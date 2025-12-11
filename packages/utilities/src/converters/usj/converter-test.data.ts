@@ -1061,6 +1061,8 @@ export const opsGen1v1Editable = [
             { insert: " + " },
             { insert: "\\fr" },
             { insert: " 3:2 ", attributes: { char: { style: "fr" } } },
+            { insert: "\\fk" },
+            { insert: "", attributes: { char: { style: "fk" } } },
             { insert: "\\ft" },
             {
               insert: " The Hebrew word rendered “God” is “אֱלֹהִ֑ים” (Elohim).",
@@ -2110,24 +2112,59 @@ export const editorStateWithUnknownItems = {
 
 export const opsWithUnknownItems = [
   // TODO: missing unknown attributes
-  { insert: "\n", attributes: { book: { style: "id", code: "GEN" } } },
-  { insert: { chapter: { style: "c", number: "1" } } },
-  { insert: { verse: { style: "v", number: "1" } } },
+  {
+    insert: "\n",
+    attributes: {
+      book: { style: "id", code: "GEN", category: "watCat", "attr-unknown": "watAttr" },
+    },
+  },
+  {
+    insert: {
+      chapter: {
+        style: "c",
+        number: "1",
+        sid: "GEN 1",
+        category: "watCat",
+        "attr-unknown": "watAttr",
+      },
+    },
+  },
+  { insert: { verse: { style: "v", number: "1", category: "watCat", "attr-unknown": "watAttr" } } },
   { insert: "First part of the first verse " },
   {
     insert: {
       note: {
         style: "f",
         caller: "+",
+        eid: "watEid",
+        "attr-unknown": "watAttr",
         contents: {
-          ops: [{ insert: "3:2 ", attributes: { char: { style: "fr" } } }],
+          ops: [
+            {
+              insert: "3:2 ",
+              attributes: { char: { style: "fr", category: "watCat", "attr-unknown": "watAttr" } },
+            },
+          ],
         },
       },
     },
   },
-  { insert: { milestone: { style: "ts" } } },
-  { insert: "wat content?Mk 9.50sidebar contentperiph contentfigure contentcell1" },
-  { insert: "\n", attributes: { para: { style: "p" } } },
+  { insert: { milestone: { style: "ts", category: "watCat", "attr-unknown": "watAttr" } } },
+  {
+    insert: {
+      unknown: {
+        tag: "wat",
+        marker: "z",
+        category: "watCat",
+        "attr-unknown": "watAttr",
+        contents: { ops: [{ insert: "wat content?" }] },
+      },
+    },
+  },
+  {
+    insert: "\n",
+    attributes: { para: { style: "p", category: "watCat", "attr-unknown": "watAttr" } },
+  },
 ];
 
 /* Gen 1:1 whitespace */
