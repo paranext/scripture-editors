@@ -1,3 +1,44 @@
+# `platform-yalc` branch
+
+This branch is a long-lived branch that is the target of Platform.Bible's build workflows. It is rebased onto `main` when appropriate. It is intended only to reflect `main` at various points with one commit on top that adds this message; please do not do anything to this branch other than to rebase it onto `main` when changes need to be reflected in Platform.Bible's editor.
+
+We build the editor into Platform.Bible from this branch instead of from specific npm releases to avoid the overhead of making releases for every little change we need to make to the editor.
+
+The only reason this branch exists as opposed to building the editor from `main` is to make it easier to sync breaking changes here with changes in Platform.Bible that depend on these changes to avoid breaking the Platform.Bible build with breaking changes there that have not yet had changes reflected in Platform.Bible. When you want to make changes in the editor, do the following:
+
+1. Locally develop the editor on a branch from `main`. Locally develop Platform.Bible on a branch as usual.
+2. Submit a PR here. Submit a PR in Platform.Bible. Get these PRs reviewed. Note: if there are breaking changes in the editor, Platform.Bible likely won't successfully build yet.
+3. Merge the PR here.
+4. **If your editor change touched the `dependencies` of `packages/*/package.json`** — adding a
+   package, removing one, or moving an existing one's version range — Platform.Bible also needs its
+   `package-lock.json` refreshed, because it records those dependencies. Its builds fail on the
+   mismatch otherwise. In a `paranext-core` checkout, run `npm install`, commit the
+   `package-lock.json` diff, and get that PR ready to merge together with your Platform.Bible PR.
+   The **Verify platform-yalc consumer sync** workflow checks this automatically on every push to
+   this branch and fails with instructions if the lockfile PR is missing.
+
+   Note this is about the dependencies our packages declare, not our packages' own version numbers:
+   releasing `platform-editor` 0.8.16 as 0.8.17 needs nothing on the Platform.Bible side.
+5. Move this branch forward. The easy way, from a `platform-yalc` checkout:
+
+```bash
+npm run move-platform-yalc
+```
+
+   It resets your local branch to origin's state, rebases onto `origin/main`, runs the step-4
+   lockfile check (refusing to push if it fails), and force-pushes — leaving your checkout at the
+   pushed state. Or do the same by hand:
+
+```bash
+git fetch origin
+git checkout platform-yalc
+git rebase origin/main
+git push --force-with-lease
+```
+
+6. Get the PR in Platform.Bible to rebuild (push something). The build should now succeed. Unfortunately, builds not on your branch may fail temporarily until you finish the next step.
+7. Once the build has succeeded, merge the Platform.Bible PR (and the lockfile PR from step 4, if there was one).
+
 # Scripture Editors
 
 This monorepo contains packages for various Scripture editors.
