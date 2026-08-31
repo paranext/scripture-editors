@@ -45,7 +45,6 @@ your changes here into a running Platform.Bible.
 Which revision paranext-core builds is pinned in its `dev-packages.json`, normally the
 [`platform-yalc`](#the-platform-yalc-branch) branch.
 
-
 ## Developer Quick Start
 
 1. Install [Volta](https://docs.volta.sh/guide/getting-started).
@@ -367,7 +366,7 @@ the base for PRs opened from `origin` — you have to target it explicitly, whic
 
 ## Releasing
 
-Consumers pin a *revision of this repository* — a branch or tag in `dev-packages.json` and
+Consumers pin a _revision of this repository_ — a branch or tag in `dev-packages.json` and
 `productInfo.json` — rather than a published package version. A release is therefore a **repository
 tag**, and one tag pins both packages at once. Tags are named `v<platform-editor version>`, e.g.
 `v0.8.17`, since `platform-editor` is the package this repo exists to ship.
