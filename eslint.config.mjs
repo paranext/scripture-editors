@@ -69,7 +69,6 @@ export default [
       "demos/platform/**",
       "libs/shared-react/**",
       "packages/platform/**",
-      "packages/scribe/**",
     ].flatMap((projectDir) => (config.files ?? ["**/*"]).map((pattern) => [projectDir, pattern])),
   })),
   {

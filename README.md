@@ -40,22 +40,16 @@ NOTE: there is a [known limitation using PNPM with Volta](https://docs.volta.sh/
 
 ## Nx Monorepo Build System
 
-| Source                              | Demo App               |
-| ----------------------------------- | ---------------------- |
-| [perf-vanilla](/demos/perf-vanilla) | `nx dev perf-vanilla`  |
-| [perf-react](/demos/perf-react)     | `nx dev perf-react`    |
-| [platform](/demos/platform)         | `nx dev platform`      |
-| [scribe-editor](/packages/scribe)\* | `nx dev scribe-editor` |
-
-\* This item appears in 2 lists as it has both the Demo App and Package in the same source folder.
+| Source                              | Demo App              |
+| ----------------------------------- | --------------------- |
+| [perf-vanilla](/demos/perf-vanilla) | `nx dev perf-vanilla` |
+| [perf-react](/demos/perf-react)     | `nx dev perf-react`   |
+| [platform](/demos/platform)         | `nx dev platform`     |
 
 | Source                                | Package                                                                 |
 | ------------------------------------- | ----------------------------------------------------------------------- |
 | [platform-editor](/packages/platform) | [![Github Tag][npm-platform-version-image]][npm-platform-version-url]   |
-| [scribe-editor](/packages/scribe)     | [![Github Tag][npm-scribe-version-image]][npm-scribe-version-url]\*     |
 | [utilities](/packages/utilities)      | [![Github Tag][npm-utilities-version-image]][npm-utilities-version-url] |
-
-\* This package has not yet been published to the new NPM organization. The previous version of `scribe-editor` is here [![Github Tag][npm-bnf-scribe-version-image]][npm-bnf-scribe-version-url].
 
 | Source                             | Library                |
 | ---------------------------------- | ---------------------- |
@@ -77,9 +71,6 @@ graph TB
   R --> SR(shared-react)
   SR --> S
   SR --> U
-  SB(scribe-editor) --> SR
-  SB --> S
-  SB --> U
   P(platform) --> PE(platform-editor)
   P --> T
   P --> U
@@ -282,10 +273,6 @@ If you are using a framework other than React and need to wrap a plain-vanilla J
 
 [npm-platform-version-image]: https://img.shields.io/npm/v/@eten-tech-foundation/platform-editor
 [npm-platform-version-url]: https://www.npmjs.com/package/@eten-tech-foundation/platform-editor
-[npm-scribe-version-image]: https://img.shields.io/npm/v/@eten-tech-foundation/scribe-editor
-[npm-scribe-version-url]: https://www.npmjs.com/package/@eten-tech-foundation/scribe-editor
-[npm-bnf-scribe-version-image]: https://img.shields.io/npm/v/@biblionexus-foundation/scribe-editor
-[npm-bnf-scribe-version-url]: https://www.npmjs.com/package/@biblionexus-foundation/scribe-editor
 [npm-utilities-version-image]: https://img.shields.io/npm/v/@eten-tech-foundation/scripture-utilities
 [npm-utilities-version-url]: https://www.npmjs.com/package/@eten-tech-foundation/scripture-utilities
 [github-license]: https://github.com/eten-tech-foundation/scripture-editors/blob/main/LICENSE
