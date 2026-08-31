@@ -1,10 +1,19 @@
-name: Publish Scribe Package (scribe-v2)
+name: Test
 
 on:
+  push:
+    branches: ["main"]
+  pull_request:
+    # The branches below should be a subset of the branches above
+    branches: ["main"]
   workflow_dispatch:
-
-env:
-  NX_CLOUD_ACCESS_TOKEN: ${{ secrets.NX_CLOUD_ACCESS_TOKEN }}
+    inputs:
+      # Allow debugging a GHA build agent. This is the trigger. See the last step.
+      debug_enabled:
+        type: boolean
+        description: "Run the build with tmate debugging enabled (https://github.com/marketplace/actions/debugging-with-tmate)"
+        required: false
+        default: false
 
 # Needed for nx-set-shas when run on the main branch
 permissions:
@@ -13,10 +22,10 @@ permissions:
   pull-requests: read
 
 jobs:
-  publish:
+  test:
     name: Build on ${{ matrix.os }}, node ${{ matrix.node_version }}, PNPM ${{ matrix.pnpm_version }}
+
     runs-on: ${{ matrix.os }}
-    if: github.ref != 'refs/heads/main'
 
     strategy:
       matrix:
@@ -36,10 +45,9 @@ jobs:
         with:
           version: ${{ matrix.pnpm_version }}
 
-      - name: Install Node.js and npm
+      - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          registry-url: "https://registry.npmjs.org/"
           node-version: ${{ matrix.node_version }}
           cache: pnpm
 
@@ -66,22 +74,9 @@ jobs:
       - name: Production build
         run: pnpm nx affected -t build
 
-      - name: Publish scribe package
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          cd ./packages/scribe
-          pnpm publish --no-git-checks --access public --tag scribe-v2
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Error handling and file content
-        if: failure()
-        run: |
-          echo "An error occurred during the workflow execution."
-          echo "Current branch: ${{ github.ref }}"
-          echo "Current workflow file content:"
-          cat ${{ github.workflow }}
-          echo "Directory structure:"
-          ls -R
-          echo "Workflow run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      # Enable tmate debugging of manually-triggered workflows if the input option was provided
+      - name: Setup tmate session
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true

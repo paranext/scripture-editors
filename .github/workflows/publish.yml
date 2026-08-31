@@ -1,0 +1,87 @@
+name: Publish
+run-name: Publish ${{ github.ref_name }} as v${{ github.event.inputs.version }}
+
+# Consumers pin a revision of this repository rather than a published package version, so a release
+# is a repository tag: one tag pins both packages at once. These packages are not published to npm —
+# paranext-core builds them from source. See the README's "Releasing" section.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, matching the platform-editor version on this branch, e.g. 0.9.0. Tagged as `v<version>`."
+        required: true
+      prerelease:
+        description: "Mark the GitHub release as a pre-release."
+        type: boolean
+        required: false
+        default: true
+      newVersionAfterPublishing:
+        description: "Version to bump platform-editor to after releasing, e.g. 0.10.0. Leave blank not to bump."
+        required: false
+      bumpRef:
+        description: "Git ref to create the bump-versions branch from, e.g. `main`. Leave blank to use the branch this run targets."
+        required: false
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install PNPM
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify the requested version matches platform-editor on this branch
+        # A tag that disagrees with the manifest would pin consumers to a build whose version says
+        # something else, so fail before creating it rather than after.
+        run: |
+          MANIFEST_VERSION=$(node -p "require('./packages/platform/package.json').version")
+          if [ "$MANIFEST_VERSION" != "${{ github.event.inputs.version }}" ]; then
+            echo "packages/platform/package.json is $MANIFEST_VERSION but you asked to release ${{ github.event.inputs.version }}."
+            echo "Dispatch the Bump Versions workflow first, or release the version already on this branch."
+            exit 1
+          fi
+
+      - name: Build
+        run: pnpm nx run-many -t build
+
+      - name: Create the release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ github.event.inputs.version }}
+          commit: ${{ github.sha }}
+          name: v${{ github.event.inputs.version }}
+          generateReleaseNotes: true
+          prerelease: ${{ github.event.inputs.prerelease }}
+
+      - name: Check out the ref to bump versions on
+        if: ${{ github.event.inputs.newVersionAfterPublishing != '' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.bumpRef || github.ref_name }}
+
+      - name: Bump versions for continued development
+        if: ${{ github.event.inputs.newVersionAfterPublishing != '' }}
+        uses: ./.github/actions/bump-versions-action
+        with:
+          platformVersion: ${{ github.event.inputs.newVersionAfterPublishing }}

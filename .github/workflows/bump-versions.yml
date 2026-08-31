@@ -1,0 +1,44 @@
+name: Bump Versions
+run-name: Bump versions on ${{ github.ref_name }} to ${{ github.event.inputs.platformVersion }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      platformVersion:
+        description: "Version to set for platform-editor on a new branch (called `bump-versions-<version>`), e.g. 0.9.0."
+        required: true
+      utilitiesVersion:
+        description: "Version to set for scripture-utilities. Leave blank to leave it unchanged."
+        required: false
+
+jobs:
+  bump-versions:
+    name: Bump versions
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      - name: Install PNPM
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bump versions
+        uses: ./.github/actions/bump-versions-action
+        with:
+          platformVersion: ${{ github.event.inputs.platformVersion }}
+          utilitiesVersion: ${{ github.event.inputs.utilitiesVersion }}
