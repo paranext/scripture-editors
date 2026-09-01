@@ -1,0 +1,32 @@
+name: Verify platform-yalc consumer sync
+
+# paranext-core's package-lock.json records this repo's packages' dependency closure. When a
+# dependency changes here and platform-yalc moves, every core build fails until core's lockfile is
+# refreshed. This check makes that visible to the person moving the branch — it passes when core's
+# main (or an open core PR touching package-lock.json) matches this branch's dependencies, and
+# fails with instructions otherwise. Version-only bumps pass; only dependency changes matter.
+#
+# Re-run it (Actions -> this workflow -> Re-run, or the workflow_dispatch button) after the core
+# lockfile PR is opened.
+
+on:
+  push:
+    branches: ["platform-yalc"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Core lockfile in sync
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      - name: Verify paranext-core's lockfile matches this branch's dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/verify-consumer-lockfile-sync.mjs

@@ -326,6 +326,24 @@ git push --force-with-lease
 The name is historical — it refers to [yalc](https://github.com/wclr/yalc), which paranext-core no
 longer uses. The branch's coordination role is still real, so it stays.
 
+### Dependency changes need a paranext-core lockfile PR
+
+paranext-core's `package-lock.json` records these packages' dependency closure. If a dependency was
+**added, removed, or its version range changed** here since `platform-yalc` last moved, every
+paranext-core build breaks when it moves again — its `npm ci` refuses to run until its lockfile is
+refreshed. (Version-only bumps of the packages themselves are fine and need nothing.)
+
+So when moving `platform-yalc` past a dependency change:
+
+1. In a paranext-core checkout (with this repo's checkout beside it or in its `dev-packages/`),
+   run `npm install`, commit the `package-lock.json` diff, and open a PR.
+2. Merge that PR together with the `platform-yalc` push.
+
+The **Verify platform-yalc consumer sync** workflow runs on every push to `platform-yalc` and
+checks this for you: it passes when paranext-core's `main` — or an open paranext-core PR touching
+`package-lock.json` — matches this branch's dependencies, and fails with these same instructions
+otherwise. Re-run it after opening the core PR.
+
 ## Working with the eten-tech-foundation repository
 
 This repo carries the full history of [`eten-tech-foundation/scripture-editors`][eten-repo], so the
