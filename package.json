@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "bump-versions": "tsx ./scripts/bump-versions.ts",
+    "move-platform-yalc": "node scripts/move-platform-yalc.mjs",
     "ncu:group": "npx npm-check-updates --interactive --format group --workspaces",
     "platform:dev": "pnpm --filter platform dev",
     "platform:dev:test": "pnpm --filter platform dev:test",

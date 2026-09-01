@@ -331,7 +331,12 @@ longer uses. The branch's coordination role is still real, so it stays.
 paranext-core's `package-lock.json` records these packages' dependency closure. If a dependency was
 **added, removed, or its version range changed** here since `platform-yalc` last moved, every
 paranext-core build breaks when it moves again — its `npm ci` refuses to run until its lockfile is
-refreshed. (Version-only bumps of the packages themselves are fine and need nothing.)
+refreshed.
+
+This is about the **dependencies these packages declare**, not about their own version numbers.
+Raising `platform-editor` from 0.8.16 to 0.8.17 needs nothing on core's side; changing what
+`platform-editor` depends on — in any way, including moving a dependency's version range — needs
+the lockfile PR below.
 
 So when moving `platform-yalc` past a dependency change:
 
@@ -339,10 +344,17 @@ So when moving `platform-yalc` past a dependency change:
    run `npm install`, commit the `package-lock.json` diff, and open a PR.
 2. Merge that PR together with the `platform-yalc` push.
 
-The **Verify platform-yalc consumer sync** workflow runs on every push to `platform-yalc` and
-checks this for you: it passes when paranext-core's `main` — or an open paranext-core PR touching
-`package-lock.json` — matches this branch's dependencies, and fails with these same instructions
-otherwise. Re-run it after opening the core PR.
+Two things check this for you:
+
+- **`npm run move-platform-yalc`** (run from a `platform-yalc` checkout with a clean tree) is the
+  recommended way to move the branch at all: it resets your local branch to origin's state, rebases
+  onto `origin/main`, runs this check, and force-pushes only if it passes — so the problem surfaces
+  before the push, not after, and your checkout ends up at exactly the pushed state. (`-- --dry-run` stops short of pushing;
+  `-- --skip-verify` is the emergency hatch.)
+- The **Verify platform-yalc consumer sync** workflow runs the same check on every push to
+  `platform-yalc`, however the push was made. It passes when paranext-core's `main` — or an open
+  paranext-core PR touching `package-lock.json` — matches this branch's dependencies, and fails
+  with these same instructions otherwise. Re-run it after opening the core PR.
 
 ## Working with the eten-tech-foundation repository
 

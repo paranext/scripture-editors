@@ -7,7 +7,11 @@
  * changed here, core's lockfile must be refreshed (`npm install` there, commit the diff) or every
  * core build breaks the moment `platform-yalc` moves: `npm ci` refuses to run on the mismatch.
  * This check runs on pushes to `platform-yalc` so whoever moves that branch finds out before the
- * breakage, not after. Version-only bumps don't need a lockfile refresh and pass untouched.
+ * breakage, not after.
+ *
+ * Only this repo's dependency lists are compared. Raising a package's OWN version number (e.g.
+ * platform-editor 0.8.16 -> 0.8.17) is not something core's lockfile validates for a `file:`
+ * dependency, so a release that changes nothing but versions passes untouched.
  *
  * The comparison mirrors what core's staging step produces from these manifests:
  * `devDependencies` are dropped, and pnpm `workspace:` specifiers become `file:` paths at the
@@ -94,6 +98,12 @@ function fetchRepoFile(repoFullName, ref, filePath) {
 async function verify() {
   const devPackagesConfig = await fetchRepoFile(CORE_REPO, CORE_BRANCH, "dev-packages.json");
   const stagedPackages = devPackagesConfig.repos.flatMap((repo) => repo.devPackages);
+  if (stagedPackages.some((devPackage) => !devPackage.packagePath || !devPackage.stagingFolder))
+    throw new Error(
+      `${CORE_REPO}@${CORE_BRANCH}'s dev-packages.json does not describe staged file: packages ` +
+        `(no packagePath/stagingFolder) — that core branch predates staged-dependency consumption, ` +
+        `so there is no lockfile contract to verify against it.`,
+    );
 
   const fs = await import("node:fs");
   const stagingFolderByName = new Map(
