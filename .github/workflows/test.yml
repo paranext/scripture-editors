@@ -78,8 +78,11 @@ jobs:
       # toolchain; rebuild it and fail if what is committed has drifted from the source.
       - name: Check the committed dist is current
         if: ${{ matrix.os == 'ubuntu-latest' }}
+        # --skip-nx-cache so this is a real build: nx declares `dist` a cached target output, so a
+        # cache hit restores its copy over the committed one and the check would grade the cache
+        # rather than the source. Earlier steps in this job populate that cache.
         run: |
-          pnpm nx run-many -t extract-api
+          pnpm nx run-many -t extract-api --skip-nx-cache
           node scripts/verify-committed-dist.mjs
 
       # Enable tmate debugging of manually-triggered workflows if the input option was provided
