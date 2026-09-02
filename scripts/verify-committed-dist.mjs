@@ -40,9 +40,21 @@ function main() {
       `  git add ${DIST_PATHS.join(" ")}\n` +
       `  git commit\n`,
   );
-  // Show what actually changed — a one-line summary is rarely enough to judge a dist diff.
+  // Print the actual diff, not just a summary: when this fails in CI the content is the only way
+  // to tell a genuine source change from a build that is not reproducible across machines.
   const diff = execSync(`git diff --stat -- ${DIST_PATHS.join(" ")}`, { encoding: "utf8" });
   if (diff.trim()) console.error(`Changes:\n${diff}`);
+  const patch = execSync(`git diff -U1 -- ${DIST_PATHS.join(" ")}`, {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (patch.trim()) {
+    const MAX_PATCH_LINES = 200;
+    const patchLines = patch.split("\n");
+    console.error(`\nDiff:\n${patchLines.slice(0, MAX_PATCH_LINES).join("\n")}`);
+    if (patchLines.length > MAX_PATCH_LINES)
+      console.error(`... ${patchLines.length - MAX_PATCH_LINES} more line(s)`);
+  }
   process.exit(1);
 }
 
