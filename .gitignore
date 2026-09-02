@@ -12,10 +12,12 @@ temp
 # result; CI verifies the committed output matches the source.
 !packages/platform/dist
 !packages/utilities/dist
-# ...but only the rolled-up artifacts. tsc emits per-file declarations into subdirectories and
-# api-extractor consumes them into dist/index.d.ts and removes them, so whether they exist depends
-# on which targets last ran. Nothing references them — `types` is dist/index.d.ts.
+# ...but only the rolled-up artifacts. tsc emits per-file declarations (into subdirectories, and a
+# declaration map beside them) which api-extractor consumes into dist/index.d.ts and removes, so
+# whether they exist depends on which targets last ran. Nothing references them — `types` is
+# dist/index.d.ts, and the shipped bundles carry their own .js.map/.cjs.map.
 packages/*/dist/*/
+packages/*/dist/*.d.ts.map
 tmp
 *.tsbuildinfo
 
