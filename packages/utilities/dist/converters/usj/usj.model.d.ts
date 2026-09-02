@@ -1,0 +1,100 @@
+/**
+ * Unified Scripture JSON (USJ) - The JSON variant of USFM and USX data models.
+ * These types follow this schema:
+ * @see https://github.com/usfm-bible/tcdocs/blob/usj/grammar/usj.js
+ */
+/**
+ * The USJ spec type
+ * @public
+ */
+export declare const USJ_TYPE = "USJ";
+/**
+ * The USJ spec version
+ * @public
+ */
+export declare const USJ_VERSION = "3.1";
+/**
+ * An empty USJ object
+ * @public
+ */
+export declare const EMPTY_USJ: Readonly<Usj>;
+/**
+ * List of known properties of `MarkerObject`
+ * @public
+ */
+export declare const MARKER_OBJECT_PROPS: (keyof MarkerObject)[];
+/**
+ * Single piece of Scripture content
+ * @public
+ */
+export type MarkerContent = string | MarkerObject;
+/**
+ * A Scripture Marker and its contents
+ * @public
+ */
+export interface MarkerObject {
+    /**
+     * The kind/category of node or element this is, corresponding the USFM marker and USX node
+     * @example `para`, `verse`, `char`
+     */
+    type: string;
+    /**
+     * The corresponding marker in USFM or style in USX
+     * @example `p`, `v`, `nd`
+     */
+    marker?: string;
+    /** This marker's contents laid out in order */
+    content?: MarkerContent[];
+    /** Indicates the Book-chapter-verse value in the paragraph based structure */
+    sid?: string;
+    /** Milestone end ID, matches start ID (not currently included in USJ spec) */
+    eid?: string;
+    /** Chapter number or verse number */
+    number?: string;
+    /** The 3-letter book code in ID element */
+    code?: BookCode;
+    /** Alternate chapter number or verse number */
+    altnumber?: string;
+    /** Published character of chapter or verse */
+    pubnumber?: string;
+    /** Caller character for footnotes and cross-refs */
+    caller?: string;
+    /** Alignment of table cells */
+    align?: string;
+    /** Category of extended study bible sections */
+    category?: string;
+    /**
+     * `"false"` when a character marker has no explicit closing marker in the USFM source (allowed
+     * through USFM 3.0; ParatextData writes `closed="false"` for such spans). Omitted entirely when
+     * the marker is explicitly closed.
+     */
+    closed?: string;
+}
+/**
+ * Scripture data represented in JSON format. Data compatible transformation from USX/USFM
+ * @public
+ */
+export interface Usj {
+    /** The USJ spec type */
+    type: typeof USJ_TYPE;
+    /** The USJ spec version */
+    version: typeof USJ_VERSION;
+    /** The JSON representation of scripture contents from USFM/USX */
+    content: MarkerContent[];
+}
+/**
+ * Check if the given code is a valid 3-letter Scripture book code.
+ * @public
+ */
+export declare function isValidBookCode(code: string): boolean;
+/**
+ * 3-letter Scripture book code
+ * @public
+ */
+export type BookCode = (typeof VALID_BOOK_CODES)[number];
+/**
+ * List of valid 3-letter Scripture book codes
+ * @public
+ */
+export declare const VALID_BOOK_CODES: readonly ["GEN", "EXO", "LEV", "NUM", "DEU", "JOS", "JDG", "RUT", "1SA", "2SA", "1KI", "2KI", "1CH", "2CH", "EZR", "NEH", "EST", "JOB", "PSA", "PRO", "ECC", "SNG", "ISA", "JER", "LAM", "EZK", "DAN", "HOS", "JOL", "AMO", "OBA", "JON", "MIC", "NAM", "HAB", "ZEP", "HAG", "ZEC", "MAL", "MAT", "MRK", "LUK", "JHN", "ACT", "ROM", "1CO", "2CO", "GAL", "EPH", "PHP", "COL", "1TH", "2TH", "1TI", "2TI", "TIT", "PHM", "HEB", "JAS", "1PE", "2PE", "1JN", "2JN", "3JN", "JUD", "REV", "TOB", "JDT", "ESG", "WIS", "SIR", "BAR", "LJE", "S3Y", "SUS", "BEL", "1MA", "2MA", "3MA", "4MA", "1ES", "2ES", "MAN", "PS2", "ODA", "PSS", "EZA", "5EZ", "6EZ", "DAG", "PS3", "2BA", "LBA", "JUB", "ENO", "1MQ", "2MQ", "3MQ", "REP", "4BA", "LAO", "FRT", "BAK", "OTH", "INT", "CNC", "GLO", "TDX", "NDX", "XXA", "XXB", "XXC", "XXD", "XXE", "XXF", "XXG"];
+//# sourceMappingURL=usj.model.d.ts.map

@@ -74,6 +74,14 @@ jobs:
       - name: Production build
         run: pnpm nx affected -t build
 
+      # The published packages' dist is committed so consumers can use them without this repo's
+      # toolchain; rebuild it and fail if what is committed has drifted from the source.
+      - name: Check the committed dist is current
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: |
+          pnpm nx run-many -t extract-api
+          node scripts/verify-committed-dist.mjs
+
       # Enable tmate debugging of manually-triggered workflows if the input option was provided
       - name: Setup tmate session
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled }}

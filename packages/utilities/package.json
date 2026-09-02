@@ -29,7 +29,8 @@
     "dist",
     "src",
     "!src/**/*.test.ts",
-    "!src/**/*.data.ts"
+    "!src/**/*.data.ts",
+    "!dist/*.tsbuildinfo"
   ],
   "scripts": {
     "prepublishOnly": "tsx ../../scripts/prepare-publish.ts && cd ../.. && nx extract-api utilities",

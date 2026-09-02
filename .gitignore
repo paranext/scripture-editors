@@ -6,6 +6,12 @@ build
 dist
 out-tsc
 temp
+
+# ...except the published packages' dist, which is committed so consumers (paranext-core) can use
+# these packages without building them. Rebuild with `nx extract-api <project>` and commit the
+# result; CI verifies the committed output matches the source.
+!packages/platform/dist
+!packages/utilities/dist
 tmp
 *.tsbuildinfo
 
