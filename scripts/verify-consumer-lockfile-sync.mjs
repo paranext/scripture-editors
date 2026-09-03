@@ -223,7 +223,10 @@ async function verify() {
       `\nEvery paranext-core build will fail until its lockfile is refreshed. To fix:\n` +
       `  1. In a paranext-core checkout (with this repo's checkout beside it or in core's dev-packages/), run: npm install\n` +
       `  2. Commit the package-lock.json change and open a PR.\n` +
-      `  3. Merge that PR together with this platform-yalc update, then re-run this workflow.\n`,
+      `  3. Merge that PR together with this platform-yalc update, then re-run this workflow.\n` +
+      `\nIf that PR exists and this did not find it — it has not been touched in ${RECENT_UPDATE_WINDOW_DAYS} days, or the two are\n` +
+      `being landed together deliberately — push past this check:\n` +
+      `\n  npm run move-platform-yalc -- --skip-verify\n`,
   );
   process.exit(1);
 }
