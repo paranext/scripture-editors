@@ -249,7 +249,7 @@ When working with scripture data:
 formatted for you. Adding a format check to your own workflow is wasted work.
 
 If you do need to format explicitly, **use `prettier` directly, not `nx format:write`**. `nx format`
-exists in CI (`nx format:check` in `test-publish.yml`) only as a historical backstop: Nx once
+exists in CI (`nx format:check` in `test.yml`) only as a historical backstop: Nx once
 resolved a prettier configuration that didn't quite match invoking prettier directly, and the check
 guards against commits that bypassed the hook. It has not caught a real failure in a long time, and
 several Nx majors have passed since, but the mismatch has never been reconfirmed either way — so

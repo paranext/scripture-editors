@@ -1,0 +1,23 @@
+name: Bump Versions Action
+description: |
+  Runs the bump-versions script and pushes the branch it creates.
+
+inputs:
+  platformVersion:
+    description: "Version to set for platform-editor on a new branch (called `bump-versions-<version>`), e.g. 0.9.0."
+    required: true
+  utilitiesVersion:
+    description: "Version to set for scripture-utilities. Leave blank to leave it unchanged."
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Bump package versions
+      # Pushes using the built-in git token https://github.com/actions/checkout/tree/v4/?tab=readme-ov-file#push-a-commit-using-the-built-in-token
+      shell: bash
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        pnpm bump-versions ${{ inputs.platformVersion }} ${{ inputs.utilitiesVersion != '' && format('--utilities {0}', inputs.utilitiesVersion) || '' }}
+        git push origin "bump-versions-${{ inputs.platformVersion }}"

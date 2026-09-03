@@ -266,7 +266,7 @@ Inherits all [Editorial Ref](#editorial-ref) methods. Non-obvious additions:
 
 ## Demo and Collaborative Web Development Environment
 
-Thanks to [CodeSandbox](https://codesandbox.io/) for the instant dev environment: https://codesandbox.io/p/github/eten-tech-foundation/scripture-editors/main
+Thanks to [CodeSandbox](https://codesandbox.io/) for the instant dev environment: https://codesandbox.io/p/github/paranext/scripture-editors/main
 
 This package is the third tab (`dev:platform:5175`).
 
@@ -280,21 +280,19 @@ nx dev platform
 
 ## Develop in App
 
-To develop an editor in a target application you can use [yalc](https://www.npmjs.com/package/yalc) to link the editor in without having to publish to NPM every time something changes.
+paranext-core consumes this package by staging a built copy out of a checkout of this repo, so
+developing against a live app means restaging that copy — nothing is published.
 
-1. In this monorepo, publish the editor to `yalc`, e.g.:
+1. Give core a checkout to stage from: clone this repo as a sibling of `paranext-core`, or into
+   `paranext-core/dev-packages/`.
+2. Make your changes here.
+3. In `paranext-core`, restage them:
    ```bash
-   nx devpub platform-editor
+   npm run build:editor
    ```
-2. In the target application repo, link from `yalc`:
-   ```bash
-   yalc link @eten-tech-foundation/platform-editor
-   ```
-3. In this monorepo, make changes and re-publish the editor (see step 1).
-4. When you have finished developing in the target application repo, unlink from `yalc`:
-   ```bash
-   yalc remove @eten-tech-foundation/platform-editor && npm i
-   ```
+
+`build:editor` stages your working tree as it stands, uncommitted changes included, and marks what
+it produces so the next ordinary `npm install` replaces it with the pinned revision.
 
 ## License
 
@@ -302,10 +300,10 @@ To develop an editor in a target application you can use [yalc](https://www.npmj
 
 <!-- define variables used above -->
 
-[github-actions-status]: https://github.com/eten-tech-foundation/scripture-editors/actions/workflows/test-publish.yml/badge.svg
-[github-actions-url]: https://github.com/eten-tech-foundation/scripture-editors/actions
-[gitghub-codeql-status]: https://github.com/eten-tech-foundation/scripture-editors/actions/workflows/codeql.yml/badge.svg
-[gitghub-codeql-url]: https://github.com/eten-tech-foundation/scripture-editors/actions/workflows/codeql.yml
-[npm-version-image]: https://img.shields.io/npm/v/@eten-tech-foundation/platform-editor
-[npm-version-url]: https://github.com/eten-tech-foundation/scripture-editors/releases
-[github-license]: https://github.com/eten-tech-foundation/scripture-editors/blob/main/packages/platform/LICENSE
+[github-actions-status]: https://github.com/paranext/scripture-editors/actions/workflows/test.yml/badge.svg
+[github-actions-url]: https://github.com/paranext/scripture-editors/actions
+[gitghub-codeql-status]: https://github.com/paranext/scripture-editors/actions/workflows/codeql.yml/badge.svg
+[gitghub-codeql-url]: https://github.com/paranext/scripture-editors/actions/workflows/codeql.yml
+[npm-version-image]: https://img.shields.io/github/v/tag/paranext/scripture-editors
+[npm-version-url]: https://github.com/paranext/scripture-editors/releases
+[github-license]: https://github.com/paranext/scripture-editors/blob/main/packages/platform/LICENSE
