@@ -2,10 +2,10 @@ name: Test
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "release-prep", "hotfix-*"]
   pull_request:
     # The branches below should be a subset of the branches above
-    branches: ["main"]
+    branches: ["main", "release-prep", "hotfix-*"]
   workflow_dispatch:
     inputs:
       # Allow debugging a GHA build agent. This is the trigger. See the last step.

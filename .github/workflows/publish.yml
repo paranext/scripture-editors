@@ -62,30 +62,14 @@ jobs:
             exit 1
           fi
 
-      # A release is a repository tag, and a tag cannot be un-cut. Everything below runs before the
-      # release step so a branch that would not pass on `main` cannot become a release. `run-many`
-      # rather than `affected`: there is no base revision to be affected relative to here.
-      - name: Check formatting
-        run: |
-          pnpm prettier --check .
-          pnpm nx format:check
-
-      - name: Check linting
-        run: pnpm nx run-many -t lint
-
-      - name: Check types
-        run: pnpm nx run-many -t typecheck
-
-      - name: Check tests
-        run: pnpm nx run-many -t test
-
-      - name: Production build
-        run: pnpm nx run-many -t build
-
-      # Consumers copy the committed dist straight out of a tagged checkout, so a tag carrying a
-      # stale one ships stale code with nothing to reveal it. `test.yml` makes this check on `main`
-      # only; a release can be cut from any branch.
-      - name: Check the committed dist is current
+      # Formatting, lint, typecheck and tests are not repeated here: `test.yml` runs them on every
+      # push to the branches releases are cut from, the same division paranext-core uses.
+      #
+      # The committed dist is different, and is checked here as well. A tag is what consumers copy
+      # their editor out of, a tag cannot be un-cut, and a stale dist inside one is invisible —
+      # nothing about the tag looks wrong. `extract-api` is the build, so this replaces a separate
+      # build step rather than adding to it.
+      - name: Build and check the committed dist is current
         # --skip-nx-cache so this is a real build: nx declares `dist` a cached target output, so a
         # cache hit restores its copy over the committed one and the check would grade the cache
         # rather than the source.
@@ -102,18 +86,15 @@ jobs:
           generateReleaseNotes: true
           prerelease: ${{ github.event.inputs.prerelease }}
 
+      # `clean: false` because the default would `git clean -ffdx` the workspace, taking
+      # `node_modules` with it, and the bump action runs `tsx`. The release tag exists by this
+      # point and `bump-versions` is not idempotent, so a failure here has to be unpicked by hand.
       - name: Check out the ref to bump versions on
-        if: ${{ github.event.inputs.newVersionAfterPublishing != '' }}
+        if: ${{ github.event.inputs.newVersionAfterPublishing != '' && github.event.inputs.bumpRef != '' && github.event.inputs.bumpRef != github.ref_name }}
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.bumpRef || github.ref_name }}
-
-      # `actions/checkout` cleans the workspace, which takes `node_modules` with it. The release
-      # tag already exists by this point and `bump-versions` is not idempotent, so a failure here
-      # has to be unpicked by hand — reinstall rather than rely on what the first checkout left.
-      - name: Reinstall dependencies for the bump
-        if: ${{ github.event.inputs.newVersionAfterPublishing != '' }}
-        run: pnpm install --frozen-lockfile
+          clean: false
+          ref: ${{ github.event.inputs.bumpRef }}
 
       - name: Bump versions for continued development
         if: ${{ github.event.inputs.newVersionAfterPublishing != '' }}
