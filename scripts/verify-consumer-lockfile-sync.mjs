@@ -37,13 +37,17 @@ const COMPARED_SECTIONS = ["dependencies", "peerDependencies", "peerDependencies
 
 /**
  * How recently an open core PR must have been updated to be considered a possible in-flight
- * lockfile refresh. Deciding whether one PR touches the lockfile costs an API request, and core
- * routinely carries 150+ open, which exhausts the unauthenticated rate limit this runs under
- * locally. A refresh for the change being pushed right now is worked on alongside it, so anything
- * untouched for this long is not it. `move-platform-yalc --skip-verify` is the escape hatch if
- * that assumption ever fails.
+ * lockfile refresh.
+ *
+ * Deciding whether one PR touches the lockfile costs an API request each, and core carries 150+
+ * open. Nearly all of them are stale, so the window is what keeps this affordable: measured
+ * against core, 7 days selects ~51 PRs and 14 days ~60, against an unauthenticated budget of 60
+ * requests an hour. 7 days fits with room for the listing calls; 14 does not.
+ *
+ * A refresh for the change being pushed right now is worked on alongside it, so a PR untouched for
+ * a week is not it. `move-platform-yalc --skip-verify` is the escape hatch if that ever fails.
  */
-const RECENT_UPDATE_WINDOW_DAYS = 14;
+const RECENT_UPDATE_WINDOW_DAYS = 7;
 
 async function fetchJson(url, init) {
   const response = await fetch(url, init);
@@ -219,7 +223,9 @@ async function verify() {
   }
 
   console.error(
-    `\nNo open ${CORE_REPO} PR updates package-lock.json to match (checked ${checkedCount} candidate PR(s) among the ${recentPrs.length} of ${openPrs.length} open PRs updated in the last ${RECENT_UPDATE_WINDOW_DAYS} days).\n` +
+    `\nNo open ${CORE_REPO} PR brings the lockfile in sync.\n` +
+      `Looked at all ${recentPrs.length} open PRs updated in the last ${RECENT_UPDATE_WINDOW_DAYS} days (${openPrs.length} are open in total, the rest untouched for longer). ` +
+      `${checkedCount} of them change package-lock.json; none of those match.\n` +
       `\nEvery paranext-core build will fail until its lockfile is refreshed. To fix:\n` +
       `  1. In a paranext-core checkout (with this repo's checkout beside it or in core's dev-packages/), run: npm install\n` +
       `  2. Commit the package-lock.json change and open a PR.\n` +
