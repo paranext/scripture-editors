@@ -3,13 +3,13 @@
   "version": "0.8.16",
   "description": "Scripture editor used in Platform. See https://platform.bible",
   "license": "MIT",
-  "homepage": "https://github.com/eten-tech-foundation/scripture-editors/tree/main/packages/platform#readme",
+  "homepage": "https://github.com/paranext/scripture-editors/tree/main/packages/platform#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/eten-tech-foundation/scripture-editors.git"
+    "url": "git+https://github.com/paranext/scripture-editors.git"
   },
   "bugs": {
-    "url": "https://github.com/eten-tech-foundation/scripture-editors/issues"
+    "url": "https://github.com/paranext/scripture-editors/issues"
   },
   "type": "module",
   "module": "dist/index.js",

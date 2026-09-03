@@ -3,13 +3,13 @@
   "version": "0.1.6",
   "description": "Utilities for working with Scripture data.",
   "license": "MIT",
-  "homepage": "https://github.com/eten-tech-foundation/scripture-editors/tree/main/packages/utilities#readme",
+  "homepage": "https://github.com/paranext/scripture-editors/tree/main/packages/utilities#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/eten-tech-foundation/scripture-editors.git"
+    "url": "git+https://github.com/paranext/scripture-editors.git"
   },
   "bugs": {
-    "url": "https://github.com/eten-tech-foundation/scripture-editors/issues"
+    "url": "https://github.com/paranext/scripture-editors/issues"
   },
   "type": "module",
   "main": "dist/index.cjs",
