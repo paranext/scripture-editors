@@ -451,7 +451,7 @@ gate.
 
 ## CI does not audit
 
-`.github/workflows/test-publish.yml` runs formatting, lint, typecheck, test and build. It does not
+`.github/workflows/test.yml` runs formatting, lint, typecheck, test and build. It does not
 run `pnpm audit`, and neither does the pre-commit hook or any npm script. **A green CI run says
 nothing about vulnerabilities.** In the July 2026 sweep, all four dependabot PRs were green while a
 CVSS 8.7 finding was open.

@@ -458,14 +458,14 @@ to [`eten-tech-foundation/scripture-editors`][eten-repo] possible.
 
 <!-- define variables used above -->
 
-[npm-platform-version-image]: https://img.shields.io/npm/v/@eten-tech-foundation/platform-editor
-[npm-platform-version-url]: https://www.npmjs.com/package/@eten-tech-foundation/platform-editor
+[npm-platform-version-image]: https://img.shields.io/github/v/tag/paranext/scripture-editors
+[npm-platform-version-url]: https://github.com/paranext/scripture-editors/releases
 [npm-scribe-version-image]: https://img.shields.io/npm/v/@eten-tech-foundation/scribe-editor
 [npm-scribe-version-url]: https://www.npmjs.com/package/@eten-tech-foundation/scribe-editor
 [npm-bnf-scribe-version-image]: https://img.shields.io/npm/v/@biblionexus-foundation/scribe-editor
 [npm-bnf-scribe-version-url]: https://www.npmjs.com/package/@biblionexus-foundation/scribe-editor
-[npm-utilities-version-image]: https://img.shields.io/npm/v/@eten-tech-foundation/scripture-utilities
-[npm-utilities-version-url]: https://www.npmjs.com/package/@eten-tech-foundation/scripture-utilities
+[npm-utilities-version-image]: https://img.shields.io/github/v/tag/paranext/scripture-editors
+[npm-utilities-version-url]: https://github.com/paranext/scripture-editors/releases
 [github-license]: https://github.com/paranext/scripture-editors/blob/main/LICENSE
 [eten-repo]: https://github.com/eten-tech-foundation/scripture-editors
 [paranext-core]: https://github.com/paranext/paranext-core
