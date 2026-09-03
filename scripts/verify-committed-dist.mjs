@@ -20,6 +20,13 @@ import { execSync } from "node:child_process";
 /** Paths whose committed contents must match a fresh build. */
 const DIST_PATHS = ["packages/platform/dist", "packages/utilities/dist"];
 
+// Blind spot: `git status` cannot see ignored paths, and `.gitignore` ignores everything nested
+// under these directories (`packages/*/dist/*/`) so tsc's per-file declarations stay untracked. A
+// build that started emitting published output into a subdirectory would therefore be invisible
+// here — the check would pass with files missing from the commit. Separating the published
+// artifacts from the toolchain's scratch space removes the overlap entirely; see
+// https://github.com/paranext/scripture-editors/issues/5.
+
 function main() {
   // `git status --porcelain` reports untracked, modified, and deleted alike, which is exactly the
   // set of ways a committed dist can disagree with a fresh build.
@@ -49,9 +56,20 @@ function main() {
     maxBuffer: 64 * 1024 * 1024,
   });
   if (patch.trim()) {
+    // Bounded on both axes. The published bundles include `.js.map` files that are megabytes wide
+    // on a single line, so a line budget alone does not bound what reaches the log.
     const MAX_PATCH_LINES = 200;
+    const MAX_LINE_CHARS = 500;
     const patchLines = patch.split("\n");
-    console.error(`\nDiff:\n${patchLines.slice(0, MAX_PATCH_LINES).join("\n")}`);
+    const excerpt = patchLines
+      .slice(0, MAX_PATCH_LINES)
+      .map((line) =>
+        line.length > MAX_LINE_CHARS
+          ? `${line.slice(0, MAX_LINE_CHARS)}... (${line.length - MAX_LINE_CHARS} more character(s) on this line)`
+          : line,
+      )
+      .join("\n");
+    console.error(`\nDiff:\n${excerpt}`);
     if (patchLines.length > MAX_PATCH_LINES)
       console.error(`... ${patchLines.length - MAX_PATCH_LINES} more line(s)`);
   }

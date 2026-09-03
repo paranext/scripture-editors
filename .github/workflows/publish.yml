@@ -62,8 +62,36 @@ jobs:
             exit 1
           fi
 
-      - name: Build
+      # A release is a repository tag, and a tag cannot be un-cut. Everything below runs before the
+      # release step so a branch that would not pass on `main` cannot become a release. `run-many`
+      # rather than `affected`: there is no base revision to be affected relative to here.
+      - name: Check formatting
+        run: |
+          pnpm prettier --check .
+          pnpm nx format:check
+
+      - name: Check linting
+        run: pnpm nx run-many -t lint
+
+      - name: Check types
+        run: pnpm nx run-many -t typecheck
+
+      - name: Check tests
+        run: pnpm nx run-many -t test
+
+      - name: Production build
         run: pnpm nx run-many -t build
+
+      # Consumers copy the committed dist straight out of a tagged checkout, so a tag carrying a
+      # stale one ships stale code with nothing to reveal it. `test.yml` makes this check on `main`
+      # only; a release can be cut from any branch.
+      - name: Check the committed dist is current
+        # --skip-nx-cache so this is a real build: nx declares `dist` a cached target output, so a
+        # cache hit restores its copy over the committed one and the check would grade the cache
+        # rather than the source.
+        run: |
+          pnpm nx run-many -t extract-api --skip-nx-cache
+          node scripts/verify-committed-dist.mjs
 
       - name: Create the release
         uses: ncipollo/release-action@v1
@@ -79,6 +107,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.bumpRef || github.ref_name }}
+
+      # `actions/checkout` cleans the workspace, which takes `node_modules` with it. The release
+      # tag already exists by this point and `bump-versions` is not idempotent, so a failure here
+      # has to be unpicked by hand — reinstall rather than rely on what the first checkout left.
+      - name: Reinstall dependencies for the bump
+        if: ${{ github.event.inputs.newVersionAfterPublishing != '' }}
+        run: pnpm install --frozen-lockfile
 
       - name: Bump versions for continued development
         if: ${{ github.event.inputs.newVersionAfterPublishing != '' }}

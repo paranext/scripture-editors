@@ -23,10 +23,25 @@
 
 const CORE_REPO = "paranext/paranext-core";
 // Overridable for testing against a not-yet-merged core branch.
-const CORE_BRANCH = process.env.CORE_BRANCH ?? "main";
+const CORE_BRANCH = process.env.CORE_BRANCH || "main";
 
-/** Sections whose entries npm records for a `file:` package and validates against the lockfile. */
-const COMPARED_SECTIONS = ["dependencies", "peerDependencies"];
+/**
+ * Sections whose entries npm records for a `file:` package and validates against the lockfile.
+ *
+ * `peerDependenciesMeta` belongs here even though it declares no package: it is what marks a peer
+ * optional, so deleting an entry from it turns that peer into a required one and npm pulls it into
+ * the closure. Verified against a staged `file:` dependency — making `yjs` required this way fails
+ * every `npm ci` with "Missing: yjs from lock file" while both dependency lists are unchanged.
+ */
+const COMPARED_SECTIONS = ["dependencies", "peerDependencies", "peerDependenciesMeta"];
+
+/**
+ * How recently an open core PR must have been updated to be looked at on the first pass. Checking
+ * a PR costs a request, and core routinely has 150+ open; a lockfile refresh for a change being
+ * pushed right now is recent. Older PRs are still checked, but only when the cheap pass finds
+ * nothing and the alternative is failing the build.
+ */
+const RECENT_UPDATE_WINDOW_DAYS = 30;
 
 async function fetchJson(url, init) {
   const response = await fetch(url, init);
@@ -55,7 +70,10 @@ async function computeExpectedSections(packagePath, stagingFolderByName) {
     if (!entries) return;
     expected[section] = Object.fromEntries(
       Object.entries(entries).map(([name, specifier]) => {
-        if (!specifier.startsWith("workspace:")) return [name, specifier];
+        // Only dependency sections hold specifier strings; `peerDependenciesMeta` holds objects,
+        // which are carried through to the comparison as they are.
+        if (typeof specifier !== "string" || !specifier.startsWith("workspace:"))
+          return [name, specifier];
         const stagingFolder = stagingFolderByName.get(name);
         if (!stagingFolder)
           throw new Error(
@@ -79,7 +97,9 @@ function diffAgainstLock(lock, stagingFolder, expectedSections) {
     const recorded = lockEntry[section] ?? {};
     const names = new Set([...Object.keys(expected), ...Object.keys(recorded)]);
     names.forEach((name) => {
-      if (expected[name] === recorded[name]) return;
+      // Structural, because `peerDependenciesMeta` entries are objects. Both sides are parsed from
+      // JSON written by npm, so key order is stable.
+      if (JSON.stringify(expected[name] ?? null) === JSON.stringify(recorded[name] ?? null)) return;
       problems.push(
         `${stagingFolder} ${section}.${name}: this repo declares ${JSON.stringify(
           expected[name] ?? null,
@@ -92,7 +112,12 @@ function diffAgainstLock(lock, stagingFolder, expectedSections) {
 
 /** Fetches a repo file as JSON at a ref, via raw.githubusercontent. */
 function fetchRepoFile(repoFullName, ref, filePath) {
-  return fetchJson(`https://raw.githubusercontent.com/${repoFullName}/${ref}/${filePath}`);
+  // Same credentials as the API calls: raw.githubusercontent rate-limits anonymous reads, and
+  // these fetch multi-megabyte lockfiles.
+  return fetchJson(
+    `https://raw.githubusercontent.com/${repoFullName}/${ref}/${filePath}`,
+    githubApiInit(),
+  );
 }
 
 async function verify() {
@@ -146,7 +171,6 @@ async function verify() {
   // since the repo routinely has more than one page of open PRs.
   const openPrs = [];
   for (let page = 1; page <= 3; page += 1) {
-    // eslint-disable-next-line no-await-in-loop
     const prPage = await fetchJson(
       `https://api.github.com/repos/${CORE_REPO}/pulls?state=open&sort=updated&direction=desc&per_page=100&page=${page}`,
       githubApiInit(),
@@ -154,31 +178,55 @@ async function verify() {
     openPrs.push(...prPage);
     if (prPage.length < 100) break;
   }
-  const candidates = [];
-  for (const pr of openPrs) {
-    // Sequential on purpose: candidates are rare and this respects API rate limits.
-    // eslint-disable-next-line no-await-in-loop
-    const files = await fetchJson(
-      `https://api.github.com/repos/${CORE_REPO}/pulls/${pr.number}/files?per_page=100`,
-      githubApiInit(),
-    );
-    if (files.some((file) => file.filename === "package-lock.json")) candidates.push(pr);
+
+  // Two passes over the open PRs, because deciding whether one touches the lockfile costs a
+  // request each and core carries 150+ open at a time. Recently-updated PRs first: a refresh for
+  // the change being pushed right now will be among them, and that pass is a handful of requests.
+  // The rest are only walked when the alternative is failing the check, since a false failure
+  // blocks the push for no reason.
+  const cutoff = Date.now() - RECENT_UPDATE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const isRecent = (pr) => Date.parse(pr.updated_at) >= cutoff;
+  const recentPrs = openPrs.filter(isRecent);
+  const olderPrs = openPrs.filter((pr) => !isRecent(pr));
+
+  let checkedCount = 0;
+
+  /** Finds an open PR whose lockfile matches, or undefined. */
+  async function findMatchingPr(prs) {
+    for (const pr of prs) {
+      // Sequential on purpose: candidates are rare and this respects API rate limits.
+      const files = await fetchJson(
+        `https://api.github.com/repos/${CORE_REPO}/pulls/${pr.number}/files?per_page=100`,
+        githubApiInit(),
+      );
+      // A response at the page limit may be truncated, and this endpoint gives no way to page
+      // further here. Treat it as a candidate: one extra lockfile fetch is cheaper than declaring
+      // a real refresh missing because its PR happened to touch a lot of files.
+      const touchesLock =
+        files.length === 100 || files.some((file) => file.filename === "package-lock.json");
+      if (!touchesLock) continue;
+      // The head fork can be deleted while the PR stays open; there is nothing left to read.
+      if (!pr.head.repo) continue;
+      checkedCount += 1;
+      const prLock = await fetchRepoFile(pr.head.repo.full_name, pr.head.sha, "package-lock.json");
+      if (diffLock(prLock).length === 0) return pr;
+    }
+    return undefined;
   }
 
-  for (const pr of candidates) {
-    // eslint-disable-next-line no-await-in-loop
-    const prLock = await fetchRepoFile(pr.head.repo.full_name, pr.head.sha, "package-lock.json");
-    if (diffLock(prLock).length === 0) {
-      console.log(
-        `Open PR ${CORE_REPO}#${pr.number} ("${pr.title}") has a matching lockfile.\n` +
-          `Merge that PR together with this platform-yalc update — core builds break until it lands.`,
-      );
-      return;
-    }
+  const match =
+    (await findMatchingPr(recentPrs)) ??
+    (olderPrs.length ? await findMatchingPr(olderPrs) : undefined);
+  if (match) {
+    console.log(
+      `Open PR ${CORE_REPO}#${match.number} ("${match.title}") has a matching lockfile.\n` +
+        `Merge that PR together with this platform-yalc update — core builds break until it lands.`,
+    );
+    return;
   }
 
   console.error(
-    `\nNo open ${CORE_REPO} PR updates package-lock.json to match (checked ${candidates.length} candidate PR(s) of ${openPrs.length} open).\n` +
+    `\nNo open ${CORE_REPO} PR updates package-lock.json to match (checked ${checkedCount} candidate PR(s) of ${openPrs.length} open).\n` +
       `\nEvery paranext-core build will fail until its lockfile is refreshed. To fix:\n` +
       `  1. In a paranext-core checkout (with this repo's checkout beside it or in core's dev-packages/), run: npm install\n` +
       `  2. Commit the package-lock.json change and open a PR.\n` +
