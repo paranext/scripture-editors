@@ -32,8 +32,17 @@ const CORE_BRANCH = process.env.CORE_BRANCH || "main";
  * optional, so deleting an entry from it turns that peer into a required one and npm pulls it into
  * the closure. Verified against a staged `file:` dependency — making `yjs` required this way fails
  * every `npm ci` with "Missing: yjs from lock file" while both dependency lists are unchanged.
+ *
+ * `optionalDependencies` is here for the same reason, though nothing declares one today: npm
+ * records it for a staged `file:` package and pulls its entries into the closure, so adding one
+ * without refreshing core's lockfile fails every `npm ci` with "Missing: <dep> from lock file".
  */
-const COMPARED_SECTIONS = ["dependencies", "peerDependencies", "peerDependenciesMeta"];
+const COMPARED_SECTIONS = [
+  "dependencies",
+  "peerDependencies",
+  "peerDependenciesMeta",
+  "optionalDependencies",
+];
 
 /**
  * How recently an open core PR must have been updated to be considered a possible in-flight

@@ -72,8 +72,9 @@ nx run-many -t extract-api         # Update API reports for all packages
 # self-contained rolled-up dist/index.d.ts. A raw `nx build` leaves dist/index.d.ts with bare
 # workspace type imports (e.g. `from "shared-react"`) that consumers cannot resolve — the symptom
 # is "Cannot find module 'shared-react'" typecheck errors inside the CONSUMER's node_modules. When
-# hand-producing a consumable dist, always run extract-api AFTER build (the devpub script already
-# orders this correctly).
+# hand-producing a consumable dist, always run extract-api AFTER build. `extract-api` declares
+# `build` as a dependsOn, so invoking it alone gets that order right — and it is what regenerates
+# the committed dist/ that paranext-core copies.
 
 # Development environments
 nx dev perf-react                  # React-based PERF editor
