@@ -36,12 +36,14 @@ const CORE_BRANCH = process.env.CORE_BRANCH || "main";
 const COMPARED_SECTIONS = ["dependencies", "peerDependencies", "peerDependenciesMeta"];
 
 /**
- * How recently an open core PR must have been updated to be looked at on the first pass. Checking
- * a PR costs a request, and core routinely has 150+ open; a lockfile refresh for a change being
- * pushed right now is recent. Older PRs are still checked, but only when the cheap pass finds
- * nothing and the alternative is failing the build.
+ * How recently an open core PR must have been updated to be considered a possible in-flight
+ * lockfile refresh. Deciding whether one PR touches the lockfile costs an API request, and core
+ * routinely carries 150+ open, which exhausts the unauthenticated rate limit this runs under
+ * locally. A refresh for the change being pushed right now is worked on alongside it, so anything
+ * untouched for this long is not it. `move-platform-yalc --skip-verify` is the escape hatch if
+ * that assumption ever fails.
  */
-const RECENT_UPDATE_WINDOW_DAYS = 30;
+const RECENT_UPDATE_WINDOW_DAYS = 14;
 
 async function fetchJson(url, init) {
   const response = await fetch(url, init);
@@ -179,15 +181,8 @@ async function verify() {
     if (prPage.length < 100) break;
   }
 
-  // Two passes over the open PRs, because deciding whether one touches the lockfile costs a
-  // request each and core carries 150+ open at a time. Recently-updated PRs first: a refresh for
-  // the change being pushed right now will be among them, and that pass is a handful of requests.
-  // The rest are only walked when the alternative is failing the check, since a false failure
-  // blocks the push for no reason.
   const cutoff = Date.now() - RECENT_UPDATE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-  const isRecent = (pr) => Date.parse(pr.updated_at) >= cutoff;
-  const recentPrs = openPrs.filter(isRecent);
-  const olderPrs = openPrs.filter((pr) => !isRecent(pr));
+  const recentPrs = openPrs.filter((pr) => Date.parse(pr.updated_at) >= cutoff);
 
   let checkedCount = 0;
 
@@ -214,9 +209,7 @@ async function verify() {
     return undefined;
   }
 
-  const match =
-    (await findMatchingPr(recentPrs)) ??
-    (olderPrs.length ? await findMatchingPr(olderPrs) : undefined);
+  const match = await findMatchingPr(recentPrs);
   if (match) {
     console.log(
       `Open PR ${CORE_REPO}#${match.number} ("${match.title}") has a matching lockfile.\n` +
@@ -226,7 +219,7 @@ async function verify() {
   }
 
   console.error(
-    `\nNo open ${CORE_REPO} PR updates package-lock.json to match (checked ${checkedCount} candidate PR(s) of ${openPrs.length} open).\n` +
+    `\nNo open ${CORE_REPO} PR updates package-lock.json to match (checked ${checkedCount} candidate PR(s) among the ${recentPrs.length} of ${openPrs.length} open PRs updated in the last ${RECENT_UPDATE_WINDOW_DAYS} days).\n` +
       `\nEvery paranext-core build will fail until its lockfile is refreshed. To fix:\n` +
       `  1. In a paranext-core checkout (with this repo's checkout beside it or in core's dev-packages/), run: npm install\n` +
       `  2. Commit the package-lock.json change and open a PR.\n` +
