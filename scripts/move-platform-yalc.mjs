@@ -60,10 +60,13 @@ function movePlatformYalc() {
   // Snapshot the verify script BEFORE the branch moves: the rebased tree may not carry it (or may
   // carry a different version), and the check that should run is the one paired with this script.
   // It only reads repo files via cwd-relative paths, so it runs fine from a temp location.
-  const verifyScriptSnapshot = path.join(
-    os.tmpdir(),
-    `verify-consumer-lockfile-sync-${process.pid}.mjs`,
-  );
+  //
+  // Into a fresh private directory rather than a name of our own choosing in the shared temp dir:
+  // this script executes what it writes, and a predictable path in a world-writable directory is
+  // something another local account can pre-create as a symlink or swap out between the copy and
+  // the run — with a checkout that is about to be force-pushed.
+  const snapshotDir = fs.mkdtempSync(path.join(os.tmpdir(), "move-platform-yalc-"));
+  const verifyScriptSnapshot = path.join(snapshotDir, "verify-consumer-lockfile-sync.mjs");
   fs.copyFileSync(
     fileURLToPath(new URL("./verify-consumer-lockfile-sync.mjs", import.meta.url)),
     verifyScriptSnapshot,
@@ -88,8 +91,20 @@ function movePlatformYalc() {
     console.log("Rebasing platform-yalc onto origin/main...");
     try {
       run("git rebase origin/main", { stdio: "inherit" });
-    } catch {
-      run("git rebase --abort", { stdio: "inherit" });
+    } catch (rebaseError) {
+      // A rebase can also fail without starting — an unreachable origin/main, or a leftover rebase
+      // directory from an interrupted run. `git rebase --abort` then fails too, so it gets its own
+      // try: without one it throws over the conflict message below and reports itself as the
+      // problem, hiding the real cause and saying the branch is somewhere it is not.
+      try {
+        run("git rebase --abort", { stdio: "inherit" });
+      } catch {
+        throw new Error(
+          `Could not rebase onto origin/main, and there was no rebase in progress to abort. Nothing was pushed, but this checkout was already reset to origin/platform-yalc — check \`git status\` before rerunning.\n\n${
+            rebaseError instanceof Error ? rebaseError.message : rebaseError
+          }`,
+        );
+      }
       throw new Error(
         "The rebase hit conflicts. Nothing was pushed; platform-yalc is back at origin's state. Rebase onto origin/main manually, resolve the conflicts, and push with --force-with-lease.",
       );
@@ -118,7 +133,7 @@ function movePlatformYalc() {
       "\nplatform-yalc moved, and your local branch matches it. paranext-core builds pick this up on\ntheir next install; if the lockfile check pointed at an open core PR, merge that PR now.",
     );
   } finally {
-    fs.rmSync(verifyScriptSnapshot, { force: true });
+    fs.rmSync(snapshotDir, { recursive: true, force: true });
   }
 }
 
