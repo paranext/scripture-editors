@@ -93,7 +93,8 @@ jobs:
 
       # `clean: false` because the default would `git clean -ffdx` the workspace, taking
       # `node_modules` with it, and the bump action runs `tsx`. The release tag exists by this
-      # point and `bump-versions` is not idempotent, so a failure here has to be unpicked by hand.
+      # point and cannot be un-cut, so `bump-versions` is idempotent: re-running this publish
+      # reuses the bump branch and skips the commit when the manifests already say the new version.
       - name: Check out the ref to bump versions on
         if: ${{ github.event.inputs.newVersionAfterPublishing != '' && github.event.inputs.bumpRef != '' && github.event.inputs.bumpRef != github.ref_name }}
         uses: actions/checkout@v4

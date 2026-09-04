@@ -26,6 +26,15 @@ const CORE_REPO = "paranext/paranext-core";
 const CORE_BRANCH = process.env.CORE_BRANCH || "main";
 
 /**
+ * This repo, as core's `dev-packages.json` names it — the entry this check is about.
+ *
+ * Matched on `folder` rather than `cloneUrl` because the folder is the stable identity: it is the
+ * checkout directory name core clones into, and it survives the repo moving between orgs, which
+ * `cloneUrl` by definition does not.
+ */
+const THIS_REPO_FOLDER = "scripture-editors";
+
+/**
  * Sections whose entries npm records for a `file:` package and validates against the lockfile.
  *
  * `peerDependenciesMeta` belongs here even though it declares no package: it is what marks a peer
@@ -125,19 +134,34 @@ function diffAgainstLock(lock, stagingFolder, expectedSections) {
   return problems;
 }
 
-/** Fetches a repo file as JSON at a ref, via raw.githubusercontent. */
+/** Fetches a repo file as JSON at a ref, through the contents API. */
 function fetchRepoFile(repoFullName, ref, filePath) {
-  // Same credentials as the API calls: raw.githubusercontent rate-limits anonymous reads, and
-  // these fetch multi-megabyte lockfiles.
+  // Not raw.githubusercontent: it serves `max-age=300`, so the recovery this check prescribes —
+  // land the core lockfile refresh, then re-run — can still be answered from the pre-merge blob
+  // five minutes later, and the open-PR fallback no longer matches because that PR just closed.
+  // The contents API serves the same bytes at `max-age=60`. The raw media type is what carries a
+  // lockfile over the 1MB the JSON representation is capped at.
   return fetchJson(
-    `https://raw.githubusercontent.com/${repoFullName}/${ref}/${filePath}`,
-    githubApiInit(),
+    `https://api.github.com/repos/${repoFullName}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
+    { headers: { ...githubApiInit().headers, accept: "application/vnd.github.raw" } },
   );
 }
 
 async function verify() {
   const devPackagesConfig = await fetchRepoFile(CORE_REPO, CORE_BRANCH, "dev-packages.json");
-  const stagedPackages = devPackagesConfig.repos.flatMap((repo) => repo.devPackages);
+  // Only this repo's entry. `packagePath` is resolved against this checkout, so folding in a second
+  // dev repo's packages would read manifests that are not here — ENOENT, or worse, a same-named
+  // path compared against the wrong staged lock entry, failing in a repo whose maintainers cannot
+  // see the core change that caused it.
+  const thisRepo = (devPackagesConfig.repos ?? []).filter(
+    (repo) => repo.folder === THIS_REPO_FOLDER,
+  );
+  if (thisRepo.length === 0)
+    throw new Error(
+      `${CORE_REPO}@${CORE_BRANCH}'s dev-packages.json has no "${THIS_REPO_FOLDER}" entry, so core ` +
+        `does not stage this repo and there is nothing to verify.`,
+    );
+  const stagedPackages = thisRepo.flatMap((repo) => repo.devPackages ?? []);
   if (stagedPackages.some((devPackage) => !devPackage.packagePath || !devPackage.stagingFolder))
     throw new Error(
       `${CORE_REPO}@${CORE_BRANCH}'s dev-packages.json does not describe staged file: packages ` +

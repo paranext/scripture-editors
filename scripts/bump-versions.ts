@@ -68,7 +68,10 @@ function bumpVersions(platformVersion: string, utilitiesVersion?: string) {
   writeManifest(platform.manifestPath, platform.manifest);
 
   const branch = `bump-versions-${platformVersion}`;
-  execSync(`git checkout -b "${branch}"`, { stdio: "inherit", cwd: REPO_ROOT });
+  // `-B`, not `-b`: this runs in `publish.yml` after the release tag has been created, and a tag
+  // cannot be un-cut. Re-running a publish that failed downstream must not also fail here just
+  // because the branch it makes already exists.
+  execSync(`git checkout -B "${branch}"`, { stdio: "inherit", cwd: REPO_ROOT });
   execSync("git add packages/platform/package.json packages/utilities/package.json", {
     stdio: "inherit",
     cwd: REPO_ROOT,
@@ -76,6 +79,24 @@ function bumpVersions(platformVersion: string, utilitiesVersion?: string) {
   const summary = utilitiesVersion
     ? `platform-editor ${platformVersion}, scripture-utilities ${utilitiesVersion}`
     : `platform-editor ${platformVersion}`;
+
+  // Nothing staged means the manifests already carry these versions — a re-run, or a publish whose
+  // `newVersionAfterPublishing` equals the version just released. `git commit` treats that as an
+  // error; here it means the work is already done.
+  const isNothingStaged = (() => {
+    try {
+      execSync("git diff --cached --quiet", { cwd: REPO_ROOT });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  if (isNothingStaged) {
+    console.log(`\n${summary} — the manifests already say this, so there is nothing to commit.`);
+    console.log(`Branch ${branch} is at the current state.`);
+    return;
+  }
+
   execSync(`git commit -m "chore: bump versions to ${summary}"`, {
     stdio: "inherit",
     cwd: REPO_ROOT,
