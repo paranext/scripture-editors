@@ -45,7 +45,9 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # The Volta pin in package.json. This job rebuilds the committed `dist/` and cuts the
+          # release tag consumers copy their editor out of, so it must match local development.
+          node-version-file: "package.json"
           cache: pnpm
 
       - name: Install dependencies

@@ -23,14 +23,13 @@ permissions:
 
 jobs:
   test:
-    name: Build on ${{ matrix.os }}, node ${{ matrix.node_version }}, PNPM ${{ matrix.pnpm_version }}
+    name: Build on ${{ matrix.os }}, PNPM ${{ matrix.pnpm_version }}
 
     runs-on: ${{ matrix.os }}
 
     strategy:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
-        node_version: [20]
         pnpm_version: [10]
 
     steps:
@@ -48,7 +47,9 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node_version }}
+          # The Volta pin in package.json, so the committed `dist/` this job rebuilds and compares
+          # is produced by the same Node everyone regenerates it with locally.
+          node-version-file: "package.json"
           cache: pnpm
 
       - name: Install dependencies
