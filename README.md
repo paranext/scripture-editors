@@ -331,9 +331,8 @@ exist only on your machine. See [Dependency changes need a paranext-core lockfil
 PR](#dependency-changes-need-a-paranext-core-lockfile-pr) for the check itself, its flags, and why
 to give it a `GITHUB_TOKEN` locally.
 
-Doing it by hand — `git rebase origin/main && git push --force-with-lease` — rebases whatever your
-local copy holds rather than origin's state, and skips the lockfile check, which is the failure that
-reaches every paranext-core build rather than just you.
+Doing it by hand skips the lockfile check, which is the failure that reaches every paranext-core
+build rather than only you.
 
 The name is historical — it refers to [yalc](https://github.com/wclr/yalc), which paranext-core no
 longer uses. The branch's coordination role is still real, so it stays.
@@ -449,7 +448,8 @@ Consumers pin a _revision of this repository_ — a branch or tag in `dev-packag
 tag**, and one tag pins both packages at once. Tags are named `v<platform-editor version>`, e.g.
 `v0.8.17`, since `platform-editor` is the package this repo exists to ship.
 
-These packages are **not published to npm**. paranext-core builds them from source; see
+These packages are **not published to npm**. paranext-core stages them from a checkout of the
+pinned revision, copying the `dist/` this repo commits; see
 [Relationship to paranext-core](#relationship-to-paranext-core).
 
 The flow mirrors [paranext-core's][paranext-core-publishing]:
