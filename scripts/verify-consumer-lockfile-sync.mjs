@@ -69,7 +69,22 @@ const RECENT_UPDATE_WINDOW_DAYS = 7;
 
 async function fetchJson(url, init) {
   const response = await fetch(url, init);
-  if (!response.ok) throw new Error(`GET ${url} -> ${response.status} ${response.statusText}`);
+  if (!response.ok) {
+    // `npm run move-platform-yalc` is the documented local command and `GITHUB_TOKEN` is set only
+    // inside Actions, so the anonymous 60-requests-an-hour budget this check is sized against is
+    // the one a developer actually runs under — and exhausting it arrives as a bare 403 that says
+    // nothing about what to do.
+    const isRateLimited =
+      response.status === 403 &&
+      (response.headers.get("x-ratelimit-remaining") === "0" || !process.env.GITHUB_TOKEN);
+    throw new Error(
+      `GET ${url} -> ${response.status} ${response.statusText}${
+        isRateLimited
+          ? `\n\nThis looks like GitHub's rate limit for unauthenticated requests. Give the check a token and rerun:\n\n  export GITHUB_TOKEN=$(gh auth token)\n`
+          : ""
+      }`,
+    );
+  }
   return response.json();
 }
 

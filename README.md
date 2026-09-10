@@ -435,13 +435,14 @@ The flow mirrors [paranext-core's][paranext-core-publishing]:
 1. Decide which branch you are releasing from. For a stable release, rebase `release-prep` onto
    `main` if it has not already been rebased this cycle. For a pre-release, `main` is normally fine.
 2. Make sure the package versions are what you want to release. If not, dispatch the **Bump
-   Versions** workflow against that branch, then merge the `bump-versions-<version>` branch it
-   creates.
+   Versions** workflow against that branch, then open a PR from the `bump-versions-<version>`
+   branch it creates and merge that. The workflow pushes the branch; it does not open the PR, and
+   the target branches are protected.
 3. Dispatch the **Publish** workflow against the branch you are releasing from. It tags the commit,
    creates a GitHub release, and — if you give it `newVersionAfterPublishing` — opens a follow-up
    `bump-versions-<version>` branch so later work applies to a new in-progress version rather than
    to the one just released.
-4. Merge that `bump-versions-<version>` branch.
+4. Open a PR from that `bump-versions-<version>` branch and merge it.
 5. Point consumers at the new tag by setting `revision` in paranext-core's `dev-packages.json`.
    That is the only place the editor revision is named: paratext-10-studio's `productInfo.json`
    leaves `branch` out for `devPackageRepos` and follows whatever core pins, so pinning a

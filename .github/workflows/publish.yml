@@ -84,12 +84,23 @@ jobs:
           pnpm nx run-many -t extract-api --skip-nx-cache
           node scripts/verify-committed-dist.mjs
 
+      # One repo tag pins both packages, and the tag name carries only platform-editor's version, so
+      # the utilities version a consumer gets is otherwise invisible from the releases page.
+      - name: Read the utilities version this tag ships
+        id: utilities
+        run: echo "version=$(node -p "require('./packages/utilities/package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Create the release
         uses: ncipollo/release-action@v1
         with:
           tag: v${{ github.event.inputs.version }}
           commit: ${{ github.sha }}
           name: v${{ github.event.inputs.version }}
+          body: |
+            | Package | Version |
+            | --- | --- |
+            | `@eten-tech-foundation/platform-editor` | ${{ github.event.inputs.version }} |
+            | `@eten-tech-foundation/scripture-utilities` | ${{ steps.utilities.outputs.version }} |
           generateReleaseNotes: true
           prerelease: ${{ github.event.inputs.prerelease }}
 
