@@ -67,20 +67,38 @@ const COMPARED_SECTIONS = [
  */
 const RECENT_UPDATE_WINDOW_DAYS = 7;
 
+/**
+ * Describes a rate-limit response, or `undefined` if this failure is something else.
+ *
+ * `npm run move-platform-yalc` is the documented local command and `GITHUB_TOKEN` is set only
+ * inside Actions, so the anonymous 60-requests-an-hour budget this check is sized against is the
+ * one developers actually run under — and exhausting it otherwise arrives as a bare status line
+ * that says nothing about what to do.
+ *
+ * GitHub answers a rate limit with 403 **or** 429: the primary limit zeroes `x-ratelimit-remaining`,
+ * and a secondary limit sends `retry-after` instead. A 403 carrying neither, with no token in the
+ * environment, is more likely to be auth than a limit — but a token fixes that too, so it gets the
+ * same advice under a hedged description rather than a confident wrong one.
+ */
+function describeRateLimit(response) {
+  if (response.status !== 403 && response.status !== 429) return undefined;
+  if (response.headers.get("x-ratelimit-remaining") === "0")
+    return "You are out of GitHub API requests for this hour";
+  if (response.headers.get("retry-after"))
+    return "GitHub is asking this to slow down (secondary rate limit)";
+  if (!process.env.GITHUB_TOKEN)
+    return "GitHub refused this unauthenticated request; the usual cause is the rate limit";
+  return undefined;
+}
+
 async function fetchJson(url, init) {
   const response = await fetch(url, init);
   if (!response.ok) {
-    // `npm run move-platform-yalc` is the documented local command and `GITHUB_TOKEN` is set only
-    // inside Actions, so the anonymous 60-requests-an-hour budget this check is sized against is
-    // the one a developer actually runs under — and exhausting it arrives as a bare 403 that says
-    // nothing about what to do.
-    const isRateLimited =
-      response.status === 403 &&
-      (response.headers.get("x-ratelimit-remaining") === "0" || !process.env.GITHUB_TOKEN);
+    const rateLimit = describeRateLimit(response);
     throw new Error(
       `GET ${url} -> ${response.status} ${response.statusText}${
-        isRateLimited
-          ? `\n\nThis looks like GitHub's rate limit for unauthenticated requests. Give the check a token and rerun:\n\n  export GITHUB_TOKEN=$(gh auth token)\n`
+        rateLimit
+          ? `\n\n${rateLimit}. Authenticated requests get 5,000 an hour instead of 60, so give the check a token and rerun:\n\n  export GITHUB_TOKEN=$(gh auth token)\n`
           : ""
       }`,
     );

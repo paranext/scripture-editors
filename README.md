@@ -354,6 +354,19 @@ Two things check this for you:
   onto `origin/main`, runs this check, and force-pushes only if it passes — so the problem surfaces
   before the push, not after, and your checkout ends up at exactly the pushed state. (`-- --dry-run` stops short of pushing;
   `-- --skip-verify` is the emergency hatch.)
+- **Give it a token when you run it locally.** The check reads paranext-core's `dev-packages.json`
+  and `package-lock.json` and scans core's recently-updated open PRs, which is tens of API requests
+  against the 60-an-hour budget GitHub gives unauthenticated callers. Inside Actions `GITHUB_TOKEN`
+  is set for you; locally it is not, so a run can stop partway with a rate-limit error. Authenticated
+  requests get 5,000 an hour:
+
+  ```bash
+  export GITHUB_TOKEN=$(gh auth token)
+  ```
+
+  The check says this itself when it recognises the failure, but exporting it first avoids the round
+  trip.
+
 - The **Verify platform-yalc consumer sync** workflow runs the same check on every push to
   `platform-yalc`, however the push was made. It passes when paranext-core's `main` — or an open
   paranext-core PR touching `package-lock.json` — matches this branch's dependencies, and fails
