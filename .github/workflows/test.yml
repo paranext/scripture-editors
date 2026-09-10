@@ -2,10 +2,14 @@ name: Test
 
 on:
   push:
-    branches: ["main", "release-prep", "hotfix-*"]
+    # `platform-yalc` is here because it is the revision paranext-core stages the editor from, and
+    # staging is a copy of the committed `dist/`. A commit landing on this branch without a rebuild
+    # — a direct fix, or a rebase conflict resolved in `src/` — would otherwise ship stale bytes to
+    # every consumer with nothing checking.
+    branches: ["main", "platform-yalc", "release-prep", "hotfix-*"]
   pull_request:
     # The branches below should be a subset of the branches above
-    branches: ["main", "release-prep", "hotfix-*"]
+    branches: ["main", "platform-yalc", "release-prep", "hotfix-*"]
   workflow_dispatch:
     inputs:
       # Allow debugging a GHA build agent. This is the trigger. See the last step.

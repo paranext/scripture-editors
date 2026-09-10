@@ -116,7 +116,27 @@ function movePlatformYalc() {
       console.log("Checking that paranext-core is ready for this update...");
       // Runs against the rebased working tree, so it sees exactly the manifests this push would
       // publish. Its failure output includes the fix instructions.
-      run(`node "${verifyScriptSnapshot}"`, { stdio: "inherit" });
+      try {
+        run(`node "${verifyScriptSnapshot}"`, { stdio: "inherit" });
+      } catch (verifyError) {
+        // The rebase already happened, so failing out here would leave the branch diverged from
+        // origin with nothing saying so — and the next run's "commits origin does not have" guard
+        // would then describe this script's own rebase as the operator's stray work. This is
+        // reached for a real mismatch and equally for a GitHub rate-limit or outage, so put the
+        // branch back where it started and let the rerun be clean.
+        try {
+          run("git reset --hard origin/platform-yalc", { stdio: "inherit" });
+        } catch {
+          throw new Error(
+            `The consumer lockfile check failed, and platform-yalc could not be reset back to origin's state afterwards. Nothing was pushed, but this checkout is still on the rebase — run \`git reset --hard origin/platform-yalc\` before rerunning.\n\n${
+              verifyError instanceof Error ? verifyError.message : verifyError
+            }`,
+          );
+        }
+        throw new Error(
+          "The consumer lockfile check failed (see its output above). Nothing was pushed; platform-yalc is back at origin's state, so this is safe to rerun once paranext-core's lockfile is in sync. If the check itself could not reach GitHub rather than finding a real mismatch, rerunning is usually enough.",
+        );
+      }
     }
 
     const newTip = run("git rev-parse --short HEAD").trim();
