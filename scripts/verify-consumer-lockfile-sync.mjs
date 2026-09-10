@@ -195,12 +195,23 @@ async function verify() {
         `does not stage this repo and there is nothing to verify.`,
     );
   const stagedPackages = thisRepo.flatMap((repo) => repo.devPackages ?? []);
-  if (stagedPackages.some((devPackage) => !devPackage.packagePath || !devPackage.stagingFolder))
-    throw new Error(
+  // A pass, not a failure. This branch of core consumes these packages some other way, so its
+  // lockfile records nothing about their dependencies and there is no contract to be out of sync
+  // with — the same reason the in-sync path below passes. Failing here instead would fail every
+  // push to platform-yalc for as long as core's main predates staged consumption, and the only way
+  // through is `--skip-verify`, which turns off the checks that DO apply once it lands.
+  //
+  // Deliberately not extended to core PRs: the packagePath and stagingFolder read here are what
+  // locate the manifests and name the lock entries, so a run that cannot read them from the branch
+  // cannot compute what to compare against a PR either.
+  if (stagedPackages.some((devPackage) => !devPackage.packagePath || !devPackage.stagingFolder)) {
+    console.log(
       `${CORE_REPO}@${CORE_BRANCH}'s dev-packages.json does not describe staged file: packages ` +
-        `(no packagePath/stagingFolder) — that core branch predates staged-dependency consumption, ` +
-        `so there is no lockfile contract to verify against it.`,
+        `(no packagePath/stagingFolder), so that core branch predates staged-dependency ` +
+        `consumption and records no dependency contract for this repo. Nothing to verify.`,
     );
+    return;
+  }
 
   const fs = await import("node:fs");
   const stagingFolderByName = new Map(
