@@ -317,14 +317,23 @@ exists so that a change here can be coordinated with the change that consumes it
 lands on `main` first, and `platform-yalc` is moved forward only once the consuming side is ready,
 so build servers never pick up a half-finished handoff.
 
-To move it forward, rebase it onto `main` and force-push:
+To move it forward, use the script rather than doing it by hand:
 
 ```bash
-git fetch origin
-git checkout platform-yalc
-git rebase origin/main
-git push --force-with-lease
+# with platform-yalc checked out and a clean tree
+npm run move-platform-yalc
 ```
+
+It resets your local branch to origin's state (this branch is force-pushed, so your copy is stale
+by design), rebases onto `origin/main`, runs the consumer-lockfile check below, and force-pushes
+only if that passes. It refuses to run from another branch, on a dirty tree, or with commits that
+exist only on your machine. See [Dependency changes need a paranext-core lockfile
+PR](#dependency-changes-need-a-paranext-core-lockfile-pr) for the check itself, its flags, and why
+to give it a `GITHUB_TOKEN` locally.
+
+Doing it by hand — `git rebase origin/main && git push --force-with-lease` — rebases whatever your
+local copy holds rather than origin's state, and skips the lockfile check, which is the failure that
+reaches every paranext-core build rather than just you.
 
 The name is historical — it refers to [yalc](https://github.com/wclr/yalc), which paranext-core no
 longer uses. The branch's coordination role is still real, so it stays.
