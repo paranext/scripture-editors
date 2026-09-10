@@ -442,19 +442,19 @@ The flow mirrors [paranext-core's][paranext-core-publishing]:
    `bump-versions-<version>` branch so later work applies to a new in-progress version rather than
    to the one just released.
 4. Merge that `bump-versions-<version>` branch.
-5. Point consumers at the new tag: `dev-packages.json` in paranext-core and `productInfo.json` in
-   paratext-10-studio. **Change both in the same window** — paranext-core's build matches the two by
-   exact string equality on the clone URL, and a mismatch is only a warning, so a half-done change
-   silently builds the wrong revision.
+5. Point consumers at the new tag by setting `revision` in paranext-core's `dev-packages.json`.
+   That is the only place the editor revision is named: paratext-10-studio's `productInfo.json`
+   leaves `branch` out for `devPackageRepos` and follows whatever core pins, so pinning a
+   paranext-core release there already pins the editor that release was built with.
 6. If this release changed either package's **dependency lists** — added, removed, or re-ranged a
    `dependencies`, `peerDependencies`, `peerDependenciesMeta` or `optionalDependencies` entry —
-   refresh paranext-core's `package-lock.json` against the new tag in that same change (`npm
+   refresh paranext-core's `package-lock.json` in the same commit that moves the revision (`npm
 install` there, commit the diff). Core stages these packages inside its own tree, so its `npm ci`
    validates the staged manifests against its lockfile and aborts on any difference; until the
-   lockfile is refreshed, every core build fails, and so does any paratext-10-studio release pinned
-   to this tag. A release that only moves the packages' own version numbers needs nothing here —
-   `npm ci` does not check a `file:` dependency's version. `verify-consumer-lockfile-sync.mjs` makes
-   exactly this comparison, and runs on every push to `platform-yalc`.
+   lockfile is refreshed, every core build fails. A release that only moves the packages' own
+   version numbers needs nothing here — `npm ci` does not check a `file:` dependency's version.
+   `verify-consumer-lockfile-sync.mjs` makes exactly this comparison, and runs on every push to
+   `platform-yalc`.
 
 ## License
 
