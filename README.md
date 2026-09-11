@@ -36,8 +36,8 @@ from the npm registry**. Its `preinstall` step clones this repo (or finds an exi
 builds those two packages, and stages a copy of each into `paranext-core/dev-packages/staging/`,
 which its `package.json` files then reference with `file:` specifiers.
 
-Because [the build is committed](#the-committed-dist), that copy step needs nothing from this
-repo's toolchain.
+Because [the build is committed](#the-committed-build-output), that copy step needs nothing from
+this repo's toolchain.
 
 The practical consequence for anyone working here: **this repo's `package.json` files are
 authoritative for its own dependencies.** Adding, bumping, or removing a dependency here flows into
@@ -418,22 +418,28 @@ Then open a pull request on `eten-tech-foundation/scripture-editors` with `my-co
 compare branch. Because this repository is not a fork, GitHub will not silently offer their repo as
 the base for PRs opened from `origin` — you have to target it explicitly, which is the intent.
 
-## The committed `dist`
+## The committed build output
 
-`packages/platform/dist` and `packages/utilities/dist` are **committed**, unlike most build output.
+The `dist/` and `etc/` folders of `packages/platform` and `packages/utilities` are **committed**,
+unlike most build output.
 
 paranext-core consumes these packages by copying them out of a checkout rather than installing them
 from a registry (see [Relationship to paranext-core](#relationship-to-paranext-core)). Committing
 the build means it needs nothing from this repo's toolchain — no pnpm, no nx, no build step — just
 to run Platform.Bible. Only people changing the editor build it.
 
-The obligation that comes with that: **rebuild and commit `dist/` in the same PR as the `src/`
-change.** A stale `dist` is invisible in review — the source diff looks right while consumers get
-old code.
+`etc/<package>.api.md` is API Extractor's report on the public type surface. Nothing consumes it at
+runtime; it is committed so that a change to the public API — an added export, a changed signature,
+a removed type — arrives as a readable diff in the pull request that makes it, rather than buried in
+a rolled-up declaration bundle.
+
+The obligation that comes with both: **rebuild and commit them in the same PR as the `src/`
+change.** Stale output is invisible in review — the source diff looks right while consumers get old
+code and the report claims the API did not move.
 
 ```bash
-pnpm nx run-many -t extract-api   # builds both packages and rolls up their type declarations
-git add packages/platform/dist packages/utilities/dist
+pnpm nx run-many -t extract-api   # builds both packages, rolls up their types, writes the reports
+git add packages/platform/dist packages/platform/etc packages/utilities/dist packages/utilities/etc
 ```
 
 CI enforces this: it rebuilds and fails if the committed output differs from what the source

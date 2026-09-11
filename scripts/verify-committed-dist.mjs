@@ -1,11 +1,15 @@
 /**
- * Verifies that each published package's committed `dist/` matches what its source builds.
+ * Verifies that each published package's committed build output matches what its source builds.
  *
- * Why the dist is committed at all: paranext-core consumes these packages by copying them out of a
- * checkout, so committing the build means consumers never need this repo's toolchain — no pnpm, no
- * nx, no build — just to run the app. The cost is that `dist/` can now go stale against `src/`, and
- * a stale one is invisible in review: the diff looks fine, and consumers silently get old code.
- * This check closes that gap by rebuilding and comparing.
+ * Two outputs are committed. `dist/` is what paranext-core copies out of a checkout, so committing
+ * it means consumers never need this repo's toolchain — no pnpm, no nx, no build — just to run the
+ * app. `etc/<package>.api.md` is API Extractor's report on the public type surface; nothing
+ * consumes it at runtime, and it is committed so that a public API change arrives as a readable
+ * diff in the pull request that makes it.
+ *
+ * Both can go stale against `src/`, and a stale one is invisible in review: the source diff looks
+ * fine while consumers silently get old code and the report claims the API did not move. This
+ * check closes that gap by rebuilding and comparing.
  *
  * Run it after `nx run-many -t extract-api` (CI does exactly that), so it compares a fresh build
  * against what git has committed. Everything the packages publish is byte-deterministic;
@@ -18,40 +22,48 @@
 import { execSync } from "node:child_process";
 
 /** Paths whose committed contents must match a fresh build. */
-const DIST_PATHS = ["packages/platform/dist", "packages/utilities/dist"];
+const COMMITTED_BUILD_PATHS = [
+  "packages/platform/dist",
+  "packages/platform/etc",
+  "packages/utilities/dist",
+  "packages/utilities/etc",
+];
 
 // Blind spot: `git status` cannot see ignored paths, and `.gitignore` ignores everything nested
-// under these directories (`packages/*/dist/*/`) so tsc's per-file declarations stay untracked. A
-// build that started emitting published output into a subdirectory would therefore be invisible
+// under the dist directories (`packages/*/dist/*/`) so tsc's per-file declarations stay untracked.
+// A build that started emitting published output into a subdirectory would therefore be invisible
 // here — the check would pass with files missing from the commit. Separating the published
 // artifacts from the toolchain's scratch space removes the overlap entirely; see
 // https://github.com/paranext/scripture-editors/issues/5.
 
 function main() {
   // `git status --porcelain` reports untracked, modified, and deleted alike, which is exactly the
-  // set of ways a committed dist can disagree with a fresh build.
-  const status = execSync(`git status --porcelain -- ${DIST_PATHS.join(" ")}`, {
+  // set of ways committed output can disagree with a fresh build.
+  const status = execSync(`git status --porcelain -- ${COMMITTED_BUILD_PATHS.join(" ")}`, {
     encoding: "utf8",
   }).trim();
 
   if (!status) {
-    console.log("Committed dist matches the build. ✓");
+    console.log("Committed build output is current. ✓");
     return;
   }
 
   console.error(
-    `The committed dist does not match what the source builds:\n\n${status}\n\n` +
-      `paranext-core copies these files straight out of a checkout, so a stale dist ships stale\n` +
-      `code to it. Rebuild and commit the result:\n\n` +
+    `The committed build output does not match what the source builds:\n\n${status}\n\n` +
+      `paranext-core copies the dist straight out of a checkout, so a stale one ships stale code\n` +
+      `to it, and a stale api.md hides a public API change from review. Rebuild and commit the\n` +
+      `result:\n\n` +
       `  pnpm nx run-many -t extract-api\n` +
-      `  git add ${DIST_PATHS.join(" ")}\n` +
+      `  git add ${COMMITTED_BUILD_PATHS.join(" ")}\n` +
       `  git commit\n`,
   );
   // Print the actual diff, not just a summary: when this fails in CI the content is the only way
   // to tell a genuine source change from a build that is not reproducible across machines.
-  const diff = execSync(`git diff --stat -- ${DIST_PATHS.join(" ")}`, { encoding: "utf8" });
+  const diff = execSync(`git diff --stat -- ${COMMITTED_BUILD_PATHS.join(" ")}`, {
+    encoding: "utf8",
+  });
   if (diff.trim()) console.error(`Changes:\n${diff}`);
-  const patch = execSync(`git diff -U1 -- ${DIST_PATHS.join(" ")}`, {
+  const patch = execSync(`git diff -U1 -- ${COMMITTED_BUILD_PATHS.join(" ")}`, {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
