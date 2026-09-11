@@ -1,0 +1,98 @@
+name: Test
+
+on:
+  push:
+    # `platform-yalc` is here because it is the revision paranext-core stages the editor from, and
+    # staging is a copy of the committed `dist/`. A commit landing on this branch without a rebuild
+    # — a direct fix, or a rebase conflict resolved in `src/` — would otherwise ship stale bytes to
+    # every consumer with nothing checking.
+    branches: ["main", "platform-yalc", "release-prep", "hotfix-*"]
+  pull_request:
+    # The branches below should be a subset of the branches above
+    branches: ["main", "platform-yalc", "release-prep", "hotfix-*"]
+  workflow_dispatch:
+    inputs:
+      # Allow debugging a GHA build agent. This is the trigger. See the last step.
+      debug_enabled:
+        type: boolean
+        description: "Run the build with tmate debugging enabled (https://github.com/marketplace/actions/debugging-with-tmate)"
+        required: false
+        default: false
+
+# Needed for nx-set-shas when run on the main branch
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  test:
+    name: Build on ${{ matrix.os }}, PNPM ${{ matrix.pnpm_version }}
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        pnpm_version: [10]
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install PNPM
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ matrix.pnpm_version }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          # The Volta pin in package.json, so the committed `dist/` this job rebuilds and compares
+          # is produced by the same Node everyone regenerates it with locally.
+          node-version-file: "package.json"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Derive appropriate SHAs for base and head for `nx affected` commands
+        uses: nrwl/nx-set-shas@v4
+
+      - name: Check formatting
+        run: |
+          pnpm prettier --check .
+          pnpm nx format:check
+
+      - name: Check linting
+        run: pnpm nx affected -t lint
+
+      - name: Check types
+        run: pnpm nx affected -t typecheck
+
+      - name: Check tests
+        run: pnpm nx affected -t test
+
+      - name: Production build
+        run: pnpm nx affected -t build
+
+      # The published packages' build output is committed so consumers can use them without this
+      # repo's toolchain; rebuild it and fail if what is committed has drifted from the source.
+      - name: Check the committed build output is current
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        # The rebuild goes through this script rather than `nx run-many -t extract-api` because the
+        # order the packages are extracted in decides whether each one's rolled-up declarations
+        # survive; `scripts/published-packages.mjs` explains why.
+        run: |
+          node scripts/rebuild-committed-output.mjs
+          node scripts/verify-committed-dist.mjs
+
+      # Enable tmate debugging of manually-triggered workflows if the input option was provided
+      - name: Setup tmate session
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true

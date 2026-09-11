@@ -12,12 +12,48 @@ In this monorepo:
 
 Sharing in this monorepo is a commitment to maintain and organize it. Each application package is free to move in its own direction but keeping in mind items that can be pushed up outside the specific editor package to be used in common.
 
+## Where this repository lives
+
+This repository is maintained by the [Paratext 10 Studio](https://github.com/paranext) team at
+`paranext/scripture-editors`, and it is the source of truth for the editor packages. Day-to-day
+development happens here.
+
+It began as a copy of [`eten-tech-foundation/scripture-editors`][eten-repo], carrying that repo's
+full history, its MIT license, and its attribution. It was seeded with a curated set of refs —
+`main`, `platform-yalc`, `release-prep`, and the release tags — so if you need a branch that was left
+behind, see [Transferring work from the eten-tech-foundation
+repository](docs/transferring-work-from-eten-tech-foundation.md). It is **not** a GitHub fork: while a repository
+is a fork, GitHub always defaults new pull requests to the upstream repository and offers no setting
+to change that, which makes it far too easy to open a PR against the wrong repo. Everything a fork
+would give us still works through an ordinary git remote — see
+[Working with the eten-tech-foundation repository](#working-with-the-eten-tech-foundation-repository).
+
+### Relationship to paranext-core
+
+[Platform.Bible][paranext-core] consumes two of this repo's packages —
+`@eten-tech-foundation/platform-editor` and `@eten-tech-foundation/scripture-utilities` — but **not
+from the npm registry**. Its `preinstall` step clones this repo (or finds an existing checkout),
+builds those two packages, and stages a copy of each into `paranext-core/dev-packages/staging/`,
+which its `package.json` files then reference with `file:` specifiers.
+
+Because [the build is committed](#the-committed-build-output), that copy step needs nothing from
+this repo's toolchain.
+
+The practical consequence for anyone working here: **this repo's `package.json` files are
+authoritative for its own dependencies.** Adding, bumping, or removing a dependency here flows into
+paranext-core on its next `npm install`, with nothing to restate on the consuming side. See
+[paranext-core's README][paranext-core-dev-packages] for the consuming half, including how to get
+your changes here into a running Platform.Bible.
+
+Which revision paranext-core builds is pinned in its `dev-packages.json`, normally the
+[`platform-yalc`](#the-platform-yalc-branch) branch.
+
 ## Developer Quick Start
 
 1. Install [Volta](https://docs.volta.sh/guide/getting-started).
 2. Clone the monorepo:
    ```bash
-   git clone https://github.com/eten-tech-foundation/scripture-editors.git
+   git clone https://github.com/paranext/scripture-editors.git
    cd scripture-editors
    pnpm install
    ```
@@ -274,18 +310,209 @@ Lexical works with plain-vanilla JS/TS as well as with React. To that end, the e
 
 If you are using a framework other than React and need to wrap a plain-vanilla JS editor for your framework, you could add your own vanilla TS editor package to this repo. By comparing `perf-vanilla` and `perf-react` you can see how to take any existing React plugins you might want and convert them to vanilla TS.
 
+## The `platform-yalc` branch
+
+`paranext-core` and `paratext-10-studio` pin the `platform-yalc` branch rather than `main`. It
+exists so that a change here can be coordinated with the change that consumes it: a breaking edit
+lands on `main` first, and `platform-yalc` is moved forward only once the consuming side is ready,
+so build servers never pick up a half-finished handoff.
+
+To move it forward, use the script rather than doing it by hand:
+
+```bash
+# with platform-yalc checked out and a clean tree
+npm run move-platform-yalc
+```
+
+It resets your local branch to origin's state (this branch is force-pushed, so your copy is stale
+by design), rebases onto `origin/main`, runs the consumer-lockfile check below, and force-pushes
+only if that passes. It refuses to run from another branch, on a dirty tree, or with commits that
+exist only on your machine. See [Dependency changes need a paranext-core lockfile
+PR](#dependency-changes-need-a-paranext-core-lockfile-pr) for the check itself, its flags, and why
+to give it a `GITHUB_TOKEN` locally.
+
+Doing it by hand skips the lockfile check, which is the failure that reaches every paranext-core
+build rather than only you.
+
+The name is historical — it refers to [yalc](https://github.com/wclr/yalc), which paranext-core no
+longer uses. The branch's coordination role is still real, so it stays.
+
+### Dependency changes need a paranext-core lockfile PR
+
+paranext-core's `package-lock.json` records these packages' dependency closure. If a dependency was
+**added, removed, or its version range changed** here since `platform-yalc` last moved, every
+paranext-core build breaks when it moves again — its `npm ci` refuses to run until its lockfile is
+refreshed.
+
+This is about the **dependencies these packages declare**, not about their own version numbers.
+Raising `platform-editor` from 0.8.16 to 0.8.17 needs nothing on core's side; changing what
+`platform-editor` depends on — in any way, including moving a dependency's version range — needs
+the lockfile PR below.
+
+So when moving `platform-yalc` past a dependency change:
+
+1. In a paranext-core checkout (with this repo's checkout beside it or in its `dev-packages/`),
+   run `npm install`, commit the `package-lock.json` diff, and open a PR.
+2. Merge that PR together with the `platform-yalc` push.
+
+Two things check this for you:
+
+- **`npm run move-platform-yalc`** (run from a `platform-yalc` checkout with a clean tree) is the
+  recommended way to move the branch at all: it resets your local branch to origin's state, rebases
+  onto `origin/main`, runs this check, and force-pushes only if it passes — so the problem surfaces
+  before the push, not after, and your checkout ends up at exactly the pushed state. (`-- --dry-run` stops short of pushing;
+  `-- --skip-verify` is the emergency hatch.)
+- **Give it a token when you run it locally.** The check reads paranext-core's `dev-packages.json`
+  and `package-lock.json` and scans core's recently-updated open PRs, which is tens of API requests
+  against the 60-an-hour budget GitHub gives unauthenticated callers. Inside Actions `GITHUB_TOKEN`
+  is set for you; locally it is not, so a run can stop partway with a rate-limit error. Authenticated
+  requests get 5,000 an hour:
+
+  ```bash
+  export GITHUB_TOKEN=$(gh auth token)
+  ```
+
+  The check says this itself when it recognises the failure, but exporting it first avoids the round
+  trip.
+
+- The **Verify platform-yalc consumer sync** workflow runs the same check on every push to
+  `platform-yalc`, however the push was made. It passes when paranext-core's `main` — or an open
+  paranext-core PR touching `package-lock.json` — matches this branch's dependencies, and fails
+  with these same instructions otherwise. Re-run it after opening the core PR.
+
+## Working with the eten-tech-foundation repository
+
+This repo carries the full history of [`eten-tech-foundation/scripture-editors`][eten-repo], so the
+two share a common ancestry and git can move commits between them. Set it up as a second remote:
+
+```bash
+git remote add eten-tech-foundation https://github.com/eten-tech-foundation/scripture-editors.git
+git fetch eten-tech-foundation
+```
+
+`origin` stays this repository. Nothing about your existing checkout changes.
+
+### Pulling changes from eten-tech-foundation
+
+```bash
+git fetch eten-tech-foundation
+git checkout -b merge-eten main
+git merge eten-tech-foundation/main
+```
+
+Resolve any conflicts, then open a PR into `main` here as usual.
+
+### Contributing a change back to eten-tech-foundation
+
+We are not committed to upstreaming routinely, but the option is deliberately kept open. Push a
+branch to their repo and open the PR there:
+
+```bash
+git fetch eten-tech-foundation
+git checkout -b my-contribution eten-tech-foundation/main
+git cherry-pick <commits from this repo>
+git push eten-tech-foundation my-contribution
+```
+
+Then open a pull request on `eten-tech-foundation/scripture-editors` with `my-contribution` as the
+compare branch. Because this repository is not a fork, GitHub will not silently offer their repo as
+the base for PRs opened from `origin` — you have to target it explicitly, which is the intent.
+
+## The committed build output
+
+The `dist/` and `etc/` folders of `packages/platform` and `packages/utilities` are **committed**,
+unlike most build output.
+
+paranext-core consumes these packages by copying them out of a checkout rather than installing them
+from a registry (see [Relationship to paranext-core](#relationship-to-paranext-core)). Committing
+the build means it needs nothing from this repo's toolchain — no pnpm, no nx, no build step — just
+to run Platform.Bible. Only people changing the editor build it.
+
+`etc/<package>.api.md` is API Extractor's report on the public type surface. Nothing consumes it at
+runtime; it is committed so that a change to the public API — an added export, a changed signature,
+a removed type — arrives as a readable diff in the pull request that makes it, rather than buried in
+a rolled-up declaration bundle.
+
+The obligation that comes with both: **rebuild and commit them in the same PR as the `src/`
+change.** Stale output is invisible in review — the source diff looks right while consumers get old
+code and the report claims the API did not move.
+
+```bash
+pnpm rebuild-committed-output   # builds both packages, rolls up their types, writes the reports
+git add packages/platform/dist packages/platform/etc packages/utilities/dist packages/utilities/etc
+```
+
+Use that script rather than `pnpm nx run-many -t extract-api` directly. The two run the same work,
+but the order the packages are extracted in decides whether each one's rolled-up declarations survive
+— a sibling's `build` can overwrite them — and the script fixes the order. `scripts/published-packages.mjs`
+explains the mechanism; [issue #5][published-artifact-issue] is the fix that will make the order stop
+mattering.
+
+CI enforces this: it rebuilds and fails if the committed output differs from what the source
+produces. Every published artifact is byte-deterministic, so a passing check means they genuinely
+match. `*.tsbuildinfo` is TypeScript's incremental cache rather than a shipped artifact, so it is
+neither committed nor packed.
+
+## Releasing
+
+Consumers pin a _revision of this repository_ — a branch or tag in `dev-packages.json` and
+`productInfo.json` — rather than a published package version. A release is therefore a **repository
+tag**, and one tag pins both packages at once. Tags are named `v<platform-editor version>`, e.g.
+`v0.8.17`, since `platform-editor` is the package this repo exists to ship.
+
+These packages are **not published to npm**. paranext-core stages them from a checkout of the
+pinned revision, copying the `dist/` this repo commits; see
+[Relationship to paranext-core](#relationship-to-paranext-core).
+
+The flow mirrors [paranext-core's][paranext-core-publishing]:
+
+1. Decide which branch you are releasing from. For a stable release, rebase `release-prep` onto
+   `main` if it has not already been rebased this cycle. For a pre-release, `main` is normally fine.
+2. Make sure the package versions are what you want to release. If not, dispatch the **Bump
+   Versions** workflow against that branch, then open a PR from the `bump-versions-<version>`
+   branch it creates and merge that. The workflow pushes the branch; it does not open the PR, and
+   the target branches are protected.
+3. Dispatch the **Publish** workflow against the branch you are releasing from. It tags the commit,
+   creates a GitHub release, and — if you give it `newVersionAfterPublishing` — opens a follow-up
+   `bump-versions-<version>` branch so later work applies to a new in-progress version rather than
+   to the one just released.
+4. Open a PR from that `bump-versions-<version>` branch and merge it.
+5. Point consumers at the new tag by setting `revision` in paranext-core's `dev-packages.json`.
+   That is the only place the editor revision is named: paratext-10-studio's `productInfo.json`
+   leaves `branch` out for `devPackageRepos` and follows whatever core pins, so pinning a
+   paranext-core release there already pins the editor that release was built with.
+6. If this release changed either package's **dependency lists** — added, removed, or re-ranged a
+   `dependencies`, `peerDependencies`, `peerDependenciesMeta` or `optionalDependencies` entry —
+   refresh paranext-core's `package-lock.json` in the same commit that moves the revision (`npm
+install` there, commit the diff). Core stages these packages inside its own tree, so its `npm ci`
+   validates the staged manifests against its lockfile and aborts on any difference; until the
+   lockfile is refreshed, every core build fails. A release that only moves the packages' own
+   version numbers needs nothing here — `npm ci` does not check a `file:` dependency's version.
+   `verify-consumer-lockfile-sync.mjs` makes exactly this comparison, and runs on every push to
+   `platform-yalc`.
+
 ## License
 
-[MIT][github-license] © [ETEN Tech Foundation](https://missionmutual.org)
+[MIT][github-license] © [ETEN Tech Foundation](https://missionmutual.org),
+[SIL Global](https://www.sil.org/) and [United Bible Societies](https://unitedbiblesocieties.org/)
+
+This repository stays MIT-licensed. Platform.Bible itself is moving to AGPL-3.0-or-later; MIT is
+compatible in that direction, and keeping this repo MIT is also what keeps contributing changes back
+to [`eten-tech-foundation/scripture-editors`][eten-repo] possible.
 
 <!-- define variables used above -->
 
-[npm-platform-version-image]: https://img.shields.io/npm/v/@eten-tech-foundation/platform-editor
-[npm-platform-version-url]: https://www.npmjs.com/package/@eten-tech-foundation/platform-editor
+[npm-platform-version-image]: https://img.shields.io/github/v/tag/paranext/scripture-editors
+[npm-platform-version-url]: https://github.com/paranext/scripture-editors/releases
 [npm-scribe-version-image]: https://img.shields.io/npm/v/@eten-tech-foundation/scribe-editor
 [npm-scribe-version-url]: https://www.npmjs.com/package/@eten-tech-foundation/scribe-editor
 [npm-bnf-scribe-version-image]: https://img.shields.io/npm/v/@biblionexus-foundation/scribe-editor
 [npm-bnf-scribe-version-url]: https://www.npmjs.com/package/@biblionexus-foundation/scribe-editor
-[npm-utilities-version-image]: https://img.shields.io/npm/v/@eten-tech-foundation/scripture-utilities
-[npm-utilities-version-url]: https://www.npmjs.com/package/@eten-tech-foundation/scripture-utilities
-[github-license]: https://github.com/eten-tech-foundation/scripture-editors/blob/main/LICENSE
+[npm-utilities-version-image]: https://img.shields.io/github/v/tag/paranext/scripture-editors
+[npm-utilities-version-url]: https://github.com/paranext/scripture-editors/releases
+[github-license]: https://github.com/paranext/scripture-editors/blob/main/LICENSE
+[eten-repo]: https://github.com/eten-tech-foundation/scripture-editors
+[paranext-core]: https://github.com/paranext/paranext-core
+[paranext-core-dev-packages]: https://github.com/paranext/paranext-core?tab=readme-ov-file#linking-local-development-packages-automatic
+[paranext-core-publishing]: https://github.com/paranext/paranext-core?tab=readme-ov-file#publishing
+[published-artifact-issue]: https://github.com/paranext/scripture-editors/issues/5

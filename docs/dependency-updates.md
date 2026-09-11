@@ -319,8 +319,9 @@ Everything below applies to both. Steps marked _(scoped)_ differ.
    command 10/10 while the package they had moved was broken — the failures live on code paths
    `build`, `test`, `lint` and `typecheck` never execute (a braced glob during packing; an express
    route dispatch). If step 7 flagged a cross-major move, add two things:
-   - `pnpm nx devpub platform-editor` — exercises the publish path, including the `npm-packlist`
-     globbing where #539 surfaced. Takes about a minute.
+   - `cd packages/platform && npm pack --dry-run` — exercises the packing path, including the
+     `npm-packlist` globbing where #539 surfaced. This is the same call paranext-core's staging step
+     makes to decide which files a consumer gets, so a break here is a break there. Takes seconds.
    - A consumer-level repro: load the consumer that declares the older major and call the API it
      actually uses. #542's was four lines — start an `express` app, dispatch one route, assert the
      response body.
@@ -451,7 +452,7 @@ gate.
 
 ## CI does not audit
 
-`.github/workflows/test-publish.yml` runs formatting, lint, typecheck, test and build. It does not
+`.github/workflows/test.yml` runs formatting, lint, typecheck, test and build. It does not
 run `pnpm audit`, and neither does the pre-commit hook or any npm script. **A green CI run says
 nothing about vulnerabilities.** In the July 2026 sweep, all four dependabot PRs were green while a
 CVSS 8.7 finding was open.
@@ -462,5 +463,5 @@ But be clear about what it does and doesn't cover. The re-audit tells you which 
 says nothing about whether the versions you forced still work, and neither does a green
 `run-many` — an override can close every advisory, pass build, test, lint and typecheck, and leave a
 package broken at runtime. That has now happened twice (#539, #542). The gate for _that_ is at
-step 8, and it is a different gate: `devpub` plus a consumer repro. Advisories and resolutions fail
-independently, so they need checking independently.
+step 8, and it is a different gate: a dry-run pack plus a consumer repro. Advisories and resolutions
+fail independently, so they need checking independently.
