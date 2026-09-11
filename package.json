@@ -9,7 +9,8 @@
     "ncu:group": "npx npm-check-updates --interactive --format group --workspaces",
     "platform:dev": "pnpm --filter platform dev",
     "platform:dev:test": "pnpm --filter platform dev:test",
-    "prepare": "husky"
+    "prepare": "husky",
+    "rebuild-committed-output": "node scripts/rebuild-committed-output.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

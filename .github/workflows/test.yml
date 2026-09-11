@@ -79,15 +79,15 @@ jobs:
       - name: Production build
         run: pnpm nx affected -t build
 
-      # The published packages' dist is committed so consumers can use them without this repo's
-      # toolchain; rebuild it and fail if what is committed has drifted from the source.
-      - name: Check the committed dist is current
+      # The published packages' build output is committed so consumers can use them without this
+      # repo's toolchain; rebuild it and fail if what is committed has drifted from the source.
+      - name: Check the committed build output is current
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        # --skip-nx-cache so this is a real build: nx declares `dist` a cached target output, so a
-        # cache hit restores its copy over the committed one and the check would grade the cache
-        # rather than the source. Earlier steps in this job populate that cache.
+        # The rebuild goes through this script rather than `nx run-many -t extract-api` because the
+        # order the packages are extracted in decides whether each one's rolled-up declarations
+        # survive; `scripts/published-packages.mjs` explains why.
         run: |
-          pnpm nx run-many -t extract-api --skip-nx-cache
+          node scripts/rebuild-committed-output.mjs
           node scripts/verify-committed-dist.mjs
 
       # Enable tmate debugging of manually-triggered workflows if the input option was provided

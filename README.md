@@ -438,9 +438,15 @@ change.** Stale output is invisible in review — the source diff looks right wh
 code and the report claims the API did not move.
 
 ```bash
-pnpm nx run-many -t extract-api   # builds both packages, rolls up their types, writes the reports
+pnpm rebuild-committed-output   # builds both packages, rolls up their types, writes the reports
 git add packages/platform/dist packages/platform/etc packages/utilities/dist packages/utilities/etc
 ```
+
+Use that script rather than `pnpm nx run-many -t extract-api` directly. The two run the same work,
+but the order the packages are extracted in decides whether each one's rolled-up declarations survive
+— a sibling's `build` can overwrite them — and the script fixes the order. `scripts/published-packages.mjs`
+explains the mechanism; [issue #5][published-artifact-issue] is the fix that will make the order stop
+mattering.
 
 CI enforces this: it rebuilds and fails if the committed output differs from what the source
 produces. Every published artifact is byte-deterministic, so a passing check means they genuinely
@@ -509,3 +515,4 @@ to [`eten-tech-foundation/scripture-editors`][eten-repo] possible.
 [paranext-core]: https://github.com/paranext/paranext-core
 [paranext-core-dev-packages]: https://github.com/paranext/paranext-core?tab=readme-ov-file#linking-local-development-packages-automatic
 [paranext-core-publishing]: https://github.com/paranext/paranext-core?tab=readme-ov-file#publishing
+[published-artifact-issue]: https://github.com/paranext/scripture-editors/issues/5

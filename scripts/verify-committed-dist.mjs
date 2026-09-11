@@ -11,7 +11,7 @@
  * fine while consumers silently get old code and the report claims the API did not move. This
  * check closes that gap by rebuilding and comparing.
  *
- * Run it after `nx run-many -t extract-api` (CI does exactly that), so it compares a fresh build
+ * Run it after `rebuild-committed-output.mjs` (CI does exactly that), so it compares a fresh build
  * against what git has committed. Everything the packages publish is byte-deterministic;
  * `*.tsbuildinfo` is TypeScript's incremental cache rather than a shipped artifact, so it is
  * neither committed nor compared.
@@ -21,13 +21,7 @@
 
 import { execSync } from "node:child_process";
 
-/** Paths whose committed contents must match a fresh build. */
-const COMMITTED_BUILD_PATHS = [
-  "packages/platform/dist",
-  "packages/platform/etc",
-  "packages/utilities/dist",
-  "packages/utilities/etc",
-];
+import { COMMITTED_BUILD_PATHS } from "./published-packages.mjs";
 
 // Blind spot: `git status` cannot see ignored paths, and `.gitignore` ignores everything nested
 // under the dist directories (`packages/*/dist/*/`) so tsc's per-file declarations stay untracked.
@@ -53,7 +47,7 @@ function main() {
       `paranext-core copies the dist straight out of a checkout, so a stale one ships stale code\n` +
       `to it, and a stale api.md hides a public API change from review. Rebuild and commit the\n` +
       `result:\n\n` +
-      `  pnpm nx run-many -t extract-api\n` +
+      `  node scripts/rebuild-committed-output.mjs\n` +
       `  git add ${COMMITTED_BUILD_PATHS.join(" ")}\n` +
       `  git commit\n`,
   );

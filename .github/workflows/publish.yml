@@ -72,16 +72,16 @@ jobs:
       # Formatting, lint, typecheck and tests are not repeated here: `test.yml` runs them on every
       # push to the branches releases are cut from, the same division paranext-core uses.
       #
-      # The committed dist is different, and is checked here as well. A tag is what consumers copy
-      # their editor out of, a tag cannot be un-cut, and a stale dist inside one is invisible —
-      # nothing about the tag looks wrong. `extract-api` is the build, so this replaces a separate
-      # build step rather than adding to it.
-      - name: Build and check the committed dist is current
-        # --skip-nx-cache so this is a real build: nx declares `dist` a cached target output, so a
-        # cache hit restores its copy over the committed one and the check would grade the cache
-        # rather than the source.
+      # The committed build output is different, and is checked here as well. A tag is what
+      # consumers copy their editor out of, a tag cannot be un-cut, and stale output inside one is
+      # invisible — nothing about the tag looks wrong. `extract-api` is the build, so this replaces a
+      # separate build step rather than adding to it.
+      - name: Build and check the committed build output is current
+        # The rebuild goes through this script rather than `nx run-many -t extract-api` because the
+        # order the packages are extracted in decides whether each one's rolled-up declarations
+        # survive; `scripts/published-packages.mjs` explains why.
         run: |
-          pnpm nx run-many -t extract-api --skip-nx-cache
+          node scripts/rebuild-committed-output.mjs
           node scripts/verify-committed-dist.mjs
 
       # One repo tag pins both packages, and the tag name carries only platform-editor's version, so
