@@ -67,6 +67,16 @@ export declare interface AnnotationRange {
   end: UsjDocumentLocation;
 }
 
+/**
+ * Constant representing the block verse view mode.
+ * Displays formatted text with each verse wrapped in a block-level element, so a verse can be
+ * placed on a layout row - for example a grid aligning the same verse across several resources.
+ * This view is read-only; see `ViewOptions.verseLayout`.
+ *
+ * @public
+ */
+export declare const BLOCK_VERSE_VIEW_MODE = "block-verse";
+
 /** Generated file using `nx generate markers-data` with 'tools/usfm-markers/src/generators/markers-data/data/usfm.sty' */
 /** @public */
 export declare enum CategoryType {
@@ -239,7 +249,13 @@ export declare const Editorial: ForwardRefExoticComponent<
  * @public
  */
 export declare interface EditorOptions {
-  /** Is the editor readonly or editable. */
+  /**
+   * Is the editor readonly or editable.
+   *
+   * Forced to `true` when `view.verseLayout` is `"block"`: that layout regroups verses into blocks
+   * and so has no source USJ an edit could be written back to. Passing `false` alongside it is
+   * reported through the logger and ignored.
+   */
   isReadonly?: boolean;
   /**
    * Structure-protection mode for paragraph/verse markers via keyboard, paste, and drop.
@@ -332,13 +348,25 @@ export declare interface EditorRef {
   undo(): void;
   /** Redo the last undone action. */
   redo(): void;
-  /** Cut the selected text. */
+  /**
+   * Cut the selected text.
+   * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
+   *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
+   */
   cut(): void;
   /** Copy the selected text. */
   copy(): void;
-  /** Paste text at the current cursor position. */
+  /**
+   * Paste text at the current cursor position.
+   * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
+   *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
+   */
   paste(): void;
-  /** Paste text as plain text at the current cursor position. */
+  /**
+   * Paste text as plain text at the current cursor position.
+   * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
+   *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
+   */
   pastePlainText(): void;
   /**
    * Get USJ Scripture data — always SETTLED, whatever the screen currently shows mid-edit. In
@@ -391,7 +419,18 @@ export declare interface EditorRef {
   setTransientInput(input: TransientInput | undefined): void;
   /** Set the USJ Scripture data. */
   setUsj(usj: Usj): void;
-  /** EXPERIMENTAL: Apply Operational Transform delta update. */
+  /**
+   * EXPERIMENTAL: Apply Operational Transform delta update.
+   *
+   * @remarks
+   * Delta ops address content by its position in the USJ, which the block verse layout
+   * (`ViewOptions.verseLayout: "block"`) regroups, so they cannot be applied there. A `"remote"`
+   * update is reported through the logger and dropped rather than thrown, so a collaborator's op
+   * loop is not torn down; refresh such a view by handing it new USJ instead.
+   *
+   * @throws Will throw an error if the editor uses the block verse layout and `source` is
+   *   `"local"`.
+   */
   applyUpdate(ops: DeltaOp[], source?: DeltaSource): void;
   /**
    * EXPERIMENTAL: Replace an embed Operational Transform delta.
@@ -405,6 +444,13 @@ export declare interface EditorRef {
   replaceEmbedUpdate(embedNodeKey: string, insertEmbedOps: DeltaOp[]): void;
   /**
    * Get the selection location or range.
+   *
+   * @remarks
+   * Always returns `undefined` in the block verse layout (`ViewOptions.verseLayout: "block"`):
+   * it splits a paragraph spanning verses across their blocks, so the editor's content indexes no
+   * longer match the source USJ's and no location can be expressed. The editor reports this once
+   * through its logger.
+   *
    * @returns the selection location or range, or `undefined` if there is no selection. The
    *   json-path in the selection assumes no comment Milestone nodes are present in the USJ, and
    *   addresses the LIVE tree, not {@link EditorRef.getUsj}'s settled output — while anything is
@@ -413,12 +459,22 @@ export declare interface EditorRef {
   getSelection(): SelectionRange | undefined;
   /**
    * Set the selection location or range.
+   *
+   * @remarks
+   * Does nothing in the block verse layout, for the reason given on
+   * {@link EditorRef.getSelection}.
+   *
    * @param selection - A selection location or range. The json-path in the selection assumes no
    *   comment Milestone nodes are present in the USJ.
    */
   setSelection(selection: SelectionRange): void;
   /**
    * Set an ephemeral annotation with optional event callbacks.
+   *
+   * @remarks
+   * Does nothing in the block verse layout (`ViewOptions.verseLayout: "block"`): an annotation is
+   * addressed by USJ location, which that layout cannot express - see
+   * {@link EditorRef.getSelection}. The failure is reported through the logger.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.
@@ -463,7 +519,11 @@ export declare interface EditorRef {
    * @param id - ID of the annotation.
    */
   removeAnnotation(type: string, id: string): void;
-  /** Format the paragraph at the current cursor position with the given block marker. */
+  /**
+   * Format the paragraph at the current cursor position with the given block marker.
+   * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
+   *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
+   */
   formatPara(blockMarker: string): void;
   /** Get the editor element for the given node key, if any. */
   getElementByKey(nodeKey: string): HTMLElement | undefined;
@@ -760,6 +820,8 @@ export declare interface EditorRef {
    * @param selection - Optional selection range where the note should be inserted. By default it
    *   will use the current selection in the editor.
    * @throws Will throw an error if the marker is not a valid note marker.
+   * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
+   *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
    *
    * @deprecated Use {@link EditorRef.insertMarker} instead. `insertMarker` supports note markers
    *   and additionally provides readonly and scrRef guards.
@@ -850,7 +912,8 @@ export declare const getDefaultViewMode: () =>
   | "formatted"
   | "unformatted"
   | "paragraph-structure"
-  | "standard";
+  | "standard"
+  | "block-verse";
 
 /**
  * Gets the default view options.
@@ -893,6 +956,21 @@ export declare function getMarkerMenuItems(
 /**
  * Convert view options to view mode if the view exists.
  *
+ * Inverts {@link getViewOptions} by comparison, so a view option added later cannot be forgotten
+ * here and leave two modes indistinguishable. Matching is exact once each unset optional field is
+ * filled in with its default, so spelling a default out still matches, but options derived from a
+ * mode and then genuinely tweaked describe a view that is no longer that mode and yield
+ * `undefined`.
+ *
+ * @remarks
+ * This is narrower than the field-by-field matching it replaced, which tested only `markerMode`,
+ * `hasSpacing`, `isFormattedFont`, `hasGutterParaMarkers` and `hasActiveTextFocusBox`. Every other
+ * field now counts, `noteMode` included - it has no default to fill in (call sites read `undefined`
+ * inconsistently, some as collapsed and some as not), so it is part of what identifies a mode and
+ * has to be given. Options built from a mode with `noteMode` changed - say
+ * `{ ...getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE), noteMode: "expanded" }` - used to return the
+ * mode they started from and now return `undefined`.
+ *
  * @param viewOptions - View options of the editor.
  * @returns the view mode if the view is defined, `undefined` otherwise.
  *
@@ -916,6 +994,20 @@ export declare function getViewOptions(viewMode?: string | undefined): ViewOptio
  * @public
  */
 export declare const HIDDEN_NOTE_CALLER = "-";
+
+/**
+ * Whether the view options select the block verse layout.
+ *
+ * That layout is read-only: its paragraphs are split across verse blocks, so an edit has no
+ * correct USJ to go back to. Anything that offers editing - or an affordance that depends on
+ * editing, such as comment authoring - should treat it as read-only whatever `isReadonly` says.
+ *
+ * @param viewOptions - View options of the editor.
+ * @returns `true` if verses are laid out as blocks.
+ *
+ * @public
+ */
+export declare function isBlockVerseLayout(viewOptions: ViewOptions | undefined): boolean;
 
 /**
  * Type guard to check if the given insert embed operation is for the specified embed type.
@@ -1626,6 +1718,22 @@ export declare interface UsjNodeOptions extends NodeOptions {
 }
 
 /**
+ * How each verse is laid out in the document.
+ *
+ * @public
+ */
+export declare type VerseLayout =
+  /** The verse marker is an inline milestone; verse text flows within its paragraph. */
+  | "inline"
+  /**
+   * Each verse is a block-level element containing its own paragraphs, so it can be placed on a
+   * layout row. Read-only: the editor forces read-only when this is selected, and neither USJ
+   * export nor USJ-addressed selection is available, because a paragraph spanning several verses
+   * is split across their blocks and no longer matches the source USJ's content indexes.
+   */
+  | "block";
+
+/**
  * Represents the available view modes for displaying content.
  *
  * @public
@@ -1643,6 +1751,7 @@ export declare const viewModeToViewNames: {
   unformatted: string;
   "paragraph-structure": string;
   standard: string;
+  "block-verse": string;
 };
 
 /**
@@ -1652,6 +1761,7 @@ export declare const viewModeToViewNames: {
  * ```typescript
  * const viewOptions: ViewOptions = {
  *   markerMode: "hidden",
+ *   noteMode: "collapsed",
  *   hasSpacing: true,
  *   isFormattedFont: true
  * };
@@ -1721,6 +1831,16 @@ export declare interface ViewOptions {
    * (char/verse/note) are unaffected — only the paragraph's own prefix is suppressed.
    */
   showParaMarkerPrefixes?: boolean;
+  /**
+   * How each verse is laid out. Default (undefined) is `"inline"`, which is what every view other
+   * than block verse uses.
+   *
+   * Switching this between `"inline"` and `"block"` recreates the editor, because the node types a
+   * Lexical editor can hold are fixed when it is created. That discards the undo history and any
+   * annotations the host has applied since the last USJ change, so hosts should choose a layout
+   * when they mount the editor rather than toggling a live one.
+   */
+  verseLayout?: VerseLayout;
 }
 
 export {};
