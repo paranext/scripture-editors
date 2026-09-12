@@ -16,9 +16,6 @@
       "path": "./packages/platform"
     },
     {
-      "path": "./packages/scribe"
-    },
-    {
       "path": "./libs/shared-react"
     },
     {
