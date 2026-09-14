@@ -14,20 +14,22 @@ import { $liveSelectionFromSettled, $livePointFromSettledLocation } from "./sett
 import {
   contentPath,
   propertyPath,
+  settledCharIndex,
+  settledPara,
   settledPositionContext,
+  settledTextIndex,
   twoParaUsj,
+  typeOver,
   $textContaining,
 } from "./positions.test-helpers";
 import { SettledPositionContext } from "./settledPositions.model";
 import { FragmentPoint } from "../markerEdit/tier2Rebuild.utils";
 import {
   getUsjDocumentLocationTypeName,
-  MarkerObject,
-  Usj,
   UsjDocumentLocation,
 } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, $isTextNode, LexicalEditor, NodeKey } from "lexical";
+import { $getRoot, $isTextNode, LexicalEditor } from "lexical";
 import {
   $isMarkerNode,
   $isParaNode,
@@ -36,30 +38,6 @@ import {
   MarkerNode,
 } from "shared";
 import { $getRangeFromUsjSelection, SelectionRange } from "shared-react";
-
-/** The paragraph at `index` of a settled document, as a `MarkerObject`. */
-function settledPara(usj: Usj | undefined, index: number): MarkerObject {
-  const para = usj?.content?.[index];
-  if (!para || typeof para === "string") throw new Error(`no paragraph at content[${index}]`);
-  return para;
-}
-
-/** The index of the settled content item that is exactly `text`, so a row's settled coordinates
- * come from the document the host would actually have read. */
-function settledTextIndex(para: MarkerObject, text: string): number {
-  const index = para.content?.findIndex((item) => item === text) ?? -1;
-  if (index < 0)
-    throw new Error(`no settled text item ${JSON.stringify(text)} in ${JSON.stringify(para)}`);
-  return index;
-}
-
-/** The index of the settled content item that is a `char` span. */
-function settledCharIndex(para: MarkerObject): number {
-  const index =
-    para.content?.findIndex((item) => typeof item !== "string" && item.type === "char") ?? -1;
-  if (index < 0) throw new Error(`no settled char span in ${JSON.stringify(para)}`);
-  return index;
-}
 
 /**
  * The LIVE location `location` becomes — the path production actually runs: `setSelection`,
@@ -87,29 +65,6 @@ function livePoint(
     const prepared = $prepareSettleScopes(context);
     return $livePointFromSettledLocation(context, prepared, location);
   });
-}
-
-/** Type `text` over the node containing `needle` and leave the caret at `caretOffset` (the start
- * of the paragraph by default — the shape that keeps a terminated literal pending rather than
- * re-tokenizing it inline in the same commit). */
-async function typeOver(
-  lexical: LexicalEditor,
-  needle: string,
-  text: string,
-  caretOffset = 0,
-): Promise<NodeKey> {
-  let key = "";
-  await act(async () => {
-    lexical.update(() => {
-      const node = $textContaining(needle);
-      node.setTextContent(text);
-      node.select(caretOffset, caretOffset);
-      key = node.getKey();
-    });
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-  return key;
 }
 
 describe("failure mode 1 — a pending literal re-tokenizes into structure", () => {

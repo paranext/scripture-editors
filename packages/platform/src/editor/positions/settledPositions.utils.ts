@@ -1,17 +1,19 @@
 /**
- * Carrying a position from the SETTLED document onto the LIVE tree.
+ * Carrying a position between the SETTLED document and the LIVE tree, in both directions.
  *
  * A host's only view of the document is `getUsj()`, which is settled, so every position it hands
- * back addresses a document the editor is not currently showing. Outside a rebuilt scope that is a
- * matter of restating one top-level index; inside one, the settled structure and the live
- * structure genuinely disagree, and the only thing they still share is the BYTES on screen — which
- * is what the Tier-2 caret's whitespace-tolerant byte anchor already carries a position across.
+ * back addresses a document the editor is not currently showing — and every position the editor
+ * hands it has to address that same settled document, or the host cannot resolve it. Outside a
+ * rebuilt scope both directions are a matter of restating one top-level index; inside one, the
+ * settled structure and the live structure genuinely disagree, and the only thing they still
+ * share is the BYTES on screen — which is what the Tier-2 caret's whitespace-tolerant byte anchor
+ * already carries a position across.
  *
- * So a settled location inside a rebuilt scope is resolved against that scope's settled tree
- * (materialized in a scratch editor), reduced to a byte anchor there, and re-resolved against the
- * live fragment. Nodes the settle preserved verbatim — notes, unknown blocks, verses and their
- * display runs — cross by their own path instead: the settle handed the SAME subtree through, so
- * the position in it is unchanged.
+ * So a position inside a rebuilt scope is reduced to a byte anchor over the tree it came from and
+ * re-resolved against the other one, which for the settled side is that scope's rebuild
+ * materialized in a scratch editor. Nodes the settle preserved verbatim — notes, unknown blocks,
+ * verses and their display runs — cross by their own path instead: the settle handed the SAME
+ * subtree through, so the position in it is unchanged.
  */
 
 import {
@@ -32,11 +34,25 @@ import {
   isUsjTextContentLocation,
   usjJsonPathFromIndexes,
 } from "@eten-tech-foundation/scripture-utilities";
-import { $getNodeByKey, $getRoot, $isElementNode, LexicalNode, NodeKey } from "lexical";
-import { $getLogicalContentItems, $isNoteNode } from "shared";
+import {
+  $getNodeByKey,
+  $getRoot,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  LexicalNode,
+  NodeKey,
+} from "lexical";
+import {
+  $getLogicalContentItems,
+  $getLogicalIndexOfChild,
+  $getLogicalParent,
+  $isNoteNode,
+} from "shared";
 import {
   $getLocationFromNode,
   $getNodeFromLocation,
+  $getUsjSelectionFromEditor,
   AnnotationRange,
   SelectionRange,
 } from "shared-react";
@@ -297,7 +313,8 @@ function $livePointInPreservedRun(
 ): FragmentPoint | undefined {
   const member = plan.liveFragment?.sentinels[resolved.sentinelIndex]?.[resolved.memberIndex];
   // A memoized plan holds live node references, and the tree can have moved on under it (an undo,
-  // a host `setUsj`). Refuse such a position rather than walking a detached node, which invariants.
+  // a host `setUsj`). Refuse such a position rather than walk a detached node, whose ancestors and
+  // offsets no longer describe anything the host can resolve against.
   if (!member?.isAttached()) return undefined;
   // A note that is ALSO settling was handed through this scope as its SETTLED self, so its live
   // content is not the same subtree — that one crosses by its own fragment bytes instead.
@@ -401,4 +418,206 @@ export function $liveSelectionFromSettled<T extends SelectionRange | AnnotationR
   const end = $liveLocationFromSettled(context, prepared, settled.end);
   if (!end) return undefined;
   return { ...settled, start, end };
+}
+
+/**
+ * The logical content indexes addressing `node` from the root — the same path
+ * `$getLocationFromNode` builds a location's `jsonPath` from, recomputed here for a node that is
+ * not itself a position: a scope's first node, or a settling note the settled path has to be
+ * prefixed with.
+ */
+function $contentIndexesOf(node: LexicalNode): number[] {
+  const indexes: number[] = [];
+  for (let current: LexicalNode | null = node; current; ) {
+    const parent = $getLogicalParent(current);
+    if (!parent) break;
+    const index = $getLogicalIndexOfChild(parent, current);
+    if (index >= 0) indexes.unshift(index);
+    current = parent;
+  }
+  return indexes;
+}
+
+/** `location`'s top-level index restated in settled coordinates. Nothing below the top level
+ * moves: a scope the settle did not rebuild keeps its own structure, and only how many settled
+ * items each PRECEDING pending scope becomes can shift it. */
+function settledTopTranslated<T extends UsjDocumentLocation>(
+  prepared: PreparedScopes,
+  location: T,
+): T {
+  const indexes = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
+  if (indexes.length === 0) return location;
+  return withContentIndexes(location, [
+    prepared.liveToSettledTopIndex(indexes[0]),
+    ...indexes.slice(1),
+  ]);
+}
+
+/** Where a scope's own settled content sits, in settled content indexes: the scope's live path
+ * with its top-level index restated. A note settles in place, so only the index above it moves. */
+function $settledScopePath(prepared: PreparedScopes, plan: SettleScopePlan): number[] {
+  const indexes = $contentIndexesOf(plan.liveNodes[0]);
+  if (indexes.length === 0) return indexes;
+  return [prepared.liveToSettledTopIndex(indexes[0]), ...indexes.slice(1)];
+}
+
+/**
+ * A scratch-relative path restated against the settled document. A paragraph or chapter scope's
+ * scratch root children ARE settled top-level items, so the scope's own top index counts them
+ * off; a note scope's scratch root holds the one settled note, which sits exactly where the live
+ * note sat.
+ */
+function settledPathFromScratch(
+  plan: SettleScopePlan,
+  scopePath: number[],
+  scratchIndexes: number[],
+): number[] | undefined {
+  const [scratchTop, ...rest] = scratchIndexes;
+  if (scratchTop === undefined) return undefined;
+  if (plan.kind === "note") return scratchTop === 0 ? [...scopePath, ...rest] : undefined;
+  const top = scopePath[0];
+  return top === undefined ? undefined : [top + scratchTop, ...rest];
+}
+
+/**
+ * A live offset restated in the scope's CUT fragment coordinates — the inverse of
+ * {@link cutCorrected}. The declared transient bytes were removed from the fragment the two sides
+ * are paired through, so an offset past them is that much further along in the node's own text
+ * than it is in the fragment. An offset INSIDE the declared run has no fragment byte at all,
+ * those bytes being absent from the settled document, so it collapses onto where the run started.
+ */
+function cutFragmentOffset(plan: SettleScopePlan, node: LexicalNode, offset: number): number {
+  const cut = plan.liveCut;
+  if (!cut || node.getKey() !== cut.key || offset <= cut.nodeOffset) return offset;
+  return Math.max(cut.nodeOffset, offset - cut.length);
+}
+
+/** The settled location for a live point inside a preserved node run: the settle handed the same
+ * subtree through, so only which run member it is and the child path down to it cross over. Call
+ * inside a read of the scratch tree. */
+function $settledLocationInPreservedRun(
+  scratchFragment: FragmentAccumulator,
+  sentinelIndex: number,
+  memberIndex: number,
+  path: readonly number[],
+  offset: number,
+): UsjDocumentLocation | undefined {
+  let node = scratchFragment.sentinels[sentinelIndex]?.[memberIndex];
+  if (!node) return undefined;
+  for (const index of path) {
+    if (!$isElementNode(node)) return undefined;
+    const child = node.getChildAtIndex(index);
+    if (!child) return undefined;
+    node = child;
+  }
+  return $getLocationFromNode(node, offset);
+}
+
+/** Where a live point lands in its scope's settled tree, in that tree's OWN coordinates. */
+function $scratchLocationFromLivePoint(
+  plan: SettleScopePlan,
+  liveFragment: FragmentAccumulator,
+  scratchFragment: FragmentAccumulator,
+  node: LexicalNode,
+  offset: number,
+): UsjDocumentLocation | undefined {
+  const preserved = $preservedRunMember(liveFragment, node);
+  if (preserved) {
+    const path = $childPath(preserved.member, node);
+    if (!path) return undefined;
+    // Plain data only across the scratch boundary: a live node must never be carried into a
+    // scratch read.
+    const { sentinelIndex, memberIndex } = preserved;
+    return plan.scratch
+      .getEditorState()
+      .read(() =>
+        $settledLocationInPreservedRun(scratchFragment, sentinelIndex, memberIndex, path, offset),
+      );
+  }
+  const anchored = $anchorForPoint(liveFragment, node, cutFragmentOffset(plan, node, offset));
+  if (!anchored) return undefined;
+  const { anchor } = anchored;
+  // The mirror of the inbound addressing choice, decided the same way: a live position that names
+  // USFM bytes wants the settled spelling of those bytes, including the ones no caret can rest
+  // in; a position in ordinary content is a caret, and keeps the caret's own addressing — which
+  // at an exact boundary spells itself as the end of the run it is leaving rather than as the
+  // construct that happens to start there.
+  const addressDisplayBytes = !isUsjTextContentLocation($getLocationFromNode(node, offset));
+  return plan.scratch.getEditorState().read(() => {
+    const point = $resolveFragmentByteAnchor(scratchFragment, anchor, { addressDisplayBytes });
+    const settledNode = point && $getNodeByKey(point.key);
+    return settledNode ? $getLocationFromNode(settledNode, point.offset) : undefined;
+  });
+}
+
+/** The settled location for a live point inside a rebuilt scope. */
+function $settledLocationInScope(
+  prepared: PreparedScopes,
+  plan: SettleScopePlan,
+  node: LexicalNode,
+  offset: number,
+): UsjDocumentLocation | undefined {
+  const { liveFragment, scratchFragment } = plan;
+  if (!liveFragment || !scratchFragment) return undefined;
+  const scratchLocation = $scratchLocationFromLivePoint(
+    plan,
+    liveFragment,
+    scratchFragment,
+    node,
+    offset,
+  );
+  if (!scratchLocation) return undefined;
+  const indexes = settledPathFromScratch(
+    plan,
+    $settledScopePath(prepared, plan),
+    indexesFromUsjJsonPath(contentPathOf(scratchLocation.jsonPath)),
+  );
+  return indexes && withContentIndexes(scratchLocation, indexes);
+}
+
+/**
+ * The SETTLED location a live point addresses — what a host, whose only view of the document is
+ * `getUsj()`, can actually resolve — or `undefined` when the position cannot be carried across (a
+ * scope whose bytes could not be fragmented, or a point the scope's settled tree has no byte for).
+ *
+ * Call inside a read of the LIVE editor state, with `prepared` from the same read.
+ */
+export function $settledLocationFromLivePoint(
+  prepared: PreparedScopes,
+  node: LexicalNode,
+  offset: number,
+): UsjDocumentLocation | undefined {
+  const plan = prepared.planContaining(node);
+  if (plan) return $settledLocationInScope(prepared, plan, node, offset);
+  return settledTopTranslated(prepared, $getLocationFromNode(node, offset));
+}
+
+/**
+ * The editor's current selection in SETTLED coordinates — `undefined` when there is no selection
+ * to report, when the layout has no USJ locations at all, or when an endpoint cannot be carried
+ * across, which a caller must treat as "refuse" rather than report a position that names the
+ * wrong bytes.
+ *
+ * Call inside a read of the LIVE editor state, with `prepared` from the same read.
+ */
+export function $settledSelectionFromLive(prepared: PreparedScopes): SelectionRange | undefined {
+  // Called even when a translation follows, and deliberately: "there is no range selection" and
+  // "this layout has no USJ locations at all" are both properties of the live tree that a settle
+  // cannot change, so they stay the editor's own reporter's answers rather than being restated
+  // here. Two extra location reports is nothing beside preparing a scope.
+  const live = $getUsjSelectionFromEditor();
+  // Nothing was rebuilt, so the live tree IS the settled document and that reporter already
+  // addressed it.
+  if (!live || prepared.byFirstLiveKey.size === 0) return live;
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return undefined;
+  const backward = selection.isBackward();
+  const first = backward ? selection.focus : selection.anchor;
+  const start = $settledLocationFromLivePoint(prepared, first.getNode(), first.offset);
+  if (!start) return undefined;
+  if (selection.isCollapsed()) return { start };
+  const last = backward ? selection.anchor : selection.focus;
+  const end = $settledLocationFromLivePoint(prepared, last.getNode(), last.offset);
+  if (!end) return undefined;
+  return { start, end };
 }

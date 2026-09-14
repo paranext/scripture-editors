@@ -78,9 +78,10 @@ HTMLElement.prototype.focus = function focus(options?: FocusOptions) {
 /** The editor's host-facing change-notification callback type. */
 type OnUsjChange = EditorProps<LoggerBasic>["onUsjChange"];
 
-/** Optional wiring a mounted test editor may need; both default to absent. */
+/** Optional wiring a mounted test editor may need; all default to absent. */
 interface MountOptions {
   onUsjChange?: OnUsjChange;
+  onSelectionChange?: EditorProps<LoggerBasic>["onSelectionChange"];
   scrRef?: SerializedVerseRef;
 }
 
@@ -119,7 +120,7 @@ export const spanUsj: Usj = {
 async function mountEditor(
   usj: Usj,
   view: ViewOptions,
-  { onUsjChange, scrRef }: MountOptions = {},
+  { onUsjChange, onSelectionChange, scrRef }: MountOptions = {},
 ): Promise<{ ref: RefObject<EditorRef | null>; lexical: LexicalEditor }> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
@@ -132,6 +133,7 @@ async function mountEditor(
         scrRef={scrRef}
         options={{ view }}
         onUsjChange={onUsjChange}
+        onSelectionChange={onSelectionChange}
       >
         {capture}
       </Editor>,
@@ -147,7 +149,8 @@ async function mountEditor(
  * `onUsjChange` wires the editor's host-facing change notification — the callback a host
  * (paranext-core's Scripture editor web view) subscribes to in order to schedule a save. Pass it
  * when a test needs to observe that a document change actually REACHED the host, as distinct from
- * merely being true of the editor's own state.
+ * merely being true of the editor's own state. `onSelectionChange` is the same host wiring for
+ * the caret.
  *
  * `scrRef` is only needed by the ref methods that guard on it (`applyMarkerMenuSelection`,
  * `insertMarker`); the rest of the suite leaves it off, and those methods then throw by design.

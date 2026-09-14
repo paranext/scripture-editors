@@ -14,11 +14,23 @@
  * the same `$liveSelectionFromSettled` output these methods consume.
  */
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
-import { contentPath, twoParaUsj, $textContaining } from "./positions.test-helpers";
-import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { contentPath, twoParaUsj, typeOver, $textContaining } from "./positions.test-helpers";
+import {
+  indexesFromUsjJsonPath,
+  MarkerObject,
+  Usj,
+} from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, $isElementNode, $isTextNode, LexicalEditor, LexicalNode } from "lexical";
+import {
+  $getRoot,
+  $isElementNode,
+  $isTextNode,
+  LexicalEditor,
+  LexicalNode,
+  SELECTION_CHANGE_COMMAND,
+} from "lexical";
 import { $isParaNode, $isTypedMarkNode, getPendedDisplayOwners, TypedMarkNode } from "shared";
+import { SelectionRange } from "shared-react";
 
 /** Every `TypedMarkNode` in the tree, depth-first. */
 function $marks(nodes: LexicalNode[] = $getRoot().getChildren()): TypedMarkNode[] {
@@ -117,5 +129,137 @@ describe("setAnnotation while a paragraph is pending", () => {
     // untranslated path resolves happily onto the wrong paragraph. This is the silent mis-anchor,
     // not a failure to resolve.
     expect(annotatedText(lexical)).toEqual(["depa"]);
+  });
+});
+
+/**
+ * The host's own resolution: walk a settled `jsonPath` down the document `getUsj()` returned, the
+ * way a consumer holding that path would. A location the editor reports is only useful if this
+ * lands on the item the caret was actually in.
+ */
+function usjContentAt(usj: Usj | undefined, jsonPath: string): MarkerObject | string | undefined {
+  let content = usj?.content;
+  let item: MarkerObject | string | undefined;
+  for (const index of indexesFromUsjJsonPath(jsonPath)) {
+    item = content?.[index];
+    if (item === undefined) return undefined;
+    content = typeof item === "string" ? undefined : item.content;
+  }
+  return item;
+}
+
+/** The character a settled text location names in the settled document. */
+function settledCharacterAt(usj: Usj | undefined, location: SelectionRange["start"]): string {
+  const item = usjContentAt(usj, location.jsonPath);
+  if (typeof item !== "string") throw new Error(`${location.jsonPath} is not settled text`);
+  const offset = "offset" in location ? location.offset : undefined;
+  if (offset === undefined) throw new Error("expected a text content location");
+  return item[offset];
+}
+
+describe("reporting the selection while a literal is pending", () => {
+  const live = "In the beginning \\nd LORD\\nd* made";
+
+  /** The paragraph's literal is pending, and the caret sits on the `m` of `made` — a live offset
+   * that does not exist in the settled paragraph's first content item at all. */
+  async function pendingSpanWithCaret(onSelectionChange?: (s: SelectionRange | undefined) => void) {
+    const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]), {
+      onSelectionChange,
+    });
+    await typeOver(mounted.lexical, "In the beginning made", live);
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    return mounted;
+  }
+
+  /** Move the caret onto the `m` of `made` and tell the editor the selection moved, the way the
+   * browser's own selectionchange does — from inside the update that moved it. */
+  async function moveCaretToMade(lexical: LexicalEditor) {
+    await act(async () => {
+      lexical.update(() => {
+        const node = $textContaining(live);
+        if (!$isTextNode(node)) throw new Error("expected a text node");
+        node.select(live.indexOf(" made") + 1, live.indexOf(" made") + 1);
+        lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("getSelection reports coordinates the settled document resolves", async () => {
+    const { ref, lexical } = await pendingSpanWithCaret();
+    await moveCaretToMade(lexical);
+
+    const selection = ref.current?.getSelection();
+
+    expect(selection?.start).toBeDefined();
+    if (!selection?.start) throw new Error("no selection");
+    // Live the paragraph is one 33-character text node; settled it is three content items, and
+    // offset 30 does not exist in the first of them. The reported path has to name the item the
+    // caret is actually in.
+    expect(settledCharacterAt(ref.current?.getUsj(), selection.start)).toBe("m");
+  });
+
+  it("onSelectionChange reports the same coordinates getSelection does", async () => {
+    const onSelectionChange = vi.fn();
+    const { ref, lexical } = await pendingSpanWithCaret(onSelectionChange);
+    onSelectionChange.mockClear();
+
+    await moveCaretToMade(lexical);
+
+    expect(onSelectionChange).toHaveBeenCalled();
+    const reported = onSelectionChange.mock.calls[onSelectionChange.mock.calls.length - 1][0];
+    expect(reported).toEqual(ref.current?.getSelection());
+    expect(settledCharacterAt(ref.current?.getUsj(), reported.start)).toBe("m");
+  });
+
+  it("reports the committed selection, once, for a move the dispatch preceded", async () => {
+    const onSelectionChange = vi.fn();
+    const { ref, lexical } = await pendingSpanWithCaret(onSelectionChange);
+    onSelectionChange.mockClear();
+
+    await act(async () => {
+      lexical.update(() => {
+        // Dispatched BEFORE the caret moves: a reporter that answers from inside the update sees
+        // the OLD selection, because the move below has not happened yet. The report has to come
+        // from the committed state instead — where the move HAS happened — which is also the only
+        // state a settle scope may be prepared against, since preparing one creates nodes.
+        lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        const node = $textContaining(live);
+        if (!$isTextNode(node)) throw new Error("expected a text node");
+        node.select(live.indexOf(" made") + 1, live.indexOf(" made") + 1);
+      });
+      expect(onSelectionChange).not.toHaveBeenCalled();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onSelectionChange).toHaveBeenCalledTimes(1);
+    const reported = onSelectionChange.mock.calls[0][0];
+    expect(settledCharacterAt(ref.current?.getUsj(), reported.start)).toBe("m");
+  });
+
+  it("reports synchronously when nothing is pending", async () => {
+    const onSelectionChange = vi.fn();
+    const { lexical } = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]), {
+      onSelectionChange,
+    });
+    onSelectionChange.mockClear();
+
+    let reportedInsideUpdate = false;
+    await act(async () => {
+      lexical.update(() => {
+        const node = $textContaining("In the beginning made");
+        if (!$isTextNode(node)) throw new Error("expected a text node");
+        node.select(3, 3);
+        lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        reportedInsideUpdate = onSelectionChange.mock.calls.length > 0;
+      });
+      await Promise.resolve();
+    });
+
+    // Live IS settled with nothing pending, so the report costs one predicate and keeps the
+    // editor's own timing: the host hears about the move inside the dispatch that carried it.
+    expect(reportedInsideUpdate).toBe(true);
   });
 });

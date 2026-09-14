@@ -39,7 +39,10 @@ import {
   SettledPositionContext,
   SettledScopeCache,
 } from "./positions/settledPositions.model";
-import { $liveSelectionFromSettled } from "./positions/settledPositions.utils";
+import {
+  $liveSelectionFromSettled,
+  $settledSelectionFromLive,
+} from "./positions/settledPositions.utils";
 import { $prepareSettleScopes } from "./positions/settledScopes.utils";
 import { ScriptureReferencePlugin } from "./ScriptureReferencePlugin";
 import TreeViewPlugin from "./TreeViewPlugin";
@@ -207,6 +210,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // calls against an unchanged pending state instead of re-settling per call. Per-instance for the
   // same reason `transientInputRef` is.
   const settledScopeCacheRef = useRef<SettledScopeCache>({ entries: new Map() });
+  // Which deferred selection report is still the current one. Every dispatch takes the next
+  // ticket, so when several arrive in one tick only the last one's deferred report is delivered.
+  const selectionReportTicketRef = useRef(0);
   // The document most recently ANNOUNCED to the host via `onUsjChange` — the yardstick the
   // historic-commit notifier below measures against, so undo/redo only re-announce a document the
   // host has not already been told about. Written on every emission (typed, applied, historic)
@@ -491,6 +497,31 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   }, [viewOptions, markerLookup, stableLogger]);
 
   /**
+   * Everything a settled↔live position translation needs about the editor's pending state
+   * (positions/settledPositions.model.ts). Built the same way `readSettledUsj` builds its settle
+   * arguments, so the document a host is told about and the coordinates it is told in are one
+   * pending state. Call outside a read — `getPendedDisplayOwners` consults the marker-edit
+   * engine's ledger, not the tree.
+   */
+  const buildSettledPositionContext = useCallback((): SettledPositionContext | undefined => {
+    const editor = editorRef.current;
+    if (!editor) return undefined;
+    const context: SettledPositionContext = {
+      pendedKeys: getPendedDisplayOwners(editor) ?? new Set<string>(),
+      transientInput: transientInputRef.current,
+      lastKnownCaret: lastKnownCaretRef.current,
+      tier2: { viewOptions, getMarker: markerLookup, logger: stableLogger },
+      nodes: editorNodes,
+      cache: settledScopeCacheRef.current,
+    };
+    // Nothing pending and nothing declared means no cached plan can still be valid, and each one
+    // holds a scratch editor plus references to live nodes the tree may have since replaced. Every
+    // caller skips the read on that path, so this is the only place the sweep can run.
+    if (isLiveSettledIdentical(context)) context.cache.entries.clear();
+    return context;
+  }, [viewOptions, markerLookup, stableLogger, editorNodes]);
+
+  /**
    * A host's position restated in LIVE coordinates. Every `jsonPath` a host holds came from
    * `getUsj()`, which is the SETTLED document, and the resolvers below all walk the live tree — so
    * while anything is pending those are two different documents and the position has to be carried
@@ -506,24 +537,59 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   const liveSelectionFromSettled = useCallback(
     <T extends SelectionRange | AnnotationRange>(settled: T): T | undefined => {
       const editor = editorRef.current;
-      if (!editor) return undefined;
-      const context: SettledPositionContext = {
-        pendedKeys: getPendedDisplayOwners(editor) ?? new Set<string>(),
-        transientInput: transientInputRef.current,
-        lastKnownCaret: lastKnownCaretRef.current,
-        tier2: { viewOptions, getMarker: markerLookup, logger: stableLogger },
-        nodes: editorNodes,
-        cache: settledScopeCacheRef.current,
-      };
-      // Nothing pending and nothing declared: the two documents are the same one, and skipping
-      // the read keeps the common call as cheap as it has always been.
+      const context = buildSettledPositionContext();
+      if (!editor || !context) return undefined;
+      // The two documents are the same one, so skipping the read keeps the common call as cheap
+      // as it has always been.
       if (isLiveSettledIdentical(context)) return settled;
       return editor.getEditorState().read(() => {
         const prepared = $prepareSettleScopes(context);
         return $liveSelectionFromSettled(context, prepared, settled);
       });
     },
-    [viewOptions, markerLookup, stableLogger, editorNodes],
+    [buildSettledPositionContext],
+  );
+
+  /**
+   * The host-facing selection report, deferred past the commit whenever a translation is needed.
+   *
+   * `OnSelectionChangePlugin` fires inside the ACTIVE, UNCOMMITTED update that moved the
+   * selection — deliberately, so an ordinary caret move is not reported one interaction late.
+   * Preparing a settle scope creates nodes (in a scratch editor), which must not happen there, and
+   * the committed state a scope would be prepared against is still the PRE-move one. So a report
+   * that needs translating waits for the commit and is coalesced to one per tick; a report that
+   * needs none keeps the plugin's own timing exactly.
+   */
+  const handleSelectionChange = useCallback(
+    (liveSelection: SelectionRange | undefined) => {
+      if (!onSelectionChange) return;
+      const editor = editorRef.current;
+      const context = buildSettledPositionContext();
+      if (!editor || !context || isLiveSettledIdentical(context)) {
+        onSelectionChange(liveSelection);
+        return;
+      }
+      selectionReportTicketRef.current += 1;
+      const ticket = selectionReportTicketRef.current;
+      // The pending state is read again inside the microtask rather than closed over: the commit
+      // may have settled the very pend that made this report need translating.
+      queueMicrotask(() => {
+        if (ticket !== selectionReportTicketRef.current || editorRef.current !== editor) return;
+        // `editor.read`, NOT `getEditorState().read`: the commit this is waiting for may still be
+        // Lexical's own pending microtask, and only `read` flushes it first. The force-flush that
+        // is a hazard inside a command listener is exactly what is wanted here, where the update
+        // it would flush is no longer in flight.
+        const settled = editor.read(() => {
+          const committed = buildSettledPositionContext();
+          return committed && $settledSelectionFromLive($prepareSettleScopes(committed));
+        });
+        // That flush can dispatch a further selection change of its own, whose report supersedes
+        // this one.
+        if (ticket !== selectionReportTicketRef.current) return;
+        onSelectionChange(settled);
+      });
+    },
+    [onSelectionChange, buildSettledPositionContext],
   );
 
   // Built as a plain object (rebuilt per render, same as the previous inline useImperativeHandle
@@ -663,7 +729,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         reportUsjLocationsUnavailable("get the selection");
         return undefined;
       }
-      return editorRef.current?.read($getUsjSelectionFromEditor);
+      const editor = editorRef.current;
+      if (!editor) return undefined;
+      // The host resolves what this returns against `getUsj()`, which is the SETTLED document, so
+      // a live position has to be carried across before it is reported
+      // (positions/settledPositions.utils.ts).
+      const context = buildSettledPositionContext();
+      if (!context || isLiveSettledIdentical(context))
+        return editor.read($getUsjSelectionFromEditor);
+      return editor.read(() => $settledSelectionFromLive($prepareSettleScopes(context)));
     },
     setSelection(selection) {
       if (isBlockVerse) {
@@ -1178,7 +1252,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             viewOptions={viewOptions}
             logger={stableLogger}
           />
-          <OnSelectionChangePlugin onChange={onSelectionChange} />
+          <OnSelectionChangePlugin onChange={handleSelectionChange} />
           <DeltaOnChangePlugin
             onChange={handleChange}
             ignoreSelectionChange

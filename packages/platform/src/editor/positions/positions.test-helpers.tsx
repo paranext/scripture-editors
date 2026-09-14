@@ -9,11 +9,13 @@ import { AnchoredTransientInput } from "../markerEdit/virtualSettle.utils";
 import { SettledPositionContext, SettledScopeCache } from "./settledPositions.model";
 import {
   ContentJsonPath,
+  MarkerObject,
   PropertyJsonPath,
   Usj,
   usjJsonPathFromIndexes,
 } from "@eten-tech-foundation/scripture-utilities";
-import { $getRoot, LexicalEditor, TextNode } from "lexical";
+import { act } from "@testing-library/react";
+import { $getRoot, LexicalEditor, NodeKey, TextNode } from "lexical";
 import { getMarker as bundledGetMarker, getPendedDisplayOwners, TypedMarkNode } from "shared";
 import { usjReactNodes } from "shared-react";
 
@@ -69,4 +71,51 @@ export function contentPath(indexes: number[]): ContentJsonPath {
 /** The same, with a `['property']` suffix. */
 export function propertyPath(indexes: number[], property: string): PropertyJsonPath {
   return `${usjJsonPathFromIndexes(indexes)}['${property}']` as PropertyJsonPath;
+}
+
+/** The paragraph at `index` of a settled document, as a `MarkerObject`. */
+export function settledPara(usj: Usj | undefined, index: number): MarkerObject {
+  const para = usj?.content?.[index];
+  if (!para || typeof para === "string") throw new Error(`no paragraph at content[${index}]`);
+  return para;
+}
+
+/** The index of the settled content item that is exactly `text`, so a row's settled coordinates
+ * come from the document the host would actually have read. */
+export function settledTextIndex(para: MarkerObject, text: string): number {
+  const index = para.content?.findIndex((item) => item === text) ?? -1;
+  if (index < 0)
+    throw new Error(`no settled text item ${JSON.stringify(text)} in ${JSON.stringify(para)}`);
+  return index;
+}
+
+/** The index of the settled content item that is a `char` span. */
+export function settledCharIndex(para: MarkerObject): number {
+  const index =
+    para.content?.findIndex((item) => typeof item !== "string" && item.type === "char") ?? -1;
+  if (index < 0) throw new Error(`no settled char span in ${JSON.stringify(para)}`);
+  return index;
+}
+
+/** Type `text` over the node containing `needle` and leave the caret at `caretOffset` (the start
+ * of the paragraph by default — the shape that keeps a terminated literal pending rather than
+ * re-tokenizing it inline in the same commit). */
+export async function typeOver(
+  lexical: LexicalEditor,
+  needle: string,
+  text: string,
+  caretOffset = 0,
+): Promise<NodeKey> {
+  let key = "";
+  await act(async () => {
+    lexical.update(() => {
+      const node = $textContaining(needle);
+      node.setTextContent(text);
+      node.select(caretOffset, caretOffset);
+      key = node.getKey();
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  return key;
 }
