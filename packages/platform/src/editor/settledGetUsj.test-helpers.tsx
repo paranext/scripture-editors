@@ -117,16 +117,25 @@ export const spanUsj: Usj = {
   ],
 };
 
+/** A mounted test editor: its public ref, the raw Lexical editor, and the teardown a row needs
+ * when what it is pinning is what happens after the view goes away. */
+interface MountedEditor {
+  ref: RefObject<EditorRef | null>;
+  lexical: LexicalEditor;
+  unmount: () => void;
+}
+
 async function mountEditor(
   usj: Usj,
   view: ViewOptions,
   { onUsjChange, onSelectionChange, scrRef }: MountOptions = {},
-): Promise<{ ref: RefObject<EditorRef | null>; lexical: LexicalEditor }> {
+): Promise<MountedEditor> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
   const capture: ReactElement = <EditorRefPlugin editorRef={lexicalRef} />;
+  let unmount: (() => void) | undefined;
   await act(async () => {
-    render(
+    ({ unmount } = render(
       <Editor
         ref={ref}
         defaultUsj={usj}
@@ -137,10 +146,11 @@ async function mountEditor(
       >
         {capture}
       </Editor>,
-    );
+    ));
   });
   if (!lexicalRef.current) throw new Error("lexical editor was not captured");
-  return { ref, lexical: lexicalRef.current };
+  if (!unmount) throw new Error("render did not return a teardown");
+  return { ref, lexical: lexicalRef.current, unmount };
 }
 
 /**
@@ -158,7 +168,7 @@ async function mountEditor(
 export async function mountStandardViewEditor(
   usj: Usj,
   options: MountOptions = {},
-): Promise<{ ref: RefObject<EditorRef | null>; lexical: LexicalEditor }> {
+): Promise<MountedEditor> {
   return mountEditor(usj, requireStandardViewOptions(), options);
 }
 
@@ -168,9 +178,7 @@ export async function mountStandardViewEditor(
  * note's content to be genuinely inline-editable in the mounted editor (the default Standard view
  * collapses notes to a caller preview, never inline-editable).
  */
-export async function mountExpandedNoteEditor(
-  usj: Usj,
-): Promise<{ ref: RefObject<EditorRef | null>; lexical: LexicalEditor }> {
+export async function mountExpandedNoteEditor(usj: Usj): Promise<MountedEditor> {
   return mountEditor(usj, expandedNoteViewOptions());
 }
 

@@ -187,6 +187,31 @@ describe("failure mode 1 — a pending literal re-tokenizes into structure", () 
       end: { jsonPath: contentPath([2, charIndex, 0]), offset: 4 },
     });
   });
+
+  it("reports a backward selection as the same range a forward one gives", async () => {
+    const { lexical, para, context } = await pendingSpan();
+    const charIndex = settledCharIndex(para);
+    await act(async () => {
+      lexical.update(() => {
+        const node = $textContaining(live);
+        if (!$isTextNode(node)) throw new Error("expected a text node");
+        // Anchor past focus: the same bytes, selected right to left.
+        node.select(live.indexOf("LORD") + 4, live.indexOf("LORD"));
+      });
+      await Promise.resolve();
+    });
+
+    const selection = lexical
+      .getEditorState()
+      .read(() => $settledSelectionFromLive($prepareSettleScopes(context)));
+
+    // A range is a span of the document, not a gesture: the endpoints come back in document
+    // order whichever way the user dragged.
+    expect(selection).toEqual({
+      start: { jsonPath: contentPath([2, charIndex, 0]), offset: 0 },
+      end: { jsonPath: contentPath([2, charIndex, 0]), offset: 4 },
+    });
+  });
 });
 
 describe("failure mode 2 — declared bytes are missing from the settled document", () => {

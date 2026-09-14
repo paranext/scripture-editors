@@ -239,6 +239,29 @@ describe("reporting the selection while a literal is pending", () => {
     expect(settledCharacterAt(ref.current?.getUsj(), reported.start)).toBe("m");
   });
 
+  it("does not report once the editor has unmounted", async () => {
+    const onSelectionChange = vi.fn();
+    const { lexical, unmount } = await pendingSpanWithCaret(onSelectionChange);
+    onSelectionChange.mockClear();
+
+    await act(async () => {
+      lexical.update(() => {
+        const node = $textContaining(live);
+        if (!$isTextNode(node)) throw new Error("expected a text node");
+        node.select(live.indexOf(" made") + 1, live.indexOf(" made") + 1);
+        lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      });
+      // The report is queued and has not run. Tearing the view down before it drains has to
+      // cancel it: the deferred read force-commits the editor, and a host that has thrown the
+      // view away must not be told where the caret is in it.
+      unmount();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onSelectionChange).not.toHaveBeenCalled();
+  });
+
   it("reports synchronously when nothing is pending", async () => {
     const onSelectionChange = vi.fn();
     const { lexical } = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]), {

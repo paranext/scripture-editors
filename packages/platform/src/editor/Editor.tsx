@@ -213,6 +213,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // Which deferred selection report is still the current one. Every dispatch takes the next
   // ticket, so when several arrive in one tick only the last one's deferred report is delivered.
   const selectionReportTicketRef = useRef(0);
+  // Whether this instance is still mounted. `editorRef` cannot answer that: `EditorRefPlugin`
+  // assigns it in an effect with NO cleanup, so it still names this editor after the tree is gone,
+  // and a deferred report that trusted it would force-commit a detached editor and call back into
+  // a torn-down view.
+  const isMountedRef = useRef(true);
   // The document most recently ANNOUNCED to the host via `onUsjChange` — the yardstick the
   // historic-commit notifier below measures against, so undo/redo only re-announce a document the
   // host has not already been told about. Written on every emission (typed, applied, historic)
@@ -550,6 +555,42 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     [buildSettledPositionContext],
   );
 
+  // Clears the mount flag above. Declared beside its only consumers rather than with the other
+  // effects, since the flag is meaningless apart from them.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  /**
+   * The editor's selection in the coordinates the host reads — the SETTLED ones — flushing any
+   * in-flight update first, so what is reported is the committed document rather than a half-built
+   * one.
+   *
+   * The pending state is read INSIDE the flush rather than before it, because the commit this
+   * forces can settle the very pend that made a translation necessary in the first place.
+   *
+   * `undefined` is two different answers: there is nothing to report (no range selection, or a
+   * layout with no USJ locations at all), and the position could not be expressed against the
+   * settled document. Only the second loses the host something, so only it is logged.
+   */
+  const readSettledSelection = useCallback(
+    (editor: LexicalEditor, caller: string): SelectionRange | undefined =>
+      editor.read(() => {
+        const context = buildSettledPositionContext();
+        const settled = context && $settledSelectionFromLive($prepareSettleScopes(context));
+        if (!settled && !isBlockVerse && $isRangeSelection($getSelection()))
+          stableLogger?.warn(
+            `${caller} refused: the selection could not be expressed against the document the ` +
+              "host is reading",
+          );
+        return settled;
+      }),
+    [buildSettledPositionContext, isBlockVerse, stableLogger],
+  );
+
   /**
    * The host-facing selection report, deferred past the commit whenever a translation is needed.
    *
@@ -559,6 +600,14 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
    * the committed state a scope would be prepared against is still the PRE-move one. So a report
    * that needs translating waits for the commit and is coalesced to one per tick; a report that
    * needs none keeps the plugin's own timing exactly.
+   *
+   * Which of the two it is, is decided against the marker-edit engine's ledger as it stands DURING
+   * the dispatch, while the synchronous report carries the plugin's in-flight coordinates. Those
+   * two agree except in one shape: an update that creates the document's FIRST pend and dispatches
+   * a selection change within itself is still identity at dispatch time, so that one report goes
+   * out in live coordinates. It is a single report, immediately followed by a settle whose own
+   * dispatch reports settled coordinates — deliberately preferred over deferring every report on
+   * the chance that a pend appears later in the same update.
    */
   const handleSelectionChange = useCallback(
     (liveSelection: SelectionRange | undefined) => {
@@ -571,25 +620,21 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       }
       selectionReportTicketRef.current += 1;
       const ticket = selectionReportTicketRef.current;
-      // The pending state is read again inside the microtask rather than closed over: the commit
-      // may have settled the very pend that made this report need translating.
       queueMicrotask(() => {
+        if (!isMountedRef.current) return;
         if (ticket !== selectionReportTicketRef.current || editorRef.current !== editor) return;
         // `editor.read`, NOT `getEditorState().read`: the commit this is waiting for may still be
         // Lexical's own pending microtask, and only `read` flushes it first. The force-flush that
         // is a hazard inside a command listener is exactly what is wanted here, where the update
         // it would flush is no longer in flight.
-        const settled = editor.read(() => {
-          const committed = buildSettledPositionContext();
-          return committed && $settledSelectionFromLive($prepareSettleScopes(committed));
-        });
+        const settled = readSettledSelection(editor, "onSelectionChange");
         // That flush can dispatch a further selection change of its own, whose report supersedes
         // this one.
         if (ticket !== selectionReportTicketRef.current) return;
         onSelectionChange(settled);
       });
     },
-    [onSelectionChange, buildSettledPositionContext],
+    [onSelectionChange, buildSettledPositionContext, readSettledSelection],
   );
 
   // Built as a plain object (rebuilt per render, same as the previous inline useImperativeHandle
@@ -734,10 +779,16 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // The host resolves what this returns against `getUsj()`, which is the SETTLED document, so
       // a live position has to be carried across before it is reported
       // (positions/settledPositions.utils.ts).
+      //
+      // `editor.read` here, where the inbound entry points below use `getEditorState().read`: this
+      // is a host QUESTION, asked from outside any dispatch, and the answer has to describe the
+      // document the host would get from `getUsj()` — so flushing an update that is merely queued
+      // is the point, not a hazard. The inbound methods are called from anywhere, including from
+      // inside an in-flight update, where the same flush is the frozen-commit crash.
       const context = buildSettledPositionContext();
       if (!context || isLiveSettledIdentical(context))
         return editor.read($getUsjSelectionFromEditor);
-      return editor.read(() => $settledSelectionFromLive($prepareSettleScopes(context)));
+      return readSettledSelection(editor, "getSelection");
     },
     setSelection(selection) {
       if (isBlockVerse) {

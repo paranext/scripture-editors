@@ -1021,11 +1021,13 @@ function $getPreviousContentSibling(child: LexicalNode): LexicalNode | undefined
 
 /**
  * Gets the jsonPath indexes from a node by traversing up to the root using logical
- * (annotation-transparent) content indexes.
+ * (annotation-transparent) content indexes — the path every location's `jsonPath` is built from,
+ * and the answer for a node that is not itself a position (the first node of a region, a note a
+ * path has to be prefixed with).
  * @param node - The node to get the path for.
  * @returns An array of indexes representing the path from root to node.
  */
-function $getJsonPathIndexes(node: LexicalNode): number[] {
+export function $getJsonPathIndexes(node: LexicalNode): number[] {
   const jsonPathIndexes: number[] = [];
   let current: LexicalNode | null = node;
   while (current) {

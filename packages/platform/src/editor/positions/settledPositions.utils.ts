@@ -43,13 +43,9 @@ import {
   LexicalNode,
   NodeKey,
 } from "lexical";
+import { $getLogicalContentItems, $isNoteNode } from "shared";
 import {
-  $getLogicalContentItems,
-  $getLogicalIndexOfChild,
-  $getLogicalParent,
-  $isNoteNode,
-} from "shared";
-import {
+  $getJsonPathIndexes,
   $getLocationFromNode,
   $getNodeFromLocation,
   $getUsjSelectionFromEditor,
@@ -420,24 +416,6 @@ export function $liveSelectionFromSettled<T extends SelectionRange | AnnotationR
   return { ...settled, start, end };
 }
 
-/**
- * The logical content indexes addressing `node` from the root — the same path
- * `$getLocationFromNode` builds a location's `jsonPath` from, recomputed here for a node that is
- * not itself a position: a scope's first node, or a settling note the settled path has to be
- * prefixed with.
- */
-function $contentIndexesOf(node: LexicalNode): number[] {
-  const indexes: number[] = [];
-  for (let current: LexicalNode | null = node; current; ) {
-    const parent = $getLogicalParent(current);
-    if (!parent) break;
-    const index = $getLogicalIndexOfChild(parent, current);
-    if (index >= 0) indexes.unshift(index);
-    current = parent;
-  }
-  return indexes;
-}
-
 /** `location`'s top-level index restated in settled coordinates. Nothing below the top level
  * moves: a scope the settle did not rebuild keeps its own structure, and only how many settled
  * items each PRECEDING pending scope becomes can shift it. */
@@ -454,9 +432,10 @@ function settledTopTranslated<T extends UsjDocumentLocation>(
 }
 
 /** Where a scope's own settled content sits, in settled content indexes: the scope's live path
- * with its top-level index restated. A note settles in place, so only the index above it moves. */
+ * (the same walk `$getLocationFromNode` builds a `jsonPath` from) with its top-level index
+ * restated. A note settles in place, so only the index above it moves. */
 function $settledScopePath(prepared: PreparedScopes, plan: SettleScopePlan): number[] {
-  const indexes = $contentIndexesOf(plan.liveNodes[0]);
+  const indexes = $getJsonPathIndexes(plan.liveNodes[0]);
   if (indexes.length === 0) return indexes;
   return [prepared.liveToSettledTopIndex(indexes[0]), ...indexes.slice(1)];
 }
