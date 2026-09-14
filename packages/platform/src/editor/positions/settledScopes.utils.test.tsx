@@ -146,4 +146,52 @@ describe("$prepareSettleScopes", () => {
 
     expect(onlyPlan(second.byFirstLiveKey)).toBe(onlyPlan(first.byFirstLiveKey));
   });
+
+  it("rebuilds the plan once the scope's bytes change", async () => {
+    const { lexical } = await mountStandardViewEditor(twoParaUsj(["plain body"]));
+    await typeLiteral(lexical, "plain body", "plain \\nd body\\nd* tail");
+    const cache = { entries: new Map() };
+    const before = lexical
+      .getEditorState()
+      .read(() => $prepareSettleScopes(settledPositionContext(lexical, { cache })));
+    const beforePlan = onlyPlan(before.byFirstLiveKey);
+
+    await typeLiteral(lexical, "plain \\nd body", "plain \\nd other\\nd* tail");
+    const after = lexical
+      .getEditorState()
+      .read(() => $prepareSettleScopes(settledPositionContext(lexical, { cache })));
+
+    const afterPlan = onlyPlan(after.byFirstLiveKey);
+    expect(afterPlan).not.toBe(beforePlan);
+    expect(afterPlan.scratchFragment?.text).toContain("other");
+  });
+
+  it("drops a cached entry once its scope stops being pending", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(twoParaUsj(["plain body"]));
+    await typeLiteral(lexical, "plain body", "plain \\nd body\\nd* tail");
+    const cache = { entries: new Map() };
+    lexical
+      .getEditorState()
+      .read(() => $prepareSettleScopes(settledPositionContext(lexical, { cache })));
+    expect(cache.entries.size).toBe(1);
+
+    // Depart the paragraph and commit: the engine settles it for real, and nothing is pending any
+    // more. Mirrors the settled-output suites' own departure (settledGetUsj.test.tsx).
+    await act(async () => {
+      lexical.update(() => {
+        $textContaining("depart here").select(0, 0);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => ref.current?.commitPendingMarkerEdits());
+    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBe(0);
+
+    const prepared = lexical
+      .getEditorState()
+      .read(() => $prepareSettleScopes(settledPositionContext(lexical, { cache })));
+
+    expect(prepared.byFirstLiveKey.size).toBe(0);
+    expect(cache.entries.size).toBe(0);
+  });
 });

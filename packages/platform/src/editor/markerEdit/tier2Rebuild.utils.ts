@@ -1062,6 +1062,45 @@ export function $buildParaFragment(
   return out;
 }
 
+/**
+ * One paragraph SCOPE's fragment: each paragraph's own fragment ({@link $buildParaFragment})
+ * concatenated, with a single space standing in for the newline between two of them and every
+ * span rebased onto the joined text. `undefined` when the scope is empty or any paragraph in it
+ * is excluded by the guard rails — a scope the engine cannot fully re-derive is never rebuilt.
+ *
+ * A scope of more than one paragraph is the unknown-split rejoin ({@link $unknownSplitRejoinScope},
+ * markerEditTier1.utils.ts), whose whole point is that the tokenizer must see the JOINED bytes.
+ *
+ * ONE definition for every consumer of a paragraph scope's bytes: the mutating rebuild
+ * ({@link $rebuildParas}), the read-only settle (`$settledParaScope`, virtualSettle.utils.ts) and
+ * the settled-position basis (`settledScopes.utils.ts`) all tokenize or byte-map against this
+ * text, so a difference in how any of them joined it would put those three out of agreement about
+ * what the same scope says.
+ *
+ * Read-only: walks the nodes, so call inside `editor.update()` or an editor-state read.
+ */
+export function $buildParaScopeFragment(
+  paras: readonly LexicalNode[],
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): FragmentAccumulator | undefined {
+  if (paras.length === 0) return undefined;
+  const combined: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  for (const para of paras) {
+    if (!$isParaNode(para)) return undefined;
+    const fragment = $buildParaFragment(para, getMarkerFn, viewOptions);
+    if (!fragment) return undefined;
+    if (combined.text.length > 0) combined.text += " ";
+    const base = combined.text.length;
+    fragment.spans.forEach((span) =>
+      combined.spans.push({ ...span, start: span.start + base, end: span.end + base }),
+    );
+    combined.sentinels.push(...fragment.sentinels);
+    combined.text += fragment.text;
+  }
+  return combined;
+}
+
 /** Replace each U+FFFC in the rebuilt tree with the next preserved node run. */
 function $replaceSentinels(roots: LexicalNode[], originals: LexicalNode[][]): void {
   let queueIndex = 0;
@@ -1560,20 +1599,10 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
   if (paras.length === 0) return false;
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
 
-  const combined: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
-  for (const para of paras) {
-    const fragment = $buildParaFragment(para, getMarkerFn, viewOptions);
-    if (!fragment) {
-      logger?.debug("[MarkerEdit] Tier 2 skipped: paragraph excluded by guard rails");
-      return false;
-    }
-    if (combined.text.length > 0) combined.text += " ";
-    const base = combined.text.length;
-    fragment.spans.forEach((span) =>
-      combined.spans.push({ ...span, start: span.start + base, end: span.end + base }),
-    );
-    combined.sentinels.push(...fragment.sentinels);
-    combined.text += fragment.text;
+  const combined = $buildParaScopeFragment(paras, getMarkerFn, viewOptions);
+  if (!combined) {
+    logger?.debug("[MarkerEdit] Tier 2 skipped: paragraph excluded by guard rails");
+    return false;
   }
 
   // Capture the caret as a fragment byte anchor before mutating anything, and note whether

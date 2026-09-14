@@ -3,6 +3,15 @@
  * it straight back to `setAnnotation`. While an edit is pending those are two different documents,
  * and the top-level indexes of one do not name the same paragraphs as the other — so an untranslated
  * path either fails to resolve or, worse, resolves onto the wrong paragraph.
+ *
+ * Both rows annotate a paragraph OUTSIDE the pending one, and deliberately so: a Tier-2 rebuild
+ * replaces its paragraph's children wholesale, and a `TypedMarkNode` is not among the nodes it
+ * preserves — so an annotation placed inside the paragraph that is settling does land on the right
+ * bytes, and is then discarded when that paragraph settles. That is true with nothing pending at
+ * all (annotate, then pend and settle in the same paragraph), so it is a property of the rebuild
+ * rather than of this translation, and pinning it belongs with the rebuild. The translation's own
+ * behavior INSIDE a pending paragraph is asserted in settledPositions.inbound.test.tsx, against
+ * the same `$liveSelectionFromSettled` output these methods consume.
  */
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { contentPath, twoParaUsj, $textContaining } from "./positions.test-helpers";

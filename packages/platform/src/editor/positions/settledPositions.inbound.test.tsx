@@ -10,7 +10,7 @@
  */
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes } from "./settledScopes.utils";
-import { $livePointFromSettledLocation } from "./settledPositions.utils";
+import { $liveSelectionFromSettled, $livePointFromSettledLocation } from "./settledPositions.utils";
 import {
   contentPath,
   propertyPath,
@@ -20,7 +20,12 @@ import {
 } from "./positions.test-helpers";
 import { SettledPositionContext } from "./settledPositions.model";
 import { FragmentPoint } from "../markerEdit/tier2Rebuild.utils";
-import { MarkerObject, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
+import {
+  getUsjDocumentLocationTypeName,
+  MarkerObject,
+  Usj,
+  UsjDocumentLocation,
+} from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $getRoot, $isTextNode, LexicalEditor, NodeKey } from "lexical";
 import {
@@ -54,6 +59,22 @@ function settledCharIndex(para: MarkerObject): number {
     para.content?.findIndex((item) => typeof item !== "string" && item.type === "char") ?? -1;
   if (index < 0) throw new Error(`no settled char span in ${JSON.stringify(para)}`);
   return index;
+}
+
+/**
+ * The LIVE location `location` becomes — the path production actually runs: `setSelection`,
+ * `setAnnotation` and `insertNote` all hand `$liveSelectionFromSettled`'s output to the editor's
+ * existing resolvers, so what those resolvers see is what this returns.
+ */
+function liveLocation(
+  lexical: LexicalEditor,
+  context: SettledPositionContext,
+  location: UsjDocumentLocation,
+): UsjDocumentLocation | undefined {
+  return lexical.getEditorState().read(() => {
+    const prepared = $prepareSettleScopes(context);
+    return $liveSelectionFromSettled(context, prepared, { start: location })?.start;
+  });
 }
 
 /** Resolve `location` against the live tree through the settled basis. */
@@ -105,15 +126,19 @@ describe("failure mode 1 — a pending literal re-tokenizes into structure", () 
   it("maps a settled text offset past the span back onto the live literal", async () => {
     const { lexical, key, para, context } = await pendingSpan();
     const tailIndex = settledTextIndex(para, " made");
+    const location = { jsonPath: contentPath([2, tailIndex]), offset: 1 };
 
-    const point = livePoint(lexical, context, {
-      jsonPath: contentPath([2, tailIndex]),
-      offset: 1,
-    });
+    const point = livePoint(lexical, context, location);
 
     // The settled `" made"` is three separate items in the settled paragraph but one run of bytes
     // in the live text node, where `m` sits at offset 30.
     expect(point).toEqual({ key, offset: live.indexOf(" made") + 1, type: "text" });
+    // And what the editor's own resolvers are handed: the same offset, against the ONE live text
+    // item the pending paragraph still has.
+    expect(liveLocation(lexical, context, location)).toEqual({
+      jsonPath: contentPath([2, 0]),
+      offset: live.indexOf(" made") + 1,
+    });
   });
 
   it("maps a settled offset INSIDE the span onto the literal bytes it came from", async () => {
@@ -131,12 +156,18 @@ describe("failure mode 1 — a pending literal re-tokenizes into structure", () 
   it("maps the settled span's marker location onto the live `\\` that spells it", async () => {
     const { lexical, key, para, context } = await pendingSpan();
     const charIndex = settledCharIndex(para);
+    const location = { jsonPath: contentPath([2, charIndex]) };
 
-    const point = livePoint(lexical, context, {
-      jsonPath: contentPath([2, charIndex]),
-    });
+    const point = livePoint(lexical, context, location);
 
     expect(point).toEqual({ key, offset: live.indexOf("\\nd"), type: "text" });
+    // The documented lossy round trip: the live tree has no glyph to name, because those bytes are
+    // still plain text there — so a settled marker location comes back as a text location at the
+    // `\` it is spelled with, which resolves to the same place.
+    expect(liveLocation(lexical, context, location)).toEqual({
+      jsonPath: contentPath([2, 0]),
+      offset: live.indexOf("\\nd"),
+    });
   });
 });
 
@@ -171,13 +202,29 @@ describe("failure mode 2 — declared bytes are missing from the settled documen
 
   it("shifts a settled offset past the declaration back over the declared bytes", async () => {
     const { lexical, key, settledText, context } = await declaredRun();
+    const location = { jsonPath: contentPath([2, 0]), offset: settledText.indexOf("made") };
+
+    const point = livePoint(lexical, context, location);
+
+    expect(point).toEqual({ key, offset: live.indexOf("made"), type: "text" });
+    expect(liveLocation(lexical, context, location)).toEqual({
+      jsonPath: contentPath([2, 0]),
+      offset: live.indexOf("made"),
+    });
+  });
+
+  it("snaps the one settled space onto the left-hand live space of the run it stands for", async () => {
+    const { lexical, key, settledText, context } = await declaredRun();
 
     const point = livePoint(lexical, context, {
       jsonPath: contentPath([2, 0]),
-      offset: settledText.indexOf("made"),
+      offset: settledText.indexOf("made") - 1,
     });
 
-    expect(point).toEqual({ key, offset: live.indexOf("made"), type: "text" });
+    // Cutting the declared bytes leaves TWO live spaces where the settled document shows one (the
+    // tokenizer regularizes the run), so that one settled space stands for both — and a position
+    // with more than one byte to choose from snaps LEFT, onto the first of them.
+    expect(point).toEqual({ key, offset: live.indexOf(" \\nd"), type: "text" });
   });
 
   it("leaves a settled offset BEFORE the declaration alone", async () => {
@@ -329,9 +376,17 @@ describe("every location subtype, while the paragraph is pending for an unrelate
     return glyph;
   }
 
-  const rows: { name: string; location: UsjDocumentLocation; $expected: () => FragmentPoint }[] = [
+  const rows: {
+    name: string;
+    location: UsjDocumentLocation;
+    /** The subtype the LIVE location must still be — these bytes are real nodes in the live tree,
+     * so nothing about the host's position has to be approximated away. */
+    liveType: string;
+    $expected: () => FragmentPoint;
+  }[] = [
     {
       name: "UsjMarkerLocation — the char span's opening `\\`",
+      liveType: "UsjMarkerLocation",
       location: { jsonPath: contentPath([2, 2]) },
       $expected: () => ({
         key: $glyph("nd", "opening").getKey(),
@@ -341,6 +396,7 @@ describe("every location subtype, while the paragraph is pending for an unrelate
     },
     {
       name: "UsjPropertyValueLocation — the char span's marker name",
+      liveType: "UsjPropertyValueLocation",
       location: { jsonPath: propertyPath([2, 2], "marker"), propertyOffset: 1 },
       $expected: () => ({
         key: $glyph("nd", "opening").getKey(),
@@ -350,6 +406,7 @@ describe("every location subtype, while the paragraph is pending for an unrelate
     },
     {
       name: "UsjClosingMarkerLocation — a byte of `\\nd*`",
+      liveType: "UsjClosingMarkerLocation",
       location: { jsonPath: contentPath([2, 2]), closingMarkerOffset: 1 },
       $expected: () => ({
         key: $glyph("nd", "closing").getKey(),
@@ -359,6 +416,7 @@ describe("every location subtype, while the paragraph is pending for an unrelate
     },
     {
       name: "UsjTextContentLocation — ordinary content",
+      liveType: "UsjTextContentLocation",
       location: { jsonPath: contentPath([2, 1]), offset: 3 },
       $expected: () => ({
         key: $textContaining("In the beginning").getKey(),
@@ -368,6 +426,7 @@ describe("every location subtype, while the paragraph is pending for an unrelate
     },
     {
       name: "UsjAttributeMarkerLocation — the `\\` of `\\va`",
+      liveType: "UsjAttributeMarkerLocation",
       location: { jsonPath: versePath, keyName: "altnumber" },
       $expected: () => ({
         key: $glyph("va", "opening").getKey(),
@@ -377,6 +436,7 @@ describe("every location subtype, while the paragraph is pending for an unrelate
     },
     {
       name: "UsjAttributeKeyLocation — a byte of the `\\va` marker name",
+      liveType: "UsjAttributeKeyLocation",
       location: { jsonPath: versePath, keyName: "altnumber", keyOffset: 1 },
       $expected: () => ({
         key: $glyph("va", "opening").getKey(),
@@ -386,6 +446,7 @@ describe("every location subtype, while the paragraph is pending for an unrelate
     },
     {
       name: "UsjClosingAttributeMarkerLocation — a byte of `\\va*`",
+      liveType: "UsjClosingAttributeMarkerLocation",
       location: { jsonPath: versePath, keyName: "altnumber", keyClosingMarkerOffset: 1 },
       $expected: () => ({
         key: $glyph("va", "closing").getKey(),
@@ -395,6 +456,7 @@ describe("every location subtype, while the paragraph is pending for an unrelate
     },
     {
       name: "UsjPropertyValueLocation — the verse's own number",
+      liveType: "UsjPropertyValueLocation",
       location: { jsonPath: propertyPath([2, 0], "number"), propertyOffset: 0 },
       $expected: () => {
         const verse = $getRoot().getAllTextNodes().find($isVerseNode);
@@ -404,12 +466,20 @@ describe("every location subtype, while the paragraph is pending for an unrelate
     },
   ];
 
-  it.each(rows)("$name", async ({ location, $expected }) => {
+  it.each(rows)("$name", async ({ location, liveType, $expected }) => {
     const { lexical, context } = await pendingParagraph();
 
     const point = livePoint(lexical, context, location);
 
     expect(point).toEqual(lexical.getEditorState().read($expected));
+    // And through the path production takes: the live location the editor's own resolvers are
+    // handed. Every construct here survives the settle as the same node, so the host's position
+    // comes back unchanged — subtype included, which is what byte addressing buys (caret
+    // addressing reports the end of the preceding text instead, losing the subtype).
+    const live = liveLocation(lexical, context, location);
+    expect(live).toBeDefined();
+    expect(live && getUsjDocumentLocationTypeName(live)).toBe(liveType);
+    expect(live).toEqual(location);
   });
 });
 

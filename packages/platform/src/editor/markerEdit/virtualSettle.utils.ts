@@ -37,7 +37,7 @@ import { $serializeExpandedNoteContent, ATOMIC_SENTINEL } from "./settleShared.u
 import {
   $buildChapterFragment,
   $buildNoteFragment,
-  $buildParaFragment,
+  $buildParaScopeFragment,
   $chapterAdjacentAttributeNodes,
   $isRebuildSentinel,
   $settleScopeForNode,
@@ -488,23 +488,10 @@ export function $settledParaScope(
   transient: TransientLiteral | undefined,
 ): SerializedLexicalNode[] | undefined {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
-  if (paras.length === 0) return undefined;
-  // Mirrors `$rebuildParas`'s own fragment join byte for byte, including the single space that
-  // stands in for the newline between two paragraphs — a scope of more than one paragraph is the
-  // unknown-split rejoin (see `$unknownSplitRejoinScope`), and the settled output a consumer
-  // reads must be what that same widened rebuild produces.
-  const fragment: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
-  for (const para of paras) {
-    const built = $buildParaFragment(para, getMarkerFn, viewOptions);
-    if (!built) return undefined;
-    if (fragment.text.length > 0) fragment.text += " ";
-    const base = fragment.text.length;
-    built.spans.forEach((span) =>
-      fragment.spans.push({ ...span, start: span.start + base, end: span.end + base }),
-    );
-    fragment.sentinels.push(...built.sentinels);
-    fragment.text += built.text;
-  }
+  // The SHARED scope join (`$buildParaScopeFragment`, tier2Rebuild.utils.ts), so the settled output
+  // a consumer reads is built from the same bytes the mutating rebuild would tokenize.
+  const fragment = $buildParaScopeFragment(paras, getMarkerFn, viewOptions);
+  if (!fragment) return undefined;
   const fragmentText = transient
     ? $fragmentTextWithoutTransient(fragment, transient)
     : fragment.text;

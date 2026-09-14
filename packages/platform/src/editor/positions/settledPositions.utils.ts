@@ -296,7 +296,9 @@ function $livePointInPreservedRun(
   resolved: Extract<ScratchResolution, { kind: "preserved" }>,
 ): FragmentPoint | undefined {
   const member = plan.liveFragment?.sentinels[resolved.sentinelIndex]?.[resolved.memberIndex];
-  if (!member) return undefined;
+  // A memoized plan holds live node references, and the tree can have moved on under it (an undo,
+  // a host `setUsj`). Refuse such a position rather than walking a detached node, which invariants.
+  if (!member?.isAttached()) return undefined;
   // A note that is ALSO settling was handed through this scope as its SETTLED self, so its live
   // content is not the same subtree — that one crosses by its own fragment bytes instead.
   const notePlan = prepared.byFirstLiveKey.get(member.getKey());

@@ -13,8 +13,8 @@
 import {
   $buildChapterFragment,
   $buildNoteFragment,
+  $buildParaScopeFragment,
   $chapterAdjacentAttributeNodes,
-  $buildParaFragment,
   FragmentAccumulator,
   Tier2Context,
 } from "../markerEdit/tier2Rebuild.utils";
@@ -115,29 +115,6 @@ export function cutFragment(
   };
 }
 
-/** The live fragment for a paragraph scope, joined exactly as `$settledParaScope` joins it — one
- * space stands in for the newline between two paragraphs, which is what an unknown-split rejoin's
- * widened scope hands the tokenizer. */
-function $buildParaScopeFragment(
-  paras: readonly LexicalNode[],
-  tier2: Tier2Context,
-): FragmentAccumulator | undefined {
-  const fragment: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
-  for (const para of paras) {
-    if (!$isParaNode(para)) return undefined;
-    const built = $buildParaFragment(para, tier2.getMarker, tier2.viewOptions);
-    if (!built) return undefined;
-    if (fragment.text.length > 0) fragment.text += " ";
-    const base = fragment.text.length;
-    built.spans.forEach((span) =>
-      fragment.spans.push({ ...span, start: span.start + base, end: span.end + base }),
-    );
-    fragment.sentinels.push(...built.sentinels);
-    fragment.text += built.text;
-  }
-  return fragment;
-}
-
 /** The fragment over one scope's nodes, whichever kind of scope it is. The same builder runs over
  * the live nodes and over the scratch editor's root children, so the two sides' bytes are
  * comparable by construction. */
@@ -146,7 +123,7 @@ function $buildScopeFragment(
   nodes: readonly LexicalNode[],
   tier2: Tier2Context,
 ): FragmentAccumulator | undefined {
-  if (kind === "para") return $buildParaScopeFragment(nodes, tier2);
+  if (kind === "para") return $buildParaScopeFragment(nodes, tier2.getMarker, tier2.viewOptions);
   if (kind === "chapter") {
     const chapter = nodes.find($isChapterNode);
     return chapter && $buildChapterFragment(chapter, tier2.getMarker, tier2.viewOptions);
@@ -215,7 +192,11 @@ function $planSignature(
 ): string {
   const view = `${tier2.viewOptions.markerMode}/${tier2.viewOptions.noteMode}`;
   const content = liveNodes.map((node) => node.getTextContent()).join(SIGNATURE_SEPARATOR);
-  const declared = transient ? `${transient.run}@${transient.caretOffset}` : "";
+  // The declaration's own NODE is part of what it means: the same run at the same offset in a
+  // different node is a different cut, and therefore a different settled scope.
+  const declared = transient
+    ? `${transient.node.getKey()}:${transient.run}@${transient.caretOffset}`
+    : "";
   return [kind, view, fragmentText, content, declared].join(SIGNATURE_SEPARATOR);
 }
 
@@ -419,7 +400,12 @@ function $mapTopIndexes(topPlans: ReadonlyMap<NodeKey, SettleScopePlan>): {
  */
 export function $prepareSettleScopes(context: SettledPositionContext): PreparedScopes {
   const transient = $verifiedTransientLiteral(context.transientInput, context.lastKnownCaret);
-  if (context.pendedKeys.size === 0 && !transient) return identityPrepared();
+  if (context.pendedKeys.size === 0 && !transient) {
+    // Nothing is pending, so no cached plan can still be valid — and each one holds a scratch
+    // editor plus references to live nodes the tree may have since replaced.
+    context.cache.entries.clear();
+    return identityPrepared();
+  }
 
   const scopes = $collectSettleScopes(context.pendedKeys, context.tier2, transient);
   const byFirstLiveKey = new Map<NodeKey, SettleScopePlan>();
