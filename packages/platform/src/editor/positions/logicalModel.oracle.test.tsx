@@ -11,33 +11,19 @@
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
-import editorUsjAdaptor, {
-  initialize as initializeDeserialize,
-} from "../adaptors/editor-usj.adaptor";
-import {
-  initialize as initializeSerialize,
-  reset,
-  serializeEditorState,
-} from "../adaptors/usj-editor.adaptor";
+import editorUsjAdaptor from "../adaptors/editor-usj.adaptor";
 import { serializedState } from "../markerEdit/markerEdit.test-helpers";
 import { displayTextToUsj, normalizeSpaceRuns } from "../markerEdit/whitespaceDisplay.utils";
-import { MarkerContent, Usj, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerContent, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
 import {
   $getLogicalContentItems,
-  $getLogicalParent,
   $getLogicalTextLocation,
   $getTextNodeAtLogicalOffset,
-  $isAttributeRunNode,
-  $isChapterNode,
-  $isNoteNode,
-  getEditableCallerText,
-  LogicalContentItem,
   LogicalTextItem,
 } from "shared";
 import {
   $getRangeFromUsjSelection,
   $getUsjSelectionFromEditor,
-  $isImmutableNoteCallerNode,
   getViewOptions,
   hasStandardViewWhitespace,
   STANDARD_VIEW_MODE,
@@ -139,14 +125,6 @@ const modes: { name: string; viewOptions: ViewOptions; hasSeparators: boolean }[
   { name: "standard", viewOptions: standardViewOptions, hasSeparators: true },
 ];
 
-/** Serializes `usj` to an editor state string for `viewOptions` — the shape the editor loads. */
-function modeState(usj: Usj, viewOptions: ViewOptions): string {
-  initializeSerialize(undefined, undefined);
-  initializeDeserialize(undefined);
-  reset();
-  return JSON.stringify({ root: serializeEditorState(usj, viewOptions).root });
-}
-
 /**
  * The per-text-node display→data inversion the exporter applies, minus the space-run collapse.
  * Character-for-character, so an offset into the live text is the same offset into the result.
@@ -158,37 +136,6 @@ function invertDisplay(text: string, isStandard: boolean): string {
 /** The full per-text-node transform the exporter applies, collapse included. */
 function toSettledText(text: string, isStandard: boolean): string {
   return isStandard ? normalizeSpaceRuns(displayTextToUsj(text)) : text;
-}
-
-/**
- * Whether `item` is one the exporter emits nothing for, so it occupies no USJ position.
- *
- * Each of these is a node the editor→USJ conversion skips WHOLE while
- * `$shouldIgnoreNodeForContentIndexes` still counts it, so the model numbers one more content
- * item than the USJ has. That is a CONTENT-INDEX disagreement inside notes, chapters, and around
- * display runs — a different defect from the text-OFFSET agreement this suite pins, and one whose
- * fix needs decisions of its own (the note caller decorator lives in `shared-react`, which
- * `libs/shared` may not import; the chapter glyph is arguably the forward adaptor's shape to fix).
- * Dropping them here keeps the offset property covering every real text item instead of stopping
- * at the first element whose items do not line up. When the model learns to skip them this
- * predicate goes away and nothing else in the suite changes.
- */
-function $isSkippedByTheExporter(item: LogicalContentItem): boolean {
-  if (item.type === "element")
-    // An attribute display run wrapper (`\va`/`\vp`, `\ca`/`\cp`, a milestone's or note
-    // category's run) and a collapsed note's caller decorator.
-    return $isAttributeRunNode(item.node) || $isImmutableNoteCallerNode(item.node);
-
-  const parent = $getLogicalParent(item.segments[0].node);
-  // An editable ChapterNode holds its `\c N` glyph as plain text, and the USJ chapter marker
-  // carries no content at all.
-  if ($isChapterNode(parent)) return true;
-  // An expanded note's editable caller text (`+ `), which the exporter matches and drops.
-  return (
-    $isNoteNode(parent) &&
-    item.segments.length === 1 &&
-    item.segments[0].node.getTextContent() === getEditableCallerText(parent.getCaller())
-  );
 }
 
 /** A text item's live content — every segment's text with its presentation-only lead removed. */
@@ -293,16 +240,11 @@ function $checkElement(
   isStandard: boolean,
   report: OracleReport,
 ): void {
-  // Keep each item's own index alongside its USJ position: the model still numbers the items the
-  // exporter skips (see $isSkippedByTheExporter), and the coordinates it reports use that
-  // numbering, so the two must be carried separately.
-  const modeled = $getLogicalContentItems(parent)
-    .map((item, index) => ({ item, index }))
-    .filter(({ item }) => !$isSkippedByTheExporter(item));
+  const modeled = $getLogicalContentItems(parent);
   const content = usjContent ?? [];
   if (modeled.length !== content.length) {
     const kinds = modeled
-      .map(({ item }) => (item.type === "text" ? "text" : item.node.getType()))
+      .map((item) => (item.type === "text" ? "text" : item.node.getType()))
       .join(",");
     const usjKinds = content
       .map((entry) => (typeof entry === "string" ? "text" : entry.type))
@@ -310,9 +252,9 @@ function $checkElement(
     report.disagreements.push({ path, detail: `items [${kinds}] vs USJ [${usjKinds}]` });
     return;
   }
-  modeled.forEach(({ item, index }, position) => {
-    const entry = content[position];
-    const itemPath = `${path}.content[${position}]`;
+  modeled.forEach((item, index) => {
+    const entry = content[index];
+    const itemPath = `${path}.content[${index}]`;
     if (item.type === "text") {
       if (typeof entry !== "string") {
         report.disagreements.push({
@@ -340,7 +282,7 @@ describe.each(modes)(
   "logical text coordinates agree with the exporter ($name)",
   ({ viewOptions, hasSeparators }) => {
     it("maps every offset of every text item to the character the exporter emits there", async () => {
-      const { editor } = await baseTestEnvironment(modeState(usj2Sa, viewOptions));
+      const { editor } = await baseTestEnvironment(serializedState(usj2Sa, viewOptions));
       const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions);
       if (!usj) throw new Error("the editor state did not serialize to USJ");
 

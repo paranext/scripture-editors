@@ -2,9 +2,13 @@ import { $createImmutableTypedTextNode } from "../features/ImmutableTypedTextNod
 import { $createMarkerNode } from "../features/MarkerNode.js";
 import { $createTypedMarkNode, TypedMarkNode } from "../features/TypedMarkNode.js";
 import { $createCursorPlaceholderNode } from "../../plugins/CursorHandler/index.js";
+import { textTypeState } from "../collab/delta.state.js";
+import { $createAttributeRunNode } from "./AttributeRunNode.js";
+import { $createChapterNode, ChapterNode } from "./ChapterNode.js";
 import { $createCharNode, $isCharNode, CharNode } from "./CharNode.js";
 import { $createImmutableChapterNode } from "./ImmutableChapterNode.js";
 import { usjBaseNodes } from "./index.js";
+import { $createNoteNode } from "./NoteNode.js";
 import {
   $getElementOffsetFromLogicalIndex,
   $getLogicalContentItems,
@@ -15,7 +19,9 @@ import {
   $getTextNodeAtLogicalOffset,
   $isSomeChapterNode,
   $setCharNodeMarker,
+  $shouldIgnoreNodeForContentIndexes,
   closingMarkerText,
+  getEditableCallerText,
   getNextVerse,
   getUnknownAttributes,
   isSelectionStartNodeExpectedError,
@@ -29,7 +35,7 @@ import {
   removeNodeAndAfter,
   removeNodesBeforeNode,
 } from "./node.utils.js";
-import { NBSP } from "./node-constants.js";
+import { IMMUTABLE_NOTE_CALLER_NODE_TYPE, NBSP } from "./node-constants.js";
 import { $createParaNode } from "./ParaNode.js";
 import { createBasicTestEnvironment } from "./test.utils.js";
 import { $createVerseNode, VerseNode } from "./VerseNode.js";
@@ -37,13 +43,51 @@ import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import {
   $getNodeByKey,
   $getRoot,
+  $setState,
+  DecoratorNode,
   NodeKey,
   $createTextNode,
   $isElementNode,
   TextNode,
 } from "lexical";
 
-const nodes = [TypedMarkNode, ...usjBaseNodes];
+/**
+ * Stands in for shared-react's `ImmutableNoteCallerNode`, the decorator a collapsed note renders
+ * its caller with: `libs/shared` may not import that class, and the logical model recognizes the
+ * node by its registered type name, so anything registered under that name is the same node as
+ * far as the model is concerned.
+ */
+class NoteCallerStubNode extends DecoratorNode<null> {
+  static override getType(): string {
+    return IMMUTABLE_NOTE_CALLER_NODE_TYPE;
+  }
+
+  static override clone(node: NoteCallerStubNode): NoteCallerStubNode {
+    return new NoteCallerStubNode(node.__key);
+  }
+
+  static override importJSON(): NoteCallerStubNode {
+    return new NoteCallerStubNode();
+  }
+
+  override createDOM(): HTMLElement {
+    return document.createElement("span");
+  }
+
+  override updateDOM(): false {
+    return false;
+  }
+
+  override decorate(): null {
+    return null;
+  }
+
+  override isInline(): true {
+    return true;
+  }
+}
+
+const nodes = [TypedMarkNode, NoteCallerStubNode, ...usjBaseNodes];
 
 describe("Editor Node Utilities", () => {
   describe("isValidNumberedMarker()", () => {
@@ -1162,6 +1206,48 @@ describe("Editor Node Utilities", () => {
       });
     });
 
+    it("finds the glyph when the annotation started on it", () => {
+      // An annotation anchored at a marker location starts ON the opening glyph, so the mark can
+      // wrap the glyph together with the text, or the glyph alone.
+      let sharedText: TextNode;
+      let followingText: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        sharedText = $createTextNode(`${NBSP}LORD`);
+        followingText = $createTextNode(`${NBSP}God`);
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createCharNode("nd").append(
+              $createTypedMarkNode({ spelling: ["s1"] }).append(
+                $createMarkerNode("nd"),
+                sharedText,
+              ),
+              $createMarkerNode("nd", "closing"),
+            ),
+            $createCharNode("wj").append(
+              $createTypedMarkNode({ spelling: ["s2"] }).append($createMarkerNode("wj")),
+              followingText,
+              $createMarkerNode("wj", "closing"),
+            ),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        const para = $getRoot().getFirstChild();
+        if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
+        const [nd, wj] = para.getChildren().filter($isCharNode);
+
+        $expectTextItem($getLogicalContentItems(nd)[0], [
+          { text: `${NBSP}LORD`, start: 0, lead: 1 },
+        ]);
+        expect($getLogicalTextLocation(sharedText, 3)?.offset).toBe(2);
+        $expectTextItem($getLogicalContentItems(wj)[0], [
+          { text: `${NBSP}God`, start: 0, lead: 1 },
+        ]);
+        expect($getLogicalTextLocation(followingText, 3)?.offset).toBe(2);
+      });
+    });
+
     it("counts a leading NBSP that no opening glyph owns", () => {
       // Outside a char span an NBSP is the author's own `~`, and inside one only the NBSP
       // directly after the opening glyph is the separator — the text after a nested span's
@@ -1199,6 +1285,131 @@ describe("Editor Node Utilities", () => {
         $expectTextItem(charItems[0], [{ text: `${NBSP}LORD`, start: 0, lead: 1 }]);
         $expectTextItem(charItems[2], [{ text: `${NBSP}tail`, start: 0 }]);
         expect($getLogicalTextLocation(tailText, 1)?.offset).toBe(1);
+
+        // The nested span owns its own opening glyph, so its first text carries a separator too.
+        const nested = charItems[1];
+        if (nested.type !== "element" || !$isCharNode(nested.node))
+          throw new Error("Expected the nested char span");
+        $expectTextItem($getLogicalContentItems(nested.node)[0], [
+          { text: `${NBSP}said`, start: 0, lead: 1 },
+        ]);
+      });
+    });
+  });
+
+  describe("nodes the editor→USJ conversion emits nothing for", () => {
+    it("skips a verse's \\va / \\vp display run wrappers", () => {
+      let bodyText: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        bodyText = $createTextNode("In the beginning");
+        const va = $createAttributeRunNode("va").append(
+          $createMarkerNode("va"),
+          $createTextNode(`${NBSP}2`),
+          $createMarkerNode("va", "closing"),
+        );
+        const vp = $createAttributeRunNode("vp").append(
+          $createMarkerNode("vp"),
+          $createTextNode(`${NBSP}1a`),
+          $createMarkerNode("vp", "closing"),
+        );
+        $getRoot().append($createParaNode("p").append($createVerseNode("1"), va, vp, bodyText));
+      });
+
+      editor.getEditorState().read(() => {
+        const para = $getRoot().getFirstChild();
+        if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
+        const items = $getLogicalContentItems(para);
+
+        expect(items.map((item) => (item.type === "text" ? "text" : item.node.getType()))).toEqual([
+          "verse",
+          "text",
+        ]);
+        expect($getLogicalIndexOfChild(para, bodyText)).toBe(1);
+      });
+    });
+
+    it("skips a collapsed note's caller decorator", () => {
+      let content: CharNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        content = $createCharNode("ft").append($createTextNode("A note"));
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createNoteNode("f", "+", true).append(new NoteCallerStubNode(), content),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        const note = content.getParent();
+        if (!$isElementNode(note)) throw new Error("Expected the note");
+        const items = $getLogicalContentItems(note);
+
+        expect(items.map((item) => (item.type === "text" ? "text" : item.node.getType()))).toEqual([
+          "char",
+        ]);
+        expect($getLogicalIndexOfChild(note, content)).toBe(0);
+      });
+    });
+
+    it("skips an expanded note's editable caller text, but not content that reads like it", () => {
+      let content: CharNode;
+      let echoText: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        content = $createCharNode("ft").append($createTextNode("A note"));
+        echoText = $createTextNode(getEditableCallerText("+"));
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createNoteNode("f", "+", false).append(
+              $createMarkerNode("f"),
+              $createTextNode(getEditableCallerText("+")),
+              content,
+              echoText,
+              $createMarkerNode("f", "closing"),
+            ),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        const note = content.getParent();
+        if (!$isElementNode(note)) throw new Error("Expected the note");
+        const items = $getLogicalContentItems(note);
+
+        // The caller occupies the slot right after the opening glyph; the same bytes later in the
+        // note are content the exporter would emit, so the rule is positional, not textual.
+        expect(items.map((item) => (item.type === "text" ? "text" : item.node.getType()))).toEqual([
+          "char",
+          "text",
+        ]);
+        expect($getLogicalIndexOfChild(note, content)).toBe(0);
+        expect($getLogicalIndexOfChild(note, echoText)).toBe(1);
+      });
+    });
+
+    it("gives an editable chapter no logical content at all", () => {
+      let chapter: ChapterNode;
+      let paraText: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        const glyph = $createTextNode("\\c 1 ");
+        const ca = $createAttributeRunNode("ca");
+        const caValue = $createTextNode(`${NBSP}2`);
+        $setState(caValue, textTypeState, "attribute");
+        ca.append($createMarkerNode("ca"), caValue, $createMarkerNode("ca", "closing"));
+        chapter = $createChapterNode("1");
+        chapter.append(glyph, ca);
+        paraText = $createTextNode("In the beginning");
+        $getRoot().append(chapter, $createParaNode("p").append(paraText));
+      });
+
+      editor.getEditorState().read(() => {
+        // The chapter marker itself is content; the `\c N` glyph it displays is not.
+        expect($getLogicalContentItems(chapter)).toEqual([]);
+        expect(
+          chapter.getChildren().map((child) => $shouldIgnoreNodeForContentIndexes(child)),
+        ).toEqual([true, true]);
+        expect($getLogicalIndexOfChild(chapter, chapter.getFirstChildOrThrow())).toBe(-1);
+        expect($getLogicalIndexOfChild($getRoot(), chapter)).toBe(0);
+        expect($getLogicalIndexOfChild($getRoot(), paraText.getParentOrThrow())).toBe(1);
       });
     });
   });

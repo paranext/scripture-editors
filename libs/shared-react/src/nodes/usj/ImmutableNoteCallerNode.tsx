@@ -19,7 +19,13 @@ import {
   Spread,
 } from "lexical";
 import { MouseEvent, ReactElement, ReactNode } from "react";
-import { $isNoteNode, GENERATOR_NOTE_CALLER, HIDDEN_NOTE_CALLER, NoteNode } from "shared";
+import {
+  $isNoteNode,
+  GENERATOR_NOTE_CALLER,
+  HIDDEN_NOTE_CALLER,
+  IMMUTABLE_NOTE_CALLER_NODE_TYPE,
+  NoteNode,
+} from "shared";
 
 /**
  * A callback function type for handling click events.
@@ -78,7 +84,7 @@ export class ImmutableNoteCallerNode extends DecoratorNode<ReactNode> {
   }
 
   static override getType(): string {
-    return "immutable-note-caller";
+    return IMMUTABLE_NOTE_CALLER_NODE_TYPE;
   }
 
   static override clone(node: ImmutableNoteCallerNode): ImmutableNoteCallerNode {

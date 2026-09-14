@@ -56,6 +56,7 @@ import {
   getViewOptions,
   STANDARD_VIEW_MODE,
   TextSpacingPlugin,
+  ViewOptions,
 } from "shared-react";
 
 /** Narrow away `T | undefined` without a banned non-null assertion. */
@@ -406,12 +407,18 @@ export function noteUsx(
   );
 }
 
-/** Serialize `usj` to a standard-view editor state string (root wrapper). */
-export function serializedState(usj: ReturnType<typeof usxStringToUsj>): string {
+/**
+ * Serialize `usj` to an editor state string (root wrapper) — standard view unless `options` says
+ * otherwise, so a suite that needs another marker mode does not re-derive the adaptor handshake.
+ */
+export function serializedState(
+  usj: ReturnType<typeof usxStringToUsj>,
+  options: ViewOptions = viewOptions,
+): string {
   initializeSerialize(undefined, undefined);
   initializeDeserialize(undefined);
   reset();
-  const state = serializeEditorState(usj, viewOptions);
+  const state = serializeEditorState(usj, options);
   return JSON.stringify({ root: state.root });
 }
 

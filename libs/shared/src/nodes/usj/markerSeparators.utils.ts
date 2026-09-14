@@ -81,22 +81,31 @@ export function $isSeparatorPrefixHostText(node: LexicalNode | null | undefined)
  * The separator is display state the editor→USJ conversion strips, so that byte is not part of
  * the span's USJ text: anything that measures content or maps between live and settled text
  * offsets must skip it, or every offset inside a char span is off by one. Shape-based on purpose
- * — glyph adjacency, not view options, which this layer does not see.
+ * — glyph adjacency, not view options, which this layer does not see. Standard view's strip
+ * (`editor-usj.adaptor.ts`) is positionally broader — it takes a leading NBSP off ANY text child
+ * of a char span, so it would also eat an authored `~` right after a nested closer — and it is
+ * the side that should narrow to this rule, not this rule that should widen to it.
  *
  * Read-only: safe inside `editor.update()` or either read form.
  */
 export function $charSeparatorPrefixLength(node: TextNode): 0 | 1 {
   if (!$isSeparatorPrefixHostText(node) || !node.getTextContent().startsWith(NBSP)) return 0;
-  // The span is the nearest non-annotation ancestor; the glyph is the previous sibling at the
-  // same level, looking through an annotation wrapper the text may sit inside.
+  // The span is the nearest non-annotation ancestor, and the glyph is whatever sits immediately
+  // before the text in document order within it — annotation wrappers are transparent on BOTH
+  // sides. A host can annotate a range that starts on the opening glyph (a marker location), so
+  // the glyph can share the text's mark, sit in a mark of its own, or be a plain sibling of the
+  // mark the text is in.
   let child: LexicalNode = node;
+  let previous: LexicalNode | null = child.getPreviousSibling();
   let parent = child.getParent();
-  while (parent && $isTypedMarkNode(parent) && child.getPreviousSibling() === null) {
+  while (parent && $isTypedMarkNode(parent)) {
     child = parent;
     parent = child.getParent();
+    previous ??= child.getPreviousSibling();
   }
   if (!$isCharNode(parent)) return 0;
-  const previous = child.getPreviousSibling();
+  // A mark that ends right before the text hides the glyph as its last descendant.
+  while ($isTypedMarkNode(previous)) previous = previous.getLastChild();
   if (!$isMarkerNode(previous) || previous.getMarkerSyntax() !== "opening") return 0;
   // Only char-span glyphs take a separator (not a milestone's display run) — the same classifier
   // $openerSeparatorGap builds one with, so reading and writing can never disagree about which

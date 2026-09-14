@@ -36,6 +36,7 @@ import {
 import { $isMarkerNode, isSerializedMarkerNode } from "../features/MarkerNode.js";
 import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { $isUnknownNode, UnknownNode } from "../features/UnknownNode.js";
+import { $isAttributeRunNode } from "./AttributeRunNode.js";
 import { $isBookNode, BookNode } from "./BookNode.js";
 import {
   $isChapterNode,
@@ -44,7 +45,6 @@ import {
   SerializedChapterNode,
 } from "./ChapterNode.js";
 import { $isCharNode, CharNode, isSerializedCharNode } from "./CharNode.js";
-import { $charSeparatorPrefixLength } from "./markerSeparators.utils.js";
 import {
   $isImmutableChapterNode,
   ImmutableChapterNode,
@@ -61,7 +61,14 @@ import { $isMilestoneNode, MilestoneNode } from "./MilestoneNode.js";
 import { $isNoteNode, NoteNode } from "./NoteNode.js";
 import { $isParaNode, isSerializedParaNode, ParaNode, SerializedParaNode } from "./ParaNode.js";
 import { $isVerseNode, VerseNode } from "./VerseNode.js";
-import { EMPTY_CHAR_PLACEHOLDER_TEXT, NBSP, UnknownAttributes } from "./node-constants.js";
+import { $noteEditableCallerNode } from "./attributeDisplay.utils.js";
+import { $charSeparatorPrefixLength } from "./markerSeparators.utils.js";
+import {
+  EMPTY_CHAR_PLACEHOLDER_TEXT,
+  IMMUTABLE_NOTE_CALLER_NODE_TYPE,
+  NBSP,
+  UnknownAttributes,
+} from "./node-constants.js";
 import { isCursorPlaceholderOnly } from "../../plugins/CursorHandler/index.js";
 
 export type NodesWithMarker =
@@ -953,9 +960,11 @@ function getSelectionStartNodeInner(selection: BaseSelection | null): LexicalNod
  * Checks whether a node is presentation-only and therefore not part of USJ content:
  * line breaks, marker scaffolding (editable and visible), marker-trailing-space or
  * attribute text (as a plain TextNode or as an opaque block's folded ImmutableTypedTextNode
- * display run, e.g. an UnknownNode's `\cat` byte display), and empty or NBSP-only spacer text
- * (which the editor→USJ conversion drops as well; ideally the USJ→editor conversion would
- * create such spacers as presentation-typed text nodes instead — follow-up work).
+ * display run, e.g. an UnknownNode's `\cat` byte display), attribute display-run wrappers,
+ * either shape of a note's caller, everything an editable chapter displays, and empty or
+ * NBSP-only spacer text (which the editor→USJ conversion drops as well; ideally the USJ→editor
+ * conversion would create such spacers as presentation-typed text nodes instead — follow-up
+ * work).
  * @param node - The node to check.
  * @returns `true` if the node must be skipped when computing USJ content indexes.
  */
@@ -964,11 +973,34 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
   if ($isLineBreakNode(node)) return true;
   if ($isMarkerNode(node)) return true;
   if ($isVisibleMarkerNode(node)) return true;
+  // An attribute display run (`\va`/`\vp`, `\ca`/`\cp`, a milestone's or a note category's) is
+  // a wrapper around glyph and attribute-byte pieces that are each presentation-only on their
+  // own, so the whole subtree carries no content — which is why the editor→USJ conversion skips
+  // it without recursing.
+  if ($isAttributeRunNode(node)) return true;
+  // A collapsed note's caller decorator lives in the react layer, which this layer may not
+  // import; the registered type name is the contract between them.
+  if (node.getType() === IMMUTABLE_NOTE_CALLER_NODE_TYPE) return true;
   // ImmutableTypedTextNode's "attribute" flavor (an opaque block's folded attribute-byte display
   // run, e.g. an UnknownNode's `\cat ...\cat*`) is a DecoratorNode, not a TextNode, so it never
   // reaches the $isTextNode branch below — mirror the "marker" flavor handled above by
   // $isVisibleMarkerNode.
   if ($isImmutableTypedTextNode(node) && node.getTextType() === "attribute") return true;
+  const logicalParent = $getLogicalParent(node);
+  // A USJ chapter marker carries no content at all, so nothing an editable ChapterNode displays
+  // — the `\c N` glyph text and any `\ca`/`\cp` run — occupies a content position.
+  if ($isChapterNode(logicalParent)) return true;
+  // An expanded note's editable caller (` + `) is display the conversion drops. Anchored to the
+  // caller SLOT — the child right after the note's leading opening glyph(s), the same slot the
+  // note-content rebuild reads — so note content that happens to spell the caller is still
+  // content. The conversion matches those bytes ANYWHERE in the note and so drops such content
+  // outright; it is the side that should narrow to this rule.
+  if (
+    $isTextNode(node) &&
+    $isNoteNode(logicalParent) &&
+    $noteEditableCallerNode(logicalParent)?.is(node)
+  )
+    return true;
   if ($isTextNode(node)) {
     const textType = $getState(node, textTypeState);
     if (textType === MARKER_TRAILING_SPACE_TEXT_TYPE || textType === "attribute") return true;
@@ -1065,6 +1097,10 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
  * @returns the logical content items in document order.
  */
 export function $getLogicalContentItems(parent: ElementNode): LogicalContentItem[] {
+  // A chapter marker has no `content` in USJ: an editable ChapterNode's children are entirely the
+  // `\c N` glyph it displays and the runs that ride after it.
+  if ($isChapterNode(parent)) return [];
+
   const items: LogicalContentItem[] = [];
   let run: { segments: LogicalTextSegment[]; length: number } | undefined;
 
