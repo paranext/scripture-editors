@@ -21,14 +21,16 @@ import {
   $createRangeSelection,
   $getRoot,
   $getSelection,
+  $getState,
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
-  ElementNode,
   LexicalNode,
   RangeSelection,
+  TextNode,
 } from "lexical";
 import {
+  $chapterGlyphTextNode,
   $getElementOffsetFromLogicalIndex,
   $getLogicalContentItems,
   $getLogicalIndexOfChild,
@@ -36,15 +38,33 @@ import {
   $getLogicalPointFromElementPoint,
   $getLogicalTextLocation,
   $getTextNodeAtLogicalOffset,
+  $isBookNode,
+  $isChapterNode,
+  $isCharNode,
+  $isImmutableTypedTextNode,
   $isMarkerNode,
+  $isMilestoneNode,
+  $isNoteNode,
   $isParaLikeNode,
   $isTypedMarkNode,
+  $isUnknownNode,
   $isVerseBlockNode,
+  $isVerseNode,
   $isVisibleMarkerNode,
+  $noteEditableCallerNode,
+  $ownerOfRunPiece,
   $shouldIgnoreNodeForContentIndexes,
+  defaultMarkerAttribute,
+  displayRunDescriptor,
+  type DisplayRunKind,
+  IMMUTABLE_NOTE_CALLER_NODE_TYPE,
   ImmutableTypedTextNode,
   type LogicalContentItem,
   MarkerNode,
+  milestoneDefaultAttribute,
+  openingMarkerText,
+  textTypeState,
+  unknownDisplayParts,
 } from "shared";
 
 /**
@@ -84,8 +104,8 @@ export function $getRangeFromUsjSelection(
   if (!startNode || !endNode || startOffset === undefined || endOffset === undefined)
     return undefined;
 
-  [startNode, startOffset] = $normalizeVisibleMarkerPoint(startNode, startOffset);
-  [endNode, endOffset] = $normalizeVisibleMarkerPoint(endNode, endOffset);
+  [startNode, startOffset] = $normalizeDecoratorPoint(startNode, startOffset);
+  [endNode, endOffset] = $normalizeDecoratorPoint(endNode, endOffset);
 
   // Create selection range.
   const editorSelection = $createRangeSelection();
@@ -130,7 +150,574 @@ export function $getUsjSelectionFromEditor(): SelectionRange | undefined {
   return { start, end };
 }
 
-function $getNodeFromLocation(
+// ---------------------------------------------------------------------------
+// USFM display bytes
+// ---------------------------------------------------------------------------
+
+/**
+ * What one span of a node's display text is, in USJ terms. `precedingText` is the snap-left answer
+ * for a byte whose nearest representable position is the content BEFORE the node — the `|` that
+ * opens a char span's attribute run.
+ */
+type DisplayByteKind =
+  | { kind: "marker" }
+  | { kind: "closingMarker" }
+  | { kind: "property"; property: string }
+  | { kind: "attributeKey"; keyName: string }
+  | { kind: "attributeMarker"; keyName: string }
+  | { kind: "closingAttributeMarker"; keyName: string }
+  | { kind: "precedingText" };
+
+/**
+ * One run of display bytes that share a USJ location. A span covers every offset from `start` up
+ * to the next span's `start` (or the end of the text for the last one), and the offset it reports
+ * is `base + (offset - start)` — so a span whose bytes continue an earlier offset space (the space
+ * after `\ca`, which counts into the attribute marker name) starts counting from `base` rather
+ * than 0.
+ */
+interface DisplayByteSpan {
+  start: number;
+  base: number;
+  bytes: DisplayByteKind;
+}
+
+/** A node's display bytes: which USJ node they belong to, and what each one is. */
+interface DisplayBytes {
+  /** The USJ node whose bytes these are — the span's char, the run's verse, the note. */
+  owner: LexicalNode;
+  /** Spans in document order; the first starts at 0. */
+  spans: DisplayByteSpan[];
+  /** The length of the display text the spans index into. */
+  length: number;
+}
+
+/** The USJ attribute each attribute-marker display run carries, keyed by the run's marker name. */
+const ATTRIBUTE_MARKER_KEYS: { readonly [markerName: string]: string | undefined } = {
+  va: "altnumber",
+  vp: "pubnumber",
+  ca: "altnumber",
+  cp: "pubnumber",
+  cat: "category",
+};
+
+/** The display-run kinds whose pieces carry their owner's bytes, in the order a scan consults them. */
+const BYTE_CARRYING_RUN_KINDS: readonly DisplayRunKind[] = [
+  "va",
+  "vp",
+  "ca",
+  "cp",
+  "cat",
+  "milestone",
+  "char",
+  "optbreak",
+];
+
+/** One `name="value"` pair of a USFM pipe-attribute list. */
+const ATTRIBUTE_PAIR_REGEX = /([^\s="|]+)="([^"]*)"/g;
+
+/** An attribute marker opening a run of display bytes, e.g. the `\cat ` of `\cat Missions\cat*`. */
+const ATTRIBUTE_MARKER_RUN_REGEX = /^[ \u00A0]*\\([^\s\\*]+)[ \u00A0]/;
+
+/** A property path, always in bracket notation — the one spelling that survives an attribute name
+ * carrying anything but word characters (`x-custom-attribute-1`), and the spelling
+ * `UsjReaderWriter` emits. */
+function propertyJsonPath(ownerPath: string, property: string): PropertyJsonPath {
+  return `${ownerPath}['${property}']` as PropertyJsonPath;
+}
+
+/** The spans of an opening marker glyph: the `\` (plus a nested span's `+`, which has no location
+ * of its own and collapses onto it), then the marker name. */
+function markerGlyphSpans(prefixLength: number): DisplayByteSpan[] {
+  return [
+    { start: 0, base: 0, bytes: { kind: "marker" } },
+    { start: prefixLength, base: 0, bytes: { kind: "property", property: "marker" } },
+  ];
+}
+
+/** A single span covering a whole closing marker glyph. */
+function closingGlyphSpans(keyName?: string): DisplayByteSpan[] {
+  return [
+    {
+      start: 0,
+      base: 0,
+      bytes:
+        keyName === undefined
+          ? { kind: "closingMarker" }
+          : { kind: "closingAttributeMarker", keyName },
+    },
+  ];
+}
+
+/** Which piece of which display run `node` is, or `undefined` when it is not a run piece. */
+function $runPieceOf(
+  node: LexicalNode,
+): { owner: LexicalNode; kind: DisplayRunKind; role: "opener" | "value" | "closer" } | undefined {
+  const reference = $ownerOfRunPiece(node);
+  if (!reference) return undefined;
+  const pieces = displayRunDescriptor(reference.kind).scanPieces(reference.owner);
+  if (pieces.opener?.is(node)) return { ...reference, role: "opener" };
+  if (pieces.value?.is(node)) return { ...reference, role: "value" };
+  if (pieces.closer?.is(node)) return { ...reference, role: "closer" };
+  return undefined;
+}
+
+/**
+ * The spans of a USFM pipe-attribute list (`|lemma="grace" strong="G5485"`, `|grace`), starting at
+ * the byte after the `|`. A key's span reaches through its `=` and opening quote (so those bytes
+ * run one and two past the key), and a value's span reaches through its closing quote and the
+ * space before the next key (so those run one and two past the value). A list with no
+ * `name="value"` pair at all is the bare form a marker's default attribute collapses to.
+ */
+function pipeAttributeSpans(
+  text: string,
+  contentStart: number,
+  defaultAttributeName: string | undefined,
+): DisplayByteSpan[] {
+  const spans: DisplayByteSpan[] = [];
+  // `matchAll` rather than repeated `exec`: it iterates a clone, so the shared regex's `lastIndex`
+  // stays 0 and a second call cannot start mid-string.
+  for (const pair of text.slice(contentStart).matchAll(ATTRIBUTE_PAIR_REGEX)) {
+    const name = pair[1];
+    spans.push({
+      start: contentStart + pair.index,
+      base: 0,
+      bytes: { kind: "attributeKey", keyName: name },
+    });
+    spans.push({
+      // Past the key, its `=`, and its opening quote.
+      start: contentStart + pair.index + name.length + 2,
+      base: 0,
+      bytes: { kind: "property", property: name },
+    });
+  }
+  if (spans.length > 0) return spans;
+  if (defaultAttributeName === undefined) return [];
+  return [
+    { start: contentStart, base: 0, bytes: { kind: "property", property: defaultAttributeName } },
+  ];
+}
+
+/**
+ * The spans of an attribute marker's display run written as ONE string — the shape an opaque block
+ * renders (`\esb \cat Missions\cat*`), as opposed to the glyph/value/glyph node triplet an
+ * editable owner carries. A leading space counts into the enclosing marker's own name offset space.
+ */
+function attributeMarkerRunSpans(text: string, enclosingMarkerLength: number): DisplayByteSpan[] {
+  const opener = ATTRIBUTE_MARKER_RUN_REGEX.exec(text);
+  if (!opener) return [];
+  const markerName = opener[1];
+  const openerStart = opener[0].length - markerName.length - 2;
+  const keyName = ATTRIBUTE_MARKER_KEYS[markerName] ?? markerName;
+  const spans: DisplayByteSpan[] = [];
+  if (openerStart > 0)
+    spans.push({
+      start: 0,
+      base: enclosingMarkerLength,
+      bytes: { kind: "property", property: "marker" },
+    });
+  spans.push({ start: openerStart, base: 0, bytes: { kind: "attributeMarker", keyName } });
+  spans.push({ start: openerStart + 1, base: 0, bytes: { kind: "attributeKey", keyName } });
+  spans.push({ start: opener[0].length, base: 0, bytes: { kind: "property", property: keyName } });
+  const closer = text.lastIndexOf(`\\${markerName}*`);
+  if (closer > opener[0].length)
+    spans.push({ start: closer, base: 0, bytes: { kind: "closingAttributeMarker", keyName } });
+  return spans;
+}
+
+/** The USJ node an editable marker glyph's bytes belong to: the sibling it is scaffolding for, or
+ * else the element it opens. */
+function $glyphOwner(glyph: LexicalNode): LexicalNode {
+  const parent = glyph.getParent();
+  if (!parent || !$isElementNode(parent)) return glyph;
+
+  const previousContentSibling = $getPreviousContentSibling(glyph);
+  if (
+    previousContentSibling &&
+    !$isParaLikeNode(previousContentSibling) &&
+    !$isTextNode(previousContentSibling) &&
+    !$isTypedMarkNode(previousContentSibling)
+  ) {
+    return previousContentSibling;
+  }
+
+  return parent;
+}
+
+/** The spans of an editable `MarkerNode` glyph. */
+function $markerGlyphBytes(glyph: MarkerNode): DisplayBytes {
+  const length = glyph.getTextContentSize();
+  const piece = $runPieceOf(glyph);
+  if (piece && piece.role !== "value") {
+    const keyName = ATTRIBUTE_MARKER_KEYS[piece.kind];
+    if (keyName !== undefined)
+      return {
+        owner: piece.owner,
+        length,
+        spans:
+          piece.role === "closer"
+            ? closingGlyphSpans(keyName)
+            : [
+                { start: 0, base: 0, bytes: { kind: "attributeMarker", keyName } },
+                { start: 1, base: 0, bytes: { kind: "attributeKey", keyName } },
+              ],
+      };
+    if (piece.kind === "milestone")
+      return {
+        owner: piece.owner,
+        length,
+        spans: piece.role === "closer" ? closingGlyphSpans() : markerGlyphSpans(1),
+      };
+  }
+
+  const syntax = glyph.getMarkerSyntax();
+  return {
+    owner: $glyphOwner(glyph),
+    length,
+    spans:
+      syntax === "opening"
+        ? // A nested span's `+` rides between the backslash and the marker name, so the name's
+          // offsets start one byte later.
+          markerGlyphSpans(glyph.getNested() ? 2 : 1)
+        : closingGlyphSpans(),
+  };
+}
+
+/** The spans of a read-only glyph (`ImmutableTypedTextNode` with text type "marker"). */
+function $visibleGlyphBytes(glyph: ImmutableTypedTextNode): DisplayBytes {
+  const text = glyph.getTextContent();
+  const length = text.length;
+
+  // An optbreak's whole `//` token is the node's marker location: USJ has nothing to say about the
+  // second slash, so it collapses onto the first.
+  const piece = $runPieceOf(glyph);
+  if (piece?.kind === "optbreak")
+    return {
+      owner: piece.owner,
+      length,
+      spans: [{ start: 0, base: 0, bytes: { kind: "marker" } }],
+    };
+
+  const owner = $glyphOwner(glyph);
+
+  // A book's glyph carries its code as well as its marker (`\id 2SA `).
+  if ($isBookNode(owner)) {
+    const markerLength = openingMarkerText(owner.getMarker()).length;
+    if (text.startsWith(openingMarkerText(owner.getMarker())))
+      return {
+        owner,
+        length,
+        spans: [
+          ...markerGlyphSpans(1),
+          { start: markerLength + 1, base: 0, bytes: { kind: "property", property: "code" } },
+        ],
+      };
+  }
+
+  // An opaque block's glyphs spell whatever its kind renders, which is not always `*`-terminated
+  // (`\esb` opens and `\esbe` closes a sidebar), so the bytes themselves decide which glyph it is.
+  if ($isUnknownNode(owner)) {
+    const parts = unknownDisplayParts(
+      owner.getTag(),
+      owner.getMarker(),
+      owner.getUnknownAttributes(),
+    );
+    if (parts.closing !== "" && text === parts.closing)
+      return { owner, length, spans: closingGlyphSpans() };
+    if (parts.opening !== "" && text === parts.opening)
+      return { owner, length, spans: markerGlyphSpans(1) };
+  }
+
+  return {
+    owner,
+    length,
+    spans: text.endsWith("*")
+      ? closingGlyphSpans()
+      : markerGlyphSpans(text.startsWith("\\+") ? 2 : 1),
+  };
+}
+
+/** The spans of an attribute display run's value node. */
+function $attributeRunValueBytes(value: TextNode): DisplayBytes | undefined {
+  const piece = $runPieceOf(value);
+  if (piece?.role !== "value") return undefined;
+  const { owner, kind } = piece;
+  const text = value.getTextContent();
+  const length = text.length;
+
+  const keyName = ATTRIBUTE_MARKER_KEYS[kind];
+  if (keyName !== undefined)
+    return {
+      owner,
+      length,
+      spans: [
+        // The separator before the value is the space after the attribute marker, which counts
+        // into that marker name's offset space.
+        { start: 0, base: kind.length, bytes: { kind: "attributeKey", keyName } },
+        { start: 1, base: 0, bytes: { kind: "property", property: keyName } },
+      ],
+    };
+
+  if (kind === "char")
+    return {
+      owner,
+      length,
+      spans: [
+        { start: 0, base: 0, bytes: { kind: "precedingText" } },
+        ...pipeAttributeSpans(
+          text,
+          1,
+          $isCharNode(owner) ? defaultMarkerAttribute(owner.getMarker()) : undefined,
+        ),
+      ],
+    };
+
+  if (kind === "milestone" && $isMilestoneNode(owner)) {
+    const markerLength = owner.getMarker().length;
+    return {
+      owner,
+      length,
+      spans: [
+        // A milestone has no text content of its own, so the separator and the `|` both keep
+        // counting into its marker name's offset space.
+        { start: 0, base: markerLength, bytes: { kind: "property", property: "marker" } },
+        ...pipeAttributeSpans(text, 2, milestoneDefaultAttribute(owner.getMarker())),
+      ],
+    };
+  }
+
+  return undefined;
+}
+
+/** The spans of an opaque block's folded attribute display run (an `ImmutableTypedTextNode` with
+ * text type "attribute"), which spells a whole attribute-marker run or pipe-attribute list. */
+function $opaqueAttributeBytes(node: ImmutableTypedTextNode): DisplayBytes | undefined {
+  const owner = node.getParent();
+  if (!$isUnknownNode(owner)) return undefined;
+  const text = node.getTextContent();
+  const length = text.length;
+  const markerRun = attributeMarkerRunSpans(text, (owner.getMarker() ?? "").length);
+  if (markerRun.length > 0) return { owner, length, spans: markerRun };
+  if (!text.startsWith("|")) return undefined;
+  return {
+    owner,
+    length,
+    spans: [
+      { start: 0, base: 0, bytes: { kind: "precedingText" } },
+      ...pipeAttributeSpans(text, 1, undefined),
+    ],
+  };
+}
+
+/** The spans of a glyph whose text spells `\marker<separator><number><separator>` — a verse's own
+ * text and a chapter's glyph child. */
+function markerAndNumberSpans(marker: string, text: string): DisplayByteSpan[] | undefined {
+  const openingText = openingMarkerText(marker);
+  if (!text.startsWith(openingText)) return undefined;
+  return [
+    ...markerGlyphSpans(1),
+    { start: openingText.length + 1, base: 0, bytes: { kind: "property", property: "number" } },
+  ];
+}
+
+/** The USFM display bytes `node` carries, or `undefined` when it carries none. */
+function $displayBytesOf(node: LexicalNode): DisplayBytes | undefined {
+  if ($isMarkerNode(node)) return $markerGlyphBytes(node);
+  if ($isVisibleMarkerNode(node)) return $visibleGlyphBytes(node);
+  if ($isImmutableTypedTextNode(node) && node.getTextType() === "attribute")
+    return $opaqueAttributeBytes(node);
+  if (node.getType() === IMMUTABLE_NOTE_CALLER_NODE_TYPE) {
+    const note = node.getParent();
+    if (!$isNoteNode(note)) return undefined;
+    // A collapsed caller renders no glyph bytes of its own; the caller value is what it stands for.
+    return {
+      owner: note,
+      length: node.getTextContentSize(),
+      spans: [{ start: 0, base: 0, bytes: { kind: "property", property: "caller" } }],
+    };
+  }
+
+  if ($isVerseNode(node)) {
+    const spans = markerAndNumberSpans(node.getMarker(), node.getTextContent());
+    return spans ? { owner: node, length: node.getTextContentSize(), spans } : undefined;
+  }
+
+  if (!$isTextNode(node)) return undefined;
+
+  if ($getState(node, textTypeState) === "attribute") return $attributeRunValueBytes(node);
+
+  const parent = node.getParent();
+  if ($isChapterNode(parent) && $chapterGlyphTextNode(parent)?.is(node)) {
+    const spans = markerAndNumberSpans(parent.getMarker(), node.getTextContent());
+    return spans ? { owner: parent, length: node.getTextContentSize(), spans } : undefined;
+  }
+  if ($isNoteNode(parent) && $noteEditableCallerNode(parent)?.is(node)) {
+    return {
+      owner: parent,
+      length: node.getTextContentSize(),
+      spans: [
+        // The caller's leading space is the space after the note's own marker, which counts into
+        // that marker name's offset space.
+        {
+          start: 0,
+          base: parent.getMarker().length,
+          bytes: { kind: "property", property: "marker" },
+        },
+        { start: 1, base: 0, bytes: { kind: "property", property: "caller" } },
+      ],
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Whether `node` renders display bytes as a decorator. Such a node holds no text of its own, so
+ * the editor can put no caret inside it and the element boundary beside it is the only point that
+ * addresses its bytes.
+ */
+function $isDisplayByteDecorator(node: LexicalNode): boolean {
+  return (
+    $isVisibleMarkerNode(node) ||
+    ($isImmutableTypedTextNode(node) && node.getTextType() === "attribute") ||
+    node.getType() === IMMUTABLE_NOTE_CALLER_NODE_TYPE
+  );
+}
+
+/** Every node carrying `owner`'s own display bytes, in the order a location resolves against them
+ * — the owner's glyphs first, then the pieces of the display runs that ride on it. */
+function $displayByteCarriers(owner: LexicalNode): LexicalNode[] {
+  const carriers: LexicalNode[] = [];
+  if ($isVerseNode(owner)) carriers.push(owner);
+  if ($isElementNode(owner)) {
+    const chapterGlyph = $isChapterNode(owner) ? $chapterGlyphTextNode(owner) : undefined;
+    const noteCaller = $isNoteNode(owner) ? $noteEditableCallerNode(owner) : undefined;
+    for (const child of owner.getChildren()) {
+      if (
+        $isMarkerNode(child) ||
+        $isVisibleMarkerNode(child) ||
+        ($isImmutableTypedTextNode(child) && child.getTextType() === "attribute") ||
+        child.getType() === IMMUTABLE_NOTE_CALLER_NODE_TYPE ||
+        chapterGlyph?.is(child) ||
+        noteCaller?.is(child)
+      )
+        carriers.push(child);
+    }
+  }
+  for (const kind of BYTE_CARRYING_RUN_KINDS) {
+    const descriptor = displayRunDescriptor(kind);
+    if (!descriptor.ownerPredicate(owner)) continue;
+    const { opener, value, closer } = descriptor.scanPieces(owner);
+    if (opener) carriers.push(opener);
+    if (value) carriers.push(value);
+    if (closer) carriers.push(closer);
+  }
+  return carriers;
+}
+
+/** Whether a span's bytes are the ones a location is asking for. */
+function isSameByteKind(span: DisplayByteKind, wanted: DisplayByteKind): boolean {
+  if (span.kind !== wanted.kind) return false;
+  if (span.kind === "property" && wanted.kind === "property")
+    return span.property === wanted.property;
+  if (
+    (span.kind === "attributeKey" ||
+      span.kind === "attributeMarker" ||
+      span.kind === "closingAttributeMarker") &&
+    "keyName" in wanted
+  )
+    return span.keyName === wanted.keyName;
+  return true;
+}
+
+/**
+ * The location `offset` bytes into `node`'s display text, or `undefined` when `node` carries no
+ * display bytes. Snaps LEFT: the offset lands in the last span that starts at or before it, and
+ * keeps counting into that span's offset space.
+ */
+function $locationFromDisplayBytes(
+  node: LexicalNode,
+  offset: number,
+): UsjDocumentLocation | undefined {
+  const bytes = $displayBytesOf(node);
+  if (!bytes || bytes.spans.length === 0) return undefined;
+
+  const clamped = Math.max(0, Math.min(offset, bytes.length));
+  let span = bytes.spans[0];
+  for (const candidate of bytes.spans) {
+    if (candidate.start > clamped) break;
+    span = candidate;
+  }
+  const within = span.base + (clamped - span.start);
+  const jsonPath = usjJsonPathFromIndexes($getJsonPathIndexes(bytes.owner));
+
+  switch (span.bytes.kind) {
+    case "marker":
+      return { jsonPath } satisfies UsjMarkerLocation;
+    case "closingMarker":
+      return { jsonPath, closingMarkerOffset: within } satisfies UsjClosingMarkerLocation;
+    case "property":
+      return {
+        jsonPath: propertyJsonPath(jsonPath, span.bytes.property),
+        propertyOffset: within,
+      } satisfies UsjPropertyValueLocation;
+    case "attributeKey":
+      return { jsonPath, keyName: span.bytes.keyName, keyOffset: within };
+    case "attributeMarker":
+      return { jsonPath, keyName: span.bytes.keyName };
+    case "closingAttributeMarker":
+      return { jsonPath, keyName: span.bytes.keyName, keyClosingMarkerOffset: within };
+    case "precedingText":
+      return $precedingTextLocation(node);
+  }
+}
+
+/** The end of the last text content before `node` — where a byte with no representation of its own
+ * (the `|` opening an attribute run) snaps to. */
+function $precedingTextLocation(node: LexicalNode): UsjDocumentLocation | undefined {
+  const parent = $getLogicalParent(node);
+  if (!parent) return undefined;
+  const items = $getLogicalContentItems(parent);
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index];
+    if (item.type !== "text") continue;
+    return {
+      jsonPath: usjJsonPathFromIndexes([...$getJsonPathIndexes(parent), index]),
+      offset: item.length,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * The node and offset holding `owner`'s `wanted` bytes at `offset` within them, or `undefined`
+ * when nothing in the tree carries them. The first carrier whose span covers the offset wins, so
+ * a position two nodes can express (the end of `\ca` and the separator before its value) resolves
+ * to the node whose own bytes it is.
+ */
+function $pointFromDisplayBytes(
+  owner: LexicalNode,
+  wanted: DisplayByteKind,
+  offset: number,
+): [LexicalNode, number] | undefined {
+  for (const carrier of $displayByteCarriers(owner)) {
+    const bytes = $displayBytesOf(carrier);
+    if (!bytes || !bytes.owner.is(owner)) continue;
+    for (let index = 0; index < bytes.spans.length; index++) {
+      const span = bytes.spans[index];
+      if (!isSameByteKind(span.bytes, wanted)) continue;
+      const nextSpan = bytes.spans[index + 1];
+      // The last span owns the position at the very end of the text; every other span stops one
+      // byte before the next span starts.
+      const highest = nextSpan
+        ? span.base + (nextSpan.start - span.start) - 1
+        : span.base + (bytes.length - span.start);
+      if (offset < span.base || offset > highest) continue;
+      return [carrier, span.start + (offset - span.base)];
+    }
+  }
+  return undefined;
+}
+
+export function $getNodeFromLocation(
   location: UsjDocumentLocation,
 ): [LexicalNode | undefined, number | undefined] {
   // Handle UsjTextContentLocation first (most common case)
@@ -163,58 +750,44 @@ function $getNodeFromLocation(
   // Handle UsjAttributeKeyLocation and UsjAttributeMarkerLocation BEFORE UsjMarkerLocation
   // because UsjAttributeMarkerLocation has keyName but no offsets, similar to UsjMarkerLocation.
   // Checking for keyName first ensures correct type narrowing.
-  // Note: Attribute markers are not yet represented in the editor, so we position at the closest
-  // available location (the end of the element's content, since attributes come after content).
   if (isUsjAttributeKeyLocation(location) || isUsjAttributeMarkerLocation(location)) {
     const node = $navigateToNode(location.jsonPath);
     if (!node) return [undefined, undefined];
 
-    // For ElementNodes, position at end of last text child
-    if ($isElementNode(node)) {
-      const lastChild = node.getLastChild();
-      if (lastChild && $isTextNode(lastChild))
-        return [lastChild, lastChild.getTextContent().length];
-    }
+    const { keyName } = location;
+    const point = isUsjAttributeKeyLocation(location)
+      ? $pointFromDisplayBytes(node, { kind: "attributeKey", keyName }, location.keyOffset)
+      : $pointFromDisplayBytes(node, { kind: "attributeMarker", keyName }, 0);
+    if (point) return point;
 
-    // For decorator nodes (e.g., ImmutableChapterNode) or elements with no children,
-    // position at the start of the next sibling
-    const nextSibling = node.getNextSibling();
-    if (nextSibling && $isElementNode(nextSibling)) return [nextSibling, 0];
-
-    return [undefined, undefined];
+    return $nearestPointAfterContent(node);
   }
 
   // Handle UsjClosingAttributeMarkerLocation BEFORE UsjMarkerLocation/UsjClosingMarkerLocation.
-  // Note: Attribute markers are not yet represented in the editor, so we position at the closest
-  // available location (the end of the element's content).
   if (isUsjClosingAttributeMarkerLocation(location)) {
     const node = $navigateToNode(location.jsonPath);
     if (!node) return [undefined, undefined];
 
-    // For ElementNodes, position at end of last text child if it exists
-    if ($isElementNode(node)) {
-      const lastChild = node.getLastChild();
-      if (lastChild && $isTextNode(lastChild))
-        return [lastChild, lastChild.getTextContent().length];
-    }
+    const point = $pointFromDisplayBytes(
+      node,
+      { kind: "closingAttributeMarker", keyName: location.keyName },
+      location.keyClosingMarkerOffset,
+    );
+    if (point) return point;
 
-    // For decorator nodes (e.g., ImmutableChapterNode) or elements with no children,
-    // position at the start of the next sibling
-    const nextSibling = node.getNextSibling();
-    if (nextSibling && $isElementNode(nextSibling)) return [nextSibling, 0];
-
-    return [undefined, undefined];
+    return $nearestPointAfterContent(node);
   }
 
   // Handle UsjMarkerLocation - position at the beginning of the opening marker
   if (isUsjMarkerLocation(location)) {
     const node = $navigateToNode(location.jsonPath);
-    if (!node || !$isElementNode(node)) return [undefined, undefined];
+    if (!node) return [undefined, undefined];
 
-    const markerNode = $findMarkerNode(node, "opening");
-    if (markerNode) return [markerNode, 0];
+    const point = $pointFromDisplayBytes(node, { kind: "marker" }, 0);
+    if (point) return point;
 
-    // Fallback: if no marker node, position at start of first child
+    if (!$isElementNode(node)) return [undefined, undefined];
+    // Fallback: no glyph bytes at all (markerMode "hidden"), so position at the element's start.
     const firstChild = node.getFirstChild();
     if (firstChild && $isTextNode(firstChild)) return [firstChild, 0];
 
@@ -224,16 +797,17 @@ function $getNodeFromLocation(
   // Handle UsjClosingMarkerLocation - position within the closing marker
   if (isUsjClosingMarkerLocation(location)) {
     const node = $navigateToNode(location.jsonPath);
-    if (!node || !$isElementNode(node)) return [undefined, undefined];
+    if (!node) return [undefined, undefined];
 
-    const markerNode = $findMarkerNode(node, "closing");
-    if (markerNode) {
-      // Validate offset is within bounds
-      const text = markerNode.getTextContent();
-      const offset = Math.min(location.closingMarkerOffset, text.length);
-      return [markerNode, offset];
-    }
-    // Fallback: if no closing marker, position at end of last text child
+    const point = $pointFromDisplayBytes(
+      node,
+      { kind: "closingMarker" },
+      location.closingMarkerOffset,
+    );
+    if (point) return point;
+
+    if (!$isElementNode(node)) return [undefined, undefined];
+    // Fallback: no closing glyph, so position at the end of the element's last text child.
     const lastChild = node.getLastChild();
     if (lastChild && $isTextNode(lastChild)) return [lastChild, lastChild.getTextContent().length];
 
@@ -242,25 +816,22 @@ function $getNodeFromLocation(
 
   // Handle UsjPropertyValueLocation - position within a property value (e.g., marker name)
   if (isUsjPropertyValueLocation(location)) {
-    // Extract the property name from the jsonPath (e.g., "$.content[0].marker" -> "marker")
+    // Extract the property name from the jsonPath (e.g., "$.content[0]['marker']" -> "marker")
     const propertyMatch = location.jsonPath.match(/\.(\w+)$|^\$\.(\w+)$|\['([^']+)'\]$/);
     const propertyName = propertyMatch?.[1] ?? propertyMatch?.[2] ?? propertyMatch?.[3];
 
     const node = $navigateToNode(location.jsonPath);
-    if (!node || !$isElementNode(node)) return [undefined, undefined];
+    if (!node || propertyName === undefined) return [undefined, undefined];
 
-    if (propertyName === "marker") {
-      // Position within the marker name in the opening MarkerNode
-      const markerNode = $findMarkerNode(node, "opening");
-      if (markerNode) {
-        // The text is "\marker " - propertyOffset 0 maps to offset 1 (after backslash)
-        const offset = location.propertyOffset + 1;
-        const text = markerNode.getTextContent();
-        return [markerNode, Math.min(offset, text.length)];
-      }
-    }
+    const point = $pointFromDisplayBytes(
+      node,
+      { kind: "property", property: propertyName },
+      location.propertyOffset,
+    );
+    if (point) return point;
 
-    // Fallback for other properties or if marker node not found
+    if (!$isElementNode(node)) return [undefined, undefined];
+    // Fallback: the property has no bytes on screen, so position at the element's start.
     const firstChild = node.getFirstChild();
     if (firstChild && $isTextNode(firstChild)) return [firstChild, 0];
 
@@ -277,13 +848,18 @@ function $getNodeFromLocation(
   );
 }
 
-function $normalizeVisibleMarkerPoint(node: LexicalNode, offset: number): [LexicalNode, number] {
-  if (!$isVisibleMarkerNode(node)) return [node, offset];
-
-  const textLength = node.getTextContent().length;
-  // If selection resolves inside or at the beginning of a visible marker,
-  // normalize to a parent ElementNode point at the marker's child index.
-  if (offset < 0 || offset >= textLength) return [node, offset];
+/**
+ * The caret a point on read-only display bytes stands for. Those bytes render as decorator nodes,
+ * which hold no text of their own — Lexical throws on a text point whose node is not a `TextNode`
+ * — so every offset inside them becomes an element boundary beside them: in front of the node for
+ * a point within its bytes, and after it for a point at their very end.
+ *
+ * Interior bytes therefore collapse onto the boundary in front of the node: a read-only glyph is
+ * addressable as a whole, never byte by byte. {@link $getLocationFromNode} reports what those
+ * boundaries stand for, so the surviving positions still name the bytes rather than the element.
+ */
+function $normalizeDecoratorPoint(node: LexicalNode, offset: number): [LexicalNode, number] {
+  if (!$isDisplayByteDecorator(node)) return [node, offset];
 
   const parent = node.getParent();
   if (!parent || !$isElementNode(parent)) return [node, offset];
@@ -291,42 +867,12 @@ function $normalizeVisibleMarkerPoint(node: LexicalNode, offset: number): [Lexic
   const indexWithinParent = node.getIndexWithinParent();
   if (indexWithinParent < 0) return [node, offset];
 
-  return [parent, indexWithinParent];
+  const isPastEnd = offset >= node.getTextContentSize() && offset > 0;
+  return [parent, isPastEnd ? indexWithinParent + 1 : indexWithinParent];
 }
 
 function $getPointType(node: LexicalNode | undefined): "text" | "element" {
   return $isElementNode(node) ? "element" : "text";
-}
-
-/**
- * Finds a MarkerNode or ImmutableTypedTextNode marker child with the specified syntax.
- * @param parent - The parent element node to search in.
- * @param syntax - The marker syntax to find ("opening" or "closing").
- * @returns The MarkerNode or ImmutableTypedTextNode if found, undefined otherwise.
- */
-function $findMarkerNode(
-  parent: ElementNode,
-  syntax: "opening" | "closing",
-): MarkerNode | ImmutableTypedTextNode | undefined {
-  const children = parent.getChildren();
-  for (const child of children) {
-    // Check for editable MarkerNode
-    if ($isMarkerNode(child) && child.getMarkerSyntax() === syntax) return child;
-
-    // Also check for selfClosing when looking for closing
-    if (syntax === "closing" && $isMarkerNode(child) && child.getMarkerSyntax() === "selfClosing") {
-      return child;
-    }
-
-    if ($isVisibleMarkerNode(child)) {
-      const text = child.getTextContent();
-      const isClosing = text.endsWith("*");
-      if ((syntax === "opening" && !isClosing) || (syntax === "closing" && isClosing)) {
-        return child;
-      }
-    }
-  }
-  return undefined;
 }
 
 /**
@@ -351,57 +897,23 @@ function $navigateToNode(jsonPath: string): LexicalNode | undefined {
 }
 
 /**
- * Gets the location from a Lexical node and offset, emitting the appropriate UsjDocumentLocation
- * subtype based on the node type.
+ * Gets the location from a Lexical node and offset, emitting the `UsjDocumentLocation` subtype
+ * that names what those bytes are.
  *
- * - For MarkerNode with "opening" syntax at offset 0: UsjMarkerLocation
- * - For MarkerNode with "opening" syntax at offset > 0: UsjPropertyValueLocation (within marker name)
- * - For MarkerNode with "closing" syntax: UsjClosingMarkerLocation
- * - For regular TextNode: UsjTextContentLocation
+ * A point inside displayed USFM bytes — a marker glyph, an attribute display run, the optbreak
+ * token, a chapter's or verse's own glyph text, a note's caller — names the byte it sits on
+ * ({@link $locationFromDisplayBytes}); everything else is a point in USJ content, reported as a
+ * `UsjTextContentLocation` in coalesced-USJ coordinates.
  *
  * @param node - The Lexical node.
  * @param offset - The offset within the node's text content.
  * @returns The appropriate UsjDocumentLocation subtype.
  */
-function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLocation {
-  if ($isMarkerNode(node)) {
-    const markerSyntax = node.getMarkerSyntax();
-
-    // Prefer anchoring to the previous node if the marker is scaffolding for it.
-    const anchorNode = $getMarkerAnchorNode(node);
-    const anchorJsonPath = anchorNode
-      ? usjJsonPathFromIndexes($getJsonPathIndexes(anchorNode))
-      : usjJsonPathFromIndexes($getJsonPathIndexes(node));
-
-    if (markerSyntax === "closing" || markerSyntax === "selfClosing") {
-      // UsjClosingMarkerLocation: position within the closing marker (e.g., \nd*)
-      return {
-        jsonPath: anchorJsonPath,
-        closingMarkerOffset: offset,
-      } satisfies UsjClosingMarkerLocation;
-    }
-
-    // Opening marker
-    if (offset === 0) {
-      // UsjMarkerLocation: at the very beginning (the backslash)
-      return {
-        jsonPath: anchorJsonPath,
-      } satisfies UsjMarkerLocation;
-    }
-
-    // Within the marker name text (after the backslash)
-    // The text is "\marker " so offset 1 is the first char of the marker name
-    // UsjPropertyValueLocation points to the marker property value
-    const propertyJsonPath = `${anchorJsonPath}.marker` as PropertyJsonPath;
-    // propertyOffset is the offset within the marker name itself (not including backslash)
-    // Text is "\p " - offset 1 is 'p', so propertyOffset = offset - 1
-    const propertyOffset = Math.max(0, offset - 1);
-
-    return {
-      jsonPath: propertyJsonPath,
-      propertyOffset,
-    } satisfies UsjPropertyValueLocation;
-  }
+export function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLocation {
+  // Standard view renders USFM bytes as real nodes, so a point inside one of them is a point in
+  // those bytes rather than in content.
+  const displayLocation = $locationFromDisplayBytes(node, offset);
+  if (displayLocation) return displayLocation;
 
   if ($isTypedMarkNode(node)) {
     // An element point on the annotation wrapper: convert to the equivalent point as if the
@@ -435,7 +947,11 @@ function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLoc
   // Element selection - offset is a child index, convert to a logical point.
   if ($isElementNode(node)) {
     const childAtOffset = node.getChildAtIndex(offset);
-    if ($isVisibleMarkerNode(childAtOffset)) {
+    // A boundary in front of read-only display bytes is the only point that addresses them, so it
+    // reports what those bytes are rather than a content boundary.
+    if (childAtOffset && $isDisplayByteDecorator(childAtOffset)) {
+      const byteLocation = $locationFromDisplayBytes(childAtOffset, 0);
+      if (byteLocation) return byteLocation;
       return {
         jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)),
       } satisfies UsjMarkerLocation;
@@ -473,21 +989,25 @@ function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLoc
   return { jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)), offset };
 }
 
-function $getMarkerAnchorNode(markerNode: MarkerNode): LexicalNode | undefined {
-  const parent = markerNode.getParent();
-  if (!parent || !$isElementNode(parent)) return undefined;
-
-  const previousContentSibling = $getPreviousContentSibling(markerNode);
-  if (
-    previousContentSibling &&
-    !$isParaLikeNode(previousContentSibling) &&
-    !$isTextNode(previousContentSibling) &&
-    !$isTypedMarkNode(previousContentSibling)
-  ) {
-    return previousContentSibling;
+/**
+ * The closest point to bytes the current view does not render at all: the end of the node's
+ * content, since USFM attribute bytes come after it. The answer for markerMode "visible" and
+ * "hidden", where attribute markers and their values have no nodes of their own.
+ */
+function $nearestPointAfterContent(
+  node: LexicalNode,
+): [LexicalNode | undefined, number | undefined] {
+  if ($isElementNode(node)) {
+    const lastChild = node.getLastChild();
+    if (lastChild && $isTextNode(lastChild)) return [lastChild, lastChild.getTextContent().length];
   }
 
-  return parent;
+  // A decorator (e.g. ImmutableChapterNode) or an element with no children: the start of what
+  // follows it is the nearest point there is.
+  const nextSibling = node.getNextSibling();
+  if (nextSibling && $isElementNode(nextSibling)) return [nextSibling, 0];
+
+  return [undefined, undefined];
 }
 
 function $getPreviousContentSibling(child: LexicalNode): LexicalNode | undefined {

@@ -965,6 +965,11 @@ function getSelectionStartNodeInner(selection: BaseSelection | null): LexicalNod
  * NBSP-only spacer text (which the editor→USJ conversion drops as well; ideally the USJ→editor
  * conversion would create such spacers as presentation-typed text nodes instead — follow-up
  * work).
+ *
+ * The answer depends on WHERE the node is attached, not on the node alone: a plain TextNode is
+ * presentation when it sits in a note's caller slot or under a chapter, and content anywhere else.
+ * So a caller cannot decide from a node's type and state — it has to pass the node as it stands in
+ * the tree.
  * @param node - The node to check.
  * @returns `true` if the node must be skipped when computing USJ content indexes.
  */
