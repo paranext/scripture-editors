@@ -35,6 +35,7 @@ import {
   $parseSerializedNode,
   ElementNode,
   LexicalNode,
+  NodeKey,
   SerializedLexicalNode,
   TextNode,
 } from "lexical";
@@ -110,6 +111,18 @@ export interface FragmentSpan {
  * lands. Built by the fragment builders (`$buildParaFragment` and kin); consumed by the rebuild's
  * tokenize-and-splice and by caret restoration.
  */
+/**
+ * A resolved position in a tree, in Lexical's own point terms: `type: "text"` is an offset within
+ * the TextNode `key` names, `type: "element"` a child-index boundary within the ElementNode it
+ * names. Produced by {@link $resolveFragmentByteAnchor}; an element point is how a position past a
+ * construct the caret cannot enter (a closing glyph, a preserved node run) is expressed.
+ */
+export interface FragmentPoint {
+  key: NodeKey;
+  offset: number;
+  type: "text" | "element";
+}
+
 export interface FragmentAccumulator {
   text: string;
   spans: FragmentSpan[];
@@ -1157,7 +1170,7 @@ const FRAGMENT_WS = /\s/;
  * by the tokenizer (the degradation property), so the N-th non-whitespace character over the old
  * spans is the same byte over the new ones. A sentinel span counts as its single placeholder char.
  */
-interface CaretByteAnchor {
+export interface CaretByteAnchor {
   nonWsBefore: number;
   wsRun: number;
   /**
@@ -1256,7 +1269,7 @@ function $walkToCaret(
   return undefined;
 }
 
-function $caretSpanByteAnchor(
+export function $caretSpanByteAnchor(
   fragment: { text: string; spans: FragmentSpan[] },
   anchorKey: string,
   anchorOffset: number,
@@ -1288,35 +1301,40 @@ function $isClosingMarkerSpan(span: FragmentSpan): boolean {
 }
 
 /**
- * Place the caret AFTER a closing marker glyph's enclosing span — the append position in the
+ * The position AFTER a closing marker glyph's enclosing span — the append position in the
  * paragraph, PAST the whole char span — for a typed closer (`\nd*`) at paragraph END with nothing
  * after it. The forward scan skips closing glyphs to land on the following content; when there IS no
- * following content (para end), the caret still belongs after the closer, not at the end of the
+ * following content (para end), the position still belongs after the closer, not at the end of the
  * span's inner text (which is the closer glyph's start-of-glyph boundary, i.e. INSIDE the span,
- * where continued typing edits within the marker). `selectNext` off the span, whose closer is its
- * last child, resolves to the paragraph point just after it. Returns whether it placed the caret.
+ * where continued typing edits within the marker). Reported as the element boundary just past the
+ * span, whose closer is its last child.
  *
  * Only a genuine char-span closer has an enclosing span to escape from this way. A verse's
  * `\va`/`\vp` closer and a milestone's self-closing `\*` are never wrapped in a char span — they
  * ride as ordinary PARAGRAPH siblings (`$verseAttributeRun`/`$milestoneDisplayRun`), so the
- * glyph's parent is the paragraph itself. `selectNext` on the PARAGRAPH would move the point past
+ * glyph's parent is the paragraph itself. A boundary past the PARAGRAPH would move the point past
  * the whole paragraph (into the next block, or off the end of the document), not just past the
- * closer within it, so a paragraph-direct closer falls through to the caller's other fallback
- * instead.
+ * closer within it, so a paragraph-direct closer returns nothing and falls through to the caller's
+ * other fallback instead.
  */
-function $selectAfterClosingSpan(span: FragmentSpan): boolean {
+function $pointAfterClosingSpan(span: FragmentSpan): FragmentPoint | undefined {
   const glyph = $getNodeByKey(span.key);
-  if (!$isMarkerNode(glyph)) return false;
+  if (!$isMarkerNode(glyph)) return undefined;
   const enclosingSpan = glyph.getParent();
-  if (!$isCharNode(enclosingSpan)) return false;
-  enclosingSpan.selectNext(0, 0);
-  return true;
+  if (!$isCharNode(enclosingSpan)) return undefined;
+  const parent = enclosingSpan.getParent();
+  if (!parent) return undefined;
+  return {
+    key: parent.getKey(),
+    offset: enclosingSpan.getIndexWithinParent() + 1,
+    type: "element",
+  };
 }
 
 /**
- * Place the caret AFTER a preserved node run the caret cannot enter — the append position past the
+ * The position AFTER a preserved node run the caret cannot enter — the append position past the
  * whole opaque construct — for an offset that ran off the end of a fragment whose last span is a
- * sentinel. The sibling of {@link $selectAfterClosingSpan}, for the other span kind the forward
+ * sentinel. The sibling of {@link $pointAfterClosingSpan}, for the other span kind the forward
  * scan skips: without it the caller's reverse-find walks BACKWARD past the construct and parks the
  * caret at the end of the preceding text, so a figure completed at the end of a paragraph leaves
  * everything typed next on the WRONG SIDE of it (`hello \fig …\fig*` + ` world` became
@@ -1324,32 +1342,44 @@ function $selectAfterClosingSpan(span: FragmentSpan): boolean {
  *
  * A sentinel span records only the run's FIRST node, and a verse or milestone rides in its
  * sentinel together with its display run (`$appendNodesFragment`), so the append position is past
- * that run's LAST node — `selectNext` off the first would land inside the run. Every other
+ * that run's LAST node — the boundary after the first would land inside the run. Every other
  * sentinel kind (unknown blocks, notes, unrecoverable char spans) is a one-node run and skips the
- * lookup. Returns whether it placed the caret.
+ * lookup.
  */
-function $selectAfterSentinelRun(span: FragmentSpan): boolean {
+function $pointAfterSentinelRun(span: FragmentSpan): FragmentPoint | undefined {
   const first = $getNodeByKey(span.key);
-  const siblings = first?.getParent()?.getChildren();
-  if (!first || !siblings) return false;
+  const parent = first?.getParent();
+  const siblings = parent?.getChildren();
+  if (!first || !parent || !siblings) return undefined;
   const index = siblings.findIndex((sibling) => sibling.is(first));
-  if (index < 0) return false;
+  if (index < 0) return undefined;
   const run = $isVerseNode(first)
     ? $verseAttributeRun(siblings, index)
     : $isMilestoneNode(first)
       ? $milestoneDisplayRun(siblings, index)
       : [];
-  (run[run.length - 1] ?? first).selectNext(0, 0);
-  return true;
+  const last = run[run.length - 1] ?? first;
+  return { key: parent.getKey(), offset: last.getIndexWithinParent() + 1, type: "element" };
 }
 
-/** Place the collapsed caret at the position `anchor` describes (see `$caretSpanByteAnchor`)
- * within the freshly-built spans, falling back to the first element. */
-function $selectAtFragmentByteAnchor(
+/**
+ * Where `anchor` (see {@link $caretSpanByteAnchor}) lands within `fragment`'s spans — a text
+ * point in the span holding the byte, or, for a position that ran past every addressable span, an
+ * ELEMENT boundary just past the construct the position belongs after
+ * ({@link $pointAfterClosingSpan}, {@link $pointAfterSentinelRun}). `undefined` when the fragment
+ * has no addressable span at all.
+ *
+ * Direction-agnostic: the mutating rebuild resolves a caret it captured from the pre-rebuild tree
+ * into the fresh one ({@link $selectAtFragmentByteAnchor}), and the settled-position translation
+ * resolves a byte of the settled document into the live tree. Both ask the same question — which
+ * node and offset holds the byte this anchor names — so both walk this one implementation.
+ *
+ * Read-only: resolves span node keys, so call inside `editor.update()` or an editor-state read.
+ */
+export function $resolveFragmentByteAnchor(
   fragment: { text: string; spans: FragmentSpan[] },
   anchor: CaretByteAnchor,
-  newNodes: LexicalNode[],
-): void {
+): FragmentPoint | undefined {
   const { text, spans } = fragment;
   // Pick the coordinate system. Document coordinates (attribute runs stepped over) keep a caret in
   // ordinary content from being dragged when a run RE-SPELLS beside it — `|who="stuff"` settling to
@@ -1366,7 +1396,7 @@ function $selectAtFragmentByteAnchor(
   let remainingWs = (documentCoords ?? anchor).wsRun;
   // Whether the anchor position resolved INSIDE a span the caret cannot rest in — a sentinel
   // (inner text not addressable) or a closing marker glyph (see $isClosingMarkerSpan) — in which
-  // case the caret belongs at the start of the NEXT addressable span, exactly as the previous
+  // case the position belongs at the start of the NEXT addressable span, exactly as the previous
   // cumulative-offset walk resolved it.
   let needNextAddressable = false;
   outer: for (const span of spans) {
@@ -1385,7 +1415,7 @@ function $selectAtFragmentByteAnchor(
       const ch = text[span.start + i];
       if (remainingNonWs === 0 && (remainingWs === 0 || !FRAGMENT_WS.test(ch))) {
         // The anchor's bytes are all behind us (any unconsumed ws run is clamped to the ws
-        // actually present here): the caret belongs immediately BEFORE this character.
+        // actually present here): the position is immediately BEFORE this character.
         if (addressable) {
           best = { key: span.key, offset: i };
           break outer;
@@ -1407,25 +1437,49 @@ function $selectAtFragmentByteAnchor(
       needNextAddressable = true;
     }
   }
-  if (!best) {
-    // The offset ran past every addressable span. Both span kinds the forward scan skips can be
-    // the last thing in the fragment, and for both the caret belongs AFTER them — an append
-    // position in the paragraph — rather than at the end of the preceding text, which is where the
-    // reverse-find fallback below would park it: a completed closer glyph (a typed `\nd*` at
-    // paragraph end, nothing after), so continued typing is unstyled; or a sentinel, so continued
-    // typing lands past the opaque construct instead of in front of it.
-    const lastSpan = spans[spans.length - 1];
-    if (lastSpan && $isClosingMarkerSpan(lastSpan) && $selectAfterClosingSpan(lastSpan)) return;
-    if (lastSpan?.isSentinel && $selectAfterSentinelRun(lastSpan)) return;
-    const last = [...spans]
-      .reverse()
-      .find((span) => !span.isSentinel && !$isClosingMarkerSpan(span));
-    if (last) best = { key: last.key, offset: last.end - last.start };
+  if (best) return { ...best, type: "text" };
+  // The offset ran past every addressable span. Both span kinds the forward scan skips can be
+  // the last thing in the fragment, and for both the position belongs AFTER them — an append
+  // position in the paragraph — rather than at the end of the preceding text, which is where the
+  // reverse-find fallback below would park it: a completed closer glyph (a typed `\nd*` at
+  // paragraph end, nothing after), so continued typing is unstyled; or a sentinel, so continued
+  // typing lands past the opaque construct instead of in front of it.
+  const lastSpan = spans[spans.length - 1];
+  if (lastSpan && $isClosingMarkerSpan(lastSpan)) {
+    const point = $pointAfterClosingSpan(lastSpan);
+    if (point) return point;
   }
-  if (best) {
-    const node = $getNodeByKey<TextNode>(best.key);
+  if (lastSpan?.isSentinel) {
+    const point = $pointAfterSentinelRun(lastSpan);
+    if (point) return point;
+  }
+  const last = [...spans].reverse().find((span) => !span.isSentinel && !$isClosingMarkerSpan(span));
+  if (last) return { key: last.key, offset: last.end - last.start, type: "text" };
+  return undefined;
+}
+
+/** Place the collapsed caret at the position `anchor` describes (see `$caretSpanByteAnchor`)
+ * within the freshly-built spans, falling back to the first element. */
+function $selectAtFragmentByteAnchor(
+  fragment: { text: string; spans: FragmentSpan[] },
+  anchor: CaretByteAnchor,
+  newNodes: LexicalNode[],
+): void {
+  const point = $resolveFragmentByteAnchor(fragment, anchor);
+  if (point?.type === "text") {
+    const node = $getNodeByKey<TextNode>(point.key);
     if (node && $isTextNode(node)) {
-      node.select(best.offset, best.offset);
+      node.select(point.offset, point.offset);
+      return;
+    }
+  } else if (point) {
+    // An element boundary past a construct the caret cannot enter: select off the node it sits
+    // after, which resolves to whatever follows (the next text run, the next block's start, or
+    // the append position at the end of the parent).
+    const parent = $getNodeByKey(point.key);
+    const previous = $isElementNode(parent) ? parent.getChildAtIndex(point.offset - 1) : undefined;
+    if (previous) {
+      previous.selectNext(0, 0);
       return;
     }
   }

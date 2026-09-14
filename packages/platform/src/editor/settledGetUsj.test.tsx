@@ -496,7 +496,7 @@ const pendingShapes: PendingShape[] = [
   {
     // The gap this shape pins: a NOTE's own opening-glyph rename is applied by the real settle
     // through `$applyOpenerRename`'s `$isNoteNode(parent)` branch (markerEditTier1.utils.ts), but
-    // `$settledNoteContent` (virtualSettle.utils.ts) only ever rebuilds a note's CONTENT — the
+    // `$settledNoteScope` (virtualSettle.utils.ts) only ever rebuilds a note's CONTENT — the
     // note's own glyphs sit outside that fragment — so before the fix the virtual half leaves the
     // note's `marker` field stale while the real half moves it.
     name: "note's own opening glyph renamed to a valid marker",
@@ -512,7 +512,7 @@ const pendingShapes: PendingShape[] = [
   },
   {
     // Both halves must fold the edited `\ca` value back onto the chapter's `altnumber` — the
-    // chapter settle scope's virtual mirror ($settledChapter) against the real $rebuildChapter.
+    // chapter settle scope's virtual mirror ($settledChapterScope) against the real $rebuildChapter.
     name: "chapter alternate-number run value edited",
     usj: chapterCaUsj(),
     $edit: () => {
