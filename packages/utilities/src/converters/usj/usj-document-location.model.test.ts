@@ -13,6 +13,10 @@ describe("jsonPath depth", () => {
     expect(deepContentPath).toBe(deep);
 
     const prop = `${deep}['lemma']` as const;
+    // `PropertyJsonPath`'s catch-all `` `$.${string}` `` member matches any string starting with
+    // `$.`, so this assertion type-checks regardless of how many `.content[${number}]` clauses
+    // precede `['lemma']` — it does not, on its own, guard the eight-clause depth bound. It is
+    // kept for shape parity with the `ContentJsonPath` assertion above.
     expectTypeOf<typeof prop>().toMatchTypeOf<PropertyJsonPath>();
     const deepPropertyPath: PropertyJsonPath = prop;
     expect(deepPropertyPath).toBe(prop);
