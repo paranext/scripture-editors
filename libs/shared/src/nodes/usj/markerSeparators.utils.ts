@@ -38,8 +38,9 @@
  */
 
 import { $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
+import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { textTypeState } from "../collab/delta.state.js";
-import { CharNode } from "./CharNode.js";
+import { $isCharNode, CharNode } from "./CharNode.js";
 import { $charGlyphNestedValue } from "./nestedGlyphs.utils.js";
 import { NBSP } from "./node-constants.js";
 import {
@@ -70,6 +71,37 @@ export function $isSeparatorPrefixHostText(node: LexicalNode | null | undefined)
     node.getType() === TextNode.getType() &&
     $getState(node, textTypeState) !== "attribute"
   );
+}
+
+/**
+ * How many of `node`'s leading characters are the char-span separator rather than content: `1`
+ * when `node` is a plain TextNode carrying an opening char glyph's separator NBSP as its prefix,
+ * `0` otherwise.
+ *
+ * The separator is display state the editor→USJ conversion strips, so that byte is not part of
+ * the span's USJ text: anything that measures content or maps between live and settled text
+ * offsets must skip it, or every offset inside a char span is off by one. Shape-based on purpose
+ * — glyph adjacency, not view options, which this layer does not see.
+ *
+ * Read-only: safe inside `editor.update()` or either read form.
+ */
+export function $charSeparatorPrefixLength(node: TextNode): 0 | 1 {
+  if (!$isSeparatorPrefixHostText(node) || !node.getTextContent().startsWith(NBSP)) return 0;
+  // The span is the nearest non-annotation ancestor; the glyph is the previous sibling at the
+  // same level, looking through an annotation wrapper the text may sit inside.
+  let child: LexicalNode = node;
+  let parent = child.getParent();
+  while (parent && $isTypedMarkNode(parent) && child.getPreviousSibling() === null) {
+    child = parent;
+    parent = child.getParent();
+  }
+  if (!$isCharNode(parent)) return 0;
+  const previous = child.getPreviousSibling();
+  if (!$isMarkerNode(previous) || previous.getMarkerSyntax() !== "opening") return 0;
+  // Only char-span glyphs take a separator (not a milestone's display run) — the same classifier
+  // $openerSeparatorGap builds one with, so reading and writing can never disagree about which
+  // glyphs own one.
+  return $charGlyphNestedValue(previous, parent) === undefined ? 0 : 1;
 }
 
 /**

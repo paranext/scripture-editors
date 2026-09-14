@@ -2,7 +2,7 @@ import { $createImmutableTypedTextNode } from "../features/ImmutableTypedTextNod
 import { $createMarkerNode } from "../features/MarkerNode.js";
 import { $createTypedMarkNode, TypedMarkNode } from "../features/TypedMarkNode.js";
 import { $createCursorPlaceholderNode } from "../../plugins/CursorHandler/index.js";
-import { $createCharNode, CharNode } from "./CharNode.js";
+import { $createCharNode, $isCharNode, CharNode } from "./CharNode.js";
 import { $createImmutableChapterNode } from "./ImmutableChapterNode.js";
 import { usjBaseNodes } from "./index.js";
 import {
@@ -1111,6 +1111,98 @@ describe("Editor Node Utilities", () => {
     });
   });
 
+  describe("char span separator prefix", () => {
+    it("excludes the separator NBSP from the span's text coordinates", () => {
+      const { editor, charText } = buildCharSpan();
+
+      editor.getEditorState().read(() => {
+        const items = $getCharItems();
+
+        expect(items).toHaveLength(1);
+        $expectTextItem(items[0], [{ text: `${NBSP}LORD`, start: 0, lead: 1 }]);
+
+        // A local offset past the separator is its distance into the content.
+        expect($getLogicalTextLocation(charText, 3)).toEqual({
+          parent: charText.getParent(),
+          index: 0,
+          offset: 2,
+        });
+        // Both sides of the separator itself are the start of the content.
+        expect($getLogicalTextLocation(charText, 0)?.offset).toBe(0);
+        expect($getLogicalTextLocation(charText, 1)?.offset).toBe(0);
+
+        const item = items[0];
+        if (item.type !== "text") throw new Error("Expected a text item");
+        expect($getTextNodeAtLogicalOffset(item, 0)).toEqual([charText, 1]);
+        expect($getTextNodeAtLogicalOffset(item, 2)).toEqual([charText, 3]);
+        expect($getTextNodeAtLogicalOffset(item, 4)).toEqual([charText, 5]);
+        expect($getTextNodeAtLogicalOffset(item, 5)).toBeUndefined();
+      });
+    });
+
+    it("keeps the separator out of an annotated span's coordinates", () => {
+      // The AnnotationPlugin wraps content in a TypedMarkNode, which is transparent in USJ — so
+      // the separator is still the glyph's, even one wrapper down.
+      let charText: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        charText = $createTextNode(`${NBSP}LORD`);
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createCharNode("nd").append(
+              $createMarkerNode("nd"),
+              $createTypedMarkNode({ spelling: ["s1"] }).append(charText),
+              $createMarkerNode("nd", "closing"),
+            ),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        $expectTextItem($getCharItems()[0], [{ text: `${NBSP}LORD`, start: 0, lead: 1 }]);
+      });
+    });
+
+    it("counts a leading NBSP that no opening glyph owns", () => {
+      // Outside a char span an NBSP is the author's own `~`, and inside one only the NBSP
+      // directly after the opening glyph is the separator — the text after a nested span's
+      // closer carries content, not display.
+      let paraText: TextNode;
+      let tailText: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        paraText = $createTextNode(`${NBSP}data`);
+        tailText = $createTextNode(`${NBSP}tail`);
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createMarkerNode("p"),
+            paraText,
+            $createCharNode("nd").append(
+              $createMarkerNode("nd"),
+              $createTextNode(`${NBSP}LORD`),
+              $createCharNode("wj").append(
+                $createMarkerNode("wj"),
+                $createTextNode(`${NBSP}said`),
+                $createMarkerNode("wj", "closing"),
+              ),
+              tailText,
+              $createMarkerNode("nd", "closing"),
+            ),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        const para = $getRoot().getFirstChild();
+        if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
+        $expectTextItem($getLogicalContentItems(para)[0], [{ text: `${NBSP}data`, start: 0 }]);
+
+        const charItems = $getCharItems();
+        $expectTextItem(charItems[0], [{ text: `${NBSP}LORD`, start: 0, lead: 1 }]);
+        $expectTextItem(charItems[2], [{ text: `${NBSP}tail`, start: 0 }]);
+        expect($getLogicalTextLocation(tailText, 1)?.offset).toBe(1);
+      });
+    });
+  });
+
   describe("$getLogicalPointFromElementPoint / $getElementOffsetFromLogicalIndex", () => {
     it("maps element boundaries around an annotated run", () => {
       const { editor } = createBasicTestEnvironment(nodes, () => {
@@ -1217,16 +1309,54 @@ function $getFirstParaTextItem(): LogicalTextItem {
  */
 function $expectTextItem(
   item: LogicalContentItem,
-  expectedSegments: { text: string; start: number }[],
+  expectedSegments: { text: string; start: number; lead?: number }[],
 ) {
   if (item.type !== "text") throw new Error("Expected a text item");
   expect(
     item.segments.map((segment) => ({
       text: segment.node.getTextContent(),
       start: segment.start,
+      lead: segment.lead,
     })),
-  ).toEqual(expectedSegments);
-  expect(item.length).toBe(expectedSegments.reduce((sum, segment) => sum + segment.text.length, 0));
+  ).toEqual(expectedSegments.map(({ text, start, lead }) => ({ text, start, lead: lead ?? 0 })));
+  expect(item.length).toBe(
+    expectedSegments.reduce((sum, segment) => sum + segment.text.length - (segment.lead ?? 0), 0),
+  );
+}
+
+/**
+ * Build an editable-mode `\nd` span — opening glyph, NBSP-prefixed content, closing glyph —
+ * inside a paragraph, returning its content text node.
+ */
+function buildCharSpan() {
+  let charText: TextNode;
+  const { editor } = createBasicTestEnvironment(nodes, () => {
+    charText = $createTextNode(`${NBSP}LORD`);
+    $getRoot().append(
+      $createParaNode("p").append(
+        $createCharNode("nd").append(
+          $createMarkerNode("nd"),
+          charText,
+          $createMarkerNode("nd", "closing"),
+        ),
+      ),
+    );
+  });
+  // Non-null assertion is safe: the initial state callback ran synchronously.
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  return { editor, charText: charText! };
+}
+
+/**
+ * Gets the logical content items of the first char span under the first (para) child of root.
+ * Must be called inside an active editor state read scope.
+ */
+function $getCharItems(): LogicalContentItem[] {
+  const para = $getRoot().getFirstChild();
+  if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
+  const char = para.getChildren().find($isCharNode);
+  if (!char) throw new Error("Expected a char span");
+  return $getLogicalContentItems(char);
 }
 
 /** Build "the " |man| " who" where "man" is annotated, returning the three text nodes. */

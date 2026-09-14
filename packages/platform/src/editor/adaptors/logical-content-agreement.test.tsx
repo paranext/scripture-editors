@@ -216,7 +216,11 @@ describe("content semantics agreement: deserializeEditorState vs $getLogicalCont
         item.type === "text"
           ? {
               kind: "text",
-              text: item.segments.map((segment) => segment.node.getTextContent()).join(""),
+              // `lead` drops a char span's separator NBSP, the one display byte a segment's text
+              // carries that the exporter does not emit.
+              text: item.segments
+                .map((segment) => segment.node.getTextContent().slice(segment.lead))
+                .join(""),
             }
           : { kind: item.node.getType() },
       );

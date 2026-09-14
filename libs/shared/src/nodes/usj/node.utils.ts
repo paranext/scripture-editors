@@ -44,6 +44,7 @@ import {
   SerializedChapterNode,
 } from "./ChapterNode.js";
 import { $isCharNode, CharNode, isSerializedCharNode } from "./CharNode.js";
+import { $charSeparatorPrefixLength } from "./markerSeparators.utils.js";
 import {
   $isImmutableChapterNode,
   ImmutableChapterNode,
@@ -86,8 +87,15 @@ export type ParaLikeNode = SomeParaNode | BookNode;
 /** A piece of a logical text item: one Lexical TextNode and its cumulative start offset. */
 export interface LogicalTextSegment {
   node: TextNode;
-  /** Offset of this segment's first character within the logical text item. */
+  /** Logical offset within the text item at which this segment's CONTENT starts. */
   start: number;
+  /**
+   * How many of `node`'s leading characters are presentation rather than content (0 or 1) — a
+   * char span's structural separator NBSP, which the editor→USJ conversion strips. A local offset
+   * `o` in `node` maps to logical `start + Math.max(0, o - lead)`, and the segment contributes
+   * `node.getTextContentSize() - lead` characters to the item.
+   */
+  lead: number;
 }
 
 /**
@@ -101,6 +109,7 @@ export interface LogicalTextSegment {
 export interface LogicalTextItem {
   type: "text";
   segments: LogicalTextSegment[];
+  /** Length of the item's USJ string — segment leads excluded, as the exporter excludes them. */
   length: number;
 }
 
@@ -1046,7 +1055,8 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
 /**
  * Maps a parent element's Lexical children to its logical USJ content items — the items the
  * editor→USJ conversion would export: presentation-only nodes skipped, TypedMarkNodes
- * transparent (children spliced in, recursively), contiguous text coalesced into single items.
+ * transparent (children spliced in, recursively), contiguous text coalesced into single items,
+ * and a char span's structural separator NBSP excluded from its text item's coordinates.
  *
  * Known exclusion: comment-type TypedMarkNodes are treated as transparent like every other
  * mark, even though the exporter still serializes them as milestone items. That milestone
@@ -1076,9 +1086,12 @@ export function $getLogicalContentItems(parent: ElementNode): LogicalContentItem
     // Only plain TextNodes (exact "text" type) join a coalesced run, mirroring the exporter.
     // TextNode subclasses (e.g. VerseNode) fall through to become standalone items.
     if ($isTextNode(node) && node.getType() === TextNode.getType()) {
+      // A char span's separator NBSP is a prefix of its first content text and the exporter
+      // strips it, so it occupies no USJ offset — see $charSeparatorPrefixLength.
+      const lead = $charSeparatorPrefixLength(node);
       run ??= { segments: [], length: 0 };
-      run.segments.push({ node, start: run.length });
-      run.length += node.getTextContentSize();
+      run.segments.push({ node, start: run.length, lead });
+      run.length += node.getTextContentSize() - lead;
       return;
     }
     flushRun();
@@ -1123,7 +1136,9 @@ export function $getLogicalIndexOfChild(parent: ElementNode, child: LexicalNode)
  * @param textNode - The Lexical text node.
  * @param offset - The offset within the text node.
  * @returns the logical parent, item index, and cumulative offset, or `undefined` if the text
- *   node is not part of any logical text item (e.g. presentation-only text).
+ *   node is not part of any logical text item (e.g. presentation-only text). An offset inside the
+ *   segment's presentation-only lead reports the start of the content after it, the nearest
+ *   position the USJ text can express.
  */
 export function $getLogicalTextLocation(
   textNode: TextNode,
@@ -1138,7 +1153,10 @@ export function $getLogicalTextLocation(
     if (item.type !== "text") continue;
 
     const segment = item.segments.find((segment) => segment.node.is(textNode));
-    if (segment) return { parent, index, offset: segment.start + offset };
+    // A point inside the presentation-only lead has no USJ offset of its own; it reports the
+    // start of the content that follows it.
+    if (segment)
+      return { parent, index, offset: segment.start + Math.max(0, offset - segment.lead) };
   }
   return undefined;
 }
@@ -1150,7 +1168,8 @@ export function $getLogicalTextLocation(
  * previous piece.
  * @param item - The logical text item.
  * @param offset - The cumulative offset within the item.
- * @returns the text node and local offset, or `undefined` when out of range.
+ * @returns the text node and local offset — past the segment's presentation-only lead, so the
+ *   point sits on the character the USJ offset names — or `undefined` when out of range.
  */
 export function $getTextNodeAtLogicalOffset(
   item: LogicalTextItem,
@@ -1159,14 +1178,14 @@ export function $getTextNodeAtLogicalOffset(
   if (offset < 0 || offset > item.length) return undefined;
 
   for (const segment of item.segments) {
-    const segmentLength = segment.node.getTextContentSize();
-    if (offset >= segment.start && offset < segment.start + segmentLength)
-      return [segment.node, offset - segment.start];
+    const contentLength = segment.node.getTextContentSize() - segment.lead;
+    if (offset >= segment.start && offset < segment.start + contentLength)
+      return [segment.node, offset - segment.start + segment.lead];
   }
   // offset === item.length: end of the last segment.
   const lastSegment = item.segments[item.segments.length - 1];
   if (!lastSegment) return undefined;
-  return [lastSegment.node, offset - lastSegment.start];
+  return [lastSegment.node, offset - lastSegment.start + lastSegment.lead];
 }
 
 /**
