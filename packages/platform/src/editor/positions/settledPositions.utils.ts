@@ -1,0 +1,402 @@
+/**
+ * Carrying a position from the SETTLED document onto the LIVE tree.
+ *
+ * A host's only view of the document is `getUsj()`, which is settled, so every position it hands
+ * back addresses a document the editor is not currently showing. Outside a rebuilt scope that is a
+ * matter of restating one top-level index; inside one, the settled structure and the live
+ * structure genuinely disagree, and the only thing they still share is the BYTES on screen — which
+ * is what the Tier-2 caret's whitespace-tolerant byte anchor already carries a position across.
+ *
+ * So a settled location inside a rebuilt scope is resolved against that scope's settled tree
+ * (materialized in a scratch editor), reduced to a byte anchor there, and re-resolved against the
+ * live fragment. Nodes the settle preserved verbatim — notes, unknown blocks, verses and their
+ * display runs — cross by their own path instead: the settle handed the SAME subtree through, so
+ * the position in it is unchanged.
+ */
+
+import {
+  $buildNoteFragment,
+  $caretSpanByteAnchor,
+  $resolveFragmentByteAnchor,
+  CaretByteAnchor,
+  FragmentAccumulator,
+  FragmentPoint,
+  FragmentSpan,
+  Tier2Context,
+} from "../markerEdit/tier2Rebuild.utils";
+import { SettledPositionContext, SettleScopePlan } from "./settledPositions.model";
+import { PreparedScopes } from "./settledScopes.utils";
+import {
+  UsjDocumentLocation,
+  indexesFromUsjJsonPath,
+  isUsjTextContentLocation,
+  usjJsonPathFromIndexes,
+} from "@eten-tech-foundation/scripture-utilities";
+import { $getNodeByKey, $getRoot, $isElementNode, LexicalNode, NodeKey } from "lexical";
+import { $getLogicalContentItems, $isNoteNode } from "shared";
+import {
+  $getLocationFromNode,
+  $getNodeFromLocation,
+  AnnotationRange,
+  SelectionRange,
+} from "shared-react";
+
+/** Whitespace as the fragment layer means it — everything the display may add, move, or flatten
+ * across a settle. */
+const WHITESPACE = /\s/;
+
+/** The `$.content[…]` prefix of a jsonPath, with any property suffix (`['marker']`) stripped. */
+const CONTENT_PATH = /^(\$(?:\.content\[\d+\])*)(?:\.|$|\[)/;
+
+function contentPathOf(jsonPath: string): string {
+  return CONTENT_PATH.exec(jsonPath)?.[1] ?? jsonPath;
+}
+
+/** `location` re-addressed at `indexes`, keeping its subtype, its offsets, and any property
+ * suffix — the path is the only part a translation ever changes. */
+function withContentIndexes<T extends UsjDocumentLocation>(location: T, indexes: number[]): T {
+  const suffix = location.jsonPath.slice(contentPathOf(location.jsonPath).length);
+  return { ...location, jsonPath: `${usjJsonPathFromIndexes(indexes)}${suffix}` } as T;
+}
+
+/** Where a settled location has to be resolved: against the live tree at a restated path, or
+ * inside one rebuilt scope's settled tree. */
+type SettledTarget =
+  | { kind: "live"; location: UsjDocumentLocation }
+  | {
+      kind: "scope";
+      plan: SettleScopePlan;
+      scratchIndexes: number[];
+      location: UsjDocumentLocation;
+    };
+
+/**
+ * The note scope whose note the path crosses, and at what depth — the settle that rebuilt a note's
+ * CONTENT leaves every index above the note untouched, so the live tree can be walked down to the
+ * note and only the remainder of the path is in settled coordinates.
+ */
+function $noteScopeOnPath(
+  prepared: PreparedScopes,
+  liveIndexes: number[],
+): { plan: SettleScopePlan; depth: number } | undefined {
+  let node: LexicalNode = $getRoot();
+  for (let depth = 0; depth < liveIndexes.length; depth += 1) {
+    if (!$isElementNode(node)) return undefined;
+    const item = $getLogicalContentItems(node)[liveIndexes[depth]];
+    if (item?.type !== "element") return undefined;
+    node = item.node;
+    const plan = prepared.byFirstLiveKey.get(node.getKey());
+    if (plan?.kind === "note") return { plan, depth };
+  }
+  return undefined;
+}
+
+function $settledTarget(prepared: PreparedScopes, location: UsjDocumentLocation): SettledTarget {
+  const indexes = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
+  // The document root addresses itself: no top-level index to restate.
+  if (indexes.length === 0) return { kind: "live", location };
+  const top = prepared.settledToLiveTopIndex(indexes[0]);
+  if (top.plan)
+    return {
+      kind: "scope",
+      plan: top.plan,
+      scratchIndexes: [top.indexWithinScope, ...indexes.slice(1)],
+      location,
+    };
+  const liveIndexes = [top.liveIndex, ...indexes.slice(1)];
+  const note = $noteScopeOnPath(prepared, liveIndexes);
+  // The settled note sits at the scratch root's only content index.
+  if (note)
+    return {
+      kind: "scope",
+      plan: note.plan,
+      scratchIndexes: [0, ...indexes.slice(note.depth + 1)],
+      location,
+    };
+  return { kind: "live", location: withContentIndexes(location, liveIndexes) };
+}
+
+/** Every key in `node`'s subtree, `node` included. */
+function $collectKeys(node: LexicalNode, out: Set<NodeKey>): void {
+  out.add(node.getKey());
+  if ($isElementNode(node)) node.getChildren().forEach((child) => $collectKeys(child, out));
+}
+
+/** The span a `(key, offset)` pair addresses, if the fragment carries one for that node. */
+function spanFor(
+  fragment: FragmentAccumulator,
+  key: NodeKey,
+  offset: number,
+): FragmentSpan | undefined {
+  return fragment.spans.find(
+    (span) => !span.isSentinel && span.key === key && offset <= span.end - span.start,
+  );
+}
+
+/**
+ * The byte anchor for a point in a fragment's own tree, plus the byte of `fragment.text` it
+ * anchored at. A text point anchors on its own bytes; an ELEMENT point is a boundary between
+ * children, which anchors at the END of the last byte before it — the one spelling that is stable
+ * when the boundary happens to sit in front of a preserved node, whose inner bytes are not
+ * addressable at all.
+ *
+ * Read-only: resolves span node keys, so call inside a read of the tree the fragment was built
+ * over.
+ */
+function $anchorForPoint(
+  fragment: FragmentAccumulator,
+  node: LexicalNode,
+  offset: number,
+): { anchor: CaretByteAnchor; position: number } | undefined {
+  const anchored = (key: NodeKey, keyOffset: number) => {
+    const anchor = $caretSpanByteAnchor(fragment, key, keyOffset);
+    const span = spanFor(fragment, key, keyOffset);
+    return anchor && span ? { anchor, position: span.start + keyOffset } : undefined;
+  };
+  if (!$isElementNode(node)) return anchored(node.getKey(), offset);
+  const before = new Set<NodeKey>();
+  node
+    .getChildren()
+    .slice(0, offset)
+    .forEach((child) => $collectKeys(child, before));
+  const last = [...fragment.spans].reverse().find((span) => before.has(span.key));
+  if (last) return anchored(last.key, last.end - last.start);
+  // Nothing before the boundary: it is the fragment's own start, which only a non-sentinel first
+  // span can express — a sentinel anchor counts its placeholder byte and would land PAST the
+  // construct rather than in front of it.
+  const first = fragment.spans[0];
+  return first && !first.isSentinel ? anchored(first.key, 0) : undefined;
+}
+
+/** What resolving a settled location inside a scope's scratch tree produced. Plain data only: a
+ * live node must never be carried into a scratch read, nor a scratch node out of one. */
+type ScratchResolution =
+  | {
+      kind: "anchor";
+      anchor: CaretByteAnchor;
+      /** Whether the settled byte the anchor names is NOT whitespace, so a live position that
+       * lands inside a whitespace run the settle normalized has to keep going to the word. */
+      atWordByte: boolean;
+    }
+  | {
+      kind: "preserved";
+      /** Which of the fragment's preserved node runs the point landed in. */
+      sentinelIndex: number;
+      /** Which node of that run. */
+      memberIndex: number;
+      /** Child indexes from that node down to the point's own node. */
+      path: number[];
+      offset: number;
+      type: "text" | "element";
+      /** The same point as a byte anchor over the member note's content, for the case where the
+       * live note is settling too and its content is therefore NOT the same subtree. */
+      noteAnchor: CaretByteAnchor | undefined;
+    };
+
+/** The preserved run member whose subtree holds `node`, if any. */
+function $preservedRunMember(
+  fragment: FragmentAccumulator,
+  node: LexicalNode,
+): { sentinelIndex: number; memberIndex: number; member: LexicalNode } | undefined {
+  const members = new Map<
+    NodeKey,
+    { sentinelIndex: number; memberIndex: number; member: LexicalNode }
+  >();
+  fragment.sentinels.forEach((run, sentinelIndex) =>
+    run.forEach((member, memberIndex) =>
+      members.set(member.getKey(), { sentinelIndex, memberIndex, member }),
+    ),
+  );
+  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
+    const hit = members.get(current.getKey());
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/** Child indexes from `ancestor` down to `node`, or `undefined` when `node` is not under it. */
+function $childPath(ancestor: LexicalNode, node: LexicalNode): number[] | undefined {
+  const path: number[] = [];
+  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
+    if (current.is(ancestor)) return path;
+    path.unshift(current.getIndexWithinParent());
+  }
+  return undefined;
+}
+
+/** Resolve a settled location inside `plan`'s scratch tree. Call inside a read of that tree. */
+function $resolveInScratch(
+  fragment: FragmentAccumulator,
+  location: UsjDocumentLocation,
+  tier2: Tier2Context,
+): ScratchResolution | undefined {
+  const [node, offset] = $getNodeFromLocation(location);
+  if (!node || offset === undefined) return undefined;
+  const preserved = $preservedRunMember(fragment, node);
+  if (!preserved) {
+    const anchored = $anchorForPoint(fragment, node, offset);
+    if (!anchored) return undefined;
+    const byte = fragment.text[anchored.position];
+    return {
+      kind: "anchor",
+      anchor: anchored.anchor,
+      atWordByte: byte !== undefined && !WHITESPACE.test(byte),
+    };
+  }
+  const path = $childPath(preserved.member, node);
+  if (!path) return undefined;
+  const noteContent = $isNoteNode(preserved.member)
+    ? $buildNoteFragment(preserved.member, tier2.getMarker, tier2.viewOptions)?.out
+    : undefined;
+  return {
+    kind: "preserved",
+    sentinelIndex: preserved.sentinelIndex,
+    memberIndex: preserved.memberIndex,
+    path,
+    offset,
+    type: $isElementNode(node) ? "element" : "text",
+    noteAnchor: noteContent && $anchorForPoint(noteContent, node, offset)?.anchor,
+  };
+}
+
+/**
+ * Move a live point forward over whitespace the settle normalized away. A settled position that
+ * names a word's first byte must name that byte live too — the cut a transient declaration leaves
+ * behind can put two spaces where the settled document shows one, and the byte anchor's
+ * whitespace tolerance then stops inside the run rather than at the word.
+ */
+function advancePastWhitespace(fragment: FragmentAccumulator, point: FragmentPoint): FragmentPoint {
+  if (point.type !== "text") return point;
+  const span = spanFor(fragment, point.key, point.offset);
+  if (!span) return point;
+  const length = span.end - span.start;
+  let offset = point.offset;
+  while (offset < length && WHITESPACE.test(fragment.text[span.start + offset])) offset += 1;
+  return offset === point.offset ? point : { ...point, offset };
+}
+
+/**
+ * Restate a live point in the live node's OWN coordinates when the scope's declared transient
+ * bytes were cut out of its fragment: the mapping ran over a fragment those bytes were missing
+ * from, so every offset at or past the cut is short by their length.
+ */
+function cutCorrected(
+  plan: SettleScopePlan,
+  point: FragmentPoint | undefined,
+): FragmentPoint | undefined {
+  const cut = plan.liveCut;
+  if (!point || !cut || point.type !== "text" || point.key !== cut.key) return point;
+  return point.offset >= cut.nodeOffset ? { ...point, offset: point.offset + cut.length } : point;
+}
+
+/** The live point for a settled point that landed inside a preserved node run. */
+function $livePointInPreservedRun(
+  prepared: PreparedScopes,
+  plan: SettleScopePlan,
+  resolved: Extract<ScratchResolution, { kind: "preserved" }>,
+): FragmentPoint | undefined {
+  const member = plan.liveFragment?.sentinels[resolved.sentinelIndex]?.[resolved.memberIndex];
+  if (!member) return undefined;
+  // A note that is ALSO settling was handed through this scope as its SETTLED self, so its live
+  // content is not the same subtree — that one crosses by its own fragment bytes instead.
+  const notePlan = prepared.byFirstLiveKey.get(member.getKey());
+  if (notePlan?.kind === "note" && resolved.noteAnchor && notePlan.liveFragment)
+    return cutCorrected(
+      notePlan,
+      $resolveFragmentByteAnchor(notePlan.liveFragment, resolved.noteAnchor),
+    );
+  let node: LexicalNode = member;
+  for (const index of resolved.path) {
+    if (!$isElementNode(node)) return undefined;
+    const child = node.getChildAtIndex(index);
+    if (!child) return undefined;
+    node = child;
+  }
+  return { key: node.getKey(), offset: resolved.offset, type: resolved.type };
+}
+
+/** The live point for a settled location inside a rebuilt scope. */
+function $livePointInScope(
+  context: SettledPositionContext,
+  prepared: PreparedScopes,
+  target: Extract<SettledTarget, { kind: "scope" }>,
+): FragmentPoint | undefined {
+  const { plan } = target;
+  const { liveFragment, scratchFragment } = plan;
+  if (!liveFragment || !scratchFragment) return undefined;
+  const scratchLocation = withContentIndexes(target.location, target.scratchIndexes);
+  const resolved = plan.scratch
+    .getEditorState()
+    .read(() => $resolveInScratch(scratchFragment, scratchLocation, context.tier2));
+  if (!resolved) return undefined;
+  if (resolved.kind === "preserved") return $livePointInPreservedRun(prepared, plan, resolved);
+  // A location that names USFM bytes rather than USJ content wants those bytes back, including
+  // the ones no caret can rest in; a text location wants the caret's own addressing.
+  const point = $resolveFragmentByteAnchor(liveFragment, resolved.anchor, {
+    addressDisplayBytes: !isUsjTextContentLocation(target.location),
+  });
+  if (!point) return undefined;
+  return cutCorrected(
+    plan,
+    resolved.atWordByte ? advancePastWhitespace(liveFragment, point) : point,
+  );
+}
+
+/**
+ * The live node and offset a SETTLED location addresses, or `undefined` when it cannot be carried
+ * across (a scope whose bytes could not be fragmented, or a path that does not resolve in the
+ * settled document either).
+ *
+ * Call inside a read of the LIVE editor state, with `prepared` from the same read.
+ */
+export function $livePointFromSettledLocation(
+  context: SettledPositionContext,
+  prepared: PreparedScopes,
+  location: UsjDocumentLocation,
+): FragmentPoint | undefined {
+  const target = $settledTarget(prepared, location);
+  if (target.kind === "scope") return $livePointInScope(context, prepared, target);
+  const [node, offset] = $getNodeFromLocation(target.location);
+  if (!node || offset === undefined) return undefined;
+  return { key: node.getKey(), offset, type: $isElementNode(node) ? "element" : "text" };
+}
+
+/** The same location, addressed against the live document. */
+function $liveLocationFromSettled(
+  context: SettledPositionContext,
+  prepared: PreparedScopes,
+  location: UsjDocumentLocation,
+): UsjDocumentLocation | undefined {
+  const target = $settledTarget(prepared, location);
+  // Outside every rebuilt scope only the top-level index moves, and restating it keeps the
+  // location's own subtype and offsets exactly as the host wrote them — resolving and
+  // re-reporting it would put it through the snapping rules a second time.
+  if (target.kind === "live") return target.location;
+  const point = $livePointInScope(context, prepared, target);
+  const node = point && $getNodeByKey(point.key);
+  return node ? $getLocationFromNode(node, point.offset) : undefined;
+}
+
+/**
+ * `settled` restated in LIVE coordinates, so the editor's existing resolvers
+ * (`$getRangeFromUsjSelection`, the annotation plugin, `$insertNote`) consume it unchanged — or
+ * `undefined` when an endpoint cannot be carried across, which a caller must treat as "refuse",
+ * never as "resolve it anyway".
+ *
+ * Call inside a read of the LIVE editor state, with `prepared` from the same read.
+ */
+export function $liveSelectionFromSettled<T extends SelectionRange | AnnotationRange>(
+  context: SettledPositionContext,
+  prepared: PreparedScopes,
+  settled: T,
+): T | undefined {
+  // Nothing was rebuilt, so the settled document IS the live tree and the host's own coordinates
+  // already address it.
+  if (prepared.byFirstLiveKey.size === 0) return settled;
+  const start = $liveLocationFromSettled(context, prepared, settled.start);
+  if (!start) return undefined;
+  if (!settled.end) return { ...settled, start };
+  const end = $liveLocationFromSettled(context, prepared, settled.end);
+  if (!end) return undefined;
+  return { ...settled, start, end };
+}

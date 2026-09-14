@@ -34,6 +34,13 @@ import {
   LastKnownCaret,
 } from "./markerEdit/virtualSettle.utils";
 import { ParaMarkerPrefixGuardPlugin } from "./ParaMarkerPrefixGuardPlugin";
+import {
+  isLiveSettledIdentical,
+  SettledPositionContext,
+  SettledScopeCache,
+} from "./positions/settledPositions.model";
+import { $liveSelectionFromSettled } from "./positions/settledPositions.utils";
+import { $prepareSettleScopes } from "./positions/settledScopes.utils";
 import { ScriptureReferencePlugin } from "./ScriptureReferencePlugin";
 import TreeViewPlugin from "./TreeViewPlugin";
 import { ToolbarPlugin } from "./toolbar/ToolbarPlugin";
@@ -94,9 +101,9 @@ import {
   $applyUpdate,
   $getNoteByKeyOrIndex,
   $getParticularNodeOps,
-  $getUsjSelectionFromEditor,
   $getRangeFromUsjSelection,
   $getReplaceEmbedOps,
+  $getUsjSelectionFromEditor,
   $insertNote,
   $selectNote,
   AnnotationPlugin,
@@ -126,17 +133,18 @@ import {
   ParaNodePlugin,
   pasteSelection,
   pasteSelectionAsPlainText,
+  SelectionRange,
   StateChangePlugin,
   StateChangeSnapshot,
   StructureKeyboardPlugin,
   TextDirectionPlugin,
   TextSpacingPlugin,
   TrailingNoteCaretGuardPlugin,
+  usjBlockVerseNodes,
   UsjNodeOptions,
   UsjNodesMenuPlugin,
-  ViewOptions,
-  usjBlockVerseNodes,
   usjReactNodes,
+  ViewOptions,
 } from "shared-react";
 
 const defaultViewOptions = getDefaultViewOptions();
@@ -195,6 +203,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // Lexical's live selection before a getUsj() read that races it. Consumed only as
   // `$verifiedTransientLiteral`'s fallback (virtualSettle.utils.ts) — see its own doc comment.
   const lastKnownCaretRef = useRef<LastKnownCaret | undefined>(undefined);
+  // Settle scopes memoized on their content, so the position APIs reuse one basis across a run of
+  // calls against an unchanged pending state instead of re-settling per call. Per-instance for the
+  // same reason `transientInputRef` is.
+  const settledScopeCacheRef = useRef<SettledScopeCache>({ entries: new Map() });
   // The document most recently ANNOUNCED to the host via `onUsjChange` — the yardstick the
   // historic-commit notifier below measures against, so undo/redo only re-announce a document the
   // host has not already been told about. Written on every emission (typed, applied, historic)
@@ -416,6 +428,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     if (effectiveIsReadonly) throw new Error(`Cannot ${operation} in readonly mode`);
   };
 
+  // Registered per layout so an editor that isn't using block verse never holds its node. Named
+  // rather than inlined into `initialConfig` because a settled-position scratch editor has to
+  // register the SAME nodes to parse a settled rebuild at all.
+  const editorNodes = useMemo(
+    () => [TypedMarkNode, ...(isBlockVerse ? usjBlockVerseNodes : usjReactNodes)],
+    [isBlockVerse],
+  );
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
       namespace: "platformEditor",
@@ -426,10 +445,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       onError(error) {
         throw error;
       },
-      // Registered per layout so an editor that isn't using block verse never holds its node.
-      nodes: [TypedMarkNode, ...(isBlockVerse ? usjBlockVerseNodes : usjReactNodes)],
+      nodes: editorNodes,
     }),
-    [effectiveIsReadonly, isBlockVerse, viewOptions.showCharMarkerTitles],
+    [effectiveIsReadonly, editorNodes, viewOptions.showCharMarkerTitles],
   );
   editorUsjAdaptor.initialize(stableLogger);
 
@@ -471,6 +489,42 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       ) ?? editedUsjRef.current
     );
   }, [viewOptions, markerLookup, stableLogger]);
+
+  /**
+   * A host's position restated in LIVE coordinates. Every `jsonPath` a host holds came from
+   * `getUsj()`, which is the SETTLED document, and the resolvers below all walk the live tree — so
+   * while anything is pending those are two different documents and the position has to be carried
+   * across before it is resolved (positions/settledPositions.utils.ts).
+   *
+   * `undefined` means the position could not be carried across, which callers must treat as a
+   * refusal: resolving it against the live tree anyway is exactly the silent mis-anchor this
+   * exists to prevent.
+   *
+   * `getEditorState().read`, NOT `editor.read` — the latter force-flushes an in-flight update
+   * mid-dispatch, and a host can call these from anywhere.
+   */
+  const liveSelectionFromSettled = useCallback(
+    <T extends SelectionRange | AnnotationRange>(settled: T): T | undefined => {
+      const editor = editorRef.current;
+      if (!editor) return undefined;
+      const context: SettledPositionContext = {
+        pendedKeys: getPendedDisplayOwners(editor) ?? new Set<string>(),
+        transientInput: transientInputRef.current,
+        lastKnownCaret: lastKnownCaretRef.current,
+        tier2: { viewOptions, getMarker: markerLookup, logger: stableLogger },
+        nodes: editorNodes,
+        cache: settledScopeCacheRef.current,
+      };
+      // Nothing pending and nothing declared: the two documents are the same one, and skipping
+      // the read keeps the common call as cheap as it has always been.
+      if (isLiveSettledIdentical(context)) return settled;
+      return editor.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        return $liveSelectionFromSettled(context, prepared, settled);
+      });
+    },
+    [viewOptions, markerLookup, stableLogger, editorNodes],
+  );
 
   // Built as a plain object (rebuilt per render, same as the previous inline useImperativeHandle
   // factory) and assigned to editorApiRef UNCONDITIONALLY below — never inside the
@@ -616,8 +670,16 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         reportUsjLocationsUnavailable("set the selection");
         return;
       }
+      const live = liveSelectionFromSettled(selection);
+      if (!live) {
+        stableLogger?.warn(
+          "setSelection refused: the position could not be resolved against the document " +
+            "currently being edited",
+        );
+        return;
+      }
       editorRef.current?.update(() => {
-        const editorSelection = $getRangeFromUsjSelection(selection);
+        const editorSelection = $getRangeFromUsjSelection(live);
         if (editorSelection !== undefined) {
           $setSelection(editorSelection);
           $addUpdateTag(SELECTION_CHANGE_TAG);
@@ -660,8 +722,17 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         onMouseLeave = fourth.onMouseLeave;
       }
 
+      const live = liveSelectionFromSettled(selection);
+      if (!live) {
+        stableLogger?.warn(
+          `setAnnotation refused for ${type} "${id}": the range could not be resolved against ` +
+            "the document currently being edited",
+        );
+        return;
+      }
+
       annotationRef.current?.setAnnotation(
-        selection,
+        live,
         externalTypedMarkType(type),
         id,
         onClick,
@@ -882,11 +953,19 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     insertNote(marker, caller, selection) {
       assertEditable("insert a note");
+      const live = selection && liveSelectionFromSettled(selection);
+      if (selection && !live) {
+        stableLogger?.warn(
+          `insertNote refused for \\${marker}: the position could not be resolved against the ` +
+            "document currently being edited",
+        );
+        return;
+      }
       editorRef.current?.update(() => {
         const noteNode = $insertNote(
           marker,
           caller,
-          selection,
+          live,
           scrRef,
           viewOptions,
           nodeOptions,

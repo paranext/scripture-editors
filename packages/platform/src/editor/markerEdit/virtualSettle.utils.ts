@@ -1079,7 +1079,8 @@ export function spliceHusk(siblings: SerializedLexicalNode[], index: number): vo
  * regardless of how many of those there are.
  *
  * Read-only on the LIVE tree (it mutates only the serialized copy), so call inside an
- * editor-state read.
+ * editor-state read. Returns whether the serialized note actually changed — a refusal is the
+ * settle saying this note is already what it settles to.
  */
 export function $applySettledNoteScope(
   note: NoteNode,
@@ -1087,12 +1088,12 @@ export function $applySettledNoteScope(
   context: Tier2Context,
   huskKeys: ReadonlySet<NodeKey>,
   transient: TransientLiteral | undefined,
-): void {
+): boolean {
   const site = sites.get(note.getKey());
   const noteChildren = site ? serializedChildren(site.node) : undefined;
-  if (!site || !noteChildren) return;
+  if (!site || !noteChildren) return false;
   const built = $settledNoteScope(note, sites, context, huskKeys, transient);
-  if (!built) return;
+  if (!built) return false;
   // The category fold's result patches the serialized note's OWN field — the settled USJ a
   // consumer reads must carry the category the displayed bytes fold to, not the stale state.
   if (built.categoryChanged) {
@@ -1100,12 +1101,13 @@ export function $applySettledNoteScope(
     if (built.category === undefined) delete serializedNote.category;
     else serializedNote.category = built.category;
   }
-  if (!built.rebuilt) return;
+  if (!built.rebuilt) return built.categoryChanged;
   const firstSite = sites.get(built.contentNodes[0].getKey());
-  if (!firstSite) return;
+  if (!firstSite) return built.categoryChanged;
   const start = noteChildren.indexOf(firstSite.node);
-  if (start < 0) return;
+  if (start < 0) return built.categoryChanged;
   noteChildren.splice(start, built.contentNodes.length, ...built.rebuilt);
+  return true;
 }
 
 /**

@@ -1374,11 +1374,19 @@ function $pointAfterSentinelRun(span: FragmentSpan): FragmentPoint | undefined {
  * resolves a byte of the settled document into the live tree. Both ask the same question — which
  * node and offset holds the byte this anchor names — so both walk this one implementation.
  *
+ * `addressDisplayBytes` switches from CARET addressing to BYTE addressing, for a position that
+ * names a USFM byte rather than a place the caret can rest. A caret never lands inside a completed
+ * closing glyph and never at the front edge of one construct when the back edge of the previous
+ * one says the same thing, so caret addressing skips closers and prefers the span the walk
+ * finished in; a position that names `\nd*`'s second byte, or the `\` a marker starts with, needs
+ * exactly those two spellings back.
+ *
  * Read-only: resolves span node keys, so call inside `editor.update()` or an editor-state read.
  */
 export function $resolveFragmentByteAnchor(
   fragment: { text: string; spans: FragmentSpan[] },
   anchor: CaretByteAnchor,
+  { addressDisplayBytes = false }: { addressDisplayBytes?: boolean } = {},
 ): FragmentPoint | undefined {
   const { text, spans } = fragment;
   // Pick the coordinate system. Document coordinates (attribute runs stepped over) keep a caret in
@@ -1401,7 +1409,7 @@ export function $resolveFragmentByteAnchor(
   let needNextAddressable = false;
   outer: for (const span of spans) {
     const spanLength = span.end - span.start;
-    const addressable = !span.isSentinel && !$isClosingMarkerSpan(span);
+    const addressable = !span.isSentinel && (addressDisplayBytes || !$isClosingMarkerSpan(span));
     // Mirror the capture's coordinate system exactly: when the anchor was taken in document
     // bytes, the restore must step over attribute runs too, or the two walks disagree and the
     // caret lands off by the run's re-spelled length.
@@ -1428,9 +1436,10 @@ export function $resolveFragmentByteAnchor(
       } else remainingWs--;
     }
     if (remainingNonWs === 0 && remainingWs === 0) {
-      // Satisfied exactly at this span's end — prefer the end of the span the walk finished in
-      // over the start of the next, matching the previous walk's first-covering-span behavior.
-      if (addressable) {
+      // Satisfied exactly at this span's end. A caret prefers the end of the span the walk
+      // finished in over the start of the next; a byte position prefers the span whose bytes it
+      // names, which is the next one.
+      if (addressable && !addressDisplayBytes) {
         best = { key: span.key, offset: spanLength };
         break;
       }
