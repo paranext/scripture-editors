@@ -13,14 +13,21 @@ export type VerseRefOffset = {
   offset: number;
 };
 
-/** This could actually have more content clauses at the end, but TS types are limited */
+/**
+ * Eight clauses covers every shape the editors render (table cell → char → nested char → text is
+ * seven). Deeper paths are valid at runtime; the type is a bound, not a rule.
+ */
 export type ContentJsonPath =
   | ""
   | `$`
   | `$.content[${number}]`
   | `$.content[${number}].content[${number}]`
   | `$.content[${number}].content[${number}].content[${number}]`
-  | `$.content[${number}].content[${number}].content[${number}].content[${number}]`;
+  | `$.content[${number}].content[${number}].content[${number}].content[${number}]`
+  | `$.content[${number}].content[${number}].content[${number}].content[${number}].content[${number}]`
+  | `$.content[${number}].content[${number}].content[${number}].content[${number}].content[${number}].content[${number}]`
+  | `$.content[${number}].content[${number}].content[${number}].content[${number}].content[${number}].content[${number}].content[${number}]`
+  | `$.content[${number}].content[${number}].content[${number}].content[${number}].content[${number}].content[${number}].content[${number}].content[${number}]`;
 
 /** Node within a USJ object, an offset within that node, and a JSONPath query to the node */
 export type UsjContentLocation = {
