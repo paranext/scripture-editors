@@ -13,7 +13,13 @@
  * `$liveSelectionFromSettled` output these methods consume.
  */
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
-import { contentPath, twoParaUsj, typeOver, $textContaining } from "./positions.test-helpers";
+import {
+  contentPath,
+  settledPara,
+  twoParaUsj,
+  typeOver,
+  $textContaining,
+} from "./positions.test-helpers";
 import {
   indexesFromUsjJsonPath,
   MarkerObject,
@@ -128,6 +134,66 @@ describe("setAnnotation while a paragraph is pending", () => {
     // untranslated path resolves happily onto the wrong paragraph. This is the silent mis-anchor,
     // not a failure to resolve.
     expect(annotatedText(lexical)).toEqual(["depa"]);
+  });
+});
+
+/**
+ * `insertNote`'s `selection` argument is host-facing SETTLED coordinates (see `EditorRef.insertNote`'s
+ * TSDoc): a host that read a text offset from `getUsj()` and calls back with it expects the note to
+ * land at that offset, not wherever the editor's own caret happens to be.
+ */
+describe("insertNote honours the selection it was given", () => {
+  it("inserts at the given location, not the caret", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(twoParaUsj(["plain body text"]));
+    await act(async () => {
+      lexical.update(() => {
+        // The caret sits at the very start of the paragraph — the wrong place an unfixed
+        // insertion would land the note.
+        $textContaining("plain body text").select(0, 0);
+      });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      ref.current?.insertNote("f", undefined, {
+        start: { jsonPath: contentPath([2, 0]), offset: 6 },
+      });
+      await Promise.resolve();
+    });
+
+    const para = settledPara(ref.current?.getUsj(), 2);
+    expect(para.content?.[0]).toBe("plain ");
+    expect((para.content?.[1] as MarkerObject)?.type).toBe("note");
+    expect(para.content?.[2]).toBe("body text");
+  });
+
+  it("translates a settled location the pend elsewhere pushed down onto the live paragraph it names", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(twoParaUsj(["plain body"]));
+    await act(async () => {
+      lexical.update(() => {
+        const node = $textContaining("plain body");
+        node.setTextContent("plain \\q1 body");
+        node.select(0, 0);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
+    // The typed `\q1` has already become a paragraph of its own, so "depart here" is settled index
+    // 4 while the live tree still has it at 3 (the same shift the `setAnnotation` suite above pins).
+    expect(settledMarkers(ref.current?.getUsj())).toEqual(["id", "c", "p", "q1", "p"]);
+
+    await act(async () => {
+      ref.current?.insertNote("f", undefined, {
+        start: { jsonPath: contentPath([4, 0]), offset: 7 },
+      });
+      await Promise.resolve();
+    });
+
+    const para = settledPara(ref.current?.getUsj(), 4);
+    expect(para.content?.[0]).toBe("depart ");
+    expect((para.content?.[1] as MarkerObject)?.type).toBe("note");
+    expect(para.content?.[2]).toBe("here");
   });
 });
 

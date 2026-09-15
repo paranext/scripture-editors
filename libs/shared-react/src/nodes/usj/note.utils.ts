@@ -27,6 +27,7 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   $setState,
   LexicalNode,
   RangeSelection,
@@ -224,6 +225,13 @@ export function $insertNoteWithSelect(
   // (the reported verse number arriving in the file twice). One place decides where such a point
   // really is; here it resolves to the glyph's trailing end, the ordinary position just past it.
   $normalizeSelectionOutOfGlyphText(selection);
+
+  // `selection` may be a detached range built from a caller-supplied location rather than the
+  // editor's own live selection (`$getRangeFromUsjSelection`). Lexical's `insertNodes` reaches for
+  // `$getSelection()` partway through its own split/removal machinery
+  // (`$removeTextAndSplitBlock`), so without this the note would land wherever the live caret is
+  // instead of where `selection` points.
+  $setSelection(selection);
 
   // At a char span's content end, place the note explicitly rather than letting `insertNodes`
   // split the span there and strand its closing glyph (see `$closingGlyphAfterCaret`). The
