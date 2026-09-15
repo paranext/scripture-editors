@@ -15,8 +15,17 @@ import {
   usjJsonPathFromIndexes,
 } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, LexicalEditor, NodeKey, TextNode } from "lexical";
-import { getMarker as bundledGetMarker, getPendedDisplayOwners, TypedMarkNode } from "shared";
+import { $getRoot, $isTextNode, LexicalEditor, NodeKey, TextNode } from "lexical";
+import {
+  $getLogicalContentItems,
+  $isCharNode,
+  $isMarkerNode,
+  $isParaNode,
+  $isUnknownNode,
+  getMarker as bundledGetMarker,
+  getPendedDisplayOwners,
+  TypedMarkNode,
+} from "shared";
 import { usjReactNodes } from "shared-react";
 
 /** A doc shaped like the settled-output suites': a book, a chapter, `content` as the first
@@ -32,6 +41,127 @@ export function twoParaUsj(content: Usj["content"]): Usj {
       { type: "para", marker: "p", content: ["depart here"] },
     ],
   };
+}
+
+/** A note whose reference span keeps its body text off the caller's own slot, so retyping the body
+ * cannot coalesce into the caller and cost the note its recognizable shape. */
+function noteMarkerObject(reference: string, body: string): MarkerObject {
+  return {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "fr", content: [reference] }, body],
+  };
+}
+
+/** An optbreak followed by two identically-shaped notes in one paragraph — the shape in which the
+ * settle drops a preserved node the live tree still carries, so each side's preserved runs are a
+ * different list. The two notes are shape-compatible on purpose: a run crossed at the wrong index
+ * then walks successfully instead of failing loudly. */
+export function optbreakAndTwoNotesUsj(): Usj {
+  return twoParaUsj([
+    "head ",
+    { type: "optbreak" },
+    " first ",
+    noteMarkerObject("1.1", "note one"),
+    " second ",
+    noteMarkerObject("1.2", "note two"),
+    " tail text",
+  ]);
+}
+
+/** Delete the optbreak's `//` display token — the whole of what backspace does to a token-mode
+ * child, which Lexical removes outright — leaving the empty `UnknownNode` husk pended with the
+ * caret inside it, where the deletion leaves it and where the settle's grace pass keeps it until
+ * the caret departs. */
+export async function emptyOptbreakHusk(lexical: LexicalEditor): Promise<NodeKey> {
+  let key = "";
+  await act(async () => {
+    lexical.update(() => {
+      const para = $getRoot().getChildren().filter($isParaNode)[0];
+      const husk = para.getChildren().find($isUnknownNode);
+      if (!husk) throw new Error("no optbreak to empty");
+      husk.getChildren().forEach((child) => child.remove());
+      husk.select(0, 0);
+      key = husk.getKey();
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  return key;
+}
+
+/** The content indexes of a settled paragraph's notes, in document order. */
+export function settledNoteIndexes(para: MarkerObject): number[] {
+  const indexes: number[] = [];
+  para.content?.forEach((item, index) => {
+    if (typeof item !== "string" && item.type === "note") indexes.push(index);
+  });
+  return indexes;
+}
+
+/** A first-class `\ca` span sitting at root beside its chapter — the shape a chapter's alternate
+ * number takes before it folds. The chapter scope's rebuild folds the span onto the chapter's
+ * `altnumber`, so the two top-level items it spans settle to one. */
+export function chapterCaCharUsj(): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      { type: "char", marker: "ca", content: ["3"] },
+      { type: "para", marker: "p", content: ["body text"] },
+      { type: "para", marker: "p", content: ["depart here"] },
+    ],
+  };
+}
+
+/** Retype the root-level `\ca` span's value, leaving the caret on it: the edit that pends the
+ * chapter scope. `value` carries the NBSP separator the display run renders. */
+export async function typeChapterCaValue(lexical: LexicalEditor, value: string): Promise<void> {
+  await act(async () => {
+    lexical.update(() => {
+      const span = $getRoot().getChildren().find($isCharNode);
+      if (!span) throw new Error("no root-level \\ca span");
+      const text = span
+        .getChildren()
+        .find((child): child is TextNode => $isTextNode(child) && !$isMarkerNode(child));
+      if (!text) throw new Error("no \\ca value text");
+      text.setTextContent(value);
+      text.select(text.getTextContentSize(), text.getTextContentSize());
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+/** The top-level content index of the settled document's chapter. */
+export function settledChapterIndex(usj: Usj | undefined): number {
+  const index =
+    usj?.content?.findIndex((item) => typeof item !== "string" && item.type === "chapter") ?? -1;
+  if (index < 0) throw new Error("no settled chapter");
+  return index;
+}
+
+/** The top-level content index of the settled paragraph whose first content item is `text`. */
+export function settledParaIndex(usj: Usj | undefined, text: string): number {
+  const index =
+    usj?.content?.findIndex(
+      (item) => typeof item !== "string" && item.type === "para" && item.content?.[0] === text,
+    ) ?? -1;
+  if (index < 0) throw new Error(`no settled paragraph starting ${JSON.stringify(text)}`);
+  return index;
+}
+
+/** The top-level LOGICAL index of the live element whose text contains `needle` — what the settled
+ * index is compared against to show a region actually collapsed. */
+export function $liveTopIndexContaining(needle: string): number {
+  const index = $getLogicalContentItems($getRoot()).findIndex(
+    (item) => item.type === "element" && item.node.getTextContent().includes(needle),
+  );
+  if (index < 0) throw new Error(`no top-level live item containing ${JSON.stringify(needle)}`);
+  return index;
 }
 
 /** Build the context `Editor.tsx` builds for its own position translation. Call outside a read —

@@ -13,14 +13,22 @@ import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetU
 import { $prepareSettleScopes } from "./settledScopes.utils";
 import { $settledLocationFromLivePoint, $settledSelectionFromLive } from "./settledPositions.utils";
 import {
+  chapterCaCharUsj,
   contentPath,
+  emptyOptbreakHusk,
+  optbreakAndTwoNotesUsj,
   propertyPath,
+  settledChapterIndex,
   settledCharIndex,
+  settledNoteIndexes,
   settledPara,
+  settledParaIndex,
   settledPositionContext,
   settledTextIndex,
   twoParaUsj,
+  typeChapterCaValue,
   typeOver,
+  $liveTopIndexContaining,
   $textContaining,
 } from "./positions.test-helpers";
 import { $livePointFromSettledLocation } from "./settledPositions.utils";
@@ -36,11 +44,14 @@ import {
   LexicalNode,
 } from "lexical";
 import {
+  $chapterGlyphTextNode,
+  $isChapterNode,
   $isMarkerNode,
   $isParaNode,
   $isVerseNode,
   getPendedDisplayOwners,
   MarkerNode,
+  NBSP,
 } from "shared";
 import { $getUsjSelectionFromEditor } from "shared-react";
 
@@ -378,6 +389,89 @@ describe("a settling note", () => {
     }));
 
     expect(location).toEqual({ jsonPath: contentPath([2, 1, tailIndex]), offset: 1 });
+  });
+});
+
+describe("a pending chapter", () => {
+  /** Editing the value of a first-class `\ca` span beside its chapter pends the CHAPTER scope,
+   * whose rebuild folds the span onto the chapter's `altnumber`. It is the one scope kind whose
+   * region CONTRACTS — two top-level items settle to one — so everything after it moves up. */
+  async function pendingChapter() {
+    const mounted = await mountStandardViewEditor(chapterCaCharUsj());
+    await typeChapterCaValue(mounted.lexical, `${NBSP}4`);
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    const settled = mounted.ref.current?.getUsj();
+    return { ...mounted, settled, context: settledPositionContext(mounted.lexical) };
+  }
+
+  it("reports a live position after the chapter at its collapsed settled index", async () => {
+    const { lexical, settled, context } = await pendingChapter();
+    const settledBodyIndex = settledParaIndex(settled, "body text");
+    const liveBodyIndex = lexical.getEditorState().read(() => $liveTopIndexContaining("body text"));
+    // The fold really contracted the region: the `\ca` span is a top-level item of its own live
+    // and none of the settled document, so the body paragraph is one index earlier there.
+    expect(settledBodyIndex).toBe(liveBodyIndex - 1);
+
+    const location = settledLocation(lexical, context, () => ({
+      node: $textContaining("body text"),
+      offset: 5,
+    }));
+
+    expect(location).toEqual({ jsonPath: contentPath([settledBodyIndex, 0]), offset: 5 });
+  });
+
+  it("reports a caret in the live chapter glyph as the settled chapter's own number", async () => {
+    const { lexical, settled, context } = await pendingChapter();
+    const chapterIndex = settledChapterIndex(settled);
+    const chapter = settled?.content?.[chapterIndex];
+    if (!chapter || typeof chapter === "string") throw new Error("expected a settled chapter");
+    // The span folded: its value is the chapter's alternate number in the document the host reads.
+    expect(chapter.altnumber).toBe("4");
+
+    // The live chapter's own displayed bytes are `\c 1 `, so its number's first byte is the `1`.
+    const location = settledLocation(lexical, context, () => {
+      const chapterNode = $getRoot().getChildren().find($isChapterNode);
+      const glyph = chapterNode && $chapterGlyphTextNode(chapterNode);
+      if (!glyph) throw new Error("expected the live chapter glyph");
+      return { node: glyph, offset: glyph.getTextContent().indexOf("1") };
+    });
+
+    expect(location).toEqual({
+      jsonPath: propertyPath([chapterIndex], "number"),
+      propertyOffset: 0,
+    });
+  });
+});
+
+describe("a preserved run the settle drops from one side only", () => {
+  /**
+   * The outbound half of the inbound suite's husk row: the live tree still carries the dead
+   * optbreak husk as a preserved run and the settled document does not, so crossing by raw index
+   * reports the note AFTER the one the caret is in — which, with two shape-compatible notes in the
+   * paragraph, is a settled location the host can resolve and act on.
+   */
+  it("refuses to report a live position in a note the dropped husk precedes", async () => {
+    const { lexical, ref } = await mountExpandedNoteEditor(optbreakAndTwoNotesUsj());
+    await emptyOptbreakHusk(lexical);
+    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
+    const context = settledPositionContext(lexical);
+    const para = settledPara(ref.current?.getUsj(), 2);
+    const noteIndexes = settledNoteIndexes(para);
+    expect(noteIndexes).toHaveLength(2);
+    const secondNote = para.content?.[noteIndexes[1]];
+    if (!secondNote || typeof secondNote === "string") throw new Error("expected a settled note");
+
+    const location = settledLocation(lexical, context, () => ({
+      node: $textContaining("note one"),
+      offset: 2,
+    }));
+
+    // Specifically NOT the SECOND note, which is where crossing by raw index lands.
+    expect(location).not.toEqual({
+      jsonPath: contentPath([2, noteIndexes[1], settledTextIndex(secondNote, "note two")]),
+      offset: 2,
+    });
+    expect(location).toBeUndefined();
   });
 });
 

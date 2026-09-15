@@ -12,14 +12,22 @@ import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetU
 import { $prepareSettleScopes } from "./settledScopes.utils";
 import { $liveSelectionFromSettled, $livePointFromSettledLocation } from "./settledPositions.utils";
 import {
+  chapterCaCharUsj,
   contentPath,
+  emptyOptbreakHusk,
+  optbreakAndTwoNotesUsj,
   propertyPath,
+  settledChapterIndex,
   settledCharIndex,
+  settledNoteIndexes,
   settledPara,
+  settledParaIndex,
   settledPositionContext,
   settledTextIndex,
   twoParaUsj,
+  typeChapterCaValue,
   typeOver,
+  $liveTopIndexContaining,
   $textContaining,
 } from "./positions.test-helpers";
 import { SettledPositionContext } from "./settledPositions.model";
@@ -31,11 +39,14 @@ import {
 import { act } from "@testing-library/react";
 import { $getRoot, $isTextNode, LexicalEditor } from "lexical";
 import {
+  $chapterGlyphTextNode,
+  $isChapterNode,
   $isMarkerNode,
   $isParaNode,
   $isVerseNode,
   getPendedDisplayOwners,
   MarkerNode,
+  NBSP,
 } from "shared";
 import { $getRangeFromUsjSelection, SelectionRange } from "shared-react";
 
@@ -286,6 +297,104 @@ describe("a settling note", () => {
     });
 
     expect(point).toEqual({ key, offset: liveNoteText.indexOf(" tail") + 1, type: "text" });
+  });
+});
+
+describe("a pending chapter", () => {
+  /** Editing the value of a first-class `\ca` span beside its chapter pends the CHAPTER scope,
+   * whose rebuild folds the span onto the chapter's `altnumber`. It is the one scope kind whose
+   * region CONTRACTS — two top-level items settle to one — so everything after it moves up. */
+  async function pendingChapter() {
+    const mounted = await mountStandardViewEditor(chapterCaCharUsj());
+    await typeChapterCaValue(mounted.lexical, `${NBSP}4`);
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    const settled = mounted.ref.current?.getUsj();
+    return { ...mounted, settled, context: settledPositionContext(mounted.lexical) };
+  }
+
+  it("shifts a settled position after the chapter back over the region's collapse", async () => {
+    const { lexical, settled, context } = await pendingChapter();
+    const settledBodyIndex = settledParaIndex(settled, "body text");
+    const liveBodyIndex = lexical.getEditorState().read(() => $liveTopIndexContaining("body text"));
+    // The fold really contracted the region: the `\ca` span is a top-level item of its own live
+    // and none of the settled document, so the body paragraph is one index earlier there.
+    expect(settledBodyIndex).toBe(liveBodyIndex - 1);
+
+    const point = livePoint(lexical, context, {
+      jsonPath: contentPath([settledBodyIndex, 0]),
+      offset: 5,
+    });
+
+    const bodyKey = lexical.getEditorState().read(() => $textContaining("body text").getKey());
+    expect(point).toEqual({ key: bodyKey, offset: 5, type: "text" });
+  });
+
+  it("resolves the settled chapter's own number onto the live chapter glyph", async () => {
+    const { lexical, settled, context } = await pendingChapter();
+    const chapterIndex = settledChapterIndex(settled);
+    const chapter = settled?.content?.[chapterIndex];
+    if (!chapter || typeof chapter === "string") throw new Error("expected a settled chapter");
+    // The span folded: its value is the chapter's alternate number in the document the host reads.
+    expect(chapter.altnumber).toBe("4");
+
+    const point = livePoint(lexical, context, {
+      jsonPath: propertyPath([chapterIndex], "number"),
+      propertyOffset: 0,
+    });
+
+    // The live chapter's own displayed bytes are `\c 1 `, so its number's first byte is the `1`.
+    const $glyph = () => {
+      const chapterNode = $getRoot().getChildren().find($isChapterNode);
+      const glyph = chapterNode && $chapterGlyphTextNode(chapterNode);
+      if (!glyph) throw new Error("expected the live chapter glyph");
+      return { key: glyph.getKey(), offset: glyph.getTextContent().indexOf("1"), type: "text" };
+    };
+    expect(point).toEqual(lexical.getEditorState().read($glyph));
+  });
+});
+
+describe("a preserved run the settle drops from one side only", () => {
+  /**
+   * Preserved nodes cross between the two trees by their POSITION in their fragment's preserved-run
+   * list, and the two lists are built over different trees: the live one still carries the dead
+   * optbreak husk, the settled one has spliced it out. Every run after the husk therefore sits one
+   * index earlier on the settled side, so crossing by raw index reaches the note BEFORE the one
+   * asked about — and two shape-compatible notes in one paragraph is an ordinary document, so the
+   * child-path walk succeeds and the position simply lands in the wrong note.
+   */
+  async function huskBeforeTwoNotes() {
+    const mounted = await mountExpandedNoteEditor(optbreakAndTwoNotesUsj());
+    await emptyOptbreakHusk(mounted.lexical);
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    const para = settledPara(mounted.ref.current?.getUsj(), 2);
+    // The husk really is gone from the settled document while both notes survive it.
+    expect(para.content?.some((item) => typeof item !== "string" && item.type === "optbreak")).toBe(
+      false,
+    );
+    return { ...mounted, para, context: settledPositionContext(mounted.lexical) };
+  }
+
+  it("refuses a settled position in the note past the dropped husk", async () => {
+    const { lexical, para, context } = await huskBeforeTwoNotes();
+    const noteIndexes = settledNoteIndexes(para);
+    expect(noteIndexes).toHaveLength(2);
+    const secondNote = para.content?.[noteIndexes[1]];
+    if (!secondNote || typeof secondNote === "string") throw new Error("expected a settled note");
+    const location = {
+      jsonPath: contentPath([2, noteIndexes[1], settledTextIndex(secondNote, "note two")]),
+      offset: 2,
+    };
+
+    const point = livePoint(lexical, context, location);
+
+    // Specifically NOT the FIRST note, which is where crossing by raw index lands.
+    expect(point).not.toEqual({
+      key: lexical.getEditorState().read(() => $textContaining("note one").getKey()),
+      offset: 2,
+      type: "text",
+    });
+    expect(point).toBeUndefined();
+    expect(liveLocation(lexical, context, location)).toBeUndefined();
   });
 });
 

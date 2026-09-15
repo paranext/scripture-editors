@@ -301,6 +301,30 @@ function cutCorrected(
   return point.offset >= cut.nodeOffset ? { ...point, offset: point.offset + cut.length } : point;
 }
 
+/**
+ * Whether the two sides' preserved-node runs can be crossed by index at all.
+ *
+ * A preserved run is carried between the live tree and the settled one by its POSITION in its
+ * fragment's run list, and the two lists are built by the same builder over DIFFERENT trees. A
+ * construct that needs a preserved run on one side but not the other — a dead optbreak husk the
+ * settle splices out while the live tree still carries it, a char span whose sentinel condition
+ * the rebuild resolves — shifts every run after it by one, and the run at the index asked for is
+ * then some other construct entirely. Where its shape happens to match (two notes in one
+ * paragraph is an ordinary document) the walk succeeds and the position lands silently in the
+ * wrong one, which is the exact failure this translation exists to prevent.
+ *
+ * Equal lengths is a necessary condition, not a sufficient one; carrying an explicit live↔settled
+ * run correspondence in the plan is the complete answer. Until then, refuse the whole scope rather
+ * than cross a list that demonstrably cannot correspond — refusing is a failure mode every caller
+ * already handles.
+ */
+function sentinelsCorrespond(
+  liveFragment: FragmentAccumulator,
+  scratchFragment: FragmentAccumulator,
+): boolean {
+  return liveFragment.sentinels.length === scratchFragment.sentinels.length;
+}
+
 /** The live point for a settled point that landed inside a preserved node run. */
 function $livePointInPreservedRun(
   prepared: PreparedScopes,
@@ -339,6 +363,7 @@ function $livePointInScope(
   const { plan } = target;
   const { liveFragment, scratchFragment } = plan;
   if (!liveFragment || !scratchFragment) return undefined;
+  if (!sentinelsCorrespond(liveFragment, scratchFragment)) return undefined;
   const scratchLocation = withContentIndexes(target.location, target.scratchIndexes);
   const resolved = plan.scratch
     .getEditorState()
@@ -538,6 +563,7 @@ function $settledLocationInScope(
 ): UsjDocumentLocation | undefined {
   const { liveFragment, scratchFragment } = plan;
   if (!liveFragment || !scratchFragment) return undefined;
+  if (!sentinelsCorrespond(liveFragment, scratchFragment)) return undefined;
   const scratchLocation = $scratchLocationFromLivePoint(
     plan,
     liveFragment,
