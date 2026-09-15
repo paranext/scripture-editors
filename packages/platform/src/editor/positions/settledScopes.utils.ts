@@ -218,32 +218,64 @@ function $notesWithin(nodes: readonly LexicalNode[], out: NoteNode[] = []): Note
 
 /**
  * Where each live preserved-run member sits in the settled fragment's own run list, in
- * {@link SettleScopePlan.sentinelMap}'s shape.
+ * {@link SettleScopePlan.sentinelMap}'s shape — or `undefined` when the two sides' runs cannot be
+ * put in correspondence at all.
  *
  * A rebuild splices the members it carries back into its output in fragment order, so the settled
  * fragment lists those same nodes in that same order with the dropped ones missing — which pairs
  * the two sides off member for member. A settled list of a DIFFERENT length is a shape that
  * pairing cannot describe (a run whose sentinel condition the rebuild resolved, or a preserved
- * node the rebuild introduced), and every member then maps to nothing rather than to a construct
- * the two sides disagree about.
+ * node the rebuild introduced), and the scope answers nothing rather than answer a construct the
+ * two sides disagree about.
  */
 function sentinelMapOf(
   liveSentinels: readonly (readonly LexicalNode[])[],
   carried: readonly (readonly LexicalNode[])[] | undefined,
   scratchSentinels: readonly (readonly LexicalNode[])[],
-): (SettledRunMember | undefined)[][] {
-  const unpaired = liveSentinels.map((run) => run.map(() => undefined));
-  if (!carried) return unpaired;
+): (SettledRunMember | undefined)[][] | undefined {
+  // Nothing preserved on either side: the correspondence is vacuous, not unknown.
+  if (liveSentinels.length === 0 && scratchSentinels.length === 0) return [];
+  if (!carried) return undefined;
   const settled: SettledRunMember[] = [];
   scratchSentinels.forEach((run, sentinelIndex) => {
     for (let memberIndex = 0; memberIndex < run.length; memberIndex += 1)
       settled.push({ sentinelIndex, memberIndex });
   });
   const carriedNodes = carried.flat();
-  if (carriedNodes.length !== settled.length) return unpaired;
+  if (carriedNodes.length !== settled.length) return undefined;
   const byKey = new Map<NodeKey, SettledRunMember>();
   carriedNodes.forEach((node, index) => byKey.set(node.getKey(), settled[index]));
   return liveSentinels.map((run) => run.map((node) => byKey.get(node.getKey())));
+}
+
+/**
+ * `fragment` with the placeholder byte of every run the settled side carries nothing of removed.
+ *
+ * A dropped run still spells a U+FFFC in the live fragment's text, and the byte anchor the two
+ * sides are otherwise paired through counts a placeholder as an ordinary document byte — it is
+ * deliberately NOT whitespace (`$resolveFragmentByteAnchor`, tier2Rebuild.utils.ts). Left in, every
+ * live position past it answers a settled position one byte away, silently. Cut, the two fragments
+ * spell the same document bytes again, which is the property the anchor relies on.
+ *
+ * The run's own span stays in the list, emptied, so the dropped node is still findable by key and
+ * a position INSIDE it still resolves to the run it belongs to (and is refused there, the settled
+ * document having nothing for it).
+ */
+function withoutDroppedSentinels(
+  fragment: FragmentAccumulator,
+  sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[],
+): FragmentAccumulator {
+  const droppedKeys = fragment.sentinels
+    .filter(
+      (run, index) => run.length > 0 && !sentinelMap[index]?.some((member) => member !== undefined),
+    )
+    .map((run) => run[0].getKey());
+  // Later runs first: a cut only restates the positions after it, so each span's start is still
+  // the one this loop looked it up by.
+  return droppedKeys.reverse().reduce((cut, key) => {
+    const span = cut.spans.find((candidate) => candidate.isSentinel && candidate.key === key);
+    return span ? cutFragment(cut, span.start, span.end) : cut;
+  }, fragment);
 }
 
 /** Build the plan for one scope from its settled serialized nodes, or `undefined` when they will
@@ -272,7 +304,10 @@ function $planFrom(
   return {
     kind,
     liveNodes,
-    liveFragment,
+    liveFragment:
+      liveFragment && sentinelMap
+        ? withoutDroppedSentinels(liveFragment, sentinelMap)
+        : liveFragment,
     liveCut,
     scratch,
     scratchFragment,

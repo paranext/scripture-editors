@@ -24,6 +24,7 @@ import {
   settledParaIndex,
   settledPositionContext,
   settledTextIndex,
+  settledTextSite,
   twoParaUsj,
   typeChapterCaValue,
   typeOver,
@@ -406,6 +407,47 @@ describe("a preserved run the settle drops from one side only", () => {
       );
     });
     expect(anchor).toEqual(lexical.getEditorState().read($noteTwoPoint));
+  });
+
+  /**
+   * The husk's placeholder is a byte of the live fragment the settled one does not spell, and the
+   * byte anchor that carries an ordinary text position across counts a placeholder as a document
+   * byte (it is deliberately not whitespace). So a text position past the husk is only answerable
+   * once the scope stops counting the bytes of a run the settled side dropped.
+   */
+  it("resolves a settled text position past the dropped husk onto the byte it names", async () => {
+    const { lexical, para, context } = await huskBeforeTwoNotes();
+    const tail = settledTextSite(para, "tail text");
+    const location = { jsonPath: contentPath([2, tail.index]), offset: tail.offset + 2 };
+
+    const point = livePoint(lexical, context, location);
+
+    expect(point).toEqual(
+      lexical.getEditorState().read(() => {
+        const text = $textContaining("tail text");
+        return {
+          key: text.getKey(),
+          offset: text.getTextContent().indexOf("tail text") + 2,
+          type: "text",
+        };
+      }),
+    );
+  });
+
+  it("resolves a settled text position before the dropped husk onto the byte it names", async () => {
+    const { lexical, para, context } = await huskBeforeTwoNotes();
+    const head = settledTextSite(para, "head");
+    const location = { jsonPath: contentPath([2, head.index]), offset: head.offset + 2 };
+
+    const point = livePoint(lexical, context, location);
+
+    expect(point).toEqual(
+      lexical.getEditorState().read(() => ({
+        key: $textContaining("head").getKey(),
+        offset: 2,
+        type: "text" as const,
+      })),
+    );
   });
 });
 

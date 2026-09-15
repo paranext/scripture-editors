@@ -219,6 +219,21 @@ export function settledTextIndex(para: MarkerObject, text: string): number {
   return index;
 }
 
+/** The settled content item whose string CONTAINS `needle`, and where `needle` starts inside it.
+ * A settle that splices a node out rejoins the text it split, so a row cannot assume the settled
+ * paragraph breaks its text into the same items the live tree does. */
+export function settledTextSite(
+  para: MarkerObject,
+  needle: string,
+): { index: number; offset: number } {
+  const index =
+    para.content?.findIndex((item) => typeof item === "string" && item.includes(needle)) ?? -1;
+  const item = para.content?.[index];
+  if (index < 0 || typeof item !== "string")
+    throw new Error(`no settled text item containing ${JSON.stringify(needle)}`);
+  return { index, offset: item.indexOf(needle) };
+}
+
 /** The index of the settled content item that is a `char` span. */
 export function settledCharIndex(para: MarkerObject): number {
   const index =

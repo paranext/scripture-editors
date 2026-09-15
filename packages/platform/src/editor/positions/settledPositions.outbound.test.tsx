@@ -25,6 +25,7 @@ import {
   settledParaIndex,
   settledPositionContext,
   settledTextIndex,
+  settledTextSite,
   twoParaUsj,
   typeChapterCaValue,
   typeOver,
@@ -452,12 +453,16 @@ describe("a preserved run the settle drops from one side only", () => {
    * location the host can resolve and act on — so the scope's own member-for-member correspondence
    * is what decides which settled note a caret reports as.
    */
+  async function huskBeforeTwoNotes() {
+    const mounted = await mountExpandedNoteEditor(optbreakAndTwoNotesUsj());
+    await emptyOptbreakHusk(mounted.lexical);
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    const para = settledPara(mounted.ref.current?.getUsj(), 2);
+    return { ...mounted, para, context: settledPositionContext(mounted.lexical) };
+  }
+
   it("reports a live position in each note at that note's own settled location", async () => {
-    const { lexical, ref } = await mountExpandedNoteEditor(optbreakAndTwoNotesUsj());
-    await emptyOptbreakHusk(lexical);
-    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
-    const context = settledPositionContext(lexical);
-    const para = settledPara(ref.current?.getUsj(), 2);
+    const { lexical, para, context } = await huskBeforeTwoNotes();
     const noteIndexes = settledNoteIndexes(para);
     expect(noteIndexes).toHaveLength(2);
     const settledNote = (index: number): MarkerObject => {
@@ -483,6 +488,42 @@ describe("a preserved run the settle drops from one side only", () => {
     expect(second).toEqual({
       jsonPath: contentPath([2, noteIndexes[1], settledTextIndex(settledNote(1), "note two")]),
       offset: 2,
+    });
+  });
+
+  /**
+   * The husk's placeholder is a byte of the live fragment the settled one does not spell, and the
+   * byte anchor that carries an ordinary text position across counts a placeholder as a document
+   * byte (it is deliberately not whitespace). So a caret past the husk is only reportable once the
+   * scope stops counting the bytes of a run the settled side dropped.
+   */
+  it("reports a live text position past the dropped husk at the byte it names", async () => {
+    const { lexical, para, context } = await huskBeforeTwoNotes();
+    const tail = settledTextSite(para, "tail text");
+
+    const location = settledLocation(lexical, context, () => {
+      const text = $textContaining("tail text");
+      return { node: text, offset: text.getTextContent().indexOf("tail text") + 2 };
+    });
+
+    expect(location).toEqual({
+      jsonPath: contentPath([2, tail.index]),
+      offset: tail.offset + 2,
+    });
+  });
+
+  it("reports a live text position before the dropped husk at the byte it names", async () => {
+    const { lexical, para, context } = await huskBeforeTwoNotes();
+    const head = settledTextSite(para, "head");
+
+    const location = settledLocation(lexical, context, () => ({
+      node: $textContaining("head"),
+      offset: 2,
+    }));
+
+    expect(location).toEqual({
+      jsonPath: contentPath([2, head.index]),
+      offset: head.offset + 2,
     });
   });
 });

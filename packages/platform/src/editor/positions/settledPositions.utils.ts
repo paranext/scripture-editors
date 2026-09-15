@@ -311,11 +311,11 @@ function cutCorrected(
  * for, which is a position no live node can answer.
  */
 function liveRunMember(
-  plan: SettleScopePlan,
+  sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[],
   settled: SettledRunMember,
 ): SettledRunMember | undefined {
-  for (let sentinelIndex = 0; sentinelIndex < plan.sentinelMap.length; sentinelIndex += 1) {
-    const run = plan.sentinelMap[sentinelIndex];
+  for (let sentinelIndex = 0; sentinelIndex < sentinelMap.length; sentinelIndex += 1) {
+    const run = sentinelMap[sentinelIndex];
     for (let memberIndex = 0; memberIndex < run.length; memberIndex += 1) {
       const entry = run[memberIndex];
       if (
@@ -332,9 +332,10 @@ function liveRunMember(
 function $livePointInPreservedRun(
   prepared: PreparedScopes,
   plan: SettleScopePlan,
+  sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[],
   resolved: Extract<ScratchResolution, { kind: "preserved" }>,
 ): FragmentPoint | undefined {
-  const live = liveRunMember(plan, resolved);
+  const live = liveRunMember(sentinelMap, resolved);
   const member = live && plan.liveFragment?.sentinels[live.sentinelIndex]?.[live.memberIndex];
   // A memoized plan holds live node references, and the tree can have moved on under it (an undo,
   // a host `setUsj`). Refuse such a position rather than walk a detached node, whose ancestors and
@@ -365,14 +366,17 @@ function $livePointInScope(
   target: Extract<SettledTarget, { kind: "scope" }>,
 ): FragmentPoint | undefined {
   const { plan } = target;
-  const { liveFragment, scratchFragment } = plan;
-  if (!liveFragment || !scratchFragment) return undefined;
+  const { liveFragment, scratchFragment, sentinelMap } = plan;
+  // No correspondence between the two sides' preserved runs means no shared byte coordinates
+  // either: refuse the whole scope rather than answer a position the two documents disagree about.
+  if (!liveFragment || !scratchFragment || !sentinelMap) return undefined;
   const scratchLocation = withContentIndexes(target.location, target.scratchIndexes);
   const resolved = plan.scratch
     .getEditorState()
     .read(() => $resolveInScratch(scratchFragment, scratchLocation, context.tier2));
   if (!resolved) return undefined;
-  if (resolved.kind === "preserved") return $livePointInPreservedRun(prepared, plan, resolved);
+  if (resolved.kind === "preserved")
+    return $livePointInPreservedRun(prepared, plan, sentinelMap, resolved);
   // A location that names USFM bytes rather than USJ content wants those bytes back, including
   // the ones no caret can rest in; a text location wants the caret's own addressing.
   const point = $resolveFragmentByteAnchor(liveFragment, resolved.anchor, {
@@ -522,6 +526,7 @@ function $settledLocationInPreservedRun(
 /** Where a live point lands in its scope's settled tree, in that tree's OWN coordinates. */
 function $scratchLocationFromLivePoint(
   plan: SettleScopePlan,
+  sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[],
   liveFragment: FragmentAccumulator,
   scratchFragment: FragmentAccumulator,
   node: LexicalNode,
@@ -531,7 +536,7 @@ function $scratchLocationFromLivePoint(
   if (preserved) {
     const path = $childPath(preserved.member, node);
     if (!path) return undefined;
-    const settled = plan.sentinelMap[preserved.sentinelIndex]?.[preserved.memberIndex];
+    const settled = sentinelMap[preserved.sentinelIndex]?.[preserved.memberIndex];
     if (!settled) return undefined;
     // Plain data only across the scratch boundary: a live node must never be carried into a
     // scratch read.
@@ -562,10 +567,13 @@ function $settledLocationInScope(
   node: LexicalNode,
   offset: number,
 ): UsjDocumentLocation | undefined {
-  const { liveFragment, scratchFragment } = plan;
-  if (!liveFragment || !scratchFragment) return undefined;
+  const { liveFragment, scratchFragment, sentinelMap } = plan;
+  // Same refusal as the inbound side, for the same reason: without a run correspondence the two
+  // sides share no byte coordinates to report a position in.
+  if (!liveFragment || !scratchFragment || !sentinelMap) return undefined;
   const scratchLocation = $scratchLocationFromLivePoint(
     plan,
+    sentinelMap,
     liveFragment,
     scratchFragment,
     node,

@@ -71,8 +71,9 @@ export interface SettleScopePlan {
   /** Live nodes the scope replaces: the paragraph(s) / the chapter region / [the note]. */
   readonly liveNodes: readonly LexicalNode[];
   /**
-   * Live fragment over `liveNodes` (spans keyed by LIVE keys), declared transient bytes already
-   * cut. `undefined` when the scope's live bytes cannot be fragmented, which leaves the scope's
+   * Live fragment over `liveNodes` (spans keyed by LIVE keys), with the declared transient bytes
+   * and the placeholder byte of every preserved run the settled side dropped already cut out.
+   * `undefined` when the scope's live bytes cannot be fragmented, which leaves the scope's
    * top-level index shift usable while refusing positions INSIDE it.
    */
   readonly liveFragment: FragmentAccumulator | undefined;
@@ -89,7 +90,8 @@ export interface SettleScopePlan {
   /**
    * Where each live preserved-run member sits in {@link SettleScopePlan.scratchFragment}'s own run
    * list, indexed `[live run][live member]` — `undefined` for a member the settled side has no
-   * counterpart for.
+   * counterpart for, and `undefined` wholesale when the two sides' runs cannot be put in
+   * correspondence at all, which refuses the scope.
    *
    * The two run lists are built by the same builder over DIFFERENT trees, so a construct that
    * needs a preserved run on one side but not the other — a dead optbreak husk the settle splices
@@ -97,8 +99,11 @@ export interface SettleScopePlan {
    * one. Crossing by raw index would then reach some other construct entirely, and where its shape
    * happens to match (two notes in one paragraph is an ordinary document) the walk succeeds and
    * the position lands silently in the wrong one.
+   *
+   * A dropped run also costs {@link SettleScopePlan.liveFragment} its placeholder byte, so the two
+   * sides' byte anchors keep addressing the same document bytes.
    */
-  readonly sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[];
+  readonly sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[] | undefined;
 }
 
 /** One preserved-node run member, named by its run's index in a fragment's run list and its own
