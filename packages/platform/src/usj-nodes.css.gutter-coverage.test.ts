@@ -7,25 +7,62 @@ import { describe, expect, it } from "vitest";
 /**
  * In the gutter view (`.psc-gutter-markers`), each paragraph's marker glyph is absolutely
  * positioned at `left: calc(-(gutter width) + 0.5em - var(--para-indent))`, so `--para-indent`
- * must equal the paragraph's own text-spacing margin or the glyph lands inside the text. Likewise
- * the active focus box starts at `var(--verse-text-start)`, which must equal a hanging-indent
- * paragraph's negative `text-indent`.
- *
- * This test derives BOTH expectations from the base text-spacing rules in the same file, so a
- * marker that gains a margin or hanging indent without matching gutter compensation fails here by
- * construction. A hand-typed expected list cannot do that: it silently encodes whatever gap
- * existed when it was written. A small independent oracle from the USFM stylesheet is kept
- * alongside, so a base value that drifts from the spec is caught too rather than being "fixed" by
- * updating its compensation to match.
- *
- * Scope: the invariant is about margins set in this file. A host that injects project-stylesheet
- * CSS (generateUsjCss) or its own commentary stylesheets later in source order can move a marker's
- * margin away from the compensated value; that is not covered here.
+ * must equal the paragraph's own text-spacing margin or the glyph lands inside the text. The active
+ * focus box also reads `--verse-text-start`, a hanging-indent paragraph's negative `text-indent`,
+ * as a fallback start. Both expectations are derived from the base text-spacing rules in the same
+ * file, so a marker that gains a margin or hanging indent without matching compensation fails here.
  *
  * This stylesheet is mirrored into consumers, so the gutter block is contract: a gap here becomes a
  * gap there on the next sync. paranext-core runs the same derivation over its copies in
  * `extensions/src/platform-scripture-editor/src/usj-nodes-scss-coverage.test.ts`.
  */
+
+describe("usj-nodes.css .psc-gutter-markers.text-spacing coverage", () => {
+  it("derives a non-empty expectation from the base text-spacing rules", () => {
+    // If the base parser ever reads nothing, both coverage checks below would pass vacuously.
+    expect(EXPECTED_PARA_INDENT.size).toBeGreaterThan(40);
+    expect(EXPECTED_VERSE_TEXT_START.size).toBeGreaterThan(20);
+    // The parser must be able to see every margin it is asked to compensate.
+    expect(unreadableMarginSpellings()).toEqual([]);
+    expect(nestingProblems("margin-left")).toEqual([]);
+    expect(nestingProblems("margin-right")).toEqual([]);
+    expect(nestingProblems("text-indent")).toEqual([]);
+  });
+
+  it("spot-checks base margins and hanging indents against the USFM stylesheet", () => {
+    expect(pick(EXPECTED_PARA_INDENT, Object.keys(USFM_LEFT_MARGIN))).toEqual(USFM_LEFT_MARGIN);
+    expect(pick(EXPECTED_VERSE_TEXT_START, Object.keys(USFM_FIRST_LINE_INDENT))).toEqual(
+      USFM_FIRST_LINE_INDENT,
+    );
+    // `p` has a positive first-line indent (2.5vw); only negative ones are hanging indents.
+    expect(EXPECTED_VERSE_TEXT_START.has("p")).toBe(false);
+    // The table-row exclusion is only meaningful while those markers still have a base margin.
+    const ltrMargins = resolveBaseValues("margin-left", "ltr");
+    NOT_COMPENSATED.forEach((marker) => expect(ltrMargins.has(marker)).toBe(true));
+  });
+
+  it("every indented marker sets --para-indent equal to its text-spacing margin", () => {
+    expect(nestingProblems("--para-indent")).toEqual([]);
+    expect(directionQualifiedGutterRules("--para-indent")).toEqual([]);
+    // One value serves both directions only if the base margins agree.
+    expect(directionAsymmetries(EXPECTED_PARA_INDENT)).toEqual([]);
+    expect(valueMismatches(ACTUAL_PARA_INDENT, "--para-indent", EXPECTED_PARA_INDENT)).toEqual([]);
+    expect(unexpectedMarkers(ACTUAL_PARA_INDENT, "--para-indent", EXPECTED_PARA_INDENT)).toEqual(
+      [],
+    );
+  });
+
+  it("every hanging-indent marker sets --verse-text-start equal to its text-indent", () => {
+    expect(nestingProblems("--verse-text-start")).toEqual([]);
+    expect(directionQualifiedGutterRules("--verse-text-start")).toEqual([]);
+    expect(
+      valueMismatches(ACTUAL_VERSE_TEXT_START, "--verse-text-start", EXPECTED_VERSE_TEXT_START),
+    ).toEqual([]);
+    expect(
+      unexpectedMarkers(ACTUAL_VERSE_TEXT_START, "--verse-text-start", EXPECTED_VERSE_TEXT_START),
+    ).toEqual([]);
+  });
+});
 
 /**
  * Markers whose base rules indent them but which must NOT have gutter compensation. A real table
@@ -33,9 +70,10 @@ import { describe, expect, it } from "vitest";
  */
 const NOT_COMPENSATED = new Set(["tr", "tr1", "tr2"]);
 
-// USFM stylesheet oracle (LeftMargin / FirstLineIndent in inches x 20 = vw), independent of this
-// file: https://github.com/ubsicap/usfm/blob/master/sty/usfm.sty. One marker per distinct value is
-// enough to catch a base rule drifting from the spec; completeness comes from the derivation.
+// Spot check against the USFM stylesheet (LeftMargin / FirstLineIndent in inches x 20 = vw):
+// https://github.com/ubsicap/usfm/blob/master/sty/usfm.sty. One marker per distinct value. The
+// derivation below guarantees base-to-gutter consistency, not base-to-spec; this catches a drift in
+// one of these six, and a re-sync that changes any other marker's base value is not caught here.
 const USFM_LEFT_MARGIN: { [key: string]: string } = {
   pi: "5vw", // 0.25"
   li1: "10vw", // 0.5"
@@ -130,9 +168,9 @@ function nestingProblems(property: string): string[] {
 /**
  * Reads the value of one `property: value;` declaration out of a rule's declaration block.
  *
- * Only a setter of exactly that property counts: the property name must start the block or follow
- * a `;` or whitespace, so `margin-left` does not match inside `margin-left-foo` and a `var(--x)`
- * read of a custom property does not count as setting it.
+ * Only a setter of exactly that property counts. The name must start the block or follow a `;` or
+ * whitespace, so `margin-left` is not found inside `scroll-margin-left`; and it must be followed by
+ * `:`, so `margin-left-foo` and a `var(--x)` read of a custom property do not count as setting it.
  *
  * @param declarations The text between a rule's `{` and `}`.
  * @param property The property name to read, e.g. `margin-left` or `--para-indent`.
@@ -187,6 +225,18 @@ function resolveBaseValues(property: string, direction: "ltr" | "rtl"): Map<stri
       });
     });
   return new Map([...agnostic, ...directed]);
+}
+
+/**
+ * Maps each marker with an inline-start margin in EITHER direction to the margin `--para-indent`
+ * must equal: the LTR `margin-left` where there is one, else the RTL `margin-right`. Deriving from
+ * the union means a marker indented only in RTL is still required to have an entry;
+ * `directionAsymmetries` then reports that its two margins disagree.
+ */
+function resolveInlineStartMargins(): Map<string, string> {
+  const ltr = resolveBaseValues("margin-left", "ltr");
+  const rtl = resolveBaseValues("margin-right", "rtl");
+  return new Map([...rtl, ...ltr]);
 }
 
 /** A length that moves the box: anything other than a zero (`0`, `0px`, `0vw`, `0in`, ...). */
@@ -286,28 +336,27 @@ function unreadableMarginSpellings(): string[] {
 }
 
 /**
- * Reports markers whose RTL inline-start margin differs from their LTR one. The same
- * `--para-indent` feeds both the LTR `left` and the RTL `right` glyph calculation, so a marker
- * whose two margins disagree cannot be compensated correctly in both directions by one value.
+ * Reports markers whose RTL inline-start margin differs from their LTR one, including a margin set
+ * in only one direction. The same `--para-indent` feeds both the LTR `left` and the RTL `right`
+ * glyph calculation, so a marker whose two margins disagree cannot be compensated correctly in both
+ * directions by one value.
  */
 function directionAsymmetries(expected: Map<string, string>): string[] {
+  const ltr = resolveBaseValues("margin-left", "ltr");
   const rtl = resolveBaseValues("margin-right", "rtl");
-  return [...expected]
-    .filter(([marker, ltrValue]) => rtl.get(marker) !== ltrValue)
+  return [...expected.keys()]
+    .filter((marker) => ltr.get(marker) !== rtl.get(marker))
     .map(
-      ([marker, ltrValue]) =>
-        `.usfm_${marker}: LTR margin-left ${ltrValue} but RTL margin-right ` +
+      (marker) =>
+        `.usfm_${marker}: LTR margin-left ${ltr.get(marker) ?? "none"} but RTL margin-right ` +
         `${rtl.get(marker) ?? "none"}; one --para-indent cannot serve both directions`,
     );
 }
 
-// Every base text-spacing margin-left is a paragraph indent the glyph must be pulled back by.
-const EXPECTED_PARA_INDENT = needingCompensation(
-  resolveBaseValues("margin-left", "ltr"),
-  isNonZeroLength,
-);
+// Every base inline-start margin is a paragraph indent the glyph must be pulled back by.
+const EXPECTED_PARA_INDENT = needingCompensation(resolveInlineStartMargins(), isNonZeroLength);
 
-// Every base negative text-indent is a hanging indent the focus box must start at.
+// Every base negative text-indent is a hanging indent the focus box can fall back to.
 const EXPECTED_VERSE_TEXT_START = needingCompensation(
   resolveBaseValues("text-indent", "ltr"),
   isNegativeLength,
@@ -315,48 +364,3 @@ const EXPECTED_VERSE_TEXT_START = needingCompensation(
 
 const ACTUAL_PARA_INDENT = getGutterMarkerValues("--para-indent");
 const ACTUAL_VERSE_TEXT_START = getGutterMarkerValues("--verse-text-start");
-
-describe("usj-nodes.css .psc-gutter-markers.text-spacing coverage", () => {
-  it("derives a non-empty expectation from the base text-spacing rules", () => {
-    // If the base parser ever reads nothing, both coverage checks below would pass vacuously.
-    expect(EXPECTED_PARA_INDENT.size).toBeGreaterThan(40);
-    expect(EXPECTED_VERSE_TEXT_START.size).toBeGreaterThan(20);
-    // The parser must be able to see every margin it is asked to compensate.
-    expect(unreadableMarginSpellings()).toEqual([]);
-    expect(nestingProblems("margin-left")).toEqual([]);
-    expect(nestingProblems("text-indent")).toEqual([]);
-  });
-
-  it("base margins and hanging indents match the USFM stylesheet", () => {
-    // Independent oracle: the derivation alone would accept a base rule that drifted from the spec
-    // as long as its compensation drifted with it.
-    expect(pick(EXPECTED_PARA_INDENT, Object.keys(USFM_LEFT_MARGIN))).toEqual(USFM_LEFT_MARGIN);
-    expect(pick(EXPECTED_VERSE_TEXT_START, Object.keys(USFM_FIRST_LINE_INDENT))).toEqual(
-      USFM_FIRST_LINE_INDENT,
-    );
-    expect(EXPECTED_VERSE_TEXT_START.has("p")).toBe(false);
-    NOT_COMPENSATED.forEach((marker) => expect(EXPECTED_PARA_INDENT.has(marker)).toBe(false));
-  });
-
-  it("every indented marker sets --para-indent equal to its text-spacing margin", () => {
-    expect(nestingProblems("--para-indent")).toEqual([]);
-    expect(directionQualifiedGutterRules("--para-indent")).toEqual([]);
-    // One value serves both directions only if the base margins agree.
-    expect(directionAsymmetries(EXPECTED_PARA_INDENT)).toEqual([]);
-    expect(valueMismatches(ACTUAL_PARA_INDENT, "--para-indent", EXPECTED_PARA_INDENT)).toEqual([]);
-    expect(unexpectedMarkers(ACTUAL_PARA_INDENT, "--para-indent", EXPECTED_PARA_INDENT)).toEqual(
-      [],
-    );
-  });
-
-  it("every hanging-indent marker sets --verse-text-start equal to its text-indent", () => {
-    expect(nestingProblems("--verse-text-start")).toEqual([]);
-    expect(directionQualifiedGutterRules("--verse-text-start")).toEqual([]);
-    expect(
-      valueMismatches(ACTUAL_VERSE_TEXT_START, "--verse-text-start", EXPECTED_VERSE_TEXT_START),
-    ).toEqual([]);
-    expect(
-      unexpectedMarkers(ACTUAL_VERSE_TEXT_START, "--verse-text-start", EXPECTED_VERSE_TEXT_START),
-    ).toEqual([]);
-  });
-});
