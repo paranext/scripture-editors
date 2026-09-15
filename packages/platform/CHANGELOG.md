@@ -32,6 +32,14 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Changed
 
+- **`EditorRef.copy()` and `EditorRef.cut()` with nothing selected now leave the clipboard alone.**
+  Previously either one, called at a collapsed caret or with no selection, still wrote to the system
+  clipboard — it put a lone `#` there, because `@lexical/clipboard` synthesizes a copy event by
+  appending a hidden placeholder element and declines to fill it in before suppressing the browser's
+  own copy. A host calling `copy()` speculatively therefore destroyed whatever the user had on the
+  clipboard. The signatures are unchanged, so this arrives with no compile-time signal: a host that
+  worked around the old behavior (clearing the clipboard first, or reading it back and treating `#`
+  as empty) should drop that workaround.
 - `EditorRef.insertMarker` returns `string | undefined` (was `void`) — the created node's key.
 - `NoteCallerOnClick` takes a 7th parameter, `getNoteIndex: () => number | undefined`.
 - **Marker menu descriptions no longer carry the `(basic)` token.** `usfm.sty` marks commonly-used
