@@ -76,14 +76,24 @@ import {
   $createVerseNode,
   $isParaNode,
   CHAPTER_MARKER,
+  CharNode,
   CURSOR_PLACEHOLDER_CHAR,
   getVisibleOpenMarkerText,
+  isSerializedCharNode,
   isSerializedImmutableTypedTextNode,
   isSerializedTextNode,
   isSerializedUnknownNode,
+  MarkerNode,
+  MILESTONE_VERSION,
+  MilestoneNode,
   NBSP,
+  ParaNode,
+  SerializedCharNode,
   SerializedChapterNode,
+  SerializedMarkerNode,
+  SerializedMilestoneNode,
   SerializedParaNode,
+  SerializedTypedMarkNode,
   SerializedVerseNode,
   ImmutableTableCellMarker,
   textTypeState,
@@ -462,6 +472,211 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
     initializeDeserialize(undefined);
     const roundTripped = deserializeSerializedEditorState(state);
     expect(JSON.stringify(roundTripped)).toContain(`in~the${NBSP}${NBSP}days`);
+  });
+
+  /**
+   * A standard-view state for `\nd LORD\+wj x\+wj*Y\nd*`: an outer char span carrying its own
+   * glyph-adjacent separator (`LORD`), a nested char span, and plain text after the nested
+   * span's closer (`Y`) — the shape `precedesOpeningCharGlyph` (editor-usj.adaptor.ts) has to
+   * read correctly.
+   */
+  function buildNestedCharState() {
+    const usx = `<usx version="3.0"><book code="RUT" style="id" /><chapter number="1" style="c" /><para style="p"><verse number="1" style="v" /><char style="nd">LORD<char style="wj">x</char>Y</char></para></usx>`;
+    const usj = usxStringToUsj(usx);
+    initializeSerialize(undefined, undefined);
+    reset();
+    return serializeEditorState(usj, getViewOptions(STANDARD_VIEW_MODE));
+  }
+
+  /** The outer `nd` char span within a state built by {@link buildNestedCharState}. */
+  function findOuterChar(state: SerializedEditorState) {
+    const para = state.root.children[2] as SerializedParaNode;
+    const char = para.children.find(
+      (child) => isSerializedCharNode(child) && child.marker === "nd",
+    );
+    if (!char || !isSerializedCharNode(char)) throw new Error("Expected the outer nd char span");
+    return char;
+  }
+
+  it("standard view: round-trips an authored NBSP right after a nested char closer", () => {
+    // `\nd LORD\+wj x\+wj*~y\nd*` — the byte after the nested span's closer is an authored data
+    // NBSP (USFM `~`), not the glyph-adjacent display separator: only text directly after an
+    // OPENING glyph carries that separator, and this text sits after a CLOSING glyph.
+    // `usjTextToDisplay` (the forward adaptor's load-time whitespace map) already turns an
+    // authored data NBSP into a display `~` before this text ever reaches the strip check, so it
+    // never starts with NBSP here — pinning that this round-trips untouched.
+    const usx = `<usx version="3.0"><book code="RUT" style="id" /><chapter number="1" style="c" /><para style="p"><verse number="1" style="v" /><char style="nd">LORD<char style="wj">x</char>${NBSP}y</char></para></usx>`;
+    const usj = usxStringToUsj(usx);
+    initializeSerialize(undefined, undefined);
+    reset();
+    const state = serializeEditorState(usj, getViewOptions(STANDARD_VIEW_MODE));
+    initializeDeserialize(undefined);
+    const roundTripped = deserializeSerializedEditorState(
+      state,
+      getViewOptions(STANDARD_VIEW_MODE),
+    );
+    // Exact equality, not just a substring: the outer span's own glyph-adjacent separator
+    // ("LORD", right after the opening glyph) is still stripped, and the byte after the nested
+    // closer survives untouched — a full byte-for-byte round trip, not merely "somewhere in the
+    // output".
+    expect(roundTripped).toEqual(usj);
+  });
+
+  it("standard view: does not strip a char-child text node's own leading NBSP unless it follows an opening glyph", () => {
+    // Exercises the position check directly: a text node whose OWN leading byte is a real NBSP
+    // — not the load-time-converted display `~` of the test above — but that sits right after a
+    // CLOSING glyph rather than an opening one. Only the glyph-adjacent separator prefix may be
+    // stripped; this byte is content and must survive (as a real space once inverted — the
+    // reverse adaptor's unconditional NBSP-to-space mapping is unaffected by this fix), not be
+    // silently dropped.
+    const state = buildNestedCharState();
+    const outerChar = findOuterChar(state);
+    const trailingText = outerChar.children.find(
+      (child) => isSerializedTextNode(child) && child.text === "Y",
+    ) as SerializedTextNode | undefined;
+    if (!trailingText) throw new Error("Expected the trailing text node");
+    trailingText.text = `${NBSP}Y`;
+    initializeDeserialize(undefined);
+    const roundTripped = deserializeSerializedEditorState(
+      state,
+      getViewOptions(STANDARD_VIEW_MODE),
+    );
+    if (!roundTripped) throw new Error("Expected a round-tripped USJ");
+    const outerContent = (roundTripped.content[2] as MarkerObject).content?.find(
+      (item): item is MarkerObject => typeof item === "object" && item.marker === "nd",
+    )?.content;
+    expect(outerContent?.at(-1)).toBe(" Y");
+  });
+
+  it("standard view: still strips the separator when the first char-child text sits inside a TypedMarkNode", () => {
+    // A comment/annotation mark wrapping the span's first text right after the opening glyph
+    // must not hide the structural separator from the strip — TypedMarkNode is transparent on
+    // both sides of the adjacency check, exactly as the live predicate treats it.
+    const state = buildNestedCharState();
+    const outerChar = findOuterChar(state);
+    const firstTextIndex = outerChar.children.findIndex(
+      (child) => isSerializedTextNode(child) && child.text.endsWith("LORD"),
+    );
+    const firstText = outerChar.children[firstTextIndex] as SerializedTextNode;
+    expect(firstText.text.startsWith(NBSP)).toBe(true);
+    const mark = {
+      type: TypedMarkNode.getType(),
+      typedIDs: { "external-test": ["1"] },
+      direction: null,
+      format: "",
+      indent: 0,
+      version: 1,
+      children: [firstText],
+    } as unknown as SerializedTypedMarkNode;
+    outerChar.children.splice(firstTextIndex, 1, mark);
+    initializeDeserialize(undefined);
+    const roundTripped = deserializeSerializedEditorState(
+      state,
+      getViewOptions(STANDARD_VIEW_MODE),
+    );
+    if (!roundTripped) throw new Error("Expected a round-tripped USJ");
+    const outerContent = (roundTripped.content[2] as MarkerObject).content?.find(
+      (item): item is MarkerObject => typeof item === "object" && item.marker === "nd",
+    )?.content;
+    expect(outerContent?.[0]).toBe("LORD");
+  });
+
+  it("standard view: does not strip text that follows a char span's first-child milestone", () => {
+    // Element-first content (here, a milestone) takes a STANDALONE NBSP spacer before it, never a
+    // prefix on later text — so text after the milestone must be untouched by the strip, exactly
+    // like text after a nested closer.
+    const nd: SerializedCharNode = {
+      type: CharNode.getType(),
+      marker: "nd",
+      direction: null,
+      format: "",
+      indent: 0,
+      version: 1,
+      children: [
+        {
+          type: MarkerNode.getType(),
+          marker: "nd",
+          markerSyntax: "opening",
+          text: "",
+          detail: 0,
+          format: 0,
+          mode: "normal",
+          style: "",
+          version: 1,
+        } as SerializedMarkerNode,
+        {
+          type: "text",
+          text: NBSP,
+          detail: 0,
+          format: 0,
+          mode: "normal",
+          style: "",
+          version: 1,
+        } as SerializedTextNode,
+        {
+          type: MilestoneNode.getType(),
+          marker: "qt-s",
+          sid: "1",
+          version: MILESTONE_VERSION,
+        } as SerializedMilestoneNode,
+        {
+          type: "text",
+          text: `${NBSP}y`,
+          detail: 0,
+          format: 0,
+          mode: "normal",
+          style: "",
+          version: 1,
+        } as SerializedTextNode,
+        {
+          type: MarkerNode.getType(),
+          marker: "nd",
+          markerSyntax: "closing",
+          text: "",
+          detail: 0,
+          format: 0,
+          mode: "normal",
+          style: "",
+          version: 1,
+        } as SerializedMarkerNode,
+      ],
+    };
+    const state: SerializedEditorState = {
+      root: {
+        type: "root",
+        direction: null,
+        format: "",
+        indent: 0,
+        version: 1,
+        children: [
+          {
+            type: ParaNode.getType(),
+            marker: "p",
+            direction: null,
+            format: "",
+            indent: 0,
+            textFormat: 0,
+            textStyle: "",
+            version: 1,
+            children: [nd],
+          } as SerializedParaNode,
+        ],
+      },
+    };
+    initializeDeserialize(undefined);
+    const roundTripped = deserializeSerializedEditorState(
+      state,
+      getViewOptions(STANDARD_VIEW_MODE),
+    );
+    if (!roundTripped) throw new Error("Expected a round-tripped USJ");
+    const outerContent = (roundTripped.content[0] as MarkerObject).content?.find(
+      (item): item is MarkerObject => typeof item === "object" && item.marker === "nd",
+    )?.content;
+    // The standalone spacer is dropped entirely (presentation-only), and the milestone survives.
+    // The trailing text's leading NBSP is content, not a separator, so it is NOT stripped — it
+    // inverts to a real space (the reverse adaptor's unconditional NBSP-to-space mapping applies
+    // regardless), not silently dropped the way an incorrectly-stripped byte would be.
+    expect(outerContent).toEqual([{ type: "ms", marker: "qt-s", sid: "1" }, " y"]);
   });
 
   it("uses per-call viewOptions, not a latched module singleton (task zero)", () => {
