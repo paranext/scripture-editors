@@ -952,14 +952,18 @@ function $handleBackwardNavigation(
   const isSelectionAtNodeStart = selection.anchor.offset === 0;
   if (!isSelectionAtNodeStart) return false;
 
-  // If at the beginning of book node text → don't move.
+  // If at the beginning of book node text → don't move, unless a note sits to the left of the
+  // caret. The `\id` line carries whatever follows the book code, notes included, so it is not
+  // always a single run of text with nothing before it; the note handling below owns that case.
   const node = selection.anchor.getNode();
-  if ($isBookNode(node.getParent())) return true;
+  if ($isBookNode(node.getParent()) && !$isNoteNode(prevNode)) return true;
 
   if ($isNoteNode(prevNode) && prevNode.getIsCollapsed()) {
     // caret at end of collapsed note preceded by verse → move to start of note in para
     const nodeBeforeNote = prevNode.getPreviousSibling();
-    if (!$isImmutableVerseNode(nodeBeforeNote)) return false;
+    // The `\id` line has no verse to sit before its notes — the book code is part of the line's
+    // own immutable marker text — so the same hop applies there on the strength of the parent.
+    if (!$isImmutableVerseNode(nodeBeforeNote) && !$isBookNode(prevNode.getParent())) return false;
 
     const parent = prevNode.getParent();
     if (!parent) return false;
