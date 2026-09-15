@@ -52,3 +52,27 @@ describe("usj-nodes.css note caller counter rules", () => {
     expect(flatCss).not.toContain(`.note.usfm_x .immutable-note-caller`);
   });
 });
+
+/**
+ * Pins the Scripture text font contract this stylesheet holds up with `generateUsjCss`: the chain
+ * lives here as `--usj-font-fallback`, and the generator names it rather than carrying a second
+ * copy. The `@font-face` pin is the other half — a face sourced only from `local()` errors wherever
+ * the font is not installed, and an erroring face makes the family unusable at that weight and
+ * style instead of deferring to a host application's working declaration of it, which is what drops
+ * bold and italic Scripture text onto an unrelated system font.
+ */
+describe("usj-nodes.css Scripture text font", () => {
+  const css = readFileSync(new URL("./usj-nodes.css", import.meta.url), "utf-8");
+  const flatCss = css.replace(/\s+/g, " ");
+
+  it("publishes the fallback chain as a custom property the generated sheet can name", () => {
+    expect(flatCss).toContain(
+      `--usj-font-fallback: "Charis SIL", "Times New Roman", "Liberation Serif", "DejaVu Serif", Georgia, serif;`,
+    );
+    expect(flatCss).toContain(`.usfm.formatted-font { font-family: var(--usj-font-fallback);`);
+  });
+
+  it("declares no font faces of its own", () => {
+    expect(css).not.toContain("@font-face");
+  });
+});

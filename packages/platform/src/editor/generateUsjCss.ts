@@ -98,6 +98,20 @@ const MIRRORED_JUSTIFICATION: Readonly<{ [justification: string]: string | undef
   right: "left",
 };
 
+/**
+ * Appended after every font this sheet names, so a project whose font is unavailable falls back to
+ * the Scripture text chain instead of the user agent's default. A bare `font-family: "<font>"`
+ * would not: the emitted rule outranks the static `.usfm.formatted-font` chain, so there would be
+ * nothing left behind it to catch. `usj-nodes.css` defines the property on `.usfm`, which keeps one
+ * copy of the chain; the literal `serif` is what remains where that stylesheet is not loaded.
+ */
+const FONT_FALLBACK = "var(--usj-font-fallback, serif)";
+
+/** A `font-family` declaration for a stylesheet-declared font, with the fallback chain behind it. */
+function fontFamilyDeclaration(fontName: string): string {
+  return `font-family: "${escapeCssString(fontName)}", ${FONT_FALLBACK}`;
+}
+
 /** The scope prefix used when none is supplied — see {@link UsjCssOptions.containerSelector}. */
 const DEFAULT_CONTAINER_SELECTOR = ".editor-input.usfm";
 
@@ -126,7 +140,7 @@ function markerDeclarations(
   rtl: boolean,
 ): string[] {
   const decls: string[] = [];
-  if (entry.fontName) decls.push(`font-family: "${escapeCssString(entry.fontName)}"`);
+  if (entry.fontName) decls.push(fontFamilyDeclaration(entry.fontName));
   if (entry.bold) decls.push("font-weight: bold");
   if (entry.italic) decls.push("font-style: italic");
   if (entry.color) {
@@ -254,8 +268,7 @@ export function generateUsjCss(styleInfo: StyleInfo, options: UsjCssOptions = {}
   const scope = safeContainerSelector(containerSelector);
   const rules: string[] = [];
   const baseDecls: string[] = [];
-  if (styleInfo.defaultFont)
-    baseDecls.push(`font-family: "${escapeCssString(styleInfo.defaultFont)}"`);
+  if (styleInfo.defaultFont) baseDecls.push(fontFamilyDeclaration(styleInfo.defaultFont));
   // Like the per-marker fontSize: a 0 default would blank the whole editor, so only positive
   // sizes emit.
   if (hasValue(styleInfo.defaultFontSize) && styleInfo.defaultFontSize > 0)

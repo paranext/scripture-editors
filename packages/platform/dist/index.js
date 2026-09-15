@@ -16518,7 +16518,7 @@ function t_(e) {
   Jc = e, Yc = t;
 }
 t_(Gc);
-const _A = () => Jc, _o = () => Yc;
+const vA = () => Jc, _o = () => Yc;
 function fh(e) {
   let t;
   switch (e ?? Jc) {
@@ -16568,7 +16568,7 @@ function fh(e) {
   }
   return t;
 }
-function CA(e) {
+function SA(e) {
   if (!e)
     return;
   const t = Nu(e);
@@ -19669,7 +19669,7 @@ function gv({ structureProtectionMode: e = "off" }) {
     };
   }, [t, n]), null;
 }
-const vA = {
+const MA = {
   ltr: "Left-to-right",
   rtl: "Right-to-left",
   auto: "Automatic"
@@ -25588,7 +25588,7 @@ const tm = vn(function({
       ] })
     ] }, fe.verseLayout ?? "inline")
   );
-}), SA = vn(function(t, r) {
+}), EA = vn(function(t, r) {
   const { children: n, ...i } = t;
   return /* @__PURE__ */ C(tm, { ref: r, ...i });
 });
@@ -26607,7 +26607,7 @@ function D1(e, t) {
     };
   }, [t, e]);
 }
-const MA = vn(function(t, r) {
+const AA = vn(function(t, r) {
   const n = X(null), i = X(!0), s = X(null), [o, a] = de(null), { children: c, onCommentChange: l, onUsjChange: u, showCommentsContainerRef: d, ...f } = t, { logger: p, options: { isReadonly: m, view: g } = {} } = t, y = (m ?? !1) || Xi(g), [T, S] = I1();
   D1(f, T), K(() => {
     if (process.env.NODE_ENV !== "production") {
@@ -26750,39 +26750,43 @@ const MA = vn(function(t, r) {
 function ln(e) {
   return e.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 }
-function lm(e) {
+function U1(e) {
   return e.replace(/["\\\n\r\f<>]/g, (t) => t === `
 ` ? "\\a " : t === "\r" ? "\\d " : t === "\f" ? "\\c " : t === "<" ? "\\3C " : t === ">" ? "\\3E " : `\\${t}`);
 }
-function U1(e) {
+function F1(e) {
   return typeof CSS < "u" && typeof CSS.escape == "function" ? CSS.escape(e) : e.replace(/[^\w-]/g, (t) => `\\${t}`);
 }
-const F1 = /^[#\w().,%/\s-]+$/;
+const z1 = /^[#\w().,%/\s-]+$/;
 function ur(e) {
   return e != null;
 }
-const z1 = {
+const K1 = {
   left: "left",
   right: "right",
   center: "center",
   both: "justify"
-}, K1 = {
+}, j1 = {
   left: "right",
   right: "left"
-}, ac = ".editor-input.usfm", j1 = /^[\w.#[\]="':()>+~*,\s-]+$/;
-function B1(e) {
-  return j1.test(e) ? e : (console.warn(
+}, B1 = "var(--usj-font-fallback, serif)";
+function lm(e) {
+  return `font-family: "${U1(e)}", ${B1}`;
+}
+const ac = ".editor-input.usfm", V1 = /^[\w.#[\]="':()>+~*,\s-]+$/;
+function W1(e) {
+  return V1.test(e) ? e : (console.warn(
     `[generateUsjCss] Ignoring unsafe containerSelector "${e}"; using "${ac}".`
   ), ac);
 }
-function V1(e, t, r, n) {
+function H1(e, t, r, n) {
   const i = [];
-  if (t.fontName && i.push(`font-family: "${lm(t.fontName)}"`), t.bold && i.push("font-weight: bold"), t.italic && i.push("font-style: italic"), t.color && (F1.test(t.color) ? i.push(`color: ${t.color}`) : console.warn(
+  if (t.fontName && i.push(lm(t.fontName)), t.bold && i.push("font-weight: bold"), t.italic && i.push("font-style: italic"), t.color && (z1.test(t.color) ? i.push(`color: ${t.color}`) : console.warn(
     `[generateUsjCss] Skipping unsafe color "${t.color}" for marker "${e}".`
   )), ur(t.fontSize) && t.fontSize > 0 && i.push(`font-size: ${Math.floor(t.fontSize * 100 / 12)}%`), ur(t.firstLineIndent) && i.push(`text-indent: ${ln(t.firstLineIndent * 20 * r)}vw`), ur(t.leftMargin) && t.leftMargin >= 0 && i.push(`margin-${n ? "right" : "left"}: ${ln(t.leftMargin * 20 * r)}vw`), ur(t.rightMargin) && t.rightMargin >= 0 && i.push(
     `margin-${n ? "left" : "right"}: ${ln(t.rightMargin * 20 * r)}vw`
   ), ur(t.spaceBefore) && t.spaceBefore >= 0 && i.push(`margin-top: ${ln(t.spaceBefore * r)}pt`), ur(t.spaceAfter) && t.spaceAfter >= 0 && i.push(`margin-bottom: ${ln(t.spaceAfter * r)}pt`), t.lineSpacing === 1 ? i.push("line-height: 1.5") : t.lineSpacing === 2 && i.push("line-height: 2"), t.subscript ? i.push("vertical-align: text-bottom", "font-size: 66%") : t.superscript && i.push("vertical-align: text-top", "font-size: 66%"), t.underline && i.push("text-decoration: underline"), t.smallCaps && i.push("font-variant: small-caps"), t.justification) {
-    const s = z1[n ? K1[t.justification] ?? t.justification : t.justification];
+    const s = K1[n ? j1[t.justification] ?? t.justification : t.justification];
     s && i.push(`text-align: ${s}`);
   }
   return t.textProperties?.includes("verse") && i.push("white-space: nowrap", "unicode-bidi: embed"), i;
@@ -26791,7 +26795,7 @@ const jd = { c: 150, ca: 133, cp: 150 };
 function Bd(e, t) {
   return e && ur(e.fontSize) && e.fontSize > 0 ? Math.floor(e.fontSize * 100 / 12) : t;
 }
-function W1(e, t) {
+function G1(e, t) {
   if (["c", "ca", "cp"].filter((i) => {
     const s = e.markers[i];
     return s && ur(s.fontSize) && s.fontSize > 0;
@@ -26805,35 +26809,35 @@ function W1(e, t) {
     return `${t} .usfm_c .usfm_${i}.usfm_${i} { font-size: ${o}%; }`;
   });
 }
-function EA(e, t = {}) {
-  const { zoom: r = 1, rtl: n = !1, containerSelector: i = ac } = t, s = B1(i), o = [], a = [];
-  e.defaultFont && a.push(`font-family: "${lm(e.defaultFont)}"`), ur(e.defaultFontSize) && e.defaultFontSize > 0 && a.push(`font-size: ${ln(e.defaultFontSize * r)}pt`), a.length > 0 && o.push(`${s} { ${a.join("; ")}; }`);
+function PA(e, t = {}) {
+  const { zoom: r = 1, rtl: n = !1, containerSelector: i = ac } = t, s = W1(i), o = [], a = [];
+  e.defaultFont && a.push(lm(e.defaultFont)), ur(e.defaultFontSize) && e.defaultFontSize > 0 && a.push(`font-size: ${ln(e.defaultFontSize * r)}pt`), a.length > 0 && o.push(`${s} { ${a.join("; ")}; }`);
   for (const [c, l] of Object.entries(e.markers)) {
-    const u = V1(c, l, r, n);
-    u.length > 0 && o.push(`${s} .usfm_${U1(c)} { ${u.join("; ")}; }`);
+    const u = H1(c, l, r, n);
+    u.length > 0 && o.push(`${s} .usfm_${F1(c)} { ${u.join("; ")}; }`);
   }
-  return o.push(...W1(e, s)), o.join(`
+  return o.push(...G1(e, s)), o.join(`
 `);
 }
 export {
   dh as BLOCK_VERSE_VIEW_MODE,
   k as CategoryType,
-  SA as Editorial,
+  EA as Editorial,
   Os as GENERATOR_NOTE_CALLER,
   yf as HIDDEN_NOTE_CALLER,
-  MA as Marginal,
+  AA as Marginal,
   b as MarkerType,
   lh as PARAGRAPH_STRUCTURE_VIEW_MODE,
   uh as STANDARD_VIEW_MODE,
   Fs as defaultStyleInfo,
-  vA as directionToNames,
+  MA as directionToNames,
   zx as filterAndRankItems,
-  EA as generateUsjCss,
-  _A as getDefaultViewMode,
+  PA as generateUsjCss,
+  vA as getDefaultViewMode,
   _o as getDefaultViewOptions,
   lM as getEnterMenuItems,
   cM as getMarkerMenuItems,
-  CA as getViewMode,
+  SA as getViewMode,
   fh as getViewOptions,
   Xi as isBlockVerseLayout,
   $r as isInsertEmbedOpOfType,

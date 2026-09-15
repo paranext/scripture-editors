@@ -15,31 +15,21 @@
 .align_end {
   text-align: end;
 }
-@font-face {
-  font-family: "Charis SIL";
-  src:
-    local("Charis SIL"), local("Charis SIL Bold"), local("Charis SIL Bold Italic"),
-    local("Charis SIL Italic");
-  font-weight: normal;
-}
-@font-face {
-  font-family: "Charis SIL";
-  src: local("Charis SIL Bold");
-  font-weight: bold;
-}
-@font-face {
-  font-family: "Charis SIL";
-  src: local("Charis SIL Italic");
-  font-style: italic;
-}
-@font-face {
-  font-family: "Charis SIL";
-  src: local("Charis SIL Bold Italic");
-  font-weight: bold;
-  font-style: italic;
+/* Charis SIL is NOT declared here. A `local()`-only font face errors on any machine that does not
+   have the font installed, and an erroring face makes the whole family unusable at that weight and
+   style rather than falling back to a working declaration of it — which drops bold and italic
+   Scripture text out of the family and onto an unrelated system font. A host application that
+   wants these families has to declare them itself, with real font files. */
+/* The Scripture text fallback chain, published as a custom property so a generated project
+   stylesheet can put the project's own font in front of it rather than replacing it outright:
+   `generateUsjCss` emits `font-family: "<project font>", var(--usj-font-fallback, serif)`. Declared
+   on `.usfm` so it reaches the unformatted view too, where the chain itself is not applied. */
+.usfm {
+  --usj-font-fallback:
+    "Charis SIL", "Times New Roman", "Liberation Serif", "DejaVu Serif", Georgia, serif;
 }
 .usfm.formatted-font {
-  font-family: "Charis SIL", "Times New Roman", "Liberation Serif", "DejaVu Serif", Georgia, serif;
+  font-family: var(--usj-font-fallback);
   font-size: 12pt;
 }
 
