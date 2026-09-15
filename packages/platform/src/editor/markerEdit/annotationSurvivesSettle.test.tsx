@@ -156,6 +156,11 @@ describe("an annotation inside a settling paragraph", () => {
     await typeOver(mounted.lexical, literalHost, withLiteral);
     settle(mounted);
 
+    // Positive controls first: `not.toHaveBeenCalled` is equally happy against a settle that never
+    // ran and against a carry that dropped the mark without reporting it, so pin that the settle
+    // DID rebuild the paragraph and that the annotation DID survive before reading the spy.
+    expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
+    expect(annotatedText(mounted.lexical)).toEqual(["bravo"]);
     expect(onRemove).not.toHaveBeenCalled();
   });
 
@@ -206,6 +211,22 @@ describe("an annotation inside a settling paragraph", () => {
     await annotate(mounted, bravoRange, "1");
     await typeOver(mounted.lexical, "bravo", "\\nd LORD\\nd*");
 
+    settle(mounted);
+
+    expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
+    expect(annotatedText(mounted.lexical)).toEqual([]);
+  });
+
+  it("drops an annotation whose bytes the re-tokenization collapses away", async () => {
+    // Re-tokenizing a run of spaces collapses it to ONE, so an annotation over the run's last two
+    // (which the editor displays as non-breaking spaces) is left with no bytes at all and both
+    // ends of the carry resolve to the same position. Wrapping a collapsed range would mark the
+    // text in FRONT of it instead, so the carry refuses.
+    const mounted = await mountStandardViewEditor(twoParaUsj(["alpha   bravo charlie"]));
+    await annotate(mounted, atOffsets(6, 8), "1");
+    expect(annotatedText(mounted.lexical)).toEqual(["\u00a0\u00a0"]);
+
+    await typeOver(mounted.lexical, "bravo charlie", "bravo charlie \\nd LORD\\nd*");
     settle(mounted);
 
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
@@ -315,17 +336,24 @@ const expandedNoteUsj: Usj = {
   ],
 };
 
+/** The expanded-note doc with `bravo` in the note's own content annotated and nothing pending. */
+async function mountWithAnnotatedNoteBody(onRemove?: TypedMarkOnRemove): Promise<Mounted> {
+  const mounted = await mountExpandedNoteEditor(expandedNoteUsj);
+  await annotate(
+    mounted,
+    {
+      start: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf("bravo") },
+      end: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf("bravo") + "bravo".length },
+    },
+    "1",
+    onRemove,
+  );
+  return mounted;
+}
+
 describe("an annotation inside settling note content", () => {
   it("still wraps the same word after the note's content settles", async () => {
-    const mounted = await mountExpandedNoteEditor(expandedNoteUsj);
-    await annotate(
-      mounted,
-      {
-        start: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf("bravo") },
-        end: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf("bravo") + "bravo".length },
-      },
-      "1",
-    );
+    const mounted = await mountWithAnnotatedNoteBody();
     expect(annotatedText(mounted.lexical)).toEqual(["bravo"]);
 
     await typeOver(mounted.lexical, literalHost, withLiteral);
@@ -337,6 +365,21 @@ describe("an annotation inside settling note content", () => {
     ).toBe(true);
     expect(annotatedText(mounted.lexical)).toEqual(["bravo"]);
     expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
+  });
+
+  it("never tells the host its annotation was destroyed", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountWithAnnotatedNoteBody(onRemove);
+
+    await typeOver(mounted.lexical, literalHost, withLiteral);
+    settle(mounted);
+
+    // Positive controls first — see the paragraph row of the same name. A note's mark is removed
+    // DIRECTLY by the rebuild (it is one of the note's own children), so the suppression this row
+    // guards is the only thing between a surviving annotation and a spurious "destroyed".
+    expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
+    expect(annotatedText(mounted.lexical)).toEqual(["bravo"]);
+    expect(onRemove).not.toHaveBeenCalled();
   });
 });
 

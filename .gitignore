@@ -87,3 +87,6 @@ docs/superpowers
 # re-included .claude paths are intentionally NOT mirrored in .prettierignore — we want these
 # shared config files formatted by prettier/lint-staged.
 .review
+
+# Vitest coverage/report temp output
+test-output

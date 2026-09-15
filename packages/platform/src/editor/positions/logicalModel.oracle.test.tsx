@@ -297,7 +297,12 @@ describe.each(modes)(
       });
 
       expect(report.disagreements).toEqual([]);
-      // The corpus holds no space runs, so nothing may be lost to the collapse.
+      // A DELIBERATE WAIVER, not a proven property. Standard view's exporter collapses a run of
+      // two or more spaces, which is not length-preserving, and the logical model does not model
+      // that — so every offset after such a run would disagree. This corpus contains no space run,
+      // which is the only reason this is empty. If a corpus that has one is ever added here, this
+      // will go red, and the fix is the per-segment offset map noted on `LogicalTextItem.length`,
+      // not a wider skip list.
       expect(report.collapsedItems).toEqual([]);
       // A floor, not a pin: it only has to be far enough above zero that a walk which stopped
       // early cannot pass, and low enough that editing the corpus does not churn it.

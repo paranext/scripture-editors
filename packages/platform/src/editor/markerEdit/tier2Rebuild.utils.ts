@@ -746,6 +746,14 @@ export function serializedRunWrapperChildren(
  * mistaken no-op refusal. A matching signature is the only outcome that would need this function
  * to classify a node identically to `$appendSignature`, and a fresh sentinel-class node can never
  * produce one against content that didn't already contain it.
+ *
+ * Its one classification asymmetry with `$appendSignature` is unreachable rather than deliberate:
+ * the live side treats a `TypedMarkNode` TRANSPARENTLY (an annotation is a host overlay, not
+ * document content) while this side has no mark branch and would tag one in its generic element
+ * branch below — but a mark contributes no bytes to the fragment a rebuild is tokenized from, so
+ * the rebuilt side never carries the comment-milestone bytes a serialized mark is built out of
+ * (`replaceMilestonesWithMarkRecurse`, usj-editor.adaptor.ts). Were one ever to reach here, the
+ * comparison would come out UNEQUAL, which splices rather than mistakenly refuses.
  */
 export function serializedSignatureOf(
   nodes: SerializedLexicalNode[],
@@ -1754,6 +1762,10 @@ function $restoreMarkByteRanges(
       const end = $resolveFragmentByteAnchor(fragment, range.end);
       if (!start || !end) continue;
       if ($isGlyphPoint(start) || $isGlyphPoint(end)) continue;
+      // A collapsed range covers no bytes, and wrapping one splits a text node at the same offset
+      // twice, which marks everything IN FRONT of it: a mark over the wrong bytes is worse than a
+      // dropped mark, so refuse. (Offset 0 collapses to a no-op inside the wrap itself.)
+      if (start.key === end.key && start.offset === end.offset && start.type === end.type) continue;
       const selection = $createRangeSelection();
       selection.anchor.set(start.key, start.offset, start.type);
       selection.focus.set(end.key, end.offset, end.type);
@@ -2231,7 +2243,17 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   // them here would silently delete them from their new home. Skip them.
   const preservedKeys = new Set(out.sentinels.flat().map((node) => node.getKey()));
   contentNodes.forEach((node) => {
-    if (!preservedKeys.has(node.getKey())) node.remove();
+    if (preservedKeys.has(node.getKey())) return;
+    // An annotation wrapping note content is one of the note's own children, so it is removed
+    // DIRECTLY here — and `TypedMarkNode.remove` reports a direct removal to the host as a
+    // destroyed annotation. The annotation is not destroyed: `$restoreMarkByteRanges` below
+    // re-wraps it over the rebuilt bytes. Suppress the notification the way every other
+    // re-creation of a mark node does (AnnotationPlugin's nested-element resolver,
+    // `TypedMarkNode`'s own sibling merges). A mark nested DEEPER needs nothing: a detached
+    // subtree is garbage-collected without `remove()` ever running on it, which is why the
+    // paragraph rebuild (whole paragraphs removed, marks always inside them) stays quiet.
+    if ($isTypedMarkNode(node)) node.getWritable().__suppressOnRemoveCallbacks = true;
+    node.remove();
   });
   // Before the caret restore, so the caret resolves against the final tree — mirror
   // `$rebuildParas`. Note content is one contiguous region, so its spans carry no inter-node
@@ -2422,6 +2444,12 @@ export function $buildChapterFragment(
  * node's KIND (the `\c` bytes rewritten into some other marker, or deleted) refuses and stays a
  * pending literal rather than restructuring the document from a chapter-scoped settle. Deleting
  * a chapter outright is `$chapterNodeTransform`'s existing empty-children path, not this one.
+ *
+ * Carries no annotation marks across, unlike its paragraph and note-content siblings, because none
+ * can be in the region to carry: an annotation range names document CONTENT, and a chapter marker
+ * has no content children for a `UsjDocumentLocation` to land in. The signature reads a mark
+ * transparently either way, so a region whose only difference is a mark reports a fixed point and
+ * is left exactly as it stands.
  */
 export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): boolean {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;

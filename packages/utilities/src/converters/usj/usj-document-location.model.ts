@@ -203,7 +203,7 @@ export interface UsjClosingAttributeMarkerLocation {
  * JSON path to a {@link MarkerObject}, {@link Usj}, or text content string in the current USJ
  * document.
  *
- * Eight clauses covers every shape the editors render (table cell → char → nested char → text is
+ * Eight clauses cover every shape the editors render (table cell → char → nested char → text is
  * seven). Deeper paths are valid at runtime; the type is a bound, not a rule.
  *
  * @public

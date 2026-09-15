@@ -97,8 +97,12 @@ interface SettledTopIndex {
  * wholesale. Spans the cut swallows entirely collapse to zero length rather than disappearing, so
  * a key stays findable.
  *
- * Sentinels are carried through untouched: the declared bytes are typed text, so a cut can never
- * remove a preserved node's placeholder.
+ * The `sentinels` run list passes through BY REFERENCE, so a run keeps its index no matter how many
+ * cuts a fragment goes through — which is what lets a run be paired with its settled counterpart
+ * positionally (see {@link sentinelMapOf}). The SPANS are a different matter: a cut whose range
+ * covers a sentinel span empties that span, which is exactly how a preserved node the settled side
+ * carries nothing of gets its placeholder byte taken out of the text (see
+ * {@link withoutDroppedSentinels}).
  */
 export function cutFragment(
   fragment: FragmentAccumulator,

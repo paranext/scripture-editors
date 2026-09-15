@@ -116,7 +116,16 @@ export interface LogicalTextSegment {
 export interface LogicalTextItem {
   type: "text";
   segments: LogicalTextSegment[];
-  /** Length of the item's USJ string — segment leads excluded, as the exporter excludes them. */
+  /**
+   * Length of the item's USJ string — segment leads excluded, as the exporter excludes them.
+   *
+   * `lead` is the only display→data adjustment this model makes, so the equality holds for every
+   * text the exporter copies through verbatim. It does NOT hold in Standard view for a text
+   * carrying a run of two or more spaces: that view's exporter additionally collapses the run
+   * (`normalizeSpaceRuns`), which is not length-preserving, so offsets after such a run are
+   * shifted by however many spaces the run lost. Closing that gap needs a per-segment settled
+   * offset map rather than a scalar lead.
+   */
   length: number;
 }
 

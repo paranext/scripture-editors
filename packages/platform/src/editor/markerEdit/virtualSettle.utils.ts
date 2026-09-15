@@ -422,7 +422,7 @@ export function $verifiedTransientLiteral(
  * normalizes away, never a dropped sentinel placeholder), and it disappears on its own the next time
  * the declaration clears and a real settle re-derives the fragment from scratch.
  */
-export function $fragmentTextWithoutTransient(
+function $fragmentTextWithoutTransient(
   fragment: FragmentAccumulator,
   transient: TransientLiteral,
 ): string {

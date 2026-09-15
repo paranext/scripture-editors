@@ -6,8 +6,10 @@
  *
  * Both rows annotate a paragraph OUTSIDE the pending one, to isolate the path translation from
  * what the rebuild itself does to a mark: a Tier-2 rebuild replaces its paragraph's children
- * wholesale and carries every annotation across by byte anchor, which is a property of the rebuild
- * rather than of this translation and is pinned with it
+ * wholesale and carries annotations across by byte anchor wherever their bytes survive the
+ * re-tokenization as content (bytes that became a marker glyph, an anchor that no longer resolves,
+ * and a range the rebuild collapses to nothing are each refused instead), which is a property of
+ * the rebuild rather than of this translation and is pinned with it
  * (markerEdit/annotationSurvivesSettle.test.tsx). The translation's own behavior INSIDE a pending
  * paragraph is asserted in settledPositions.inbound.test.tsx, against the same
  * `$liveSelectionFromSettled` output these methods consume.

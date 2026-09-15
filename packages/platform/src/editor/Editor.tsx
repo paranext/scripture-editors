@@ -615,12 +615,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       if (!onSelectionChange) return;
       const editor = editorRef.current;
       const context = buildSettledPositionContext();
+      // Take a ticket on BOTH paths. A synchronous report is still the newest report, so it has to
+      // supersede a deferred one already queued from an earlier dispatch in the same tick —
+      // otherwise that microtask still matches the current ticket and reports a second time.
+      selectionReportTicketRef.current += 1;
+      const ticket = selectionReportTicketRef.current;
       if (!editor || !context || isLiveSettledIdentical(context)) {
         onSelectionChange(liveSelection);
         return;
       }
-      selectionReportTicketRef.current += 1;
-      const ticket = selectionReportTicketRef.current;
       queueMicrotask(() => {
         if (!isMountedRef.current) return;
         if (ticket !== selectionReportTicketRef.current || editorRef.current !== editor) return;
