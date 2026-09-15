@@ -34,6 +34,7 @@ import {
   $isRootNode,
   $isTextNode,
   $parseSerializedNode,
+  $setSelection,
   ElementNode,
   LexicalNode,
   NodeKey,
@@ -1539,19 +1540,41 @@ interface CarriedAnnotation {
 }
 
 /**
+ * Where a carried mark BEGINS.
+ *
+ * `"byte"` is the ordinary case: a fragment byte anchor, read and resolved exactly the way the
+ * caret's is.
+ *
+ * `"preserved"` is a mark that starts ON a preserved node — a note, an unrecoverable char span, a
+ * sentinel verse or milestone run. Such a node contributes ONE U+FFFC placeholder to the fragment,
+ * and NO byte position can name the boundary in front of it: a caret can never rest inside a
+ * placeholder, so the anchor walk and the resolve both read a position on it as being AFTER the
+ * node it stands for. The anchor here is therefore the position just past the run, and the run
+ * itself is pulled back into the mark afterwards ({@link $extendMarkOverPreservedRun}) — by node
+ * identity, which is exact because `$replaceSentinels` moves the ORIGINAL preserved nodes into the
+ * rebuilt tree.
+ */
+type MarkStart =
+  | { kind: "byte"; anchor: CaretByteAnchor }
+  | { kind: "preserved"; anchor: CaretByteAnchor; key: NodeKey };
+
+/**
  * One annotation mark lifted out of a settle scope before the scope's bytes are re-tokenized: the
- * annotations it carries, and the two fragment byte anchors bracketing the text it wraps.
+ * annotations it carries, and the two positions bracketing the text it wraps.
  *
  * A `TypedMarkNode` is TRANSPARENT in the fragment ({@link $appendNodesFragment}) — its text bytes
  * belong to its children's spans and the wrapper contributes none of its own — so re-tokenization
  * cannot reproduce it, and a splice that carried nothing across would drop every annotation
- * inside the paragraph the user is editing. Both ends anchor exactly the way the caret does
+ * inside the paragraph the user is editing. Both ends anchor the way the caret does
  * ({@link $caretSpanByteAnchor}), so a mark follows its bytes through a rebuild that adds,
  * removes, or moves display whitespace around them.
+ *
+ * The END needs no preserved-node special case: a byte anchor that consumes the placeholder
+ * resolves to the boundary just past the node, which is exactly where a mark ending on one stops.
  */
 interface MarkByteRange {
   annotations: CarriedAnnotation[];
-  start: CaretByteAnchor;
+  start: MarkStart;
   end: CaretByteAnchor;
 }
 
@@ -1570,6 +1593,21 @@ function $subtreeKeys(node: LexicalNode, out = new Set<NodeKey>()): Set<NodeKey>
   out.add(node.getKey());
   if ($isElementNode(node)) node.getChildren().forEach((child) => $subtreeKeys(child, out));
   return out;
+}
+
+/**
+ * Where a mark whose first covered span is `first` begins. A sentinel span also carries its node
+ * key, because its byte anchor names the position PAST the preserved node rather than in front of
+ * it — see {@link MarkStart}.
+ *
+ * Read-only: walks the fragment's spans, so call inside `editor.update()` or an editor-state read.
+ */
+function $markStartAt(fragment: FragmentAccumulator, first: FragmentSpan): MarkStart | undefined {
+  const anchor = $caretSpanByteAnchor(fragment, first.key, 0);
+  if (!anchor) return undefined;
+  return first.isSentinel
+    ? { kind: "preserved", anchor, key: first.key }
+    : { kind: "byte", anchor };
 }
 
 /**
@@ -1593,7 +1631,7 @@ function $captureMarkByteRanges(
     const first = covered[0];
     const last = covered[covered.length - 1];
     if (!first || !last) continue;
-    const start = $caretSpanByteAnchor(fragment, first.key, 0);
+    const start = $markStartAt(fragment, first);
     const end = $caretSpanByteAnchor(fragment, last.key, last.end - last.start);
     if (!start || !end) continue;
     const onClicks = mark.getTypedOnClicks();
@@ -1613,6 +1651,42 @@ function $captureMarkByteRanges(
     if (annotations.length > 0) ranges.push({ annotations, start, end });
   }
   return ranges;
+}
+
+/**
+ * Move the preserved node run beginning at `key` into the front of the mark that now sits directly
+ * after it — the second half of restoring a mark that STARTED on a preserved node (see
+ * {@link MarkStart}), whose wrap could only cover the content past the run.
+ *
+ * The run is located by node identity rather than re-resolved, because a preserved node survives
+ * the splice as the same node, and a verse or milestone rides together with its display run (the
+ * same run definition {@link $pointAfterSentinelRun} uses). A selection boundary would not do the
+ * job: an element point in front of an inline element resolves to that element's first LEAF, so
+ * wrapping from there would mark the preserved node's INTERNALS instead of the node.
+ *
+ * Does nothing unless the node after the run really is the mark just built for `type`/`id`, so a
+ * shape the wrap did not produce is left alone.
+ *
+ * Mutating: call inside `editor.update()`, straight after the wrap.
+ */
+function $extendMarkOverPreservedRun(key: NodeKey, type: string, id: string): void {
+  const first = $getNodeByKey(key);
+  const parent = first?.getParent();
+  const siblings = parent?.getChildren();
+  if (!first || !siblings) return;
+  const index = siblings.findIndex((sibling) => sibling.is(first));
+  if (index < 0) return;
+  const run = $isVerseNode(first)
+    ? $verseAttributeRun(siblings, index)
+    : $isMilestoneNode(first)
+      ? $milestoneDisplayRun(siblings, index)
+      : [];
+  const last = run[run.length - 1] ?? first;
+  const mark = last.getNextSibling();
+  if (!$isTypedMarkNode(mark) || !mark.hasID(type, id)) return;
+  const target = mark.getFirstChild();
+  if (!target) return;
+  [first, ...run].forEach((node) => target.insertBefore(node));
 }
 
 /**
@@ -1656,16 +1730,25 @@ function $restoreMarkByteRanges(
   ranges: MarkByteRange[],
   $freshFragment: () => { text: string; spans: FragmentSpan[] },
 ): void {
+  if (ranges.length === 0) return;
+  // Carrying a mark must leave the document selection exactly as it found it — the caller owns the
+  // caret policy and applies it right after ($restoreSelectionAtOffset, which deliberately does
+  // NOTHING when the caret was parked outside the scope being rebuilt, and so cannot undo anything
+  // done here). `$wrapSelectionInTypedMarkNode` collapses the selection onto the mark it built for
+  // the comment type, and a split text node moves any point that sat in it, so snapshot the
+  // selection and put it back. A null snapshot is restored as null: a settle after blur must not
+  // resurrect a selection.
+  const selectionBefore = $getSelection()?.clone() ?? null;
   for (const range of ranges) {
     for (const annotation of range.annotations) {
       const fragment = $freshFragment();
-      // The two ends want the two different addressing modes `$resolveFragmentByteAnchor`
-      // offers. A mark's START names the first BYTE it covers, so it belongs at the front edge of
-      // the span holding that byte — caret addressing would instead park it at the END of the
-      // preceding span (a caret's own preference), and the wrap would swallow whatever sits
-      // there: a paragraph's glyph separator, or a char span's opening glyph. Its END is a
-      // boundary AFTER the last byte, which is exactly a caret position.
-      const start = $resolveFragmentByteAnchor(fragment, range.start, {
+      // A mark's START names the first BYTE it covers, so it belongs at the front edge of the span
+      // holding that byte — caret addressing (`addressDisplayBytes: false`) would instead park it
+      // at the END of the preceding span, a caret's own preference, and the wrap would swallow
+      // whatever sits there: a paragraph's glyph separator, or a char span's opening glyph. The
+      // END is a boundary AFTER the last byte, which is exactly a caret position. A start on a
+      // preserved node lands past that node either way, and the run is pulled back in below.
+      const start = $resolveFragmentByteAnchor(fragment, range.start.anchor, {
         addressDisplayBytes: true,
       });
       const end = $resolveFragmentByteAnchor(fragment, range.end);
@@ -1683,8 +1766,11 @@ function $restoreMarkByteRanges(
         annotation.onMouseEnter,
         annotation.onMouseLeave,
       );
+      if (range.start.kind === "preserved")
+        $extendMarkOverPreservedRun(range.start.key, annotation.type, annotation.id);
     }
   }
+  $setSelection(selectionBefore);
 }
 
 /** Place the collapsed caret at the position `anchor` describes (see `$caretSpanByteAnchor`)

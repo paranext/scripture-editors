@@ -16,16 +16,31 @@ import {
   mountStandardViewEditor,
   requireStandardViewOptions,
 } from "../settledGetUsj.test-helpers";
-import { contentPath, twoParaUsj, typeOver } from "../positions/positions.test-helpers";
+import {
+  contentPath,
+  twoParaUsj,
+  typeOver,
+  $textContaining,
+} from "../positions/positions.test-helpers";
 import { $rebuildParas } from "./tier2Rebuild.utils";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
+import {
+  $createRangeSelection,
+  $getRoot,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  LexicalEditor,
+  LexicalNode,
+} from "lexical";
 import {
   $isCharNode,
   $isNoteNode,
   $isParaNode,
   $isTypedMarkNode,
+  $wrapSelectionInTypedMarkNode,
+  COMMENT_MARK_TYPE,
   getMarker as bundledGetMarker,
   getPendedDisplayOwners,
   TypedIDs,
@@ -321,6 +336,120 @@ describe("an annotation inside settling note content", () => {
       treeHas(mounted.lexical, (node) => $isNoteNode(node) && node.getChildren().some($isCharNode)),
     ).toBe(true);
     expect(annotatedText(mounted.lexical)).toEqual(["bravo"]);
+    expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
+  });
+});
+
+/** Where the collapsed caret sits, as the text it is in plus its offset — `undefined` for no
+ * selection at all. */
+function caretAt(lexical: LexicalEditor): string | undefined {
+  return lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) return undefined;
+    return `${selection.anchor.getNode().getTextContent()}@${selection.anchor.offset}`;
+  });
+}
+
+describe("a comment mark in a settling paragraph", () => {
+  it("carries the comment without moving the caret out of the paragraph the user is in", async () => {
+    // A comment mark is the one type whose wrap collapses the document selection onto itself
+    // (`$wrapSelectionInTypedMarkNode`'s COMMENT_MARK_TYPE branch). Settling a paragraph the caret
+    // has already LEFT must not drag it back: the caret restore deliberately does nothing when the
+    // caret was parked outside the rebuilt scope, so nothing downstream would undo it.
+    const mounted = await mountStandardViewEditor(twoParaUsj([body]));
+    // The shape `CommentPlugin` creates: a reserved-type mark wrapped straight over a text range.
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const text = $textContaining(body);
+        const selection = $createRangeSelection();
+        selection.anchor.set(text.getKey(), body.indexOf("bravo"), "text");
+        selection.focus.set(text.getKey(), body.indexOf("bravo") + "bravo".length, "text");
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+      });
+      await Promise.resolve();
+    });
+    expect(annotatedText(mounted.lexical)).toEqual(["bravo"]);
+    expect(annotatedIDs(mounted.lexical)).toEqual([{ [COMMENT_MARK_TYPE]: ["c1"] }]);
+
+    await typeOver(mounted.lexical, literalHost, withLiteral);
+    // Moving the caret into the other paragraph is what settles the one it left.
+    await act(async () => {
+      mounted.lexical.update(() => {
+        $textContaining("depart here").select(2, 2);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
+    expect(annotatedText(mounted.lexical)).toEqual(["bravo"]);
+    expect(annotatedIDs(mounted.lexical)).toEqual([{ [COMMENT_MARK_TYPE]: ["c1"] }]);
+    expect(caretAt(mounted.lexical)).toBe("depart here@2");
+  });
+});
+
+/** A paragraph whose annotated range BEGINS at a note: `alpha ` sits outside the mark, the note and
+ * `bravo` inside it. */
+const markOverNoteUsj: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+    { type: "chapter", marker: "c", number: "1" },
+    {
+      type: "para",
+      marker: "p",
+      content: [
+        "alpha ",
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ type: "char", marker: "fr", content: ["1.1"] }, "note body"],
+        },
+        `bravo${literalHost}`,
+      ],
+    },
+    { type: "para", marker: "p", content: ["depart here"] },
+  ],
+};
+
+describe("an annotation that begins on a preserved node", () => {
+  it("still wraps the note and the text after it once the paragraph settles", async () => {
+    const mounted = await mountStandardViewEditor(markOverNoteUsj);
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: contentPath([2, 2]), offset: 0 },
+        end: { jsonPath: contentPath([2, 2]), offset: "bravo".length },
+      },
+      "1",
+    );
+    // A USJ location naming the note resolves INSIDE it, so a range starting at a note is not
+    // something `setAnnotation` can spell; the shape is reached the way a user reaches it, by
+    // taking the mark's leading text out of it — here, by moving the note in.
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const para = $getRoot().getChildren().find($isParaNode);
+        const note = para?.getChildren().find($isNoteNode);
+        const target = para?.getChildren().find($isTypedMarkNode)?.getFirstChild();
+        if (!note || !target) throw new Error("expected a note and a mark in the paragraph");
+        target.insertBefore(note);
+      });
+      await Promise.resolve();
+    });
+    const before = annotatedText(mounted.lexical);
+    expect(before).toHaveLength(1);
+    expect(before[0]).toContain("note body");
+    expect(before[0]).toContain("bravo");
+
+    await typeOver(mounted.lexical, literalHost, withLiteral);
+    settle(mounted);
+
+    expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
+    // The note is preserved whole across the splice, and the mark it started on still holds it —
+    // its placeholder byte cannot express a position in front of it, so the run is pulled back in.
+    expect(annotatedText(mounted.lexical)).toEqual(before);
     expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
   });
 });
