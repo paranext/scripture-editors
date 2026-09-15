@@ -505,8 +505,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
    * Everything a settled↔live position translation needs about the editor's pending state
    * (positions/settledPositions.model.ts). Built the same way `readSettledUsj` builds its settle
    * arguments, so the document a host is told about and the coordinates it is told in are one
-   * pending state. Call outside a read — `getPendedDisplayOwners` consults the marker-edit
-   * engine's ledger, not the tree.
+   * pending state. Does not need to be inside a read — `getPendedDisplayOwners` consults the
+   * marker-edit engine's ledger, not the tree — so a caller that already holds one
+   * (`readSettledSelection`) and a caller with none are equally free to call it.
    */
   const buildSettledPositionContext = useCallback((): SettledPositionContext | undefined => {
     const editor = editorRef.current;

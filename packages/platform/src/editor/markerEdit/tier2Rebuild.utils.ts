@@ -105,13 +105,6 @@ export interface FragmentSpan {
 }
 
 /**
- * A settle scope's displayed bytes flattened for the tokenizer: the fragment `text` (with each
- * atomically-preserved node as a one-byte U+FFFC placeholder), the {@link FragmentSpan} map back
- * to the contributing nodes, and the preserved node runs to re-insert where each placeholder
- * lands. Built by the fragment builders (`$buildParaFragment` and kin); consumed by the rebuild's
- * tokenize-and-splice and by caret restoration.
- */
-/**
  * A resolved position in a tree, in Lexical's own point terms: `type: "text"` is an offset within
  * the TextNode `key` names, `type: "element"` a child-index boundary within the ElementNode it
  * names. Produced by {@link $resolveFragmentByteAnchor}; an element point is how a position past a
@@ -123,6 +116,13 @@ export interface FragmentPoint {
   type: "text" | "element";
 }
 
+/**
+ * A settle scope's displayed bytes flattened for the tokenizer: the fragment `text` (with each
+ * atomically-preserved node as a one-byte U+FFFC placeholder), the {@link FragmentSpan} map back
+ * to the contributing nodes, and the preserved node runs to re-insert where each placeholder
+ * lands. Built by the fragment builders (`$buildParaFragment` and kin); consumed by the rebuild's
+ * tokenize-and-splice and by caret restoration.
+ */
 export interface FragmentAccumulator {
   text: string;
   spans: FragmentSpan[];
@@ -1443,8 +1443,7 @@ export function $resolveFragmentByteAnchor(
   let remainingWs = (documentCoords ?? anchor).wsRun;
   // Whether the anchor position resolved INSIDE a span the caret cannot rest in — a sentinel
   // (inner text not addressable) or a closing marker glyph (see $isClosingMarkerSpan) — in which
-  // case the position belongs at the start of the NEXT addressable span, exactly as the previous
-  // cumulative-offset walk resolved it.
+  // case the position belongs at the start of the NEXT addressable span.
   let needNextAddressable = false;
   outer: for (const span of spans) {
     const spanLength = span.end - span.start;

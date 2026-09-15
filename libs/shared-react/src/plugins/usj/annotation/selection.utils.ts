@@ -191,26 +191,71 @@ interface DisplayBytes {
   length: number;
 }
 
-/** The USJ attribute each attribute-marker display run carries, keyed by the run's marker name. */
-const ATTRIBUTE_MARKER_KEYS: { readonly [markerName: string]: string | undefined } = {
-  va: "altnumber",
-  vp: "pubnumber",
-  ca: "altnumber",
-  cp: "pubnumber",
-  cat: "category",
+/**
+ * How one attribute-marker display run is spelled, and which USJ attribute of its owner it
+ * carries: `\va 2\va*` is `{ markerName: "va", keyName: "altnumber" }`.
+ *
+ * The marker name is stated rather than read off the run KIND. The two are separate namespaces
+ * that happen to spell the same string for every kind registered today, and the offset arithmetic
+ * needs the marker name's length — so a kind spelled with a different marker would otherwise
+ * silently take the kind's own length instead.
+ */
+interface AttributeMarkerRun {
+  readonly markerName: string;
+  readonly keyName: string;
+}
+
+/** The attribute-marker run each display-run kind carries, `undefined` for a kind that carries
+ * none. Exhaustive over the registry, so a newly registered kind has to say which it is. */
+const ATTRIBUTE_MARKER_RUNS: { readonly [K in DisplayRunKind]: AttributeMarkerRun | undefined } = {
+  va: { markerName: "va", keyName: "altnumber" },
+  vp: { markerName: "vp", keyName: "pubnumber" },
+  ca: { markerName: "ca", keyName: "altnumber" },
+  cp: { markerName: "cp", keyName: "pubnumber" },
+  cat: { markerName: "cat", keyName: "category" },
+  char: undefined,
+  milestone: undefined,
+  optbreak: undefined,
+  separator: undefined,
+  nestedGlyph: undefined,
+  opaqueUnknown: undefined,
+};
+
+/** The USJ attribute an attribute marker NAME carries, derived from {@link ATTRIBUTE_MARKER_RUNS}
+ * so a run's two spellings cannot drift. */
+const ATTRIBUTE_KEY_BY_MARKER_NAME: ReadonlyMap<string, string> = new Map(
+  Object.values(ATTRIBUTE_MARKER_RUNS).flatMap((run): [string, string][] =>
+    run ? [[run.markerName, run.keyName]] : [],
+  ),
+);
+
+/**
+ * Whether each display-run kind's pieces carry their owner's display bytes. Exhaustive over the
+ * registry, so a newly registered kind has to decide rather than defaulting to carrying none, and
+ * declared in the order a scan consults the carrying kinds.
+ */
+const RUN_KIND_CARRIES_BYTES: { readonly [K in DisplayRunKind]: boolean } = {
+  va: true,
+  vp: true,
+  ca: true,
+  cp: true,
+  cat: true,
+  milestone: true,
+  char: true,
+  optbreak: true,
+  // A separator and a nested glyph are bytes of the char span they decorate and are addressed
+  // through that span's own glyph spans; an opaque unknown renders its bytes as ordinary text.
+  separator: false,
+  nestedGlyph: false,
+  opaqueUnknown: false,
 };
 
 /** The display-run kinds whose pieces carry their owner's bytes, in the order a scan consults them. */
-const BYTE_CARRYING_RUN_KINDS: readonly DisplayRunKind[] = [
-  "va",
-  "vp",
-  "ca",
-  "cp",
-  "cat",
-  "milestone",
-  "char",
-  "optbreak",
-];
+const BYTE_CARRYING_RUN_KINDS: readonly DisplayRunKind[] =
+  // `Object.keys` widens to `string[]`; the mapped type above is what guarantees every key is one.
+  (Object.keys(RUN_KIND_CARRIES_BYTES) as DisplayRunKind[]).filter(
+    (kind) => RUN_KIND_CARRIES_BYTES[kind],
+  );
 
 /** One `name="value"` pair of a USFM pipe-attribute list. */
 const ATTRIBUTE_PAIR_REGEX = /([^\s="|]+)="([^"]*)"/g;
@@ -307,7 +352,7 @@ function attributeMarkerRunSpans(text: string, enclosingMarkerLength: number): D
   if (!opener) return [];
   const markerName = opener[1];
   const openerStart = opener[0].length - markerName.length - 2;
-  const keyName = ATTRIBUTE_MARKER_KEYS[markerName] ?? markerName;
+  const keyName = ATTRIBUTE_KEY_BY_MARKER_NAME.get(markerName) ?? markerName;
   const spans: DisplayByteSpan[] = [];
   if (openerStart > 0)
     spans.push({
@@ -348,8 +393,9 @@ function $markerGlyphBytes(glyph: MarkerNode): DisplayBytes {
   const length = glyph.getTextContentSize();
   const piece = $runPieceOf(glyph);
   if (piece && piece.role !== "value") {
-    const keyName = ATTRIBUTE_MARKER_KEYS[piece.kind];
-    if (keyName !== undefined)
+    const attributeRun = ATTRIBUTE_MARKER_RUNS[piece.kind];
+    if (attributeRun) {
+      const { keyName } = attributeRun;
       return {
         owner: piece.owner,
         length,
@@ -361,6 +407,7 @@ function $markerGlyphBytes(glyph: MarkerNode): DisplayBytes {
                 { start: 1, base: 0, bytes: { kind: "attributeKey", keyName } },
               ],
       };
+    }
     if (piece.kind === "milestone")
       return {
         owner: piece.owner,
@@ -444,18 +491,20 @@ function $attributeRunValueBytes(value: TextNode): DisplayBytes | undefined {
   const text = value.getTextContent();
   const length = text.length;
 
-  const keyName = ATTRIBUTE_MARKER_KEYS[kind];
-  if (keyName !== undefined)
+  const attributeRun = ATTRIBUTE_MARKER_RUNS[kind];
+  if (attributeRun) {
+    const { markerName, keyName } = attributeRun;
     return {
       owner,
       length,
       spans: [
         // The separator before the value is the space after the attribute marker, which counts
         // into that marker name's offset space.
-        { start: 0, base: kind.length, bytes: { kind: "attributeKey", keyName } },
+        { start: 0, base: markerName.length, bytes: { kind: "attributeKey", keyName } },
         { start: 1, base: 0, bytes: { kind: "property", property: keyName } },
       ],
     };
+  }
 
   if (kind === "char")
     return {
