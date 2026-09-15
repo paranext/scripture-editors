@@ -86,6 +86,26 @@ export interface SettleScopePlan {
   readonly scratchFragment: FragmentAccumulator | undefined;
   /** How many top-level settled content items the scope becomes (para/chapter); 1 for a note. */
   readonly settledCount: number;
+  /**
+   * Where each live preserved-run member sits in {@link SettleScopePlan.scratchFragment}'s own run
+   * list, indexed `[live run][live member]` — `undefined` for a member the settled side has no
+   * counterpart for.
+   *
+   * The two run lists are built by the same builder over DIFFERENT trees, so a construct that
+   * needs a preserved run on one side but not the other — a dead optbreak husk the settle splices
+   * out, a char span whose sentinel condition the rebuild resolves — shifts every run after it by
+   * one. Crossing by raw index would then reach some other construct entirely, and where its shape
+   * happens to match (two notes in one paragraph is an ordinary document) the walk succeeds and
+   * the position lands silently in the wrong one.
+   */
+  readonly sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[];
+}
+
+/** One preserved-node run member, named by its run's index in a fragment's run list and its own
+ * index within that run. */
+export interface SettledRunMember {
+  readonly sentinelIndex: number;
+  readonly memberIndex: number;
 }
 
 /**

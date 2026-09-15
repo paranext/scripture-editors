@@ -173,8 +173,17 @@ function replaceSerializedSentinels(
   visitList(roots);
 }
 
-/** The serialized counterparts of one fragment's preserved runs, or `undefined` when any
- * non-husk node in them has none (a shape the parallel walk could not pair — abort rather than
+/** One fragment's preserved runs as a settled rebuild carries them: the live members of each run
+ * the rebuild keeps, and the serialized counterparts that stand in for them. Both halves are the
+ * same run list in the same order, so the two sides pair off member for member — which is what
+ * lets a consumer state where a live preserved node ends up in the rebuilt output. */
+export interface CarriedPreservedRuns {
+  readonly live: readonly (readonly LexicalNode[])[];
+  readonly serialized: SerializedLexicalNode[][];
+}
+
+/** One fragment's preserved runs paired with their serialized counterparts, or `undefined` when
+ * any non-husk node in them has none (a shape the parallel walk could not pair — abort rather than
  * drop a node). A node whose key is in `huskKeys` contributes NOTHING to its run: the standalone
  * husk-removal pass in `$settledUsj` already spliced it out of the serialized tree, but
  * `fragment`/`out` (built from the LIVE tree, which the read-only settle never mutates) still
@@ -182,23 +191,27 @@ function replaceSerializedSentinels(
  * `replaceSerializedSentinels`, would resurrect it wherever this run's placeholder lands,
  * silently undoing that removal whenever the husk's own paragraph/note ALSO settles for an
  * unrelated pend in the same scope. */
-function serializedRunsOf(
+export function carriedPreservedRuns(
   fragment: FragmentAccumulator,
   sites: Map<NodeKey, SerializedSite>,
   huskKeys: ReadonlySet<NodeKey>,
-): SerializedLexicalNode[][] | undefined {
-  const runs: SerializedLexicalNode[][] = [];
+): CarriedPreservedRuns | undefined {
+  const live: LexicalNode[][] = [];
+  const serialized: SerializedLexicalNode[][] = [];
   for (const run of fragment.sentinels) {
+    const liveRun: LexicalNode[] = [];
     const serializedRun: SerializedLexicalNode[] = [];
     for (const node of run) {
       if (huskKeys.has(node.getKey())) continue;
       const site = sites.get(node.getKey());
       if (!site) return undefined;
+      liveRun.push(node);
       serializedRun.push(site.node);
     }
-    runs.push(serializedRun);
+    live.push(liveRun);
+    serialized.push(serializedRun);
   }
-  return runs;
+  return { live, serialized };
 }
 
 /**
@@ -513,7 +526,7 @@ export function $settledParaScope(
     );
     return undefined;
   }
-  const runs = serializedRunsOf(fragment, sites, huskKeys);
+  const runs = carriedPreservedRuns(fragment, sites, huskKeys);
   if (!runs) {
     logger?.warn("[MarkerEdit] Settled USJ skipped: a preserved node had no serialized form");
     return undefined;
@@ -536,7 +549,7 @@ export function $settledParaScope(
     logger?.debug("[MarkerEdit] Settled USJ skipped: rebuild is a no-op (fixed point)");
     return undefined;
   }
-  replaceSerializedSentinels(rebuilt, runs);
+  replaceSerializedSentinels(rebuilt, runs.serialized);
   // Sid carry-over, mirroring `$rebuildParas`: a freshly re-tokenized verse never has a sid —
   // the tokenizer cannot derive one from visible bytes — so without this step a `getUsj()`
   // taken while a paragraph was pending stripped `sid` from every verse in it, while
@@ -657,7 +670,7 @@ export function $settledNoteScope(
     );
     return undefined;
   }
-  const runs = serializedRunsOf(out, sites, huskKeys);
+  const runs = carriedPreservedRuns(out, sites, huskKeys);
   if (!runs) {
     logger?.warn("[MarkerEdit] Settled note USJ skipped: a preserved node had no serialized form");
     return undefined;
@@ -702,7 +715,7 @@ export function $settledNoteScope(
     logger?.debug("[MarkerEdit] Settled note USJ skipped: rebuild is a no-op (fixed point)");
     return undefined;
   }
-  replaceSerializedSentinels(rebuilt, runs);
+  replaceSerializedSentinels(rebuilt, runs.serialized);
   return { rebuilt, contentNodes, category: foldedCategory, categoryChanged };
 }
 
@@ -1144,9 +1157,9 @@ export function $settledUsj(
   // Notes FIRST: a settled note that also rides inside a settling paragraph is preserved there as
   // a sentinel, and the paragraph pass substitutes the very serialized subtree this pass has just
   // rewritten in place — so the paragraph's output carries the settled note, not the pending one.
-  // `huskKeys` (threaded into `serializedRunsOf` inside `$settledNoteScope`) already keeps a
+  // `huskKeys` (threaded into `carriedPreservedRuns` inside `$settledNoteScope`) already keeps a
   // co-settling note's own rebuild from resurrecting a husk living in its content — see
-  // `serializedRunsOf`'s own doc comment.
+  // `carriedPreservedRuns`'s own doc comment.
   for (const note of noteScopes.values())
     $applySettledNoteScope(note, sites, context, huskKeys, transient);
 

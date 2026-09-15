@@ -358,9 +358,10 @@ describe("a preserved run the settle drops from one side only", () => {
    * Preserved nodes cross between the two trees by their POSITION in their fragment's preserved-run
    * list, and the two lists are built over different trees: the live one still carries the dead
    * optbreak husk, the settled one has spliced it out. Every run after the husk therefore sits one
-   * index earlier on the settled side, so crossing by raw index reaches the note BEFORE the one
-   * asked about — and two shape-compatible notes in one paragraph is an ordinary document, so the
-   * child-path walk succeeds and the position simply lands in the wrong note.
+   * index earlier on the settled side, so it is the scope's own member-for-member correspondence,
+   * not the raw index, that names which note a position is in. The two notes are shape-compatible
+   * on purpose: crossed at the raw index the child-path walk succeeds and the position simply
+   * lands in the wrong note.
    */
   async function huskBeforeTwoNotes() {
     const mounted = await mountExpandedNoteEditor(optbreakAndTwoNotesUsj());
@@ -374,7 +375,12 @@ describe("a preserved run the settle drops from one side only", () => {
     return { ...mounted, para, context: settledPositionContext(mounted.lexical) };
   }
 
-  it("refuses a settled position in the note past the dropped husk", async () => {
+  /** The live byte the settled position names: the third byte of the second note's body text. */
+  function $noteTwoPoint() {
+    return { key: $textContaining("note two").getKey(), offset: 2, type: "text" as const };
+  }
+
+  it("resolves a settled position in the note past the dropped husk onto that note", async () => {
     const { lexical, para, context } = await huskBeforeTwoNotes();
     const noteIndexes = settledNoteIndexes(para);
     expect(noteIndexes).toHaveLength(2);
@@ -387,14 +393,19 @@ describe("a preserved run the settle drops from one side only", () => {
 
     const point = livePoint(lexical, context, location);
 
-    // Specifically NOT the FIRST note, which is where crossing by raw index lands.
-    expect(point).not.toEqual({
-      key: lexical.getEditorState().read(() => $textContaining("note one").getKey()),
-      offset: 2,
-      type: "text",
+    // The SECOND note — not the first, which is where crossing by raw index lands.
+    expect(point).toEqual(lexical.getEditorState().read($noteTwoPoint));
+    // And through the path production takes: the live location the editor's own resolvers are
+    // handed resolves to the same byte of the same note.
+    const live = liveLocation(lexical, context, location);
+    expect(live).toBeDefined();
+    const anchor = lexical.getEditorState().read(() => {
+      const range = live && $getRangeFromUsjSelection({ start: live });
+      return (
+        range && { key: range.anchor.key, offset: range.anchor.offset, type: range.anchor.type }
+      );
     });
-    expect(point).toBeUndefined();
-    expect(liveLocation(lexical, context, location)).toBeUndefined();
+    expect(anchor).toEqual(lexical.getEditorState().read($noteTwoPoint));
   });
 });
 

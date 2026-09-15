@@ -25,13 +25,20 @@ import {
   $settledParaScope,
   $transientCutRange,
   $verifiedTransientLiteral,
+  carriedPreservedRuns,
+  CarriedPreservedRuns,
   SerializedSite,
   SettleScopes,
   TransientLiteral,
   $mapSerializedSites,
   spliceHusk,
 } from "../markerEdit/virtualSettle.utils";
-import { SettledPositionContext, SettleScopePlan, TransientCut } from "./settledPositions.model";
+import {
+  SettledPositionContext,
+  SettledRunMember,
+  SettleScopePlan,
+  TransientCut,
+} from "./settledPositions.model";
 import {
   $getRoot,
   $isElementNode,
@@ -209,14 +216,46 @@ function $notesWithin(nodes: readonly LexicalNode[], out: NoteNode[] = []): Note
   return out;
 }
 
+/**
+ * Where each live preserved-run member sits in the settled fragment's own run list, in
+ * {@link SettleScopePlan.sentinelMap}'s shape.
+ *
+ * A rebuild splices the members it carries back into its output in fragment order, so the settled
+ * fragment lists those same nodes in that same order with the dropped ones missing — which pairs
+ * the two sides off member for member. A settled list of a DIFFERENT length is a shape that
+ * pairing cannot describe (a run whose sentinel condition the rebuild resolved, or a preserved
+ * node the rebuild introduced), and every member then maps to nothing rather than to a construct
+ * the two sides disagree about.
+ */
+function sentinelMapOf(
+  liveSentinels: readonly (readonly LexicalNode[])[],
+  carried: readonly (readonly LexicalNode[])[] | undefined,
+  scratchSentinels: readonly (readonly LexicalNode[])[],
+): (SettledRunMember | undefined)[][] {
+  const unpaired = liveSentinels.map((run) => run.map(() => undefined));
+  if (!carried) return unpaired;
+  const settled: SettledRunMember[] = [];
+  scratchSentinels.forEach((run, sentinelIndex) => {
+    for (let memberIndex = 0; memberIndex < run.length; memberIndex += 1)
+      settled.push({ sentinelIndex, memberIndex });
+  });
+  const carriedNodes = carried.flat();
+  if (carriedNodes.length !== settled.length) return unpaired;
+  const byKey = new Map<NodeKey, SettledRunMember>();
+  carriedNodes.forEach((node, index) => byKey.set(node.getKey(), settled[index]));
+  return liveSentinels.map((run) => run.map((node) => byKey.get(node.getKey())));
+}
+
 /** Build the plan for one scope from its settled serialized nodes, or `undefined` when they will
- * not materialize. */
+ * not materialize. `carried` is the rebuild's own account of which preserved-run members reached
+ * its output, which is what pairs the two sides' run lists up. */
 function $planFrom(
   kind: SettleScopePlan["kind"],
   liveNodes: readonly LexicalNode[],
   liveFragment: FragmentAccumulator | undefined,
   liveCut: TransientCut | undefined,
   rebuilt: SerializedLexicalNode[],
+  carried: CarriedPreservedRuns | undefined,
   context: SettledPositionContext,
 ): SettleScopePlan | undefined {
   const scratch = materializeScratch(context.nodes, rebuilt);
@@ -225,7 +264,21 @@ function $planFrom(
     settledCount: $getLogicalContentItems($getRoot()).length,
     scratchFragment: $buildScopeFragment(kind, $getRoot().getChildren(), context.tier2),
   }));
-  return { kind, liveNodes, liveFragment, liveCut, scratch, scratchFragment, settledCount };
+  const sentinelMap = sentinelMapOf(
+    liveFragment?.sentinels ?? [],
+    carried?.live,
+    scratchFragment?.sentinels ?? [],
+  );
+  return {
+    kind,
+    liveNodes,
+    liveFragment,
+    liveCut,
+    scratch,
+    scratchFragment,
+    settledCount,
+    sentinelMap,
+  };
 }
 
 /** The live fragment for a scope with the declared bytes cut out of it, plus where that cut was. */
@@ -262,7 +315,8 @@ function $planForNote(
   // already what it settles to — no plan, so positions in it address the live tree directly.
   if (!$applySettledNoteScope(note, sites, context.tier2, scopes.huskKeys, transient))
     return undefined;
-  return $planFrom("note", [note], liveFragment, liveCut, [serialized], context);
+  const carried = built && carriedPreservedRuns(built, sites, scopes.huskKeys);
+  return $planFrom("note", [note], liveFragment, liveCut, [serialized], carried, context);
 }
 
 /** The paragraph scope's plan. Any note settling INSIDE the scope is settled into the serialized
@@ -287,7 +341,8 @@ function $planForParas(
     );
   const rebuilt = $settledParaScope(paras, sites, context.tier2, scopes.huskKeys, transient);
   if (!rebuilt) return undefined;
-  return $planFrom("para", paras, liveFragment, liveCut, rebuilt, context);
+  const carried = built && carriedPreservedRuns(built, sites, scopes.huskKeys);
+  return $planFrom("para", paras, liveFragment, liveCut, rebuilt, carried, context);
 }
 
 /** The chapter scope's plan, over the whole region the chapter rebuild replaces (the chapter plus
@@ -302,7 +357,9 @@ function $planForChapter(
   const rebuilt = $settledChapterScope(chapter, context.tier2, transient);
   if (!rebuilt) return undefined;
   const liveNodes = [chapter, ...$chapterAdjacentAttributeNodes(chapter)];
-  return $planFrom("chapter", liveNodes, liveFragment, liveCut, rebuilt, context);
+  // A chapter region with any preserved node at all is refused outright by `$buildChapterFragment`,
+  // so a chapter scope has no preserved runs to pair.
+  return $planFrom("chapter", liveNodes, liveFragment, liveCut, rebuilt, undefined, context);
 }
 
 /** The plan for a paragraph whose only pending change is an emptied optbreak husk — nothing
@@ -317,17 +374,18 @@ function $planForHuskOnlyPara(
   const serialized = $exportSubtree(para);
   const sites = new Map<NodeKey, SerializedSite>();
   $mapSerializedSites([para], [serialized], sites);
-  let spliced = false;
+  const splicedKeys = new Set<NodeKey>();
   for (const husk of husks) {
     const site = sites.get(husk.getKey());
     if (!site) continue;
     const index = site.siblings.indexOf(site.node);
     if (index < 0) continue;
     spliceHusk(site.siblings, index);
-    spliced = true;
+    splicedKeys.add(husk.getKey());
   }
-  if (!spliced) return undefined;
-  return $planFrom("para", [para], liveFragment, undefined, [serialized], context);
+  if (splicedKeys.size === 0) return undefined;
+  const carried = liveFragment && carriedPreservedRuns(liveFragment, sites, splicedKeys);
+  return $planFrom("para", [para], liveFragment, undefined, [serialized], carried, context);
 }
 
 /** Whether any scope already planned covers `node` — its own key or an ancestor's. */

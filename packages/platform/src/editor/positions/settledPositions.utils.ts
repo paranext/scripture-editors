@@ -26,7 +26,11 @@ import {
   FragmentSpan,
   Tier2Context,
 } from "../markerEdit/tier2Rebuild.utils";
-import { SettledPositionContext, SettleScopePlan } from "./settledPositions.model";
+import {
+  SettledPositionContext,
+  SettledRunMember,
+  SettleScopePlan,
+} from "./settledPositions.model";
 import { PreparedScopes } from "./settledScopes.utils";
 import {
   UsjDocumentLocation,
@@ -302,27 +306,26 @@ function cutCorrected(
 }
 
 /**
- * Whether the two sides' preserved-node runs can be crossed by index at all.
- *
- * A preserved run is carried between the live tree and the settled one by its POSITION in its
- * fragment's run list, and the two lists are built by the same builder over DIFFERENT trees. A
- * construct that needs a preserved run on one side but not the other — a dead optbreak husk the
- * settle splices out while the live tree still carries it, a char span whose sentinel condition
- * the rebuild resolves — shifts every run after it by one, and the run at the index asked for is
- * then some other construct entirely. Where its shape happens to match (two notes in one
- * paragraph is an ordinary document) the walk succeeds and the position lands silently in the
- * wrong one, which is the exact failure this translation exists to prevent.
- *
- * Equal lengths is a necessary condition, not a sufficient one; carrying an explicit live↔settled
- * run correspondence in the plan is the complete answer. Until then, refuse the whole scope rather
- * than cross a list that demonstrably cannot correspond — refusing is a failure mode every caller
- * already handles.
+ * The live preserved-run member a settled one came from — {@link SettleScopePlan.sentinelMap} read
+ * backwards. `undefined` when the settled document's run is one the live tree has no counterpart
+ * for, which is a position no live node can answer.
  */
-function sentinelsCorrespond(
-  liveFragment: FragmentAccumulator,
-  scratchFragment: FragmentAccumulator,
-): boolean {
-  return liveFragment.sentinels.length === scratchFragment.sentinels.length;
+function liveRunMember(
+  plan: SettleScopePlan,
+  settled: SettledRunMember,
+): SettledRunMember | undefined {
+  for (let sentinelIndex = 0; sentinelIndex < plan.sentinelMap.length; sentinelIndex += 1) {
+    const run = plan.sentinelMap[sentinelIndex];
+    for (let memberIndex = 0; memberIndex < run.length; memberIndex += 1) {
+      const entry = run[memberIndex];
+      if (
+        entry?.sentinelIndex === settled.sentinelIndex &&
+        entry.memberIndex === settled.memberIndex
+      )
+        return { sentinelIndex, memberIndex };
+    }
+  }
+  return undefined;
 }
 
 /** The live point for a settled point that landed inside a preserved node run. */
@@ -331,7 +334,8 @@ function $livePointInPreservedRun(
   plan: SettleScopePlan,
   resolved: Extract<ScratchResolution, { kind: "preserved" }>,
 ): FragmentPoint | undefined {
-  const member = plan.liveFragment?.sentinels[resolved.sentinelIndex]?.[resolved.memberIndex];
+  const live = liveRunMember(plan, resolved);
+  const member = live && plan.liveFragment?.sentinels[live.sentinelIndex]?.[live.memberIndex];
   // A memoized plan holds live node references, and the tree can have moved on under it (an undo,
   // a host `setUsj`). Refuse such a position rather than walk a detached node, whose ancestors and
   // offsets no longer describe anything the host can resolve against.
@@ -363,7 +367,6 @@ function $livePointInScope(
   const { plan } = target;
   const { liveFragment, scratchFragment } = plan;
   if (!liveFragment || !scratchFragment) return undefined;
-  if (!sentinelsCorrespond(liveFragment, scratchFragment)) return undefined;
   const scratchLocation = withContentIndexes(target.location, target.scratchIndexes);
   const resolved = plan.scratch
     .getEditorState()
@@ -501,12 +504,11 @@ function cutFragmentOffset(plan: SettleScopePlan, node: LexicalNode, offset: num
  * inside a read of the scratch tree. */
 function $settledLocationInPreservedRun(
   scratchFragment: FragmentAccumulator,
-  sentinelIndex: number,
-  memberIndex: number,
+  settled: SettledRunMember,
   path: readonly number[],
   offset: number,
 ): UsjDocumentLocation | undefined {
-  let node = scratchFragment.sentinels[sentinelIndex]?.[memberIndex];
+  let node = scratchFragment.sentinels[settled.sentinelIndex]?.[settled.memberIndex];
   if (!node) return undefined;
   for (const index of path) {
     if (!$isElementNode(node)) return undefined;
@@ -529,14 +531,13 @@ function $scratchLocationFromLivePoint(
   if (preserved) {
     const path = $childPath(preserved.member, node);
     if (!path) return undefined;
+    const settled = plan.sentinelMap[preserved.sentinelIndex]?.[preserved.memberIndex];
+    if (!settled) return undefined;
     // Plain data only across the scratch boundary: a live node must never be carried into a
     // scratch read.
-    const { sentinelIndex, memberIndex } = preserved;
     return plan.scratch
       .getEditorState()
-      .read(() =>
-        $settledLocationInPreservedRun(scratchFragment, sentinelIndex, memberIndex, path, offset),
-      );
+      .read(() => $settledLocationInPreservedRun(scratchFragment, settled, path, offset));
   }
   const anchored = $anchorForPoint(liveFragment, node, cutFragmentOffset(plan, node, offset));
   if (!anchored) return undefined;
@@ -563,7 +564,6 @@ function $settledLocationInScope(
 ): UsjDocumentLocation | undefined {
   const { liveFragment, scratchFragment } = plan;
   if (!liveFragment || !scratchFragment) return undefined;
-  if (!sentinelsCorrespond(liveFragment, scratchFragment)) return undefined;
   const scratchLocation = $scratchLocationFromLivePoint(
     plan,
     liveFragment,

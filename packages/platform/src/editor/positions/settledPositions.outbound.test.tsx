@@ -446,11 +446,13 @@ describe("a pending chapter", () => {
 describe("a preserved run the settle drops from one side only", () => {
   /**
    * The outbound half of the inbound suite's husk row: the live tree still carries the dead
-   * optbreak husk as a preserved run and the settled document does not, so crossing by raw index
-   * reports the note AFTER the one the caret is in — which, with two shape-compatible notes in the
-   * paragraph, is a settled location the host can resolve and act on.
+   * optbreak husk as a preserved run and the settled document does not, so every run after the
+   * husk sits one index earlier on the settled side. Crossed at the raw index a caret in the first
+   * note reports as the SECOND — with two shape-compatible notes in the paragraph, a settled
+   * location the host can resolve and act on — so the scope's own member-for-member correspondence
+   * is what decides which settled note a caret reports as.
    */
-  it("refuses to report a live position in a note the dropped husk precedes", async () => {
+  it("reports a live position in each note at that note's own settled location", async () => {
     const { lexical, ref } = await mountExpandedNoteEditor(optbreakAndTwoNotesUsj());
     await emptyOptbreakHusk(lexical);
     expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
@@ -458,20 +460,30 @@ describe("a preserved run the settle drops from one side only", () => {
     const para = settledPara(ref.current?.getUsj(), 2);
     const noteIndexes = settledNoteIndexes(para);
     expect(noteIndexes).toHaveLength(2);
-    const secondNote = para.content?.[noteIndexes[1]];
-    if (!secondNote || typeof secondNote === "string") throw new Error("expected a settled note");
+    const settledNote = (index: number): MarkerObject => {
+      const note = para.content?.[noteIndexes[index]];
+      if (!note || typeof note === "string") throw new Error("expected a settled note");
+      return note;
+    };
 
-    const location = settledLocation(lexical, context, () => ({
+    const first = settledLocation(lexical, context, () => ({
       node: $textContaining("note one"),
       offset: 2,
     }));
+    const second = settledLocation(lexical, context, () => ({
+      node: $textContaining("note two"),
+      offset: 2,
+    }));
 
-    // Specifically NOT the SECOND note, which is where crossing by raw index lands.
-    expect(location).not.toEqual({
-      jsonPath: contentPath([2, noteIndexes[1], settledTextIndex(secondNote, "note two")]),
+    // The FIRST note — not the second, which is where crossing by raw index lands.
+    expect(first).toEqual({
+      jsonPath: contentPath([2, noteIndexes[0], settledTextIndex(settledNote(0), "note one")]),
       offset: 2,
     });
-    expect(location).toBeUndefined();
+    expect(second).toEqual({
+      jsonPath: contentPath([2, noteIndexes[1], settledTextIndex(settledNote(1), "note two")]),
+      offset: 2,
+    });
   });
 });
 
