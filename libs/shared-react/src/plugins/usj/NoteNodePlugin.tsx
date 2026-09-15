@@ -31,6 +31,7 @@ import {
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
+  $isParaLikeNode,
   $isSomeParaNode,
   CharNode,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
@@ -357,7 +358,9 @@ function $handleCursorNextToNoteNode(
       if (
         noteAncestor &&
         noteAncestor.getIsCollapsed() &&
-        $isSomeParaNode(noteAncestor.getParent()) &&
+        // `ParaLike`, not `SomePara`: the `\id` line is a `BookNode` and can carry a note like any
+        // other content container, so a note at its end expands the same way.
+        $isParaLikeNode(noteAncestor.getParent()) &&
         noteAncestor.is(noteAncestor.getParent()?.getLastChild())
       ) {
         logger?.debug("Cursor is at end of note at end of para");
