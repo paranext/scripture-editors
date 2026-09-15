@@ -67,7 +67,9 @@ import {
   EditorState,
   LexicalEditor,
   HISTORIC_TAG,
+  PointType,
   REDO_COMMAND,
+  SELECTION_CHANGE_COMMAND,
   UNDO_COMMAND,
 } from "lexical";
 import {
@@ -156,6 +158,22 @@ const defaultOptions: EditorOptions = {};
 
 function Placeholder(): ReactElement {
   return <div className="editor-placeholder">Enter some Scripture...</div>;
+}
+
+/**
+ * Whether a selection point sits strictly inside a text run — neither at its start nor its end.
+ * Lexical's own DOM `selectionchange` listener drops the resulting `SELECTION_CHANGE_COMMAND`
+ * dispatch when both the anchor and the focus resolve to such a point (`shouldSkipSelectionChange`
+ * in Lexical's core selection handling), on the reasoning that a caret move confined to a text
+ * node's interior needs no further reconciliation. An element-type point, or one at a text node's
+ * boundary, is never skipped.
+ */
+function $isInteriorTextPoint(point: PointType): boolean {
+  return (
+    point.type === "text" &&
+    point.offset !== 0 &&
+    point.offset !== point.getNode().getTextContentSize()
+  );
 }
 
 /**
@@ -812,6 +830,21 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         if (editorSelection !== undefined) {
           $setSelection(editorSelection);
           $addUpdateTag(SELECTION_CHANGE_TAG);
+          // A placement whose anchor and focus both land inside a text run's interior is exactly
+          // the shape Lexical's own selectionchange listener drops (see `$isInteriorTextPoint`),
+          // so the host would otherwise never hear the caret moved. Dispatching here instead of
+          // there is safe: `OnSelectionChangePlugin` registers `SELECTION_CHANGE_COMMAND` as a
+          // bare `$` listener, and Lexical runs command listeners for the currently active editor
+          // inline (`triggerCommandListeners` -> `updateEditorSync`), so this still executes inside
+          // THIS update, against the pending selection just set above, exactly once. A boundary or
+          // element-type endpoint is left alone: Lexical's own listener already reports those, and
+          // dispatching again here would report the same placement twice.
+          if (
+            $isInteriorTextPoint(editorSelection.anchor) &&
+            $isInteriorTextPoint(editorSelection.focus)
+          ) {
+            editorRef.current?.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+          }
         }
       });
     },

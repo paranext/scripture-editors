@@ -353,3 +353,65 @@ describe("reporting the selection while a literal is pending", () => {
     expect(reportedInsideUpdate).toBe(true);
   });
 });
+
+/**
+ * `setSelection` places the caret by writing the Lexical model directly, not by driving the
+ * browser's own Selection object the way a click or arrow key does. A host that calls it needs to
+ * hear the placement back through `onSelectionChange` the same way it hears any other caret move —
+ * regardless of where inside a text run the caret landed.
+ */
+describe("setSelection reports the selection it placed", () => {
+  it("reports a collapsed caret placed in the interior of a text node", async () => {
+    const onSelectionChange = vi.fn();
+    const { ref } = await mountStandardViewEditor(twoParaUsj(["plain text"]), {
+      onSelectionChange,
+    });
+    onSelectionChange.mockClear();
+
+    const location = { start: { jsonPath: contentPath([2, 0]), offset: 2 } };
+    await act(async () => {
+      ref.current?.setSelection(location);
+      await Promise.resolve();
+    });
+
+    expect(onSelectionChange).toHaveBeenCalledWith(location);
+  });
+
+  it("reports a range whose both endpoints sit in the interior of a text node", async () => {
+    const onSelectionChange = vi.fn();
+    const { ref } = await mountStandardViewEditor(twoParaUsj(["plain text"]), {
+      onSelectionChange,
+    });
+    onSelectionChange.mockClear();
+
+    const location = {
+      start: { jsonPath: contentPath([2, 0]), offset: 2 },
+      end: { jsonPath: contentPath([2, 0]), offset: 4 },
+    };
+    await act(async () => {
+      ref.current?.setSelection(location);
+      await Promise.resolve();
+    });
+
+    expect(onSelectionChange).toHaveBeenCalledWith(location);
+  });
+
+  it("reports a caret placed at a text boundary exactly once", async () => {
+    const onSelectionChange = vi.fn();
+    const { ref } = await mountStandardViewEditor(twoParaUsj(["plain text"]), {
+      onSelectionChange,
+    });
+    onSelectionChange.mockClear();
+
+    // "plain text" is 10 characters — offset 10 is the text's end, a boundary Lexical's own
+    // selectionchange listener never skips.
+    const location = { start: { jsonPath: contentPath([2, 0]), offset: 10 } };
+    await act(async () => {
+      ref.current?.setSelection(location);
+      await Promise.resolve();
+    });
+
+    expect(onSelectionChange).toHaveBeenCalledTimes(1);
+    expect(onSelectionChange).toHaveBeenCalledWith(location);
+  });
+});
