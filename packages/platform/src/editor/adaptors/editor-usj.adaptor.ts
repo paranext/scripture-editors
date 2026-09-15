@@ -29,6 +29,7 @@ import {
   ImmutableUnmatchedNode,
   isSerializedImpliedParaNode,
   isSerializedMarkerNode,
+  isSerializedTextNode,
   isSerializedTypedMarkNode,
   isCursorPlaceholderOnly,
   LoggerBasic,
@@ -453,9 +454,8 @@ function replaceMarkWithMilestones(
  * it IS a mark, its deepest last descendant stands in for it (a mark that ends right before this
  * node hides the glyph as its last child); if `nodes[index]` itself has no earlier sibling
  * because `nodes` is a mark's own unwrapped children, `precedingSibling` — threaded in from the
- * enclosing call exactly like `noteCaller`/`isCharChild` — carries the search outward, ascending
- * through as many mark levels as the live predicate's `previous ??= child.getPreviousSibling()`
- * loop does.
+ * enclosing call exactly like `isCharChild` — carries the search outward, ascending through as
+ * many mark levels as the live predicate's `previous ??= child.getPreviousSibling()` loop does.
  *
  * `isCharChild` stands in for the live predicate's char-span-glyph classifier
  * (`$charGlyphNestedValue`), approximated rather than reproduced: this codebase's adaptors never
@@ -479,13 +479,44 @@ function precedesOpeningCharGlyph(
   return isSerializedMarkerNode(previous) && previous.markerSyntax === "opening";
 }
 
+/**
+ * The one child of `noteChildren` that renders a note's EDITABLE caller, if any — the serialized
+ * twin of `$noteEditableCallerNode` (attributeDisplay.utils.ts): skip the leading opening
+ * `marker` nodes, and the next child is the caller slot only when IT ITSELF is a serialized plain
+ * text node whose text equals `getEditableCallerText(caller)`. A `marker` candidate there (an
+ * absent-caller shape, opening glyph immediately followed by closing glyph) never carries that
+ * text, so failing the type check first is equivalent to the live predicate's `$isTextNode` guard
+ * followed by the same text comparison. Deliberately does not look through a `TypedMarkNode` at
+ * that position, matching the live predicate: a caller wrapped in an annotation mark is not
+ * recognized as the editable caller there either, so nothing is anchored to drop.
+ */
+function noteCallerSlotNode(
+  noteChildren: SerializedLexicalNode[],
+  caller: string,
+): SerializedTextNode | undefined {
+  let index = 0;
+  while (index < noteChildren.length) {
+    const child = noteChildren[index];
+    if (!isSerializedMarkerNode(child) || child.markerSyntax !== "opening") break;
+    index++;
+  }
+  const candidate = noteChildren[index];
+  if (isSerializedTextNode(candidate) && candidate.text === getEditableCallerText(caller))
+    return candidate;
+  return undefined;
+}
+
 // Keep this function's content semantics in sync with `$getLogicalContentItems` in
 // `libs/shared/src/nodes/usj/node.utils.ts` — the logical content model mirrors which nodes
 // this export skips, splices (TypedMarkNodes), and coalesces into single text strings.
 function recurseNodes(
   nodes: SerializedLexicalNode[],
   viewOptions: ViewOptions | undefined,
-  noteCaller?: string,
+  // Identity, not text: the one node `noteCallerSlotNode` picked out as a note's editable
+  // caller, threaded down so the TextNode case below can drop that exact node and no other —
+  // never re-derived by comparing text, or content that coincidentally matches the caller's
+  // rendered text anywhere else in the note would be dropped too.
+  callerSlot?: SerializedTextNode,
   isCharChild = false,
   // The effective previous sibling for `nodes[0]`, when `nodes` is a TypedMarkNode's own
   // unwrapped children — see `precedesOpeningCharGlyph`.
@@ -573,7 +604,11 @@ function recurseNodes(
         markers.push(
           createNoteMarker(
             serializedNoteNode,
-            recurseNodes(serializedNoteNode.children, viewOptions, serializedNoteNode.caller),
+            recurseNodes(
+              serializedNoteNode.children,
+              viewOptions,
+              noteCallerSlotNode(serializedNoteNode.children, serializedNoteNode.caller),
+            ),
           ),
         );
         break;
@@ -595,14 +630,16 @@ function recurseNodes(
         break;
       case TypedMarkNode.getType():
         // An annotation mark is presentation the splice below strips, so its children serialize
-        // exactly as if they were direct children here — the note-caller and char-child context
-        // must survive the re-entry, or a mark wrapping a char span's first text hides the
-        // structural NBSP from the strip (a fabricated leading space in the file) and a mark
-        // wrapping a note's caller text emits the caller as content.
+        // exactly as if they were direct children here — the char-child context must survive the
+        // re-entry, or a mark wrapping a char span's first text hides the structural NBSP from
+        // the strip (a fabricated leading space in the file). `callerSlot` is NOT threaded down:
+        // it is always a node found directly among a NoteNode's own children (never a
+        // TypedMarkNode itself — see `noteCallerSlotNode`), so it can never be nested inside a
+        // mark, matching the live predicate it mirrors, which does not look through marks either.
         childMarkers = recurseNodes(
           serializedMarkNode.children,
           viewOptions,
-          noteCaller,
+          undefined,
           isCharChild,
           index > 0 ? nodes[index - 1] : precedingSibling,
         );
@@ -648,7 +685,10 @@ function recurseNodes(
           // usj-editor.adaptor's `addCharAttributes`) carry no NBSP prefix to strip against, so
           // the prefix check above can't catch them; the textType state tag is the only signal.
           serializedTextNode[NODE_STATE_KEY]?.textType !== "attribute" &&
-          (!noteCaller || serializedTextNode.text !== getEditableCallerText(noteCaller))
+          // Identity, not text equality: only the ONE node `noteCallerSlotNode` anchored as the
+          // note's caller is excluded, so note content that coincidentally reads the same as the
+          // caller (anywhere else in the note) still round-trips as data.
+          node !== callerSlot
         ) {
           let text = createTextMarker(serializedTextNode);
           // Standard view stores display text; invert and normalize on serialization. A
