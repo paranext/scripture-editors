@@ -40,12 +40,15 @@ import {
   $createNoteNode,
   $getNoteCallerPreviewText,
   $isCharNode,
+  $isGlyphTextNode,
   $isImmutableTypedTextNode,
   $isImmutableUnmatchedNode,
   $isMarkerNode,
   $isNoteNode,
+  $isSeparatorPrefixHostText,
   $moveSelectionToEnd,
   $normalizeSelectionOutOfGlyphText,
+  $shouldIgnoreNodeForContentIndexes,
   CharNode,
   closingMarkerText,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
@@ -61,6 +64,11 @@ import {
   segmentState,
   textTypeState,
 } from "shared";
+
+// Lives in a leaf module so this file and `ImmutableNoteCallerNode` do not import each other (see
+// `note-index.utils`). Re-exported so it reaches the `nodes/usj` barrel, which exports this file
+// and not the leaf.
+export { $getNoteIndex } from "./note-index.utils";
 
 /** Caller count is in an object so it can be manipulated by passing the object. */
 export interface CallerData {
@@ -468,9 +476,116 @@ export function $selectNote(noteNode: NoteNode, viewOptions: ViewOptions | undef
       }
     } else nodeBefore.selectEnd();
   } else {
-    const lastCharChild = noteNode.getChildren().reverse().find($isCharNode);
-    lastCharChild?.selectEnd();
+    const children = noteNode.getChildren();
+    const lastCharChild = children.slice().reverse().find($isCharNode);
+    if (lastCharChild) lastCharChild.selectEnd();
+    else {
+      // An expanded note with no content run at all (`\f + \f*`) holds nothing to select the end
+      // of, and leaving the caret where it was puts it OUTSIDE the note the user asked to be in -
+      // so the next keystroke lands in the surrounding text. Land it at the child slot content
+      // would occupy: just before the closing glyph, or at the end when there is none.
+      const closingIndex = children.findIndex(
+        (child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing",
+      );
+      const at = closingIndex === -1 ? children.length : closingIndex;
+      noteNode.select(at, at);
+    }
   }
+}
+
+/**
+ * Puts the caret immediately AFTER `noteNode`, where PT9 leaves it once the user is done with a
+ * note: in a collapsed note the note renders as its caller alone, so this is the position just
+ * past the caller.
+ *
+ * The mirror of {@link $selectNote}'s collapsed branch, which lands just BEFORE the note.
+ *
+ * @param noteNode - The note node to put the caret after.
+ */
+export function $selectAfterNote(noteNode: NoteNode) {
+  const nodeAfter = noteNode.getNextSibling();
+  // Landing in the following text rather than on the parent's element offset gives the caret a
+  // text position to type into, the same reason $selectNote prefers `selectEnd()` on the node
+  // before over the parent-offset branch.
+  //
+  // A glyph text node is not that text: its bytes are a picture of its own state (a verse number,
+  // a marker's syntax), so offset 0 is a position INSIDE the picture, which the next keystroke
+  // splits - the very thing $normalizeSelectionOutOfGlyphText exists to prevent. A note that ends
+  // a verse is followed by exactly such a node, so it takes the parent-offset branch instead.
+  if ($isTextNode(nodeAfter) && !$isGlyphTextNode(nodeAfter)) {
+    nodeAfter.select(0, 0);
+    return;
+  }
+  const parent = noteNode.getParent();
+  if (!parent) return;
+  const indexAfter = noteNode.getIndexWithinParent() + 1;
+  parent.select(indexAfter, indexAfter);
+}
+
+/**
+ * Where a text node's own DATA starts within it. An opening glyph's display separator rides as an
+ * NBSP PREFIX of the text that follows the glyph (markerSeparators.utils.ts owns that convention,
+ * and the editor -> USJ conversion strips it on save), so it is display, never content, and a
+ * position expressed over the note's content must not count it.
+ */
+function $noteDataTextStart(node: TextNode): number {
+  const previous = node.getPreviousSibling();
+  if (!$isMarkerNode(previous) || previous.getMarkerSyntax() !== "opening") return 0;
+  if (!$isSeparatorPrefixHostText(node)) return 0;
+  return node.getTextContent().startsWith(NBSP) ? NBSP.length : 0;
+}
+
+/**
+ * Puts the caret at `utf16Offset` within a note's own text, counting the note's CONTENT only and
+ * skipping every display artifact the view adds around it: marker glyphs (editable and visible),
+ * attribute display runs, engine-owned NBSP spacers, an opening glyph's NBSP separator prefix,
+ * and - in an expanded editable note - the caller text node. That makes the offset origin the
+ * note's USJ text, so a host that captured a position over its OWN rendering of the same note
+ * (a footnotes pane row, say) resolves against the same characters no matter which
+ * `ViewOptions.markerMode` this editor renders in.
+ *
+ * KNOWN GAP - TODO(PT-4322): text the source wrote directly inside the note rather than inside a
+ * `\ft`-style run is not counted, because the walk requires a char-span ancestor (which is also
+ * what excludes the caller). A host that renders such text inline still drifts by its length.
+ *
+ * Offsets past the end of the note's text clamp to the end.
+ *
+ * @param noteNode - The note node whose text to place the caret in.
+ * @param utf16Offset - Offset into the note's content text, in UTF-16 code units.
+ * @returns `true` when a caret was placed, `false` when the note holds no content text to place
+ *   one in (the caller should fall back to {@link $selectNote}).
+ */
+export function $selectNoteTextOffset(noteNode: NoteNode, utf16Offset: number): boolean {
+  let remaining = Math.max(utf16Offset, 0);
+  let lastDataNode: TextNode | undefined;
+
+  for (const { node } of $dfs(noteNode)) {
+    if (!$isTextNode(node)) continue;
+    if ($shouldIgnoreNodeForContentIndexes(node)) continue;
+    // Bounded at the note so a note nested inside a char span (`\w ...\f ...\f*...\w*`) is not
+    // mistaken for content of that outer span.
+    const container = $findMatchingParent(node, (n) => $isCharNode(n) || $isNoteNode(n));
+    if (!$isCharNode(container)) continue;
+
+    const dataStart = $noteDataTextStart(node);
+    const dataLength = node.getTextContentSize() - dataStart;
+    // Strictly `<`: an offset that lands exactly on a run boundary belongs to the run it starts,
+    // not to the one it ends. The two are the same caret on screen but not the same place to type
+    // - the end of `\fr`'s text extends the reference run, while the start of `\ft`'s extends the
+    // note text the user clicked into. The final position is reached by the clamp below instead.
+    if (remaining < dataLength) {
+      const at = dataStart + remaining;
+      node.select(at, at);
+      return true;
+    }
+    remaining -= dataLength;
+    lastDataNode = node;
+  }
+
+  if (!lastDataNode) return false;
+  const end = lastDataNode.getTextContentSize();
+  lastDataNode.select(end, end);
+  return true;
 }
 
 /** Add the given space node after each child node */
