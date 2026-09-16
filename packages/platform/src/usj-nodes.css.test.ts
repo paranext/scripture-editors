@@ -63,16 +63,27 @@ describe("usj-nodes.css note caller counter rules", () => {
  */
 describe("usj-nodes.css Scripture text font", () => {
   const css = readFileSync(new URL("./usj-nodes.css", import.meta.url), "utf-8");
-  const flatCss = css.replace(/\s+/g, " ");
+  /**
+   * Comments stripped before whitespace is collapsed. Both assertions below are about what the
+   * stylesheet DECLARES, and the prose next to those declarations names the same tokens — a
+   * `@font-face` the file explains it does not have, a `var()` it explains the shape of — so
+   * matching the raw text would let the explanation satisfy or break the pin on the code.
+   */
+  const declaredCss = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const flatCss = declaredCss.replace(/\s+/g, " ");
 
   it("publishes the fallback chain as a custom property the generated sheet can name", () => {
     expect(flatCss).toContain(
       `--usj-font-fallback: "Charis SIL", "Times New Roman", "Liberation Serif", "DejaVu Serif", Georgia, serif;`,
     );
-    expect(flatCss).toContain(`.usfm.formatted-font { font-family: var(--usj-font-fallback);`);
+    // With the `serif` fallback the generated rules also carry: a bare `var()` whose property is
+    // invalid at computed-value time takes the whole declaration down with it.
+    expect(flatCss).toContain(
+      `.usfm.formatted-font { font-family: var(--usj-font-fallback, serif);`,
+    );
   });
 
   it("declares no font faces of its own", () => {
-    expect(css).not.toContain("@font-face");
+    expect(declaredCss).not.toContain("@font-face");
   });
 });

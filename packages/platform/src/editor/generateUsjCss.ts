@@ -107,9 +107,19 @@ const MIRRORED_JUSTIFICATION: Readonly<{ [justification: string]: string | undef
  */
 const FONT_FALLBACK = "var(--usj-font-fallback, serif)";
 
-/** A `font-family` declaration for a stylesheet-declared font, with the fallback chain behind it. */
-function fontFamilyDeclaration(fontName: string): string {
-  return `font-family: "${escapeCssString(fontName)}", ${FONT_FALLBACK}`;
+/**
+ * A `font-family` declaration for a stylesheet-declared font, with the fallback chain behind it.
+ *
+ * `projectDefaultFont` goes between the two for a marker font, so a marker whose own font is
+ * unavailable lands on the font the rest of the project's text is already using rather than
+ * skipping straight to the Scripture chain — which, in a project whose default font is not Latin,
+ * is a visible typeface break mid-verse. Omit it for the base rule, whose font IS that default.
+ */
+function fontFamilyDeclaration(fontName: string, projectDefaultFont?: string): string {
+  const families = [fontName];
+  if (projectDefaultFont && projectDefaultFont !== fontName) families.push(projectDefaultFont);
+  const names = families.map((family) => `"${escapeCssString(family)}"`).join(", ");
+  return `font-family: ${names}, ${FONT_FALLBACK}`;
 }
 
 /** The scope prefix used when none is supplied — see {@link UsjCssOptions.containerSelector}. */
@@ -138,9 +148,10 @@ function markerDeclarations(
   entry: MarkerStyleInfo,
   zoom: number,
   rtl: boolean,
+  projectDefaultFont: string | undefined,
 ): string[] {
   const decls: string[] = [];
-  if (entry.fontName) decls.push(fontFamilyDeclaration(entry.fontName));
+  if (entry.fontName) decls.push(fontFamilyDeclaration(entry.fontName, projectDefaultFont));
   if (entry.bold) decls.push("font-weight: bold");
   if (entry.italic) decls.push("font-style: italic");
   if (entry.color) {
@@ -275,7 +286,7 @@ export function generateUsjCss(styleInfo: StyleInfo, options: UsjCssOptions = {}
     baseDecls.push(`font-size: ${formatLength(styleInfo.defaultFontSize * zoom)}pt`);
   if (baseDecls.length > 0) rules.push(`${scope} { ${baseDecls.join("; ")}; }`);
   for (const [marker, entry] of Object.entries(styleInfo.markers)) {
-    const decls = markerDeclarations(marker, entry, zoom, rtl);
+    const decls = markerDeclarations(marker, entry, zoom, rtl, styleInfo.defaultFont);
     if (decls.length > 0)
       rules.push(`${scope} .usfm_${escapeCssIdentifier(marker)} { ${decls.join("; ")}; }`);
   }

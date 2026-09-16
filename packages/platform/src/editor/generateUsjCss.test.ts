@@ -59,8 +59,22 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
     expect(css).toContain(
       '.editor-input.usfm { font-family: "Nonexistent Project Font", var(--usj-font-fallback, serif); font-size: 12pt; }',
     );
+    // The project's own default sits between a marker font and the chain: a marker font that is
+    // unavailable should land on what the rest of the project's text is already using. Without it,
+    // a project whose default font is not Latin shows the marker's runs in a Latin serif while the
+    // text around them stays in the project font — a typeface break mid-verse.
     expect(css).toContain(
-      '.editor-input.usfm .usfm_wj { font-family: "Also Nonexistent", var(--usj-font-fallback, serif); }',
+      '.editor-input.usfm .usfm_wj { font-family: "Also Nonexistent", "Nonexistent Project Font", var(--usj-font-fallback, serif); }',
+    );
+  });
+
+  it("does not repeat the project default when a marker names the same font", () => {
+    const css = generateUsjCss({
+      defaultFont: "Charis SIL",
+      markers: { wj: { marker: "wj", styleType: "character", fontName: "Charis SIL" } },
+    });
+    expect(css).toContain(
+      '.editor-input.usfm .usfm_wj { font-family: "Charis SIL", var(--usj-font-fallback, serif); }',
     );
   });
 

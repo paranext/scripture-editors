@@ -26770,8 +26770,9 @@ const K1 = {
   left: "right",
   right: "left"
 }, B1 = "var(--usj-font-fallback, serif)";
-function lm(e) {
-  return `font-family: "${U1(e)}", ${B1}`;
+function lm(e, t) {
+  const r = [e];
+  return t && t !== e && r.push(t), `font-family: ${r.map((i) => `"${U1(i)}"`).join(", ")}, ${B1}`;
 }
 const ac = ".editor-input.usfm", V1 = /^[\w.#[\]="':()>+~*,\s-]+$/;
 function W1(e) {
@@ -26779,17 +26780,17 @@ function W1(e) {
     `[generateUsjCss] Ignoring unsafe containerSelector "${e}"; using "${ac}".`
   ), ac);
 }
-function H1(e, t, r, n) {
-  const i = [];
-  if (t.fontName && i.push(lm(t.fontName)), t.bold && i.push("font-weight: bold"), t.italic && i.push("font-style: italic"), t.color && (z1.test(t.color) ? i.push(`color: ${t.color}`) : console.warn(
+function H1(e, t, r, n, i) {
+  const s = [];
+  if (t.fontName && s.push(lm(t.fontName, i)), t.bold && s.push("font-weight: bold"), t.italic && s.push("font-style: italic"), t.color && (z1.test(t.color) ? s.push(`color: ${t.color}`) : console.warn(
     `[generateUsjCss] Skipping unsafe color "${t.color}" for marker "${e}".`
-  )), ur(t.fontSize) && t.fontSize > 0 && i.push(`font-size: ${Math.floor(t.fontSize * 100 / 12)}%`), ur(t.firstLineIndent) && i.push(`text-indent: ${ln(t.firstLineIndent * 20 * r)}vw`), ur(t.leftMargin) && t.leftMargin >= 0 && i.push(`margin-${n ? "right" : "left"}: ${ln(t.leftMargin * 20 * r)}vw`), ur(t.rightMargin) && t.rightMargin >= 0 && i.push(
+  )), ur(t.fontSize) && t.fontSize > 0 && s.push(`font-size: ${Math.floor(t.fontSize * 100 / 12)}%`), ur(t.firstLineIndent) && s.push(`text-indent: ${ln(t.firstLineIndent * 20 * r)}vw`), ur(t.leftMargin) && t.leftMargin >= 0 && s.push(`margin-${n ? "right" : "left"}: ${ln(t.leftMargin * 20 * r)}vw`), ur(t.rightMargin) && t.rightMargin >= 0 && s.push(
     `margin-${n ? "left" : "right"}: ${ln(t.rightMargin * 20 * r)}vw`
-  ), ur(t.spaceBefore) && t.spaceBefore >= 0 && i.push(`margin-top: ${ln(t.spaceBefore * r)}pt`), ur(t.spaceAfter) && t.spaceAfter >= 0 && i.push(`margin-bottom: ${ln(t.spaceAfter * r)}pt`), t.lineSpacing === 1 ? i.push("line-height: 1.5") : t.lineSpacing === 2 && i.push("line-height: 2"), t.subscript ? i.push("vertical-align: text-bottom", "font-size: 66%") : t.superscript && i.push("vertical-align: text-top", "font-size: 66%"), t.underline && i.push("text-decoration: underline"), t.smallCaps && i.push("font-variant: small-caps"), t.justification) {
-    const s = K1[n ? j1[t.justification] ?? t.justification : t.justification];
-    s && i.push(`text-align: ${s}`);
+  ), ur(t.spaceBefore) && t.spaceBefore >= 0 && s.push(`margin-top: ${ln(t.spaceBefore * r)}pt`), ur(t.spaceAfter) && t.spaceAfter >= 0 && s.push(`margin-bottom: ${ln(t.spaceAfter * r)}pt`), t.lineSpacing === 1 ? s.push("line-height: 1.5") : t.lineSpacing === 2 && s.push("line-height: 2"), t.subscript ? s.push("vertical-align: text-bottom", "font-size: 66%") : t.superscript && s.push("vertical-align: text-top", "font-size: 66%"), t.underline && s.push("text-decoration: underline"), t.smallCaps && s.push("font-variant: small-caps"), t.justification) {
+    const o = K1[n ? j1[t.justification] ?? t.justification : t.justification];
+    o && s.push(`text-align: ${o}`);
   }
-  return t.textProperties?.includes("verse") && i.push("white-space: nowrap", "unicode-bidi: embed"), i;
+  return t.textProperties?.includes("verse") && s.push("white-space: nowrap", "unicode-bidi: embed"), s;
 }
 const jd = { c: 150, ca: 133, cp: 150 };
 function Bd(e, t) {
@@ -26813,7 +26814,7 @@ function PA(e, t = {}) {
   const { zoom: r = 1, rtl: n = !1, containerSelector: i = ac } = t, s = W1(i), o = [], a = [];
   e.defaultFont && a.push(lm(e.defaultFont)), ur(e.defaultFontSize) && e.defaultFontSize > 0 && a.push(`font-size: ${ln(e.defaultFontSize * r)}pt`), a.length > 0 && o.push(`${s} { ${a.join("; ")}; }`);
   for (const [c, l] of Object.entries(e.markers)) {
-    const u = H1(c, l, r, n);
+    const u = H1(c, l, r, n, e.defaultFont);
     u.length > 0 && o.push(`${s} .usfm_${F1(c)} { ${u.join("; ")}; }`);
   }
   return o.push(...G1(e, s)), o.join(`
