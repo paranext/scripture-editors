@@ -865,6 +865,15 @@ export declare interface EditorRef {
    * An offset past the end of the note's text clamps to the end; a note with no content text falls
    * back to {@link EditorRef.selectNote}.
    *
+   * Unlike {@link EditorRef.selectAfterNote}, this DOES take DOM focus when the editor does not
+   * already hold it - the same behavior as {@link EditorRef.selectNote}, which it falls back to.
+   * It is for a host putting the caret into an editor it is about to focus (pair it with
+   * {@link EditorRef.focus}), not for driving one editor's caret from another.
+   *
+   * The caret is placed, not revealed: a note rendered COLLAPSED hides its content text, and
+   * nothing here expands it, so land the caret with this only in a note mode that shows the note
+   * ({@link ViewOptions.noteMode} `"expanded"`, as a host's own note editor uses).
+   *
    * @param noteKeyOrIndex - The note key or document-order index (see
    *   {@link EditorRef.getNoteIndex}).
    * @param utf16Offset - Offset into the note's content text, in UTF-16 code units (the unit DOM
@@ -878,24 +887,28 @@ export declare interface EditorRef {
    */
   getNoteOps(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
   /**
-   * Document-order index of the note with the given key — the coordinate a USJ-built notes list
-   * (e.g. a footnotes pane) addresses notes by, and the same index `noteCallerOnClick` reports.
+   * EXPERIMENTAL: Document-order index of the note with the given key — the coordinate a USJ-built
+   * notes list (e.g. a footnotes pane) addresses notes by, and the same index `noteCallerOnClick`
+   * reports.
    * @param noteKey - The note node's key (e.g. from `insertMarker` or `noteCallerOnClick`).
    * @returns The index, or `undefined` when the key is not a note in the document.
    */
   getNoteIndex(noteKey: string): number | undefined;
   /**
-   * Key of the note at the given document-order index (the inverse of `getNoteIndex`), so a host
-   * that addresses notes by index can hand the editor the key `replaceEmbedUpdate` needs.
-   * @param noteIndex - The document-order index of the note (e.g. from `getNoteIndex` or a
-   *   USJ-built notes list).
+   * EXPERIMENTAL: Key of the note at the given document-order index (the inverse of
+   * {@link EditorRef.getNoteIndex}), so a host that addresses notes by index can hand the editor
+   * the key `replaceEmbedUpdate` needs.
+   * @param noteIndex - The document-order index of the note (e.g. from
+   *   {@link EditorRef.getNoteIndex} or a USJ-built notes list).
    * @returns The key, or `undefined` when no note exists at that index.
    */
   getNoteKey(noteIndex: number): string | undefined;
   /**
-   * Highlights the caller of the given note in the text with PT9's selected-note style (a thin
-   * top-and-bottom border, class `caller_highlight`), replacing any previous highlight. Pass
-   * `undefined` to clear. Purely presentational: never changes the document.
+   * EXPERIMENTAL: Highlights the caller of the given note in the text with PT9's selected-note
+   * style (class `caller_highlight`: a yellow fill with thin blue top and bottom borders),
+   * replacing any previous highlight. Pass `undefined` to clear. Purely presentational: never
+   * changes the document. A host that vendors its own copy of `usj-nodes.css` needs that rule in
+   * it, or this is a silent no-op visually.
    *
    * Silently does nothing for a note BUILT expanded under `markerMode: "editable"`, whose caller
    * is plain text rather than the immutable caller element the style attaches to — a note built
@@ -903,7 +916,8 @@ export declare interface EditorRef {
    * note is resolved when this is called and never retried, so a call made before the document
    * has loaded, or with a stale key or an out-of-range index, is discarded and clears any
    * highlight already showing.
-   * @param noteKeyOrIndex - Note key or document-order index (see `getNoteIndex`).
+   * @param noteKeyOrIndex - Note key or document-order index (see
+   *   {@link EditorRef.getNoteIndex}).
    */
   highlightNote(noteKeyOrIndex: string | number | undefined): void;
   /** Ref to the end of the toolbar - INTERNAL USE ONLY to dynamically add controls in the toolbar. */

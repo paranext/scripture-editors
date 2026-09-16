@@ -1,12 +1,13 @@
 import { $isImmutableNoteCallerNode } from "../../nodes/usj/ImmutableNoteCallerNode";
-import { $getNoteByKeyOrIndex, $getNoteIndex } from "../../nodes/usj/note.utils";
+import { $getNoteIndex } from "../../nodes/usj/note-index.utils";
+import { $getNoteByKeyOrIndex } from "../../nodes/usj/note.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import { NodeKey } from "lexical";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { EXTERNAL_USJ_MUTATION_TAG, NoteNode } from "shared";
 
-/** PT9's selected-caller style: a thin top-and-bottom border on the note caller in the text. */
+/** PT9's selected-caller style: a yellow fill and thin blue top/bottom borders on the caller. */
 export const NOTE_CALLER_HIGHLIGHT_CLASS = "caller_highlight";
 
 /** Forward reference for the note caller highlight. */

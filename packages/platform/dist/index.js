@@ -16088,8 +16088,15 @@ function qu(e, t) {
       }
     } else
       n.selectEnd();
-  } else
-    e.getChildren().reverse().find($)?.selectEnd();
+  } else {
+    const n = e.getChildren(), i = n.slice().reverse().find($);
+    if (i)
+      i.selectEnd();
+    else {
+      const s = n.findIndex((a) => P(a) && a.getMarkerSyntax() === "closing"), o = s === -1 ? n.length : s;
+      e.select(o, o);
+    }
+  }
 }
 function wx(e) {
   const t = e.getNextSibling();

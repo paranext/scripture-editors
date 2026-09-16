@@ -7,6 +7,12 @@
  * the mode where a note's opening glyphs are real editable text inside the char span and the
  * span's first text child carries the NBSP display separator as a prefix. A host counting the
  * note's CONTENT (`\fr 1:1 \ft alpha` reads as `1:1 alpha`) must not be charged for either.
+ *
+ * `STANDARD_VIEW_MODE` is also `noteMode: "collapsed"`, which is the Scripture text's own shape.
+ * A host's note editor renders the SAME note expanded, where the adaptor builds a materially
+ * different interior - the caller is a plain `TextNode` and a `\cat` category becomes an
+ * attribute display run - so the offset origin is pinned under both note modes, in the
+ * `expanded` describe block at the end.
  */
 import Editorial from "../Editorial";
 import { EditorOptions, EditorRef } from "./editor.model";
@@ -21,12 +27,12 @@ import {
   LexicalEditor,
   SKIP_DOM_SELECTION_TAG,
 } from "lexical";
-import { $dfs } from "@lexical/utils";
+import { $dfs, $findMatchingParent } from "@lexical/utils";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { getEmbeddedLexicalEditor } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 import { $isNoteNode, NoteNode } from "shared";
-import { getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
+import { getViewOptions, STANDARD_VIEW_MODE, UNFORMATTED_VIEW_MODE } from "shared-react";
 
 function requireDefined<T>(value: T | undefined | null, message: string): T {
   if (value === undefined || value === null) throw new Error(message);
@@ -112,7 +118,7 @@ const usjNoteBeforeVerse: Usj = {
 
 const scrRef = { book: "GEN", chapterNum: 1, verseNum: 1 };
 
-async function renderEditor(defaultUsj: Usj = usj) {
+async function renderEditor(defaultUsj: Usj = usj, editorOptions: EditorOptions = options) {
   const ref = createRef<EditorRef>();
   let container: HTMLElement | undefined;
   await act(async () => {
@@ -122,7 +128,7 @@ async function renderEditor(defaultUsj: Usj = usj) {
         defaultUsj={defaultUsj}
         scrRef={scrRef}
         onScrRefChange={() => undefined}
-        options={options}
+        options={editorOptions}
       />,
     );
     container = result.container;
@@ -160,6 +166,29 @@ function caretAnchorType(lexical: LexicalEditor): string {
     const selection = $getSelection();
     if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
     return selection.anchor.getNode().getType();
+  });
+}
+
+/**
+ * The caret's anchor offset paired with the note's own position among its parent's children, so a
+ * test can say the caret is at the child slot immediately AFTER the note rather than merely "not
+ * in the thing it used to land in".
+ */
+function caretOffsetAndNoteIndexInParent(lexical: LexicalEditor): {
+  anchorOffset: number;
+  noteIndexInParent: number;
+} {
+  return lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+    const noteNode = $dfs($getRoot())
+      .map(({ node }) => node)
+      .find($isNoteNode);
+    if (!noteNode) throw new Error("expected a note in the document");
+    return {
+      anchorOffset: selection.anchor.offset,
+      noteIndexInParent: noteNode.getIndexWithinParent(),
+    };
   });
 }
 
@@ -244,7 +273,12 @@ describe("EditorRef.selectAfterNote", () => {
 
     await act(async () => editorRef.selectAfterNote(0));
 
-    expect(caretAnchorType(lexical)).not.toBe("verse");
+    // Positively: the caret is an ELEMENT-anchored position at the child slot right after the
+    // note. `not.toBe("verse")` alone would also pass for a caret left before the note, or back
+    // in the preceding "before " text.
+    expect(caretAnchorType(lexical)).toBe("para");
+    const { anchorOffset, noteIndexInParent } = caretOffsetAndNoteIndexInParent(lexical);
+    expect(anchorOffset).toBe(noteIndexInParent + 1);
   });
 
   it("does not pull DOM focus into an editor the user is not in", async () => {
@@ -268,5 +302,138 @@ describe("EditorRef.selectAfterNote", () => {
     const tags = await tagsOfUpdatesDuring(lexical, () => editorRef.selectAfterNote(0));
 
     expect(tags.has(SKIP_DOM_SELECTION_TAG)).toBe(false);
+  });
+});
+
+/**
+ * The shape a host's own note editor renders: `markerMode: "editable"` with the note EXPANDED, so
+ * the adaptor builds the caller as a plain `TextNode` and folds a `\cat` category into an
+ * `attribute` display run. Both are display, not content, and the offset origin has to skip them
+ * exactly as it skips the marker glyphs under the collapsed shape above.
+ */
+const expandedOptions: EditorOptions = {
+  ...options,
+  view: requireDefined(getViewOptions(UNFORMATTED_VIEW_MODE), "unformatted view options"),
+};
+
+/** `\f + \cat People\cat* \fr 1:1 \ft alpha` — content text is still just `1:1 alpha`. */
+const categorizedNote: MarkerObject = { ...note, category: "People" };
+
+const usjCategorizedNote: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+    { type: "chapter", marker: "c", number: "1" },
+    {
+      type: "para",
+      marker: "p",
+      content: [{ type: "verse", marker: "v", number: "1" }, "before ", categorizedNote, "after"],
+    },
+  ],
+};
+
+/**
+ * A note split across paragraphs by `\fp`, which the adaptor renders as further char runs the
+ * offset walk counts. Content text is `1:1 alpha` + `beta` = `1:1 alphabeta`, so an offset that
+ * crosses the `\fp` boundary is the shape most likely to expose an off-by-one between runs.
+ */
+const multiParagraphNote: MarkerObject = {
+  type: "note",
+  marker: "f",
+  caller: "+",
+  content: [
+    { type: "char", marker: "fr", content: ["1:1 "] },
+    { type: "char", marker: "ft", content: ["alpha"] },
+    { type: "char", marker: "fp", content: [] },
+    { type: "char", marker: "ft", content: ["beta"] },
+  ],
+};
+
+const usjMultiParagraphNote: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+    { type: "chapter", marker: "c", number: "1" },
+    {
+      type: "para",
+      marker: "p",
+      content: [
+        { type: "verse", marker: "v", number: "1" },
+        "before ",
+        multiParagraphNote,
+        "after",
+      ],
+    },
+  ],
+};
+
+/** A note with a caller and nothing else — the no-content-text fallback's input. */
+const usjEmptyNote: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+    { type: "chapter", marker: "c", number: "1" },
+    {
+      type: "para",
+      marker: "p",
+      content: [
+        { type: "verse", marker: "v", number: "1" },
+        "before ",
+        { type: "note", marker: "f", caller: "+", content: [] },
+        "after",
+      ],
+    },
+  ],
+};
+
+describe("EditorRef.selectNoteTextOffset in an expanded note (a host's own note editor)", () => {
+  it("counts the note's content only, skipping the caller the expanded shape spells out", async () => {
+    const { editorRef, lexical } = await renderEditor(usj, expandedOptions);
+
+    // 4 = the `\fr` run's content (`1:1 `), so this is the first character of `alpha`. The
+    // expanded caller (`+`) sits ahead of it as ordinary text and must not be charged for.
+    await act(async () => editorRef.selectNoteTextOffset(0, 4));
+
+    const { text, offset } = caret(lexical);
+    expect(text.slice(offset)).toBe("alpha");
+  });
+
+  it("skips a \\cat category run, which is a field on the note rather than its content", async () => {
+    const { editorRef, lexical } = await renderEditor(usjCategorizedNote, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 4));
+
+    // `People` rides between the caller and the first content run; counting it would push the
+    // caret six characters past where the host clicked.
+    const { text, offset } = caret(lexical);
+    expect(text.slice(offset)).toBe("alpha");
+  });
+
+  it("carries the offset across a \\fp paragraph break", async () => {
+    const { editorRef, lexical } = await renderEditor(usjMultiParagraphNote, expandedOptions);
+
+    // 9 = `1:1 ` (4) + `alpha` (5), so this is the first character of the second paragraph's run.
+    await act(async () => editorRef.selectNoteTextOffset(0, 9));
+
+    const { text, offset } = caret(lexical);
+    expect(text.slice(offset)).toBe("beta");
+  });
+
+  it("falls back to selecting the note when it has no content text at all", async () => {
+    const { editorRef, lexical } = await renderEditor(usjEmptyNote, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 3));
+
+    // Documented fallback: an offset into a note with nothing to offset into still leaves the
+    // caret somewhere inside that note rather than wherever it happened to be.
+    const insideNote = lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      return !!$findMatchingParent(selection.anchor.getNode(), $isNoteNode);
+    });
+    expect(insideNote).toBe(true);
   });
 });

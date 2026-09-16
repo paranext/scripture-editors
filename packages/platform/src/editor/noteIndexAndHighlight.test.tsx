@@ -204,17 +204,26 @@ describe("EditorRef.highlightNote", () => {
     await act(async () => {
       editorRef.highlightNote(first);
     });
+    // Without this the empty expectation below would also pass against a highlight that never
+    // applied at all.
+    expect(highlightedCallers(container)).toEqual([callerOf(container, 0)]);
     await act(async () => {
       editorRef.replaceEmbedUpdate(first, []);
     });
     expect(highlightedCallers(container)).toEqual([]);
   });
 
-  it("does not mark the document dirty (no onUsjChange)", async () => {
+  // The highlight is applied through `classList`, never through node state, so it must not commit
+  // an editor update at all. `onUsjChange` alone cannot prove that: it fires only when the
+  // DESERIALIZED USJ differs, so a highlight held in node state would dirty the editor and still
+  // produce identical USJ. Count commits, and assert the highlight really landed - otherwise a
+  // `highlightNote` that did nothing would pass this test twice over.
+  it("applies the highlight without committing an editor update", async () => {
     const ref = createRef<EditorRef>();
     const onUsjChange = vi.fn();
+    let container: HTMLElement | undefined;
     await act(async () => {
-      render(
+      const result = render(
         <Editorial
           ref={ref}
           defaultUsj={threeNotesUsj}
@@ -224,11 +233,23 @@ describe("EditorRef.highlightNote", () => {
           options={options}
         />,
       );
+      container = result.container;
     });
+    const lexical = getEmbeddedLexicalEditor(container);
     onUsjChange.mockClear();
+    let commits = 0;
+    const unregister = lexical.registerUpdateListener(() => {
+      commits += 1;
+    });
     await act(async () => {
       requireDefined(ref.current, "ref").highlightNote(1);
     });
+    unregister();
+
+    expect(highlightedCallers(requireDefined(container, "container"))).toEqual([
+      callerOf(requireDefined(container, "container"), 1),
+    ]);
+    expect(commits).toBe(0);
     expect(onUsjChange).not.toHaveBeenCalled();
   });
 

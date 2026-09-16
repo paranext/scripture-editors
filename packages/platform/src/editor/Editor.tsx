@@ -433,6 +433,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
    * into the Scripture text, say). Commits made while this returns `false` carry Lexical's
    * `SKIP_DOM_SELECTION_TAG`. When this editor DOES hold focus the reconcile is exactly right and
    * stays: that is how a collaborator's op keeps the local caret in the correct place.
+   *
+   * Deliberately broader than `EditorRef.isFocused`, which answers "is the root itself the active
+   * element". A focused decorator inside the editor - a collapsed note's caller button, say - is
+   * the user being in THIS editor for the purposes of the rule above, and is not the root.
    */
   const holdsDomFocus = () => {
     const rootElement = editorRef.current?.getRootElement();

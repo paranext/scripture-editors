@@ -24,9 +24,10 @@ refused. The public surface grew substantially; nothing was removed.
   coordinate a USJ-built notes list (e.g. a footnotes pane) addresses notes by.
 - `EditorRef.getNoteKey` — the inverse: the key of the note at a document-order index, so a host
   that addresses notes by index can hand the editor the key `replaceEmbedUpdate` needs.
-- `EditorRef.highlightNote` — applies PT9's selected-caller style (a thin top-and-bottom border,
-  class `caller_highlight`) to one note's caller at a time, through `NoteCallerHighlightPlugin`;
-  purely presentational, and `undefined` clears it.
+- `EditorRef.highlightNote` — applies PT9's selected-caller style (class `caller_highlight`: a
+  yellow fill with thin blue top and bottom borders) to one note's caller at a time, through
+  `NoteCallerHighlightPlugin`; purely presentational, and `undefined` clears it. A host that
+  vendors its own copy of `usj-nodes.css` needs that rule in it.
 - `EditorRef.selectAfterNote` — puts the caret immediately after a note (past its caller in a
   collapsed note), where PT9 leaves it once the user is done with the note. Never pulls DOM focus
   into an editor that does not already hold it, so a host can park the Scripture caret while the
@@ -61,6 +62,9 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- Selecting an EXPANDED note that holds no content run at all (`\f + \f*`) puts the caret inside
+  the note, at the slot content would occupy, instead of leaving it wherever it happened to be —
+  outside the note, where the next keystroke landed in the surrounding text.
 - The attribute-run hover color resolves against the host's `--foreground` instead of a fixed
   near-black, which was all but invisible against a dark theme.
 - The in-editor marker menu no longer swallows modifier chords: a keystroke carrying Ctrl/Cmd/Alt

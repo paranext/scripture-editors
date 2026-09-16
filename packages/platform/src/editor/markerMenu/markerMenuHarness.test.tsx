@@ -630,8 +630,10 @@ describe("editable-mode marker menu harness", () => {
       await dispatchKeyDown(editor, " ");
 
       expect(document.querySelector(".autocomplete-menu-container")).toBeNull();
-      // Space commits the typed literal at once; the char node it becomes settles afterwards, so
-      // poll for it as the first-session assertion above does.
+      // The bytes land immediately, but with no terminating separator they settle on the engine's
+      // DEFERRED clock rather than inside the commit update (invariant IV - settle has two
+      // clocks), so the end state is awaited rather than read synchronously, exactly as the
+      // first-session assertion above does.
       await waitFor(() =>
         editor.getEditorState().read(() => {
           const para = requireDefined($getRoot().getChildren().filter($isParaNode)[0], "para");

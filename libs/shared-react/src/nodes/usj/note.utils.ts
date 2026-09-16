@@ -65,8 +65,9 @@ import {
   textTypeState,
 } from "shared";
 
-// Lives in a leaf module so this file and `ImmutableNoteCallerNode` do not import each other;
-// re-exported here because this is where callers have always found it.
+// Lives in a leaf module so this file and `ImmutableNoteCallerNode` do not import each other (see
+// `note-index.utils`). Re-exported so it reaches the `nodes/usj` barrel, which exports this file
+// and not the leaf.
 export { $getNoteIndex } from "./note-index.utils";
 
 /** Caller count is in an object so it can be manipulated by passing the object. */
@@ -475,8 +476,20 @@ export function $selectNote(noteNode: NoteNode, viewOptions: ViewOptions | undef
       }
     } else nodeBefore.selectEnd();
   } else {
-    const lastCharChild = noteNode.getChildren().reverse().find($isCharNode);
-    lastCharChild?.selectEnd();
+    const children = noteNode.getChildren();
+    const lastCharChild = children.slice().reverse().find($isCharNode);
+    if (lastCharChild) lastCharChild.selectEnd();
+    else {
+      // An expanded note with no content run at all (`\f + \f*`) holds nothing to select the end
+      // of, and leaving the caret where it was puts it OUTSIDE the note the user asked to be in -
+      // so the next keystroke lands in the surrounding text. Land it at the child slot content
+      // would occupy: just before the closing glyph, or at the end when there is none.
+      const closingIndex = children.findIndex(
+        (child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing",
+      );
+      const at = closingIndex === -1 ? children.length : closingIndex;
+      noteNode.select(at, at);
+    }
   }
 }
 
