@@ -176,7 +176,17 @@ function $anchorForPoint(
     .slice(0, offset)
     .forEach((child) => $collectKeys(child, before));
   const last = [...fragment.spans].reverse().find((span) => before.has(span.key));
-  if (last) return anchored(last.key, last.end - last.start);
+  if (last) {
+    // Deliberately not through `anchored`: the span before the boundary may be a preserved node's
+    // one-byte SENTINEL, which `spanFor` refuses (its inner bytes are not addressable). The END of
+    // that byte is exactly what this boundary means — just past the construct — and
+    // `$caretSpanByteAnchor` spells a sentinel's end without trouble. A boundary in FRONT of a
+    // sentinel is the case that genuinely has no spelling, and it is the fragment-start branch
+    // below that refuses it.
+    const keyOffset = last.end - last.start;
+    const anchor = $caretSpanByteAnchor(fragment, last.key, keyOffset);
+    return anchor ? { anchor, position: last.start + keyOffset } : undefined;
+  }
   // Nothing before the boundary: it is the fragment's own start, which only a non-sentinel first
   // span can express — a sentinel anchor counts its placeholder byte and would land PAST the
   // construct rather than in front of it.
@@ -342,13 +352,18 @@ function $livePointInPreservedRun(
   // offsets no longer describe anything the host can resolve against.
   if (!member?.isAttached()) return undefined;
   // A note that is ALSO settling was handed through this scope as its SETTLED self, so its live
-  // content is not the same subtree — that one crosses by its own fragment bytes instead.
+  // content is not the same subtree — that one crosses by its own fragment bytes instead, and
+  // REFUSES when it has no bytes to cross by. Falling through to the child walk below would spell
+  // a SETTLED child path against LIVE children, which resolves to whatever node happens to sit at
+  // that index.
   const notePlan = prepared.byFirstLiveKey.get(member.getKey());
-  if (notePlan?.kind === "note" && resolved.noteAnchor && notePlan.liveFragment)
-    return cutCorrected(
-      notePlan,
-      $resolveFragmentByteAnchor(notePlan.liveFragment, resolved.noteAnchor),
-    );
+  if (notePlan?.kind === "note")
+    return resolved.noteAnchor && notePlan.liveFragment
+      ? cutCorrected(
+          notePlan,
+          $resolveFragmentByteAnchor(notePlan.liveFragment, resolved.noteAnchor),
+        )
+      : undefined;
   let node: LexicalNode = member;
   for (const index of resolved.path) {
     if (!$isElementNode(node)) return undefined;
@@ -463,11 +478,40 @@ function settledTopTranslated<T extends UsjDocumentLocation>(
   ]);
 }
 
-/** Where a scope's own settled content sits, in settled content indexes: the scope's live path
- * (the same walk `$getLocationFromNode` builds a `jsonPath` from) with its top-level index
- * restated. A note settles in place, so only the index above it moves. */
-function $settledScopePath(prepared: PreparedScopes, plan: SettleScopePlan): number[] {
-  const indexes = $getJsonPathIndexes(plan.liveNodes[0]);
+/** The scope `plan`'s own nodes ride INSIDE, if any — never `plan` itself. A note is the only
+ * scope kind that can be nested: paragraphs and chapters are top-level. */
+function $enclosingPlan(
+  prepared: PreparedScopes,
+  plan: SettleScopePlan,
+): SettleScopePlan | undefined {
+  const parent = plan.liveNodes[0].getParent();
+  const enclosing = parent ? prepared.planContaining(parent) : undefined;
+  return enclosing === plan ? undefined : enclosing;
+}
+
+/**
+ * Where a scope's own settled content sits, in settled content indexes — or `undefined` when that
+ * cannot be determined, which a caller must treat as "refuse".
+ *
+ * For a scope nothing encloses, that is the scope's live path (the same walk
+ * `$getLocationFromNode` builds a `jsonPath` from) with its top-level index restated: the scope
+ * settles in place, so only the index above it moves.
+ *
+ * A note settling inside a settling paragraph is NOT that case. It rides through the paragraph's
+ * rebuild as a preserved node, and the rebuild re-indexes the paragraph's content around it — a
+ * spliced-out husk before the note, a literal that tokenizes into several items — so the note's
+ * live index within its paragraph names a DIFFERENT settled item. Ask the enclosing scope where
+ * the note actually landed, through the same preserved-run correspondence every other position in
+ * that scope crosses by. Terminates: each step moves strictly up the tree.
+ */
+function $settledScopePath(prepared: PreparedScopes, plan: SettleScopePlan): number[] | undefined {
+  const node = plan.liveNodes[0];
+  const enclosing = $enclosingPlan(prepared, plan);
+  if (enclosing) {
+    const located = $settledLocationInScope(prepared, enclosing, node, 0);
+    return located && indexesFromUsjJsonPath(contentPathOf(located.jsonPath));
+  }
+  const indexes = $getJsonPathIndexes(node);
   if (indexes.length === 0) return indexes;
   return [prepared.liveToSettledTopIndex(indexes[0]), ...indexes.slice(1)];
 }
@@ -480,9 +524,10 @@ function $settledScopePath(prepared: PreparedScopes, plan: SettleScopePlan): num
  */
 function settledPathFromScratch(
   plan: SettleScopePlan,
-  scopePath: number[],
+  scopePath: number[] | undefined,
   scratchIndexes: number[],
 ): number[] | undefined {
+  if (!scopePath) return undefined;
   const [scratchTop, ...rest] = scratchIndexes;
   if (scratchTop === undefined) return undefined;
   if (plan.kind === "note") return scratchTop === 0 ? [...scopePath, ...rest] : undefined;

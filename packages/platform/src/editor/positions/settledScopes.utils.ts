@@ -403,16 +403,27 @@ function $planForChapter(
 
 /** The plan for a paragraph whose only pending change is an emptied optbreak husk — nothing
  * re-tokenizes, the dead husk is simply spliced out and the text it split is rejoined, exactly as
- * the read-only settle's own husk pass does it. */
+ * the read-only settle's own husk pass does it. A note settling inside the paragraph is settled
+ * into the serialized copy first, for the same reason {@link $planForParas} does it: the note
+ * rides through as a preserved node, and a settled path into it is resolved against THIS tree, so
+ * a paragraph carrying the pending note resolves the note's settled content indexes against the
+ * wrong children. */
 function $planForHuskOnlyPara(
   para: ParaNode,
   liveFragment: FragmentAccumulator | undefined,
   husks: readonly LexicalNode[],
+  scopes: SettleScopes,
   context: SettledPositionContext,
+  transient: TransientLiteral | undefined,
 ): SettleScopePlan | undefined {
   const serialized = $exportSubtree(para);
   const sites = new Map<NodeKey, SerializedSite>();
   $mapSerializedSites([para], [serialized], sites);
+  $notesWithin([para])
+    .filter((note) => scopes.noteScopes.has(note.getKey()))
+    .forEach((note) =>
+      $applySettledNoteScope(note, sites, context.tier2, scopes.huskKeys, transient),
+    );
   const splicedKeys = new Set<NodeKey>();
   for (const husk of husks) {
     const site = sites.get(husk.getKey());
@@ -580,7 +591,7 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
   for (const [key, { para, husks }] of huskParas)
     record(
       planned(key, "para", [para], (fragment) =>
-        $planForHuskOnlyPara(para, fragment, husks, context),
+        $planForHuskOnlyPara(para, fragment, husks, scopes, context, transient),
       ),
       true,
     );

@@ -5,6 +5,7 @@
  * it does not re-register the other suite's tests by importing it.
  */
 import { requireStandardViewOptions } from "../settledGetUsj.test-helpers";
+import { $pendGlyphEdit } from "../markerEdit/markerEdit.test-helpers";
 import { AnchoredTransientInput } from "../markerEdit/virtualSettle.utils";
 import { SettledPositionContext, SettledScopeCache } from "./settledPositions.model";
 import {
@@ -20,6 +21,7 @@ import {
   $getLogicalContentItems,
   $isCharNode,
   $isMarkerNode,
+  $isNoteNode,
   $isParaNode,
   $isUnknownNode,
   getMarker as bundledGetMarker,
@@ -263,4 +265,88 @@ export async function typeOver(
     await Promise.resolve();
   });
   return key;
+}
+
+/**
+ * A paragraph carrying, in order, text, an optbreak, a note, and more text. The optbreak is what
+ * makes the note's index within the paragraph differ between the two documents: a settle splices
+ * an emptied husk out, so the note that is the paragraph's THIRD live content item is its SECOND
+ * settled one.
+ */
+export function huskBeforeNoteUsj(): Usj {
+  return twoParaUsj([
+    "before ",
+    { type: "optbreak" },
+    {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      // The reference span keeps the body text off the caller's own slot, so an edit to the body
+      // cannot coalesce into the caller and cost the note its recognizable shape. The note's OWN
+      // optbreak does for the note's content indexes what the paragraph's does for the
+      // paragraph's: settled, the body text is the note's SECOND item; live it is the third.
+      content: [
+        { type: "char", marker: "fr", content: ["1.1"] },
+        { type: "optbreak" },
+        "note body",
+      ],
+    },
+    " after",
+  ]);
+}
+
+/**
+ * Pend a NOTE scope and its own PARAGRAPH's scope at the same time, with the paragraph's emptied
+ * optbreak husk pending too — the three-way shape that makes the note's settled index differ from
+ * its live one.
+ *
+ * Every pend is ledger-recorded rather than caret-held (`$pendGlyphEdit`): a caret can hold only
+ * one pend at a time, since departing the first to make the second settles it.
+ *
+ * @param pendParaGlyph - When false, the paragraph gets no pend of its own, so the emptied husk is
+ *   the ONLY thing planning it — the husk-only paragraph scope.
+ */
+export async function pendNoteInsideSettlingPara(
+  lexical: LexicalEditor,
+  { pendParaGlyph = true }: { pendParaGlyph?: boolean } = {},
+): Promise<void> {
+  await act(async () => {
+    lexical.update(() => {
+      const para = $getRoot().getChildren().filter($isParaNode)[0];
+      if (pendParaGlyph) {
+        const glyph = para.getFirstChild();
+        if (!$isMarkerNode(glyph)) throw new Error("no paragraph prefix glyph");
+        $pendGlyphEdit(glyph, "\\q1");
+      }
+
+      const note = para.getChildren().find($isNoteNode);
+      if (!note) throw new Error("no note");
+
+      // Both optbreaks: the paragraph's own (which moves the note) and the note's (which moves
+      // the note's body text).
+      const husks = [para, note].map((owner) => {
+        const husk = owner.getChildren().find($isUnknownNode);
+        if (!husk) throw new Error("no optbreak to empty");
+        return husk;
+      });
+      husks.forEach((husk) => husk.getChildren().forEach((child) => child.remove()));
+
+      const reference = note.getChildren().find($isCharNode);
+      if (!reference) throw new Error("no reference span in the note");
+      const glyphs = reference.getChildren().filter($isMarkerNode);
+      if (glyphs.length < 2) throw new Error("expected the reference span's glyph pair");
+      $pendGlyphEdit(glyphs[0], "\\fq");
+      $pendGlyphEdit(glyphs[glyphs.length - 1], "\\fq*");
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+/** The content index of the settled paragraph's one note. */
+export function settledNoteIndex(para: MarkerObject): number {
+  const [index, ...rest] = settledNoteIndexes(para);
+  if (index === undefined || rest.length > 0)
+    throw new Error(`expected exactly one settled note in ${JSON.stringify(para)}`);
+  return index;
 }
