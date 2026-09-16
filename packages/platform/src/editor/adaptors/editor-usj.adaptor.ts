@@ -479,16 +479,26 @@ function precedesOpeningCharGlyph(
   return isSerializedMarkerNode(previous) && previous.markerSyntax === "opening";
 }
 
+/** The serialized twin of `$throughMarks` (attributeDisplay.utils.ts): an annotation mark is
+ * presentation this export splices away, so a slot identified by its position among its parent's
+ * children has to see through one. */
+function serializedThroughMarks(
+  node: SerializedLexicalNode | undefined,
+): SerializedLexicalNode | undefined {
+  let current = node;
+  while (isSerializedTypedMarkNode(current)) current = current.children[0];
+  return current;
+}
+
 /**
  * The one child of `noteChildren` that renders a note's EDITABLE caller, if any — the serialized
  * twin of `$noteEditableCallerNode` (attributeDisplay.utils.ts): skip the leading opening
- * `marker` nodes, and the next child is the caller slot only when IT ITSELF is a serialized plain
- * text node whose text equals `getEditableCallerText(caller)`. A `marker` candidate there (an
- * absent-caller shape, opening glyph immediately followed by closing glyph) never carries that
- * text, so failing the type check first is equivalent to the live predicate's `$isTextNode` guard
- * followed by the same text comparison. Deliberately does not look through a `TypedMarkNode` at
- * that position, matching the live predicate: a caller wrapped in an annotation mark is not
- * recognized as the editable caller there either, so nothing is anchored to drop.
+ * `marker` nodes, look through any annotation mark at that position, and the next child is the
+ * caller slot only when it is a serialized plain text node whose text equals
+ * `getEditableCallerText(caller)`. A `marker` candidate there (an absent-caller shape, opening
+ * glyph immediately followed by closing glyph) never carries that text, so failing the type check
+ * first is equivalent to the live predicate's `$isTextNode` guard followed by the same text
+ * comparison.
  */
 function noteCallerSlotNode(
   noteChildren: SerializedLexicalNode[],
@@ -500,7 +510,7 @@ function noteCallerSlotNode(
     if (!isSerializedMarkerNode(child) || child.markerSyntax !== "opening") break;
     index++;
   }
-  const candidate = noteChildren[index];
+  const candidate = serializedThroughMarks(noteChildren[index]);
   if (isSerializedTextNode(candidate) && candidate.text === getEditableCallerText(caller))
     return candidate;
   return undefined;
@@ -632,14 +642,14 @@ function recurseNodes(
         // An annotation mark is presentation the splice below strips, so its children serialize
         // exactly as if they were direct children here — the char-child context must survive the
         // re-entry, or a mark wrapping a char span's first text hides the structural NBSP from
-        // the strip (a fabricated leading space in the file). `callerSlot` is NOT threaded down:
-        // it is always a node found directly among a NoteNode's own children (never a
-        // TypedMarkNode itself — see `noteCallerSlotNode`), so it can never be nested inside a
-        // mark, matching the live predicate it mirrors, which does not look through marks either.
+        // the strip (a fabricated leading space in the file). `callerSlot` survives the re-entry
+        // for the same reason: `noteCallerSlotNode` looks through a mark at the caller position,
+        // so the anchored node can be nested inside one, and the drop below has to reach it or
+        // the caller's display bytes are fabricated into the note's saved content.
         childMarkers = recurseNodes(
           serializedMarkNode.children,
           viewOptions,
-          undefined,
+          callerSlot,
           isCharChild,
           index > 0 ? nodes[index - 1] : precedingSibling,
         );

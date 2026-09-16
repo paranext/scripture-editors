@@ -814,12 +814,12 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       ]);
     });
 
-    it("a caller-slot-shaped text wrapped in an annotation mark anchors nothing and survives as data", () => {
-      // $noteEditableCallerNode (attributeDisplay.utils.ts) requires the caller-slot candidate to
-      // BE a plain text node, not merely produce one when a wrapping mark is unwrapped — it never
-      // looks through a `TypedMarkNode` at that position. A comment placed on the caller therefore
-      // leaves the note with no recognized caller slot at all, exactly like the drifted-text case:
-      // the wrapped text is ordinary content once its mark is stripped, and must survive.
+    it("still drops the caller slot when an annotation mark wraps it", () => {
+      // An annotation mark is presentation both the exporter and the logical content model splice
+      // away, so the caller slot has to be recognized THROUGH one: a comment placed on the caller
+      // must not turn the caller's display bytes (` + ` with an NBSP tail) into note content. It
+      // would come back as a second, fabricated caller on the next load, and compound on every
+      // save/load cycle after that.
       const viewOptions = getViewOptions(UNFORMATTED_VIEW_MODE);
       const state = buildNoteState(viewOptions);
       const note = findSerializedNote(state);
@@ -842,10 +842,10 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       if (!roundTripped) throw new Error("Expected a round-tripped USJ");
 
       const note2 = findNote(roundTripped);
-      // The mark is stripped and its content spliced in as if it were a direct child, coalescing
-      // with the adjacent loose look-alike text exactly as the drifted-text case does.
+      // Identical to the unmarked case: the caller slot contributes nothing, and the look-alike
+      // body text — which is data, not a caller — still round-trips.
       expect(note2?.content).toEqual([
-        `${callerLookalike}${callerLookalike}`,
+        callerLookalike,
         { type: "char", marker: "ft", content: [callerLookalike] },
       ]);
     });
