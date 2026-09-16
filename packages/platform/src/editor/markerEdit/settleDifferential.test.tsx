@@ -252,7 +252,7 @@ const differentialShapes: DifferentialShape[] = [
   },
   {
     // A typed char literal INSIDE an expanded note's content: the note-content rebuild
-    // (`$rebuildNoteContent`) and its serialized mirror (`$settledNoteContent`) must tokenize the
+    // (`$rebuildNoteContent`) and its serialized mirror (`$settledNoteScope`) must tokenize the
     // typed span identically, inside the note's separate re-tokenization scope.
     name: "char literal typed inside an expanded note's content",
     expectSettled: (settled) => {

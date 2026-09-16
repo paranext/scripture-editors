@@ -36,6 +36,7 @@ import {
 import { $isMarkerNode, isSerializedMarkerNode } from "../features/MarkerNode.js";
 import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { $isUnknownNode, UnknownNode } from "../features/UnknownNode.js";
+import { $isAttributeRunNode } from "./AttributeRunNode.js";
 import { $isBookNode, BookNode } from "./BookNode.js";
 import {
   $isChapterNode,
@@ -60,7 +61,14 @@ import { $isMilestoneNode, MilestoneNode } from "./MilestoneNode.js";
 import { $isNoteNode, NoteNode } from "./NoteNode.js";
 import { $isParaNode, isSerializedParaNode, ParaNode, SerializedParaNode } from "./ParaNode.js";
 import { $isVerseNode, VerseNode } from "./VerseNode.js";
-import { EMPTY_CHAR_PLACEHOLDER_TEXT, NBSP, UnknownAttributes } from "./node-constants.js";
+import { $noteEditableCallerNode } from "./attributeDisplay.utils.js";
+import { $charSeparatorPrefixLength } from "./markerSeparators.utils.js";
+import {
+  EMPTY_CHAR_PLACEHOLDER_TEXT,
+  IMMUTABLE_NOTE_CALLER_NODE_TYPE,
+  NBSP,
+  UnknownAttributes,
+} from "./node-constants.js";
 import { isCursorPlaceholderOnly } from "../../plugins/CursorHandler/index.js";
 
 export type NodesWithMarker =
@@ -86,8 +94,15 @@ export type ParaLikeNode = SomeParaNode | BookNode;
 /** A piece of a logical text item: one Lexical TextNode and its cumulative start offset. */
 export interface LogicalTextSegment {
   node: TextNode;
-  /** Offset of this segment's first character within the logical text item. */
+  /** Logical offset within the text item at which this segment's CONTENT starts. */
   start: number;
+  /**
+   * How many of `node`'s leading characters are presentation rather than content (0 or 1) — a
+   * char span's structural separator NBSP, which the editor→USJ conversion strips. A local offset
+   * `o` in `node` maps to logical `start + Math.max(0, o - lead)`, and the segment contributes
+   * `node.getTextContentSize() - lead` characters to the item.
+   */
+  lead: number;
 }
 
 /**
@@ -101,6 +116,16 @@ export interface LogicalTextSegment {
 export interface LogicalTextItem {
   type: "text";
   segments: LogicalTextSegment[];
+  /**
+   * Length of the item's USJ string — segment leads excluded, as the exporter excludes them.
+   *
+   * `lead` is the only display→data adjustment this model makes, so the equality holds for every
+   * text the exporter copies through verbatim. It does NOT hold in Standard view for a text
+   * carrying a run of two or more spaces: that view's exporter additionally collapses the run
+   * (`normalizeSpaceRuns`), which is not length-preserving, so offsets after such a run are
+   * shifted by however many spaces the run lost. Closing that gap needs a per-segment settled
+   * offset map rather than a scalar lead.
+   */
   length: number;
 }
 
@@ -944,9 +969,16 @@ function getSelectionStartNodeInner(selection: BaseSelection | null): LexicalNod
  * Checks whether a node is presentation-only and therefore not part of USJ content:
  * line breaks, marker scaffolding (editable and visible), marker-trailing-space or
  * attribute text (as a plain TextNode or as an opaque block's folded ImmutableTypedTextNode
- * display run, e.g. an UnknownNode's `\cat` byte display), and empty or NBSP-only spacer text
- * (which the editor→USJ conversion drops as well; ideally the USJ→editor conversion would
- * create such spacers as presentation-typed text nodes instead — follow-up work).
+ * display run, e.g. an UnknownNode's `\cat` byte display), attribute display-run wrappers,
+ * either shape of a note's caller, everything an editable chapter displays, and empty or
+ * NBSP-only spacer text (which the editor→USJ conversion drops as well; ideally the USJ→editor
+ * conversion would create such spacers as presentation-typed text nodes instead — follow-up
+ * work).
+ *
+ * The answer depends on WHERE the node is attached, not on the node alone: a plain TextNode is
+ * presentation when it sits in a note's caller slot or under a chapter, and content anywhere else.
+ * So a caller cannot decide from a node's type and state — it has to pass the node as it stands in
+ * the tree.
  * @param node - The node to check.
  * @returns `true` if the node must be skipped when computing USJ content indexes.
  */
@@ -955,11 +987,34 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
   if ($isLineBreakNode(node)) return true;
   if ($isMarkerNode(node)) return true;
   if ($isVisibleMarkerNode(node)) return true;
+  // An attribute display run (`\va`/`\vp`, `\ca`/`\cp`, a milestone's or a note category's) is
+  // a wrapper around glyph and attribute-byte pieces that are each presentation-only on their
+  // own, so the whole subtree carries no content — which is why the editor→USJ conversion skips
+  // it without recursing.
+  if ($isAttributeRunNode(node)) return true;
+  // A collapsed note's caller decorator lives in the react layer, which this layer may not
+  // import; the registered type name is the contract between them.
+  if (node.getType() === IMMUTABLE_NOTE_CALLER_NODE_TYPE) return true;
   // ImmutableTypedTextNode's "attribute" flavor (an opaque block's folded attribute-byte display
   // run, e.g. an UnknownNode's `\cat ...\cat*`) is a DecoratorNode, not a TextNode, so it never
   // reaches the $isTextNode branch below — mirror the "marker" flavor handled above by
   // $isVisibleMarkerNode.
   if ($isImmutableTypedTextNode(node) && node.getTextType() === "attribute") return true;
+  const logicalParent = $getLogicalParent(node);
+  // A USJ chapter marker carries no content at all, so nothing an editable ChapterNode displays
+  // — the `\c N` glyph text and any `\ca`/`\cp` run — occupies a content position.
+  if ($isChapterNode(logicalParent)) return true;
+  // An expanded note's editable caller (` + `) is display the conversion drops. Anchored to the
+  // caller SLOT — the child right after the note's leading opening glyph(s), the same slot the
+  // note-content rebuild reads — so note content that happens to spell the caller is still
+  // content. The conversion matches those bytes ANYWHERE in the note and so drops such content
+  // outright; it is the side that should narrow to this rule.
+  if (
+    $isTextNode(node) &&
+    $isNoteNode(logicalParent) &&
+    $noteEditableCallerNode(logicalParent)?.is(node)
+  )
+    return true;
   if ($isTextNode(node)) {
     const textType = $getState(node, textTypeState);
     if (textType === MARKER_TRAILING_SPACE_TEXT_TYPE || textType === "attribute") return true;
@@ -1046,7 +1101,8 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
 /**
  * Maps a parent element's Lexical children to its logical USJ content items — the items the
  * editor→USJ conversion would export: presentation-only nodes skipped, TypedMarkNodes
- * transparent (children spliced in, recursively), contiguous text coalesced into single items.
+ * transparent (children spliced in, recursively), contiguous text coalesced into single items,
+ * and a char span's structural separator NBSP excluded from its text item's coordinates.
  *
  * Known exclusion: comment-type TypedMarkNodes are treated as transparent like every other
  * mark, even though the exporter still serializes them as milestone items. That milestone
@@ -1055,6 +1111,10 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
  * @returns the logical content items in document order.
  */
 export function $getLogicalContentItems(parent: ElementNode): LogicalContentItem[] {
+  // A chapter marker has no `content` in USJ: an editable ChapterNode's children are entirely the
+  // `\c N` glyph it displays and the runs that ride after it.
+  if ($isChapterNode(parent)) return [];
+
   const items: LogicalContentItem[] = [];
   let run: { segments: LogicalTextSegment[]; length: number } | undefined;
 
@@ -1076,9 +1136,12 @@ export function $getLogicalContentItems(parent: ElementNode): LogicalContentItem
     // Only plain TextNodes (exact "text" type) join a coalesced run, mirroring the exporter.
     // TextNode subclasses (e.g. VerseNode) fall through to become standalone items.
     if ($isTextNode(node) && node.getType() === TextNode.getType()) {
+      // A char span's separator NBSP is a prefix of its first content text and the exporter
+      // strips it, so it occupies no USJ offset — see $charSeparatorPrefixLength.
+      const lead = $charSeparatorPrefixLength(node);
       run ??= { segments: [], length: 0 };
-      run.segments.push({ node, start: run.length });
-      run.length += node.getTextContentSize();
+      run.segments.push({ node, start: run.length, lead });
+      run.length += node.getTextContentSize() - lead;
       return;
     }
     flushRun();
@@ -1123,7 +1186,9 @@ export function $getLogicalIndexOfChild(parent: ElementNode, child: LexicalNode)
  * @param textNode - The Lexical text node.
  * @param offset - The offset within the text node.
  * @returns the logical parent, item index, and cumulative offset, or `undefined` if the text
- *   node is not part of any logical text item (e.g. presentation-only text).
+ *   node is not part of any logical text item (e.g. presentation-only text). An offset inside the
+ *   segment's presentation-only lead reports the start of the content after it, the nearest
+ *   position the USJ text can express.
  */
 export function $getLogicalTextLocation(
   textNode: TextNode,
@@ -1138,7 +1203,10 @@ export function $getLogicalTextLocation(
     if (item.type !== "text") continue;
 
     const segment = item.segments.find((segment) => segment.node.is(textNode));
-    if (segment) return { parent, index, offset: segment.start + offset };
+    // A point inside the presentation-only lead has no USJ offset of its own; it reports the
+    // start of the content that follows it.
+    if (segment)
+      return { parent, index, offset: segment.start + Math.max(0, offset - segment.lead) };
   }
   return undefined;
 }
@@ -1150,7 +1218,8 @@ export function $getLogicalTextLocation(
  * previous piece.
  * @param item - The logical text item.
  * @param offset - The cumulative offset within the item.
- * @returns the text node and local offset, or `undefined` when out of range.
+ * @returns the text node and local offset — past the segment's presentation-only lead, so the
+ *   point sits on the character the USJ offset names — or `undefined` when out of range.
  */
 export function $getTextNodeAtLogicalOffset(
   item: LogicalTextItem,
@@ -1159,14 +1228,14 @@ export function $getTextNodeAtLogicalOffset(
   if (offset < 0 || offset > item.length) return undefined;
 
   for (const segment of item.segments) {
-    const segmentLength = segment.node.getTextContentSize();
-    if (offset >= segment.start && offset < segment.start + segmentLength)
-      return [segment.node, offset - segment.start];
+    const contentLength = segment.node.getTextContentSize() - segment.lead;
+    if (offset >= segment.start && offset < segment.start + contentLength)
+      return [segment.node, offset - segment.start + segment.lead];
   }
   // offset === item.length: end of the last segment.
   const lastSegment = item.segments[item.segments.length - 1];
   if (!lastSegment) return undefined;
-  return [lastSegment.node, offset - lastSegment.start];
+  return [lastSegment.node, offset - lastSegment.start + lastSegment.lead];
 }
 
 /**

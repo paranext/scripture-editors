@@ -78,9 +78,10 @@ HTMLElement.prototype.focus = function focus(options?: FocusOptions) {
 /** The editor's host-facing change-notification callback type. */
 type OnUsjChange = EditorProps<LoggerBasic>["onUsjChange"];
 
-/** Optional wiring a mounted test editor may need; both default to absent. */
+/** Optional wiring a mounted test editor may need; all default to absent. */
 interface MountOptions {
   onUsjChange?: OnUsjChange;
+  onSelectionChange?: EditorProps<LoggerBasic>["onSelectionChange"];
   scrRef?: SerializedVerseRef;
 }
 
@@ -116,29 +117,40 @@ export const spanUsj: Usj = {
   ],
 };
 
+/** A mounted test editor: its public ref, the raw Lexical editor, and the teardown a row needs
+ * when what it is pinning is what happens after the view goes away. */
+interface MountedEditor {
+  ref: RefObject<EditorRef | null>;
+  lexical: LexicalEditor;
+  unmount: () => void;
+}
+
 async function mountEditor(
   usj: Usj,
   view: ViewOptions,
-  { onUsjChange, scrRef }: MountOptions = {},
-): Promise<{ ref: RefObject<EditorRef | null>; lexical: LexicalEditor }> {
+  { onUsjChange, onSelectionChange, scrRef }: MountOptions = {},
+): Promise<MountedEditor> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
   const capture: ReactElement = <EditorRefPlugin editorRef={lexicalRef} />;
+  let unmount: (() => void) | undefined;
   await act(async () => {
-    render(
+    ({ unmount } = render(
       <Editor
         ref={ref}
         defaultUsj={usj}
         scrRef={scrRef}
         options={{ view }}
         onUsjChange={onUsjChange}
+        onSelectionChange={onSelectionChange}
       >
         {capture}
       </Editor>,
-    );
+    ));
   });
   if (!lexicalRef.current) throw new Error("lexical editor was not captured");
-  return { ref, lexical: lexicalRef.current };
+  if (!unmount) throw new Error("render did not return a teardown");
+  return { ref, lexical: lexicalRef.current, unmount };
 }
 
 /**
@@ -147,7 +159,8 @@ async function mountEditor(
  * `onUsjChange` wires the editor's host-facing change notification — the callback a host
  * (paranext-core's Scripture editor web view) subscribes to in order to schedule a save. Pass it
  * when a test needs to observe that a document change actually REACHED the host, as distinct from
- * merely being true of the editor's own state.
+ * merely being true of the editor's own state. `onSelectionChange` is the same host wiring for
+ * the caret.
  *
  * `scrRef` is only needed by the ref methods that guard on it (`applyMarkerMenuSelection`,
  * `insertMarker`); the rest of the suite leaves it off, and those methods then throw by design.
@@ -155,7 +168,7 @@ async function mountEditor(
 export async function mountStandardViewEditor(
   usj: Usj,
   options: MountOptions = {},
-): Promise<{ ref: RefObject<EditorRef | null>; lexical: LexicalEditor }> {
+): Promise<MountedEditor> {
   return mountEditor(usj, requireStandardViewOptions(), options);
 }
 
@@ -165,9 +178,7 @@ export async function mountStandardViewEditor(
  * note's content to be genuinely inline-editable in the mounted editor (the default Standard view
  * collapses notes to a caller preview, never inline-editable).
  */
-export async function mountExpandedNoteEditor(
-  usj: Usj,
-): Promise<{ ref: RefObject<EditorRef | null>; lexical: LexicalEditor }> {
+export async function mountExpandedNoteEditor(usj: Usj): Promise<MountedEditor> {
   return mountEditor(usj, expandedNoteViewOptions());
 }
 

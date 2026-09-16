@@ -28,6 +28,8 @@ import {
   ImmutableTypedTextNode,
   ImmutableUnmatchedNode,
   isSerializedImpliedParaNode,
+  isSerializedMarkerNode,
+  isSerializedTextNode,
   isSerializedTypedMarkNode,
   isCursorPlaceholderOnly,
   LoggerBasic,
@@ -445,14 +447,90 @@ function replaceMarkWithMilestones(
   }
 }
 
+/**
+ * Whether the node at `nodes[index]` sits immediately after an opening char-span glyph — the
+ * serialized twin of `$charSeparatorPrefixLength` (markerSeparators.utils.ts). The previous
+ * sibling is read through a `TypedMarkNode` on both sides exactly as the live predicate does: if
+ * it IS a mark, its deepest last descendant stands in for it (a mark that ends right before this
+ * node hides the glyph as its last child); if `nodes[index]` itself has no earlier sibling
+ * because `nodes` is a mark's own unwrapped children, `precedingSibling` — threaded in from the
+ * enclosing call exactly like `isCharChild` — carries the search outward, ascending through as
+ * many mark levels as the live predicate's `previous ??= child.getPreviousSibling()` loop does.
+ *
+ * `isCharChild` stands in for the live predicate's char-span-glyph classifier
+ * (`$charGlyphNestedValue`), approximated rather than reproduced: this codebase's adaptors never
+ * place a bare "opening" marker sibling here for anything but a char span's own opener — a
+ * milestone or verse-attribute display run's glyphs live inside an `AttributeRunNode` wrapper
+ * (`recurseNodes` skips it wholesale below) or a textType "attribute" `TextNode` (filtered out
+ * before this runs) — so "found inside a char span's children" already is the distinction.
+ */
+function precedesOpeningCharGlyph(
+  nodes: SerializedLexicalNode[],
+  index: number,
+  precedingSibling: SerializedLexicalNode | undefined,
+  isCharChild: boolean,
+): boolean {
+  if (!isCharChild) return false;
+  let previous = index > 0 ? nodes[index - 1] : precedingSibling;
+  while (previous && isSerializedTypedMarkNode(previous)) {
+    const { children } = previous;
+    previous = children.length > 0 ? children[children.length - 1] : undefined;
+  }
+  return isSerializedMarkerNode(previous) && previous.markerSyntax === "opening";
+}
+
+/** The serialized twin of `$throughMarks` (attributeDisplay.utils.ts): an annotation mark is
+ * presentation this export splices away, so a slot identified by its position among its parent's
+ * children has to see through one. */
+function serializedThroughMarks(
+  node: SerializedLexicalNode | undefined,
+): SerializedLexicalNode | undefined {
+  let current = node;
+  while (isSerializedTypedMarkNode(current)) current = current.children[0];
+  return current;
+}
+
+/**
+ * The one child of `noteChildren` that renders a note's EDITABLE caller, if any — the serialized
+ * twin of `$noteEditableCallerNode` (attributeDisplay.utils.ts): skip the leading opening
+ * `marker` nodes, look through any annotation mark at that position, and the next child is the
+ * caller slot only when it is a serialized plain text node whose text equals
+ * `getEditableCallerText(caller)`. A `marker` candidate there (an absent-caller shape, opening
+ * glyph immediately followed by closing glyph) never carries that text, so failing the type check
+ * first is equivalent to the live predicate's `$isTextNode` guard followed by the same text
+ * comparison.
+ */
+function noteCallerSlotNode(
+  noteChildren: SerializedLexicalNode[],
+  caller: string,
+): SerializedTextNode | undefined {
+  let index = 0;
+  while (index < noteChildren.length) {
+    const child = noteChildren[index];
+    if (!isSerializedMarkerNode(child) || child.markerSyntax !== "opening") break;
+    index++;
+  }
+  const candidate = serializedThroughMarks(noteChildren[index]);
+  if (isSerializedTextNode(candidate) && candidate.text === getEditableCallerText(caller))
+    return candidate;
+  return undefined;
+}
+
 // Keep this function's content semantics in sync with `$getLogicalContentItems` in
 // `libs/shared/src/nodes/usj/node.utils.ts` — the logical content model mirrors which nodes
 // this export skips, splices (TypedMarkNodes), and coalesces into single text strings.
 function recurseNodes(
   nodes: SerializedLexicalNode[],
   viewOptions: ViewOptions | undefined,
-  noteCaller?: string,
+  // Identity, not text: the one node `noteCallerSlotNode` picked out as a note's editable
+  // caller, threaded down so the TextNode case below can drop that exact node and no other —
+  // never re-derived by comparing text, or content that coincidentally matches the caller's
+  // rendered text anywhere else in the note would be dropped too.
+  callerSlot?: SerializedTextNode,
   isCharChild = false,
+  // The effective previous sibling for `nodes[0]`, when `nodes` is a TypedMarkNode's own
+  // unwrapped children — see `precedesOpeningCharGlyph`.
+  precedingSibling?: SerializedLexicalNode,
 ): MarkerContent[] | undefined {
   const markers: MarkerContent[] = [];
   let childMarkers: MarkerContent[] | undefined;
@@ -536,7 +614,11 @@ function recurseNodes(
         markers.push(
           createNoteMarker(
             serializedNoteNode,
-            recurseNodes(serializedNoteNode.children, viewOptions, serializedNoteNode.caller),
+            recurseNodes(
+              serializedNoteNode.children,
+              viewOptions,
+              noteCallerSlotNode(serializedNoteNode.children, serializedNoteNode.caller),
+            ),
           ),
         );
         break;
@@ -558,15 +640,18 @@ function recurseNodes(
         break;
       case TypedMarkNode.getType():
         // An annotation mark is presentation the splice below strips, so its children serialize
-        // exactly as if they were direct children here — the note-caller and char-child context
-        // must survive the re-entry, or a mark wrapping a char span's first text hides the
-        // structural NBSP from the strip (a fabricated leading space in the file) and a mark
-        // wrapping a note's caller text emits the caller as content.
+        // exactly as if they were direct children here — the char-child context must survive the
+        // re-entry, or a mark wrapping a char span's first text hides the structural NBSP from
+        // the strip (a fabricated leading space in the file). `callerSlot` survives the re-entry
+        // for the same reason: `noteCallerSlotNode` looks through a mark at the caller position,
+        // so the anchored node can be nested inside one, and the drop below has to reach it or
+        // the caller's display bytes are fabricated into the note's saved content.
         childMarkers = recurseNodes(
           serializedMarkNode.children,
           viewOptions,
-          noteCaller,
+          callerSlot,
           isCharChild,
+          index > 0 ? nodes[index - 1] : precedingSibling,
         );
         if (childMarkers) {
           const commentIDs = serializedMarkNode.typedIDs[COMMENT_MARK_TYPE];
@@ -610,14 +695,24 @@ function recurseNodes(
           // usj-editor.adaptor's `addCharAttributes`) carry no NBSP prefix to strip against, so
           // the prefix check above can't catch them; the textType state tag is the only signal.
           serializedTextNode[NODE_STATE_KEY]?.textType !== "attribute" &&
-          (!noteCaller || serializedTextNode.text !== getEditableCallerText(noteCaller))
+          // Identity, not text equality: only the ONE node `noteCallerSlotNode` anchored as the
+          // note's caller is excluded, so note content that coincidentally reads the same as the
+          // caller (anywhere else in the note) still round-trips as data.
+          node !== callerSlot
         ) {
           let text = createTextMarker(serializedTextNode);
           // Standard view stores display text; invert and normalize on serialization. A
           // char marker's leading NBSP separator (added by the forward adaptor's `createChar`)
-          // must be stripped before inversion so it isn't misread as a collapsed space run.
+          // must be stripped before inversion so it isn't misread as a collapsed space run — but
+          // only when this text is the glyph-adjacent separator host, not any text that merely
+          // happens to start with NBSP (e.g. an authored NBSP right after a nested span's
+          // closer), or the byte is eaten instead of round-tripping as data.
           if (isStandardView(viewOptions)) {
-            if (isCharChild && text.startsWith(NBSP)) text = text.slice(1);
+            if (
+              precedesOpeningCharGlyph(nodes, index, precedingSibling, isCharChild) &&
+              text.startsWith(NBSP)
+            )
+              text = text.slice(1);
             text = normalizeSpaceRuns(displayTextToUsj(text));
           }
           combineTextContentOrAdd(markers, text);

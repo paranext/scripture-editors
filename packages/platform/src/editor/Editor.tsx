@@ -34,6 +34,16 @@ import {
   LastKnownCaret,
 } from "./markerEdit/virtualSettle.utils";
 import { ParaMarkerPrefixGuardPlugin } from "./ParaMarkerPrefixGuardPlugin";
+import {
+  isLiveSettledIdentical,
+  SettledPositionContext,
+  SettledScopeCache,
+} from "./positions/settledPositions.model";
+import {
+  $liveSelectionFromSettled,
+  $settledSelectionFromLive,
+} from "./positions/settledPositions.utils";
+import { $prepareSettleScopes } from "./positions/settledScopes.utils";
 import { ScriptureReferencePlugin } from "./ScriptureReferencePlugin";
 import TreeViewPlugin from "./TreeViewPlugin";
 import { ToolbarPlugin } from "./toolbar/ToolbarPlugin";
@@ -57,7 +67,9 @@ import {
   EditorState,
   LexicalEditor,
   HISTORIC_TAG,
+  PointType,
   REDO_COMMAND,
+  SELECTION_CHANGE_COMMAND,
   UNDO_COMMAND,
 } from "lexical";
 import {
@@ -94,9 +106,9 @@ import {
   $applyUpdate,
   $getNoteByKeyOrIndex,
   $getParticularNodeOps,
-  $getUsjSelectionFromEditor,
   $getRangeFromUsjSelection,
   $getReplaceEmbedOps,
+  $getUsjSelectionFromEditor,
   $insertNote,
   $selectNote,
   AnnotationPlugin,
@@ -126,17 +138,18 @@ import {
   ParaNodePlugin,
   pasteSelection,
   pasteSelectionAsPlainText,
+  SelectionRange,
   StateChangePlugin,
   StateChangeSnapshot,
   StructureKeyboardPlugin,
   TextDirectionPlugin,
   TextSpacingPlugin,
   TrailingNoteCaretGuardPlugin,
+  usjBlockVerseNodes,
   UsjNodeOptions,
   UsjNodesMenuPlugin,
-  ViewOptions,
-  usjBlockVerseNodes,
   usjReactNodes,
+  ViewOptions,
 } from "shared-react";
 
 const defaultViewOptions = getDefaultViewOptions();
@@ -145,6 +158,22 @@ const defaultOptions: EditorOptions = {};
 
 function Placeholder(): ReactElement {
   return <div className="editor-placeholder">Enter some Scripture...</div>;
+}
+
+/**
+ * Whether a selection point sits strictly inside a text run — neither at its start nor its end.
+ * Lexical's own DOM `selectionchange` listener drops the resulting `SELECTION_CHANGE_COMMAND`
+ * dispatch when both the anchor and the focus resolve to such a point (`shouldSkipSelectionChange`
+ * in Lexical's core selection handling), on the reasoning that a caret move confined to a text
+ * node's interior needs no further reconciliation. An element-type point, or one at a text node's
+ * boundary, is never skipped.
+ */
+function $isInteriorTextPoint(point: PointType): boolean {
+  return (
+    point.type === "text" &&
+    point.offset !== 0 &&
+    point.offset !== point.getNode().getTextContentSize()
+  );
 }
 
 /**
@@ -195,6 +224,18 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // Lexical's live selection before a getUsj() read that races it. Consumed only as
   // `$verifiedTransientLiteral`'s fallback (virtualSettle.utils.ts) — see its own doc comment.
   const lastKnownCaretRef = useRef<LastKnownCaret | undefined>(undefined);
+  // Settle scopes memoized on their content, so the position APIs reuse one basis across a run of
+  // calls against an unchanged pending state instead of re-settling per call. Per-instance for the
+  // same reason `transientInputRef` is.
+  const settledScopeCacheRef = useRef<SettledScopeCache>({ entries: new Map() });
+  // Which deferred selection report is still the current one. Every dispatch takes the next
+  // ticket, so when several arrive in one tick only the last one's deferred report is delivered.
+  const selectionReportTicketRef = useRef(0);
+  // Whether this instance is still mounted. `editorRef` cannot answer that: `EditorRefPlugin`
+  // assigns it in an effect with NO cleanup, so it still names this editor after the tree is gone,
+  // and a deferred report that trusted it would force-commit a detached editor and call back into
+  // a torn-down view.
+  const isMountedRef = useRef(true);
   // The document most recently ANNOUNCED to the host via `onUsjChange` — the yardstick the
   // historic-commit notifier below measures against, so undo/redo only re-announce a document the
   // host has not already been told about. Written on every emission (typed, applied, historic)
@@ -416,6 +457,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     if (effectiveIsReadonly) throw new Error(`Cannot ${operation} in readonly mode`);
   };
 
+  // Registered per layout so an editor that isn't using block verse never holds its node. Named
+  // rather than inlined into `initialConfig` because a settled-position scratch editor has to
+  // register the SAME nodes to parse a settled rebuild at all.
+  const editorNodes = useMemo(
+    () => [TypedMarkNode, ...(isBlockVerse ? usjBlockVerseNodes : usjReactNodes)],
+    [isBlockVerse],
+  );
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
       namespace: "platformEditor",
@@ -426,10 +474,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       onError(error) {
         throw error;
       },
-      // Registered per layout so an editor that isn't using block verse never holds its node.
-      nodes: [TypedMarkNode, ...(isBlockVerse ? usjBlockVerseNodes : usjReactNodes)],
+      nodes: editorNodes,
     }),
-    [effectiveIsReadonly, isBlockVerse, viewOptions.showCharMarkerTitles],
+    [effectiveIsReadonly, editorNodes, viewOptions.showCharMarkerTitles],
   );
   editorUsjAdaptor.initialize(stableLogger);
 
@@ -471,6 +518,146 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       ) ?? editedUsjRef.current
     );
   }, [viewOptions, markerLookup, stableLogger]);
+
+  /**
+   * Everything a settled↔live position translation needs about the editor's pending state
+   * (positions/settledPositions.model.ts). Built the same way `readSettledUsj` builds its settle
+   * arguments, so the document a host is told about and the coordinates it is told in are one
+   * pending state. Does not need to be inside a read — `getPendedDisplayOwners` consults the
+   * marker-edit engine's ledger, not the tree — so a caller that already holds one
+   * (`readSettledSelection`) and a caller with none are equally free to call it.
+   */
+  const buildSettledPositionContext = useCallback((): SettledPositionContext | undefined => {
+    const editor = editorRef.current;
+    if (!editor) return undefined;
+    const context: SettledPositionContext = {
+      pendedKeys: getPendedDisplayOwners(editor) ?? new Set<string>(),
+      transientInput: transientInputRef.current,
+      lastKnownCaret: lastKnownCaretRef.current,
+      tier2: { viewOptions, getMarker: markerLookup, logger: stableLogger },
+      nodes: editorNodes,
+      cache: settledScopeCacheRef.current,
+    };
+    // Nothing pending and nothing declared means no cached plan can still be valid, and each one
+    // holds a scratch editor plus references to live nodes the tree may have since replaced. Every
+    // caller skips the read on that path, so this is the only place the sweep can run.
+    if (isLiveSettledIdentical(context)) context.cache.entries.clear();
+    return context;
+  }, [viewOptions, markerLookup, stableLogger, editorNodes]);
+
+  /**
+   * A host's position restated in LIVE coordinates. Every `jsonPath` a host holds came from
+   * `getUsj()`, which is the SETTLED document, and the resolvers below all walk the live tree — so
+   * while anything is pending those are two different documents and the position has to be carried
+   * across before it is resolved (positions/settledPositions.utils.ts).
+   *
+   * `undefined` means the position could not be carried across, which callers must treat as a
+   * refusal: resolving it against the live tree anyway is exactly the silent mis-anchor this
+   * exists to prevent.
+   *
+   * `getEditorState().read`, NOT `editor.read` — the latter force-flushes an in-flight update
+   * mid-dispatch, and a host can call these from anywhere.
+   */
+  const liveSelectionFromSettled = useCallback(
+    <T extends SelectionRange | AnnotationRange>(settled: T): T | undefined => {
+      const editor = editorRef.current;
+      const context = buildSettledPositionContext();
+      if (!editor || !context) return undefined;
+      // The two documents are the same one, so skipping the read keeps the common call as cheap
+      // as it has always been.
+      if (isLiveSettledIdentical(context)) return settled;
+      return editor.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        return $liveSelectionFromSettled(context, prepared, settled);
+      });
+    },
+    [buildSettledPositionContext],
+  );
+
+  // Clears the mount flag above. Declared beside its only consumers rather than with the other
+  // effects, since the flag is meaningless apart from them.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  /**
+   * The editor's selection in the coordinates the host reads — the SETTLED ones — flushing any
+   * in-flight update first, so what is reported is the committed document rather than a half-built
+   * one.
+   *
+   * The pending state is read INSIDE the flush rather than before it, because the commit this
+   * forces can settle the very pend that made a translation necessary in the first place.
+   *
+   * `undefined` is two different answers: there is nothing to report (no range selection, or a
+   * layout with no USJ locations at all), and the position could not be expressed against the
+   * settled document. Only the second loses the host something, so only it is logged.
+   */
+  const readSettledSelection = useCallback(
+    (editor: LexicalEditor, caller: string): SelectionRange | undefined =>
+      editor.read(() => {
+        const context = buildSettledPositionContext();
+        const settled = context && $settledSelectionFromLive($prepareSettleScopes(context));
+        if (!settled && !isBlockVerse && $isRangeSelection($getSelection()))
+          stableLogger?.warn(
+            `${caller} refused: the selection could not be expressed against the document the ` +
+              "host is reading",
+          );
+        return settled;
+      }),
+    [buildSettledPositionContext, isBlockVerse, stableLogger],
+  );
+
+  /**
+   * The host-facing selection report, deferred past the commit whenever a translation is needed.
+   *
+   * `OnSelectionChangePlugin` fires inside the ACTIVE, UNCOMMITTED update that moved the
+   * selection — deliberately, so an ordinary caret move is not reported one interaction late.
+   * Preparing a settle scope creates nodes (in a scratch editor), which must not happen there, and
+   * the committed state a scope would be prepared against is still the PRE-move one. So a report
+   * that needs translating waits for the commit and is coalesced to one per tick; a report that
+   * needs none keeps the plugin's own timing exactly.
+   *
+   * Which of the two it is, is decided against the marker-edit engine's ledger as it stands DURING
+   * the dispatch, while the synchronous report carries the plugin's in-flight coordinates. Those
+   * two agree except in one shape: an update that creates the document's FIRST pend and dispatches
+   * a selection change within itself is still identity at dispatch time, so that one report goes
+   * out in live coordinates. It is a single report, immediately followed by a settle whose own
+   * dispatch reports settled coordinates — deliberately preferred over deferring every report on
+   * the chance that a pend appears later in the same update.
+   */
+  const handleSelectionChange = useCallback(
+    (liveSelection: SelectionRange | undefined) => {
+      if (!onSelectionChange) return;
+      const editor = editorRef.current;
+      const context = buildSettledPositionContext();
+      // Take a ticket on BOTH paths. A synchronous report is still the newest report, so it has to
+      // supersede a deferred one already queued from an earlier dispatch in the same tick —
+      // otherwise that microtask still matches the current ticket and reports a second time.
+      selectionReportTicketRef.current += 1;
+      const ticket = selectionReportTicketRef.current;
+      if (!editor || !context || isLiveSettledIdentical(context)) {
+        onSelectionChange(liveSelection);
+        return;
+      }
+      queueMicrotask(() => {
+        if (!isMountedRef.current) return;
+        if (ticket !== selectionReportTicketRef.current || editorRef.current !== editor) return;
+        // `editor.read`, NOT `getEditorState().read`: the commit this is waiting for may still be
+        // Lexical's own pending microtask, and only `read` flushes it first. The force-flush that
+        // is a hazard inside a command listener is exactly what is wanted here, where the update
+        // it would flush is no longer in flight.
+        const settled = readSettledSelection(editor, "onSelectionChange");
+        // That flush can dispatch a further selection change of its own, whose report supersedes
+        // this one.
+        if (ticket !== selectionReportTicketRef.current) return;
+        onSelectionChange(settled);
+      });
+    },
+    [onSelectionChange, buildSettledPositionContext, readSettledSelection],
+  );
 
   // Built as a plain object (rebuilt per render, same as the previous inline useImperativeHandle
   // factory) and assigned to editorApiRef UNCONDITIONALLY below — never inside the
@@ -609,18 +796,55 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         reportUsjLocationsUnavailable("get the selection");
         return undefined;
       }
-      return editorRef.current?.read($getUsjSelectionFromEditor);
+      const editor = editorRef.current;
+      if (!editor) return undefined;
+      // The host resolves what this returns against `getUsj()`, which is the SETTLED document, so
+      // a live position has to be carried across before it is reported
+      // (positions/settledPositions.utils.ts).
+      //
+      // `editor.read` here, where the inbound entry points below use `getEditorState().read`: this
+      // is a host QUESTION, asked from outside any dispatch, and the answer has to describe the
+      // document the host would get from `getUsj()` — so flushing an update that is merely queued
+      // is the point, not a hazard. The inbound methods are called from anywhere, including from
+      // inside an in-flight update, where the same flush is the frozen-commit crash.
+      const context = buildSettledPositionContext();
+      if (!context || isLiveSettledIdentical(context))
+        return editor.read($getUsjSelectionFromEditor);
+      return readSettledSelection(editor, "getSelection");
     },
     setSelection(selection) {
       if (isBlockVerse) {
         reportUsjLocationsUnavailable("set the selection");
         return;
       }
+      const live = liveSelectionFromSettled(selection);
+      if (!live) {
+        stableLogger?.warn(
+          "setSelection refused: the position could not be resolved against the document " +
+            "currently being edited",
+        );
+        return;
+      }
       editorRef.current?.update(() => {
-        const editorSelection = $getRangeFromUsjSelection(selection);
+        const editorSelection = $getRangeFromUsjSelection(live);
         if (editorSelection !== undefined) {
           $setSelection(editorSelection);
           $addUpdateTag(SELECTION_CHANGE_TAG);
+          // A placement whose anchor and focus both land inside a text run's interior is exactly
+          // the shape Lexical's own selectionchange listener drops (see `$isInteriorTextPoint`),
+          // so the host would otherwise never hear the caret moved. Dispatching here instead of
+          // there is safe: `OnSelectionChangePlugin` registers `SELECTION_CHANGE_COMMAND` as a
+          // bare `$` listener, and Lexical runs command listeners for the currently active editor
+          // inline (`triggerCommandListeners` -> `updateEditorSync`), so this still executes inside
+          // THIS update, against the pending selection just set above, exactly once. A boundary or
+          // element-type endpoint is left alone: Lexical's own listener already reports those, and
+          // dispatching again here would report the same placement twice.
+          if (
+            $isInteriorTextPoint(editorSelection.anchor) &&
+            $isInteriorTextPoint(editorSelection.focus)
+          ) {
+            editorRef.current?.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+          }
         }
       });
     },
@@ -660,8 +884,17 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         onMouseLeave = fourth.onMouseLeave;
       }
 
+      const live = liveSelectionFromSettled(selection);
+      if (!live) {
+        stableLogger?.warn(
+          `setAnnotation refused for ${type} "${id}": the range could not be resolved against ` +
+            "the document currently being edited",
+        );
+        return;
+      }
+
       annotationRef.current?.setAnnotation(
-        selection,
+        live,
         externalTypedMarkType(type),
         id,
         onClick,
@@ -882,11 +1115,19 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     insertNote(marker, caller, selection) {
       assertEditable("insert a note");
+      const live = selection && liveSelectionFromSettled(selection);
+      if (selection && !live) {
+        stableLogger?.warn(
+          `insertNote refused for \\${marker}: the position could not be resolved against the ` +
+            "document currently being edited",
+        );
+        return;
+      }
       editorRef.current?.update(() => {
         const noteNode = $insertNote(
           marker,
           caller,
-          selection,
+          live,
           scrRef,
           viewOptions,
           nodeOptions,
@@ -1099,7 +1340,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             viewOptions={viewOptions}
             logger={stableLogger}
           />
-          <OnSelectionChangePlugin onChange={onSelectionChange} />
+          <OnSelectionChangePlugin onChange={handleSelectionChange} />
           <DeltaOnChangePlugin
             onChange={handleChange}
             ignoreSelectionChange

@@ -1,5 +1,6 @@
 import {
   $milestoneAttributeRunPieces,
+  $noteEditableCallerNode,
   $verseAttributeRunPieces,
   $verseOfAttributeSourceText,
   canonicalAttributeText,
@@ -12,15 +13,18 @@ import {
   AttributeRunNode,
 } from "./AttributeRunNode.js";
 import { $createCharNode } from "./CharNode.js";
+import { usjBaseNodes } from "./index.js";
+import { $createNoteNode, NoteNode } from "./NoteNode.js";
 import { $caretHoldsRunSite, $runEntirelyAbsent, $syncDisplayRun } from "./displayRunSync.utils.js";
 import { $createMilestoneNode, MilestoneNode } from "./MilestoneNode.js";
-import { getVisibleOpenMarkerText } from "./node.utils.js";
+import { getEditableCallerText, getVisibleOpenMarkerText } from "./node.utils.js";
 import { NBSP } from "./node-constants.js";
 import { $createParaNode } from "./ParaNode.js";
 import { registerPendedDisplayOwners } from "./pendedDisplayOwners.utils.js";
 import { createBasicTestEnvironment, updateSelection } from "./test.utils.js";
 import { $createVerseNode, VerseNode } from "./VerseNode.js";
 import { $createMarkerNode, $isMarkerNode } from "../features/MarkerNode.js";
+import { $createTypedMarkNode, TypedMarkNode } from "../features/TypedMarkNode.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { displayRunDescriptor } from "../../displayRun/displayRunRegistry.js";
 import { $createTextNode, $getRoot, $isTextNode, $setState, TextNode } from "lexical";
@@ -1218,5 +1222,75 @@ describe("orderedAttributes inherited-property safety", () => {
 
     expect(result).toEqual({ who: "x" });
     expect(Object.hasOwn(result, "constructor")).toBe(false);
+  });
+});
+
+describe("$noteEditableCallerNode", () => {
+  /**
+   * The expanded editable note shell the forward adaptor builds: the opening `\f` glyph, the
+   * caller as a plain text node holding exactly `getEditableCallerText(caller)`, then the note's
+   * content — a `\ft` char span, so the caller stays its own node (Lexical merges adjacent
+   * simple text nodes, which a loose body string would trigger). `wrapCaller` puts an annotation
+   * mark around the caller, the shape a comment placed on it leaves behind.
+   */
+  function buildExpandedNote(wrapCaller: boolean) {
+    // TypedMarkNode is not one of `usjBaseNodes` — an annotation mark is a feature node the
+    // hosting plugin registers, and this suite needs one to wrap the caller with.
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    let note!: NoteNode;
+    let caller!: TextNode;
+    editor.update(
+      () => {
+        note = $createNoteNode("f", "+");
+        caller = $createTextNode(getEditableCallerText("+"));
+        note.append(
+          $createMarkerNode("f", "opening"),
+          wrapCaller ? $createTypedMarkNode({ "external-test": ["1"] }).append(caller) : caller,
+          $createCharNode("ft").append($createTextNode("body")),
+        );
+        $getRoot().append($createParaNode("p").append(note));
+      },
+      { discrete: true },
+    );
+    return { editor, note, caller };
+  }
+
+  it("finds the caller text node directly under the note", () => {
+    const { editor, note, caller } = buildExpandedNote(false);
+
+    editor.getEditorState().read(() => {
+      expect($noteEditableCallerNode(note)?.is(caller)).toBe(true);
+    });
+  });
+
+  it("finds the caller through an annotation mark wrapping it", () => {
+    // An annotation mark is presentation every USJ-facing view of the tree splices away, so a
+    // slot identified by its position among its parent's children has to see through one. A
+    // caller the exporter no longer recognizes is a caller it no longer drops, and its display
+    // bytes are fabricated into the note's saved content.
+    const { editor, note, caller } = buildExpandedNote(true);
+
+    editor.getEditorState().read(() => {
+      expect($noteEditableCallerNode(note)?.is(caller)).toBe(true);
+    });
+  });
+
+  it("refuses a slot whose text is not the caller, marked or not", () => {
+    const { editor, note } = buildExpandedNote(true);
+
+    editor.update(
+      () => {
+        const marked = note.getChildren()[1];
+        if (!("getChildren" in marked)) throw new Error("expected the wrapping mark");
+        const inner = (marked as unknown as NoteNode).getChildren()[0];
+        if (!$isTextNode(inner)) throw new Error("expected the wrapped caller text");
+        inner.setTextContent(`${getEditableCallerText("+")}drifted`);
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      expect($noteEditableCallerNode(note)).toBeUndefined();
+    });
   });
 });

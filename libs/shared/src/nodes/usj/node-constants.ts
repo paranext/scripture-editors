@@ -26,6 +26,15 @@ export const GENERATOR_NOTE_CALLER = "+";
  */
 export const HIDDEN_NOTE_CALLER = "-";
 
+/**
+ * Registered type name of the decorator node a collapsed note renders its caller with
+ * (shared-react's `ImmutableNoteCallerNode`). Declared here because this layer must recognize the
+ * node — the editor→USJ conversion emits nothing for it, so it holds no USJ content position —
+ * while being unable to import a react-layer class. The class itself returns this constant from
+ * `getType()`, so the name lives in exactly one place.
+ */
+export const IMMUTABLE_NOTE_CALLER_NODE_TYPE = "immutable-note-caller";
+
 export const CHAPTER_CLASS_NAME = "chapter";
 export const VERSE_CLASS_NAME = "verse";
 export const INVALID_CLASS_NAME = "invalid";

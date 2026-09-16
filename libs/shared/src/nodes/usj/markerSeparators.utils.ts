@@ -38,8 +38,9 @@
  */
 
 import { $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
+import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { textTypeState } from "../collab/delta.state.js";
-import { CharNode } from "./CharNode.js";
+import { $isCharNode, CharNode } from "./CharNode.js";
 import { $charGlyphNestedValue } from "./nestedGlyphs.utils.js";
 import { NBSP } from "./node-constants.js";
 import {
@@ -70,6 +71,47 @@ export function $isSeparatorPrefixHostText(node: LexicalNode | null | undefined)
     node.getType() === TextNode.getType() &&
     $getState(node, textTypeState) !== "attribute"
   );
+}
+
+/**
+ * How many of `node`'s leading characters are the char-span separator rather than content: `1`
+ * when `node` is a plain TextNode carrying an opening char glyph's separator NBSP as its prefix,
+ * `0` otherwise.
+ *
+ * The separator is display state the editor→USJ conversion strips, so that byte is not part of
+ * the span's USJ text: anything that measures content or maps between live and settled text
+ * offsets must skip it, or every offset inside a char span is off by one. Shape-based on purpose
+ * — glyph adjacency, not view options, which this layer does not see. Standard view's strip
+ * (`precedesOpeningCharGlyph` in `editor-usj.adaptor.ts`) decides the same way over the serialized
+ * tree, so an authored `~` right after a nested closer survives the export. The editable
+ * non-Standard strip in `createCharMarker` is still the coarser "first coalesced string starts
+ * with NBSP" rule and can disagree with this one while a span's opening glyph is mid-edit.
+ *
+ * Read-only: safe inside `editor.update()` or either read form.
+ */
+export function $charSeparatorPrefixLength(node: TextNode): 0 | 1 {
+  if (!$isSeparatorPrefixHostText(node) || !node.getTextContent().startsWith(NBSP)) return 0;
+  // The span is the nearest non-annotation ancestor, and the glyph is whatever sits immediately
+  // before the text in document order within it — annotation wrappers are transparent on BOTH
+  // sides. A host can annotate a range that starts on the opening glyph (a marker location), so
+  // the glyph can share the text's mark, sit in a mark of its own, or be a plain sibling of the
+  // mark the text is in.
+  let child: LexicalNode = node;
+  let previous: LexicalNode | null = child.getPreviousSibling();
+  let parent = child.getParent();
+  while (parent && $isTypedMarkNode(parent)) {
+    child = parent;
+    parent = child.getParent();
+    previous ??= child.getPreviousSibling();
+  }
+  if (!$isCharNode(parent)) return 0;
+  // A mark that ends right before the text hides the glyph as its last descendant.
+  while ($isTypedMarkNode(previous)) previous = previous.getLastChild();
+  if (!$isMarkerNode(previous) || previous.getMarkerSyntax() !== "opening") return 0;
+  // Only char-span glyphs take a separator (not a milestone's display run) — the same classifier
+  // $openerSeparatorGap builds one with, so reading and writing can never disagree about which
+  // glyphs own one.
+  return $charGlyphNestedValue(previous, parent) === undefined ? 0 : 1;
 }
 
 /**

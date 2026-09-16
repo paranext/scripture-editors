@@ -24,6 +24,7 @@ import {
   USJ_VERSION,
 } from "@eten-tech-foundation/scripture-utilities";
 import {
+  $createRangeSelection,
   $getNodeByKey,
   $getSelection,
   $getState,
@@ -33,8 +34,10 @@ import {
   $isRootNode,
   $isTextNode,
   $parseSerializedNode,
+  $setSelection,
   ElementNode,
   LexicalNode,
+  NodeKey,
   SerializedLexicalNode,
   TextNode,
 } from "lexical";
@@ -52,8 +55,10 @@ import {
   $isUnknownNode,
   $isVerseNode,
   $isMarkerTrailingSeparator,
+  $isTypedMarkNode,
   $milestoneAttributeRunPieces,
   $verseAttributeRunPieces,
+  $wrapSelectionInTypedMarkNode,
   closingMarkerText,
   getEditableCallerText,
   getMarker as bundledGetMarker,
@@ -70,6 +75,11 @@ import {
   NoteNode,
   ParaNode,
   textTypeState,
+  TypedMarkNode,
+  TypedMarkOnClick,
+  TypedMarkOnMouseEnter,
+  TypedMarkOnMouseLeave,
+  TypedMarkOnRemove,
   usfmFragmentToUsjContent,
   VerseNode,
 } from "shared";
@@ -101,6 +111,18 @@ export interface FragmentSpan {
   start: number;
   end: number;
   isSentinel: boolean;
+}
+
+/**
+ * A resolved position in a tree, in Lexical's own point terms: `type: "text"` is an offset within
+ * the TextNode `key` names, `type: "element"` a child-index boundary within the ElementNode it
+ * names. Produced by {@link $resolveFragmentByteAnchor}; an element point is how a position past a
+ * construct the caret cannot enter (a closing glyph, a preserved node run) is expressed.
+ */
+export interface FragmentPoint {
+  key: NodeKey;
+  offset: number;
+  type: "text" | "element";
 }
 
 /**
@@ -608,6 +630,15 @@ function $appendSignature(
       out.push(SIGNATURE_OPEN, "char", JSON.stringify(node.getUnknownAttributes() ?? null));
       $appendSignature(node.getChildren(), out, getMarkerFn, true);
       out.push(SIGNATURE_CLOSE);
+    } else if ($isTypedMarkNode(node)) {
+      // Transparent, mirroring `$appendNodesFragment`'s own wrapper branch: an annotation is a
+      // host overlay, not document content, and the fragment the rebuilt side is tokenized from
+      // carries only its children's bytes. Tagging the wrapper here would make every annotated
+      // paragraph compare unequal to its own re-tokenization forever — a scope that can never
+      // report a fixed point re-splices, and re-notifies the host, on every settle it is driven
+      // through. A mark's children sit in the SAME content positions the wrapper occupies, so
+      // `insideCharChildren` passes through with them.
+      $appendSignature(node.getChildren(), out, getMarkerFn, insideCharChildren);
     } else if ($isElementNode(node)) {
       out.push(SIGNATURE_OPEN, node.getType());
       $appendSignature(node.getChildren(), out, getMarkerFn);
@@ -715,6 +746,14 @@ export function serializedRunWrapperChildren(
  * mistaken no-op refusal. A matching signature is the only outcome that would need this function
  * to classify a node identically to `$appendSignature`, and a fresh sentinel-class node can never
  * produce one against content that didn't already contain it.
+ *
+ * Its one classification asymmetry with `$appendSignature` is unreachable rather than deliberate:
+ * the live side treats a `TypedMarkNode` TRANSPARENTLY (an annotation is a host overlay, not
+ * document content) while this side has no mark branch and would tag one in its generic element
+ * branch below — but a mark contributes no bytes to the fragment a rebuild is tokenized from, so
+ * the rebuilt side never carries the comment-milestone bytes a serialized mark is built out of
+ * (`replaceMilestonesWithMarkRecurse`, usj-editor.adaptor.ts). Were one ever to reach here, the
+ * comparison would come out UNEQUAL, which splices rather than mistakenly refuses.
  */
 export function serializedSignatureOf(
   nodes: SerializedLexicalNode[],
@@ -1002,10 +1041,12 @@ function $appendNodesFragment(
           : contentFragmentText($textNodeFragmentText(node), viewOptions, structuralLead),
       );
     } else if ($isElementNode(node)) {
-      // TypedMarkNode and other transparent wrappers: annotation marks are
-      // host-reapplied overlays; their text content is rebuilt as plain content — in the SAME
-      // content positions the wrapper occupies, so a char span's pending structural lead passes
-      // through to the wrapper's children instead of being consumed by the wrapper itself.
+      // TypedMarkNode and other transparent wrappers: an annotation is a host overlay, never
+      // document content, so only its children's text reaches the tokenizer — in the SAME content
+      // positions the wrapper occupies, so a char span's pending structural lead passes through to
+      // the wrapper's children instead of being consumed by the wrapper itself. The wrapper is
+      // re-applied around the same bytes after the splice (`$restoreMarkByteRanges`), which
+      // is the only thing that brings a mark back — nothing here can.
       $appendChildrenFragment(node, out, getMarkerFn, viewOptions, charLead);
     } else {
       consumeCharLead();
@@ -1047,6 +1088,45 @@ export function $buildParaFragment(
   const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
   $appendChildrenFragment(para, out, getMarkerFn, viewOptions);
   return out;
+}
+
+/**
+ * One paragraph SCOPE's fragment: each paragraph's own fragment ({@link $buildParaFragment})
+ * concatenated, with a single space standing in for the newline between two of them and every
+ * span rebased onto the joined text. `undefined` when the scope is empty or any paragraph in it
+ * is excluded by the guard rails — a scope the engine cannot fully re-derive is never rebuilt.
+ *
+ * A scope of more than one paragraph is the unknown-split rejoin ({@link $unknownSplitRejoinScope},
+ * markerEditTier1.utils.ts), whose whole point is that the tokenizer must see the JOINED bytes.
+ *
+ * ONE definition for every consumer of a paragraph scope's bytes: the mutating rebuild
+ * ({@link $rebuildParas}), the read-only settle (`$settledParaScope`, virtualSettle.utils.ts) and
+ * the settled-position basis (`settledScopes.utils.ts`) all tokenize or byte-map against this
+ * text, so a difference in how any of them joined it would put those three out of agreement about
+ * what the same scope says.
+ *
+ * Read-only: walks the nodes, so call inside `editor.update()` or an editor-state read.
+ */
+export function $buildParaScopeFragment(
+  paras: readonly LexicalNode[],
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): FragmentAccumulator | undefined {
+  if (paras.length === 0) return undefined;
+  const combined: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  for (const para of paras) {
+    if (!$isParaNode(para)) return undefined;
+    const fragment = $buildParaFragment(para, getMarkerFn, viewOptions);
+    if (!fragment) return undefined;
+    if (combined.text.length > 0) combined.text += " ";
+    const base = combined.text.length;
+    fragment.spans.forEach((span) =>
+      combined.spans.push({ ...span, start: span.start + base, end: span.end + base }),
+    );
+    combined.sentinels.push(...fragment.sentinels);
+    combined.text += fragment.text;
+  }
+  return combined;
 }
 
 /** Replace each U+FFFC in the rebuilt tree with the next preserved node run. */
@@ -1157,7 +1237,7 @@ const FRAGMENT_WS = /\s/;
  * by the tokenizer (the degradation property), so the N-th non-whitespace character over the old
  * spans is the same byte over the new ones. A sentinel span counts as its single placeholder char.
  */
-interface CaretByteAnchor {
+export interface CaretByteAnchor {
   nonWsBefore: number;
   wsRun: number;
   /**
@@ -1256,7 +1336,7 @@ function $walkToCaret(
   return undefined;
 }
 
-function $caretSpanByteAnchor(
+export function $caretSpanByteAnchor(
   fragment: { text: string; spans: FragmentSpan[] },
   anchorKey: string,
   anchorOffset: number,
@@ -1288,35 +1368,40 @@ function $isClosingMarkerSpan(span: FragmentSpan): boolean {
 }
 
 /**
- * Place the caret AFTER a closing marker glyph's enclosing span — the append position in the
+ * The position AFTER a closing marker glyph's enclosing span — the append position in the
  * paragraph, PAST the whole char span — for a typed closer (`\nd*`) at paragraph END with nothing
  * after it. The forward scan skips closing glyphs to land on the following content; when there IS no
- * following content (para end), the caret still belongs after the closer, not at the end of the
+ * following content (para end), the position still belongs after the closer, not at the end of the
  * span's inner text (which is the closer glyph's start-of-glyph boundary, i.e. INSIDE the span,
- * where continued typing edits within the marker). `selectNext` off the span, whose closer is its
- * last child, resolves to the paragraph point just after it. Returns whether it placed the caret.
+ * where continued typing edits within the marker). Reported as the element boundary just past the
+ * span, whose closer is its last child.
  *
  * Only a genuine char-span closer has an enclosing span to escape from this way. A verse's
  * `\va`/`\vp` closer and a milestone's self-closing `\*` are never wrapped in a char span — they
  * ride as ordinary PARAGRAPH siblings (`$verseAttributeRun`/`$milestoneDisplayRun`), so the
- * glyph's parent is the paragraph itself. `selectNext` on the PARAGRAPH would move the point past
+ * glyph's parent is the paragraph itself. A boundary past the PARAGRAPH would move the point past
  * the whole paragraph (into the next block, or off the end of the document), not just past the
- * closer within it, so a paragraph-direct closer falls through to the caller's other fallback
- * instead.
+ * closer within it, so a paragraph-direct closer returns nothing and falls through to the caller's
+ * other fallback instead.
  */
-function $selectAfterClosingSpan(span: FragmentSpan): boolean {
+function $pointAfterClosingSpan(span: FragmentSpan): FragmentPoint | undefined {
   const glyph = $getNodeByKey(span.key);
-  if (!$isMarkerNode(glyph)) return false;
+  if (!$isMarkerNode(glyph)) return undefined;
   const enclosingSpan = glyph.getParent();
-  if (!$isCharNode(enclosingSpan)) return false;
-  enclosingSpan.selectNext(0, 0);
-  return true;
+  if (!$isCharNode(enclosingSpan)) return undefined;
+  const parent = enclosingSpan.getParent();
+  if (!parent) return undefined;
+  return {
+    key: parent.getKey(),
+    offset: enclosingSpan.getIndexWithinParent() + 1,
+    type: "element",
+  };
 }
 
 /**
- * Place the caret AFTER a preserved node run the caret cannot enter — the append position past the
+ * The position AFTER a preserved node run the caret cannot enter — the append position past the
  * whole opaque construct — for an offset that ran off the end of a fragment whose last span is a
- * sentinel. The sibling of {@link $selectAfterClosingSpan}, for the other span kind the forward
+ * sentinel. The sibling of {@link $pointAfterClosingSpan}, for the other span kind the forward
  * scan skips: without it the caller's reverse-find walks BACKWARD past the construct and parks the
  * caret at the end of the preceding text, so a figure completed at the end of a paragraph leaves
  * everything typed next on the WRONG SIDE of it (`hello \fig …\fig*` + ` world` became
@@ -1324,32 +1409,52 @@ function $selectAfterClosingSpan(span: FragmentSpan): boolean {
  *
  * A sentinel span records only the run's FIRST node, and a verse or milestone rides in its
  * sentinel together with its display run (`$appendNodesFragment`), so the append position is past
- * that run's LAST node — `selectNext` off the first would land inside the run. Every other
+ * that run's LAST node — the boundary after the first would land inside the run. Every other
  * sentinel kind (unknown blocks, notes, unrecoverable char spans) is a one-node run and skips the
- * lookup. Returns whether it placed the caret.
+ * lookup.
  */
-function $selectAfterSentinelRun(span: FragmentSpan): boolean {
+function $pointAfterSentinelRun(span: FragmentSpan): FragmentPoint | undefined {
   const first = $getNodeByKey(span.key);
-  const siblings = first?.getParent()?.getChildren();
-  if (!first || !siblings) return false;
+  const parent = first?.getParent();
+  const siblings = parent?.getChildren();
+  if (!first || !parent || !siblings) return undefined;
   const index = siblings.findIndex((sibling) => sibling.is(first));
-  if (index < 0) return false;
+  if (index < 0) return undefined;
   const run = $isVerseNode(first)
     ? $verseAttributeRun(siblings, index)
     : $isMilestoneNode(first)
       ? $milestoneDisplayRun(siblings, index)
       : [];
-  (run[run.length - 1] ?? first).selectNext(0, 0);
-  return true;
+  const last = run[run.length - 1] ?? first;
+  return { key: parent.getKey(), offset: last.getIndexWithinParent() + 1, type: "element" };
 }
 
-/** Place the collapsed caret at the position `anchor` describes (see `$caretSpanByteAnchor`)
- * within the freshly-built spans, falling back to the first element. */
-function $selectAtFragmentByteAnchor(
+/**
+ * Where `anchor` (see {@link $caretSpanByteAnchor}) lands within `fragment`'s spans — a text
+ * point in the span holding the byte, or, for a position that ran past every addressable span, an
+ * ELEMENT boundary just past the construct the position belongs after
+ * ({@link $pointAfterClosingSpan}, {@link $pointAfterSentinelRun}). `undefined` when the fragment
+ * has no addressable span at all.
+ *
+ * Direction-agnostic: the mutating rebuild resolves a caret it captured from the pre-rebuild tree
+ * into the fresh one ({@link $selectAtFragmentByteAnchor}), and the settled-position translation
+ * resolves a byte of the settled document into the live tree. Both ask the same question — which
+ * node and offset holds the byte this anchor names — so both walk this one implementation.
+ *
+ * `addressDisplayBytes` switches from CARET addressing to BYTE addressing, for a position that
+ * names a USFM byte rather than a place the caret can rest. A caret never lands inside a completed
+ * closing glyph and never at the front edge of one construct when the back edge of the previous
+ * one says the same thing, so caret addressing skips closers and prefers the span the walk
+ * finished in; a position that names `\nd*`'s second byte, or the `\` a marker starts with, needs
+ * exactly those two spellings back.
+ *
+ * Read-only: resolves span node keys, so call inside `editor.update()` or an editor-state read.
+ */
+export function $resolveFragmentByteAnchor(
   fragment: { text: string; spans: FragmentSpan[] },
   anchor: CaretByteAnchor,
-  newNodes: LexicalNode[],
-): void {
+  { addressDisplayBytes = false }: { addressDisplayBytes?: boolean } = {},
+): FragmentPoint | undefined {
   const { text, spans } = fragment;
   // Pick the coordinate system. Document coordinates (attribute runs stepped over) keep a caret in
   // ordinary content from being dragged when a run RE-SPELLS beside it — `|who="stuff"` settling to
@@ -1366,12 +1471,11 @@ function $selectAtFragmentByteAnchor(
   let remainingWs = (documentCoords ?? anchor).wsRun;
   // Whether the anchor position resolved INSIDE a span the caret cannot rest in — a sentinel
   // (inner text not addressable) or a closing marker glyph (see $isClosingMarkerSpan) — in which
-  // case the caret belongs at the start of the NEXT addressable span, exactly as the previous
-  // cumulative-offset walk resolved it.
+  // case the position belongs at the start of the NEXT addressable span.
   let needNextAddressable = false;
   outer: for (const span of spans) {
     const spanLength = span.end - span.start;
-    const addressable = !span.isSentinel && !$isClosingMarkerSpan(span);
+    const addressable = !span.isSentinel && (addressDisplayBytes || !$isClosingMarkerSpan(span));
     // Mirror the capture's coordinate system exactly: when the anchor was taken in document
     // bytes, the restore must step over attribute runs too, or the two walks disagree and the
     // caret lands off by the run's re-spelled length.
@@ -1385,7 +1489,7 @@ function $selectAtFragmentByteAnchor(
       const ch = text[span.start + i];
       if (remainingNonWs === 0 && (remainingWs === 0 || !FRAGMENT_WS.test(ch))) {
         // The anchor's bytes are all behind us (any unconsumed ws run is clamped to the ws
-        // actually present here): the caret belongs immediately BEFORE this character.
+        // actually present here): the position is immediately BEFORE this character.
         if (addressable) {
           best = { key: span.key, offset: i };
           break outer;
@@ -1398,34 +1502,311 @@ function $selectAtFragmentByteAnchor(
       } else remainingWs--;
     }
     if (remainingNonWs === 0 && remainingWs === 0) {
-      // Satisfied exactly at this span's end — prefer the end of the span the walk finished in
-      // over the start of the next, matching the previous walk's first-covering-span behavior.
-      if (addressable) {
+      // Satisfied exactly at this span's end. A caret prefers the end of the span the walk
+      // finished in over the start of the next; a byte position prefers the span whose bytes it
+      // names, which is the next one.
+      if (addressable && !addressDisplayBytes) {
         best = { key: span.key, offset: spanLength };
         break;
       }
       needNextAddressable = true;
     }
   }
-  if (!best) {
-    // The offset ran past every addressable span. Both span kinds the forward scan skips can be
-    // the last thing in the fragment, and for both the caret belongs AFTER them — an append
-    // position in the paragraph — rather than at the end of the preceding text, which is where the
-    // reverse-find fallback below would park it: a completed closer glyph (a typed `\nd*` at
-    // paragraph end, nothing after), so continued typing is unstyled; or a sentinel, so continued
-    // typing lands past the opaque construct instead of in front of it.
-    const lastSpan = spans[spans.length - 1];
-    if (lastSpan && $isClosingMarkerSpan(lastSpan) && $selectAfterClosingSpan(lastSpan)) return;
-    if (lastSpan?.isSentinel && $selectAfterSentinelRun(lastSpan)) return;
-    const last = [...spans]
-      .reverse()
-      .find((span) => !span.isSentinel && !$isClosingMarkerSpan(span));
-    if (last) best = { key: last.key, offset: last.end - last.start };
+  if (best) return { ...best, type: "text" };
+  // The offset ran past every addressable span. Both span kinds the forward scan skips can be
+  // the last thing in the fragment, and for both the position belongs AFTER them — an append
+  // position in the paragraph — rather than at the end of the preceding text, which is where the
+  // reverse-find fallback below would park it: a completed closer glyph (a typed `\nd*` at
+  // paragraph end, nothing after), so continued typing is unstyled; or a sentinel, so continued
+  // typing lands past the opaque construct instead of in front of it.
+  const lastSpan = spans[spans.length - 1];
+  if (lastSpan && $isClosingMarkerSpan(lastSpan)) {
+    const point = $pointAfterClosingSpan(lastSpan);
+    if (point) return point;
   }
-  if (best) {
-    const node = $getNodeByKey<TextNode>(best.key);
+  if (lastSpan?.isSentinel) {
+    const point = $pointAfterSentinelRun(lastSpan);
+    if (point) return point;
+  }
+  const last = [...spans].reverse().find((span) => !span.isSentinel && !$isClosingMarkerSpan(span));
+  if (last) return { key: last.key, offset: last.end - last.start, type: "text" };
+  return undefined;
+}
+
+/**
+ * One `type:id` pair an annotation mark carries, together with the host callbacks registered for
+ * it. Held as plain data (never a reference to the node's own callback maps), so it stays readable
+ * after the node it came from has been spliced away.
+ */
+interface CarriedAnnotation {
+  type: string;
+  id: string;
+  onClick?: TypedMarkOnClick;
+  onRemove?: TypedMarkOnRemove;
+  onMouseEnter?: TypedMarkOnMouseEnter;
+  onMouseLeave?: TypedMarkOnMouseLeave;
+}
+
+/**
+ * Where a carried mark BEGINS.
+ *
+ * `"byte"` is the ordinary case: a fragment byte anchor, read and resolved exactly the way the
+ * caret's is.
+ *
+ * `"preserved"` is a mark that starts ON a preserved node — a note, an unrecoverable char span, a
+ * sentinel verse or milestone run. Such a node contributes ONE U+FFFC placeholder to the fragment,
+ * and NO byte position can name the boundary in front of it: a caret can never rest inside a
+ * placeholder, so the anchor walk and the resolve both read a position on it as being AFTER the
+ * node it stands for. The anchor here is therefore the position just past the run, and the run
+ * itself is pulled back into the mark afterwards ({@link $extendMarkOverPreservedRun}) — by node
+ * identity, which is exact because `$replaceSentinels` moves the ORIGINAL preserved nodes into the
+ * rebuilt tree.
+ */
+type MarkStart =
+  | { kind: "byte"; anchor: CaretByteAnchor }
+  | { kind: "preserved"; anchor: CaretByteAnchor; key: NodeKey };
+
+/**
+ * One annotation mark lifted out of a settle scope before the scope's bytes are re-tokenized: the
+ * annotations it carries, and the two positions bracketing the text it wraps.
+ *
+ * A `TypedMarkNode` is TRANSPARENT in the fragment ({@link $appendNodesFragment}) — its text bytes
+ * belong to its children's spans and the wrapper contributes none of its own — so re-tokenization
+ * cannot reproduce it, and a splice that carried nothing across would drop every annotation
+ * inside the paragraph the user is editing. Both ends anchor the way the caret does
+ * ({@link $caretSpanByteAnchor}), so a mark follows its bytes through a rebuild that adds,
+ * removes, or moves display whitespace around them.
+ *
+ * The END needs no preserved-node special case: a byte anchor that consumes the placeholder
+ * resolves to the boundary just past the node, which is exactly where a mark ending on one stops.
+ */
+interface MarkByteRange {
+  annotations: CarriedAnnotation[];
+  start: MarkStart;
+  end: CaretByteAnchor;
+}
+
+/** Every `TypedMarkNode` under `nodes`, depth-first. A mark nested inside another (the transient
+ * shape `registerNestedElementResolver` un-nests) is collected as its own range. */
+function $collectTypedMarks(nodes: LexicalNode[], out: TypedMarkNode[] = []): TypedMarkNode[] {
+  for (const node of nodes) {
+    if ($isTypedMarkNode(node)) out.push(node);
+    if ($isElementNode(node)) $collectTypedMarks(node.getChildren(), out);
+  }
+  return out;
+}
+
+/** `node` and everything under it, by key — the span owners whose bytes a mark wraps. */
+function $subtreeKeys(node: LexicalNode, out = new Set<NodeKey>()): Set<NodeKey> {
+  out.add(node.getKey());
+  if ($isElementNode(node)) node.getChildren().forEach((child) => $subtreeKeys(child, out));
+  return out;
+}
+
+/**
+ * Where a mark whose first covered span is `first` begins. A sentinel span also carries its node
+ * key, because its byte anchor names the position PAST the preserved node rather than in front of
+ * it — see {@link MarkStart}.
+ *
+ * Read-only: walks the fragment's spans, so call inside `editor.update()` or an editor-state read.
+ */
+function $markStartAt(fragment: FragmentAccumulator, first: FragmentSpan): MarkStart | undefined {
+  const anchor = $caretSpanByteAnchor(fragment, first.key, 0);
+  if (!anchor) return undefined;
+  return first.isSentinel
+    ? { kind: "preserved", anchor, key: first.key }
+    : { kind: "byte", anchor };
+}
+
+/**
+ * Every annotation mark in `scope`, as byte ranges over `fragment`. Read BEFORE the splice, since
+ * the marks live on nodes the splice destroys.
+ *
+ * A mark whose bytes are not in the fragment at all is skipped rather than guessed at: that is a
+ * mark inside a preserved node (a note, an unrecoverable char span), which the splice moves across
+ * whole and which therefore needs no carry.
+ *
+ * Read-only: walks live nodes, so call inside `editor.update()` or an editor-state read.
+ */
+function $captureMarkByteRanges(
+  scope: LexicalNode[],
+  fragment: FragmentAccumulator,
+): MarkByteRange[] {
+  const ranges: MarkByteRange[] = [];
+  for (const mark of $collectTypedMarks(scope)) {
+    const owners = $subtreeKeys(mark);
+    const covered = fragment.spans.filter((span) => owners.has(span.key));
+    const first = covered[0];
+    const last = covered[covered.length - 1];
+    if (!first || !last) continue;
+    const start = $markStartAt(fragment, first);
+    const end = $caretSpanByteAnchor(fragment, last.key, last.end - last.start);
+    if (!start || !end) continue;
+    const onClicks = mark.getTypedOnClicks();
+    const onRemoves = mark.getTypedOnRemoves();
+    const onMouseEnters = mark.getTypedOnMouseEnters();
+    const onMouseLeaves = mark.getTypedOnMouseLeaves();
+    const annotations = Object.entries(mark.getTypedIDs()).flatMap(([type, ids]) =>
+      ids.map((id) => ({
+        type,
+        id,
+        onClick: onClicks[type]?.[id],
+        onRemove: onRemoves[type]?.[id],
+        onMouseEnter: onMouseEnters[type]?.[id],
+        onMouseLeave: onMouseLeaves[type]?.[id],
+      })),
+    );
+    if (annotations.length > 0) ranges.push({ annotations, start, end });
+  }
+  return ranges;
+}
+
+/**
+ * Move the preserved node run beginning at `key` into the front of the mark that now sits directly
+ * after it — the second half of restoring a mark that STARTED on a preserved node (see
+ * {@link MarkStart}), whose wrap could only cover the content past the run.
+ *
+ * The run is located by node identity rather than re-resolved, because a preserved node survives
+ * the splice as the same node, and a verse or milestone rides together with its display run (the
+ * same run definition {@link $pointAfterSentinelRun} uses). A selection boundary would not do the
+ * job: an element point in front of an inline element resolves to that element's first LEAF, so
+ * wrapping from there would mark the preserved node's INTERNALS instead of the node.
+ *
+ * Does nothing unless the node after the run really is the mark just built for `type`/`id`, so a
+ * shape the wrap did not produce is left alone.
+ *
+ * Mutating: call inside `editor.update()`, straight after the wrap.
+ */
+function $extendMarkOverPreservedRun(key: NodeKey, type: string, id: string): void {
+  const first = $getNodeByKey(key);
+  const parent = first?.getParent();
+  const siblings = parent?.getChildren();
+  if (!first || !siblings) return;
+  const index = siblings.findIndex((sibling) => sibling.is(first));
+  if (index < 0) return;
+  const run = $isVerseNode(first)
+    ? $verseAttributeRun(siblings, index)
+    : $isMilestoneNode(first)
+      ? $milestoneDisplayRun(siblings, index)
+      : [];
+  const last = run[run.length - 1] ?? first;
+  const mark = last.getNextSibling();
+  if (!$isTypedMarkNode(mark) || !mark.hasID(type, id)) return;
+  const target = mark.getFirstChild();
+  if (!target) return;
+  [first, ...run].forEach((node) => target.insertBefore(node));
+}
+
+/**
+ * Whether a resolved end of a mark lands inside a marker GLYPH — engine-owned display bytes rather
+ * than document content.
+ *
+ * It means the annotated bytes themselves became part of a marker: text the host annotated as a
+ * literal (`\nd LORD\nd*`) re-tokenized into a char span's opening and closing glyphs. There is no
+ * content range left to re-wrap, and wrapping from inside a glyph would tear the construct the
+ * glyph belongs to out of its own span, so the carry is refused instead — preserve-or-refuse, the
+ * same stance the rebuild takes everywhere else.
+ *
+ * Read-only: resolves the point's node key, so call inside `editor.update()` or an editor-state
+ * read.
+ */
+function $isGlyphPoint(point: FragmentPoint): boolean {
+  return point.type === "text" && $isMarkerNode($getNodeByKey(point.key));
+}
+
+/**
+ * Re-wrap the annotations {@link $captureMarkByteRanges} lifted out, over whatever the rebuilt
+ * nodes now spell at the same byte positions. `$freshFragment` re-derives the spliced tree's
+ * spans; it is called again for every wrap because wrapping SPLITS the text nodes it covers, so
+ * the span map one wrap resolved against no longer describes the tree the next one resolves in.
+ *
+ * The mark node is re-created rather than moved, which is what re-associates the AnnotationPlugin's
+ * `type:id` → node-key map: its mutation listener sees the old key destroyed and the new one
+ * created, and rebuilds the entry from the new node's own `typedIDs`. The host's callbacks ride
+ * along per `type:id` through `$wrapSelectionInTypedMarkNode`, so they survive the new node key,
+ * and no removal callback fires for the old node — a spliced-away subtree is garbage-collected
+ * rather than `remove()`d, and `TypedMarkNode.remove` is the only source of a "destroyed"
+ * notification.
+ *
+ * An anchor that no longer resolves is skipped, in the rebuild's own preserve-or-refuse spirit: a
+ * dropped annotation is recoverable by the host re-applying it, one re-wrapped over the wrong
+ * bytes is not.
+ *
+ * Mutating: call inside `editor.update()`, after the splice.
+ */
+function $restoreMarkByteRanges(
+  ranges: MarkByteRange[],
+  $freshFragment: () => { text: string; spans: FragmentSpan[] },
+): void {
+  if (ranges.length === 0) return;
+  // Carrying a mark must leave the document selection exactly as it found it — the caller owns the
+  // caret policy and applies it right after ($restoreSelectionAtOffset, which deliberately does
+  // NOTHING when the caret was parked outside the scope being rebuilt, and so cannot undo anything
+  // done here). `$wrapSelectionInTypedMarkNode` collapses the selection onto the mark it built for
+  // the comment type, and a split text node moves any point that sat in it, so snapshot the
+  // selection and put it back. A null snapshot is restored as null: a settle after blur must not
+  // resurrect a selection.
+  const selectionBefore = $getSelection()?.clone() ?? null;
+  for (const range of ranges) {
+    for (const annotation of range.annotations) {
+      const fragment = $freshFragment();
+      // A mark's START names the first BYTE it covers, so it belongs at the front edge of the span
+      // holding that byte — caret addressing (`addressDisplayBytes: false`) would instead park it
+      // at the END of the preceding span, a caret's own preference, and the wrap would swallow
+      // whatever sits there: a paragraph's glyph separator, or a char span's opening glyph. The
+      // END is a boundary AFTER the last byte, which is exactly a caret position. A start on a
+      // preserved node lands past that node either way, and the run is pulled back in below.
+      const start = $resolveFragmentByteAnchor(fragment, range.start.anchor, {
+        addressDisplayBytes: true,
+      });
+      const end = $resolveFragmentByteAnchor(fragment, range.end);
+      if (!start || !end) continue;
+      if ($isGlyphPoint(start) || $isGlyphPoint(end)) continue;
+      // A collapsed range covers no bytes, and wrapping one splits a text node at the same offset
+      // twice, which marks everything IN FRONT of it: a mark over the wrong bytes is worse than a
+      // dropped mark, so refuse. (Offset 0 collapses to a no-op inside the wrap itself.)
+      if (start.key === end.key && start.offset === end.offset && start.type === end.type) continue;
+      const selection = $createRangeSelection();
+      selection.anchor.set(start.key, start.offset, start.type);
+      selection.focus.set(end.key, end.offset, end.type);
+      $wrapSelectionInTypedMarkNode(
+        selection,
+        annotation.type,
+        annotation.id,
+        annotation.onClick,
+        annotation.onRemove,
+        annotation.onMouseEnter,
+        annotation.onMouseLeave,
+      );
+      if (range.start.kind === "preserved")
+        $extendMarkOverPreservedRun(range.start.key, annotation.type, annotation.id);
+    }
+  }
+  $setSelection(selectionBefore);
+}
+
+/** Place the collapsed caret at the position `anchor` describes (see `$caretSpanByteAnchor`)
+ * within the freshly-built spans, falling back to the first element. */
+function $selectAtFragmentByteAnchor(
+  fragment: { text: string; spans: FragmentSpan[] },
+  anchor: CaretByteAnchor,
+  newNodes: LexicalNode[],
+): void {
+  const point = $resolveFragmentByteAnchor(fragment, anchor);
+  if (point?.type === "text") {
+    const node = $getNodeByKey<TextNode>(point.key);
     if (node && $isTextNode(node)) {
-      node.select(best.offset, best.offset);
+      node.select(point.offset, point.offset);
+      return;
+    }
+  } else if (point) {
+    // An element boundary past a construct the caret cannot enter: select off the node it sits
+    // after, which resolves to whatever follows (the next text run, the next block's start, or
+    // the append position at the end of the parent).
+    const parent = $getNodeByKey(point.key);
+    const previous = $isElementNode(parent) ? parent.getChildAtIndex(point.offset - 1) : undefined;
+    if (previous) {
+      previous.selectNext(0, 0);
       return;
     }
   }
@@ -1497,20 +1878,10 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
   if (paras.length === 0) return false;
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
 
-  const combined: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
-  for (const para of paras) {
-    const fragment = $buildParaFragment(para, getMarkerFn, viewOptions);
-    if (!fragment) {
-      logger?.debug("[MarkerEdit] Tier 2 skipped: paragraph excluded by guard rails");
-      return false;
-    }
-    if (combined.text.length > 0) combined.text += " ";
-    const base = combined.text.length;
-    fragment.spans.forEach((span) =>
-      combined.spans.push({ ...span, start: span.start + base, end: span.end + base }),
-    );
-    combined.sentinels.push(...fragment.sentinels);
-    combined.text += fragment.text;
+  const combined = $buildParaScopeFragment(paras, getMarkerFn, viewOptions);
+  if (!combined) {
+    logger?.debug("[MarkerEdit] Tier 2 skipped: paragraph excluded by guard rails");
+    return false;
   }
 
   // Capture the caret as a fragment byte anchor before mutating anything, and note whether
@@ -1527,6 +1898,9 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
     if (selection.isCollapsed())
       caretAnchor = $caretSpanByteAnchor(combined, selection.anchor.key, selection.anchor.offset);
   }
+  // Annotation marks anchor the same way, two points each — they live on nodes the splice
+  // destroys and are transparent to re-tokenization, so nothing else would bring them back.
+  const markRanges = $captureMarkByteRanges(paras, combined);
 
   const content: MarkerContent[] = usfmFragmentToUsjContent(combined.text, {
     getMarker: getMarkerFn,
@@ -1616,6 +1990,9 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
     if (newVerses[i].getNumber() === oldVerseSids[i].number)
       newVerses[i].setSid(oldVerseSids[i].sid);
   }
+  // Before the caret restore, so the caret resolves against the final tree: re-wrapping splits
+  // the text nodes it covers.
+  $restoreMarkByteRanges(markRanges, () => $spansForNodes(newNodes, getMarkerFn, viewOptions));
   $restoreSelectionAtOffset(newNodes, caretAnchor, anchorInParas, getMarkerFn, viewOptions);
   return true;
 }
@@ -1741,6 +2118,10 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
     if (selection.isCollapsed())
       caretAnchor = $caretSpanByteAnchor(out, selection.anchor.key, selection.anchor.offset);
   }
+  // Annotations inside the note's content anchor the same way — mirror `$rebuildParas`. A
+  // note's content is reachable by USJ location, so `setAnnotation` can put a mark in an
+  // expanded note exactly as it can in a paragraph.
+  const markRanges = $captureMarkByteRanges(contentNodes, out);
 
   const content: MarkerContent[] = usfmFragmentToUsjContent(out.text, {
     getMarker: getMarkerFn,
@@ -1862,7 +2243,25 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   // them here would silently delete them from their new home. Skip them.
   const preservedKeys = new Set(out.sentinels.flat().map((node) => node.getKey()));
   contentNodes.forEach((node) => {
-    if (!preservedKeys.has(node.getKey())) node.remove();
+    if (preservedKeys.has(node.getKey())) return;
+    // An annotation wrapping note content is one of the note's own children, so it is removed
+    // DIRECTLY here — and `TypedMarkNode.remove` reports a direct removal to the host as a
+    // destroyed annotation. The annotation is not destroyed: `$restoreMarkByteRanges` below
+    // re-wraps it over the rebuilt bytes. Suppress the notification the way every other
+    // re-creation of a mark node does (AnnotationPlugin's nested-element resolver,
+    // `TypedMarkNode`'s own sibling merges). A mark nested DEEPER needs nothing: a detached
+    // subtree is garbage-collected without `remove()` ever running on it, which is why the
+    // paragraph rebuild (whole paragraphs removed, marks always inside them) stays quiet.
+    if ($isTypedMarkNode(node)) node.getWritable().__suppressOnRemoveCallbacks = true;
+    node.remove();
+  });
+  // Before the caret restore, so the caret resolves against the final tree — mirror
+  // `$rebuildParas`. Note content is one contiguous region, so its spans carry no inter-node
+  // separators, exactly as `$restoreSelectionInNoteContent` builds them.
+  $restoreMarkByteRanges(markRanges, () => {
+    const spans: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+    $appendNodesFragment(newNodes, spans, getMarkerFn, viewOptions);
+    return spans;
   });
   $restoreSelectionInNoteContent(newNodes, caretAnchor, anchorInNote, getMarkerFn, viewOptions);
   return true;
@@ -2045,6 +2444,12 @@ export function $buildChapterFragment(
  * node's KIND (the `\c` bytes rewritten into some other marker, or deleted) refuses and stays a
  * pending literal rather than restructuring the document from a chapter-scoped settle. Deleting
  * a chapter outright is `$chapterNodeTransform`'s existing empty-children path, not this one.
+ *
+ * Carries no annotation marks across, unlike its paragraph and note-content siblings, because none
+ * can be in the region to carry: an annotation range names document CONTENT, and a chapter marker
+ * has no content children for a `UsjDocumentLocation` to land in. The signature reads a mark
+ * transparently either way, so a region whose only difference is a mark reports a fixed point and
+ * is left exactly as it stands.
  */
 export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): boolean {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;

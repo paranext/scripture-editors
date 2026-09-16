@@ -37,7 +37,7 @@ import { $serializeExpandedNoteContent, ATOMIC_SENTINEL } from "./settleShared.u
 import {
   $buildChapterFragment,
   $buildNoteFragment,
-  $buildParaFragment,
+  $buildParaScopeFragment,
   $chapterAdjacentAttributeNodes,
   $isRebuildSentinel,
   $settleScopeForNode,
@@ -96,7 +96,7 @@ import {
 /** Where a live node's serialized counterpart sits: the JSON node itself, plus the children array
  * holding it (the array a splice must target — its index is re-read at splice time, since earlier
  * splices into the same array shift positions). */
-interface SerializedSite {
+export interface SerializedSite {
   readonly node: SerializedLexicalNode;
   readonly siblings: SerializedLexicalNode[];
 }
@@ -106,7 +106,7 @@ interface SerializedSite {
  * tree order, so a parallel walk is exact — and it is the only way to make the pairing, since
  * serialized nodes carry no keys.
  */
-function $mapSerializedSites(
+export function $mapSerializedSites(
   liveNodes: LexicalNode[],
   serializedNodes: SerializedLexicalNode[],
   out: Map<NodeKey, SerializedSite>,
@@ -173,8 +173,17 @@ function replaceSerializedSentinels(
   visitList(roots);
 }
 
-/** The serialized counterparts of one fragment's preserved runs, or `undefined` when any
- * non-husk node in them has none (a shape the parallel walk could not pair — abort rather than
+/** One fragment's preserved runs as a settled rebuild carries them: the live members of each run
+ * the rebuild keeps, and the serialized counterparts that stand in for them. Both halves are the
+ * same run list in the same order, so the two sides pair off member for member — which is what
+ * lets a consumer state where a live preserved node ends up in the rebuilt output. */
+export interface CarriedPreservedRuns {
+  readonly live: readonly (readonly LexicalNode[])[];
+  readonly serialized: SerializedLexicalNode[][];
+}
+
+/** One fragment's preserved runs paired with their serialized counterparts, or `undefined` when
+ * any non-husk node in them has none (a shape the parallel walk could not pair — abort rather than
  * drop a node). A node whose key is in `huskKeys` contributes NOTHING to its run: the standalone
  * husk-removal pass in `$settledUsj` already spliced it out of the serialized tree, but
  * `fragment`/`out` (built from the LIVE tree, which the read-only settle never mutates) still
@@ -182,23 +191,27 @@ function replaceSerializedSentinels(
  * `replaceSerializedSentinels`, would resurrect it wherever this run's placeholder lands,
  * silently undoing that removal whenever the husk's own paragraph/note ALSO settles for an
  * unrelated pend in the same scope. */
-function serializedRunsOf(
+export function carriedPreservedRuns(
   fragment: FragmentAccumulator,
   sites: Map<NodeKey, SerializedSite>,
   huskKeys: ReadonlySet<NodeKey>,
-): SerializedLexicalNode[][] | undefined {
-  const runs: SerializedLexicalNode[][] = [];
+): CarriedPreservedRuns | undefined {
+  const live: LexicalNode[][] = [];
+  const serialized: SerializedLexicalNode[][] = [];
   for (const run of fragment.sentinels) {
+    const liveRun: LexicalNode[] = [];
     const serializedRun: SerializedLexicalNode[] = [];
     for (const node of run) {
       if (huskKeys.has(node.getKey())) continue;
       const site = sites.get(node.getKey());
       if (!site) return undefined;
+      liveRun.push(node);
       serializedRun.push(site.node);
     }
-    runs.push(serializedRun);
+    live.push(liveRun);
+    serialized.push(serializedRun);
   }
-  return runs;
+  return { live, serialized };
 }
 
 /**
@@ -303,7 +316,7 @@ function $structuralMarkersAgree(
 
 /** A declaration that VERIFIED against the live tree: the node holding the bytes, the caret offset
  * they end at, and the bytes themselves. */
-interface TransientLiteral {
+export interface TransientLiteral {
   readonly node: TextNode;
   readonly caretOffset: number;
   readonly run: string;
@@ -361,7 +374,7 @@ export interface AnchoredTransientInput {
  * differently than a stale declaration already does — at most one visible phantom marker, never
  * silently dropped content.
  */
-function $verifiedTransientLiteral(
+export function $verifiedTransientLiteral(
   anchored: AnchoredTransientInput | undefined,
   lastKnownCaret: LastKnownCaret | undefined,
 ): TransientLiteral | undefined {
@@ -413,17 +426,36 @@ function $fragmentTextWithoutTransient(
   fragment: FragmentAccumulator,
   transient: TransientLiteral,
 ): string {
+  const range = $transientCutRange(fragment, transient);
+  if (!range) return fragment.text;
+  return fragment.text.slice(0, range.start) + fragment.text.slice(range.end);
+}
+
+/**
+ * The `[start, end)` byte range of `fragment.text` the declared bytes occupy, or `undefined` when
+ * this fragment does not carry them (the declaration names a node in some other scope) or when the
+ * cut cannot be made exactly. The range is located through the fragment's own spans, so the shared
+ * fragment builder is not forked and the real settle is unaffected; the span-length check rejects
+ * the one case where a node's fragment contribution is not length-preserving (a whitespace-only
+ * para-prefix separator substituted for a plain space), rather than cutting at a shifted offset.
+ *
+ * Read-only: reads the declaration's node, so call inside an editor-state read.
+ */
+export function $transientCutRange(
+  fragment: FragmentAccumulator,
+  transient: TransientLiteral,
+): { start: number; end: number } | undefined {
   const key = transient.node.getKey();
   const span: FragmentSpan | undefined = fragment.spans.find(
     (candidate) => !candidate.isSentinel && candidate.key === key,
   );
-  if (!span) return fragment.text;
-  if (span.end - span.start !== transient.node.getTextContentSize()) return fragment.text;
-  const cutEnd = span.start + transient.caretOffset;
-  const cutStart = cutEnd - transient.run.length;
-  if (cutStart < span.start) return fragment.text;
-  if (fragment.text.slice(cutStart, cutEnd) !== transient.run) return fragment.text;
-  return fragment.text.slice(0, cutStart) + fragment.text.slice(cutEnd);
+  if (!span) return undefined;
+  if (span.end - span.start !== transient.node.getTextContentSize()) return undefined;
+  const end = span.start + transient.caretOffset;
+  const start = end - transient.run.length;
+  if (start < span.start) return undefined;
+  if (fragment.text.slice(start, end) !== transient.run) return undefined;
+  return { start, end };
 }
 
 /**
@@ -461,7 +493,7 @@ function $fragmentTextWithoutTransient(
  * safe: the paragraph only ever normalizes TOWARD excluding the declared run, never toward
  * reintroducing an unrelated stale rebuild.
  */
-function $settledParaNodes(
+export function $settledParaScope(
   paras: ParaNode[],
   sites: Map<NodeKey, SerializedSite>,
   context: Tier2Context,
@@ -469,23 +501,10 @@ function $settledParaNodes(
   transient: TransientLiteral | undefined,
 ): SerializedLexicalNode[] | undefined {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
-  if (paras.length === 0) return undefined;
-  // Mirrors `$rebuildParas`'s own fragment join byte for byte, including the single space that
-  // stands in for the newline between two paragraphs — a scope of more than one paragraph is the
-  // unknown-split rejoin (see `$unknownSplitRejoinScope`), and the settled output a consumer
-  // reads must be what that same widened rebuild produces.
-  const fragment: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
-  for (const para of paras) {
-    const built = $buildParaFragment(para, getMarkerFn, viewOptions);
-    if (!built) return undefined;
-    if (fragment.text.length > 0) fragment.text += " ";
-    const base = fragment.text.length;
-    built.spans.forEach((span) =>
-      fragment.spans.push({ ...span, start: span.start + base, end: span.end + base }),
-    );
-    fragment.sentinels.push(...built.sentinels);
-    fragment.text += built.text;
-  }
+  // The SHARED scope join (`$buildParaScopeFragment`, tier2Rebuild.utils.ts), so the settled output
+  // a consumer reads is built from the same bytes the mutating rebuild would tokenize.
+  const fragment = $buildParaScopeFragment(paras, getMarkerFn, viewOptions);
+  if (!fragment) return undefined;
   const fragmentText = transient
     ? $fragmentTextWithoutTransient(fragment, transient)
     : fragment.text;
@@ -507,7 +526,7 @@ function $settledParaNodes(
     );
     return undefined;
   }
-  const runs = serializedRunsOf(fragment, sites, huskKeys);
+  const runs = carriedPreservedRuns(fragment, sites, huskKeys);
   if (!runs) {
     logger?.warn("[MarkerEdit] Settled USJ skipped: a preserved node had no serialized form");
     return undefined;
@@ -530,7 +549,7 @@ function $settledParaNodes(
     logger?.debug("[MarkerEdit] Settled USJ skipped: rebuild is a no-op (fixed point)");
     return undefined;
   }
-  replaceSerializedSentinels(rebuilt, runs);
+  replaceSerializedSentinels(rebuilt, runs.serialized);
   // Sid carry-over, mirroring `$rebuildParas`: a freshly re-tokenized verse never has a sid —
   // the tokenizer cannot derive one from visible bytes — so without this step a `getUsj()`
   // taken while a paragraph was pending stripped `sid` from every verse in it, while
@@ -579,13 +598,13 @@ function collectSerializedVerses(nodes: SerializedLexicalNode[]): SerializedVers
  * tokenized in note context, re-serialized with expanded notes so char spans come back inline, the
  * tokenizer's default `\p` wrapper (plus the visible para prefix glyph and its trailing space) is
  * unwrapped, since none of that belongs inside a note, and a fixed-point rebuild refuses — same
- * reasoning as `$settledParaNodes`'s own check, see its doc comment.
+ * reasoning as `$settledParaScope`'s own check, see its doc comment.
  *
- * `transient` is cut out of the note's own fragment text the same way `$settledParaNodes` cuts it
+ * `transient` is cut out of the note's own fragment text the same way `$settledParaScope` cuts it
  * out of a paragraph's — see {@link $fragmentTextWithoutTransient}'s doc comment; a declaration
  * naming a node outside this note's content leaves `out.text` untouched.
  */
-function $settledNoteContent(
+export function $settledNoteScope(
   note: NoteNode,
   sites: Map<NodeKey, SerializedSite>,
   context: Tier2Context,
@@ -651,7 +670,7 @@ function $settledNoteContent(
     );
     return undefined;
   }
-  const runs = serializedRunsOf(out, sites, huskKeys);
+  const runs = carriedPreservedRuns(out, sites, huskKeys);
   if (!runs) {
     logger?.warn("[MarkerEdit] Settled note USJ skipped: a preserved node had no serialized form");
     return undefined;
@@ -660,18 +679,18 @@ function $settledNoteContent(
   // (tier2Rebuild.utils.ts, `$rebuildNoteContent`'s `$signatureOf(newNodes, ...) ===
   // $signatureOf(contentNodes, ...)`) — computed BEFORE `replaceSerializedSentinels` below, while
   // `rebuilt` still carries the
-  // raw ATOMIC_SENTINEL characters the tokenizer produced, same reason as `$settledParaNodes`'s
+  // raw ATOMIC_SENTINEL characters the tokenizer produced, same reason as `$settledParaScope`'s
   // check. Compares CONTENT nodes only, not `[note]` itself: the note's own marker/caller/closing
   // glyphs are preserved verbatim across this rebuild and never re-derived from content bytes, so
   // they need no equivalent of the paragraph case's own top-level marker check. But a note's
   // CONTENT can itself carry char spans, and `$structuralMarkersAgree` (see its own doc comment)
-  // is exactly as necessary here as it is for `$settledParaNodes`: a bare rename on a char span
+  // is exactly as necessary here as it is for `$settledParaScope`: a bare rename on a char span
   // nested in note content never reaches `$rebuildNoteContent` either (`$applyOpenerRename`
   // handles a char span's opening glyph identically whether its parent paragraph is a plain
   // paragraph or a note), so the signature comparison alone is blind to it. Without both checks, a
   // half-typed attribute run OR a bare char-span rename inside an expanded note would either get
   // silently dropped or silently refused — the same signature-equivalent-but-textually-different
-  // divergence `$settledParaNodes` guards against.
+  // divergence `$settledParaScope` guards against.
   //
   // The paragraph-scope analogue of `$liveStructuralMarkers`'s opacity gate (an unrelated,
   // un-edited co-resident note whose own nested char span inflates the live marker sequence, see
@@ -696,7 +715,7 @@ function $settledNoteContent(
     logger?.debug("[MarkerEdit] Settled note USJ skipped: rebuild is a no-op (fixed point)");
     return undefined;
   }
-  replaceSerializedSentinels(rebuilt, runs);
+  replaceSerializedSentinels(rebuilt, runs.serialized);
   return { rebuilt, contentNodes, category: foldedCategory, categoryChanged };
 }
 
@@ -831,7 +850,7 @@ function rewriteSettledGlyphMarker(json: SerializedLexicalNode, marker: string):
  * already the correct mirror for that case.
  *
  * Runs independently of, and composes safely with, a co-resident content settle
- * ({@link $settledNoteContent}) in the SAME note: this patches only the note's own top-level
+ * ({@link $settledNoteScope}) in the SAME note: this patches only the note's own top-level
  * `marker` field (and its glyph/closer siblings, both OUTSIDE the content range —
  * `$buildNoteFragment` trims the glyphs out of `contentNodes` before ever building a fragment);
  * the content settle only ever replaces the CONTENT slice of `noteChildren`. Disjoint JSON
@@ -876,7 +895,7 @@ function $applySettledNoteGlyphRename(
  * fragment, the same must-still-be-a-chapter guard, the same sid carry-over, and the same
  * fixed-point refusal.
  */
-function $settledChapter(
+export function $settledChapterScope(
   chapter: ChapterNode,
   context: Tier2Context,
   transient: TransientLiteral | undefined,
@@ -925,42 +944,50 @@ function $settledChapter(
   return rebuilt;
 }
 
+/** A note's own OPENING glyph retyped to a different marker name, and the note it renames. */
+export interface NoteGlyphRename {
+  glyph: MarkerNode;
+  note: NoteNode;
+  oldMarker: string;
+  newMarker: string;
+}
+
 /**
- * The settled USJ for the editor state `serializedState` was exported from, or `undefined` when
- * nothing settleable is pending (the caller keeps whatever it already has). Call INSIDE a
- * `read()` of that same state. `serializedState` is mutated in place and must therefore be a fresh
- * `toJSON()` result the caller does not otherwise hold.
- *
- * `transientInput` is the advisory declaration from `EditorRef.setTransientInput` — re-verified
- * here, against the live caret, every call ({@link $verifiedTransientLiteral}). A verified
- * declaration settles its own scope even when `pendedKeys` is empty: the whole point is that the
- * declared bytes never reach a consumer, and the paragraph or note they sit in may otherwise be
- * perfectly settled already, with nothing else pending there to trigger a settle at all.
- *
- * `lastKnownCaret` is `Editor.tsx`'s remembered last-observed collapsed caret, used only as
- * `$verifiedTransientLiteral`'s fallback when the live selection is absent (see its own doc
- * comment for the exact race this closes).
+ * Every settle scope a pending state puts in play, discovered but not yet rebuilt. One scope is
+ * one re-tokenization unit — the region `$settleScopeForNode` routes a pended key to — so a
+ * consumer that rebuilds them (`$settledUsj`) and a consumer that only needs to know WHERE the
+ * settled document differs from the live one (the settled-position translation) agree on the
+ * regions by construction.
  */
-export function $settledUsj(
-  serializedState: SerializedEditorState,
+export interface SettleScopes {
+  /** Each entry is one paragraph scope, keyed by its FIRST paragraph: `[para]` normally, and
+   * `[previous, artifact]` for an unknown-split rejoin. */
+  paraScopes: Map<NodeKey, ParaNode[]>;
+  noteScopes: Map<NodeKey, NoteNode>;
+  chapterScopes: Map<NodeKey, ChapterNode>;
+  /** The note-own-glyph renames among the pended keys, keyed by the note's key. */
+  noteGlyphRenames: Map<NodeKey, NoteGlyphRename>;
+  /** Pended, emptied optbreak husks — removed outright rather than rebuilt. */
+  husks: UnknownNode[];
+  huskKeys: Set<NodeKey>;
+}
+
+/**
+ * Route every pended key (plus a verified transient declaration's own node) to its settle scope,
+ * widening an unknown-split rejoin to the paragraph pair the tokenizer must see together.
+ *
+ * Read-only: resolves keys and walks the tree, so call inside an editor-state read.
+ */
+export function $collectSettleScopes(
   pendedKeys: ReadonlySet<NodeKey>,
   context: Tier2Context,
-  transientInput?: AnchoredTransientInput,
-  lastKnownCaret?: LastKnownCaret,
-): Usj | undefined {
-  const transient = $verifiedTransientLiteral(transientInput, lastKnownCaret);
-  if (pendedKeys.size === 0 && !transient) return undefined;
-
-  // Each entry is one settle scope, keyed by its FIRST paragraph: `[para]` normally, and
-  // `[previous, artifact]` for an unknown-split rejoin (see the widening pass below).
+  transient: TransientLiteral | undefined,
+): SettleScopes {
   const paraScopes = new Map<NodeKey, ParaNode[]>();
   const rejoinScopes: ParaNode[][] = [];
   const noteScopes = new Map<NodeKey, NoteNode>();
   const chapterScopes = new Map<NodeKey, ChapterNode>();
-  const noteGlyphRenames = new Map<
-    NodeKey,
-    { glyph: MarkerNode; note: NoteNode; oldMarker: string; newMarker: string }
-  >();
+  const noteGlyphRenames = new Map<NodeKey, NoteGlyphRename>();
   const addScope = (scope: ParaNode | NoteNode | ChapterNode) => {
     if ($isNoteNode(scope)) noteScopes.set(scope.getKey(), scope);
     else if ($isChapterNode(scope)) chapterScopes.set(scope.getKey(), scope);
@@ -1003,6 +1030,114 @@ export function $settledUsj(
     if (scope) addScope(scope);
   }
   const husks = $emptiedOptbreakHusksOf(pendedKeys);
+  return {
+    paraScopes,
+    noteScopes,
+    chapterScopes,
+    noteGlyphRenames,
+    husks,
+    huskKeys: new Set(husks.map((husk) => husk.getKey())),
+  };
+}
+
+/**
+ * Remove the serialized husk at `index` from `siblings` and merge the text that becomes adjacent.
+ *
+ * The merge mirrors the live reconciler's own coalesce of two simple-mergeable TextNode siblings
+ * (see `canMergeSerializedText`'s doc comment) — the mutating settle leaves the flanking
+ * significant spaces untouched at removal time ($settlePendedDisplayOwner's remove-owner branch)
+ * and relies on exactly this coalesce, followed by `normalizeSpaceRuns`, to collapse a run split
+ * across the removed husk. It matters only for a husk removed on its own: a co-settling rebuild
+ * already produces correctly normalized text through the full tokenize+serialize pipeline.
+ */
+export function spliceHusk(siblings: SerializedLexicalNode[], index: number): void {
+  siblings.splice(index, 1);
+  const before = siblings[index - 1];
+  const after = siblings[index];
+  const beforeText = before && serializedText(before);
+  const afterText = after && serializedText(after);
+  if (
+    before &&
+    after &&
+    beforeText !== undefined &&
+    afterText !== undefined &&
+    canMergeSerializedText(before, after)
+  ) {
+    (before as SerializedLexicalNode & { text: string }).text = beforeText + afterText;
+    siblings.splice(index, 1);
+  }
+}
+
+/**
+ * Settle one note scope INTO `sites` — the note's serialized counterpart is patched in place with
+ * the settled content children and, when the leading `\cat` fold moved it, the note's own
+ * `category` field. A refusal ({@link $settledNoteScope} returning `undefined`) leaves the
+ * serialized note exactly as it stood.
+ *
+ * The splice is anchored on the FIRST content node's serialized site rather than a counted index,
+ * so a note whose leading children are glyphs and a caller lands its content in the right slot
+ * regardless of how many of those there are.
+ *
+ * Read-only on the LIVE tree (it mutates only the serialized copy), so call inside an
+ * editor-state read. Returns whether the serialized note actually changed — a refusal is the
+ * settle saying this note is already what it settles to.
+ */
+export function $applySettledNoteScope(
+  note: NoteNode,
+  sites: Map<NodeKey, SerializedSite>,
+  context: Tier2Context,
+  huskKeys: ReadonlySet<NodeKey>,
+  transient: TransientLiteral | undefined,
+): boolean {
+  const site = sites.get(note.getKey());
+  const noteChildren = site ? serializedChildren(site.node) : undefined;
+  if (!site || !noteChildren) return false;
+  const built = $settledNoteScope(note, sites, context, huskKeys, transient);
+  if (!built) return false;
+  // The category fold's result patches the serialized note's OWN field — the settled USJ a
+  // consumer reads must carry the category the displayed bytes fold to, not the stale state.
+  if (built.categoryChanged) {
+    const serializedNote = site.node as { category?: string };
+    if (built.category === undefined) delete serializedNote.category;
+    else serializedNote.category = built.category;
+  }
+  if (!built.rebuilt) return built.categoryChanged;
+  const firstSite = sites.get(built.contentNodes[0].getKey());
+  if (!firstSite) return built.categoryChanged;
+  const start = noteChildren.indexOf(firstSite.node);
+  if (start < 0) return built.categoryChanged;
+  noteChildren.splice(start, built.contentNodes.length, ...built.rebuilt);
+  return true;
+}
+
+/**
+ * The settled USJ for the editor state `serializedState` was exported from, or `undefined` when
+ * nothing settleable is pending (the caller keeps whatever it already has). Call INSIDE a
+ * `read()` of that same state. `serializedState` is mutated in place and must therefore be a fresh
+ * `toJSON()` result the caller does not otherwise hold.
+ *
+ * `transientInput` is the advisory declaration from `EditorRef.setTransientInput` — re-verified
+ * here, against the live caret, every call ({@link $verifiedTransientLiteral}). A verified
+ * declaration settles its own scope even when `pendedKeys` is empty: the whole point is that the
+ * declared bytes never reach a consumer, and the paragraph or note they sit in may otherwise be
+ * perfectly settled already, with nothing else pending there to trigger a settle at all.
+ *
+ * `lastKnownCaret` is `Editor.tsx`'s remembered last-observed collapsed caret, used only as
+ * `$verifiedTransientLiteral`'s fallback when the live selection is absent (see its own doc
+ * comment for the exact race this closes).
+ */
+export function $settledUsj(
+  serializedState: SerializedEditorState,
+  pendedKeys: ReadonlySet<NodeKey>,
+  context: Tier2Context,
+  transientInput?: AnchoredTransientInput,
+  lastKnownCaret?: LastKnownCaret,
+): Usj | undefined {
+  const transient = $verifiedTransientLiteral(transientInput, lastKnownCaret);
+  if (pendedKeys.size === 0 && !transient) return undefined;
+
+  const { paraScopes, noteScopes, chapterScopes, noteGlyphRenames, husks, huskKeys } =
+    $collectSettleScopes(pendedKeys, context, transient);
   if (
     paraScopes.size === 0 &&
     noteScopes.size === 0 &&
@@ -1010,7 +1145,6 @@ export function $settledUsj(
     husks.length === 0
   )
     return undefined;
-  const huskKeys = new Set(husks.map((husk) => husk.getKey()));
 
   const sites = new Map<NodeKey, SerializedSite>();
   $mapSerializedSites($getRoot().getChildren(), serializedState.root.children, sites);
@@ -1023,34 +1157,16 @@ export function $settledUsj(
   // Notes FIRST: a settled note that also rides inside a settling paragraph is preserved there as
   // a sentinel, and the paragraph pass substitutes the very serialized subtree this pass has just
   // rewritten in place — so the paragraph's output carries the settled note, not the pending one.
-  // `huskKeys` (threaded into `serializedRunsOf` inside `$settledNoteContent`) already keeps a
+  // `huskKeys` (threaded into `carriedPreservedRuns` inside `$settledNoteScope`) already keeps a
   // co-settling note's own rebuild from resurrecting a husk living in its content — see
-  // `serializedRunsOf`'s own doc comment.
-  for (const note of noteScopes.values()) {
-    const site = sites.get(note.getKey());
-    const noteChildren = site ? serializedChildren(site.node) : undefined;
-    if (!site || !noteChildren) continue;
-    const built = $settledNoteContent(note, sites, context, huskKeys, transient);
-    if (!built) continue;
-    // The category fold's result patches the serialized note's OWN field — the settled USJ a
-    // consumer reads must carry the category the displayed bytes fold to, not the stale state.
-    if (built.categoryChanged) {
-      const serializedNote = site.node as { category?: string };
-      if (built.category === undefined) delete serializedNote.category;
-      else serializedNote.category = built.category;
-    }
-    if (!built.rebuilt) continue;
-    const firstSite = sites.get(built.contentNodes[0].getKey());
-    if (!firstSite) continue;
-    const start = noteChildren.indexOf(firstSite.node);
-    if (start < 0) continue;
-    noteChildren.splice(start, built.contentNodes.length, ...built.rebuilt);
-  }
+  // `carriedPreservedRuns`'s own doc comment.
+  for (const note of noteScopes.values())
+    $applySettledNoteScope(note, sites, context, huskKeys, transient);
 
   for (const paras of paraScopes.values()) {
     const site = sites.get(paras[0].getKey());
     if (!site) continue;
-    const rebuilt = $settledParaNodes(paras, sites, context, huskKeys, transient);
+    const rebuilt = $settledParaScope(paras, sites, context, huskKeys, transient);
     if (!rebuilt) continue;
     const index = site.siblings.indexOf(site.node);
     if (index < 0) continue;
@@ -1069,7 +1185,7 @@ export function $settledUsj(
     const site = sites.get(chapter.getKey());
     if (!site) continue;
     const regionSize = 1 + $chapterAdjacentAttributeNodes(chapter).length;
-    const rebuilt = $settledChapter(chapter, context, transient);
+    const rebuilt = $settledChapterScope(chapter, context, transient);
     if (!rebuilt) continue;
     const index = site.siblings.indexOf(site.node);
     if (index < 0) continue;
@@ -1091,7 +1207,7 @@ export function $settledUsj(
   //    `$mapSerializedSites`). `built.rebuilt` already excludes the husk (via `huskKeys`), so by
   //    the time this loop runs, the husk's own JSON node genuinely no longer exists anywhere in
   //    that array; `indexOf` returns -1 and `continue` is a real no-op.
-  //  - PARAGRAPH: `$settledParaNodes` returns a WHOLLY FRESH top-level node, and the para pass's
+  //  - PARAGRAPH: `$settledParaScope` returns a WHOLLY FRESH top-level node, and the para pass's
   //    splice (`site.siblings.splice(index, 1, ...rebuilt)`, keyed on the PARAGRAPH's own site)
   //    replaces the paragraph's OWN SLOT in its PARENT's children array — it never touches the
   //    OLD paragraph's own children array (where the husk's site.siblings still points). That old
@@ -1111,29 +1227,7 @@ export function $settledUsj(
     if (!site) continue;
     const index = site.siblings.indexOf(site.node);
     if (index < 0) continue;
-    site.siblings.splice(index, 1);
-    // Merge the now-adjacent flanking text, mirroring the live reconciler's own coalesce of two
-    // simple-mergeable TextNode siblings (see `canMergeSerializedText`'s doc comment) — the
-    // mutating settle leaves the flanking significant spaces untouched at removal time
-    // ($settlePendedDisplayOwner's remove-owner branch) and relies on exactly this coalesce,
-    // followed by `normalizeSpaceRuns`, to collapse a run split across the removed husk. Only
-    // reachable for a husk pended alone (see this loop's own doc comment above) — a co-settling
-    // rebuild already produces correctly normalized text on its own, via the full
-    // tokenize+serialize pipeline.
-    const before = site.siblings[index - 1];
-    const after = site.siblings[index];
-    const beforeText = before && serializedText(before);
-    const afterText = after && serializedText(after);
-    if (
-      before &&
-      after &&
-      beforeText !== undefined &&
-      afterText !== undefined &&
-      canMergeSerializedText(before, after)
-    ) {
-      (before as SerializedLexicalNode & { text: string }).text = beforeText + afterText;
-      site.siblings.splice(index, 1);
-    }
+    spliceHusk(site.siblings, index);
   }
 
   return deserializeSerializedEditorState(serializedState, context.viewOptions);

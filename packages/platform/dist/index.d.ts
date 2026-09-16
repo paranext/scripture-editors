@@ -315,7 +315,10 @@ export declare interface EditorProps<TLogger extends LoggerBasic> {
   scrRef?: SerializedVerseRef;
   /** Callback function when the Scripture reference has changed. */
   onScrRefChange?: (scrRef: SerializedVerseRef) => void;
-  /** Callback function when the cursor selection changes. */
+  /**
+   * Callback function when the cursor selection changes. The `selection` passed is expressed
+   * against the SETTLED document — see {@link EditorRef.getSelection} for the contract.
+   */
   onSelectionChange?: (selection: SelectionRange | undefined) => void;
   /** Callback function when USJ Scripture data has changed. */
   onUsjChange?: (usj: Usj, ops?: DeltaOp[], source?: DeltaSource, insertedNodeKey?: string) => void;
@@ -375,10 +378,7 @@ export declare interface EditorRef {
    * (the same re-tokenization a departure settle performs), computed without touching the editor,
    * so the user's edit stays pending on screen and their caret and undo history are untouched.
    * Settling is uniform: a half-typed `|stuf` settles to literal content, because that is what
-   * those bytes mean to anything that parses them. While anything is pending, this settled
-   * structure can differ from the LIVE tree {@link EditorRef.getSelection}'s `jsonPath` addresses —
-   * do not resolve a live-selection `jsonPath` against a `getUsj()` snapshot without accounting for
-   * that.
+   * those bytes mean to anything that parses them.
    */
   getUsj(): Usj | undefined;
   /**
@@ -386,7 +386,9 @@ export declare interface EditorRef {
    * so the screen shows the finished structure. NOT required before reading the USJ to save —
    * {@link EditorRef.getUsj} already returns settled output — so a host that only needs canonical
    * USJ should not call this at all: it mutates the document, which pushes a history entry and can
-   * re-settle content the user just undid.
+   * re-settle content the user just undid. Positions ({@link EditorRef.getSelection},
+   * {@link EditorRef.setSelection}, {@link EditorRef.setAnnotation}) never require it either — they
+   * already resolve against the settled document automatically.
    *
    * Two carve-outs: while the app-placed-caret suppression window is armed (the caret was placed
    * by a programmatic scrRef move or an undo/redo restore, with no user gesture since), NOTHING
@@ -446,21 +448,31 @@ export declare interface EditorRef {
    * Get the selection location or range.
    *
    * @remarks
+   * Positions are expressed against the SETTLED document — the one {@link EditorRef.getUsj}
+   * returns — never against the on-screen tree mid-edit. While a marker edit is pending (Standard
+   * view's marker-editing engine) the editor translates between the two automatically; when
+   * nothing is pending the two are identical. A USFM byte with no USJ representation (the `+` of a
+   * nested marker, the second `/` of `//`, an attribute's `|`, `=`, `"`, or the space between
+   * attributes) snaps LEFT to the nearest representable location, so a selection captured at such
+   * a byte and set back lands on that representative, not on the byte itself.
+   *
    * Always returns `undefined` in the block verse layout (`ViewOptions.verseLayout: "block"`):
    * it splits a paragraph spanning verses across their blocks, so the editor's content indexes no
    * longer match the source USJ's and no location can be expressed. The editor reports this once
    * through its logger.
    *
    * @returns the selection location or range, or `undefined` if there is no selection. The
-   *   json-path in the selection assumes no comment Milestone nodes are present in the USJ, and
-   *   addresses the LIVE tree, not {@link EditorRef.getUsj}'s settled output — while anything is
-   *   pending, resolving it against a `getUsj()` snapshot can land on shifted or stale content.
+   *   json-path in the selection assumes no comment Milestone nodes are present in the USJ.
    */
   getSelection(): SelectionRange | undefined;
   /**
    * Set the selection location or range.
    *
    * @remarks
+   * Positions are expressed against the SETTLED document ({@link EditorRef.getUsj}) — see
+   * {@link EditorRef.getSelection} for the full contract, including how a USFM byte with no USJ
+   * representation snaps left.
+   *
    * Does nothing in the block verse layout, for the reason given on
    * {@link EditorRef.getSelection}.
    *
@@ -472,6 +484,9 @@ export declare interface EditorRef {
    * Set an ephemeral annotation with optional event callbacks.
    *
    * @remarks
+   * Positions are expressed against the SETTLED document ({@link EditorRef.getUsj}) — see
+   * {@link EditorRef.getSelection} for the full contract.
+   *
    * Does nothing in the block verse layout (`ViewOptions.verseLayout: "block"`): an annotation is
    * addressed by USJ location, which that layout cannot express - see
    * {@link EditorRef.getSelection}. The failure is reported through the logger.
@@ -499,6 +514,9 @@ export declare interface EditorRef {
    *
    * @deprecated Pass a callbacks object instead. This positional form is preserved for backward
    *   compatibility and will be removed in a future release.
+   *
+   * @remarks Positions are expressed against the SETTLED document — see
+   *   {@link EditorRef.getSelection} for the contract.
    *
    * @param selection - An annotation range containing the start and end location.
    * @param type - Type of the annotation.
@@ -817,8 +835,9 @@ export declare interface EditorRef {
    * Insert a note at the specified selection, e.g. footnote, cross-reference, endnote.
    * @param marker - The marker type for the note.
    * @param caller - Optional note caller to override the default for the given marker.
-   * @param selection - Optional selection range where the note should be inserted. By default it
-   *   will use the current selection in the editor.
+   * @param selection - Optional selection range where the note should be inserted, expressed
+   *   against the SETTLED document (see {@link EditorRef.getSelection}). By default it will use
+   *   the current selection in the editor.
    * @throws Will throw an error if the marker is not a valid note marker.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.

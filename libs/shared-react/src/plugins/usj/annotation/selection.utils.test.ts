@@ -1399,7 +1399,7 @@ describe("$getUsjSelectionFromEditor", () => {
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0].marker",
+          jsonPath: "$.content[0]['marker']",
           propertyOffset: 0,
         });
         expect(usjSelection.end).toBeUndefined();
@@ -1436,7 +1436,7 @@ describe("$getUsjSelectionFromEditor", () => {
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0].content[1].marker",
+          jsonPath: "$.content[0].content[1]['marker']",
           propertyOffset: 0,
         });
         expect(usjSelection.end).toBeUndefined();
