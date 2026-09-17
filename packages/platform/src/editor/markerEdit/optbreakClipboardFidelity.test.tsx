@@ -236,14 +236,18 @@ describe("copy characterization: what the walker actually emits around an optbre
   });
 
   it("carrier agreement at a childless boundary: a selection ending exactly at the optbreak's own start (touching the wrapper, not its `//` child) excludes it from BOTH carriers, not just text/plain", async () => {
-    // Without `UnknownNode`'s `isSelected` override, this selection shape — a focus point
-    // resolving as an ELEMENT-type point ON the optbreak at offset 0 — would still mark the
-    // WRAPPER "selected" under Lexical's default `isSelected` (key-membership in
-    // `selection.getNodes()`, blind to whether any of the wrapper's own children are actually
-    // covered), even though the `//` child itself is not selected. `$appendNodesToJSON` would then
-    // serialize a CHILDLESS `{type:"unknown", tag:"optbreak", children:[]}` placeholder into the
-    // lexical-JSON payload — a carrier disagreement (`text/plain`, walking the same `getNodes()`
-    // list via `$selectionToUsfmText`, correctly emits nothing for this boundary).
+    // A focus point resolving as an ELEMENT-type point ON the optbreak at offset 0 is a selection
+    // reaching INTO an opaque construct, so `$getStandardViewClipboardData`
+    // (whitespaceDisplay.plugin.utils.ts) writes the two TEXT flavors only — there is no internal
+    // flavor here to disagree with `text/plain`, which is what "both carriers" means at this
+    // boundary. Asserted as the empty string it actually is: a `not.toContain` against it would
+    // hold vacuously and would keep holding however the payload were built.
+    //
+    // `UnknownNode.isSelected` is what makes the SAME boundary agree wherever the internal flavor
+    // IS written — the views that do not register this handler, where Lexical's own copy runs
+    // `$appendNodesToJSON` and its default key-membership `isSelected` would serialize a CHILDLESS
+    // `{type:"unknown", tag:"optbreak", children:[]}` placeholder. That predicate is pinned
+    // directly, on both range branches, in `libs/shared`'s `UnknownNode.test.ts`.
     const { editor } = await renderUsjEditor(optbreakUsj());
     let optbreakKey = "";
     editor.getEditorState().read(() => {
@@ -267,7 +271,7 @@ describe("copy characterization: what the walker actually emits around an optbre
     const { event, getData } = copyEvent();
     await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
     expect(getData("text/plain")).not.toContain("//");
-    expect(getData("application/x-lexical-editor")).not.toContain("optbreak");
+    expect(getData("application/x-lexical-editor")).toBe("");
   });
 
   it("characterization only (not fixed — unreachable via this branch's own copy): a synthetic html-only foreign payload with an NBSP directly before `//` still settles to a real optbreak node, with the foreign source's own NBSP kept as data `~` rather than folded into a display space", async () => {

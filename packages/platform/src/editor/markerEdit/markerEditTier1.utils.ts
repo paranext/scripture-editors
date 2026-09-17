@@ -126,13 +126,17 @@ export interface MarkerEditContext extends Tier2Context {
    */
   pastePendedKeys: Set<NodeKey>;
   /**
-   * Mirrors the host `Editor`'s `structureProtectionMode` option. Read by
-   * `$handlePasteForStandardView` (whitespaceDisplay.plugin.utils.ts), which must decline a
-   * `"protected"` document's paste so `StructureKeyboardPlugin`'s HTML sanitizer still governs it
-   * — both register at `COMMAND_PRIORITY_HIGH`, and the marker-edit engine mounts first, so
-   * without this check its unconditional external-paste claim would starve the sanitizer. Wiring,
-   * not engine state: refreshed every render alongside `viewOptions`/`getMarker`/`logger` rather
-   * than gating the registration effect, so toggling it doesn't tear down and reset the engine.
+   * Mirrors the host `Editor`'s `structureProtectionMode` option. Read by the engine's two
+   * `COMMAND_PRIORITY_HIGH` paste claims — `$handlePasteForStandardView`
+   * (whitespaceDisplay.plugin.utils.ts) and the char-stack line replay (`MarkerEditPlugin.tsx`) —
+   * which must stand aside in a `"protected"` document for the ONE paste
+   * `StructureKeyboardPlugin` refuses outright: a selection `$shouldBlockSelectionReplacement`
+   * blocks. Not every protected paste; the sanitizer governs the rest, and both claims keep
+   * claiming those. The narrow rule is what the priorities require: all three register at HIGH and
+   * the marker-edit engine mounts first, so a claim here starves the refusal that would otherwise
+   * own the selection. Wiring, not engine state: refreshed every render alongside
+   * `viewOptions`/`getMarker`/`logger` rather than gating the registration effect, so toggling it
+   * doesn't tear down and reset the engine.
    */
   structureProtectionMode: StructureProtectionMode;
   /**

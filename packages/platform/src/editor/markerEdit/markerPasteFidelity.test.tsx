@@ -453,6 +453,35 @@ describe("own-marker-prefix dedup: unknown/custom.sty markers", () => {
 
     expect(paraMarkerText(usjOf(editor))).toEqual([["zz", "one two"]]);
   });
+
+  it('paste "\\zbold* rest" into an "\\s1" host: a CLOSER is not the pasted paragraph\'s own marker, so the host keeps its glyph', async () => {
+    // The dedup only fires for a pasted PARAGRAPH-marker OPENER. Its literal pattern accepts the
+    // marker name followed by a separator and nothing else: allow a closer's `*` there and
+    // `\zbold*` reads as the marker `zbold`, which `isParaKindMarker` calls a paragraph (unknown
+    // markers are paragraphs), so the host's own `\s1` glyph is dropped as "redundant" and the
+    // paragraph silently loses its real marker. Reachable in any project with a custom.sty char
+    // style: copy from just before a `\zbold*` closing glyph to end of line, paste at the content
+    // start of a section heading.
+    initializeDeserialize(undefined);
+    let sep!: TextNode;
+    const { editor } = await historyTestEnvironment(() => {
+      const para = $createParaNode("s1");
+      sep = $createTextNode(NBSP);
+      $setState(sep, textTypeState, "marker-trailing-space");
+      $getRoot().append(para.append($createMarkerNode("s1"), sep));
+    });
+
+    await pasteAndSettle(
+      editor,
+      () => sep.select(sep.getTextContentSize(), sep.getTextContentSize()),
+      "\\zbold* rest",
+    );
+
+    const paras = paraMarkerText(usjOf(editor));
+    expect(paras).toHaveLength(1);
+    expect(paras[0][0]).toBe("s1");
+    expect(paras[0][1]).toContain("rest");
+  });
 });
 
 /** A `\p` host holding "A", plus a second paragraph to depart into. Returns the host's content

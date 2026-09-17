@@ -641,10 +641,16 @@ describe("mixed selection: spans BOTH attribute and non-attribute content", () =
 
     await pasteAndFlush(editor, { "text/plain": "X" });
 
-    // No crash, and the document stays structurally sane: still 2 paragraphs, closer still present
-    // (the mixed range covered only the run's own text, never reaching into the closer glyph).
     editor.getEditorState().read(() => {
       const char = $firstChar();
+      // What the claim is FOR: the selected range — the attribute run's whole text — is gone and
+      // the pasted byte sits in its place, which is where the same keystroke typed over that
+      // selection would have put it. Asserted on the run's own content, because the structural
+      // assertions below cannot see an insertion that landed at the wrong offset, or none at all.
+      expect($charAttributeRun(char).getTextContent()).toBe("X");
+      expect(char.getTextContent().replaceAll(NBSP, " ")).toBe("\\nd asdfX\\nd*");
+      // And the document stays structurally sane: still 2 paragraphs, closer still present (the
+      // mixed range covered only the run's own text, never reaching into the closer glyph).
       expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(2);
       expect($charCloser(char).getTextContent()).toBe("\\nd*");
     });

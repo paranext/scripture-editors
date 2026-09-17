@@ -30,7 +30,16 @@ import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { $getHtmlContent } from "@lexical/clipboard";
 import { act } from "@testing-library/react";
-import { $getRoot, $isTextNode, LexicalEditor, PASTE_COMMAND, TextNode } from "lexical";
+import { $dfs } from "@lexical/utils";
+import {
+  $getRoot,
+  $getSelection,
+  $isRangeSelection,
+  $isTextNode,
+  LexicalEditor,
+  PASTE_COMMAND,
+  TextNode,
+} from "lexical";
 import { $isParaNode, NBSP } from "shared";
 import { StructureProtectionMode } from "shared-react";
 
@@ -58,9 +67,13 @@ const figureObject: MarkerObject = {
   content: [CAPTION],
 } as unknown as MarkerObject;
 
+/** A paragraph's content, always present here by construction — `MarkerObject["content"]` is
+ * optional, and threading that `undefined` through every fixture and read buys nothing. */
+type ParaContent = NonNullable<MarkerObject["content"]>;
+
 /** A two-paragraph document whose first paragraph holds `content`; the second is somewhere for the
  * caret to depart to, which is what makes the marker engine settle. */
-function figureUsj(content: MarkerObject["content"]): Usj {
+function figureUsj(content: ParaContent): Usj {
   return {
     type: "USJ",
     version: "3.1",
@@ -74,7 +87,7 @@ function figureUsj(content: MarkerObject["content"]): Usj {
 }
 
 /** The paste target: a verse whose prose the caret can land inside. */
-const hostContent: MarkerObject["content"] = [
+const hostContent: ParaContent = [
   { type: "verse", marker: "v", number: "18" } as unknown as MarkerObject,
   "Before after",
 ];
@@ -97,7 +110,7 @@ function displayText(editor: LexicalEditor): string {
 }
 
 /** The first paragraph's exported content, for asserting what the paste left behind. */
-function firstParaContent(usj: Usj | undefined): MarkerObject["content"] {
+function firstParaContent(usj: Usj | undefined): ParaContent {
   const para = (usj?.content ?? [])[2] as MarkerObject | undefined;
   return para?.content ?? [];
 }
@@ -129,8 +142,9 @@ async function pasteInto(
   structureProtectionMode: StructureProtectionMode,
   payload: { [mimeType: string]: string },
   $place: () => void = () => $placeMidProse(),
+  content: ParaContent = hostContent,
 ): Promise<{ usj: Usj | undefined; display: string; prevented: boolean }> {
-  const { ref, lexical } = await mountStandardViewEditor(figureUsj(hostContent), {
+  const { ref, lexical } = await mountStandardViewEditor(figureUsj(content), {
     structureProtectionMode,
   });
   const { event, prevented } = pasteEvent(payload);
@@ -161,6 +175,46 @@ function $placeMidProse(): void {
     );
   if (!run) throw new Error("expected the paragraph's `Before after` text run");
   run.select(7, 7);
+}
+
+/** A host paragraph whose prose runs through a `\nd` char span — the shape the char-stack paste
+ * claim gates on. */
+const charStackHostContent: ParaContent = [
+  { type: "verse", marker: "v", number: "18" } as unknown as MarkerObject,
+  "Before ",
+  { type: "char", marker: "nd", content: ["Lord"] } as unknown as MarkerObject,
+  " after",
+];
+
+/** How many top-level paragraphs the document exports — a split would make it three. */
+function $paraCount(usj: Usj | undefined): number {
+  return (usj?.content ?? []).filter(
+    (item) => typeof item === "object" && (item as MarkerObject).type === "para",
+  ).length;
+}
+
+/** A range from the start of the editable verse glyph to inside the `\nd` span's own text: it
+ * contains the verse marker, and its focus is inside the char stack. */
+function $placeAcrossVerseIntoCharSpan(): void {
+  const para = $getRoot().getChildren().filter($isParaNode)[0];
+  const verse = para
+    .getChildren()
+    .find((node): node is TextNode => $isTextNode(node) && node.getTextContent().includes("\\v"));
+  if (!verse) throw new Error("expected the paragraph's editable verse glyph");
+  // The span's content run carries its own leading separator (`" Lord"`), so the run is matched by
+  // its tail and the focus set a couple of characters short of the end — squarely inside the
+  // styled text, not on either glyph.
+  const inChar = $dfs(para)
+    .map(({ node }) => node)
+    .find(
+      (node): node is TextNode =>
+        $isTextNode(node) && node.getTextContent().endsWith("Lord") && node.getType() === "text",
+    );
+  if (!inChar) throw new Error("expected the `\\nd` span's own text run");
+  verse.select(0, 0);
+  const selection = $getSelection();
+  if ($isRangeSelection(selection))
+    selection.focus.set(inChar.getKey(), inChar.getTextContentSize() - 2, "text");
 }
 
 /** The caret at the very end of the editable `\v 18 ` glyph — the same screen position as offset 0
@@ -278,6 +332,30 @@ describe("pasting a figure into a structure-protected Standard view", () => {
     expect(display).toContain("Before Before after");
     expect(display).not.toContain(CAPTION);
     expect(JSON.stringify(usj)).not.toContain("figure");
+  });
+
+  it("refuses a MULTI-LINE paste over a blocked selection whose focus is inside a char stack", async () => {
+    // The blocked-selection decline has to hold for EVERY claim registered at HIGH, not just the
+    // Standard-view one. The char-stack line replay (`MarkerEditPlugin.tsx`) is registered after it
+    // in the same `mergeRegister` and before `StructureKeyboardPlugin` mounts, so it is what a
+    // declined protected paste reaches next — and its replay opens with `selection.removeText()`
+    // and an `INSERT_PARAGRAPH_COMMAND` per line, which is exactly the verse-marker deletion and
+    // paragraph split protection had just refused. This selection reaches both claims at once: it
+    // CONTAINS the verse marker (Rule 1 blocks it) and its focus sits inside the `\\nd` span (the
+    // char-stack gate reads the focus), and the payload has the two lines the replay needs.
+    const { usj, display, prevented } = await pasteInto(
+      "protected",
+      { "text/plain": "one\ntwo" },
+      $placeAcrossVerseIntoCharSpan,
+      charStackHostContent,
+    );
+
+    expect(prevented).toBe(true);
+    expect(display).not.toContain("one");
+    expect(display).not.toContain("two");
+    // Nothing was removed either: the verse marker, the char span and its closer all survive.
+    expect(firstParaContent(usj)).toEqual(charStackHostContent);
+    expect($paraCount(usj)).toBe(2);
   });
 
   it("refuses a paste outright at the end of the editable verse glyph, inserting nothing", async () => {

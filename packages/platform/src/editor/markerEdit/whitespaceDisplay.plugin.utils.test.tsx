@@ -791,6 +791,17 @@ async function pasteAndCopyBack(
   return getData("text/plain");
 }
 
+/**
+ * The `application/x-lexical-editor` flavor shape that makes a paste INTERNAL: one Lexical's own
+ * `$insertDataTransferForRichText` would reconstruct as nodes, which is namespace-scoped. Read off
+ * the editor rather than spelled literally so these pins keep meaning what they say if the test
+ * harness ever renames its editor. The node list's CONTENTS are irrelevant here — every claim
+ * under test declines before looking at them — so it is left empty.
+ */
+function sameNamespaceLexicalFlavor(editor: LexicalEditor): string {
+  return JSON.stringify({ namespace: editor._config.namespace, nodes: [] });
+}
+
 describe("paste normalization ($handlePasteForStandardView)", () => {
   it("rewrites a pasted data-NBSP to the `~` display form (data round-trips to a real NBSP)", async () => {
     let text: TextNode;
@@ -829,7 +840,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
     await act(async () => editor.update(() => text.select(0, 0)));
 
     const internal = pasteEvent({
-      "application/x-lexical-editor": "{}",
+      "application/x-lexical-editor": sameNamespaceLexicalFlavor(editor),
       "text/plain": `x${NBSP}y`,
     });
     let handled = true;
@@ -840,6 +851,45 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
     );
     expect(handled).toBe(false);
     expect(internal.prevented()).toBe(false);
+  });
+
+  it("claims a FOREIGN Lexical editor's payload — the internal fast path would never reconstruct it", async () => {
+    // `$insertDataTransferForRichText` (`@lexical/clipboard`) takes its node-tree branch only for a
+    // payload whose namespace matches THIS editor's, and falls through to the `text/html` DOM
+    // import for every other one. So declining on the mere PRESENCE of the flavor hands a foreign
+    // payload — the `"Commenting"` editor `CommentPlugin.tsx` mounts in this same app writes one —
+    // to a path that runs none of this handler's byte rules: the `\\c`/`\\id` strip and the
+    // positional NBSP mapping. A `\\c` copied out of a comment box would reach the document and
+    // poison the save with a second chapter marker.
+    let text: TextNode;
+    const { editor } = await testEnvironment(() => {
+      const para = $createParaNode("p");
+      text = $createTextNode("body");
+      $getRoot().append(para.append($createMarkerNode("p"), text));
+    });
+    await act(async () => editor.update(() => text.select(0, 0)));
+
+    const foreign = pasteEvent({
+      "application/x-lexical-editor": JSON.stringify({
+        namespace: "Commenting",
+        nodes: [{ type: "text", text: "\\c 2 from a comment" }],
+      }),
+      "text/plain": "\\c 2 from a comment",
+    });
+    let handled = false;
+    await act(async () =>
+      editor.update(() => {
+        handled = $handlePasteForStandardView(foreign.event);
+      }),
+    );
+
+    expect(handled).toBe(true);
+    expect(foreign.prevented()).toBe(true);
+    editor.getEditorState().read(() => {
+      // The strip ran: the chapter bytes are gone and only the prose landed.
+      expect($getRoot().getTextContent()).not.toContain("\\c 2");
+      expect($getRoot().getTextContent()).toContain("from a comment");
+    });
   });
 
   it("claims an external plain-text paste with no NBSP at all, inserting it unchanged", async () => {
@@ -1039,7 +1089,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
     await act(async () => editor.update(() => text.select(0, 0)));
 
     const { event, prevented } = pasteEvent({
-      "application/x-lexical-editor": "{}",
+      "application/x-lexical-editor": sameNamespaceLexicalFlavor(editor),
       "text/html": "<p>3&nbsp;000</p>",
     });
     let handled = true;

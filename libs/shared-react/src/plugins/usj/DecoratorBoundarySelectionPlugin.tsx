@@ -255,13 +255,27 @@ export function DecoratorBoundarySelectionPlugin(): null {
   const isMaterializePending = useRef(false);
 
   useEffect(() => {
-    const markDown = () => {
+    // Only the PRIMARY button starts a drag Chromium will extend a selection from, and only a
+    // press that starts one may set this flag: a secondary-button press can open the platform's
+    // NATIVE context menu (`ContextMenuPlugin` deliberately lets it through for some targets),
+    // which on Windows and Linux grabs the mouse so the page never sees the matching `pointerup`.
+    // The flag would then stay set with no drag in flight, and every later arrival — a click, a
+    // Shift+Arrow extend — would be treated as one, leaving the DOM selection stranded on points
+    // Lexical cannot resolve.
+    const markDown = (event: Event) => {
+      if (event instanceof PointerEvent && event.button !== 0) return;
       isPointerDown.current = true;
     };
-    // Releasing is listened for on the DOCUMENT in the capture phase, and on `pointercancel` as well
-    // as `pointerup`: a drag that starts in the editor can finish anywhere, and a flag that fails to
-    // clear would leave every later keyboard move reading as a drag and the DOM selection stranded on
-    // points Lexical cannot resolve.
+    // BOTH ends are listened for on the DOCUMENT in the capture phase, and the release on
+    // `pointercancel` as well as `pointerup`: a drag that starts in the editor can finish anywhere,
+    // and a flag that fails to clear would leave every later keyboard move reading as a drag and the
+    // DOM selection stranded on points Lexical cannot resolve. The press has to be heard on the
+    // document rather than the root for the mirror-image reason — Chromium places a caret INSIDE
+    // the editor for a press that lands in the container just outside the contenteditable root, so
+    // a root-scoped listener misses the start of a real drag and the first snap is materialized into
+    // the DOM, which is exactly what stops a drag dead. A press with no editor selection behind it
+    // costs nothing: the flag is only ever read while repairing a selection inside the editor.
+    // (`NoteShellCaretGuardPlugin` registers all three on the document for the same reason.)
     const release = () => {
       isPointerDown.current = false;
       if (!isMaterializePending.current) return;
@@ -276,14 +290,14 @@ export function DecoratorBoundarySelectionPlugin(): null {
     // One listener does both the wiring and the unwiring: Lexical calls it with the current root at
     // registration, with each replacement root on a swap, and with `(null, previous)` on teardown.
     return editor.registerRootListener((rootElement, prevRootElement) => {
-      prevRootElement?.removeEventListener("pointerdown", markDown, true);
       const previousDocument = prevRootElement?.ownerDocument;
+      previousDocument?.removeEventListener("pointerdown", markDown, true);
       previousDocument?.removeEventListener("pointerup", release, true);
       previousDocument?.removeEventListener("pointercancel", release, true);
       isPointerDown.current = false;
       isMaterializePending.current = false;
-      rootElement?.addEventListener("pointerdown", markDown, true);
       const currentDocument = rootElement?.ownerDocument;
+      currentDocument?.addEventListener("pointerdown", markDown, true);
       currentDocument?.addEventListener("pointerup", release, true);
       currentDocument?.addEventListener("pointercancel", release, true);
     });
