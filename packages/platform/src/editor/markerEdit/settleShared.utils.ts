@@ -14,11 +14,19 @@
  */
 
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
-import { MarkerContent, USJ_TYPE, USJ_VERSION } from "@eten-tech-foundation/scripture-utilities";
+import {
+  MarkerContent,
+  MarkerObject,
+  USJ_TYPE,
+  USJ_VERSION,
+} from "@eten-tech-foundation/scripture-utilities";
 import { SerializedLexicalNode } from "lexical";
 import {
   getEditableCallerText,
+  isSerializedBookNode,
+  isSerializedImmutableTypedTextNode,
   isSerializedMarkerNode,
+  BookNode,
   MarkerSyntax,
   NBSP,
   NoteNode,
@@ -191,4 +199,85 @@ export function $serializeExpandedNoteContent(
   const children = wrapperChildren.slice(contentStart, contentEnd);
   if (children.length === 0) return { failure: "empty" };
   return { children };
+}
+
+/**
+ * The serialized twin of `$isSynthesizedMarkerNode` (shared's node.utils.ts): either flavor of
+ * visible marker glyph — a `MarkerNode` (markerMode "editable") or a marker-typed
+ * `ImmutableTypedTextNode` (markerMode "visible" and gutter views).
+ */
+function isSerializedSynthesizedMarker(node: SerializedLexicalNode | undefined): boolean {
+  return (
+    isSerializedMarkerNode(node) ||
+    (isSerializedImmutableTypedTextNode(node) && node.textType === "marker")
+  );
+}
+
+/**
+ * Why {@link $serializeBookLine} has nothing to hand back:
+ *
+ * - `"shape"` — the serialization did not open with a book element carrying children.
+ * - `"empty"` — the unwrap left no content after the `\id GEN ` prefix, and no block follows.
+ *
+ * Returned rather than logged, so each settle reports the guard in its own wording, exactly as
+ * {@link ExpandedNoteContentFailure} is.
+ */
+export type BookLineFailure = "shape" | "empty";
+
+/** {@link $serializeBookLine}'s result: the line's content children plus the blocks that follow the
+ * line, or why there are none. */
+export type BookLineResult =
+  | {
+      children: SerializedLexicalNode[];
+      followingBlocks: SerializedLexicalNode[];
+      failure?: undefined;
+    }
+  | { children?: undefined; followingBlocks?: undefined; failure: BookLineFailure };
+
+/**
+ * The serialized `\id` line rebuilt from freshly tokenized bytes: the CONTENT children of `book`
+ * built from `lineContent`, and the top-level nodes built from `followingBlocks` — the blocks a
+ * typed `\p`, `\ip` or `\c` starts after the line. Serializes the WHOLE region — the book element
+ * plus its rebuilt content, then every following block — and unwraps the leading `\id GEN ` prefix
+ * glyph.
+ *
+ * Serializing through the adaptor's own `createBook` rather than hand-building the children is
+ * what keeps a rebuild's display scaffolding identical to a freshly loaded document's: the same
+ * text display-encoding, the same char-span separators, the same glyph shapes. The prefix itself
+ * is never re-derived from bytes — it is dropped here and the LIVE one is preserved — so a
+ * markerMode that builds no prefix simply has none to drop.
+ *
+ * Shared unchanged by both settles because the whole of it lives in the SERIALIZED domain, the
+ * same contract {@link $serializeExpandedNoteContent} has.
+ *
+ * Read-only: reads the book's own code and unknown attributes, so call inside `editor.update()` or
+ * an editor-state read.
+ */
+export function $serializeBookLine(
+  book: BookNode,
+  lineContent: MarkerContent[],
+  followingBlocks: MarkerContent[],
+  viewOptions: ViewOptions | undefined,
+): BookLineResult {
+  // A book whose code is the empty-string placeholder carries no `code` at all in USJ, the same
+  // omission `createBookMarker` (editor-usj.adaptor.ts) makes converting the other way.
+  const code = book.getCode();
+  const bookMarker: MarkerObject = {
+    ...book.getUnknownAttributes(),
+    type: "book",
+    marker: book.getMarker(),
+    ...(code !== "" && { code }),
+    content: lineContent,
+  };
+  const [wrapper, ...following] = usjEditorAdaptor.serializeEditorState(
+    { type: USJ_TYPE, version: USJ_VERSION, content: [bookMarker, ...followingBlocks] },
+    viewOptions,
+  ).root.children;
+  if (!isSerializedBookNode(wrapper)) return { failure: "shape" };
+
+  const children = isSerializedSynthesizedMarker(wrapper.children[0])
+    ? wrapper.children.slice(1)
+    : wrapper.children;
+  if (children.length === 0 && following.length === 0) return { failure: "empty" };
+  return { children, followingBlocks: following };
 }
