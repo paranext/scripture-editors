@@ -20,6 +20,7 @@ export * from "./ParaMarkerPrefixCursorGuardPlugin";
 export * from "./ParaNodePlugin";
 export * from "./StateChangePlugin";
 export * from "./structure-protection.model";
+export * from "./structureKeyboard.utils";
 export * from "./StructureKeyboardPlugin";
 export * from "./text-direction.model";
 export * from "./TextDirectionPlugin";

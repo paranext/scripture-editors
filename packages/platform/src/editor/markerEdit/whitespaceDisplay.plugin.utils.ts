@@ -5,19 +5,14 @@
  * architecture map of the feature — is `whitespaceDisplay.utils.ts` beside this file.
  *
  * While typing, spaces in a run are kept visible as display-NBSP (the same mapping
- * `usjTextToDisplay` applies at load time, applied incrementally as the user types); copying
- * or cutting selected text inverts display-NBSP back to plain spaces — wholesale for
- * `text/plain`, collapse-aware for `text/html` ({@link invertDisplayNbspInHtml}) — so pasted
- * text elsewhere isn't polluted with NBSP. Both pieces are gated to Standard view only by the
- * caller (`MarkerEditPlugin.tsx`) — they must not run in other view modes.
+ * `usjTextToDisplay` applies at load time, applied incrementally as the user types); copying or
+ * cutting selected text inverts display-NBSP back to plain spaces, so pasted text elsewhere isn't
+ * polluted with NBSP. Both clipboard flavors a consumer can read carry the SAME inverted USFM bytes
+ * ({@link $getStandardViewClipboardData}). Both pieces are gated to Standard view only by the caller
+ * (`MarkerEditPlugin.tsx`) — they must not run in other view modes.
  */
 
-import {
-  $getHtmlContent,
-  $getLexicalContent,
-  copyToClipboard,
-  LexicalClipboardData,
-} from "@lexical/clipboard";
+import { $getLexicalContent, copyToClipboard, LexicalClipboardData } from "@lexical/clipboard";
 import {
   $getCharacterOffsets,
   $getEditor,
@@ -51,8 +46,10 @@ import {
   $hasCopyableSelection,
   $isImmutableNoteCallerNode,
   $opaqueBlockAncestor,
+  $shouldBlockSelectionReplacement,
 } from "shared-react";
 import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
+import { paratext9HtmlToUsfm } from "./paratext9Clipboard.utils";
 
 /** Spaces in runs display as NBSP so they are visible while typing. */
 export function $displayWhitespaceTransform(node: TextNode): void {
@@ -110,9 +107,10 @@ export function htmlPasteText(html: string): string {
 /** The text of a paste, read the one way every `PASTE_COMMAND` claim in this editor reads it. */
 export interface PastePayload {
   /**
-   * What a claim replays: `text/plain` when it carries anything, else the decoded `text/html`.
-   * Some sources (word processors, intermediaries) ship html alone, and those pastes otherwise
-   * reach the generic handling this editor's claims exist to pre-empt.
+   * What a claim replays: the USFM decoded from a Paratext 9 clipboard's `text/html` when the html
+   * is one, else `text/plain` when it carries anything, else the decoded `text/html`. Some sources
+   * (word processors, intermediaries) ship html alone, and those pastes otherwise reach the generic
+   * handling this editor's claims exist to pre-empt.
    *
    * The unresolved carriers (`text/plain`, the raw `text/html`, and its decoded text) are
    * deliberately not exposed alongside it: every claim must replay the SAME bytes, and a second
@@ -165,20 +163,28 @@ export function getPastePayload(
   const plainText = normalizeLineEndings(clipboardData.getData("text/plain"));
   const html = clipboardData.getData("text/html");
   const htmlText = html ? normalizeLineEndings(htmlPasteText(html)) : "";
-  // The carrier is chosen by PRESENCE — plain text whenever the clipboard carries any — and not
-  // by which carrier an NBSP survived in. The stronger rule is genuinely better for a foreign
-  // clipboard: a source whose `text/plain` collapsed `&nbsp;` to a plain space still has the real
-  // NBSP in its `text/html`, and preferring html there would keep a data-NBSP this loses. But it
-  // is not usable here, because it inverts on this editor's OWN copy: Standard view's `text/plain`
-  // deliberately carries no NBSP at all (display ones invert to spaces, a data NBSP displays and
-  // copies as `~`), while its `text/html` still ships NBSPs wherever a plain space would not
-  // survive a rich consumer ({@link invertDisplayNbspInHtml}) — so "the plain text has no NBSP" is
-  // TRUE of every P10 copy, and an NBSP-presence test would route P10's own round trip through
-  // html, whose decoded text drops a collapsed note's caller entirely (it rides as a `data-caller`
-  // attribute, never as text). A lost note caller on the editor's own copy is a worse, far likelier
-  // loss than a foreign clipboard's data-NBSP.
+  // A Paratext 9 clipboard's html is decoded to USFM and WINS over its own `text/plain`
+  // (`paratext9Clipboard.utils.ts`); every other source's `text/plain` wins whenever it carries
+  // anything; a clipboard with only `text/html` falls back to that html's decoded text.
+  //
+  // The P9 clause is the one place a source's html is strictly MORE faithful than its plain text, and
+  // it is more faithful by construction rather than by luck: P9 writes `text/plain` as the selection's
+  // VISIBLE text, while the USFM its own paste reads rides the html as escaped `<!--usfm:…-->`
+  // comments inside spans P9 marks `exclude`. A footnote's `text/plain` is therefore the caller GLYPH
+  // alone (`a`, or `*`), and reading it drops the whole note. The decoder's signature is what keeps
+  // this from becoming a general "prefer html" rule: it answers `undefined` for every html that is not
+  // a P9 scripture-editor fragment, this editor's own included.
+  //
+  // For everything else the carrier is chosen by PRESENCE — plain text whenever the clipboard carries
+  // any — and not by which carrier an NBSP survived in. The stronger NBSP rule is genuinely better for
+  // a foreign clipboard: a source whose `text/plain` collapsed `&nbsp;` to a plain space still has the
+  // real NBSP in its `text/html`, and preferring html there would keep a data-NBSP this loses. It buys
+  // nothing on this editor's OWN copy, whose two readable flavors are the same USFM bytes
+  // ({@link $getStandardViewClipboardData}) — so the plain carrier stays authoritative and the foreign
+  // data-NBSP loss is accepted.
+  const paratext9Text = html ? paratext9HtmlToUsfm(html) : undefined;
   return {
-    text: plainText || htmlText,
+    text: paratext9Text !== undefined ? normalizeLineEndings(paratext9Text) : plainText || htmlText,
     isInternal: !!clipboardData.getData("application/x-lexical-editor"),
   };
 }
@@ -200,8 +206,11 @@ const BEFORE_MARKER_NBSP = new RegExp(String.raw`\u00A0(?=${MARKER_TOKEN})`, "g"
 /**
  * Positional NBSP normalization for an external paste's resolved text. Standard view has no
  * `text/html` fidelity carrier for foreign sources (`$handlePasteForStandardView` below drops
- * formatting entirely and re-tokenizes the plain text), so a `text/html` payload's NBSPs are the
- * only clue to which spaces were meaningful markup vs. plain content — and the browser's own
+ * formatting entirely and re-tokenizes the plain text — a Paratext 9 clipboard is the one source
+ * whose html IS read for fidelity, and it is decoded to USFM outright before reaching here, with
+ * every NBSP already resolved to the space it stands for: {@link getPastePayload}), so a
+ * `text/html` payload's NBSPs are the only clue to which spaces were meaningful markup vs. plain
+ * content — and the browser's own
  * clipboard round-trip (and a same-editor paste, whose private Lexical flavor does not survive
  * `navigator.clipboard.read()` — see `$handlePasteForStandardView`'s doc comment) both carry a
  * DISPLAY-NBSP (a Standard-view run space, a marker's own trailing separator, or a note's
@@ -434,12 +443,30 @@ function $insertPastedTextIntoAttributeContext(selection: RangeSelection, text: 
  *
  * Declines (returns `false`, lets Lexical's own paste handling run) when: the payload carries a
  * same-namespace Lexical flavor (the sync `ClipboardEvent` path — a null-payload dispatch or a
- * live native paste event that still has it — keeps the exact node-tree fast path); the document
- * is structure-protected (`StructureKeyboardPlugin` must sanitize the HTML payload instead —
- * this handler runs at the same `COMMAND_PRIORITY_HIGH` but registers earlier, so without this
- * check it would claim the paste first and starve that sanitizer — a recorded trade-off: a
- * protected editor's plain-text pastes get NO NBSP normalization at all, since this handler
- * never runs for them); or no text can be resolved.
+ * live native paste event that still has it — keeps the exact node-tree fast path); a
+ * structure-protected document's selection is one `StructureKeyboardPlugin` refuses to replace
+ * ({@link $shouldBlockSelectionReplacement} — a range spanning a paragraph boundary, or one
+ * containing a verse marker, the mutable `VerseNode`'s own caret included); or no text can be
+ * resolved.
+ *
+ * A structure-protected document is otherwise handled HERE, with the same bytes an unprotected one
+ * gets — `structureProtectionMode: "protected"` (Platform.Bible's Simple interface mode) changes only
+ * the insertion MECHANISM, never the bytes. Declining the whole paste instead handed it to
+ * `StructureKeyboardPlugin`'s html sanitizer (`$sanitizeAndInsert`), which reads `text/html` and
+ * nothing else, and that cost three things protection is supposed to make SAFER: a pasted `\c 7`
+ * never reached {@link stripPastedChapterAndBookId}, so it created a second chapter node and poisoned
+ * every subsequent save — the exact corruption that strip exists for, present only in the protected
+ * mode; NBSPs never reached {@link normalizePastedNbsp}; and a Paratext 9 clipboard's `usfm:` comments
+ * were never decoded, so a P9 footnote arrived as the caller glyph its `text/plain` shows. The
+ * sanitizer was never protecting Standard view from marker BYTES either: the marker engine has no
+ * protection gate, so a pasted or typed `\v`/`\p` literal tokenizes into a real marker in both modes,
+ * and the sanitizer's `$sanitizeNodesForProtectedStructure` only strips verse/para NODES out of an html
+ * DOM import — a shape Standard view's own `text/html` no longer carries at all (it is the USFM bytes
+ * now, {@link usfmToClipboardHtml}). So protection in Standard view governs SELECTION REPLACEMENT
+ * (declined above, one owner) and PARAGRAPH SPLITTING (below), not marker bytes, which are content
+ * here. Under protection a multi-line payload's newlines become single spaces and the whole thing goes
+ * in as ONE `insertText` — no `INSERT_PARAGRAPH_COMMAND`, no `splitExpected` arming — matching
+ * `$sanitizeNodesForProtectedStructure`'s own convention for a boundary it removes.
  *
  * The same-namespace-flavor decline is SUSPENDED whenever the selection TOUCHES attribute-display
  * text at either end ({@link $isSelectionInAttributeContext}). Lexical's default rich-paste node
@@ -462,9 +489,9 @@ function $insertPastedTextIntoAttributeContext(selection: RangeSelection, text: 
  * sits outside. Attribute value bytes are never rich content — a user cannot "type formatting"
  * into one either — so this handler must always claim a paste touching one and insert it as plain
  * text ({@link $insertPastedTextIntoAttributeContext}), regardless of what other MIME flavors the
- * clipboard also carries. Structure protection still takes precedence (checked first, below): an
- * attribute run inside a protected document defers to the same protection contract as everything
- * else. One further precedence is unaffected by this suspension: the CRITICAL-priority in-note
+ * clipboard also carries. A protected document needs no special case in that branch: inserting one
+ * `insertText` with each newline collapsed to a space is already exactly what protection asks for,
+ * and the selection refusal above has already declined the shapes it owns. One further precedence is unaffected by this suspension: the CRITICAL-priority in-note
  * multi-line `PASTE_COMMAND` claim (`MarkerEditPlugin.tsx`) still runs BEFORE this handler and
  * still wins for a multi-line payload whose selection touches EXPANDED note content — an attribute
  * run that happens to sit inside an expanded note's content is reached by this handler (and this
@@ -486,11 +513,20 @@ export function $handlePasteForStandardView(
   const inAttributeContext =
     $isRangeSelection(selection) && $isSelectionInAttributeContext(selection);
   if (!inAttributeContext && payload.isInternal) return false;
-  if (isStructureProtected) return false;
-  // `text` is `text/plain` when the clipboard carries any, else the decoded `text/html` — the one
-  // preference every paste claim in this editor shares, with line endings already normalized to
-  // bare `\n` ({@link getPastePayload}), so no `\r` ever reaches content and a `\r\n` clipboard
-  // breaks into lines correctly.
+  // The one thing protection still declines: a selection `StructureKeyboardPlugin` refuses to
+  // replace. Both plugins register `PASTE_COMMAND` at `COMMAND_PRIORITY_HIGH` and this one mounts
+  // first (matching `Editor.tsx`'s order), so claiming such a paste here would starve the refusal
+  // and leave the rule with two owners that could disagree.
+  if (
+    isStructureProtected &&
+    $isRangeSelection(selection) &&
+    $shouldBlockSelectionReplacement(selection)
+  )
+    return false;
+  // `text` is the USFM decoded from a Paratext 9 clipboard's html, else `text/plain` when the
+  // clipboard carries any, else the decoded `text/html` — the one preference every paste claim in
+  // this editor shares, with line endings already normalized to bare `\n` ({@link getPastePayload}),
+  // so no `\r` ever reaches content and a `\r\n` clipboard breaks into lines correctly.
   const { text } = payload;
   if (!text) return false;
   if (!$isRangeSelection(selection)) return false;
@@ -506,6 +542,13 @@ export function $handlePasteForStandardView(
   armPasteRebuildDedup();
   const normalized = normalizePastedNbsp(stripPastedChapterAndBookId(text));
   const lines = normalized.split("\n");
+  // A protected document never gains a paragraph from a paste: each newline becomes a single space
+  // and the payload goes in as one insertion, so the block structure the user sees is exactly the
+  // one they had. Every byte-level rule above still applied.
+  if (isStructureProtected) {
+    selection.insertText(lines.join(" "));
+    return true;
+  }
   if (lines.length < 2) {
     selection.insertText(normalized);
     return true;
@@ -688,74 +731,64 @@ export function $selectionToUsfmText(selection: RangeSelection): string {
 }
 
 /**
- * Collapse-aware display-NBSP inversion for the `text/html` clipboard flavor. Every display-NBSP
- * stands for a PLAIN space in the document data (marker-trailing separator spaces, char spans'
- * structural separators, paragraph-leading spaces, and every space in a run of 2+ — the display
- * mapping in whitespaceDisplay.utils.ts), so shipping them to a rich-text paste target as real
- * NBSPs breaks line wrapping and text search there, while `text/plain` already inverts them all.
- * But a plain space does not always survive HTML: consumers collapse space runs and drop
- * fragment-edge whitespace. So this inversion keeps NBSP exactly where the plain space it stands
- * for would be destroyed:
+ * The `text/html` clipboard flavor for `usfm` — the SAME bytes as `text/plain`, HTML-escaped and
+ * laid out one block per line.
  *
- * - a run of 2+ NBSPs stays all-NBSP — the form the display already carries (byte-stable; the
- *   conventional space/NBSP alternation would survive collapsing too, but changes bytes for no
- *   gain);
- * - a single NBSP at the very start or end of the fragment's text stays NBSP — HTML consumers
- *   drop a leading/trailing plain space, and edge whitespace is in the fragment only because the
- *   user deliberately selected it;
- * - every other single NBSP becomes the plain space it stands for.
+ * Standard view's fidelity carrier is USFM text (`docs/clipboard-semantics.md`, S1/S3), and the two
+ * flavors a clipboard consumer can actually read must therefore decode to the same document.
+ * Lexical's own DOM export cannot provide that, in two independent ways:
+ * `ImmutableNoteCallerNode.exportDOM` carries a collapsed note's caller as a `data-caller`
+ * ATTRIBUTE with no text at all, so the note's html reads back as `\f \fr …\f*` with the caller
+ * missing — and Paratext 9 reads an incoming fragment's TEXT as USFM, so a P10→P9 note paste
+ * arrived with an empty caller; and `UnknownNode.exportDOM` returns `{element: null}` for every
+ * kind, which stops `@lexical/html`'s walk before it reaches the node's display children, so
+ * figures, sidebars, peripherals, refs and optbreaks are absent from the html altogether. Rendering
+ * the copy walker's own USFM makes both losses structurally impossible rather than patched.
  *
- * A genuine data NBSP takes no part here: Standard view displays it as a literal `~` (the USFM
- * byte form PT9 also shows and copies), so it is ordinary text to this inversion and ships as `~`
- * in BOTH flavors — the same display-vs-data line the `text/plain` inversion draws by replacing
- * only NBSP, never `~`. Either way both flavors decode to the same document text.
+ * Each `\n`-separated line becomes `<p><span style="white-space: pre-wrap;">…</span></p>` — the
+ * shape Lexical's own `TextNode.exportDOM` produces for a paragraph of text, so an html consumer
+ * that re-imports through `$generateNodesFromDOM` (shared-react's `StructureKeyboardPlugin` still
+ * sanitizes a protected DROP that way, and a foreign consumer may rebuild nodes from html at all)
+ * still sees one block per line.
+ * `white-space: pre-wrap` is what keeps an edge space and a run of spaces alive through such a
+ * re-import; P9 ignores the style and reads the text. An empty line becomes a bare `<p></p>`;
+ * nothing the copy walker produces contains one (an empty block contributes no line break of its
+ * own — {@link $selectionToUsfmText}), and a re-decode would collapse it away.
  *
- * Runs and edges are judged on the fragment's CONCATENATED text, not per markup span — a
- * marker-trailing NBSP separator and a paragraph-leading NBSP sit in different spans but form one
- * run a consumer would collapse if either became plain. The mapping is length-preserving, so the
- * result writes straight back to each text node as a slice.
+ * `&`, `<` and `>` are escaped, `&` first so an escape's own ampersand is not escaped twice. USFM
+ * needs nothing else escaped here: the bytes live in a text node, where quotes and backslashes are
+ * literal.
  */
-export function invertDisplayNbspInHtml(html: string): string {
-  // Same inert-DOMParser guarantee as htmlPasteText above: no script execution, no subresource
-  // loads, nothing adopted into the live DOM — the mutated fragment only ever becomes a string.
-  const { body } = new DOMParser().parseFromString(html, "text/html");
-  const walker = body.ownerDocument.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-  const textNodes: Node[] = [];
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) textNodes.push(node);
-  const text = textNodes.map((node) => node.nodeValue ?? "").join("");
-  const inverted = text.replace(/\u00A0+/g, (run, offset: number) =>
-    run.length >= 2 || offset === 0 || offset + run.length === text.length ? run : " ",
-  );
-  if (inverted === text) return html;
-  let offset = 0;
-  for (const node of textNodes) {
-    const length = (node.nodeValue ?? "").length;
-    node.nodeValue = inverted.slice(offset, offset + length);
-    offset += length;
-  }
-  return body.innerHTML;
+export function usfmToClipboardHtml(usfm: string): string {
+  return usfm
+    .split("\n")
+    .map((line) => line.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"))
+    .map((line) =>
+      line ? `<p><span style="white-space: pre-wrap;">${line}</span></p>` : "<p></p>",
+    )
+    .join("");
 }
 
 /**
  * Payload builder: the currently-selected content, normalized per flavor. `text/plain` is the
  * source-faithful USFM of the selection ({@link $selectionToUsfmText}), which carries plain spaces
- * where the display shows NBSP. `text/html` keeps NBSP only where a plain space would not survive
- * a rich-text consumer ({@link invertDisplayNbspInHtml}). The internal
- * `application/x-lexical-editor` flavor keeps the display form untouched so a paste back into a
- * Standard-view editor round-trips exactly. Shared by both the real-event and null-event
- * branches of `$handleCopyForStandardView` below so they stay byte-for-byte consistent.
+ * where the display shows NBSP. `text/html` is those SAME bytes as escaped html
+ * ({@link usfmToClipboardHtml}), so a consumer's flavor choice can never change the content it
+ * receives. The internal `application/x-lexical-editor` flavor keeps the display form untouched so a
+ * paste back into a Standard-view editor round-trips exactly. Shared by both the real-event and
+ * null-event branches of `$handleCopyForStandardView` below so they stay byte-for-byte consistent.
  */
 export function $getStandardViewClipboardData(
   editor: LexicalEditor,
 ): LexicalClipboardData | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return undefined;
+  const usfm = $selectionToUsfmText(selection);
   const data: LexicalClipboardData = {
-    "text/plain": $selectionToUsfmText(selection),
+    "text/plain": usfm,
+    "text/html": usfmToClipboardHtml(usfm),
   };
-  const html = $getHtmlContent(editor);
   const lexical = $getLexicalContent(editor);
-  if (html) data["text/html"] = invertDisplayNbspInHtml(html);
   if (lexical) data["application/x-lexical-editor"] = lexical;
   return data;
 }

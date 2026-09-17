@@ -11,11 +11,13 @@ import {
   $appendVerseAttributeRun,
   copyEvent,
   findOnlyNote,
+  pasteEvent,
   plainTextPasteEvent,
   serializedState,
   testEnvironment,
   viewOptions,
 } from "./markerEdit.test-helpers";
+import { htmlPasteText } from "./whitespaceDisplay.plugin.utils";
 import {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,
@@ -510,6 +512,139 @@ describe("copy → paste USJ round trip", () => {
     );
     // Settle: flush any reconciliation the paste-triggered Tier 2 re-tokenization schedules
     // beyond the synchronous update above.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const pastedUsj = deserializeSerializedEditorState(
+      targetEditor.getEditorState().toJSON(),
+      viewOptions,
+    );
+    expect(pastedUsj).toEqual(usj);
+  });
+});
+
+describe("text/html carries the same USFM bytes as text/plain", () => {
+  // Standard view's fidelity carrier is USFM text, so the two flavors a consumer can read must
+  // decode to ONE document — otherwise which flavor the target happens to prefer changes what the
+  // user pasted. Paratext 9 is that target in practice: its paste reads an incoming fragment's TEXT
+  // as USFM, and a DOM-export-derived html reached it with a collapsed note's caller missing (the
+  // caller rides `ImmutableNoteCallerNode.exportDOM` as a `data-caller` attribute, never as text)
+  // and with every opaque construct absent (`UnknownNode.exportDOM` returns a null element, which
+  // stops Lexical's html walk before the construct's own display children). Each pin below decodes
+  // the html the way such a consumer does and compares it to the plain carrier byte-for-byte.
+
+  /** Copies `usj`'s whole document through the real `COPY_COMMAND` path and hands back both readable
+   * flavors, plus the text an html consumer decodes out of the html one. */
+  async function copiedFlavors(
+    usj: Usj,
+  ): Promise<{ plain: string; html: string; htmlText: string }> {
+    const { editor } = await renderUsjEditor(usj);
+    await act(async () => editor.update($selectWholeDocument));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    const html = getData("text/html");
+    return { plain: getData("text/plain"), html, htmlText: htmlPasteText(html) };
+  }
+
+  it.each(["+", "-", "b"])(
+    "a collapsed note with a %s caller decodes identically from either flavor",
+    async (caller) => {
+      const { plain, html, htmlText } = await copiedFlavors(noteUsj(caller));
+      expect(plain).toContain(`\\f ${caller} `);
+      expect(html).toContain(`\\f ${caller} `);
+      expect(htmlText).toBe(plain);
+    },
+  );
+
+  it("keeps a cross-reference's `-` caller in the html, where the DOM export carried no caller at all", async () => {
+    const { plain, html, htmlText } = await copiedFlavors(xrefReproUsj());
+    expect(html).toContain("\\x - ");
+    expect(htmlText).toBe(plain);
+  });
+
+  it("carries no DOM-export residue: no `data-caller` attribute and no node class names", async () => {
+    const { html } = await copiedFlavors(noteUsj("+"));
+    expect(html).not.toContain("data-caller");
+    expect(html).not.toContain("immutable-note-caller");
+  });
+
+  it("keeps a two-paragraph selection's line break, each paragraph with its own marker", async () => {
+    let secondText: TextNode;
+    const { editor } = await testEnvironment(() => {
+      const firstText = $createTextNode("one");
+      secondText = $createTextNode("two");
+      $getRoot().append(
+        $createParaNode("p").append($createMarkerNode("p"), $trailingSpaceNode(), firstText),
+        $createParaNode("q1").append($createMarkerNode("q1"), $trailingSpaceNode(), secondText),
+      );
+    });
+    await act(async () =>
+      editor.update(() => {
+        const firstPara = $getRoot().getFirstChildOrThrow();
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(firstPara.getKey(), 0, "element");
+        selection.focus = $createPoint(
+          secondText.getKey(),
+          secondText.getTextContentSize(),
+          "text",
+        );
+        $setSelection(selection);
+      }),
+    );
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    const plain = getData("text/plain");
+    expect(plain).toBe("\\p one\n\\q1 two");
+    // One block per line, so an html consumer reading the fragment back gets the same two lines
+    // rather than "one\q1 two" run together.
+    expect(htmlPasteText(getData("text/html"))).toBe(plain);
+  });
+
+  it("escapes `<`, `>` and `&` in content and decodes them back unchanged", async () => {
+    let text: TextNode;
+    const { editor } = await testEnvironment(() => {
+      text = $createTextNode("a < b & c > d");
+      $getRoot().append(
+        $createParaNode("p").append($createMarkerNode("p"), $trailingSpaceNode(), text),
+      );
+    });
+    await act(async () => editor.update(() => text.select(0, text.getTextContentSize())));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    const html = getData("text/html");
+    // Escaped as entities in the markup — unescaped they would parse as tags and the bytes between
+    // them would vanish from the decoded text.
+    expect(html).toContain("a &lt; b &amp; c &gt; d");
+    expect(htmlPasteText(html)).toBe(getData("text/plain"));
+  });
+
+  it("round-trips a note caller through an html-ONLY paste of this editor's own copy", async () => {
+    // The gap this closes: a real Ctrl+V always carries `text/plain`, but a clipboard intermediary
+    // that keeps only `text/html` used to strip a collapsed note's caller (the export carried it as
+    // an attribute, so the decoded text had `\f \fr …` with nothing where the caller belonged, and
+    // the paste rewrote it to the generated `+`). Dropping `text/plain` AND the lexical flavor from
+    // the payload is what forces the html carrier to answer on its own.
+    initializeDeserialize(undefined);
+    const usj = noteUsj("-");
+    const { editor: sourceEditor } = await renderUsjEditor(usj);
+    await act(async () => sourceEditor.update($selectWholeDocument));
+    const { event: copyStubEvent, getData } = copyEvent();
+    await act(async () => sourceEditor.dispatchCommand(COPY_COMMAND, copyStubEvent));
+    const html = getData("text/html");
+
+    let trailing: TextNode;
+    const { editor: targetEditor } = await testEnvironment(() => {
+      trailing = $trailingSpaceNode();
+      $getRoot().append($createParaNode("p").append($createMarkerNode("p"), trailing));
+    });
+    await act(async () =>
+      targetEditor.update(() => {
+        trailing.select(trailing.getTextContentSize(), trailing.getTextContentSize());
+        targetEditor.dispatchCommand(PASTE_COMMAND, pasteEvent({ "text/html": html }).event);
+      }),
+    );
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();

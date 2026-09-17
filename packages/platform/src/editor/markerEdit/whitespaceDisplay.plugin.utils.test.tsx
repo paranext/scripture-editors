@@ -14,9 +14,10 @@ import {
   $getStandardViewClipboardData,
   $handleCopyForStandardView,
   $handlePasteForStandardView,
-  invertDisplayNbspInHtml,
+  htmlPasteText,
   normalizePastedNbsp,
   stripPastedChapterAndBookId,
+  usfmToClipboardHtml,
 } from "./whitespaceDisplay.plugin.utils";
 import { displayTextToUsj } from "./whitespaceDisplay.utils";
 import { act } from "@testing-library/react";
@@ -50,6 +51,7 @@ import {
   $isCharNode,
   $isMarkerNode,
   $isParaNode,
+  $isSomeChapterNode,
   $isUnknownNode,
   NBSP,
   NoteNode,
@@ -63,9 +65,9 @@ import { StructureKeyboardPlugin } from "shared-react";
  * CUT_COMMAND with a `null` payload. `@lexical/clipboard`'s `copyToClipboard` is mocked so the
  * jsdom `execCommand`/synthetic-event dance (unimplemented in jsdom — verified: `execCommand` is
  * `undefined` and `instanceof ClipboardEvent` throws) never has to run; instead we assert the
- * handler calls through with the exact normalized payload. `$getHtmlContent`/
- * `$getLexicalContent` (also from this module) stay real via the `importOriginal` spread, so the
- * payload-builder unit tests below exercise genuine HTML/Lexical-JSON generation.
+ * handler calls through with the exact normalized payload. `$getLexicalContent` (also from this
+ * module) stays real via the `importOriginal` spread, so the payload-builder unit tests below
+ * exercise genuine Lexical-JSON generation.
  */
 // Typed explicitly against the real `copyToClipboard` signature: an untyped `vi.fn(async () =>
 // true)` infers a zero-arg mock, which narrows `.mock.calls[0]` to the empty tuple `[]` and
@@ -307,26 +309,24 @@ describe("copy across an UnknownNode (figure) — full USFM byte display", () =>
     );
   });
 
-  it("keeps the block's bytes in the Lexical payload and drops them from text/html", async () => {
+  it("keeps the block's bytes in BOTH the Lexical payload and text/html", async () => {
     const getData = await copyAcrossFigure();
 
     // The internal payload keeps the block whole, so a paste back into this editor is lossless.
     // (JSON-escaped, hence the doubled backslash.)
     expect(getData("application/x-lexical-editor")).toContain("\\\\fig ");
 
-    // text/html does not. `UnknownNode.exportDOM` returns a null element and Lexical's HTML
-    // exporter reads that as "drop this subtree", bailing BEFORE it recurses into children — so a
-    // rich-text paste target (a word processor, a browser, a chat client) receives neither the
-    // marker name nor the block's own content, here the figure's caption. That is the half of
-    // "read-only blocks are selectable and copyable" that does not hold.
-    //
-    // Pinned as today's answer rather than as the desired one: making the block export HTML also
-    // governs the paste leg, since `importDOM` reads a block back out of `data-tag`/`data-marker`.
+    // So does text/html, because it renders the copy walker's own USFM rather than Lexical's DOM
+    // export. `UnknownNode.exportDOM` returns a null element for every kind, and Lexical's HTML
+    // exporter reads that as "drop this subtree" BEFORE it recurses into children — so an export-
+    // derived html reached a rich-text paste target with neither the marker name nor the block's
+    // own content in it. Rendering the text carrier's bytes instead is what makes a read-only
+    // block copyable to an html consumer at all.
     const html = getData("text/html");
-    expect(html).toContain("Before ");
-    expect(html).toContain(" after.");
-    expect(html).not.toContain("fig");
-    expect(html).not.toContain("caption");
+    expect(htmlPasteText(html)).toBe(getData("text/plain"));
+    expect(htmlPasteText(html)).toBe(
+      'Before \\fig caption|src="cn01617.jpg" size="span" ref="1.18"\\fig* after.',
+    );
   });
 
   it("copies the figure's own bytes when the selection covers the figure alone", async () => {
@@ -356,7 +356,7 @@ describe("$getStandardViewClipboardData", () => {
     expect(data).toBeUndefined();
   });
 
-  it("builds a normalized text/plain payload (NBSP→space) plus html/lexical for a range selection", async () => {
+  it("builds a normalized text/plain payload (NBSP→space), the same bytes as html, plus lexical for a range selection", async () => {
     let text: TextNode;
     const { editor } = await testEnvironment(() => {
       text = $createTextNode(`a${NBSP}${NBSP}b`);
@@ -365,14 +365,12 @@ describe("$getStandardViewClipboardData", () => {
     await act(async () => editor.update(() => text.select(0, text.getTextContentSize())));
     let data: LexicalClipboardData | undefined;
     await act(async () => editor.update(() => (data = $getStandardViewClipboardData(editor))));
-    // text/plain inverts every display-NBSP back to a plain space. text/html is collapse-aware
-    // (see the dedicated describe below): this run of 2 keeps its NBSPs so it survives a
-    // rich-text consumer's whitespace collapsing. The lexical payload keeps the on-screen NBSPs
-    // so a paste back into a Standard-view editor round-trips exactly.
+    // text/plain inverts every display-NBSP back to a plain space, and text/html carries those same
+    // inverted bytes (see the dedicated describe below). The lexical payload keeps the on-screen
+    // NBSPs so a paste back into a Standard-view editor round-trips exactly.
     expect(data?.["text/plain"]).toBe("a  b");
-    // html carries the two NBSPs (as entities) inside a text span, NOT normalized to spaces.
-    expect(data?.["text/html"]).toContain("a&nbsp;&nbsp;b");
-    expect(data?.["text/html"]).not.toContain("a  b");
+    expect(data?.["text/html"]).toBe(usfmToClipboardHtml("a  b"));
+    expect(data?.["text/html"]).not.toContain("&nbsp;");
     // the lexical clipboard JSON is a single TextNode whose content still holds the NBSPs.
     const lexical = JSON.parse(data?.["application/x-lexical-editor"] ?? "{}");
     expect(lexical.nodes).toHaveLength(1);
@@ -380,7 +378,7 @@ describe("$getStandardViewClipboardData", () => {
   });
 });
 
-describe("text/html flavor — collapse-aware display-NBSP inversion", () => {
+describe("text/html flavor — the same USFM bytes as text/plain", () => {
   /**
    * Selects from the start of `from` to the end of `to`.
    *
@@ -391,12 +389,20 @@ describe("text/html flavor — collapse-aware display-NBSP inversion", () => {
     selection.focus.set(to.getKey(), to.getTextContentSize(), "text");
   }
 
-  /** The text a rich consumer would extract from the html flavor (inline fragment: no blocks). */
-  function htmlTextOf(html: string): string {
-    return new DOMParser().parseFromString(html, "text/html").body.textContent ?? "";
+  /** Copies the selection through the real `COPY_COMMAND` path and hands back both readable
+   * flavors, plus the text an html consumer decodes out of the html one. */
+  async function copiedFlavors(
+    editor: LexicalEditor,
+  ): Promise<{ plain: string; html: string; htmlText: string }> {
+    const { event, getData } = copyEvent();
+    await act(async () => {
+      editor.dispatchCommand(COPY_COMMAND, event);
+    });
+    const html = getData("text/html");
+    return { plain: getData("text/plain"), html, htmlText: htmlPasteText(html) };
   }
 
-  it("inverts a single display-NBSP (marker-trailing separator) to a plain space", async () => {
+  it("ships a marker glyph and its separator space as html text, with no NBSP anywhere", async () => {
     let marker: TextNode;
     let text: TextNode;
     const { editor } = await testEnvironment(() => {
@@ -407,105 +413,53 @@ describe("text/html flavor — collapse-aware display-NBSP inversion", () => {
       $getRoot().append($createParaNode("p").append(marker, sep, text));
     });
     await act(async () => editor.update(() => $selectSpan(marker, text)));
-    const { event, getData } = copyEvent();
-    await act(async () => {
-      editor.dispatchCommand(COPY_COMMAND, event);
-    });
-    expect(getData("text/plain")).toBe("\\p a b c");
-    // The separator NBSP sits between the glyph and the content — an interior single — so the
-    // html flavor ships the plain space it stands for: nothing non-breaking reaches a rich
-    // consumer from ordinary single-spaced text.
-    const html = getData("text/html");
+    const { plain, html, htmlText } = await copiedFlavors(editor);
+    expect(plain).toBe("\\p a b c");
+    // The html carries the plain carrier's bytes verbatim: every display-NBSP is already inverted
+    // to the plain space it stands for before the html is built, so nothing non-breaking reaches a
+    // rich consumer and the two flavors cannot disagree.
     expect(html).not.toContain("&nbsp;");
     expect(html).not.toContain(NBSP);
-    expect(htmlTextOf(html)).toBe("\\p a b c");
+    expect(htmlText).toBe(plain);
   });
 
   it("keeps a genuine data NBSP's `~` byte form in both flavors", async () => {
     // In Standard view a data NBSP never appears as an NBSP character: it displays as the
     // literal `~` (the USFM byte form PT9 also shows and copies), so BOTH flavors carry `~` —
-    // not an NBSP — and stay decode-consistent with each other. Every NBSP character in the
-    // display is a display artifact standing for a plain space.
+    // not an NBSP. Every NBSP character in the display is a display artifact standing for a
+    // plain space.
     let text: TextNode;
     const { editor } = await testEnvironment(() => {
       text = $createTextNode("pay 3~000 now");
       $appendMarkerAndText(text);
     });
     await act(async () => editor.update(() => text.select(0, text.getTextContentSize())));
-    const { event, getData } = copyEvent();
-    await act(async () => {
-      editor.dispatchCommand(COPY_COMMAND, event);
-    });
-    expect(getData("text/plain")).toBe("pay 3~000 now");
-    const html = getData("text/html");
+    const { plain, html, htmlText } = await copiedFlavors(editor);
+    expect(plain).toBe("pay 3~000 now");
     expect(html).toContain("3~000");
     expect(html).not.toContain("&nbsp;");
     expect(html).not.toContain(NBSP);
+    expect(htmlText).toBe(plain);
   });
 
-  it("keeps a run of 2+ display-NBSPs all-NBSP so it survives html whitespace collapsing", async () => {
-    let text: TextNode;
-    const { editor } = await testEnvironment(() => {
-      text = $createTextNode(`a${NBSP}${NBSP}${NBSP}b`);
-      $appendMarkerAndText(text);
-    });
-    await act(async () => editor.update(() => text.select(0, text.getTextContentSize())));
-    const { event, getData } = copyEvent();
-    await act(async () => {
-      editor.dispatchCommand(COPY_COMMAND, event);
-    });
-    // Plain spaces would collapse to one in a rich consumer; the run stays in its all-NBSP form
-    // (the bytes the display already carries — the space/NBSP alternation would survive too but
-    // changes bytes for no gain).
-    expect(getData("text/plain")).toBe("a   b");
-    expect(getData("text/html")).toContain("a&nbsp;&nbsp;&nbsp;b");
-  });
-
-  it("judges runs across span boundaries: separator + paragraph-leading NBSP form one preserved run", async () => {
-    // The marker-trailing separator and a paragraph-leading NBSP live in different html spans
-    // but are adjacent in the fragment's text: treated per span each would be a "single" and
-    // become a plain space, and the consumer would then collapse the pair down to one space.
-    let marker: TextNode;
-    let text: TextNode;
-    const { editor } = await testEnvironment(() => {
-      marker = $createMarkerNode("p");
-      const sep = $createTextNode(NBSP);
-      $setState(sep, textTypeState, "marker-trailing-space");
-      // The paragraph-leading NBSP shape createPara produces for an authored leading space.
-      text = $createTextNode(`${NBSP}lead in`);
-      $getRoot().append($createParaNode("p").append(marker, sep, text));
-    });
-    await act(async () => editor.update(() => $selectSpan(marker, text)));
-    const { event, getData } = copyEvent();
-    await act(async () => {
-      editor.dispatchCommand(COPY_COMMAND, event);
-    });
-    expect(getData("text/plain")).toBe("\\p  lead in");
-    const html = getData("text/html");
-    expect(html.match(/&nbsp;/g)).toHaveLength(2);
-    expect(htmlTextOf(html)).toBe(`\\p${NBSP}${NBSP}lead in`);
-  });
-
-  it("keeps a fragment-leading single NBSP (separator selected without its marker)", async () => {
-    // A plain space at the fragment's edge is exactly what html consumers drop; edge whitespace
-    // is in the fragment only because the user deliberately selected it, so it stays NBSP.
+  it("survives a run of spaces and a fragment-edge space through the html carrier", async () => {
+    // The two shapes an html consumer normally destroys: it collapses a run of spaces and drops
+    // whitespace at a fragment's edge. `white-space: pre-wrap` on the emitted span is what keeps
+    // both, so the run and the edge space are still there when the html is read back as text —
+    // without either flavor having to carry an NBSP the other one does not.
     let sep: TextNode;
     let text: TextNode;
     const { editor } = await testEnvironment(() => {
       sep = $createTextNode(NBSP);
       $setState(sep, textTypeState, "marker-trailing-space");
-      text = $createTextNode("body");
+      text = $createTextNode(`a${NBSP}${NBSP}${NBSP}b`);
       $getRoot().append($createParaNode("p").append($createMarkerNode("p"), sep, text));
     });
     await act(async () => editor.update(() => $selectSpan(sep, text)));
-    const { event, getData } = copyEvent();
-    await act(async () => {
-      editor.dispatchCommand(COPY_COMMAND, event);
-    });
-    expect(getData("text/plain")).toBe(" body");
-    const html = getData("text/html");
-    expect(html.match(/&nbsp;/g)).toHaveLength(1);
-    expect(htmlTextOf(html)).toBe(`${NBSP}body`);
+    const { plain, html, htmlText } = await copiedFlavors(editor);
+    expect(plain).toBe(" a   b");
+    expect(html).toContain("white-space: pre-wrap");
+    expect(htmlText).toBe(plain);
   });
 
   it("both flavors decode to the same document text across glyphs, runs, `~`, and a char span", async () => {
@@ -531,32 +485,32 @@ describe("text/html flavor — collapse-aware display-NBSP inversion", () => {
       );
     });
     await act(async () => editor.update(() => $selectSpan(marker, spanText)));
-    const { event, getData } = copyEvent();
-    await act(async () => {
-      editor.dispatchCommand(COPY_COMMAND, event);
-    });
-    const plain = getData("text/plain");
+    const { plain, htmlText } = await copiedFlavors(editor);
     expect(plain).toBe("\\p before  mid 3~000 x\\nd deep waters");
     // One selection, one document: the display→data inversion (display-NBSP → space, `~` →
     // data NBSP) must read both flavors as the same text, or the paste target's flavor choice
     // would change the content.
-    expect(displayTextToUsj(htmlTextOf(getData("text/html")))).toBe(displayTextToUsj(plain));
+    expect(displayTextToUsj(htmlText)).toBe(displayTextToUsj(plain));
   });
 
-  describe("invertDisplayNbspInHtml mechanics", () => {
-    it("inverts an interior single NBSP that is its own span (concatenated-text judgment)", () => {
-      expect(invertDisplayNbspInHtml(`<span>a</span><span>${NBSP}</span><span>b</span>`)).toBe(
-        "<span>a</span><span> </span><span>b</span>",
+  describe("usfmToClipboardHtml mechanics", () => {
+    it("wraps one line in a pre-wrap span inside a block, so a re-import sees a paragraph of text", () => {
+      expect(usfmToClipboardHtml("\\p one")).toBe(
+        '<p><span style="white-space: pre-wrap;">\\p one</span></p>',
       );
     });
 
-    it("returns the input unchanged when nothing inverts (runs and edge singles keep NBSP)", () => {
-      const run = `<span>a${NBSP}${NBSP}b</span>`;
-      expect(invertDisplayNbspInHtml(run)).toBe(run);
-      const leadingEdge = `<span>${NBSP}a</span>`;
-      expect(invertDisplayNbspInHtml(leadingEdge)).toBe(leadingEdge);
-      const trailingEdge = `<span>a${NBSP}</span>`;
-      expect(invertDisplayNbspInHtml(trailingEdge)).toBe(trailingEdge);
+    it("emits one block per line, an empty line as a bare block", () => {
+      expect(usfmToClipboardHtml("a\n\nb")).toBe(
+        '<p><span style="white-space: pre-wrap;">a</span></p><p></p>' +
+          '<p><span style="white-space: pre-wrap;">b</span></p>',
+      );
+    });
+
+    it("escapes `&`, `<` and `>` so the bytes survive as text rather than becoming markup", () => {
+      const html = usfmToClipboardHtml("a & b < c > d");
+      expect(html).toContain("a &amp; b &lt; c &gt; d");
+      expect(htmlPasteText(html)).toBe("a & b < c > d");
     });
   });
 });
@@ -1489,75 +1443,169 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       );
     }
 
-    it("declines when the document is structure-protected, letting StructureKeyboardPlugin's sanitizer govern the paste", async () => {
-      // Both plugins register PASTE_COMMAND at COMMAND_PRIORITY_HIGH, and MarkerEditPlugin mounts
-      // first (matching Editor.tsx's real order) — so without an explicit decline here, this
-      // handler would claim the paste before StructureKeyboardPlugin's sanitizer ever runs.
-      let t1: TextNode;
+    /** A `\p hello world` host with the caret after `"hello"`. Both plugins register
+     * `PASTE_COMMAND` at `COMMAND_PRIORITY_HIGH` and `MarkerEditPlugin` mounts first (matching
+     * `Editor.tsx`'s real order), so whichever of the two claims the paste is what these pins
+     * measure. */
+    async function protectedHost(): Promise<{ editor: LexicalEditor; text: TextNode }> {
+      let text!: TextNode;
       const { editor } = await protectedTestEnvironment(() => {
         const sep = $createTextNode(NBSP);
         $setState(sep, textTypeState, "marker-trailing-space");
-        t1 = $createTextNode("hello world");
-        $getRoot().append($createParaNode("p").append($createMarkerNode("p"), sep, t1));
+        text = $createTextNode("hello world");
+        $getRoot().append($createParaNode("p").append($createMarkerNode("p"), sep, text));
       });
-      await act(async () => editor.update(() => t1.select(5, 5)));
+      await act(async () => editor.update(() => text.select(5, 5)));
+      return { editor, text };
+    }
 
-      // Same verse-marker HTML shape StructureKeyboardPlugin.test.tsx pins against alone.
-      const verseHtml =
-        '<p data-marker="p" class="para">' +
-        '<span data-marker="v" data-number="2" class="verse">2</span>pasted</p>';
-      const { event } = pasteEvent({ "text/html": verseHtml });
-
+    async function pasteAt(editor: LexicalEditor, payload: { [key: string]: string }) {
+      const { event } = pasteEvent(payload);
       await act(async () =>
         editor.update(() => {
           editor.dispatchCommand(PASTE_COMMAND, event);
         }),
       );
+    }
+
+    it("claims a protected paste and applies the same byte rules an unprotected one gets", async () => {
+      // Protection governs selection replacement and paragraph splitting, not marker BYTES: the
+      // marker engine has no protection gate, so pasted `\marker` literals tokenize in both modes
+      // exactly as typed ones do. What the old decline lost was the byte normalization — the
+      // `\c`/`\id` strip in particular, whose absence let a protected paste create a second chapter
+      // node and poison every save.
+      const { editor } = await protectedHost();
+      await pasteAt(editor, { "text/plain": `\\c 7 pasted tail${NBSP}end` });
 
       editor.getEditorState().read(() => {
-        // If `$handlePasteForStandardView` had wrongly claimed this instead of declining, it
-        // would extract the verse span's own visible "2" as literal text via `htmlPasteText` and
-        // insert "2pasted" — StructureKeyboardPlugin's sanitizer instead strips the verse node
-        // entirely, so no such digit leak survives.
-        const content = $getRoot().getTextContent();
-        expect(content).not.toContain("2pasted");
-        expect(content).toContain("pasted");
+        // Read with display NBSPs mapped back to the spaces they stand for: the space run the strip
+        // leaves behind is shown as NBSP while typing, which is display, not content.
+        const content = $getRoot().getTextContent().replaceAll(NBSP, " ");
+        // The chapter token and its number are gone; every byte around them survives, and the
+        // pasted NBSP — adjacent to no marker token — is read as data and takes the `~` display form
+        // a typed data-NBSP gets. Both are normalization the protected mode used to skip entirely.
+        expect(content).not.toContain("\\c");
+        expect(content).toBe("\\p hello pasted tail~end world");
       });
     });
 
-    it("the real `Editor` hands its `structureProtectionMode` down, so a protected paste declines there too", async () => {
-      // The pin above passes the mode straight to `MarkerEditPlugin`, which proves the handler's
-      // rule but not the wiring that reaches it. Both `Editor` and the plugin default the prop to
-      // `"off"`, so a dropped pass-through is invisible to every other test in the suite: the
-      // plugin would simply never be told, and claim the paste that the sanitizer must govern.
-      const { lexical } = await mountStandardViewEditor(
-        {
-          type: "USJ",
-          version: "3.1",
-          content: [{ type: "para", marker: "p", content: ["hello world"] }],
-        },
-        { structureProtectionMode: "protected" },
-      );
+    it("never splits a paragraph under protection: a multi-line payload joins with single spaces", async () => {
+      const { editor } = await protectedHost();
+      await pasteAt(editor, { "text/plain": "first\nsecond" });
 
-      const verseHtml =
-        '<p data-marker="p" class="para">' +
-        '<span data-marker="v" data-number="2" class="verse">2</span>pasted</p>';
+      editor.getEditorState().read(() => {
+        // One block in, one block out. Unprotected, this same payload dispatches
+        // INSERT_PARAGRAPH_COMMAND and produces a second paragraph (pinned in the
+        // "multi-line paste interplay" describe above, and both ways round in the Editor pin below).
+        expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(1);
+        expect($getRoot().getTextContent()).toContain("hellofirst second");
+      });
+    });
 
+    it("declines a selection StructureKeyboardPlugin refuses to replace, leaving that refusal one owner", async () => {
+      // `$shouldBlockSelectionReplacement` (structureKeyboard.utils.ts) blocks a range spanning a
+      // paragraph boundary. Claiming it here would starve `StructureKeyboardPlugin`'s own block and
+      // leave the rule with two owners that could disagree; declining keeps the sanitizer's refusal
+      // the only answer, and it refuses the whole paste.
+      let first!: TextNode;
+      let second!: TextNode;
+      const { editor } = await protectedTestEnvironment(() => {
+        first = $createTextNode("hello world");
+        second = $createTextNode("second para");
+        $getRoot().append(
+          $createParaNode("p").append($createMarkerNode("p"), first),
+          $createParaNode("p").append($createMarkerNode("p"), second),
+        );
+      });
       await act(async () =>
-        lexical.update(() => {
-          const paragraph = $getRoot().getChildren().filter($isParaNode)[0];
-          paragraph.selectEnd();
-          lexical.dispatchCommand(PASTE_COMMAND, pasteEvent({ "text/html": verseHtml }).event);
+        editor.update(() => {
+          const selection = $createRangeSelection();
+          selection.anchor = $createPoint(first.getKey(), 5, "text");
+          selection.focus = $createPoint(second.getKey(), 6, "text");
+          $setSelection(selection);
         }),
       );
+      await pasteAt(editor, { "text/plain": "pasted" });
 
-      lexical.getEditorState().read(() => {
-        // Same tell as the plugin-level pin: a claimed paste leaks the verse span's visible "2"
-        // as literal text, while the sanitizer strips the verse node and leaves only "pasted".
+      editor.getEditorState().read(() => {
         const content = $getRoot().getTextContent();
-        expect(content).not.toContain("2pasted");
-        expect(content).toContain("pasted");
+        expect(content).not.toContain("pasted");
+        expect(content).toContain("hello world");
+        expect(content).toContain("second para");
       });
+    });
+
+    it("the real `Editor` hands its `structureProtectionMode` down, so the protected rule reaches the plugin", async () => {
+      // The pins above pass the mode straight to `MarkerEditPlugin`, which proves the rule but not
+      // the wiring that reaches it. Both `Editor` and the plugin default the prop to `"off"`, so a
+      // dropped pass-through is invisible to every other test in the suite: the plugin would simply
+      // never be told, and would split paragraphs in a document whose structure must not change.
+      // Measured as a DIFFERENCE between the two modes, so the pin cannot pass on a mount that
+      // ignores the prop in either direction.
+      async function paraCountAfterTwoLinePaste(
+        structureProtectionMode: "off" | "protected",
+      ): Promise<number> {
+        const { lexical } = await mountStandardViewEditor(
+          {
+            type: "USJ",
+            version: "3.1",
+            content: [{ type: "para", marker: "p", content: ["hello world"] }],
+          },
+          { structureProtectionMode },
+        );
+        await act(async () =>
+          lexical.update(() => {
+            const paragraph = $getRoot().getChildren().filter($isParaNode)[0];
+            paragraph.selectEnd();
+            lexical.dispatchCommand(
+              PASTE_COMMAND,
+              pasteEvent({ "text/plain": "first\nsecond" }).event,
+            );
+          }),
+        );
+        return lexical
+          .getEditorState()
+          .read(() => $getRoot().getChildren().filter($isParaNode).length);
+      }
+
+      expect(await paraCountAfterTwoLinePaste("protected")).toBe(1);
+      expect(await paraCountAfterTwoLinePaste("off")).toBe(2);
+    });
+
+    it("strips a pasted `\\c` in BOTH modes through the real `Editor`, so protection is never the unsafe mode", async () => {
+      async function chapterCountAfterChapterPaste(
+        structureProtectionMode: "off" | "protected",
+      ): Promise<number> {
+        const { lexical } = await mountStandardViewEditor(
+          {
+            type: "USJ",
+            version: "3.1",
+            content: [
+              { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+              { type: "chapter", marker: "c", number: "1" },
+              { type: "para", marker: "p", content: ["hello world"] },
+            ],
+          } as unknown as Usj,
+          { structureProtectionMode },
+        );
+        await act(async () =>
+          lexical.update(() => {
+            const paragraph = $getRoot().getChildren().filter($isParaNode)[0];
+            paragraph.selectEnd();
+            lexical.dispatchCommand(PASTE_COMMAND, pasteEvent({ "text/plain": "x \\c 7 y" }).event);
+          }),
+        );
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        return lexical
+          .getEditorState()
+          .read(() => $dfs($getRoot()).filter(({ node }) => $isSomeChapterNode(node)).length);
+      }
+
+      expect(await chapterCountAfterChapterPaste("protected")).toBe(1);
+      expect(await chapterCountAfterChapterPaste("off")).toBe(1);
     });
   });
 
@@ -1640,16 +1688,15 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
     });
 
     it("a browser-hop/html-derived collapsed-footnote shape (structural NBSPs before `\\ft` and `\\f*`, not only after `\\f`/`\\fr`) round-trips clean", async () => {
-      // `createNote` (usj-editor.adaptor.ts) appends a spacer NBSP after EVERY child, not just
-      // the first — confirmed by inspecting this exact fixture's real `$getHtmlContent` export:
-      // `…<span>\fr</span><span>&nbsp;1:1 </span></span><span>&nbsp;</span><span>\ft</span>…`
-      // (a bare `&nbsp;` span sits between `\fr`'s content and `\ft`, and another one between
-      // `\ft`'s content and `\f*`). So a browser-hop paste of this shape carries structural NBSPs
-      // on BOTH sides of its interior markers, not only after an opener. Hand-built (rather than
-      // a live html round-trip) so this pins the positional-normalization rule specifically —
-      // `ImmutableNoteCallerNode`'s own DOM export carries the caller only as a `data-caller`
-      // attribute, never as visible text, so a REAL html-only round-trip of this fixture loses
-      // the caller entirely, an unrelated, pre-existing gap this test isn't about.
+      // `createNote` (usj-editor.adaptor.ts) appends a spacer NBSP after EVERY child, not just the
+      // first, so a DOM-export-derived paste of a collapsed note carries structural NBSPs on BOTH
+      // sides of its interior markers, not only after an opener: a bare NBSP sits between `\fr`'s
+      // content and `\ft`, and another between `\ft`'s content and `\f*`. Standard view's own
+      // `text/html` no longer carries that shape (it renders the copy walker's USFM, which drops
+      // those spacers), but a foreign NBSP-preserving carrier still can, and the positional rule is
+      // what tells a structural spacer from a data NBSP. Hand-built rather than harvested from a
+      // copy, so the rule is pinned on the byte shape itself instead of on whatever the current
+      // copy path happens to emit.
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         const para = $createParaNode("p");

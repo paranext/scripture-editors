@@ -616,3 +616,101 @@ describe("paste-as-plain-text equivalence (S4): no literal mode, plain always wi
     });
   });
 });
+
+describe("Paratext 9 clipboard html (P9→P10 paste)", () => {
+  // P9's `text/plain` for a collapsed note is the rendered caller GLYPH alone — the note's real
+  // bytes ride its html as an escaped `<!--usfm:…-->` comment inside a span P9 marks `exclude`
+  // (`Standard.xslt`). Reading the plain carrier therefore pasted one stray character where a
+  // footnote belonged. `getPastePayload` (`whitespaceDisplay.plugin.utils.ts`) decodes a P9-flavoured
+  // html instead, and the decoder's own unit pins live in `paratext9Clipboard.utils.test.ts`; these
+  // pins are the end-to-end half — the paste really materializes a NoteNode with P9's caller and
+  // body. A NON-P9 html alongside `text/plain` is unaffected and still ignored outright (the
+  // `MISMATCHED_HTML` pins in the S4 describe above).
+
+  /** P9's `XsltExtensions.EscapeComment`: every character except `a-zA-Z` becomes `%` plus four
+   * uppercase hex digits, because an html comment may contain neither `--` nor `>`. Duplicated from
+   * `paratext9Clipboard.utils.test.ts` so this suite's fixture states the USFM it means rather than
+   * a wall of hex. */
+  function escapeComment(data: string): string {
+    return data
+      .split("")
+      .map((char) =>
+        /[a-zA-Z]/.test(char)
+          ? char
+          : `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}`,
+      )
+      .join("");
+  }
+
+  /** P9's collapsed-note html: the caller glyph as the span's only visible text, the note's USFM as
+   * the last of its five comments. Shape taken from P9's own test corpus
+   * (`ParatextInternalShared.Tests/UsfmUtils/UsfmUtilsTests.cs`). */
+  function p9NoteHtml(style: string, caller: string, body: string, glyph: string): string {
+    const usfm = `\\${style} ${caller} ${body}\\${style}*`;
+    return (
+      `<span class="caller caller_big exclude showtooltip " id="caller_ID0EHB" attachmentid=""` +
+      ` contenteditable="false">` +
+      `<!--note--><!--${style}--><!--${escapeComment(caller)}--><!--${escapeComment(body)}-->` +
+      `<!--usfm:${escapeComment(usfm)}-->${glyph}</span>`
+    );
+  }
+
+  /** A `\p` host with a verse, matching the note-materialization pins above. */
+  async function versedHost(): Promise<{ editor: LexicalEditor; text: TextNode }> {
+    initializeDeserialize(undefined);
+    let text!: TextNode;
+    const { editor } = await historyTestEnvironment(() => {
+      const para = $createParaNode("p");
+      const verse = $createVerseNode("1", getVisibleOpenMarkerText("v", "1"));
+      text = $createTextNode("In the beginning God created");
+      $getRoot().append(para.append($createMarkerNode("p"), verse, text));
+    });
+    return { editor, text };
+  }
+
+  it("materializes P9's footnote from the html carrier instead of pasting the caller glyph its text/plain carries", async () => {
+    const { editor, text } = await versedHost();
+    await pastePayloadAndSettle(editor, () => text.select(9, 9), {
+      "text/plain": "a",
+      "text/html": p9NoteHtml("f", "+", "\\fr 1.1 \\ft text", "a"),
+    });
+
+    editor.getEditorState().read(() => {
+      const note = findOnlyNote($getRoot());
+      expect(note.getMarker()).toBe("f");
+      expect(note.getCaller()).toBe("+");
+      expect(note.getIsCollapsed()).toBe(true);
+    });
+    const para = (usjOf(editor).content as MarkerObject[])[0];
+    const note = para.content?.find(
+      (item): item is MarkerObject => typeof item !== "string" && item.type === "note",
+    );
+    expect(note?.caller).toBe("+");
+    // The body P9's `usfm:` comment carried, re-tokenized into real note children — `\fr` and
+    // `\ft` both unclosed, the shape ParatextData itself produces for footnote content.
+    expect(note?.content).toEqual([
+      { type: "char", marker: "fr", closed: "false", content: ["1.1 "] },
+      { type: "char", marker: "ft", closed: "false", content: ["text"] },
+    ]);
+    // The glyph the plain carrier offered is nowhere in the document: had the presence rule won,
+    // `In the be|ginning` would read "In the bea ginning" with no note at all.
+    const paragraphText = (para.content ?? [])
+      .filter((item): item is string => typeof item === "string")
+      .join("");
+    expect(paragraphText).toBe("In the beginning God created");
+  });
+
+  it("materializes a cross-reference's `-` caller, which P9 renders as the glyph `*`", async () => {
+    const { editor, text } = await versedHost();
+    await pastePayloadAndSettle(editor, () => text.select(9, 9), {
+      "text/plain": "*",
+      "text/html": p9NoteHtml("x", "-", "\\xo 1:26: \\xo*\\xt 1Cor 11:7\\xt*", "*"),
+    });
+
+    editor.getEditorState().read(() => {
+      const note = findOnlyNote($getRoot());
+      expect(note.getMarker()).toBe("x");
+      expect(note.getCaller()).toBe("-");
+    });
+  });
+});
