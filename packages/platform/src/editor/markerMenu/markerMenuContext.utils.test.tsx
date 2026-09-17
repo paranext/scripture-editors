@@ -19,6 +19,7 @@ import {
   $createImmutableChapterNode,
   $createMarkerNode,
   $createParaNode,
+  BookNode,
   getVisibleOpenMarkerText,
   MarkerNode,
   NBSP,
@@ -137,10 +138,11 @@ describe("$getMarkerMenuContext", () => {
     expect(context?.previousParaMarkers).toEqual(["id", "c"]);
   });
 
-  it("reports paragraph source for a caret in the book region, outside any paragraph", async () => {
-    // `\id` is a BookNode at document root, not a ParaNode - so there is no paragraph to take a
-    // character style. A character span is nearly always wrong there; the paragraph list is what
-    // the region can actually accept.
+  it("reports CHARACTER source with paraMarker 'id' for a caret in the book region", async () => {
+    // `\id` is a BookNode at document root, not a ParaNode, but its text is CONTENT like any
+    // paragraph's: PT9 offers the inline palette there (character styles valid under `id`, plus
+    // every note style). The `\id 2SA ` prefix is an immutable decorator with no interior caret
+    // position, so every caret in the line is a content position and none is "on the glyph".
     let idText: TextNode;
     const { editor } = await testEnvironment(() => {
       const book = $createBookNode("2SA");
@@ -151,8 +153,25 @@ describe("$getMarkerMenuContext", () => {
     await act(async () => editor.update(() => idText.select(3, 3)));
 
     const context = editor.getEditorState().read(() => $getMarkerMenuContext());
-    expect(context?.source).toBe("paragraph");
-    expect(context?.paraMarker).toBeUndefined();
+    expect(context?.source).toBe("character");
+    expect(context?.paraMarker).toBe("id");
+  });
+
+  it("reports CHARACTER source with paraMarker 'id' at an ELEMENT point on the book itself", async () => {
+    // The caret lands on the BookNode itself (an element point) whenever the line's content is a
+    // decorator or the caret is parked at a child boundary - the book arm must recognize the
+    // focus node being the book, not only a descendant of it.
+    let book: BookNode;
+    const { editor } = await testEnvironment(() => {
+      book = $createBookNode("2SA");
+      $getRoot().append(book.append($createTextNode("2 Samuel")));
+    });
+
+    await act(async () => editor.update(() => book.select(1, 1)));
+
+    const context = editor.getEditorState().read(() => $getMarkerMenuContext());
+    expect(context?.source).toBe("character");
+    expect(context?.paraMarker).toBe("id");
   });
 
   it("keeps character source for a text SELECTION in the book region (wrapping is a char action)", async () => {
@@ -168,6 +187,7 @@ describe("$getMarkerMenuContext", () => {
     const context = editor.getEditorState().read(() => $getMarkerMenuContext());
     expect(context?.hasTextSelection).toBe(true);
     expect(context?.source).toBe("character");
+    expect(context?.paraMarker).toBe("id");
   });
 
   it("reports character source for a mid-text caret", async () => {

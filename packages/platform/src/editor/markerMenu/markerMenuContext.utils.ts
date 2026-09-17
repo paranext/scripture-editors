@@ -7,7 +7,9 @@
  * ({@link $isAtParagraphMarkerPrefix}) — otherwise character source. Directly AFTER the
  * separator, where content starts, `\` is a character action (owner-directed boundary; the
  * original port counted content start as paragraph source, which put the paragraph palette
- * where the user is about to type content).
+ * where the user is about to type content). The `\id` line is the one block with no paragraph
+ * arm at all: its prefix is immutable, so every caret in it is a content position and a collapsed
+ * caret there is character source too.
  *
  * Called from `EditorRef.getMarkerMenuContext` (`Editor.tsx`) via
  * `editorRef.current?.getEditorState().read(...)` rather than `editor.read(...)` - the latter
@@ -188,12 +190,20 @@ export function $getMarkerMenuContext(): MarkerMenuContextSnapshot | undefined {
   const hasTextSelection = !selection.isCollapsed();
 
   const para = $findMatchingParent(focusNode, $isParaNode);
-  // A collapsed caret with NO paragraph around it at all is the book/header region — `\id` is a
-  // BookNode at document root, not a `ParaNode`. There is no paragraph there to take a character
-  // style, so the paragraph list is what the region can actually accept. A text selection stays
-  // character source wherever it sits: wrapping is a character action.
+  // The `\id` line is a BookNode at document root, not a `ParaNode`, but its text is CONTENT like
+  // any paragraph's — PT9 offers the inline palette there (character styles valid under `id`, plus
+  // every note style, which is why a footnote is offered in the `\id` line). Its marker prefix is
+  // one immutable `\id GEN ` decorator with no interior caret position, so every caret in the line
+  // is a content position and none is ever "on the marker glyph": the book takes no
+  // {@link $isAtParagraphMarkerPrefix} probe, it is unconditionally character source. The paragraph
+  // list is still reachable there through the Enter trigger, whose pick inserts a paragraph after
+  // the line (`$splitParagraphWithMarker`'s book arm, markerMenuApply.utils.ts).
+  const book = para ? undefined : $findMatchingParent(focusNode, $isBookNode);
+  // A collapsed caret with NO block owner around it at all is the remaining header region. There is
+  // no block there to take a character style, so the paragraph list is what it can actually accept.
+  // A text selection stays character source wherever it sits: wrapping is a character action.
   const source: MarkerMenuContext["source"] =
-    !hasTextSelection && (!para || $isAtParagraphMarkerPrefix(para, focusNode, offset))
+    !hasTextSelection && !book && (!para || $isAtParagraphMarkerPrefix(para, focusNode, offset))
       ? "paragraph"
       : "character";
 
@@ -201,7 +211,10 @@ export function $getMarkerMenuContext(): MarkerMenuContextSnapshot | undefined {
 
   return {
     source,
-    paraMarker: para?.getMarker(),
+    // The book reports `id` as its own block marker: PT9's character source filters on the
+    // enclosing paragraph's marker (`occursUnder` empty or containing it), and without one it
+    // returns an empty list that falls back to the paragraph palette.
+    paraMarker: para?.getMarker() ?? book?.getMarker(),
     previousParaMarkers: $collectPreviousParaMarkers(focusNode),
     openCharMarkers: $collectOpenCharMarkers(focusNode),
     noteMarker: note?.getMarker(),

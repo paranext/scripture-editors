@@ -38,10 +38,13 @@ import {
   UNDO_COMMAND,
 } from "lexical";
 import {
+  $createBookNode,
   $createCharNode,
+  $createImmutableTypedTextNode,
   $createMarkerNode,
   $createNoteNode,
   $createParaNode,
+  $isBookNode,
   $isCharNode,
   $isMarkerNode,
   $isParaNode,
@@ -355,6 +358,115 @@ describe("$applyMarkerMenuSelection", () => {
         const paras = $getRoot().getChildren().filter($isParaNode);
         expect(paras).toHaveLength(1);
         expect($getRoot().getTextContent()).toContain("one \\q1two");
+      });
+    });
+  });
+
+  describe("paragraph kind — the `\\id` line", () => {
+    /** The `\id` line as `createBook` builds it in markerMode "editable": one immutable
+     * `\id GEN ` glyph decorator, then the line's own content. */
+    function $buildBookLine(content: string): TextNode {
+      const text = $createTextNode(content);
+      $getRoot().append(
+        $createBookNode("GEN").append(
+          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          text,
+        ),
+      );
+      return text;
+    }
+
+    it("inserts the picked paragraph AFTER the \\id line, carrying the text past the caret", async () => {
+      // A book can never be RETAGGED — `\id` names the book, and its glyph is immutable — so a
+      // paragraph pick in the line always SPLITS, which is what PT9 does with a paragraph marker
+      // typed mid-line.
+      let idText: TextNode;
+      const { editor } = await historyTestEnvironment(() => {
+        idText = $buildBookLine("Genesis description");
+      });
+      await act(async () => editor.update(() => idText.select(7, 7)));
+
+      const item: MarkerMenuItem = { marker: "p", kind: "paragraph", isBasic: true };
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            item,
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        const children = $getRoot().getChildren();
+        expect(children).toHaveLength(2);
+        expect($isBookNode(children[0])).toBe(true);
+        // The immutable `\id GEN ` prefix survives, with only the text before the caret left.
+        expect(children[0].getTextContent()).toBe(`\\id GEN${NBSP}Genesis`);
+        const para = children[1];
+        if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+        expect(para.getMarker()).toBe("p");
+        expect($isMarkerNode(para.getFirstChild())).toBe(true);
+        expect(para.getTextContent()).toContain(" description");
+      });
+
+      await act(async () => {
+        editor.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+      editor.getEditorState().read(() => {
+        expect($getRoot().getChildren()).toHaveLength(1);
+        expect($getRoot().getTextContent()).toContain("Genesis description");
+      });
+    });
+
+    it("splits at a caret INSIDE a char span, reopening the span in the new paragraph", async () => {
+      // The `\id` line can legitimately carry char spans (`\id GE \nd N gen`), so the split has
+      // to close and reopen the open stack exactly as a paragraph split does — otherwise the tail
+      // moves out of the book still parented to a span the new paragraph does not contain.
+      let ndText: TextNode;
+      const { editor } = await historyTestEnvironment(() => {
+        const nd = $createCharNode("nd");
+        ndText = $createTextNode(`${NBSP}holy name`);
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+            $createTextNode("Genesis "),
+            nd.append($createMarkerNode("nd"), ndText, $createMarkerNode("nd", "closing")),
+          ),
+        );
+      });
+      await act(async () => editor.update(() => ndText.select(5, 5)));
+
+      const item: MarkerMenuItem = { marker: "q1", kind: "paragraph", isBasic: true };
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            item,
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        const children = $getRoot().getChildren();
+        expect(children).toHaveLength(2);
+        const book = children[0];
+        if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+        // Left half keeps a CLOSED \nd span inside the book.
+        const leftSpans = book.getChildren().filter($isCharNode);
+        expect(leftSpans).toHaveLength(1);
+        expect(leftSpans[0].getTextContent()).toContain("holy");
+        const para = children[1];
+        if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+        expect(para.getMarker()).toBe("q1");
+        // Right half reopened the span rather than losing its marker.
+        const rightSpans = para.getChildren().filter($isCharNode);
+        expect(rightSpans).toHaveLength(1);
+        expect(rightSpans[0].getMarker()).toBe("nd");
+        expect(rightSpans[0].getTextContent()).toContain("name");
       });
     });
   });
@@ -2303,6 +2415,43 @@ describe("$splitParagraphWithMarker", () => {
       expect(paras).toHaveLength(1);
       expect(paras[0].getMarker()).toBe("p");
       expect($getRoot().getTextContent()).toContain("one two");
+    });
+  });
+});
+
+describe("$splitParagraphWithMarker — the `\\id` line", () => {
+  it("starts the new paragraph AFTER the book (the Enter menu's apply step goes straight here)", async () => {
+    // The Enter-triggered menu routes its pick to `EditorRef.splitParagraphWithMarker`, never
+    // through `$applyMarkerMenuSelection` — so the `\id` line has to be handled on this path too,
+    // or Enter in the line runs the generic paragraph split against a BookNode.
+    let idText: TextNode;
+    const { editor } = await historyTestEnvironment(() => {
+      idText = $createTextNode("Genesis description");
+      $getRoot().append(
+        $createBookNode("GEN").append(
+          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          idText,
+        ),
+      );
+    });
+    await act(async () => editor.update(() => idText.select(7, 7)));
+
+    await act(async () =>
+      editor.update(() => {
+        $splitParagraphWithMarker("p", viewOptions);
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const children = $getRoot().getChildren();
+      expect(children).toHaveLength(2);
+      expect($isBookNode(children[0])).toBe(true);
+      expect(children[0].getTextContent()).toBe(`\\id GEN${NBSP}Genesis`);
+      const para = children[1];
+      if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+      expect(para.getMarker()).toBe("p");
+      expect($isMarkerNode(para.getFirstChild())).toBe(true);
+      expect(para.getTextContent()).toContain(" description");
     });
   });
 });
