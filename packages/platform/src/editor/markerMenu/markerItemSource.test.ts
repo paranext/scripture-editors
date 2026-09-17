@@ -142,22 +142,18 @@ describe("getMarkerMenuItems — character source (PT9 MarkerItemSource.GetChara
     expect(items.map((item) => item.marker)).toContain("p");
   });
 
-  it("offers the same list for the book region whichever source it is asked for", () => {
-    // The book region has no paraMarker, so the character source is empty and the fallback
-    // above already produced the paragraph list there. Naming the region paragraph source is
-    // therefore a correctness fix to the CONTEXT, not a change to what the user is offered —
-    // pinned here so the two paths cannot silently diverge.
-    const bookRegion = { previousParaMarkers: ["id"] };
-    const asCharacter = getMarkerMenuItems(
+  it("offers the inline list for the `\\id` line, never the paragraph list", () => {
+    // The `\id` line takes content like a paragraph, so a caret in it reports CHARACTER source
+    // with `paraMarker: "id"` (`$getMarkerMenuContext`) and is offered the character styles valid
+    // under `id` plus every note style — what PT9 lists there. The paragraph list stays reachable
+    // through the Enter trigger, whose pick splits the line rather than retagging it; offering it
+    // on `\` would list markers the line has no paragraph to apply.
+    const items = getMarkerMenuItems(
       sheet,
-      makeContext({ ...bookRegion, source: "character" }),
+      makeContext({ source: "character", paraMarker: "id", previousParaMarkers: ["id"] }),
     );
-    const asParagraph = getMarkerMenuItems(
-      sheet,
-      makeContext({ ...bookRegion, source: "paragraph" }),
-    );
-    expect(asParagraph.length).toBeGreaterThan(0);
-    expect(asParagraph).toEqual(asCharacter);
+    expect(items.map((item) => item.marker).sort()).toEqual(["f", "nd"]);
+    expect(items.some((item) => item.kind === "paragraph")).toBe(false);
   });
 });
 
