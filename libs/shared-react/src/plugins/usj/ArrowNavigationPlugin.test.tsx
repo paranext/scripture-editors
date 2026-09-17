@@ -2601,8 +2601,9 @@ describe("a collapsed note at a paragraph's end offers no text position after it
 });
 
 // The `\\id` line is a content container like any other: whatever follows the book code reaches the
-// editor, notes included, so the caret has to be able to walk back out of the text after one.
-describe("Note in the book line", () => {
+// editor — notes and character spans included — so the caret has to be able to walk back out of the
+// text after one.
+describe("Backward navigation in the book line", () => {
   function $buildBookLine(children: () => LexicalNode[]) {
     const book = $createBookNode("GEN");
     $getRoot().append(
@@ -2672,6 +2673,28 @@ describe("Note in the book line", () => {
     editor.getEditorState().read(() => {
       $expectSelectionToBe(description!, 0);
     });
+  });
+
+  // A character span is not a note, so nothing here hops over it — the point is only that the guard
+  // stands down and lets the ordinary move happen. jsdom performs no caret movement of its own, so
+  // this asserts the CLAIM rather than the resulting position.
+  it("leaves the default move to run from the text after a character span", async () => {
+    let trailing: TextNode;
+    const { editor } = await testEnvironment(() => {
+      $buildBookLine(() => {
+        trailing = $createTextNode(" trailing desc");
+        return [
+          $createTextNode("description "),
+          $createCharNode("nd").append($createTextNode("LORD")),
+          trailing,
+        ];
+      });
+    });
+    updateSelection(editor, trailing!, 0);
+
+    const event = await pressKey(editor, "ArrowLeft");
+
+    expect(event.defaultPrevented).toBe(false);
   });
 });
 
