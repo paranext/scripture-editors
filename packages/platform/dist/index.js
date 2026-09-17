@@ -18054,9 +18054,9 @@ function aC({ options: e } = {}) {
         f.preventDefault(), f.stopPropagation(), a((p) => p === void 0 ? 0 : (p + 1) % c.length);
       else if (f.key === "ArrowUp")
         f.preventDefault(), f.stopPropagation(), a((p) => p === void 0 ? c.length - 1 : (p - 1 + c.length) % c.length);
-      else if (f.key === "Enter" && o !== void 0) {
+      else if (f.key === "Enter") {
         f.preventDefault(), f.stopPropagation();
-        const p = c[o];
+        const p = o === void 0 ? void 0 : c[o];
         p && !p.isDisabled && (t.update(() => {
           p.onSelect();
         }), u());
