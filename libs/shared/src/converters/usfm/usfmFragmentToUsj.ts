@@ -1016,14 +1016,22 @@ export function usfmFragmentToUsjContent(
    * line's first `|` is the division title (USX/USJ's `alt`), the rest an ordinary named-attribute
    * list.
    *
-   * A list that does not parse degrades the whole division to an ordinary paragraph carrying the
-   * literal bytes, exactly as an unfoldable figure span degrades — every byte the author wrote
-   * stays where they can see and fix it. A list that spells the TITLE a second time (`alt`,
-   * alongside a non-empty marker-line title) degrades for the same reason and by the same rule:
-   * the two spellings are the same USJ property, there is no reading that keeps both, and picking
-   * one would silently destroy bytes the author can still see. `alt` on a TITLELESS line collides
-   * with nothing and is read normally. The editor can never author the colliding shape — periph's
-   * display renders `alt` AS the marker-line title (`unknownUsfm.utils.ts`), never as a pipe pair.
+   * A list that does not parse is REFUSED, and so is one that spells the TITLE a second time
+   * (`alt`, alongside a non-empty marker-line title): the two spellings are the same USJ property,
+   * there is no reading that keeps both, and picking one would silently destroy bytes the author
+   * can still see. `alt` on a TITLELESS line collides with nothing and is read normally. The editor
+   * can never author the colliding shape — periph's display renders `alt` AS the marker-line title
+   * (`unknownUsfm.utils.ts`), never as a pipe pair.
+   *
+   * Refusing the list does NOT refuse the division. `\periph` opens a peripheral division for its
+   * own sake — it has no closing marker and nothing else delimits it, so the division's extent is
+   * a property of the marker, not of its attributes. Paratext 9 reads it the same way: a failed
+   * `SetAttributes` leaves the marker-line text alone (`ParatextData/UsfmToken.cs`) and the USX
+   * writer still opens `<periph>` for any `\periph` token, with an empty `id`
+   * (`ParatextData/UsxUsfmParserSink.cs`). Demoting the division to an ordinary paragraph would
+   * re-parent every block it contained up to the root instead. The refused bytes survive as the
+   * division's own title, where the author can still see and fix them, and they serialize back
+   * byte-for-byte (`alt` renders as literal marker content, not a pipe pair).
    *
    * @param atBlockBoundary - Whether the token that ended the line starts a new block (or the
    *   fragment ended). The line's trailing line break is structural there, the same rule the text
@@ -1036,13 +1044,13 @@ export function usfmFragmentToUsjContent(
     periphCapture = undefined;
     if (atBlockBoundary && value.endsWith("\n")) value = value.slice(0, -1);
     const pipeIndex = value.indexOf("|");
-    const attributes =
+    const parsed =
       pipeIndex >= 0 ? parseAttributeText(value.slice(pipeIndex + 1), PERIPH_MARKER) : undefined;
-    const title = pipeIndex >= 0 ? value.slice(0, pipeIndex) : value;
-    if (pipeIndex >= 0 && (!attributes || (title && attributes[PERIPH_TITLE_ATTRIBUTE]))) {
-      startParagraph(PERIPH_MARKER, value);
-      return;
-    }
+    const parsedTitle = pipeIndex >= 0 ? value.slice(0, pipeIndex) : value;
+    const refused =
+      pipeIndex >= 0 && (!parsed || (!!parsedTitle && !!parsed[PERIPH_TITLE_ATTRIBUTE]));
+    const attributes = refused ? undefined : parsed;
+    const title = refused ? value : parsedTitle;
     const opened: MarkerObject = {
       type: "periph",
       ...(title ? { [PERIPH_TITLE_ATTRIBUTE]: toUsjText(title) } : {}),
