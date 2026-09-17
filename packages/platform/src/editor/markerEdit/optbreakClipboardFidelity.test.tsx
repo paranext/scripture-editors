@@ -6,22 +6,24 @@
  * Three hypotheses, verified below rather than assumed:
  *
  * - **H1** (a real native paste, whose async clipboard read strips the lexical flavor): with no
- *   lexical flavor to fall back on, Lexical's default paste prefers `text/html`; `//` renders in
- *   `text/html` as nothing at all (see "copy characterization" below — `UnknownNode.exportDOM`
- *   returns `{element: null}` unconditionally, so `@lexical/html`'s `$appendNodesToHTML` returns
- *   `false` before ever visiting the optbreak's display child, dropping it silently).
+ *   lexical flavor to fall back on, Lexical's default paste prefers `text/html`.
  *   `$handlePasteForStandardView` (`whitespaceDisplay.plugin.utils.ts`) prefers `text/plain`
  *   whenever present, and Standard view's own copy always populates `text/plain` — H1 predicts the
  *   symptom does not reach the plain path here. Pinned, not assumed, in "paste round trip" below.
+ *   The html carrier is no longer a place the `//` can go missing either: Standard view's
+ *   `text/html` renders the copy walker's own USFM rather than Lexical's DOM export (whose
+ *   `UnknownNode.exportDOM` returns `{element: null}` unconditionally, so `@lexical/html`'s
+ *   `$appendNodesToHTML` returned before ever visiting the optbreak's display child), so both
+ *   readable carriers now say `//`. Pinned in "copy characterization" below.
  * - **H2**: `normalizePastedNbsp`'s marker-token regexes (`whitespaceDisplay.plugin.utils.ts`)
  *   only match `\`-shaped tokens — an NBSP adjacent to `//` would not be recognized as display
  *   whitespace and would fall to the blanket data-`~` rule instead. Characterized below: Standard
  *   view's own copy walker (`$selectionToUsfmText`) inverts every TextNode's NBSP to a plain space
  *   unconditionally (the note-internal-separator special case aside), so `text/plain` never
- *   carries an NBSP next to `//` to begin with — H2 does not bite the round trip this file covers,
- *   and doubly so: Standard view's own `text/html` never carries `//` at all for an optbreak
- *   either (see the `text/html` pin below), so there is no `//` in its OWN html for a foreign NBSP
- *   to even land beside. A synthetic html-only foreign payload that DOES carry such an NBSP is
+ *   carries an NBSP next to `//` to begin with — and neither does Standard view's own `text/html`,
+ *   which carries those same inverted bytes (see the `text/html` pin below). H2 therefore does not
+ *   bite the round trip this file covers on either carrier. A synthetic html-only foreign payload
+ *   that DOES carry such an NBSP is
  *   characterized (not "fixed" — unreachable via Standard view's own copy, reachable only via a
  *   genuinely foreign clipboard source) for completeness: the NBSP is genuine data from that
  *   foreign source, and settles to the correct display form for real data-NBSP (`~`), just one
@@ -65,7 +67,7 @@ import {
   testEnvironment,
   viewOptions,
 } from "./markerEdit.test-helpers";
-import { $handlePasteForStandardView } from "./whitespaceDisplay.plugin.utils";
+import { $handlePasteForStandardView, htmlPasteText } from "./whitespaceDisplay.plugin.utils";
 import {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,
@@ -220,15 +222,17 @@ describe("copy characterization: what the walker actually emits around an optbre
     expect(plain).not.toContain(NBSP);
   });
 
-  it("text/html drops the optbreak's `//` bytes entirely — UnknownNode.exportDOM() always returns a null element, so @lexical/html's node walk short-circuits before ever visiting the display child (a documented gap, harmless here because text/plain always wins when present)", async () => {
+  it("text/html carries the same bytes, `//` included — it renders the walker's USFM rather than Lexical's DOM export, whose null-element `UnknownNode.exportDOM` dropped the display child", async () => {
     const { editor } = await renderUsjEditor(optbreakUsj());
     await act(async () => editor.update($selectWholePara));
     const { event, getData } = copyEvent();
     await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
     const html = getData("text/html");
-    expect(html).not.toContain("//");
-    expect(html).toContain("before");
-    expect(html).toContain("after");
+    expect(html).toContain("//");
+    // Decoded the way an html consumer reads it (Paratext 9 reads an incoming fragment's text as
+    // USFM): the same string `text/plain` carries, so a consumer's flavor choice cannot silently
+    // drop the discretionary line break.
+    expect(htmlPasteText(html)).toBe(getData("text/plain"));
   });
 
   it("carrier agreement at a childless boundary: a selection ending exactly at the optbreak's own start (touching the wrapper, not its `//` child) excludes it from BOTH carriers, not just text/plain", async () => {

@@ -417,11 +417,12 @@ function registerPasteNormalization(
         // Claimed narrowly and replayed as the same two steps the user would have performed by
         // hand: text, then the command. Only multi-line, since a single line never splits; only
         // inside a stack, so every other paste is left exactly as it was; and never an INTERNAL
-        // rich paste, whose real nodes carry structure a line replay would flatten. text/plain is
-        // authoritative when present, falling back to the decoded text/html — some sources (word
-        // processors, browsers) ship html alone, and those pastes otherwise reach the generic
-        // split and tear the span. Inside a stack that trade is worth it, the same call the
-        // in-note claim above makes.
+        // rich paste, whose real nodes carry structure a line replay would flatten. The bytes come
+        // from the one carrier rule every paste claim in this editor shares (`getPastePayload`): a
+        // Paratext 9 clipboard's html decoded to USFM, else text/plain when present, else the decoded
+        // text/html — some sources (word processors, browsers) ship html alone, and those pastes
+        // otherwise reach the generic split and tear the span. Inside a stack that trade is worth it,
+        // the same call the in-note claim above makes.
         //
         // At HIGH, and registered AFTER the Standard-view external-paste handler at the same
         // priority. That handler claims every external paste it sees and replays the lines

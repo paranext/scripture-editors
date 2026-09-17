@@ -209,11 +209,12 @@ export class UnknownNode extends ElementNode {
   }
 
   // A CHILD-BEARING `UnknownNode` of any kind stays IN the copy. This affects ONLY the
-  // `application/x-lexical-editor` (lexical-JSON) flavor: `$appendNodesToHTML` (`@lexical/html`)
-  // computes this same `excludeFromCopy('html')` value, but `exportDOM()` above always returns
-  // `{element: null}` and `$appendNodesToHTML` returns early on a null `element` BEFORE ever
-  // consulting the exclusion value it just computed, so `text/html` output is byte-identical for
-  // every kind whatever this predicate answers. `'clone'` is never passed by any Lexical-shipped
+  // `application/x-lexical-editor` (lexical-JSON) flavor, for two independent reasons: an
+  // editable-marker view's own `text/html` is not a DOM export at all (Standard view renders the
+  // copy walker's USFM bytes — `usfmToClipboardHtml`, platform's whitespaceDisplay.plugin.utils.ts),
+  // and where Lexical's exporter DOES run, `$appendNodesToHTML` (`@lexical/html`) computes this same
+  // `excludeFromCopy('html')` value but returns early on `exportDOM()`'s unconditional
+  // `{element: null}` BEFORE ever consulting it. `'clone'` is never passed by any Lexical-shipped
   // code path in the installed version, so an unconditional `destination !== "clone"` would
   // exclude every `UnknownNode` from the lexical-JSON flavor outright.
   //
