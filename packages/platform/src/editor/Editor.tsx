@@ -107,6 +107,7 @@ import {
   ContextMenuPlugin,
   copySelection,
   cutSelection,
+  DecoratorBoundarySelectionPlugin,
   DeltaOnChangePlugin,
   DeltaOp,
   DisableHistoryShortcutsPlugin,
@@ -1120,6 +1121,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               or pasted `\` and `/` - only guards the non-editable views. */}
           {viewOptions?.markerMode !== "editable" && <CommandMenuPlugin logger={stableLogger} />}
           <ContextMenuPlugin options={contextMenuOptions} />
+          {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
+              normalization that keeps a point out of one is too. */}
+          <DecoratorBoundarySelectionPlugin />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects

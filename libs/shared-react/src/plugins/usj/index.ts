@@ -7,6 +7,7 @@ export * from "./clipboard.utils";
 export * from "./ClipboardPlugin";
 export * from "./CommandMenuPlugin";
 export * from "./ContextMenuPlugin";
+export * from "./DecoratorBoundarySelectionPlugin";
 export * from "./DisableHistoryShortcutsPlugin";
 export * from "./EditablePlugin";
 export * from "./EmptyVerseCaretGuardPlugin";
