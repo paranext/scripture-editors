@@ -76,10 +76,16 @@ function unescapeComment(escaped: string): string {
 
 /** The USFM a comment contributes: an escaped `usfm:` comment's own bytes with newlines flattened
  * to spaces, or `""` for every other comment (P9's tooltip/caller/style comments, and a CF_HTML
- * wrapper's own `StartFragment`/`EndFragment` markers). */
+ * wrapper's own `StartFragment`/`EndFragment` markers).
+ *
+ * EVERY line-ending shape is flattened, `\r\n` and a bare `\r` included — the escaped bytes carry
+ * whatever the note held, and P9 escapes a CR as `%000D`. A note's USFM has to come back as ONE
+ * line: the decoder's own tail normalizes a surviving `\r` into a `\n`, which a paste then replays
+ * as a paragraph split, leaving an unterminated `\f` on one line and orphaned note text on the
+ * next. */
 function usfmFromComment(data: string): string {
   if (!data.startsWith(USFM_COMMENT_PREFIX)) return "";
-  return unescapeComment(data.slice(USFM_COMMENT_PREFIX.length)).replaceAll("\n", " ");
+  return unescapeComment(data.slice(USFM_COMMENT_PREFIX.length)).replace(/\r\n?|\n/g, " ");
 }
 
 /**

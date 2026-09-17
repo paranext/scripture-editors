@@ -17,8 +17,10 @@
  *
  * `"periph"` is a named `it.skip` rather than a swept case: it is book-level front matter with no
  * chapter at all, so it does not fit "a single-chapter editor state" — there is no chapter-content
- * selection for it to exercise. Every other fixture is either swept clean or recorded in
- * `KNOWN_LOSSY` below with the exact byte-level divergence — none are silently dropped.
+ * selection for it to exercise. Every other fixture is either swept clean, recorded in
+ * `KNOWN_LOSSY` below with the exact byte-level divergence (an unresolved loss, skipped), or —
+ * for the one ACCEPTED Paratext 9 parity divergence — pinned positively to the shape it produces
+ * ({@link ACCEPTED_DIVERGENCE_FIXTURE}). None are silently dropped.
  *
  * The repo's OTHER USJ corpus, `libs/test-data/src/data/2sa.usj.ts`, is swept too — see the
  * `"real-world multi-construct fixture (2sa)"` describe at the bottom of this file for what it adds
@@ -152,12 +154,16 @@ const KNOWN_LOSSY: { name: string; reason: string }[] = [
     name: "closed=false body char span (implicit close, no closer)",
     reason: "no closer byte to mark where an unclosed span's content ends before trailing prose",
   },
-  {
-    name: "paragraph-leading space (display rule)",
-    reason:
-      "consumeSeparator() eats the whole whitespace run after a marker, matching P9's NormalizeUsfm parity — accepted, not a bug",
-  },
 ];
+
+/**
+ * The one fixture whose round trip is a DIVERGENCE by design rather than a loss, so it is asserted
+ * by name below instead of swept or skipped — the same treatment the 2sa fixture's derived verse
+ * `sid` gets. `KNOWN_LOSSY` is for unresolved losses, and its entries are skipped; parking accepted
+ * parity there would leave the behaviour with no regression protection at all, which is the
+ * opposite of what "accepted" should mean.
+ */
+const ACCEPTED_DIVERGENCE_FIXTURE = "paragraph-leading space (display rule)";
 
 /** Loads `usj` into a Standard-view editor, copies the chapter's own content, pastes the resulting
  * `text/plain` into a fresh editor holding the same header, settles, and returns the USJ a host
@@ -205,6 +211,7 @@ describe("corpus copy/paste round trip (Standard view)", () => {
         undefined);
       continue;
     }
+    if (fixture.name === ACCEPTED_DIVERGENCE_FIXTURE) continue; // pinned positively below
     const lossy = KNOWN_LOSSY.find((entry) => entry.name === fixture.name);
     const run = lossy ? it.skip : it;
     run(`${fixture.name}${lossy ? ` (${lossy.reason})` : ""}`, async () => {
@@ -212,7 +219,45 @@ describe("corpus copy/paste round trip (Standard view)", () => {
       expect(await copyPasteRoundTrip(usj)).toEqual(usj);
     });
   }
+
+  it(`${ACCEPTED_DIVERGENCE_FIXTURE}: the paragraph-leading space is collapsed, matching Paratext 9`, async () => {
+    // ACCEPTED normalization, not a bug — and therefore pinned to the shape it actually produces
+    // rather than skipped. `consumeSeparator()` (usfmFragmentToUsj.ts) eats the whole whitespace
+    // run after an opening marker, which is what P9's own `NormalizeUsfm` reformat pass does to a
+    // pasted `\p  X`. Asserting the collapsed shape is what keeps the parity claim honest: a
+    // regression that started KEEPING the space, or that ate a non-leading one too, fails here.
+    const fixture = corpusFixtures.find((entry) => entry.name === ACCEPTED_DIVERGENCE_FIXTURE);
+    if (!fixture) throw new Error(`corpus fixture "${ACCEPTED_DIVERGENCE_FIXTURE}" is gone`);
+    const usj = usxStringToUsj(fixture.usx);
+
+    const pasted = await copyPasteRoundTrip(usj);
+
+    expect(pasted).toEqual(withoutParagraphLeadingSpace(usj));
+    // Guard against the expectation collapsing into a tautology: the source really does carry the
+    // leading space this strips, so the two objects are genuinely different documents.
+    expect(withoutParagraphLeadingSpace(usj)).not.toEqual(usj);
+  });
 });
+
+/** `usj` with ONE leading space removed from each paragraph's first string child, and nothing
+ * else touched. */
+function withoutParagraphLeadingSpace(usj: Usj): Usj {
+  const stripItems = (items: MarkerContent[] | undefined): MarkerContent[] | undefined =>
+    items?.map((item) => {
+      if (typeof item === "string") return item;
+      const stripped: MarkerObject = { ...item };
+      const content = stripItems(item.content);
+      if (content) {
+        const [first, ...rest] = content;
+        stripped.content =
+          item.type === "para" && typeof first === "string" && first.startsWith(" ")
+            ? [first.slice(1), ...rest]
+            : content;
+      }
+      return stripped;
+    });
+  return { ...usj, content: stripItems(usj.content) ?? [] };
+}
 
 /**
  * The one real-world fixture in the repo — 143 top-level items, every construct the editor supports

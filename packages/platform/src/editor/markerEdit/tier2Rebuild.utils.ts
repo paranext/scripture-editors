@@ -1061,11 +1061,17 @@ function $appendNodesFragment(
   }
 }
 
-/** A paragraph-kind marker literal at the very start of a text run — the same terminated-marker
- * shape `TERMINATED_MARKER_IN_TEXT_REGEX` (markerEditTier2Trigger.utils.ts) recognizes anywhere
- * in a run, anchored here to the run's first character. */
+/** A paragraph-kind marker OPENER literal at the very start of a text run: the terminated-marker
+ * shape `TERMINATED_MARKER_IN_TEXT_REGEX` (markerEditTier2Trigger.utils.ts) recognizes anywhere in
+ * a run, anchored here to the run's first character and narrowed to an opener's separator.
+ *
+ * That narrowing is the whole difference from the shared pattern, and it is load-bearing. The
+ * shared shape also accepts a CLOSER's `*`, but a closer is never "the pasted paragraph's own
+ * marker" — and `isParaKindMarker` answers true for any name the stylesheet does not know, so a
+ * leading `\zbold*` from a project with a custom.sty char style would otherwise read as a
+ * paragraph marker and silently strip the HOST paragraph's real glyph. */
 const LEADING_MARKER_LITERAL = new RegExp(
-  String.raw`^\\\+?([${ENGINE_MARKER_NAME_BYTES}]+)(?:\*|[ \u00A0])`,
+  String.raw`^\\\+?([${ENGINE_MARKER_NAME_BYTES}]+)[ \u00A0]`,
 );
 
 /**

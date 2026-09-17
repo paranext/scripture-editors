@@ -436,5 +436,69 @@ describe("UnknownNode", () => {
         expect(figure.isSelected()).toBe(false);
       });
     });
+
+    // The RANGE branch — the shape the override exists for, and the one Lexical's default gets
+    // wrong. A copy walks `$appendNodesToJSON` (`@lexical/clipboard`), which asks `isSelected()`
+    // for `shouldInclude`: a true answer at a boundary that covers none of the node's content
+    // serializes a CHILDLESS placeholder into `application/x-lexical-editor` for a node that HAS
+    // children, disagreeing with `text/plain`, whose walker emits nothing there.
+    //
+    // Asserted on the predicate rather than through a Standard-view copy, deliberately. That path
+    // cannot see this: a boundary ON the construct is also a selection reaching INTO an opaque
+    // block, so `$getStandardViewClipboardData` omits the internal flavor outright
+    // (`optbreakClipboardFidelity.test.tsx`, `unknownClipboardFidelity.test.tsx`) and every
+    // assertion about its contents would hold vacuously against an empty string. The flavor IS
+    // written by Lexical's own copy in the views that do not register that handler, which is where
+    // this predicate does its work.
+    function $figureAfterTextInDocument() {
+      const before = $createTextNode("before ");
+      const figure = $createUnknownNode("figure", "fig");
+      figure.append($createImmutableTypedTextNode("marker", "\\fig "));
+      $getRoot().append($createParaNode("p").append(before, figure));
+      return { before, figure };
+    }
+
+    it("answers false for a RANGE ending at an ELEMENT point ON the node, which covers none of its children", () => {
+      const { editor } = createBasicTestEnvironment([
+        UnknownNode,
+        ImmutableTypedTextNode,
+        ParaNode,
+      ]);
+      editor.update(() => {
+        const { before, figure } = $figureAfterTextInDocument();
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(before.getKey(), 0, "text");
+        selection.focus = $createPoint(figure.getKey(), 0, "element");
+        $setSelection(selection);
+
+        // Falsifiable: the node IS in `getNodes()`, so the inherited `ElementNode.isSelected` —
+        // key membership in exactly that list — answers true here. Only the child-membership
+        // override answers false.
+        const selectedNodes = selection.getNodes();
+        expect(selectedNodes.some((node) => node.is(figure))).toBe(true);
+        expect(selectedNodes.some((node) => node.is(figure.getFirstChild()))).toBe(false);
+        expect(figure.isSelected(selection)).toBe(false);
+      });
+    });
+
+    it("answers true for a RANGE that reaches over one of the node's own children", () => {
+      const { editor } = createBasicTestEnvironment([
+        UnknownNode,
+        ImmutableTypedTextNode,
+        ParaNode,
+      ]);
+      editor.update(() => {
+        const { before, figure } = $figureAfterTextInDocument();
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(before.getKey(), 0, "text");
+        // One past the `\fig ` glyph: the child itself is now inside the range, so both carriers
+        // have bytes for it and the construct must ride along whole.
+        selection.focus = $createPoint(figure.getKey(), 1, "element");
+        $setSelection(selection);
+
+        expect(selection.getNodes().some((node) => node.is(figure.getFirstChild()))).toBe(true);
+        expect(figure.isSelected(selection)).toBe(true);
+      });
+    });
   });
 });

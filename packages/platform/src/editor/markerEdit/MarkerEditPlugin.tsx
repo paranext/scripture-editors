@@ -100,6 +100,7 @@ import {
 } from "shared";
 import {
   $selectionReachesIntoOpaqueBlock,
+  $shouldBlockSelectionReplacement,
   hasStandardViewWhitespace,
   StructureProtectionMode,
   ViewOptions,
@@ -358,7 +359,7 @@ function registerPasteNormalization(
         // destroyed content of a read-only block. Consulting the guard's own predicate first
         // makes either registration order refuse.
         if ($selectionReachesIntoOpaqueBlock()) return false;
-        const payload = getPastePayload(event);
+        const payload = getPastePayload(event, editor._config.namespace);
         if (!payload) return false;
         const pastedText = payload.text;
         if (pastedText.includes("\n")) {
@@ -429,13 +430,27 @@ function registerPasteNormalization(
         // through this same command, so in Standard view this claim is reached only where it
         // declines (a structure-protected document). Unformatted view, where it is not
         // registered at all, is where this claim does its work.
-        const payload = getPastePayload(event);
+        const payload = getPastePayload(event, editor._config.namespace);
         if (!payload || payload.isInternal || !payload.text) return false;
         const lines = payload.text.split("\n");
         if (lines.length < 2) return false;
         if (!$isSelectionInParagraphCharStack()) return false;
-        event?.preventDefault();
         const selection = $getSelection();
+        // The one place the Standard-view handler declines is the one place this claim must decline
+        // too. Both register at HIGH and this one is registered LATER within the same
+        // `mergeRegister`, so a protected paste the Standard-view handler stands aside from
+        // (`$shouldBlockSelectionReplacement`, whitespaceDisplay.plugin.utils.ts) reaches here
+        // BEFORE `StructureKeyboardPlugin`'s refusal, which mounts after this plugin. Without this
+        // check the line replay below would `removeText()` and split the paragraph — deleting the
+        // very verse marker or paragraph boundary structure protection had just refused to let a
+        // paste replace.
+        if (
+          context.structureProtectionMode === "protected" &&
+          $isRangeSelection(selection) &&
+          $shouldBlockSelectionReplacement(selection)
+        )
+          return false;
+        event?.preventDefault();
         if ($isRangeSelection(selection) && !selection.isCollapsed()) selection.removeText();
         lines.forEach((line, index) => {
           // The split goes through the command so it takes that handler's char-stack path and arms

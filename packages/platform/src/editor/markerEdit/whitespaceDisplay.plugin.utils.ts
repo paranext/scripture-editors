@@ -120,8 +120,17 @@ export interface PastePayload {
    */
   text: string;
   /**
-   * Whether the clipboard carries this editor's own rich payload
-   * (`application/x-lexical-editor`), whose real nodes a line-by-line replay would flatten.
+   * Whether the clipboard carries a rich payload (`application/x-lexical-editor`) that LEXICAL'S
+   * OWN fast path will reconstruct as real nodes — which is what a declining claim hands the paste
+   * to, and therefore the only question a decline can safely turn on. That path is
+   * namespace-scoped: `$insertDataTransferForRichText` (`@lexical/clipboard`) takes the node-tree
+   * branch only for `payload.namespace === editor._config.namespace` with a `nodes` array, and
+   * falls through to the `text/html` DOM import for everything else. A payload written by a
+   * DIFFERENT Lexical editor — the `"Commenting"` editor `CommentPlugin.tsx` mounts in this same
+   * app writes one — is therefore FOREIGN here: answering true for it would make every claim stand
+   * aside for a path that runs none of this editor's byte rules, so a `\c` copied out of a comment
+   * box would reach the document unstripped.
+   *
    * Deliberately NOT acted on here: the claims disagree about it on purpose — the in-note `\fp`
    * claim covers internal pastes (an internal multi-paragraph copy is exactly the split it
    * prevents), the char-stack claim declines them outright, and the Standard-view claim declines
@@ -130,6 +139,31 @@ export interface PastePayload {
    * rule, in view, at its own site.
    */
   isInternal: boolean;
+}
+
+/**
+ * Whether `lexicalString` is a rich payload Lexical's own paste would reconstruct as NODES in an
+ * editor with this `namespace` — the exact condition `$insertDataTransferForRichText`
+ * (`@lexical/clipboard`) applies before taking its node-tree branch. Anything else (a foreign
+ * editor's namespace, a missing `nodes` array, unparseable JSON, no flavor at all) falls through
+ * that function to the `text/html` DOM import, which is an ORDINARY external paste as far as this
+ * editor's rules are concerned.
+ *
+ * Mirrored rather than imported because Lexical exports no predicate for it.
+ */
+function isSameNamespaceLexicalPayload(lexicalString: string, namespace: string): boolean {
+  if (!lexicalString) return false;
+  try {
+    const payload: unknown = JSON.parse(lexicalString);
+    if (typeof payload !== "object" || payload === null) return false;
+    const { namespace: payloadNamespace, nodes } = payload as {
+      namespace?: unknown;
+      nodes?: unknown;
+    };
+    return payloadNamespace === namespace && Array.isArray(nodes);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -154,6 +188,7 @@ export interface PastePayload {
  */
 export function getPastePayload(
   event: PasteCommandType | null | undefined,
+  namespace: string,
 ): PastePayload | undefined {
   const clipboardData =
     event && typeof event === "object" && "clipboardData" in event
@@ -186,7 +221,10 @@ export function getPastePayload(
   const paratext9Text = html ? paratext9HtmlToUsfm(html) : undefined;
   return {
     text: paratext9Text !== undefined ? normalizeLineEndings(paratext9Text) : plainText || htmlText,
-    isInternal: !!clipboardData.getData("application/x-lexical-editor"),
+    isInternal: isSameNamespaceLexicalPayload(
+      clipboardData.getData("application/x-lexical-editor"),
+      namespace,
+    ),
   };
 }
 
@@ -508,7 +546,7 @@ export function $handlePasteForStandardView(
   armSplitExpected: () => void = () => undefined,
   armPasteRebuildDedup: () => void = () => undefined,
 ): boolean {
-  const payload = getPastePayload(event);
+  const payload = getPastePayload(event, $getEditor()._config.namespace);
   if (!payload) return false;
   const selection = $getSelection();
   const inAttributeContext =
@@ -845,12 +883,20 @@ export function $handleCopyForStandardView(
   }
   const data = $getStandardViewClipboardData(editor);
   if (!data) return false;
+  // The same "nothing to copy" rule the collapsed-selection leg above states, reached through the
+  // non-collapsed door: a RANGE can cover nodes that contribute no bytes at all (an optbreak husk
+  // whose `//` display child was deleted, selected by the two element points either side of it),
+  // and writing the payload anyway replaces the clipboard's real contents with an empty string and
+  // an empty `<p>`. The event is still CLAIMED — the selection is this handler's to answer — it
+  // just writes nothing, leaving whatever the user copied last intact. A cut still removes the
+  // range: the bytes it would have carried are the ones that do not exist, not the nodes.
+  const isEmptyPayload = !data["text/plain"] && !data["application/x-lexical-editor"];
   if (!event || !("clipboardData" in event)) {
     // Null-payload dispatch (ClipboardPlugin / ContextMenuPlugin / EditorRef): write via
     // Lexical's execCommand mechanism with OUR pre-normalized payload. copyToClipboard(null)
     // without `data` would intercept its own synthesized event at COMMAND_PRIORITY_CRITICAL
     // and write the stock payload — which is why this branch must pass `data`.
-    void copyToClipboard(editor, null, data);
+    if (!isEmptyPayload) void copyToClipboard(editor, null, data);
     if (isCut) selection.removeText();
     return true;
   }
@@ -860,7 +906,8 @@ export function $handleCopyForStandardView(
   // document.execCommand from inside that dispatch and never preventDefault the original event.
   if (event.clipboardData == null) return false;
   event.preventDefault();
-  for (const [mime, value] of Object.entries(data)) event.clipboardData.setData(mime, value);
+  if (!isEmptyPayload)
+    for (const [mime, value] of Object.entries(data)) event.clipboardData.setData(mime, value);
   if (isCut) selection.removeText();
   return true;
 }
