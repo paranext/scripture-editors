@@ -46,6 +46,7 @@ import {
   $hasCopyableSelection,
   $isImmutableNoteCallerNode,
   $opaqueBlockAncestor,
+  $selectionReachesIntoOpaqueBlock,
   $shouldBlockSelectionReplacement,
 } from "shared-react";
 import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
@@ -777,6 +778,22 @@ export function usfmToClipboardHtml(usfm: string): string {
  * receives. The internal `application/x-lexical-editor` flavor keeps the display form untouched so a
  * paste back into a Standard-view editor round-trips exactly. Shared by both the real-event and
  * null-event branches of `$handleCopyForStandardView` below so they stay byte-for-byte consistent.
+ *
+ * The internal flavor is OMITTED whenever an END of the selection lies inside an opaque construct
+ * (`$selectionReachesIntoOpaqueBlock`, shared-react). That flavor exists to carry a construct WHOLE,
+ * and a selection cutting through one cannot be carried whole: `createUnknown`
+ * (`usj-editor.adaptor.ts`) builds a construct's text children in token mode, and
+ * `$sliceSelectedTextNodeContent` (`@lexical/selection`) refuses to slice a token-mode TextNode, so
+ * a caption selected from its third character to its seventh serializes as the COMPLETE construct —
+ * wrapper, every attribute on it, and the caption's full text. Pasting that reproduces a whole
+ * second figure where the user asked for four letters, and a save persists the invented bytes with
+ * no error. The two text flavors have no such floor: they are exactly the selected bytes, and
+ * Tier 2 re-tokenizes them back into whatever construct those bytes actually spell (an unclosed
+ * `\fig` becomes a char span, not a figure — which is what a cut-through selection means).
+ *
+ * A selection whose ends are both OUTSIDE still ships the flavor: the construct is covered whole
+ * there, and the fast path rebuilds it with a fidelity re-tokenization cannot match for the kinds
+ * USFM has no bytes for (`ref`).
  */
 export function $getStandardViewClipboardData(
   editor: LexicalEditor,
@@ -788,6 +805,7 @@ export function $getStandardViewClipboardData(
     "text/plain": usfm,
     "text/html": usfmToClipboardHtml(usfm),
   };
+  if ($selectionReachesIntoOpaqueBlock()) return data;
   const lexical = $getLexicalContent(editor);
   if (lexical) data["application/x-lexical-editor"] = lexical;
   return data;
