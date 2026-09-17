@@ -47,16 +47,21 @@ function selectedMenuItemTitle() {
   return document.querySelector(".typeahead-popover li.selected .text")?.textContent;
 }
 
-async function openMenuWithEndNoteHighlighted(onSelect: () => void) {
+async function openMenu(onSelect: () => void, isDisabled = false) {
   const { editor } = await baseTestEnvironment(
     () => {
       $getRoot().append($createParaNode().append($createTextNode("In the beginning")));
     },
-    <ContextMenuPlugin options={[{ title: "Insert end note", onSelect }]} />,
+    <ContextMenuPlugin options={[{ title: "Insert end note", onSelect, isDisabled }]} />,
   );
   const rootElement = editor.getRootElement();
   if (!rootElement) throw new Error("editor has no root element");
   await rightClick(rootElement);
+  return { editor, rootElement };
+}
+
+async function openMenuWithEndNoteHighlighted(onSelect: () => void, isDisabled = false) {
+  const { editor, rootElement } = await openMenu(onSelect, isDisabled);
   const indexOfEndNote = menuItemTitles().indexOf("Insert end note");
   expect(indexOfEndNote).toBeGreaterThanOrEqual(0);
   // Walk the highlight down onto the extra option, the way the user does.
@@ -107,6 +112,52 @@ describe("ContextMenuPlugin keyboard selection", () => {
     // The control for the test above: the harness DOES route Enter to Lexical when the menu is not
     // the one holding the keyboard, so "Lexical never saw Enter" there means the menu claimed it.
     expect(lexicalSawEnter).toHaveBeenCalled();
+  });
+
+  // The menu owns Enter for as long as it is up, not only while it holds something to invoke. A
+  // press it hands back reaches an editor that still has DOM focus behind the menu, and a host that
+  // gates its own Enter behavior on this menu would start a second keyboard mode over a menu that
+  // is still armed.
+  it("swallows Enter with nothing highlighted, leaving the menu open", async () => {
+    const lexicalSawEnter = vi.fn();
+    const { editor } = await openMenu(vi.fn());
+    editor.registerCommand(
+      KEY_ENTER_COMMAND,
+      () => {
+        lexicalSawEnter();
+        return true;
+      },
+      COMMAND_PRIORITY_NORMAL,
+    );
+    expect(selectedMenuItemTitle()).toBeUndefined();
+
+    await pressKeyThroughDom(editor, "Enter");
+
+    expect(lexicalSawEnter).not.toHaveBeenCalled();
+    expect(menuList()).not.toBeNull();
+  });
+
+  // Specifically NOT by handing the press back: a disabled highlighted option is still the menu
+  // holding the keyboard, and letting Enter through there is the tempting wrong fix for its being a
+  // dead key.
+  it("swallows Enter on a disabled option without running it, leaving the menu open", async () => {
+    const onSelect = vi.fn();
+    const lexicalSawEnter = vi.fn();
+    const { editor } = await openMenuWithEndNoteHighlighted(onSelect, true);
+    editor.registerCommand(
+      KEY_ENTER_COMMAND,
+      () => {
+        lexicalSawEnter();
+        return true;
+      },
+      COMMAND_PRIORITY_NORMAL,
+    );
+
+    await pressKeyThroughDom(editor, "Enter");
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(lexicalSawEnter).not.toHaveBeenCalled();
+    expect(menuList()).not.toBeNull();
   });
 });
 

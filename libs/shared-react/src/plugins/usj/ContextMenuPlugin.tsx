@@ -250,10 +250,16 @@ export function ContextMenuPlugin({
         setSelectedIndex((prev) =>
           prev === undefined ? options.length - 1 : (prev - 1 + options.length) % options.length,
         );
-      } else if (event.key === "Enter" && selectedIndex !== undefined) {
+      } else if (event.key === "Enter") {
+        // The menu owns Enter for as long as it is open, whatever is highlighted, and swallows
+        // every press it does not act on rather than handing it back. The editor keeps DOM focus
+        // behind the menu, so an unclaimed Enter would reach Lexical and split the paragraph there
+        // — or reach a host that gates its own Enter behavior on this menu and start a second
+        // keyboard mode underneath a menu that is still armed.
         event.preventDefault();
         event.stopPropagation();
-        const option = options[selectedIndex];
+        const option = selectedIndex === undefined ? undefined : options[selectedIndex];
+        // A disabled option is a no-op that leaves the menu open, the way a native menu behaves.
         if (option && !option.isDisabled) {
           editor.update(() => {
             option.onSelect();
