@@ -19,16 +19,16 @@
  * that turns the selection into USFM bytes, are both in the picture.
  */
 
-import { copyEvent } from "./markerEdit.test-helpers";
 import { flushQueuedEvents } from "../editor-test.utils";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $isRangeSelection,
-  COPY_COMMAND,
+  $isTextNode,
   LexicalEditor,
   PointType,
 } from "lexical";
@@ -90,6 +90,9 @@ function figureDom(editor: LexicalEditor) {
     (element) => element.textContent === " two",
   );
   return {
+    // The `<unknown>` element every snapped boundary is an offset in, which is where a materialized
+    // boundary lands in the DOM as well.
+    figure,
     opener: textChild(markers[0], "the opener glyph"),
     caption: textChild(figure.querySelector('span[data-lexical-text="true"]'), "the caption"),
     attributes: textChild(figure.querySelector('span[data-text-type="attribute"]'), "the run"),
@@ -131,6 +134,12 @@ async function dragSelect(
     domSelection.setBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset);
   });
   await flushQueuedEvents();
+  // Drained twice on purpose. A snap that materializes writes the DOM selection inside its own
+  // commit, which queues one MORE `selectionchange`; Lexical tracks "this change was mine" in a
+  // module-global flag cleared only by the next `selectionchange` it actually sees, so leaving that
+  // event undelivered makes the following test's first real selection change look like Lexical's own
+  // and be skipped — no `SELECTION_CHANGE_COMMAND`, and the repair under test never runs.
+  await flushQueuedEvents();
 }
 
 /** `{ key, offset, type }` of both ends of the editor's current selection — what the snap is
@@ -147,14 +156,77 @@ function selectionPoints(editor: LexicalEditor): {
   });
 }
 
-/** The `text/plain` bytes a Ctrl+C would put on the clipboard right now — `""` when the copy wrote
- * nothing, which is what an unresolved selection produces. */
-async function copiedText(editor: LexicalEditor): Promise<string> {
-  const { event, getData } = copyEvent();
+/**
+ * Hold the pointer button down the way a drag does. `pointerdown` goes to the root element, which is
+ * where a press inside the editor lands; the plugin leaves the browser's DOM selection alone only for
+ * as long as this is held.
+ */
+async function pressPointer(editor: LexicalEditor): Promise<void> {
+  const root = editor.getRootElement();
+  if (!root) throw new Error("the editor rendered no root element");
   await act(async () => {
-    editor.dispatchCommand(COPY_COMMAND, event);
+    root.dispatchEvent(new Event("pointerdown", { bubbles: true }));
   });
-  return getData("text/plain");
+}
+
+/**
+ * Let the pointer button up. `pointerup` goes to the DOCUMENT, because a drag begun in the editor can
+ * be released anywhere, and that is where the plugin listens for it. jsdom implements no
+ * `PointerEvent`, so a plain `Event` carries the type — the plugin reads nothing else off it.
+ */
+async function releasePointer(editor: LexicalEditor): Promise<void> {
+  const root = editor.getRootElement();
+  if (!root) throw new Error("the editor rendered no root element");
+  await act(async () => {
+    root.ownerDocument.dispatchEvent(new Event("pointerup", { bubbles: true }));
+  });
+  await flushQueuedEvents();
+  // The materialization's own DOM write queues a further `selectionchange`; see `dragSelect`.
+  await flushQueuedEvents();
+}
+
+/** `{ anchorNode, anchorOffset, focusNode, focusOffset }` of the document's DOM selection — the four
+ * properties the browser owns, and the ones a repair must be able to leave alone. */
+function domSelectionPoints(): {
+  anchorNode: Node | null;
+  anchorOffset: number;
+  focusNode: Node | null;
+  focusOffset: number;
+} {
+  const domSelection = document.getSelection();
+  if (!domSelection) throw new Error("no DOM selection");
+  const { anchorNode, anchorOffset, focusNode, focusOffset } = domSelection;
+  return { anchorNode, anchorOffset, focusNode, focusOffset };
+}
+
+/**
+ * The `text/plain` bytes a Ctrl+C would put on the clipboard right now — `""` when the copy wrote
+ * nothing, which is what an unresolved selection produces.
+ *
+ * Driven by a real `copy` event on the root element, the way the browser reaches `COPY_COMMAND`
+ * (Lexical registers `copy` as a pass-through root event), rather than by dispatching the command
+ * directly. The entry point is load-bearing for these pins: `$internalCreateSelection`
+ * (lexical/LexicalUpdates) re-derives an update's selection FROM THE DOM whenever the update is not
+ * attributable to a DOM event it trusts — it consults `window.event` — and the snapped selection
+ * lives in the editor state only. A directly dispatched command would therefore be answered with the
+ * DOM's own interior points, the unresolvable form, instead of the boundaries the snap chose.
+ */
+async function copiedText(editor: LexicalEditor): Promise<string> {
+  const root = editor.getRootElement();
+  if (!root) throw new Error("the editor rendered no root element");
+  const store = new Map<string, string>();
+  const clipboardData = {
+    getData: (type: string) => store.get(type) ?? "",
+    setData: (type: string, data: string) => {
+      store.set(type, data);
+    },
+  };
+  const event = new ClipboardEvent("copy", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", { value: clipboardData });
+  await act(async () => {
+    root.dispatchEvent(event);
+  });
+  return clipboardData.getData("text/plain");
 }
 
 describe("a selection landing inside a read-only construct's decorator glyphs", () => {
@@ -255,5 +327,112 @@ describe("a selection landing inside a read-only construct's decorator glyphs", 
       focus: { key: caption, offset: 3, type: "text" },
     });
     expect(await copiedText(lexical)).toBe(CAPTION);
+  });
+
+  it("leaves the browser's own DOM points untouched while the button is down", async () => {
+    const { lexical } = await mountStandardViewEditor(figureUsj);
+    const dom = figureDom(lexical);
+    await pressPointer(lexical);
+
+    await dragSelect(dom.opener, 2, dom.trailing, 3);
+
+    // The asymmetry a drag depends on: Chromium extends one only from a base it placed itself, so
+    // while the button is held the four DOM properties have to come back exactly as handed in even
+    // though the editor state now holds the figure's leading boundary instead.
+    expect(domSelectionPoints()).toEqual({
+      anchorNode: dom.opener,
+      anchorOffset: 2,
+      focusNode: dom.trailing,
+      focusOffset: 3,
+    });
+    expect(selectionPoints(lexical).anchor).toEqual({
+      key: figureNode(lexical).getKey(),
+      offset: 0,
+      type: "element",
+    });
+  });
+
+  it("materializes the boundary form into the DOM when the button comes up", async () => {
+    const { lexical } = await mountStandardViewEditor(figureUsj);
+    const dom = figureDom(lexical);
+    await pressPointer(lexical);
+    await dragSelect(dom.opener, 2, dom.trailing, 3);
+    const snapped = selectionPoints(lexical);
+
+    await releasePointer(lexical);
+
+    // The release is the moment the raw interior points stop being needed and start being a hazard,
+    // so the boundary the snap chose is written where the browser can be asked about it again. The
+    // editor's own selection is the same one throughout — the release moves the DOM, not the state.
+    expect(domSelectionPoints().anchorNode).toBe(dom.figure);
+    expect(domSelectionPoints().anchorOffset).toBe(0);
+    expect(selectionPoints(lexical)).toEqual(snapped);
+  });
+
+  it("writes the DOM straight away for an arrival with no button down", async () => {
+    const { lexical } = await mountStandardViewEditor(figureUsj);
+    const dom = figureDom(lexical);
+
+    // No `pointerdown`: the shape of a keyboard extend (Shift+Arrow into the glyph) or a programmatic
+    // move. Nothing is mid-drag, so there is no base to protect and the repair is materialized at
+    // once rather than waiting for a release that will never come.
+    await dragSelect(dom.opener, 2, dom.trailing, 3);
+
+    expect(domSelectionPoints().anchorNode).toBe(dom.figure);
+    expect(domSelectionPoints().anchorOffset).toBe(0);
+  });
+
+  it("survives an event-less update once the DOM holds the boundary form", async () => {
+    const { lexical } = await mountStandardViewEditor(figureUsj);
+    const dom = figureDom(lexical);
+    await pressPointer(lexical);
+    await dragSelect(dom.opener, 2, dom.trailing, 3);
+    await releasePointer(lexical);
+    const snapped = selectionPoints(lexical);
+
+    // An update opened from no DOM event at all — a timer, a microtask, a React effect. Lexical
+    // re-derives such an update's selection FROM THE DOM, so interior points left there would come
+    // back unresolvable and the commit would clear the browser's range along with the selection.
+    await act(async () => {
+      lexical.update(() => {
+        // Reads the document and changes nothing: what is under test is that an update opened and
+        // committed at all, not anything it did.
+        $getRoot().getChildrenSize();
+      });
+    });
+    await flushQueuedEvents();
+
+    expect(selectionPoints(lexical)).toEqual(snapped);
+  });
+
+  it("stops skipping the DOM write at the end of the snap's own commit", async () => {
+    const { lexical } = await mountStandardViewEditor(figureUsj);
+    const dom = figureDom(lexical);
+    const captionKey = lexical
+      .getEditorState()
+      .read(() => figureNode(lexical).getChildAtIndex(1)?.getKey());
+    await pressPointer(lexical);
+
+    await dragSelect(dom.opener, 2, dom.trailing, 3);
+
+    // An ordinary later update, of the kind any plugin makes, while the button is still down. The
+    // snap holds the reconciler's DOM-selection pass back for its OWN commit only, so this one must
+    // reach the browser normally — otherwise every programmatic caret move during a drag would leave
+    // the caret visibly behind.
+    await act(async () => {
+      lexical.update(() => {
+        const caption = captionKey ? $getNodeByKey(captionKey) : undefined;
+        if (!$isTextNode(caption)) throw new Error("the caption is not a text node");
+        caption.select(1, 1);
+      });
+    });
+    await flushQueuedEvents();
+
+    expect(domSelectionPoints()).toEqual({
+      anchorNode: dom.caption,
+      anchorOffset: 1,
+      focusNode: dom.caption,
+      focusOffset: 1,
+    });
   });
 });
