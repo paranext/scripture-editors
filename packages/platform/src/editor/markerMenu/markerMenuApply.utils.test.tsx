@@ -3,7 +3,8 @@ import {
   $splitParagraphWithMarker,
   ApplyMarkerMenuSelectionDeps,
 } from "./markerMenuApply.utils";
-import { MarkerMenuItem } from "./markerItemSource";
+import { getMarkerMenuItems, MarkerMenuItem } from "./markerItemSource";
+import { $getMarkerMenuContext } from "./markerMenuContext.utils";
 import { deserializeEditorState } from "../adaptors/editor-usj.adaptor";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import { MarkerEditPlugin } from "../markerEdit/MarkerEditPlugin";
@@ -47,6 +48,7 @@ import {
   $isBookNode,
   $isCharNode,
   $isMarkerNode,
+  $isNoteNode,
   $isParaNode,
   CharNode,
   defaultStyleInfo,
@@ -112,6 +114,31 @@ function makeDeps(styleInfo?: StyleInfo): ApplyMarkerMenuSelectionDeps {
     styleInfo,
   };
 }
+
+/** The `\id` line as `createBook` builds it in markerMode "editable": one immutable `\id GEN `
+ * glyph decorator, then the line's own content. */
+function $buildBookLine(content: string): TextNode {
+  const text = $createTextNode(content);
+  $getRoot().append(
+    $createBookNode("GEN").append($createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`), text),
+  );
+  return text;
+}
+
+/**
+ * What the `\` palette offers at a caret in the `\id` line. Built from the context shape rather
+ * than from an editor, which `markerMenuContext.utils.test.tsx` pins and
+ * "offers exactly what the live context in the line produces" below re-checks against a real
+ * caret — so this list cannot drift from the one a user sees.
+ */
+const ID_LINE_MENU_ITEMS = getMarkerMenuItems(defaultStyleInfo, {
+  source: "character",
+  paraMarker: "id",
+  previousParaMarkers: ["id"],
+  openCharMarkers: [],
+  hasTextSelection: false,
+  inMarkerText: false,
+});
 
 /** The bundled sheet with `occursUnder` overridden for one marker, as a project sheet may do. */
 function styleInfoWithOccursUnder(marker: string, occursUnder: string[]): StyleInfo {
@@ -363,19 +390,6 @@ describe("$applyMarkerMenuSelection", () => {
   });
 
   describe("paragraph kind — the `\\id` line", () => {
-    /** The `\id` line as `createBook` builds it in markerMode "editable": one immutable
-     * `\id GEN ` glyph decorator, then the line's own content. */
-    function $buildBookLine(content: string): TextNode {
-      const text = $createTextNode(content);
-      $getRoot().append(
-        $createBookNode("GEN").append(
-          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
-          text,
-        ),
-      );
-      return text;
-    }
-
     it("inserts the picked paragraph AFTER the \\id line, carrying the text past the caret", async () => {
       // A book can never be RETAGGED — `\id` names the book, and its glyph is immutable — so a
       // paragraph pick in the line always SPLITS, which is what PT9 does with a paragraph marker
@@ -467,6 +481,129 @@ describe("$applyMarkerMenuSelection", () => {
         expect(rightSpans).toHaveLength(1);
         expect(rightSpans[0].getMarker()).toBe("nd");
         expect(rightSpans[0].getTextContent()).toContain("name");
+      });
+    });
+  });
+
+  describe("the `\\id` line offers nothing it cannot insert", () => {
+    // The offered list and the commit paths are ONE contract: a menu that lists a marker and then
+    // ignores the pick is worse than not offering it at all. Every entry the line offers is
+    // committed here, so neither side can move without the other.
+
+    async function bookLineAtCaret() {
+      let idText: TextNode;
+      const environment = await historyTestEnvironment(() => {
+        idText = $buildBookLine("Genesis description");
+      });
+      await act(async () =>
+        environment.editor.update(() => requireDefined(idText, "book line text").select(7, 7)),
+      );
+      return environment;
+    }
+
+    /** Text plus root shape, so an insert that lands no bytes still counts as a change. */
+    function $documentShape(): string {
+      return JSON.stringify([
+        $getRoot().getTextContent(),
+        $getRoot()
+          .getChildren()
+          .map((child) => child.getType()),
+      ]);
+    }
+
+    it("offers exactly what the live context in the line produces", async () => {
+      const { editor } = await bookLineAtCaret();
+
+      const live = editor
+        .getEditorState()
+        .read(() =>
+          getMarkerMenuItems(
+            defaultStyleInfo,
+            requireDefined($getMarkerMenuContext(), "marker menu context"),
+          ),
+        );
+
+      expect(live).toEqual(ID_LINE_MENU_ITEMS);
+      expect(live.length).toBeGreaterThan(0);
+      // Character styles valid under `id` plus every note style — and NO paragraph marker, which
+      // is the list whose picks the line has no paragraph to apply.
+      expect(live.map((item) => item.kind)).not.toContain("paragraph");
+      expect(live.map((item) => item.marker)).toEqual(expect.arrayContaining(["f", "fe"]));
+    });
+
+    it.each(ID_LINE_MENU_ITEMS.map((item) => [item.marker, item] as const))(
+      "commits `%s` into the line rather than doing nothing",
+      async (_marker, item) => {
+        const { editor } = await bookLineAtCaret();
+        const before = editor.getEditorState().read($documentShape);
+
+        await act(async () =>
+          editor.update(() => {
+            $applyMarkerMenuSelection(
+              item,
+              { trigger: "backslash", literalPrefixLanded: false },
+              reference,
+              makeDeps(),
+            );
+          }),
+        );
+
+        expect(editor.getEditorState().read($documentShape)).not.toBe(before);
+      },
+    );
+
+    it("lands a real char span for a character pick, inside the book", async () => {
+      const charItem = requireDefined(
+        ID_LINE_MENU_ITEMS.find((item) => item.kind === "character"),
+        "the sheet offers no character style under `id`",
+      );
+      const { editor } = await bookLineAtCaret();
+
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            charItem,
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        const book = $getRoot().getFirstChild();
+        if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+        const spans = book.getChildren().filter($isCharNode);
+        expect(spans).toHaveLength(1);
+        expect(spans[0].getMarker()).toBe(charItem.marker);
+        // The line keeps its immutable prefix and its own text around the new span.
+        expect(book.getTextContent()).toContain(`\\id GEN${NBSP}Genesis`);
+        expect(book.getTextContent()).toContain(" description");
+      });
+    });
+
+    it("lands a real note for a note pick, and returns its key for the host's session", async () => {
+      const { editor } = await bookLineAtCaret();
+      let insertedKey: string | undefined;
+
+      await act(async () =>
+        editor.update(() => {
+          insertedKey = $applyMarkerMenuSelection(
+            { marker: "f", kind: "note", isBasic: true },
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        const book = $getRoot().getFirstChild();
+        if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+        const notes = book.getChildren().filter($isNoteNode);
+        expect(notes).toHaveLength(1);
+        expect(notes[0].getMarker()).toBe("f");
+        expect(insertedKey).toBe(notes[0].getKey());
       });
     });
   });
@@ -2426,13 +2563,7 @@ describe("$splitParagraphWithMarker — the `\\id` line", () => {
     // or Enter in the line runs the generic paragraph split against a BookNode.
     let idText: TextNode;
     const { editor } = await historyTestEnvironment(() => {
-      idText = $createTextNode("Genesis description");
-      $getRoot().append(
-        $createBookNode("GEN").append(
-          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
-          idText,
-        ),
-      );
+      idText = $buildBookLine("Genesis description");
     });
     await act(async () => editor.update(() => idText.select(7, 7)));
 

@@ -166,6 +166,37 @@ text before it), and at the seam between the glyph and the caller it inserts bet
 Consequence for tests: asserting that the mode is `token` proves nothing about whether the shell is
 protected. Assert what the DOCUMENT does under a keystroke.
 
+### The `\id` line is content, not a header
+
+`\id` is a `BookNode` at document root, not a `ParaNode` — but Paratext 9 treats the text after the
+book code as ordinary content, character styles and notes included, and so does this engine. Every
+place that asks "is this a paragraph?" on the way to editing content has to accept the book too.
+What follows from that:
+
+- **The line's marker prefix is ONE immutable decorator** (`\id GEN ` plus its separator) that the
+  caret cannot enter. So the line has **no paragraph arm**: it takes no marker-prefix probe, every
+  caret in it is a content position, and a collapsed caret there is CHARACTER source with
+  `paraMarker: "id"` — which is what makes the character list (styles valid under `id`, plus every
+  note style) non-empty and keeps the empty-to-paragraph fallback from firing.
+- **A book is never RETAGGED.** `\id` names the book, so a paragraph pick in the line can only
+  SPLIT: the tail after the caret becomes a new paragraph inserted directly after the book, with an
+  open character span closed on the left and reopened in it. Typed `\p`, `\ip` or `\c ` bytes end
+  the line the same way, where the file bytes would.
+- **The line settles.** `$rebuildBook` is the fourth settle scope beside paragraphs, note content
+  and chapters; like the note scope it re-tokenizes only the content and preserves the book node,
+  its code and its prefix, which are never re-derived from displayed bytes. Without it, typed
+  markers stayed literal on screen while the save wrote real spans — invariant I violated in the
+  one block that had no scope.
+- **A paragraph below it merges INTO it** when its whole marker is deleted, exactly as it would
+  merge into a paragraph above.
+
+**A menu offers nothing it cannot insert.** The offered list and the commit paths are one contract:
+a list that includes a marker the caret's block cannot take is a defect wherever it happens, and so
+is a commit path that accepts the pick and mutates nothing. The `\id` line is where both failed at
+once — it was offered the paragraph list and had no paragraph to apply it to — which is why the rule
+is written down here rather than left to each block. `markerMenuApply.utils.test.tsx` commits every
+entry the line offers and asserts the document changed.
+
 ### `\cat` is the attribute marker the stylesheet does not declare
 
 `ATTRIBUTE_MARKERS` holds `ca`, `cp`, `va`, `vp`, and `cat`. All but `cat` are also usfm.sty
@@ -262,6 +293,8 @@ The host owns which KEY does what (see its half); this repo owns the resulting d
   wrong is invisible rather than loud: a fresh wrapper with an opener and no closer loses that
   opener to the wrap primitive's strip branch, and the marker-edit engine then unwraps the
   glyph-less span again — the apply does nothing at all.
+- **A paragraph pick in the `\id` line** splits the line and starts the new paragraph AFTER the
+  book — the book itself is never retagged. See "The `\id` line is content, not a header".
 - **A closing marker typed over a selection** DELETES the selected content and lands the literal
   closer in its place (Paratext 9 parity). That is a different gesture from the wrap, so the two are
   not interchangeable over a selection.
