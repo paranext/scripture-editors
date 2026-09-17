@@ -2830,13 +2830,16 @@ span.read img {
   unicode-bidi: isolate;
 }
 
-/* Indent compensation: each marker's --para-indent must equal its text-spacing margin-left above
-   (the same value serves RTL margin-right), or the gutter glyph lands in the text.
-   usj-nodes.css.gutter-coverage.test.ts enforces this for margins set in THIS file; margins a host
-   injects later (generateUsjCss, consumer commentary sheets) are not compensated.
-   Table rows (tr, tr1, tr2) need no entry: a real row is a <tr>, not a .para.
+/* Indent compensation: each marker's --para-indent must equal its text-spacing margin-left above,
+   or the gutter glyph lands in the text. The same value serves RTL margin-right, so a marker needs
+   the same margin in both directions. usj-nodes.css.gutter-coverage.test.ts enforces this for
+   margins set in THIS file; margins a host injects later (generateUsjCss, consumer commentary
+   sheets) override these and leave the compensation stale by the difference.
+   \tr needs no entry: a real row is a <tr>, not a .para. The obsolete \tr1 and \tr2 still convert
+   to plain paragraphs, so they do.
    Out of scope: an "auto" text direction. TextDirectionPlugin sets no dir attribute for it, so the
-   [dir]-qualified margins above never apply while this compensation still does; see the KNOWN GAP
+   [dir]-qualified margins above never apply while this compensation still does, and the
+   [dir]-qualified gutter rules never match, so RTL content keeps the LTR gutter; see the KNOWN GAP
    note in ArrowNavigationPlugin. */
 .psc-gutter-markers.text-spacing .usfm_p2 {
   --para-indent: 2.5vw;
@@ -2849,7 +2852,8 @@ span.read img {
 .psc-gutter-markers.text-spacing .usfm_li1,
 .psc-gutter-markers.text-spacing .usfm_ph,
 .psc-gutter-markers.text-spacing .usfm_ph1,
-.psc-gutter-markers.text-spacing .usfm_pi2 {
+.psc-gutter-markers.text-spacing .usfm_pi2,
+.psc-gutter-markers.text-spacing .usfm_tr1 {
   --para-indent: 10vw;
 }
 .psc-gutter-markers.text-spacing .usfm_q,
@@ -2863,7 +2867,8 @@ span.read img {
 .psc-gutter-markers.text-spacing .usfm_lim,
 .psc-gutter-markers.text-spacing .usfm_lim1,
 .psc-gutter-markers.text-spacing .usfm_ph2,
-.psc-gutter-markers.text-spacing .usfm_pi3 {
+.psc-gutter-markers.text-spacing .usfm_pi3,
+.psc-gutter-markers.text-spacing .usfm_tr2 {
   --para-indent: 15vw;
 }
 .psc-gutter-markers.text-spacing .usfm_qm,
@@ -2961,7 +2966,9 @@ span.read img {
 .psc-gutter-markers.text-spacing .usfm_ph,
 .psc-gutter-markers.text-spacing .usfm_ph1,
 .psc-gutter-markers.text-spacing .usfm_ph2,
-.psc-gutter-markers.text-spacing .usfm_ph3 {
+.psc-gutter-markers.text-spacing .usfm_ph3,
+.psc-gutter-markers.text-spacing .usfm_tr1,
+.psc-gutter-markers.text-spacing .usfm_tr2 {
   --verse-text-start: -5vw;
 }
 
@@ -3004,6 +3011,6 @@ span.read img {
 .psc-active-focus.psc-gutter-markers .psc-active-text::after {
   inset-inline-start: min(
     var(--verse-text-start, 0px),
-    calc(-1 * var(--psc-gutter-width) - var(--para-indent))
+    calc(-1 * var(--psc-gutter-width) - var(--para-indent, 0px))
   );
 }
