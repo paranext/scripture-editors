@@ -76,6 +76,17 @@ refused. The public surface grew substantially; nothing was removed.
 - `getUsj()` returns the settled document in editable marker modes. When nothing is pending and no
   transient input is declared it short-circuits to the previous behavior, so the other view modes are
   unaffected.
+- **A Standard-view copy whose selection cuts through an opaque construct — a figure, sidebar,
+  periph, ref, table or optbreak — no longer writes the private `application/x-lexical-editor`
+  flavor.** That flavor carries a construct WHOLE and cannot carry part of one: a construct's text is
+  token-mode, which `@lexical/selection` refuses to slice, so a caption selected from its third
+  character to its seventh went on the clipboard as a COMPLETE figure — wrapper, attributes and the
+  whole caption — while the two readable flavors carried the four selected characters. Pasting that
+  through a native paste event inserted a second figure, and a save persisted it. `text/plain` and
+  `text/html` are unchanged and still carry exactly the selected bytes. A host that reads the private
+  flavor off the clipboard must handle its absence for such a selection; a host pasting through
+  `navigator.clipboard.read()` (the editor's own Ctrl+V and context-menu Paste) sees no change, since
+  that API never exposed the flavor.
 
 ### Fixed
 

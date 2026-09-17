@@ -281,13 +281,22 @@ describe("ref (UnknownNode) copy→paste across all three payload shapes", () =>
   });
 });
 
-describe("a construct's own start boundary (the shared isSelected rule)", () => {
-  // `UnknownNode.isSelected` asks whether any of the node's OWN CHILDREN are in the selection,
-  // rather than taking Lexical's default key-membership answer for the WRAPPER — so the
-  // lexical-JSON copy agrees with `text/plain`, whose walker reads the same `getNodes()` list. The
-  // rule is written once for every kind and keys on nothing kind-specific, so it is pinned on more
-  // than the optbreak that surfaced it (`optbreakClipboardFidelity.test.tsx`): these constructs
-  // have real attributes and real content, which an optbreak does not.
+describe("a construct's own boundary (a selection that reaches into one)", () => {
+  // A boundary ON a construct — an element point at one of its child offsets, or the text point
+  // Lexical normalizes that into — is a selection reaching INTO the construct, and a copy whose
+  // selection reaches into one writes the two TEXT flavors only ({@link
+  // $getStandardViewClipboardData}, whitespaceDisplay.plugin.utils.ts). The construct cannot be
+  // carried whole from there, and `$sliceSelectedTextNodeContent` refuses to slice the token-mode
+  // text it is built from, so an internal flavor would carry MORE than was selected — a whole
+  // second construct, attributes and all (`partialConstructClipboard.test.tsx`). The text carriers
+  // are exactly the selected bytes, so the two carriers agree at every boundary below by there
+  // being only one kind of carrier.
+  //
+  // `UnknownNode.isSelected` is what makes the SAME boundary agree wherever the internal flavor IS
+  // still written — a selection whose ends are both outside — and it is written once for every
+  // kind, so it is pinned on more than the optbreak that surfaced it
+  // (`optbreakClipboardFidelity.test.tsx`): these constructs have real attributes and real content,
+  // which an optbreak does not.
   //
   // Every assertion below reads the construct's own CONTENT BYTES, never just its tag. A tag-only
   // assertion cannot see the shape that matters here — a copy that dropped the wrapper while
@@ -297,47 +306,53 @@ describe("a construct's own start boundary (the shared isSelected rule)", () => 
   const FIGURE_BYTES = "At once they left their nets.";
   const REF_BYTES = "Genesis 1:1";
 
-  it("a selection ending exactly at a DISPLAY-BYTE-LED construct's start excludes it from both carriers", async () => {
+  it("a selection ending exactly at a DISPLAY-BYTE-LED construct's start excludes it from every carrier", async () => {
     // A figure's first child is the `\fig ` display decorator, so the element-type focus point
-    // stays an element point and reaches none of the figure's children: neither carrier carries
-    // the caption, and the lexical flavor has no figure node either.
+    // reaches none of the figure's children and `text/plain` carries nothing of it.
     const payload = await copyToConstructBoundary(corpusUsj(FIGURE.fixture), FIGURE.tag, 0);
     expect(payload[PLAIN]).not.toContain(FIGURE_BYTES);
     expect(payload[PLAIN]).not.toContain("\\fig");
-    expect(payload[LEXICAL]).not.toContain(FIGURE_BYTES);
-    expect(payload[LEXICAL]).not.toContain('"figure"');
+    expect(payload[LEXICAL]).toBe("");
   });
 
-  it("a selection ending exactly at a TEXT-LED construct's start carries it WHOLE in the lexical flavor — a superset of text/plain, deliberately, because the alternative loses the node", async () => {
+  it("a selection ending exactly at a TEXT-LED construct's start excludes it from every carrier too", async () => {
     // A `ref` has no display bytes of its own (USJ invented the container), so its first child is a
     // real TextNode and Lexical normalizes the same focus point into a TEXT point at that child's
-    // offset 0. The child is then in `getNodes()` contributing zero characters: `text/plain`
-    // correctly emits none of it, while `isSelected` answers true and the lexical flavor keeps the
-    // construct.
+    // offset 0. The child is then in `getNodes()` contributing zero characters, so `text/plain`
+    // correctly emits none of it — and the boundary lands inside the construct, so there is no
+    // internal flavor to disagree with that.
     //
-    // That residual disagreement is the DELIBERATE half of the trade. Answering false instead makes
-    // `$appendNodesToJSON` hoist the construct's children in place of the excluded wrapper, and a
-    // token-mode child is never sliced, so the copy carries `Genesis 1:1` with the `ref` node and
-    // its `loc` attribute silently gone — the same convincing-lie shape this suite's header
-    // describes. Measured both ways; this pin fixes which one ships.
+    // Writing one would not be a harmless superset. A token-mode child is never sliced, so the
+    // zero-width child keeps its full text: the copy would carry `Genesis 1:1` for a selection that
+    // covers none of it.
     const payload = await copyToConstructBoundary(corpusUsj(REF.fixture), REF.tag, 0);
     expect(payload[PLAIN]).not.toContain(REF_BYTES);
-    expect(payload[LEXICAL]).toContain(REF_BYTES);
-    // Whole, not hoisted: the wrapper and the attribute it carries travel with those bytes.
-    expect(payload[LEXICAL]).toContain('"ref"');
-    expect(payload[LEXICAL]).toContain('"loc":"GEN 1:1"');
+    expect(payload[LEXICAL]).toBe("");
   });
 
-  [
-    { ...FIGURE, bytes: FIGURE_BYTES },
-    { ...REF, bytes: REF_BYTES },
-  ].forEach(({ tag, fixture, bytes }) => {
-    it(`extending that selection over the ${tag}'s first child puts its content in BOTH carriers`, async () => {
-      const payload = await copyToConstructBoundary(corpusUsj(fixture), tag, 1);
-      expect(payload[LEXICAL]).toContain(`"${tag}"`);
-      expect(payload[LEXICAL]).toContain(bytes);
-      expect(payload[PLAIN]).toContain(tag === "figure" ? "\\fig" : bytes);
-    });
+  it("extending that selection over a DISPLAY-BYTE-LED construct's first child puts its opening bytes in text/plain, still with no internal flavor", async () => {
+    // The `\fig ` glyph is now inside the selection and the caption is not, so the text carrier
+    // spells an unclosed `\fig` — which is exactly what was selected, and what Tier 2 re-tokenizes
+    // on a paste back.
+    const payload = await copyToConstructBoundary(corpusUsj(FIGURE.fixture), FIGURE.tag, 1);
+    expect(payload[PLAIN]).toContain("\\fig");
+    expect(payload[PLAIN]).not.toContain(FIGURE_BYTES);
+    expect(payload[LEXICAL]).toBe("");
+  });
+
+  it("LOSS: a ref selected up to its own end keeps its text but loses the wrapper and its loc attribute, because the boundary is inside it", async () => {
+    // A `ref` holds exactly one child, so this boundary covers its content WHOLE — and the copy
+    // still carries text only, because the rule keys on where the selection's ENDS are, not on how
+    // much of the construct they happen to enclose. USFM has no bytes for the `ref` container (see
+    // the `ref` describe above), so the wrapper and `loc` do not survive a text carrier.
+    //
+    // A selection whose ends are both OUTSIDE the ref keeps the internal flavor and round-trips it
+    // whole, and that is the shape a drag produces: the construct renders `contentEditable=false`,
+    // so the browser resolves a drag ending "at the ref" to a point beside it rather than inside.
+    const payload = await copyToConstructBoundary(corpusUsj(REF.fixture), REF.tag, 1);
+    expect(payload[PLAIN]).toContain(REF_BYTES);
+    expect(payload[PLAIN]).not.toContain("GEN 1:1");
+    expect(payload[LEXICAL]).toBe("");
   });
 });
 
