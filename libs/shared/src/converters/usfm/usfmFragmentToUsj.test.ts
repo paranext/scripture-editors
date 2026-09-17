@@ -2035,12 +2035,18 @@ describe("usfmFragmentToUsjContent — peripheral divisions (\\periph)", () => {
     ]);
   });
 
-  it("degrades to an ordinary paragraph when the attribute list does not parse, keeping every byte", () => {
+  it("refuses an attribute list that does not parse, keeping every byte as the division's title", () => {
     // Same refusal as every other attribute list here: `|id=""` is not a reading Paratext agrees
-    // with, so the bytes stay literal text where the author can see and fix them.
+    // with, so the bytes stay literal text where the author can see and fix them. The DIVISION
+    // survives the refusal — `\\periph` has no closing marker, so its extent is a property of the
+    // marker and not of its attributes, and Paratext 9 likewise opens `<periph>` for any `\\periph`
+    // token whose attributes failed to parse. The following blocks stay INSIDE it.
     expect(usfmFragmentToUsjContent('\\periph Title Page|id=""\\mt1 The Title')).toEqual([
-      { type: "para", marker: "periph", content: ['Title Page|id=""'] },
-      { type: "para", marker: "mt1", content: ["The Title"] },
+      {
+        type: "periph",
+        alt: 'Title Page|id=""',
+        content: [{ type: "para", marker: "mt1", content: ["The Title"] }],
+      },
     ]);
   });
 
@@ -2048,10 +2054,27 @@ describe("usfmFragmentToUsjContent — peripheral divisions (\\periph)", () => {
     // `alt` is the division TITLE, which periph spells as marker-line text rather than a pipe pair
     // (`unknownUsfm.utils.ts` renders it that way, so the editor can never produce this shape) — a
     // line carrying both spellings has two conflicting readings and no lossless one, so it refuses
-    // the list like any other ambiguous attribute list rather than silently dropping a title.
+    // the list like any other ambiguous attribute list rather than silently dropping a title. The
+    // division survives here too, for the same reason.
     expect(usfmFragmentToUsjContent('\\periph Title|alt="Z"\\mt1 X')).toEqual([
-      { type: "para", marker: "periph", content: ['Title|alt="Z"'] },
-      { type: "para", marker: "mt1", content: ["X"] },
+      {
+        type: "periph",
+        alt: 'Title|alt="Z"',
+        content: [{ type: "para", marker: "mt1", content: ["X"] }],
+      },
+    ]);
+  });
+
+  it("keeps a bare trailing pipe inside the division rather than un-nesting it mid-keystroke", () => {
+    // The shape a user passes THROUGH while typing `|id="cover"` onto a periph line: in Standard
+    // view the marker line re-tokenizes live, so a refusal that dropped the division would un-nest
+    // every block under it on the `|` keystroke and re-nest them several keystrokes later.
+    expect(usfmFragmentToUsjContent("\\periph Title|\\mt1 X")).toEqual([
+      {
+        type: "periph",
+        alt: "Title|",
+        content: [{ type: "para", marker: "mt1", content: ["X"] }],
+      },
     ]);
   });
 
