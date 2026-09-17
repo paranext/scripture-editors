@@ -19,8 +19,9 @@ describe("leadingAttributeNames (vendored markers-map slice)", () => {
 
   it("declares the code for the book id", () => {
     // Declarative coverage only: the editor renders the `\id CODE` glyph as an uneditable
-    // DecoratorNode and keeps book bytes literal-by-policy (no settle scope), so no Tier-1 arm
-    // consumes this entry today. It is vendored anyway because the slice mirrors the map
+    // DecoratorNode, so the code can never be edited in place and no Tier-1 arm consumes this
+    // entry today — the book settle scope rebuilds the line's CONTENT and preserves the glyph
+    // rather than re-deriving it from bytes. It is vendored anyway because the slice mirrors the map
     // verbatim — dropping the one unconsumed row would turn a verbatim copy into a curated
     // list, the exact drift hazard the vendoring convention exists to avoid.
     expect(leadingAttributeNames("id")).toEqual(["code"]);
