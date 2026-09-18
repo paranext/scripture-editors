@@ -218,6 +218,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     nodes,
     debug = false,
     contextMenu,
+    contextMenuContainer,
     styleInfo,
     markerSettleDelayMs,
   } = options ?? defaultOptions;
@@ -1115,7 +1116,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               the `\` marker menu consume it), so CommandMenuPlugin - which preventDefaults typed
               or pasted `\` and `/` - only guards the non-editable views. */}
           {viewOptions?.markerMode !== "editable" && <CommandMenuPlugin logger={stableLogger} />}
-          <ContextMenuPlugin options={contextMenuOptions} />
+          <ContextMenuPlugin options={contextMenuOptions} getContainer={contextMenuContainer} />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects

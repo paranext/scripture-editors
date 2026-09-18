@@ -120,15 +120,29 @@ export class ContextMenuOption {
 
 export function ContextMenuPlugin({
   options: extraOptions,
+  getContainer,
 }: {
   options?: ContextMenuOptionConfig[];
+  /**
+   * Returns the element to render the menu into, instead of `document.body`. Return the element
+   * whose content the menu belongs to when that element is scaled (CSS `zoom`), so the menu is
+   * scaled with it and stays inside it. Called only while the menu is open; return `undefined`
+   * to portal to `document.body` unscaled.
+   */
+  getContainer?: () => HTMLElement | undefined;
 } = {}): ReactElement | null {
   const [editor] = useLexicalComposerContext();
   const [isReadonly, setIsReadonly] = useState(() => !editor.isEditable());
-  const [menuState, setMenuState] = useState<{ isOpen: boolean; x: number; y: number }>({
+  const [menuState, setMenuState] = useState<{
+    isOpen: boolean;
+    x: number;
+    y: number;
+    container: HTMLElement | undefined;
+  }>({
     isOpen: false,
     x: 0,
     y: 0,
+    container: undefined,
   });
   const [selectedIndex, setSelectedIndex] = useState<number | undefined>(undefined);
 
@@ -178,7 +192,12 @@ export function ContextMenuPlugin({
         return;
       }
       event.preventDefault();
-      setMenuState({ isOpen: true, x: event.clientX, y: event.clientY });
+      setMenuState({
+        isOpen: true,
+        x: event.clientX,
+        y: event.clientY,
+        container: getContainer?.(),
+      });
       setSelectedIndex(undefined);
     };
 
@@ -187,7 +206,7 @@ export function ContextMenuPlugin({
       if (!rootElement) return;
       rootElement.addEventListener("contextmenu", handleContextMenu);
     });
-  }, [editor]);
+  }, [editor, getContainer]);
 
   // Close menu on scroll
   useEffect(() => {
@@ -298,6 +317,6 @@ export function ContextMenuPlugin({
         }}
       />
     </div>,
-    document.body,
+    menuState.container ?? document.body,
   );
 }
