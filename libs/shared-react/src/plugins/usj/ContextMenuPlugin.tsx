@@ -118,6 +118,63 @@ export class ContextMenuOption {
   }
 }
 
+/** A rectangle in viewport pixels. */
+interface Box {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+function intersect(a: Box, b: Box): Box {
+  return {
+    left: Math.max(a.left, b.left),
+    top: Math.max(a.top, b.top),
+    right: Math.min(a.right, b.right),
+    bottom: Math.min(a.bottom, b.bottom),
+  };
+}
+
+/** Overflow values that clip. `visible` is the only one that does not; `overlay` behaves as `scroll`. */
+const CLIPPING_OVERFLOW = new Set(["hidden", "clip", "scroll", "auto", "overlay"]);
+
+/**
+ * Whether an element clips what overflows it. The axes can differ, so both are considered, and the
+ * shorthand is read alongside them: a browser resolves the longhands, while jsdom populates only
+ * whichever form was assigned. Splitting the shorthand keeps a two-value `overflow` such as
+ * `visible auto` from being read as a single unrecognized value.
+ */
+function clipsOverflow(element: HTMLElement): boolean {
+  const style = globalThis.getComputedStyle(element);
+  const values = [style.overflowX, style.overflowY, ...(style.overflow || "").split(/\s+/)];
+  return values.some((value) => CLIPPING_OVERFLOW.has(value));
+}
+
+/**
+ * The part of `container` that is actually on screen, in viewport pixels: its own rect narrowed by
+ * every ancestor that clips it and finally by the viewport. The container is often the scrollable
+ * content rather than the visible pane, so its own rect can be far taller than what the user sees;
+ * a menu bounded only by it would spill out of the pane. With no container, the box is the
+ * viewport, which is the unscaled behavior.
+ */
+function getVisibleBox(container: HTMLElement | undefined): Box {
+  const viewport: Box = {
+    left: 0,
+    top: 0,
+    right: globalThis.innerWidth,
+    bottom: globalThis.innerHeight,
+  };
+  if (!container) return viewport;
+
+  let box: Box = container.getBoundingClientRect();
+  for (let ancestor = container.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    if (clipsOverflow(ancestor)) {
+      box = intersect(box, ancestor.getBoundingClientRect());
+    }
+  }
+  return intersect(box, viewport);
+}
+
 export function ContextMenuPlugin({
   options: extraOptions,
   getContainer,
@@ -278,10 +335,12 @@ export function ContextMenuPlugin({
   useLayoutEffect(() => {
     const menu = menuRef.current;
     if (!menu) return;
-    const factor = menuState.container?.currentCSSZoom ?? 1;
+    const { container } = menuState;
+    const factor = container?.currentCSSZoom ?? 1;
     const { width, height } = menu.getBoundingClientRect();
-    const clampedLeft = Math.max(0, Math.min(menuState.x, globalThis.innerWidth - width));
-    const clampedTop = Math.max(0, Math.min(menuState.y, globalThis.innerHeight - height));
+    const box = getVisibleBox(container);
+    const clampedLeft = Math.max(box.left, Math.min(menuState.x, box.right - width));
+    const clampedTop = Math.max(box.top, Math.min(menuState.y, box.bottom - height));
     menu.style.left = `${clampedLeft / factor}px`;
     menu.style.top = `${clampedTop / factor}px`;
     menu.style.visibility = "visible";

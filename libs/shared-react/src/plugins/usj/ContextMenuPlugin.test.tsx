@@ -75,6 +75,31 @@ function stubbedContainer(
   return container;
 }
 
+/**
+ * Gives the portalled menu a measured size, which jsdom otherwise reports as zero. Instance stubs
+ * on individual containers still win, since they shadow the prototype. Returns a restore function.
+ */
+function stubMenuSize(width: number, height: number): () => void {
+  const original = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function stubbed(this: Element) {
+    if (!this.classList.contains("auto-embed-menu")) return original.call(this);
+    return {
+      left: 0,
+      top: 0,
+      width,
+      height,
+      right: width,
+      bottom: height,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
+  };
+  return () => {
+    Element.prototype.getBoundingClientRect = original;
+  };
+}
+
 describe("ContextMenuPlugin", () => {
   it("portals to document.body when no container getter is supplied", async () => {
     const { editor } = await contextMenuEnvironment();
@@ -148,7 +173,9 @@ describe("ContextMenuPlugin", () => {
   });
 
   it("divides its coordinates by the container's zoom factor", async () => {
-    // A large container so no clamping applies; the division is what is under test.
+    // The container is larger than the jsdom viewport (1024x768), so the visible box reduces to
+    // the viewport itself, and 300/400 sit well within it; no clamping applies here, so the
+    // division is what is under test.
     const container = stubbedContainer(2, { left: 0, top: 0, width: 10000, height: 10000 });
     const { editor } = await contextMenuEnvironment(() => container);
 
@@ -166,5 +193,61 @@ describe("ContextMenuPlugin", () => {
 
     expect(menu.style.left).toBe("300px");
     expect(menu.style.top).toBe("400px");
+  });
+
+  it("clamps into the container's box rather than the viewport", async () => {
+    // A narrow container far from the viewport's right edge. Zoom 1 isolates the clamp.
+    const container = stubbedContainer(1, { left: 0, top: 0, width: 400, height: 400 });
+    const { editor } = await contextMenuEnvironment(() => container);
+
+    // The menu is measured at 200x100; jsdom otherwise reports zero and lets any left through.
+    const restoreMenuSize = stubMenuSize(200, 100);
+    try {
+      // Right-click near the container's right edge.
+      const menu = await openMenu(editor, 380, 10);
+
+      // Without container clamping it would sit at 380; clamped, it's min(380, 400 - 200) = 200.
+      expect(menu.style.left).toBe("200px");
+    } finally {
+      restoreMenuSize();
+    }
+  });
+
+  it("clamps against a clipping ancestor, not just the container", async () => {
+    // The pane: a short scroll parent that clips.
+    const pane = document.createElement("div");
+    pane.style.overflow = "auto";
+    pane.getBoundingClientRect = () =>
+      ({
+        left: 0,
+        top: 0,
+        width: 400,
+        height: 300,
+        right: 400,
+        bottom: 300,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    document.body.append(pane);
+
+    // The container: the scrollable content, far taller than the pane that clips it.
+    const container = stubbedContainer(1, { left: 0, top: 0, width: 400, height: 5000 });
+    pane.append(container);
+
+    const { editor } = await contextMenuEnvironment(() => container);
+
+    // The menu is measured at 200x100; jsdom otherwise reports zero and lets any top through.
+    const restoreMenuSize = stubMenuSize(200, 100);
+    try {
+      // Right-click near the pane's bottom edge.
+      const menu = await openMenu(editor, 10, 290);
+
+      // The container alone allows min(290, 5000 - 100) = 290; the pane clamps it to
+      // min(290, 300 - 100) = 200, proving the ancestor walk, not just the container, bounds it.
+      expect(menu.style.top).toBe("200px");
+    } finally {
+      restoreMenuSize();
+    }
   });
 });
