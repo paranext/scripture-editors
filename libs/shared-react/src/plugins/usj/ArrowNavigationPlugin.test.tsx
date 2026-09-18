@@ -39,6 +39,7 @@ import {
 import {
   $createAttributeRunNode,
   $createCharNode,
+  $createCursorPlaceholderNode,
   $createImmutableTableCellNode,
   $createImmutableTableNode,
   $createImmutableTableRowNode,
@@ -2594,6 +2595,69 @@ describe("a collapsed note at a paragraph's end offers no text position after it
       const lastChild = para.getLastChild();
       expect($isTextNode(lastChild) && lastChild.getTextContent()).toBe("X");
       expect(note.getTextContent()).not.toContain("X");
+    });
+  });
+});
+
+describe("Caret host", () => {
+  // A transient caret host (EmptyVerseCaretGuardPlugin, TrailingNoteCaretGuardPlugin) is a
+  // one-character zero-width-space text node, so the browser offers a caret position on each side
+  // of that character and both paint in the same place. The host stands for ONE insertion point, so
+  // traversal has to treat it as one stop — otherwise crossing an empty verse costs a press at
+  // which the caret visibly does not move. The host is built directly here rather than grown by the
+  // guard, so the traversal is what is under test and nothing depends on a selection-change
+  // arriving first.
+  it("leaves an empty verse in one forward press", async () => {
+    let host: TextNode;
+    let v4Text: TextNode;
+    const { editor } = await testEnvironment(() => {
+      host = $createCursorPlaceholderNode();
+      v4Text = $createTextNode("And there was light.");
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createImmutableVerseNode("2"),
+          $createTextNode("And the earth was without form. "),
+          $createImmutableVerseNode("3"),
+          host,
+          $createImmutableVerseNode("4"),
+          v4Text,
+        ),
+      );
+    });
+    updateSelection(editor, host!, 0);
+
+    await pressKey(editor, "ArrowRight");
+
+    // One press crosses verse 4's marker and lands in its text, rather than stepping to the far
+    // side of the host's zero-width space.
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(v4Text!, 0);
+    });
+  });
+
+  it("stays put when nothing follows the host, leaving the block hop to the browser", async () => {
+    let host: TextNode;
+    const { editor } = await testEnvironment(() => {
+      host = $createCursorPlaceholderNode();
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createImmutableVerseNode("2"),
+          $createTextNode("And the earth was without form. "),
+          $createImmutableVerseNode("3"),
+          host,
+        ),
+      );
+    });
+    updateSelection(editor, host!, 0);
+
+    const event = await pressKey(editor, "ArrowRight");
+
+    // Declining is the whole behavior here, and an unmoved caret alone cannot show it — the caret
+    // also sits still when the rule claims the press and lands it back where it started. Only the
+    // unclaimed event distinguishes "left to the browser" from "handled to no effect".
+    expect(event.defaultPrevented).toBe(false);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(host!, 0);
     });
   });
 });
