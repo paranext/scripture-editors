@@ -22639,12 +22639,12 @@ function qM(e) {
   const n = e.getFirstChild();
   return n !== null && r.key === n.getKey() && r.offset === 0;
 }
-function xl(e) {
+function Zs(e) {
   const t = qM(e);
   e.splice(0, 0, wM(e.getMarker())), t && Tl(e);
 }
-function Zs(e, t) {
-  e.setMarker(t), xl(e), Tl(e);
+function xl(e, t) {
+  e.setMarker(t), Zs(e), Tl(e);
 }
 function RM(e, t) {
   const r = e.getFirstChild();
@@ -22721,14 +22721,14 @@ function DM(e, t) {
     return;
   }
   if (t.splitExpected.current) {
-    xl(e), t.logger?.debug(`[MarkerEdit] injected prefix for split para "${e.getMarker()}"`);
+    Zs(e), t.logger?.debug(`[MarkerEdit] injected prefix for split para "${e.getMarker()}"`);
     return;
   }
   if (e.isEmpty()) {
     const n = t.wholeParaDeleteExpected?.has(e.getKey()) ?? !1, i = t.collapsedDeleteCaretParas?.has(e.getKey()) ?? !1;
     if (!n && !i) return;
     if (t.wholeParaDeleteExpected?.delete(e.getKey()), t.collapsedDeleteCaretParas?.delete(e.getKey()), !e.getParent()?.getChildren().some((o) => se(o) && !o.is(e))) {
-      Zs(e, ir), t.logger?.debug("[MarkerEdit] whole-para delete of the last para: reset to \\p");
+      xl(e, ir), t.logger?.debug("[MarkerEdit] whole-para delete of the last para: reset to \\p");
       return;
     }
     e.remove(), t.logger?.debug("[MarkerEdit] removed para whose whole representation was deleted");
@@ -22748,7 +22748,7 @@ function DM(e, t) {
     r.append(...n), e.remove(), s && Jt(r, o), t.logger?.debug("[MarkerEdit] merged marker-deleted para into previous");
     return;
   }
-  Zs(e, ir);
+  e.setMarker(ir), Zs(e);
 }
 function UM(e) {
   const t = e.getUnknownAttributes();
@@ -22796,7 +22796,7 @@ function KM(e, t) {
 }
 function Ag(e, t, r) {
   if (!N(e.getFirstChild()) && r?.markerMode === "editable" && li(r)) {
-    Zs(e, t);
+    xl(e, t);
     return;
   }
   gh(e, t);
@@ -23050,11 +23050,11 @@ function Rg(e, t) {
     if (!P(s)) return;
     const o = nt(s.anchor.getNode(), se);
     if (!o) return;
-    o.setMarker(e), n && xl(o);
+    o.setMarker(e), n && Zs(o);
     return;
   }
   const i = r.insertParagraph();
-  se(i) && (n ? Zs(i, e) : i.setMarker(e));
+  se(i) && (n ? xl(i, e) : i.setMarker(e));
 }
 function iE() {
   const [e] = le();

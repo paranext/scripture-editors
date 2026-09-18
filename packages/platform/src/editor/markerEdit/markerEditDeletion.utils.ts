@@ -120,7 +120,8 @@ export function $injectMarkerPrefix(para: ParaNode): void {
  * `../markerMenu/markerMenuApply.utils.ts`), since injecting again would double the prefix.
  *
  * Always parks the caret on the content side of the new prefix: retagging is a deliberate
- * "make THIS paragraph a `\q1`" act (palette apply, reset-to-`\p`), so the user's next
+ * "make THIS paragraph a `\q1`" act (palette apply, resetting an emptied last paragraph to `\p`),
+ * so the user's next
  * keystroke belongs in that paragraph's content wherever the caret sat before — unlike
  * `$injectMarkerPrefix` alone, whose caret handling is conditional because a paste can inject
  * several paragraphs' prefixes far away from the caret.
@@ -426,8 +427,12 @@ export function $paraMarkerDeletionTransform(para: ParaNode, context: MarkerEdit
     return;
   }
 
-  // No previous paragraph to merge into: fall back to the default marker, visibly.
-  $setParaMarkerWithPrefix(para, PARA_MARKER_DEFAULT);
+  // No previous paragraph to merge into: fall back to the default marker, visibly. The caret moves
+  // only if it would otherwise sit in front of the new prefix; one already in the content stays
+  // put — typing over a selection that took the marker lands the typed character there first, and
+  // parking the caret at the content start would put every later keystroke in front of it.
+  para.setMarker(PARA_MARKER_DEFAULT);
+  $injectMarkerPrefix(para);
 }
 
 /** The canonical `|…` attribute bytes for a span whose glyphs are being dropped (PT9 keeps these

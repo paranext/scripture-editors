@@ -172,6 +172,24 @@ describe("deleting from the chapter line into the text", () => {
     ]);
   });
 
+  it("keeps the caret after each character typed over the selection", async () => {
+    // Typing is one insertion per key: the first replaces the selection, the rest must follow it.
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await overChapterLineIntoText(lexical, () =>
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "n"),
+    );
+    for (const key of ["e", "w"])
+      await act(async () =>
+        lexical.update(() => {
+          lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, key);
+        }),
+      );
+    expect(ref.current?.getUsj()?.content).toEqual([
+      { type: "para", marker: "p", content: ["new two"] },
+      POETRY_PARA,
+    ]);
+  });
+
   it("keeps it when the selection is cut", async () => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
     await overChapterLineIntoText(lexical, () => lexical.dispatchCommand(CUT_COMMAND, cutEvent()));
