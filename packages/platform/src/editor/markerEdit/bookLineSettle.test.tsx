@@ -12,7 +12,7 @@
 
 import { testEnvironment, viewOptions } from "./markerEdit.test-helpers";
 import { $settledUsj } from "./virtualSettle.utils";
-import { Tier2Context } from "./tier2Rebuild.utils";
+import { Tier2Context, tokenizedBookLine } from "./tier2Rebuild.utils";
 import { deserializeSerializedEditorState } from "../adaptors/editor-usj.adaptor";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -312,5 +312,39 @@ describe("the `\\id` line's settle scope", () => {
     expect(bookUsj(settledUsjOf(editor)) ?? bookUsj(unsettledUsjOf(editor))).toEqual(
       bookUsj(unsettledUsjOf(editor)),
     );
+  });
+});
+
+describe("where the `\\id` line's bytes end the line", () => {
+  // The tokenizer wraps the line's leading inline content in an implied `\p` that looks exactly like
+  // a `\p` the author typed first, so the split re-reads the bytes to tell them apart. Every row is
+  // a place that re-reading could disagree with the tokenizer: the leading whitespace it keeps as
+  // content or drops as structure, and the characters that end a marker name.
+  it.each([
+    { name: "a typed `\\p` then a space", bytes: "\\p more", line: [], next: ["more"] },
+    { name: "a line break ahead of the `\\p`", bytes: "\n\\p more", line: [], next: ["more"] },
+    { name: "a space ahead of the `\\p`", bytes: " \\p more", line: [" "], next: ["more"] },
+    { name: "an NBSP ahead of the `\\p`", bytes: `${NBSP}\\p more`, line: [NBSP], next: ["more"] },
+    { name: "a tab ahead of the `\\p`", bytes: "\t\\p more", line: [" "], next: ["more"] },
+    {
+      name: "a `\\p` ended by the next marker's backslash",
+      bytes: "\\p\\bd Genesis\\bd*",
+      line: [],
+      next: [{ type: "char", marker: "bd", content: ["Genesis"] }],
+    },
+    { name: "a `\\p` ended by a ZWSP", bytes: "\\p\u200Bmore", line: [], next: ["more"] },
+    { name: "a `\\p` ended by a pipe", bytes: "\\p|x", line: [], next: ["|x"] },
+  ])("$name", ({ bytes, line, next }) => {
+    const { lineContent, followingBlocks } = tokenizedBookLine(bytes, bundledGetMarker);
+
+    expect(lineContent).toEqual(line);
+    expect(followingBlocks).toEqual([{ type: "para", marker: "p", content: next }]);
+  });
+
+  it("keeps a closing `\\p*` in the line: it is a different marker, not the author's `\\p`", () => {
+    const { lineContent, followingBlocks } = tokenizedBookLine("\\p*x", bundledGetMarker);
+
+    expect(lineContent).toEqual([{ type: "unmatched", marker: "p*" }, "x"]);
+    expect(followingBlocks).toEqual([]);
   });
 });
