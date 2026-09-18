@@ -18251,7 +18251,7 @@ const ua = "caller_highlight", pC = Jr(function(t, r) {
   }, [n]);
   return oo(r, () => ({
     setHighlightedNote(a) {
-      i.current = a === void 0 ? void 0 : n.getEditorState().read(() => Ur(a)?.getKey()), o();
+      i.current = a === void 0 ? void 0 : n.read(() => Ur(a)?.getKey()), o();
     }
   }), [n, o]), K(() => Ge(
     // Runs before the update listener below, so the key it re-points to is the one the
