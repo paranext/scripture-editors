@@ -483,9 +483,15 @@ export function $selectNote(noteNode: NoteNode, viewOptions: ViewOptions | undef
       // An expanded note with no content run at all (`\f + \f*`) holds nothing to select the end
       // of, and leaving the caret where it was puts it OUTSIDE the note the user asked to be in -
       // so the next keystroke lands in the surrounding text. Land it at the child slot content
-      // would occupy: just before the closing glyph, or at the end when there is none.
+      // would occupy: just before the closing glyph, or at the end when there is none. The glyph
+      // is a marker node under `markerMode: "editable"` and display-only text under `"visible"`.
+      const closerText = closingMarkerText(noteNode.getMarker());
       const closingIndex = children.findIndex(
-        (child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing",
+        (child) =>
+          ($isMarkerNode(child) && child.getMarkerSyntax() === "closing") ||
+          ($isImmutableTypedTextNode(child) &&
+            child.getTextType() === "marker" &&
+            child.getTextContent() === closerText),
       );
       const at = closingIndex === -1 ? children.length : closingIndex;
       noteNode.select(at, at);

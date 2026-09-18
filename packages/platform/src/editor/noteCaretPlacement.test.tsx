@@ -389,6 +389,39 @@ const usjEmptyNote: Usj = {
   ],
 };
 
+/** Whether the caret sits inside the note and ahead of the note's closing glyph. */
+function isCaretBeforeNoteCloser(lexical: LexicalEditor): boolean {
+  return lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+    const anchorNode = selection.anchor.getNode();
+    const noteNode = $isNoteNode(anchorNode)
+      ? anchorNode
+      : $findMatchingParent(anchorNode, $isNoteNode);
+    const closer = requireDefined(noteNode, "the caret is not in a note").getLastChild();
+    if (!closer) throw new Error("the note has no children");
+    if (anchorNode.is(noteNode)) return selection.anchor.offset <= closer.getIndexWithinParent();
+    if (anchorNode.is(closer)) return selection.anchor.offset === 0;
+    return anchorNode.isBefore(closer);
+  });
+}
+
+describe("EditorRef.selectNote on a note with no content run", () => {
+  it.each(["editable", "visible"] as const)(
+    "lands ahead of the closing glyph with %s markers",
+    async (markerMode) => {
+      const { editorRef, lexical } = await renderEditor(usjEmptyNote, {
+        ...options,
+        view: { markerMode, noteMode: "expanded", hasSpacing: false, isFormattedFont: false },
+      });
+
+      await act(async () => editorRef.selectNote(0));
+
+      expect(isCaretBeforeNoteCloser(lexical)).toBe(true);
+    },
+  );
+});
+
 describe("EditorRef.selectNoteTextOffset in an expanded note (a host's own note editor)", () => {
   it("counts the note's content only, skipping the caller the expanded shape spells out", async () => {
     const { editorRef, lexical } = await renderEditor(usj, expandedOptions);
