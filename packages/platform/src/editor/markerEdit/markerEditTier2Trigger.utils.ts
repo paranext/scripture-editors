@@ -141,18 +141,10 @@ function $inLiteralOnlyBlock(node: LexicalNode): boolean {
   return false;
 }
 
-/**
- * Pend `node`'s own key for a rebuild this update declines to perform, carrying the paste's
- * provenance along with it when the update IS an external paste's own
- * ({@link MarkerEditContext.pastePendedKeys}). A pasted line's terminated marker literal would
- * otherwise reach the caret-departure settle with nothing recording where its bytes came from, and
- * the settle would rebuild it as though the user had TYPED them — splitting the host paragraph in
- * two instead of letting the pasted marker replace the host's now-redundant glyph.
- */
+/** Pend `node`'s own key for a rebuild this update declines to perform, leaving it to the
+ * caret-departure or idle settle. */
 function $pendDeferredRebuild(node: TextNode, context: MarkerEditContext): void {
-  const key = node.getKey();
-  context.pendingKeys.add(key);
-  if (context.pasteRebuildArmed.current) context.pastePendedKeys.add(key);
+  context.pendingKeys.add(node.getKey());
 }
 
 /**

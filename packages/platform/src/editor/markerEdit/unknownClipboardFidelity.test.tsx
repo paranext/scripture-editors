@@ -156,7 +156,37 @@ async function pastedUsjFor(usj: Usj, shape: "plain" | "plain+html" | "full"): P
     throw new Error("copy wrote no application/x-lexical-editor payload");
   const pasted = await pasteIntoFreshHost(usj, shaped);
   if (!pasted) throw new Error("editor produced no USJ");
-  return pasted;
+  // A TEXT-carrier paste lands its bytes INSIDE the empty host paragraph the skeleton seeded, and
+  // each pasted line carries its own paragraph marker — so the host survives as an empty paragraph
+  // ahead of the pasted content, exactly as it does in Paratext 9. The host is the harness's, not
+  // the document's, so it is asserted and stripped here rather than expected to be consumed.
+  // Lexical's own node-tree fast path (the `full` shape) replaces the selection with real nodes
+  // instead of re-tokenizing text, and consumes the host on the way — hence the shape split.
+  return shape === "full" ? pasted : withoutPasteHost(pasted, usj);
+}
+
+/** Drop the empty `\p` insertion host {@link headerSkeletonUsj} seeded, failing loudly if what sits
+ * at its index is anything else — so a genuine stray paragraph can never pass as the host. */
+function withoutPasteHost(pasted: Usj, source: Usj): Usj {
+  let headerEnd = 0;
+  source.content.forEach((item, index) => {
+    if (typeof item !== "string" && (item.type === "chapter" || item.type === "book"))
+      headerEnd = index + 1;
+  });
+  const host = pasted.content[headerEnd];
+  if (
+    typeof host === "string" ||
+    host?.type !== "para" ||
+    host.marker !== "p" ||
+    (host.content?.length ?? 0) > 0
+  )
+    throw new Error(
+      `expected the empty \\p paste host at content[${headerEnd}], found ${JSON.stringify(host)}`,
+    );
+  return {
+    ...pasted,
+    content: [...pasted.content.slice(0, headerEnd), ...pasted.content.slice(headerEnd + 1)],
+  };
 }
 
 /** Every object of `type` anywhere in `usj`, at any depth. */

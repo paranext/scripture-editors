@@ -51,7 +51,6 @@ import {
   $isTextNode,
   $setState,
   LexicalNode,
-  NodeKey,
   TextNode,
 } from "lexical";
 import {
@@ -357,8 +356,6 @@ describe("collab-materialized milestone settles into a re-tokenizable run", () =
         getMarker: bundledGetMarker,
         pendingKeys: new Set(milestoneFirst ? [msKey, runKey] : [runKey, msKey]),
         splitExpected: { current: false },
-        pasteRebuildArmed: { current: false },
-        pastePendedKeys: new Set<NodeKey>(),
         rebuildAttempted: new Set(),
         structureProtectionMode: "off",
       };

@@ -428,14 +428,14 @@ describe("\\c/\\id strip on paste", () => {
   });
 });
 
-describe("own-marker-prefix dedup: unknown/custom.sty markers", () => {
-  it('paste "\\zz one two" into an EMPTY "\\p" host: the unrecognized marker still owns the paragraph — no stray empty leading paragraph', async () => {
-    // The dedup's embedded-literal check must classify markers the SAME way `$buildParaFragment`'s
-    // own guard does (stylesheet-first, unknown-as-paragraph) — a narrower `type ===
-    // MarkerType.Paragraph` comparison rejected every unknown/custom.sty marker and left this
-    // exact shape (a paste starting with its own marker literal into an already-prefixed empty
-    // paragraph) producing a stray empty host paragraph for any marker the bundled sheet doesn't
-    // recognize.
+describe("a pasted marker literal splits rather than retagging the host", () => {
+  it('paste "\\zz one two" at a "\\p" host\'s content start: the host stays a `\\p`, the pasted marker gets its own paragraph', async () => {
+    // A paste inserts what was pasted and nothing more. The host paragraph keeps the marker it
+    // had — deleting it would be destroying a byte the user never selected — so the line splits,
+    // leaving the (now empty) host ahead of the pasted paragraph. Paratext 9 reads the same bytes
+    // the same way: `NormalizeTokenUsfm` (ParatextData/UsfmToken.cs) emits a line break before
+    // every Paragraph token. An UNKNOWN marker is paragraph-kind here, same as everywhere else in
+    // the engine, so `\zz` behaves exactly as `\q1` would.
     initializeDeserialize(undefined);
     let sep!: TextNode;
     const { editor } = await historyTestEnvironment(() => {
@@ -451,7 +451,47 @@ describe("own-marker-prefix dedup: unknown/custom.sty markers", () => {
       "\\zz one two",
     );
 
-    expect(paraMarkerText(usjOf(editor))).toEqual([["zz", "one two"]]);
+    expect(paraMarkerText(usjOf(editor))).toEqual([
+      ["p", ""],
+      ["zz", "one two"],
+    ]);
+  });
+
+  it("a multi-line paste never invents a `\\p` for a line that already carries its own marker", async () => {
+    // A multi-line paste replays each line break as a paragraph split, and the engine injects a
+    // marker prefix onto every fresh split paragraph (`$paraMarkerDeletionTransform`, the
+    // `splitExpected` branch) so it is not read as marker-deleted and merged back. A pasted line
+    // carrying its OWN marker needs no such prefix, and injecting one anyway put a `\p ` glyph in
+    // front of the marker the user pasted — settling as a stray empty `\p` ahead of the real
+    // paragraph.
+    //
+    // `\b` is the case that shows it: a blank-line marker carries no content and no separator, so
+    // the line is nothing but its marker and there is no terminated literal for Tier 2 to resolve
+    // in the paste's own update. Before the guard, every `\b` in a pasted document gained an empty
+    // `\p` in front of it — 16 of them in this repo's one real-world fixture (2sa).
+    initializeDeserialize(undefined);
+    let sep!: TextNode;
+    const { editor } = await historyTestEnvironment(() => {
+      const para = $createParaNode("p");
+      sep = $createTextNode(NBSP);
+      $setState(sep, textTypeState, "marker-trailing-space");
+      $getRoot().append(para.append($createMarkerNode("p"), sep));
+    });
+
+    await pasteAndSettle(
+      editor,
+      () => sep.select(sep.getTextContentSize(), sep.getTextContentSize()),
+      "\\p one\n\\b\n\\q1 two",
+    );
+
+    // The empty host the paste landed in, then exactly the three pasted paragraphs — no invented
+    // `\p` anywhere, `\b` included.
+    expect(paraMarkerText(usjOf(editor))).toEqual([
+      ["p", ""],
+      ["p", "one"],
+      ["b", ""],
+      ["q1", "two"],
+    ]);
   });
 
   it('paste "\\zbold* rest" into an "\\s1" host: a CLOSER is not the pasted paragraph\'s own marker, so the host keeps its glyph', async () => {
@@ -519,12 +559,13 @@ async function departAndSettle(editor: LexicalEditor, departure: TextNode): Prom
   });
 }
 
-describe("own-marker-prefix dedup survives a DEFERRED settle", () => {
+describe("a DEFERRED settle treats pasted and typed bytes identically", () => {
   // Bytes whose rebuild would EJECT content out of a milestone deliberately do NOT settle in the
   // update that produced them (`markerEditTier2Trigger.utils.ts`: ejection rearranges the line
-  // under a caret the user is still on) — they pend until caret departure. A PASTE of such bytes
-  // therefore reaches its rebuild in a later update than the one that inserted it, which is the
-  // one shape where "is this a paste?" cannot be answered by a per-commit flag.
+  // under a caret the user is still on) — they pend until caret departure. That is the one shape
+  // where a paste reaches its rebuild in a LATER update than the one that inserted it, so it is
+  // where a paste-only rule would have had to carry provenance across the gap. There is no such
+  // rule: the settle rebuilds what the paragraph holds, however those bytes arrived.
   const EJECTING_LINE = '\\p \\qt1-s\\*|who=""\\*';
   /** What loading `EJECTING_LINE` produces: the ejected fixed point — the milestone closed, the
    * attribute list it could not hold left outside it, and the author's own `\*` stranded. */
@@ -534,8 +575,10 @@ describe("own-marker-prefix dedup survives a DEFERRED settle", () => {
     content: [{ type: "ms", marker: "qt1-s" }, '|who=""', { type: "unmatched", marker: "*" }, "A"],
   };
   const DEPARTURE_PARA = { type: "para", marker: "p", content: ["depart here"] };
+  /** The host paragraph, left empty ahead of the pasted/typed one by the split. */
+  const EMPTY_HOST_PARA = { type: "para", marker: "p" };
 
-  it("paste at an existing paragraph's content start: the pasted line owns the paragraph even though its rebuild waits for caret departure", async () => {
+  it("paste at an existing paragraph's content start: the bytes pend, then split on caret departure", async () => {
     const { editor, content, departure } = await deferredSettleHost();
 
     await pasteAndSettle(editor, () => content.select(0, 0), EJECTING_LINE);
@@ -549,10 +592,10 @@ describe("own-marker-prefix dedup survives a DEFERRED settle", () => {
 
     await departAndSettle(editor, departure);
 
-    expect(usjOf(editor).content).toEqual([EJECTED_PARA, DEPARTURE_PARA]);
+    expect(usjOf(editor).content).toEqual([EMPTY_HOST_PARA, EJECTED_PARA, DEPARTURE_PARA]);
   });
 
-  it("the same bytes arriving with no paste behind them still split with an empty predecessor — what carries across the settle is the paste's provenance, not the shape of the bytes", async () => {
+  it("the same bytes TYPED settle to the identical document — paste has no rule of its own here", async () => {
     const { editor, content, departure } = await deferredSettleHost();
 
     await act(async () =>
@@ -563,11 +606,7 @@ describe("own-marker-prefix dedup survives a DEFERRED settle", () => {
     );
     await departAndSettle(editor, departure);
 
-    expect(usjOf(editor).content).toEqual([
-      { type: "para", marker: "p" },
-      EJECTED_PARA,
-      DEPARTURE_PARA,
-    ]);
+    expect(usjOf(editor).content).toEqual([EMPTY_HOST_PARA, EJECTED_PARA, DEPARTURE_PARA]);
   });
 });
 
