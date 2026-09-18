@@ -49,6 +49,32 @@ async function closeMenuWithEscape(): Promise<void> {
   });
 }
 
+/**
+ * A container element with `currentCSSZoom` and `getBoundingClientRect` stubbed, since jsdom
+ * implements neither zoom nor layout. `rect` is the container's box in viewport pixels.
+ */
+function stubbedContainer(
+  zoom: number,
+  rect: { left: number; top: number; width: number; height: number },
+): HTMLElement {
+  const container = document.createElement("div");
+  document.body.append(container);
+  Object.defineProperty(container, "currentCSSZoom", { value: zoom, configurable: true });
+  container.getBoundingClientRect = () =>
+    ({
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+      right: rect.left + rect.width,
+      bottom: rect.top + rect.height,
+      x: rect.left,
+      y: rect.top,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  return container;
+}
+
 describe("ContextMenuPlugin", () => {
   it("portals to document.body when no container getter is supplied", async () => {
     const { editor } = await contextMenuEnvironment();
@@ -119,5 +145,26 @@ describe("ContextMenuPlugin", () => {
 
     expect(containerA.contains(menu)).toBe(true);
     expect(containerB.contains(menu)).toBe(false);
+  });
+
+  it("divides its coordinates by the container's zoom factor", async () => {
+    // A large container so no clamping applies; the division is what is under test.
+    const container = stubbedContainer(2, { left: 0, top: 0, width: 10000, height: 10000 });
+    const { editor } = await contextMenuEnvironment(() => container);
+
+    const menu = await openMenu(editor, 300, 400);
+
+    // The menu must sit at viewport (300, 400); inside a zoom:2 element that is left/top 150/200.
+    expect(menu.style.left).toBe("150px");
+    expect(menu.style.top).toBe("200px");
+  });
+
+  it("does not divide when there is no container", async () => {
+    const { editor } = await contextMenuEnvironment();
+
+    const menu = await openMenu(editor, 300, 400);
+
+    expect(menu.style.left).toBe("300px");
+    expect(menu.style.top).toBe("400px");
   });
 });

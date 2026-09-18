@@ -272,17 +272,20 @@ export function ContextMenuPlugin({
 
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Clamp menu position to viewport bounds before first paint to prevent off-screen rendering.
+  // Clamp the menu into view before first paint to prevent off-screen rendering. Inside a
+  // container scaled with CSS `zoom`, the element's own lengths are pre-zoom while the pointer
+  // event's coordinates are rendered viewport pixels, so the placement divides by the factor.
   useLayoutEffect(() => {
     const menu = menuRef.current;
     if (!menu) return;
+    const factor = menuState.container?.currentCSSZoom ?? 1;
     const { width, height } = menu.getBoundingClientRect();
     const clampedLeft = Math.max(0, Math.min(menuState.x, globalThis.innerWidth - width));
     const clampedTop = Math.max(0, Math.min(menuState.y, globalThis.innerHeight - height));
-    menu.style.left = `${clampedLeft}px`;
-    menu.style.top = `${clampedTop}px`;
+    menu.style.left = `${clampedLeft / factor}px`;
+    menu.style.top = `${clampedTop / factor}px`;
     menu.style.visibility = "visible";
-  }, [menuState.isOpen, menuState.x, menuState.y]);
+  }, [menuState]);
 
   if (!menuState.isOpen) return null;
 
