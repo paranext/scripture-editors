@@ -133,6 +133,13 @@ async function renderEditor(defaultUsj: Usj = usj, editorOptions: EditorOptions 
     );
     container = result.container;
   });
+  // A fresh editor puts its caret at the start of `scrRef`'s verse a few microtasks after the
+  // document loads. Let that land first, or it can overwrite the caret a test is about to place.
+  await act(async () => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
   return {
     editorRef: requireDefined(ref.current, "editor ref"),
     lexical: getEmbeddedLexicalEditor(container),
