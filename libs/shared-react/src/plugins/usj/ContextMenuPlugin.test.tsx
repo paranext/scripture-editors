@@ -159,6 +159,32 @@ describe("ContextMenuPlugin keyboard selection", () => {
     expect(lexicalSawEnter).not.toHaveBeenCalled();
     expect(menuList()).not.toBeNull();
   });
+
+  // Nothing closes the menu when focus moves on (Tab), and its key listener is on the whole
+  // document — so without this the focused control's Enter would be claimed by a menu the user has
+  // already left.
+  it("leaves Enter to whatever has focus once focus has moved off the editor", async () => {
+    const onSelect = vi.fn();
+    await openMenuWithEndNoteHighlighted(onSelect);
+    const button = document.createElement("button");
+    document.body.append(button);
+    try {
+      const buttonSawEnter = vi.fn();
+      button.addEventListener("keydown", buttonSawEnter);
+      button.focus();
+
+      const press = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      await act(async () => {
+        button.dispatchEvent(press);
+      });
+
+      expect(buttonSawEnter).toHaveBeenCalled();
+      expect(press.defaultPrevented).toBe(false);
+      expect(onSelect).not.toHaveBeenCalled();
+    } finally {
+      button.remove();
+    }
+  });
 });
 
 describe("ContextMenuPlugin accessibility", () => {
