@@ -284,6 +284,12 @@ after a settle the screen keeps both spaces while the file gets one, indefinitel
 permanent screen-vs-file divergence, ratified anyway: it models Paratext 9's `RegularizeSpaces`, and
 normalizing the display instead would delete a byte under the user's caret.
 
+Positions do not diverge with it. The logical content model drops a displayed run's extra spaces
+from its coordinates exactly where serialization drops them, from one shared definition
+(`collapsedSpaceRunRanges` in `libs/shared/src/nodes/usj/spaceRuns.utils.ts`), so a settled offset
+past the run still names the character the host expects. That makes the position layer
+view-dependent: every position function takes the editor's view options.
+
 **This is a one-off and must not be generalized.** It is the single place where the answer to "the
 screen and the file disagree" is "leave it". Every other divergence is a defect. If a new case looks
 like this one, it is not — bring it to the owner rather than reasoning from this row.
