@@ -16518,7 +16518,7 @@ function o_(e) {
   tl = e, rl = t;
 }
 o_(el);
-const N1 = () => tl, So = () => rl;
+const q1 = () => tl, So = () => rl;
 function yh(e) {
   let t;
   switch (e ?? tl) {
@@ -16568,7 +16568,7 @@ function yh(e) {
   }
   return t;
 }
-function O1(e) {
+function R1(e) {
   if (!e)
     return;
   const t = Lu(e);
@@ -19687,7 +19687,7 @@ function Tv({ structureProtectionMode: e = "off" }) {
     };
   }, [t, n]), null;
 }
-const q1 = {
+const $1 = {
   ltr: "Left-to-right",
   rtl: "Right-to-left",
   auto: "Automatic"
@@ -25756,7 +25756,7 @@ const om = An(function({
       ] })
     ] }, fe.verseLayout ?? "inline")
   );
-}), R1 = An(function(t, r) {
+}), I1 = An(function(t, r) {
   const { children: n, ...i } = t;
   return /* @__PURE__ */ S(om, { ref: r, ...i });
 });
@@ -26775,7 +26775,7 @@ function HA(e, t) {
     };
   }, [t, e]);
 }
-const $1 = An(function(t, r) {
+const L1 = An(function(t, r) {
   const n = X(null), i = X(!0), s = X(null), [o, a] = de(null), { children: c, onCommentChange: l, onUsjChange: u, showCommentsContainerRef: d, ...f } = t, { logger: p, options: { isReadonly: m, view: g } = {} } = t, y = (m ?? !1) || Zi(g), [k, _] = VA();
   HA(f, k), K(() => {
     if (process.env.NODE_ENV !== "production") {
@@ -26918,48 +26918,53 @@ const $1 = An(function(t, r) {
 function hn(e) {
   return e.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 }
-function hm(e) {
+function GA(e) {
   return e.replace(/["\\\n\r\f<>]/g, (t) => t === `
 ` ? "\\a " : t === "\r" ? "\\d " : t === "\f" ? "\\c " : t === "<" ? "\\3C " : t === ">" ? "\\3E " : `\\${t}`);
 }
-function GA(e) {
+function JA(e) {
   return typeof CSS < "u" && typeof CSS.escape == "function" ? CSS.escape(e) : e.replace(/[^\w-]/g, (t) => `\\${t}`);
 }
-const JA = /^[#\w().,%/\s-]+$/;
+const YA = /^[#\w().,%/\s-]+$/;
 function gr(e) {
   return e != null;
 }
-const YA = {
+const XA = {
   left: "left",
   right: "right",
   center: "center",
   both: "justify"
-}, XA = {
+}, QA = {
   left: "right",
   right: "left"
-}, pc = ".editor-input.usfm", QA = /^[\w.#[\]="':()>+~*,\s-]+$/;
-function ZA(e) {
-  return QA.test(e) ? e : (console.warn(
+}, ZA = "var(--usj-font-fallback, serif)";
+function hm(e, t) {
+  const r = [e];
+  return t && t !== e && r.push(t), `font-family: ${r.map((i) => `"${GA(i)}"`).join(", ")}, ${ZA}`;
+}
+const pc = ".editor-input.usfm", e1 = /^[\w.#[\]="':()>+~*,\s-]+$/;
+function t1(e) {
+  return e1.test(e) ? e : (console.warn(
     `[generateUsjCss] Ignoring unsafe containerSelector "${e}"; using "${pc}".`
   ), pc);
 }
-function e1(e, t, r, n) {
-  const i = [];
-  if (t.fontName && i.push(`font-family: "${hm(t.fontName)}"`), t.bold && i.push("font-weight: bold"), t.italic && i.push("font-style: italic"), t.color && (JA.test(t.color) ? i.push(`color: ${t.color}`) : console.warn(
+function r1(e, t, r, n, i) {
+  const s = [];
+  if (t.fontName && s.push(hm(t.fontName, i)), t.bold && s.push("font-weight: bold"), t.italic && s.push("font-style: italic"), t.color && (YA.test(t.color) ? s.push(`color: ${t.color}`) : console.warn(
     `[generateUsjCss] Skipping unsafe color "${t.color}" for marker "${e}".`
-  )), gr(t.fontSize) && t.fontSize > 0 && i.push(`font-size: ${Math.floor(t.fontSize * 100 / 12)}%`), gr(t.firstLineIndent) && i.push(`text-indent: ${hn(t.firstLineIndent * 20 * r)}vw`), gr(t.leftMargin) && t.leftMargin >= 0 && i.push(`margin-${n ? "right" : "left"}: ${hn(t.leftMargin * 20 * r)}vw`), gr(t.rightMargin) && t.rightMargin >= 0 && i.push(
+  )), gr(t.fontSize) && t.fontSize > 0 && s.push(`font-size: ${Math.floor(t.fontSize * 100 / 12)}%`), gr(t.firstLineIndent) && s.push(`text-indent: ${hn(t.firstLineIndent * 20 * r)}vw`), gr(t.leftMargin) && t.leftMargin >= 0 && s.push(`margin-${n ? "right" : "left"}: ${hn(t.leftMargin * 20 * r)}vw`), gr(t.rightMargin) && t.rightMargin >= 0 && s.push(
     `margin-${n ? "left" : "right"}: ${hn(t.rightMargin * 20 * r)}vw`
-  ), gr(t.spaceBefore) && t.spaceBefore >= 0 && i.push(`margin-top: ${hn(t.spaceBefore * r)}pt`), gr(t.spaceAfter) && t.spaceAfter >= 0 && i.push(`margin-bottom: ${hn(t.spaceAfter * r)}pt`), t.lineSpacing === 1 ? i.push("line-height: 1.5") : t.lineSpacing === 2 && i.push("line-height: 2"), t.subscript ? i.push("vertical-align: text-bottom", "font-size: 66%") : t.superscript && i.push("vertical-align: text-top", "font-size: 66%"), t.underline && i.push("text-decoration: underline"), t.smallCaps && i.push("font-variant: small-caps"), t.justification) {
-    const s = YA[n ? XA[t.justification] ?? t.justification : t.justification];
-    s && i.push(`text-align: ${s}`);
+  ), gr(t.spaceBefore) && t.spaceBefore >= 0 && s.push(`margin-top: ${hn(t.spaceBefore * r)}pt`), gr(t.spaceAfter) && t.spaceAfter >= 0 && s.push(`margin-bottom: ${hn(t.spaceAfter * r)}pt`), t.lineSpacing === 1 ? s.push("line-height: 1.5") : t.lineSpacing === 2 && s.push("line-height: 2"), t.subscript ? s.push("vertical-align: text-bottom", "font-size: 66%") : t.superscript && s.push("vertical-align: text-top", "font-size: 66%"), t.underline && s.push("text-decoration: underline"), t.smallCaps && s.push("font-variant: small-caps"), t.justification) {
+    const o = XA[n ? QA[t.justification] ?? t.justification : t.justification];
+    o && s.push(`text-align: ${o}`);
   }
-  return t.textProperties?.includes("verse") && i.push("white-space: nowrap", "unicode-bidi: embed"), i;
+  return t.textProperties?.includes("verse") && s.push("white-space: nowrap", "unicode-bidi: embed"), s;
 }
 const Yd = { c: 150, ca: 133, cp: 150 };
 function Xd(e, t) {
   return e && gr(e.fontSize) && e.fontSize > 0 ? Math.floor(e.fontSize * 100 / 12) : t;
 }
-function t1(e, t) {
+function n1(e, t) {
   if (["c", "ca", "cp"].filter((i) => {
     const s = e.markers[i];
     return s && gr(s.fontSize) && s.fontSize > 0;
@@ -26973,35 +26978,35 @@ function t1(e, t) {
     return `${t} .usfm_c .usfm_${i}.usfm_${i} { font-size: ${o}%; }`;
   });
 }
-function I1(e, t = {}) {
-  const { zoom: r = 1, rtl: n = !1, containerSelector: i = pc } = t, s = ZA(i), o = [], a = [];
-  e.defaultFont && a.push(`font-family: "${hm(e.defaultFont)}"`), gr(e.defaultFontSize) && e.defaultFontSize > 0 && a.push(`font-size: ${hn(e.defaultFontSize * r)}pt`), a.length > 0 && o.push(`${s} { ${a.join("; ")}; }`);
+function D1(e, t = {}) {
+  const { zoom: r = 1, rtl: n = !1, containerSelector: i = pc } = t, s = t1(i), o = [], a = [];
+  e.defaultFont && a.push(hm(e.defaultFont)), gr(e.defaultFontSize) && e.defaultFontSize > 0 && a.push(`font-size: ${hn(e.defaultFontSize * r)}pt`), a.length > 0 && o.push(`${s} { ${a.join("; ")}; }`);
   for (const [c, l] of Object.entries(e.markers)) {
-    const u = e1(c, l, r, n);
-    u.length > 0 && o.push(`${s} .usfm_${GA(c)} { ${u.join("; ")}; }`);
+    const u = r1(c, l, r, n, e.defaultFont);
+    u.length > 0 && o.push(`${s} .usfm_${JA(c)} { ${u.join("; ")}; }`);
   }
-  return o.push(...t1(e, s)), o.join(`
+  return o.push(...n1(e, s)), o.join(`
 `);
 }
 export {
   mh as BLOCK_VERSE_VIEW_MODE,
   T as CategoryType,
-  R1 as Editorial,
+  I1 as Editorial,
   qs as GENERATOR_NOTE_CALLER,
   vf as HIDDEN_NOTE_CALLER,
-  $1 as Marginal,
+  L1 as Marginal,
   b as MarkerType,
   hh as PARAGRAPH_STRUCTURE_VIEW_MODE,
   gh as STANDARD_VIEW_MODE,
   Ks as defaultStyleInfo,
-  q1 as directionToNames,
+  $1 as directionToNames,
   Wx as filterAndRankItems,
-  I1 as generateUsjCss,
-  N1 as getDefaultViewMode,
+  D1 as generateUsjCss,
+  q1 as getDefaultViewMode,
   So as getDefaultViewOptions,
   hM as getEnterMenuItems,
   pM as getMarkerMenuItems,
-  O1 as getViewMode,
+  R1 as getViewMode,
   yh as getViewOptions,
   Zi as isBlockVerseLayout,
   Lr as isInsertEmbedOpOfType,
