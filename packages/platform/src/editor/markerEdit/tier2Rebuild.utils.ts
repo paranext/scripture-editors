@@ -13,6 +13,7 @@
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
 import { UNTERMINATED_MARKER_TAIL } from "./markerName.pattern";
 import {
+  $serializeBookLine,
   $serializeExpandedNoteContent,
   ATOMIC_SENTINEL,
   charOwnChildSignatureText,
@@ -41,6 +42,7 @@ import {
 import {
   $hasUnrecoverableAttributes,
   $isAttributeRunNode,
+  $isBookNode,
   $isChapterNode,
   $isCharNode,
   $isImmutableUnmatchedNode,
@@ -49,6 +51,7 @@ import {
   $isMilestoneNode,
   $isNoteNode,
   $isParaNode,
+  $isSynthesizedMarkerNode,
   $isUnknownNode,
   $isVerseNode,
   $isMarkerTrailingSeparator,
@@ -60,6 +63,7 @@ import {
   isAttributeMarker,
   isMilestoneHeuristicName,
   openingMarkerText,
+  BookNode,
   ChapterNode,
   CharNode,
   ImpliedParaNode,
@@ -68,6 +72,7 @@ import {
   MarkerType,
   NBSP,
   NoteNode,
+  PARA_MARKER_DEFAULT,
   ParaNode,
   textTypeState,
   usfmFragmentToUsjContent,
@@ -1452,18 +1457,20 @@ function $restoreSelectionAtOffset(
 }
 
 /**
- * Restore the caret inside rebuilt NOTE content. Unlike `$restoreSelectionAtOffset`, the
- * content nodes form one contiguous region, so spans are computed with `$appendNodesFragment`
- * (no inter-node separators) to match the offset captured over `$buildNoteFragment`'s text.
+ * Restore the caret inside a rebuilt CONTENT REGION — the children of one preserved shell, which is
+ * a note's expanded content or the `\id` line's content past its prefix. Unlike
+ * `$restoreSelectionAtOffset`, those nodes form one contiguous region, so spans are computed with
+ * `$appendNodesFragment` (no inter-node separators) to match the offset captured over
+ * `$buildNoteFragment`/`$buildBookFragment`'s text.
  */
-function $restoreSelectionInNoteContent(
+function $restoreSelectionInContentRegion(
   newNodes: LexicalNode[],
   anchor: CaretByteAnchor | undefined,
-  anchorInNote: boolean,
+  anchorInShell: boolean,
   getMarkerFn: MarkerLookup,
   viewOptions: ViewOptions | undefined,
 ): void {
-  if (!anchorInNote) return;
+  if (!anchorInShell) return;
   if (anchor === undefined) {
     newNodes.find($isElementNode)?.selectStart();
     return;
@@ -1864,7 +1871,177 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   contentNodes.forEach((node) => {
     if (!preservedKeys.has(node.getKey())) node.remove();
   });
-  $restoreSelectionInNoteContent(newNodes, caretAnchor, anchorInNote, getMarkerFn, viewOptions);
+  $restoreSelectionInContentRegion(newNodes, caretAnchor, anchorInNote, getMarkerFn, viewOptions);
+  return true;
+}
+
+/**
+ * Build the re-tokenizable fragment for the `\id` line's CONTENT children — everything after the
+ * immutable `\id GEN ` prefix glyph (markerMode "hidden" builds none, so the skip is conditional
+ * on finding one).
+ *
+ * The book node itself is PRESERVED across the rebuild, exactly as a note's shell is: its marker
+ * is always `\id`, its code names the book, and the view renders both as one decorator the caret
+ * cannot enter — so none of it is ever re-derived from displayed bytes, and none of it can
+ * disqualify a rebuild of the line's content the way a paragraph's own unknown attributes do.
+ *
+ * Exported for the read-only settle (virtualSettle.utils.ts), the same sharing contract
+ * `$buildNoteFragment` has.
+ */
+export function $buildBookFragment(
+  book: BookNode,
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): { out: FragmentAccumulator; contentNodes: LexicalNode[] } {
+  const children = book.getChildren();
+  const contentNodes = $isSynthesizedMarkerNode(children[0]) ? children.slice(1) : children;
+  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  $appendNodesFragment(contentNodes, out, getMarkerFn, viewOptions);
+  return { out, contentNodes };
+}
+
+/**
+ * Bytes that literally OPEN with the tokenizer's default paragraph marker, so a wrapper built from
+ * them is the author's own `\p` rather than the implied one — see {@link tokenizedBookLine}.
+ *
+ * Both edges mirror the tokenizer, since this re-derives from the bytes a decision it already made.
+ * A leading whitespace run is dropped ahead of a block marker only when it holds a line break; any
+ * other run (a space, a tab, an NBSP) is content, which the tokenizer wraps in the implied `\p`. And
+ * a marker name ends where `scanMarkerName` ends it — at whitespace, a ZWSP, `\` or `|` — so
+ * `\p\bd …` is the author's `\p` too, while `\p*` is a different marker altogether.
+ */
+const LEADING_DEFAULT_PARA_MARKER = new RegExp(
+  `^(?:[\\s\\u200B]*[\\r\\n][\\s\\u200B]*)?\\\\${PARA_MARKER_DEFAULT}(?=[\\s\\u200B\\\\|]|$)`,
+);
+
+/**
+ * The freshly tokenized `\id` line bytes, split where the line ENDS: `lineContent` is what the book
+ * holds, and `followingBlocks` are the blocks a typed block marker starts after it (a `\p` or `\ip`
+ * starts a paragraph, a `\c` a chapter) — exactly where the file bytes would end the line, which is
+ * how PT9 reads them and how our own tokenizer reads them back on the next load. `content` is the
+ * whole tokenized list, for the sentinel symmetry checks.
+ *
+ * The tokenizer wraps a body-context fragment's leading inline material in an implied `\p`, so the
+ * line's own content arrives as that wrapper's content. Bytes that literally BEGIN with `\p`
+ * tokenize to a wrapper indistinguishable from the implied one, and are told apart by the bytes
+ * themselves: that `\p` is the author's, so the line is left empty and the paragraph follows it.
+ *
+ * Exported for the read-only settle (virtualSettle.utils.ts), which must reach the SAME split from
+ * the same bytes — the sharing contract every other fragment helper here has.
+ */
+export function tokenizedBookLine(
+  fragmentText: string,
+  getMarkerFn: MarkerLookup,
+): { content: MarkerContent[]; lineContent: MarkerContent[]; followingBlocks: MarkerContent[] } {
+  const content: MarkerContent[] = usfmFragmentToUsjContent(fragmentText, {
+    getMarker: getMarkerFn,
+  });
+  const [first, ...rest] = content;
+  const opensWithImpliedPara =
+    typeof first === "object" &&
+    first.type === "para" &&
+    first.marker === PARA_MARKER_DEFAULT &&
+    !LEADING_DEFAULT_PARA_MARKER.test(fragmentText);
+  return opensWithImpliedPara
+    ? { content, lineContent: first.content ?? [], followingBlocks: rest }
+    : { content, lineContent: [], followingBlocks: content };
+}
+
+/**
+ * Book-scoped Tier 2 re-tokenization — the fourth settle scope, beside `$rebuildParas`,
+ * `$rebuildNoteContent` and `$rebuildChapter`. Mirrors `$rebuildNoteContent`: it operates on the
+ * `\id` line's CONTENT children while the book node, its code, and its prefix glyph are preserved.
+ *
+ * The line's text is content like any paragraph's — PT9 accepts char spans and notes in `\id`
+ * text, and our own tokenizer parses them back as real markers on the next load — so without this
+ * scope a marker typed there stayed literal on screen while the save wrote a real one. A typed
+ * BLOCK marker ends the line the same way ({@link tokenizedBookLine}): the tail after it becomes
+ * the new block, inserted directly after the book, just as a paragraph split starts its new
+ * paragraph after the old one.
+ */
+export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
+  const { viewOptions, getMarker: getMarkerFn, logger } = context;
+  const { out, contentNodes } = $buildBookFragment(book, getMarkerFn, viewOptions);
+
+  // Capture the caret as a fragment byte anchor before mutating, noting whether the anchor was
+  // actually inside this book (vs. parked elsewhere) — mirror `$rebuildNoteContent`.
+  let caretAnchor: CaretByteAnchor | undefined;
+  let anchorInBook = false;
+  const selection = $getSelection();
+  if ($isRangeSelection(selection)) {
+    for (let node: LexicalNode | null = selection.anchor.getNode(); node; node = node.getParent())
+      if (book.is(node)) {
+        anchorInBook = true;
+        break;
+      }
+    if (selection.isCollapsed())
+      caretAnchor = $caretSpanByteAnchor(out, selection.anchor.key, selection.anchor.offset);
+  }
+
+  const tokenized = tokenizedBookLine(out.text, getMarkerFn);
+  // Symmetry bail-out (see `$rebuildParas`): a preserved-run/placeholder mismatch aborts the
+  // rebuild with the line untouched rather than silently dropping a node.
+  if (countSentinels(tokenized.content) !== out.sentinels.length) {
+    logger?.warn("[MarkerEdit] Book Tier 2 aborted: sentinel/preserved-node count mismatch");
+    return false;
+  }
+
+  const serialized = $serializeBookLine(
+    book,
+    tokenized.lineContent,
+    tokenized.followingBlocks,
+    viewOptions,
+  );
+  if (serialized.failure !== undefined) {
+    if (serialized.failure === "empty")
+      logger?.debug("[MarkerEdit] Book Tier 2 skipped: no content nodes after unwrap");
+    else logger?.warn("[MarkerEdit] Book Tier 2 aborted: unexpected serialized shape");
+    return false;
+  }
+  // Second sentinel check on the SERIALIZED tree, the mirror of `$rebuildNoteContent`'s:
+  // serialization is a separate place a U+FFFC placeholder can vanish.
+  const serializedRegion = [...serialized.children, ...serialized.followingBlocks];
+  if (countSerializedSentinels(serializedRegion) !== out.sentinels.length) {
+    logger?.warn("[MarkerEdit] Book Tier 2 aborted: serialized sentinel/preserved-node mismatch");
+    return false;
+  }
+
+  // Fixed-point refusal (preserve-or-refuse) on the CONTENT nodes only, compared on the SERIALIZED
+  // rebuild before any nodes are parsed, so a refusal materializes no live nodes — see
+  // `$rebuildParas`' fixed-point comment for why orphan-free refusal is load-bearing. A rebuild that
+  // starts a following block restructures the document, so it is never a fixed point.
+  if (
+    serialized.followingBlocks.length === 0 &&
+    serializedSignatureOf(serialized.children, getMarkerFn) ===
+      $signatureOf(contentNodes, getMarkerFn)
+  ) {
+    logger?.debug("[MarkerEdit] Book Tier 2 skipped: rebuild is a no-op (fixed point)");
+    return false;
+  }
+
+  const newContent = serialized.children.map((child) => $parseSerializedNode(child));
+  const newBlocks = serialized.followingBlocks.map((child) => $parseSerializedNode(child));
+  const newNodes = [...newContent, ...newBlocks];
+  // Parse-leg recount, the mirror of `$rebuildNoteContent`'s.
+  if (countSentinelNodes(newNodes) !== out.sentinels.length) {
+    logger?.warn("[MarkerEdit] Book Tier 2 aborted: parsed sentinel/preserved-node mismatch");
+    return false;
+  }
+
+  // Splice: insert the new content before the first old content node (or at the line's end when it
+  // had none) and the new blocks directly after the book, move preserved sentinel runs into place,
+  // then remove the originals — skipping the preserved nodes themselves, which `$replaceSentinels`
+  // has just moved into their new home.
+  const firstContent = contentNodes[0];
+  if (firstContent) newContent.forEach((node) => firstContent.insertBefore(node));
+  else newContent.forEach((node) => book.append(node));
+  newBlocks.reduce<LexicalNode>((previous, block) => previous.insertAfter(block), book);
+  $replaceSentinels(newNodes, out.sentinels);
+  const preservedKeys = new Set(out.sentinels.flat().map((node) => node.getKey()));
+  contentNodes.forEach((node) => {
+    if (!preservedKeys.has(node.getKey())) node.remove();
+  });
+  $restoreSelectionInContentRegion(newNodes, caretAnchor, anchorInBook, getMarkerFn, viewOptions);
   return true;
 }
 
@@ -2142,11 +2319,12 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
 
 /**
  * The re-tokenization SCOPE a node belongs to: the expanded note whose content contains it, the
- * editable chapter whose display bytes contain it, or
- * the paragraph that contains it — or `undefined` when it has neither (an opaque block interior,
- * where the bytes stay literal, or a detached node). The nearest Note or Para wins — a note inside
+ * editable chapter whose display bytes contain it, the `\id` line whose content contains it, or
+ * the paragraph that contains it — or `undefined` when it has none (an opaque block interior,
+ * where the bytes stay literal, or a detached node). The nearest scope wins — a note inside
  * a paragraph is its own scope: the note node, its marker glyphs, and its caller are preserved
- * across a rebuild while only its content re-tokenizes.
+ * across a rebuild while only its content re-tokenizes, and the same holds for a note inside the
+ * `\id` line.
  *
  * The walk runs to the DOCUMENT ROOT, not just to the first Note/Para match: a paragraph can itself
  * be nested inside an opaque block (a sidebar's own paragraphs — see `$buildParaFragment`'s matching
@@ -2179,12 +2357,18 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
  */
 export function $settleScopeForNode(
   node: LexicalNode,
-): ParaNode | NoteNode | ChapterNode | undefined {
-  let scope: ParaNode | NoteNode | ChapterNode | undefined;
+): ParaNode | NoteNode | ChapterNode | BookNode | undefined {
+  let scope: ParaNode | NoteNode | ChapterNode | BookNode | undefined;
   let rootChild: LexicalNode | undefined;
   for (let current: LexicalNode | null = node; current; current = current.getParent()) {
     if ($isUnknownNode(current)) return undefined;
-    if (!scope && ($isNoteNode(current) || $isParaNode(current) || $isChapterNode(current)))
+    if (
+      !scope &&
+      ($isNoteNode(current) ||
+        $isParaNode(current) ||
+        $isChapterNode(current) ||
+        $isBookNode(current))
+    )
       scope = current;
     if ($isRootNode(current.getParent())) rootChild = current;
   }
@@ -2203,6 +2387,7 @@ export function $requestTier2ForNode(node: LexicalNode, context: Tier2Context): 
   if (!scope) return false;
   if ($isNoteNode(scope)) return $rebuildNoteContent(scope, context);
   if ($isChapterNode(scope)) return $rebuildChapter(scope, context);
+  if ($isBookNode(scope)) return $rebuildBook(scope, context);
   return $rebuildParas([scope], context);
 }
 
@@ -2300,9 +2485,10 @@ function appendContentBytes(content: MarkerContent[] | undefined, out: string[])
  * under-emitting an exotic shape, a typographic quote the tokenizer regularizes) only defers
  * that settle to caret departure — the pre-idle-clock behavior.
  *
- * Paragraph scopes only: the chapter and note scopes fold values byte-preservingly (an
- * unparseable value lands in altnumber/category verbatim), so no byte-dropping shape is known
- * there; their idle settles are not second-guessed.
+ * Paragraph and `\id`-line scopes only — both re-tokenize plain content, where the shape exists.
+ * The chapter and note scopes fold values byte-preservingly (an unparseable value lands in
+ * altnumber/category verbatim), so no byte-dropping shape is known there; their idle settles are
+ * not second-guessed.
  *
  * Read-only (reads the live selection and tree, never mutates): call inside `editor.update()`,
  * where the settle passes already run.
@@ -2313,7 +2499,7 @@ export function $idleSettleWouldDiscardCaretHeldBytes(
   viewOptions: ViewOptions | undefined,
 ): boolean {
   const scope = $settleScopeForNode(node);
-  if (!$isParaNode(scope)) return false;
+  if (!$isParaNode(scope) && !$isBookNode(scope)) return false;
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   let caretInScope = false;
@@ -2327,7 +2513,9 @@ export function $idleSettleWouldDiscardCaretHeldBytes(
       break;
     }
   if (!caretInScope) return false;
-  const fragment = $buildParaFragment(scope, getMarkerFn, viewOptions);
+  const fragment = $isBookNode(scope)
+    ? $buildBookFragment(scope, getMarkerFn, viewOptions).out
+    : $buildParaFragment(scope, getMarkerFn, viewOptions);
   if (!fragment) return false;
   const content = usfmFragmentToUsjContent(fragment.text, { getMarker: getMarkerFn });
   if (content.length === 0) return false;

@@ -31,6 +31,19 @@ export interface ContextMenuOptionConfig {
   isDisabled?: boolean;
 }
 
+/**
+ * The option list's element id, referenced by the focused editor's `aria-controls`. Its own
+ * namespace rather than Lexical's shared `typeahead-*` ids: those are reused by every menu built on
+ * Lexical's typeahead (the marker menu among them), and an `aria-activedescendant` IDREF that
+ * resolves to the wrong menu's item announces the wrong thing.
+ */
+const CONTEXT_MENU_LIST_ID = "editor-context-menu";
+
+/** The element id of the option at `index`, referenced by `aria-activedescendant`. */
+function contextMenuItemId(index: number) {
+  return `${CONTEXT_MENU_LIST_ID}-item-${index}`;
+}
+
 function ContextMenuItem({
   index,
   isSelected,
@@ -58,7 +71,7 @@ function ContextMenuItem({
       role="option"
       aria-selected={isSelected}
       aria-disabled={option.isDisabled}
-      id={"typeahead-item-" + index}
+      id={contextMenuItemId(index)}
       onMouseEnter={onMouseEnter}
       onClick={option.isDisabled ? undefined : onClick}
     >
@@ -80,7 +93,9 @@ function ContextMenu({
 }) {
   return (
     <div className="typeahead-popover">
-      <ul>
+      {/* The items are `role="option"`, which only means something inside a listbox; on a bare
+          `ul` a screen reader has no list to announce a position within. */}
+      <ul id={CONTEXT_MENU_LIST_ID} role="listbox" aria-label="Editor context menu">
         {options.map((option: ContextMenuOption, i: number) => (
           <ContextMenuItem
             index={i}
@@ -165,6 +180,8 @@ export function ContextMenuPlugin({
     return [...builtIn, ...extra];
   }, [editor, isReadonly, extraOptions]);
 
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const closeMenu = useCallback(() => {
     setMenuState((prev) => ({ ...prev, isOpen: false }));
     setSelectedIndex(undefined);
@@ -192,7 +209,15 @@ export function ContextMenuPlugin({
   // Close menu on scroll
   useEffect(() => {
     if (!menuState.isOpen) return;
-    const handleScroll = () => {
+    const handleScroll = (event: Event) => {
+      // A scroll INSIDE the menu is the user reaching items below the fold, and the menu has to
+      // survive it: this listener is on `window` in capture phase, which fires for a descendant's
+      // non-bubbling scroll event too, so closing on every scroll would leave a menu taller than
+      // its own `max-height` impossible to scroll at all. Only a scroll of something else leaves
+      // the menu stale — it is positioned in fixed viewport coordinates, so the content it was
+      // opened over has moved out from under it.
+      const target = event.target as Node | null;
+      if (target && menuRef.current?.contains(target)) return;
       closeMenu();
     };
     globalThis.addEventListener("scroll", handleScroll, true);
@@ -215,7 +240,16 @@ export function ContextMenuPlugin({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         closeMenu();
-      } else if (event.key === "ArrowDown") {
+        return;
+      }
+      // The menu drives the keyboard only while the editor holds focus behind it. Nothing closes
+      // the menu when focus moves on (Tab), and this listener hears the whole document, so once
+      // another control has focus its keys are its own — claiming Enter there would stop a focused
+      // button from ever activating.
+      const focused = document.activeElement;
+      if (focused && focused !== document.body && !editor.getRootElement()?.contains(focused))
+        return;
+      if (event.key === "ArrowDown") {
         event.preventDefault();
         event.stopPropagation();
         setSelectedIndex((prev) => (prev === undefined ? 0 : (prev + 1) % options.length));
@@ -225,10 +259,16 @@ export function ContextMenuPlugin({
         setSelectedIndex((prev) =>
           prev === undefined ? options.length - 1 : (prev - 1 + options.length) % options.length,
         );
-      } else if (event.key === "Enter" && selectedIndex !== undefined) {
+      } else if (event.key === "Enter") {
+        // The menu owns Enter for as long as it is open, whatever is highlighted, and swallows
+        // every press it does not act on rather than handing it back. The editor keeps DOM focus
+        // behind the menu, so an unclaimed Enter would reach Lexical and split the paragraph there
+        // — or reach a host that gates its own Enter behavior on this menu and start a second
+        // keyboard mode underneath a menu that is still armed.
         event.preventDefault();
         event.stopPropagation();
-        const option = options[selectedIndex];
+        const option = selectedIndex === undefined ? undefined : options[selectedIndex];
+        // A disabled option is a no-op that leaves the menu open, the way a native menu behaves.
         if (option && !option.isDisabled) {
           editor.update(() => {
             option.onSelect();
@@ -243,6 +283,30 @@ export function ContextMenuPlugin({
     return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [menuState.isOpen, closeMenu, options, selectedIndex, editor]);
 
+  // Focus stays in the contenteditable the whole time the menu is open — that is what keeps the
+  // selection the chosen item acts on — so the menu cannot be announced from its own DOM. Point the
+  // focused element at the option list instead, the way Lexical's own typeahead menu does.
+  useEffect(() => {
+    if (!menuState.isOpen) return undefined;
+    const rootElement = editor.getRootElement();
+    if (!rootElement) return undefined;
+    rootElement.setAttribute("aria-controls", CONTEXT_MENU_LIST_ID);
+    return () => {
+      rootElement.removeAttribute("aria-controls");
+      rootElement.removeAttribute("aria-activedescendant");
+    };
+  }, [editor, menuState.isOpen]);
+
+  // Which option is highlighted, announced from that same focused element. A freshly opened menu
+  // has no highlight, and then there is nothing to point at.
+  useEffect(() => {
+    if (!menuState.isOpen) return;
+    const rootElement = editor.getRootElement();
+    if (!rootElement) return;
+    if (selectedIndex === undefined) rootElement.removeAttribute("aria-activedescendant");
+    else rootElement.setAttribute("aria-activedescendant", contextMenuItemId(selectedIndex));
+  }, [editor, menuState.isOpen, selectedIndex]);
+
   useEffect(
     () =>
       editor.registerEditableListener((editable) => {
@@ -250,8 +314,6 @@ export function ContextMenuPlugin({
       }),
     [editor],
   );
-
-  const menuRef = useRef<HTMLDivElement>(null);
 
   // Clamp menu position to viewport bounds before first paint to prevent off-screen rendering.
   useLayoutEffect(() => {

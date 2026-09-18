@@ -13,7 +13,9 @@
  * own key (its text IS the glyph). Note elements are NOT context-validated
  * (PT9's node set excludes //note); chars inside a note validate against the
  * note's marker; nested chars validate against the PARAGRAPH marker (PT9
- * ancestor::para[1]); chars under an `xq` ancestor are exempt.
+ * ancestor::para[1]); chars under an `xq` ancestor are exempt. The `\id` line has no paragraph
+ * ancestor, so its own chars and verses are only checked for being known; a note there still
+ * validates its content against the note.
  */
 import { $getRoot, $isElementNode, ElementNode, LexicalNode, NodeKey } from "lexical";
 import {
@@ -131,10 +133,14 @@ function flagGlyphs(
   for (const glyph of glyphs) out.set(glyph.getKey(), validity);
 }
 
+/**
+ * `contextMarker` is the enclosing paragraph's or note's marker, or `undefined` where PT9 finds
+ * neither (the `\id` line) and so checks nothing but whether the marker is known.
+ */
 function checkChar(
   node: ElementNode,
   marker: string,
-  contextMarker: string,
+  contextMarker: string | undefined,
   styleInfo: StyleInfo,
   out: Map<NodeKey, MarkerValidity>,
 ): void {
@@ -143,6 +149,7 @@ function checkChar(
     flagGlyphs(node, "unknown", out);
     return;
   }
+  if (contextMarker === undefined) return;
   const occursUnder = entry.occursUnder ?? [];
   if (occursUnder.length > 0 && !occursUnder.includes(contextMarker))
     flagGlyphs(node, "invalid", out);
@@ -150,7 +157,7 @@ function checkChar(
 
 function $validateInline(
   element: ElementNode,
-  contextMarker: string,
+  contextMarker: string | undefined,
   styleInfo: StyleInfo,
   out: Map<NodeKey, MarkerValidity>,
   insideXq: boolean,
@@ -166,6 +173,7 @@ function $validateInline(
       const entry = getEntry(styleInfo, "v");
       if (!entry) out.set(child.getKey(), "unknown");
       else if (
+        contextMarker !== undefined &&
         (entry.occursUnder ?? []).length > 0 &&
         !(entry.occursUnder ?? []).includes(contextMarker)
       )
@@ -226,7 +234,10 @@ export function $validateDocument(
     !onlyParagraphs || onlyParagraphs.has(child.getKey());
   for (const child of $getRoot().getChildren()) {
     if ($isUnknownNode(child)) continue; // opaque blocks: skip entirely
-    if ($isBookNode(child) || $isSomeChapterNode(child)) {
+    if ($isBookNode(child)) {
+      validateParaLevel(child, child.getMarker());
+      if (inScope(child)) $validateInline(child, undefined, styleInfo, out, false);
+    } else if ($isSomeChapterNode(child)) {
       validateParaLevel(child, child.getMarker());
     } else if ($isParaNode(child)) {
       validateParaLevel(child, child.getMarker());
