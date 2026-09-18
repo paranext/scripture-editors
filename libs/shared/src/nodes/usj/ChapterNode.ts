@@ -165,6 +165,19 @@ export class ChapterNode extends ElementNode {
     return self.__unknownAttributes;
   }
 
+  /**
+   * A chapter holds its own marker bytes and nothing else, and serializes as its number alone, so
+   * it must never take in another block's content: whatever landed in it would stay on screen and
+   * be dropped on save. Reporting that it cannot be empty is what keeps Lexical from treating it as
+   * a block to merge a following paragraph into when a deletion starts on the chapter line, and
+   * what removes the chapter once every byte of its marker is deleted. Editors that let the caret
+   * into a chapter must refuse splits there themselves, since Lexical then has no block to split
+   * (see the platform editor's `chapterLine.utils.ts`).
+   */
+  override canBeEmpty(): false {
+    return false;
+  }
+
   override createDOM(): HTMLElement {
     const dom = document.createElement("p");
     dom.setAttribute("data-marker", this.__marker);

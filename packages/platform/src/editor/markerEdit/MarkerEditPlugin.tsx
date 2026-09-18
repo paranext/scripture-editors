@@ -11,6 +11,7 @@ import {
   $paraMarkerDeletionTransform,
   $prepareReplaceSelection,
 } from "./markerEditDeletion.utils";
+import { $pasteOnChapterLine, $refuseSplitOnChapterLine } from "./chapterLine.utils";
 import {
   $adoptDomCaretInExpandedNote,
   $handleEnterInNote,
@@ -53,6 +54,7 @@ import {
   EditorState,
   HISTORIC_TAG,
   HISTORY_MERGE_TAG,
+  INSERT_LINE_BREAK_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
@@ -307,12 +309,13 @@ function registerDestroyedOwnerPend(editor: LexicalEditor, context: MarkerEditCo
 }
 
 /**
- * The engine's three `PASTE_COMMAND` claims — the in-note `\fp` break at CRITICAL, the
- * character-stack line replay at HIGH, and the paragraph-split arm at LOW. Kept together because
+ * The engine's four `PASTE_COMMAND` claims — the in-note `\fp` break at CRITICAL, the
+ * character-stack line replay at HIGH, the chapter-line paste and the paragraph-split arm at LOW.
+ * Kept together because
  * they race on one command and their priorities are what keeps them apart; composed into the
  * plugin's `mergeRegister` in the position that ordering requires (the standard-view NBSP
  * normalization at HIGH is registered BEFORE this, and the char-stack claim relies on it). The
- * returned teardown unregisters all three.
+ * returned teardown unregisters all four.
  */
 function registerPasteNormalization(
   editor: LexicalEditor,
@@ -428,6 +431,21 @@ function registerPasteNormalization(
         return true;
       },
       COMMAND_PRIORITY_HIGH,
+    ),
+    editor.registerCommand(
+      PASTE_COMMAND,
+      (event) => {
+        // A chapter line cannot be split, and Lexical's paste splits at every line break without
+        // going through INSERT_PARAGRAPH_COMMAND, so a paste landing on a chapter line is claimed
+        // and inserted there as one line (see chapterLine.utils.ts). At LOW, below every claim
+        // above and below structure protection and the NBSP normalization at HIGH; declines
+        // outright for an opaque block, like the in-note claim.
+        if ($selectionReachesIntoOpaqueBlock()) return false;
+        if (!$pasteOnChapterLine(getPastePayload(event)?.text)) return false;
+        event?.preventDefault();
+        return true;
+      },
+      COMMAND_PRIORITY_LOW,
     ),
     editor.registerCommand(
       PASTE_COMMAND,
@@ -985,6 +1003,18 @@ export function MarkerEditPlugin({
           return claimed;
         },
         COMMAND_PRIORITY_HIGH,
+      ),
+      // A chapter line cannot be split (see chapterLine.utils.ts). CRITICAL so the refusal runs
+      // ahead of every split, including this plugin's own char-stack split below.
+      editor.registerCommand(
+        INSERT_PARAGRAPH_COMMAND,
+        () => $refuseSplitOnChapterLine(),
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
+        INSERT_LINE_BREAK_COMMAND,
+        () => $refuseSplitOnChapterLine(),
+        COMMAND_PRIORITY_CRITICAL,
       ),
       editor.registerCommand(
         INSERT_PARAGRAPH_COMMAND,
