@@ -39,7 +39,7 @@
 
 import { $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
 import { textTypeState } from "../collab/delta.state.js";
-import { CharNode } from "./CharNode.js";
+import { $isCharNode, CharNode } from "./CharNode.js";
 import { $charGlyphNestedValue } from "./nestedGlyphs.utils.js";
 import { NBSP } from "./node-constants.js";
 import {
@@ -70,6 +70,31 @@ export function $isSeparatorPrefixHostText(node: LexicalNode | null | undefined)
     node.getType() === TextNode.getType() &&
     $getState(node, textTypeState) !== "attribute"
   );
+}
+
+/**
+ * How many leading UTF-16 code units of `node` are an opening glyph's display separator rather
+ * than content: `NBSP.length` when `node` is {@link $isSeparatorPrefixHostText} text directly
+ * after a char-span opening glyph and starts with the NBSP, otherwise 0. That is exactly the slot
+ * {@link $openerSeparatorGap} fills — a prefix of the following text, or a standalone spacer,
+ * which is separator in its entirety — so a position counted over a span's CONTENT skips the byte
+ * the builders and the sync put there and nothing else. An NBSP anywhere else is the author's own
+ * `~` and stays content: after a nested closer (`\ft A\+nd x\+nd*~B`), after a milestone's display
+ * glyph, or in a span rendered without glyphs.
+ *
+ * THE one reading of the convention for every site that turns a text node's bytes into content
+ * (caret placement inside a span or a note, the collab emit path), so they cannot drift apart.
+ *
+ * Read-only: safe inside `editor.update()` or either read form.
+ */
+export function $separatorPrefixLength(node: TextNode): number {
+  const opener = node.getPreviousSibling();
+  const char = node.getParent();
+  if (!$isMarkerNode(opener) || opener.getMarkerSyntax() !== "opening" || !$isCharNode(char))
+    return 0;
+  if ($charGlyphNestedValue(opener, char) === undefined) return 0;
+  if (!$isSeparatorPrefixHostText(node)) return 0;
+  return node.getTextContent().startsWith(NBSP) ? NBSP.length : 0;
 }
 
 /**

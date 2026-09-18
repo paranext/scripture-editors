@@ -45,9 +45,9 @@ import {
   $isImmutableUnmatchedNode,
   $isMarkerNode,
   $isNoteNode,
-  $isSeparatorPrefixHostText,
   $moveSelectionToEnd,
   $normalizeSelectionOutOfGlyphText,
+  $separatorPrefixLength,
   $shouldIgnoreNodeForContentIndexes,
   CharNode,
   closingMarkerText,
@@ -523,19 +523,6 @@ export function $selectAfterNote(noteNode: NoteNode) {
 }
 
 /**
- * Where a text node's own DATA starts within it. An opening glyph's display separator rides as an
- * NBSP PREFIX of the text that follows the glyph (markerSeparators.utils.ts owns that convention,
- * and the editor -> USJ conversion strips it on save), so it is display, never content, and a
- * position expressed over the note's content must not count it.
- */
-function $noteDataTextStart(node: TextNode): number {
-  const previous = node.getPreviousSibling();
-  if (!$isMarkerNode(previous) || previous.getMarkerSyntax() !== "opening") return 0;
-  if (!$isSeparatorPrefixHostText(node)) return 0;
-  return node.getTextContent().startsWith(NBSP) ? NBSP.length : 0;
-}
-
-/**
  * Puts the caret at `utf16Offset` within a note's own text, counting the note's CONTENT only and
  * skipping every display artifact the view adds around it: marker glyphs (editable and visible),
  * attribute display runs, engine-owned NBSP spacers, an opening glyph's NBSP separator prefix,
@@ -567,7 +554,9 @@ export function $selectNoteTextOffset(noteNode: NoteNode, utf16Offset: number): 
     const container = $findMatchingParent(node, (n) => $isCharNode(n) || $isNoteNode(n));
     if (!$isCharNode(container)) continue;
 
-    const dataStart = $noteDataTextStart(node);
+    // An opening glyph's display separator rides as an NBSP prefix of the text after it; it is
+    // display, never content, so the offset origin starts past it.
+    const dataStart = $separatorPrefixLength(node);
     const dataLength = node.getTextContentSize() - dataStart;
     // Strictly `<`: an offset that lands exactly on a run boundary belongs to the run it starts,
     // not to the one it ends. The two are the same caret on screen but not the same place to type
