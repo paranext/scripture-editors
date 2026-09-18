@@ -569,8 +569,6 @@ export function MarkerEditPlugin({
       splitExpected: { current: false },
       wholeParaDeleteExpected: new Set<NodeKey>(),
       collapsedDeleteCaretParas: new Set<NodeKey>(),
-      pasteRebuildArmed: { current: false },
-      pastePendedKeys: new Set<NodeKey>(),
       rebuildAttempted: new Set<string>(),
       logger,
       structureProtectionMode,
@@ -918,12 +916,6 @@ export function MarkerEditPlugin({
                   () => {
                     context.splitExpected.current = true;
                   },
-                  // Consumed by $rebuildParas (tier2Rebuild.utils.ts) to scope the own-marker-
-                  // prefix dedup to THIS paste's own update — see Tier2Context.pasteRebuildArmed's
-                  // doc comment for why it must not also fire for typed input.
-                  () => {
-                    context.pasteRebuildArmed.current = true;
-                  },
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -1132,13 +1124,6 @@ export function MarkerEditPlugin({
         context.splitExpected.current = false;
         context.wholeParaDeleteExpected?.clear();
         context.collapsedDeleteCaretParas?.clear();
-        context.pasteRebuildArmed.current = false;
-        // Paste provenance never outlives the pend it decorates: a key that stopped pending —
-        // settled, detached, or shielded onto a different key — must not arm the own-marker-prefix
-        // dedup if the same node is ever pended again by ordinary typing.
-        context.pastePendedKeys.forEach((key) => {
-          if (!context.pendingKeys.has(key)) context.pastePendedKeys.delete(key);
-        });
         context.rebuildAttempted.clear();
         // Typing path: ScriptureReferencePlugin's async scrRef echo re-enters
         // `$moveCursorToVerseStart` and yanks the caret to the para/verse start via
@@ -1187,7 +1172,6 @@ export function MarkerEditPlugin({
           // are cleared first — they describe the pre-restore document, and a leftover key
           // pointing at a now-canonical node would drive a pointless refused rebuild later.
           context.pendingKeys.clear();
-          context.pastePendedKeys.clear();
           editorState.read(() => $rependPendShapedNodes(context));
           // The restored caret is app-placed (history put it there, not a fresh user gesture),
           // and a historic restore is NOT a departure: resolving now — or on any follow-on

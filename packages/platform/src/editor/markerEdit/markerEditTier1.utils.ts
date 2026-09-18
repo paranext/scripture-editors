@@ -112,20 +112,6 @@ export interface MarkerEditContext extends Tier2Context {
    */
   collapsedDeleteCaretParas?: Set<NodeKey>;
   /**
-   * Narrows `Tier2Context.pasteRebuildArmed` from optional to REQUIRED: the marker-edit engine
-   * (`MarkerEditPlugin.tsx`) always constructs and maintains this field, unlike a bare
-   * `Tier2Context` a test may build directly to exercise the tokenizer/rebuild machinery alone
-   * (where "not a paste rebuild" is simply the field's absence). See its doc comment on
-   * `Tier2Context` for what it does.
-   */
-  pasteRebuildArmed: { current: boolean };
-  /**
-   * Narrows `Tier2Context.pastePendedKeys` from optional to REQUIRED, for the same reason as
-   * {@link pasteRebuildArmed}: the engine always constructs and maintains the set. See its doc
-   * comment on `Tier2Context` for what carries the provenance and why it cannot leak.
-   */
-  pastePendedKeys: Set<NodeKey>;
-  /**
    * Mirrors the host `Editor`'s `structureProtectionMode` option. Read by the engine's two
    * `COMMAND_PRIORITY_HIGH` paste claims — `$handlePasteForStandardView`
    * (whitespaceDisplay.plugin.utils.ts) and the char-stack line replay (`MarkerEditPlugin.tsx`) —
@@ -1215,17 +1201,6 @@ function $exceptKeysAround(exceptKey: NodeKey | undefined): Set<NodeKey> {
 }
 
 /**
- * Takes `key`'s paste provenance ({@link MarkerEditContext.pastePendedKeys}) for the rebuild about
- * to be routed for it, and clears it: one key, one use, so a later rebuild of the same paragraph —
- * typed input, an idle re-settle — is an ordinary typed rebuild again. `undefined` (not `false`)
- * for a key with no provenance, so the rebuild falls back to its own default ("is this the paste's
- * own update") rather than being told it is not a paste.
- */
-function consumePasteProvenance(key: NodeKey, context: MarkerEditContext): true | undefined {
-  return context.pastePendedKeys.delete(key) || undefined;
-}
-
-/**
  * Completion trigger. PT9 completes mid-edit markers via its 1s debounced
  * reformat; our deterministic equivalents are Enter, blur, and the caret
  * leaving the node (`exceptKey` keeps the node still being edited pending — widened to the
@@ -1264,7 +1239,6 @@ export function $resolvePendingMarkers(
     const node: LexicalNode | null = $getNodeByKey(key);
     if (!node?.isAttached()) {
       context.pendingKeys.delete(key);
-      context.pastePendedKeys.delete(key);
       continue;
     }
     if ($isMarkerNode(node)) {
@@ -1293,9 +1267,7 @@ export function $resolvePendingMarkers(
         context.logger?.debug(
           "[MarkerEdit] unknown-split paragraph rejoined its predecessor on marker degradation",
         );
-      } else
-        mutated =
-          $requestTier2ForNode(node, context, consumePasteProvenance(key, context)) || mutated;
+      } else mutated = $requestTier2ForNode(node, context) || mutated;
       continue;
     }
     // A pended run PIECE settles at its OWNER. `$settlePendedDisplayOwner` recognizes only owners
@@ -1358,8 +1330,7 @@ export function $resolvePendingMarkers(
       context.pendingKeys.add(targetKey);
       continue;
     }
-    mutated =
-      $requestTier2ForNode(target, context, consumePasteProvenance(key, context)) || mutated;
+    mutated = $requestTier2ForNode(target, context) || mutated;
   }
   return mutated;
 }

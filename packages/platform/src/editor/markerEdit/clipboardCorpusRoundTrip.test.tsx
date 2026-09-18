@@ -27,7 +27,7 @@
  * and for the one attribute it cannot carry. `tier2Rebuild.corpus.test.tsx` already exercises that
  * fixture, but for a narrower, DIFFERENT property (an unedited `$rebuildParas` call refusing as a
  * fixed point) that does not cover the paste path (NBSP normalization, `\c`/`\id` strip,
- * own-marker-wins dedup) this sweep does.
+ * paste host accounting) this sweep does.
  *
  * The whole file, 2sa included, runs in about a second; no sampling is needed.
  */
@@ -88,11 +88,16 @@ function $selectChapterContent(root: RootNode): void {
 }
 
 /** The fixture's book+chapter header, byte-identical, plus a single EMPTY `\p` paragraph as the
- * paste insertion host — the same "empty host + Tier 2's own-marker-wins dedup absorbs the whole
- * pasted fragment" shape `clipboardCopyFidelity.test.tsx`'s "copy → paste USJ round trip" test
- * uses, generalized to any book+chapter header so the target starts from the SAME chapter context
- * as the source without paste ever having to reconstruct `\c`/`\id` itself (it can't — paste
- * normalization strips them). */
+ * paste insertion host — generalized to any book+chapter header so the target starts from the SAME
+ * chapter context as the source without paste ever having to reconstruct `\c`/`\id` itself (it
+ * can't — paste normalization strips them).
+ *
+ * The host paragraph is the HARNESS's, not the product's: a paste needs somewhere for the caret to
+ * be, and pasting a whole-paragraph copy (which carries its own `\p ` literal) at its content start
+ * splits the line, leaving the host behind as an empty paragraph ahead of the pasted one. That is
+ * what P9 does with the same bytes, and what this editor does however they arrive — so the sweep
+ * strips the host back off before comparing, rather than expecting the paste to consume it
+ * ({@link withoutPasteHost}). */
 function chapterHeaderSkeletonUsj(usj: Usj): Usj {
   const content = usj.content;
   let chapterIndex = -1;
@@ -196,7 +201,50 @@ async function copyPasteRoundTrip(usj: Usj): Promise<Usj | undefined> {
     await Promise.resolve();
     await Promise.resolve();
   });
-  return deserializeSerializedEditorState(targetEditor.getEditorState().toJSON(), viewOptions);
+  const pasted = deserializeSerializedEditorState(
+    targetEditor.getEditorState().toJSON(),
+    viewOptions,
+  );
+  return withoutPasteHost(pasted, usj);
+}
+
+/**
+ * Drop the empty insertion-host paragraph {@link chapterHeaderSkeletonUsj} seeded, which survives
+ * the paste as an empty paragraph directly after the header.
+ *
+ * Asserted rather than filtered: it removes the host at its KNOWN index and fails loudly if what
+ * sits there is anything else, so a genuine regression that produced an unexpected empty paragraph
+ * (or consumed the host) cannot slip through as a silently-skipped entry.
+ */
+function withoutPasteHost(pasted: Usj | undefined, source: Usj): Usj | undefined {
+  if (!pasted) return pasted;
+  const hostIndex = pasteHostIndex(source);
+  const host = pasted.content[hostIndex];
+  if (
+    typeof host === "string" ||
+    host?.type !== "para" ||
+    host.marker !== "p" ||
+    (host.content?.length ?? 0) > 0
+  )
+    throw new Error(
+      `expected the empty \\p paste host at content[${hostIndex}], found ${JSON.stringify(host)}`,
+    );
+  return {
+    ...pasted,
+    content: [...pasted.content.slice(0, hostIndex), ...pasted.content.slice(hostIndex + 1)],
+  };
+}
+
+/** Index of the first item after the fixture's book+chapter header — where
+ * {@link chapterHeaderSkeletonUsj} puts the paste host. Reads the plain USJ object, never the
+ * editor. */
+function pasteHostIndex(usj: Usj): number {
+  let chapterIndex = -1;
+  usj.content.forEach((item, index) => {
+    if (typeof item !== "string" && item.type === "chapter") chapterIndex = index;
+  });
+  if (chapterIndex === -1) throw new Error("fixture has no chapter");
+  return chapterIndex + 1;
 }
 
 describe("corpus copy/paste round trip (Standard view)", () => {

@@ -544,7 +544,6 @@ export function $handlePasteForStandardView(
   event: ClipboardEvent | null | undefined,
   isStructureProtected = false,
   armSplitExpected: () => void = () => undefined,
-  armPasteRebuildDedup: () => void = () => undefined,
 ): boolean {
   const payload = getPastePayload(event, $getEditor()._config.namespace);
   if (!payload) return false;
@@ -574,11 +573,6 @@ export function $handlePasteForStandardView(
     $insertPastedTextIntoAttributeContext(selection, text);
     return true;
   }
-  // Arms `Tier2Context.pasteRebuildArmed` for this paste's own update, BEFORE inserting —
-  // unconditionally, unlike `armSplitExpected` below, because a SINGLE-line paste (no newline at
-  // all) can just as easily trigger the immediate own-marker-prefix dedup rebuild (`\p one` pasted
-  // right after an existing `\p` host's prefix) as a multi-line one can.
-  armPasteRebuildDedup();
   const normalized = normalizePastedNbsp(stripPastedChapterAndBookId(text));
   const lines = normalized.split("\n");
   // A protected document never gains a paragraph from a paste: each newline becomes a single space

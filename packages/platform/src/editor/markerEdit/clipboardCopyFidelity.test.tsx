@@ -482,14 +482,36 @@ describe("cut = copy + removeText", () => {
   });
 });
 
+/**
+ * Drop the empty `\p` paragraph these round trips seed as the paste's insertion host.
+ *
+ * A paste needs somewhere for the caret to be, and a whole-paragraph copy carries its paragraph's
+ * own `\p ` marker literal — so the pasted line supplies its own marker and the host is left behind
+ * as an empty paragraph ahead of it. Paratext 9 reads the same bytes the same way. The host belongs
+ * to the harness, not to the document, so it is asserted and removed here rather than expected to
+ * be swallowed; anything other than an empty `\p` in that position fails loudly.
+ */
+function withoutPasteHost(pasted: Usj | undefined): Usj | undefined {
+  if (!pasted) return pasted;
+  const [host, ...rest] = pasted.content;
+  if (
+    typeof host === "string" ||
+    host?.type !== "para" ||
+    host.marker !== "p" ||
+    (host.content?.length ?? 0) > 0
+  )
+    throw new Error(`expected an empty \\p paste host first, found ${JSON.stringify(host)}`);
+  return { ...pasted, content: rest };
+}
+
 describe("copy → paste USJ round trip", () => {
   // A whole-paragraph copy starts with its own "\p " literal (the paragraph's own marker rides
   // along with a whole-block selection). Pasted at an existing "\p" host's content start, the
   // fragment Tier 2 rebuilds from would otherwise carry BOTH the host's own glyph and the pasted
   // literal's — two paragraph-marker occurrences with nothing between them, tokenizing into a
   // stray empty leading paragraph (the host's, now with nothing to show for it) ahead of the real
-  // one. `$buildParaFragment`'s own-marker-wins rule (tier2Rebuild.utils.ts) drops the host's
-  // redundant glyph from the fragment in exactly this shape, closing that gap.
+  // one — the harness's own host, which {@link withoutPasteHost} strips before comparing. The
+  // paste itself leaves the host's marker alone: it inserts what was pasted and nothing else.
   it("re-tokenizes a whole-paragraph copy back to the source USJ when pasted into a fresh editor", async () => {
     initializeDeserialize(undefined);
     const usj = noteUsj("+");
@@ -521,7 +543,7 @@ describe("copy → paste USJ round trip", () => {
       targetEditor.getEditorState().toJSON(),
       viewOptions,
     );
-    expect(pastedUsj).toEqual(usj);
+    expect(withoutPasteHost(pastedUsj)).toEqual(usj);
   });
 });
 
@@ -654,6 +676,6 @@ describe("text/html carries the same USFM bytes as text/plain", () => {
       targetEditor.getEditorState().toJSON(),
       viewOptions,
     );
-    expect(pastedUsj).toEqual(usj);
+    expect(withoutPasteHost(pastedUsj)).toEqual(usj);
   });
 });
