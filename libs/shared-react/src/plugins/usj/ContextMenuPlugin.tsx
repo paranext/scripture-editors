@@ -258,7 +258,16 @@ export function ContextMenuPlugin({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         closeMenu();
-      } else if (event.key === "ArrowDown") {
+        return;
+      }
+      // The menu drives the keyboard only while the editor holds focus behind it. Nothing closes
+      // the menu when focus moves on (Tab), and this listener hears the whole document, so once
+      // another control has focus its keys are its own — claiming Enter there would stop a focused
+      // button from ever activating.
+      const focused = document.activeElement;
+      if (focused && focused !== document.body && !editor.getRootElement()?.contains(focused))
+        return;
+      if (event.key === "ArrowDown") {
         event.preventDefault();
         event.stopPropagation();
         setSelectedIndex((prev) => (prev === undefined ? 0 : (prev + 1) % options.length));
