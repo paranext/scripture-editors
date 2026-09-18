@@ -18,7 +18,14 @@ import {
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
-import { $createParaNode, CURSOR_PLACEHOLDER_CHAR, ParaNode } from "shared";
+import {
+  $createImpliedParaNode,
+  $createParaNode,
+  CURSOR_CHANGE_TAG,
+  CURSOR_PLACEHOLDER_CHAR,
+  ImpliedParaNode,
+  ParaNode,
+} from "shared";
 
 async function guardedEnvironment($initialEditorState?: () => void) {
   return baseTestEnvironment($initialEditorState, <EmptyVerseCaretGuardPlugin />);
@@ -283,16 +290,60 @@ describe("EmptyVerseCaretGuardPlugin alongside the editor's other plugins", () =
     });
 
     const strandedCommits: string[] = [];
+    const hostingCommitTags: string[][] = [];
+    let wasHosted = false;
     editor.registerUpdateListener(({ tags }) => {
       editor.getEditorState().read(() => {
         // The rule names a boundary only when it needs a host and has none — exactly "stranded".
         if ($emptyVerseNeedingHost()) strandedCommits.push(`[${[...tags].join(",")}]`);
+        const isHosted = $getRoot()
+          .getAllTextNodes()
+          .some((node) => node.getTextContent() === CURSOR_PLACEHOLDER_CHAR);
+        if (isHosted && !wasHosted) hostingCommitTags.push([...tags]);
+        wasHosted = isHosted;
       });
     });
 
     await deleteTextAtSelection(editor, v3Content!, 0, v3Content!, "light".length);
 
     expect(strandedCommits).toEqual([]);
+    // The commit that produces the host is the user's edit, so it must stay legible to USJ-change
+    // consumers. CURSOR_CHANGE_TAG is blacklisted for them: tagging here would silently drop the
+    // edit itself, not just the host.
+    expect(hostingCommitTags).toHaveLength(1);
+    expect(hostingCommitTags[0]).not.toContain(CURSOR_CHANGE_TAG);
+  });
+
+  it("hosts the caret in an implied paragraph too", async () => {
+    // A verse's content can sit directly in an ImpliedParaNode, which is a sibling of ParaNode
+    // rather than a subclass, so it needs its own transform registration to get the same repair.
+    let v3Content: TextNode;
+    const { editor } = await sharedEnvironment(() => {
+      v3Content = $createTextNode("light");
+      $getRoot().append(
+        $createImpliedParaNode().append(
+          $createImmutableVerseNode("2"),
+          $createTextNode("And the earth was without form. "),
+          $createImmutableVerseNode("3"),
+          v3Content,
+        ),
+      );
+    });
+
+    const strandedCommits: string[] = [];
+    editor.registerUpdateListener(() => {
+      editor.getEditorState().read(() => {
+        if ($emptyVerseNeedingHost()) strandedCommits.push("stranded");
+      });
+    });
+
+    await deleteTextAtSelection(editor, v3Content!, 0, v3Content!, "light".length);
+
+    expect(strandedCommits).toEqual([]);
+    editor.getEditorState().read(() => {
+      const children = ($getRoot().getFirstChild() as ImpliedParaNode).getChildren();
+      expect(children[3].getTextContent()).toBe(CURSOR_PLACEHOLDER_CHAR);
+    });
   });
 
   it("lands typed text in the empty verse, not the next one", async () => {

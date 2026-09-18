@@ -42,6 +42,12 @@ export function $emptyVerseNeedingHost(): SomeVerseNode | undefined {
 }
 
 /**
+ * The block types a verse's content can sit directly in. They are siblings rather than one
+ * extending the other, so each needs its own transform registration.
+ */
+const PARA_KLASSES: Klass<LexicalNode>[] = [ParaNode, ImpliedParaNode];
+
+/**
  * Keeps a visible caret in a verse whose text has been fully deleted.
  *
  * A verse number is rendered by a childless `ImmutableVerseNode` decorator, so once a verse has no
@@ -53,14 +59,16 @@ export function $emptyVerseNeedingHost(): SomeVerseNode | undefined {
  * saved Scripture and out of collaborative traffic; this file supplies only the rule for WHERE one
  * is needed. `TrailingNoteCaretGuardPlugin` supplies the other rule.
  *
+ * The rule is driven from both arrivals a hostless verse has. The caret's own resting place
+ * announces one, as a selection change. The other announces nothing — an edit that empties the
+ * verse the caret is already in leaves the DOM selection where it was, so Lexical dispatches no
+ * selection change — and is answered from the edit itself, in the same commit.
+ *
  * Unlike the arrow-driven `CursorHandler` placeholder system (perf-react), this hosts a *resting*
  * caret and is aware of verse markers, so it fits the platform editor's immutable verse numbers.
  *
  * @returns Always `null`; this plugin renders no UI.
  */
-/** The block types a verse's content can sit directly in — siblings, so each needs its own transform. */
-const PARA_KLASSES: Klass<LexicalNode>[] = [ParaNode, ImpliedParaNode];
-
 export function EmptyVerseCaretGuardPlugin(): null {
   const [editor] = useLexicalComposerContext();
   const $repairCaret = useTransientCaretHost($emptyVerseNeedingHost);
