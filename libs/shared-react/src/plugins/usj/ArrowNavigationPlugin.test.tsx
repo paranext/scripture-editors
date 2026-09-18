@@ -2650,8 +2650,12 @@ describe("Caret host", () => {
     });
     updateSelection(editor, host!, 0);
 
-    await pressKey(editor, "ArrowRight");
+    const event = await pressKey(editor, "ArrowRight");
 
+    // Declining is the whole behavior here, and an unmoved caret alone cannot show it — the caret
+    // also sits still when the rule claims the press and lands it back where it started. Only the
+    // unclaimed event distinguishes "left to the browser" from "handled to no effect".
+    expect(event.defaultPrevented).toBe(false);
     editor.getEditorState().read(() => {
       $expectSelectionToBe(host!, 0);
     });
