@@ -1,6 +1,6 @@
 import { ContextMenuPlugin } from "./ContextMenuPlugin";
 import { baseTestEnvironment } from "./react-test.utils";
-import { act } from "@testing-library/react";
+import { act, fireEvent } from "@testing-library/react";
 import { $createTextNode, $getRoot, LexicalEditor } from "lexical";
 import { $createParaNode } from "shared";
 
@@ -40,6 +40,15 @@ async function openMenu(
   return menu;
 }
 
+/** Presses Escape on the document, the same way the plugin's own Escape handler closes the menu. */
+async function closeMenuWithEscape(): Promise<void> {
+  await act(async () => {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+  });
+}
+
 describe("ContextMenuPlugin", () => {
   it("portals to document.body when no container getter is supplied", async () => {
     const { editor } = await contextMenuEnvironment();
@@ -66,5 +75,49 @@ describe("ContextMenuPlugin", () => {
     const menu = await openMenu(editor, 10, 10);
 
     expect(menu.parentElement).toBe(document.body);
+  });
+
+  it("re-resolves the container the next time the menu opens", async () => {
+    const containerA = document.createElement("div");
+    const containerB = document.createElement("div");
+    document.body.append(containerA, containerB);
+    let opens = 0;
+    const getContainer = () => (opens++ === 0 ? containerA : containerB);
+
+    const { editor } = await contextMenuEnvironment(getContainer);
+
+    const firstMenu = await openMenu(editor, 10, 10);
+    expect(containerA.contains(firstMenu)).toBe(true);
+
+    await closeMenuWithEscape();
+
+    const secondMenu = await openMenu(editor, 20, 20);
+    expect(containerB.contains(secondMenu)).toBe(true);
+  });
+
+  it("keeps the menu in the container resolved at open time across a re-render", async () => {
+    const containerA = document.createElement("div");
+    const containerB = document.createElement("div");
+    document.body.append(containerA, containerB);
+    let opens = 0;
+    const getContainer = () => (opens++ === 0 ? containerA : containerB);
+
+    const { editor } = await contextMenuEnvironment(getContainer);
+
+    const menu = await openMenu(editor, 10, 10);
+    expect(containerA.contains(menu)).toBe(true);
+
+    // Hovering an item re-renders the plugin (it tracks the hovered/selected index) without
+    // closing the menu. Confirm the hover actually re-rendered before trusting the container
+    // assertion below, or a component that ignores hover entirely would pass this test for free.
+    const item = menu.querySelector("li");
+    if (!item) throw new Error("no menu item to hover");
+    await act(async () => {
+      fireEvent.mouseEnter(item);
+    });
+    expect(item.getAttribute("aria-selected")).toBe("true");
+
+    expect(containerA.contains(menu)).toBe(true);
+    expect(containerB.contains(menu)).toBe(false);
   });
 });
