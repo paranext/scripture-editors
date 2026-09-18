@@ -250,4 +250,23 @@ describe("ContextMenuPlugin", () => {
       restoreMenuSize();
     }
   });
+
+  it("caps its height at the visible box divided by the zoom factor", async () => {
+    // A 300px-tall pane at zoom 2: the menu's own max-height must be 150 pre-zoom pixels.
+    const container = stubbedContainer(2, { left: 0, top: 0, width: 400, height: 300 });
+    const { editor } = await contextMenuEnvironment(() => container);
+
+    const menu = await openMenu(editor, 10, 10);
+
+    expect(menu.style.maxHeight).toBe("150px");
+    expect(menu.style.overflowY).toBe("auto");
+  });
+
+  it("sets no height cap when there is no container", async () => {
+    const { editor } = await contextMenuEnvironment();
+
+    const menu = await openMenu(editor, 10, 10);
+
+    expect(menu.style.maxHeight).toBe("");
+  });
 });

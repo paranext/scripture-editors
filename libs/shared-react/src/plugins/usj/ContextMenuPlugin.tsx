@@ -343,6 +343,12 @@ export function ContextMenuPlugin({
     const clampedTop = Math.max(box.top, Math.min(menuState.y, box.bottom - height));
     menu.style.left = `${clampedLeft / factor}px`;
     menu.style.top = `${clampedTop / factor}px`;
+    // The menu's own lengths are pre-zoom, so the cap is the visible height divided by the factor.
+    // Combined with the stylesheet's own list cap, the menu never outgrows the space it opens in.
+    if (container) {
+      menu.style.maxHeight = `${(box.bottom - box.top) / factor}px`;
+      menu.style.overflowY = "auto";
+    }
     menu.style.visibility = "visible";
   }, [menuState]);
 
