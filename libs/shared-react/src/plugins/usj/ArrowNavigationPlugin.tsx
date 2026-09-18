@@ -35,6 +35,7 @@ import {
   $getPreviousNode,
   $isBookNode,
   $isCharNode,
+  $isCursorPlaceholderOnlyText,
   $isImmutableChapterNode,
   $isImmutableTypedTextNode,
   $isMarkerNode,
@@ -264,6 +265,7 @@ function useArrowKeys(editor: LexicalEditor, viewOptions: ViewOptions | undefine
         isHandled =
           (!hasModifier && $crossOpaqueConstruct(selection, "next")) ||
           (!hasModifier && $handleForwardFpNavigation(selection)) ||
+          (!hasModifier && $exitCaretHostForward(selection)) ||
           $handleForwardNavigation(selection) ||
           (!hasModifier && normalizesStops && $moveOneVisibleStop(selection, "next"));
       } else if (isMovingBackward(direction, event.key)) {
@@ -883,6 +885,39 @@ function $selectPastTrailingNote(note: NoteNode): void {
   if (!parent) return;
   const indexPastNote = note.getIndexWithinParent() + 1;
   parent.select(indexPastNote, indexPastNote);
+}
+
+/**
+ * Leaves a transient caret host in one press, instead of stepping to the far side of the
+ * zero-width space it is made of.
+ *
+ * A host is a one-character text node, so the browser offers a caret position on each side of that
+ * character — and because the character is zero-width, both paint in the same place. Left to the
+ * browser, crossing an empty verse therefore costs a press at which the caret visibly does not
+ * move. The host stands for a single insertion point, so it is a single stop.
+ *
+ * The landing steps over the atom the host was materialized against — the following verse marker —
+ * so one press crosses one marker. What lies past it is either the next verse's text, or another
+ * empty verse's own hostless boundary, which the caret guard then repairs into a host of its own;
+ * either way the caret comes to rest somewhere it can be seen.
+ *
+ * Declines when nothing follows the host, leaving the move across a block boundary to the browser.
+ */
+function $exitCaretHostForward(selection: RangeSelection): boolean {
+  const { anchor } = selection;
+  if (anchor.type !== "text") return false;
+  const host = anchor.getNode();
+  if (!$isCursorPlaceholderOnlyText(host)) return false;
+
+  const parent = host.getParent();
+  if (!parent) return false;
+  let boundary = host.getIndexWithinParent() + 1;
+  const following = parent.getChildAtIndex(boundary);
+  if (!following) return false;
+  if (!$isTextNode(following)) boundary += 1;
+
+  $placeCaretAtBoundary(parent, boundary);
+  return true;
 }
 
 /** Helper to handle forward arrow key navigation logic */

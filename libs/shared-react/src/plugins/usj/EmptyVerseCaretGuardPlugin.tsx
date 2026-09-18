@@ -1,6 +1,9 @@
 import { useTransientCaretHost } from "./transientCaretHost";
-import { $getSelection, $isElementNode, $isRangeSelection } from "lexical";
-import { $caretHostAtBoundary } from "shared";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { mergeRegister } from "@lexical/utils";
+import { $getSelection, $isElementNode, $isRangeSelection, Klass, LexicalNode } from "lexical";
+import { useEffect } from "react";
+import { $caretHostAtBoundary, ImpliedParaNode, ParaNode } from "shared";
 import { $isSomeVerseNode, SomeVerseNode } from "../../nodes/usj";
 
 /**
@@ -55,7 +58,40 @@ export function $emptyVerseNeedingHost(): SomeVerseNode | undefined {
  *
  * @returns Always `null`; this plugin renders no UI.
  */
+/** The block types a verse's content can sit directly in — siblings, so each needs its own transform. */
+const PARA_KLASSES: Klass<LexicalNode>[] = [ParaNode, ImpliedParaNode];
+
 export function EmptyVerseCaretGuardPlugin(): null {
-  useTransientCaretHost($emptyVerseNeedingHost);
+  const [editor] = useLexicalComposerContext();
+  const $repairCaret = useTransientCaretHost($emptyVerseNeedingHost);
+
+  useEffect(() => {
+    // The arrival the caret cannot announce: an edit that empties the verse it is resting in. The
+    // caret ends up on the boundary's element point, but no selection change follows — Lexical
+    // skips its dispatch when the DOM selection already matches the one the edit applied — so the
+    // hook's SELECTION_CHANGE route never runs and the caret is stranded where nothing is drawn.
+    //
+    // Repaired from the edit itself, as a transform, so the host lands in the SAME commit: the
+    // caret is never committed to a state it cannot be seen in, and there is no window for the
+    // hook's stale-host pass to read a pre-repair anchor and take the new host back out.
+    //
+    // Deliberately NOT tagged CURSOR_CHANGE_TAG, unlike the hook's own commits. The tag suppresses
+    // a whole commit for USJ-change consumers, and this commit is the user's edit. The host needs
+    // no tag to stay out of the document: the USJ adaptor, the delta adaptor and the collab
+    // coordinates each exclude a placeholder-only text node by its CONTENT.
+    //
+    // Converges: the repair dirties the block, the transform runs again, and the rule no longer
+    // names a boundary once a host is on it.
+    const registrable = PARA_KLASSES.filter((klass) => editor.hasNodes([klass]));
+    return mergeRegister(
+      ...registrable.map((klass) =>
+        editor.registerNodeTransform(klass, () => {
+          const target = $emptyVerseNeedingHost();
+          if (target) $repairCaret(target);
+        }),
+      ),
+    );
+  }, [editor, $repairCaret]);
+
   return null;
 }
