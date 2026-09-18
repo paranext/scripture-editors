@@ -25,6 +25,7 @@ import {
   $syncDisplayRun,
   CharNode,
   displayRunDescriptor,
+  isCursorPlaceholderOnly,
   NoteNode,
   textTypeState,
   VerseNode,
@@ -120,6 +121,16 @@ function $textNodeTrailingSpaceTransform(node: TextNode): void {
     // already applied to notes, chars, and typed marks. Block-level unknowns (figures, sidebars)
     // keep the existing spacing behavior.
     ($isUnknownNode(nextSibling) && nextSibling.isInlineTag()) ||
+    // A transient caret host is engine-owned presentation too, and the most fragile kind: it is a
+    // lone zero-width space whose whole purpose is to give the browser something to draw an
+    // insertion point in where the tree offers only an element point. Spacing it destroys it, and
+    // does so silently in three steps — the space makes the node no longer placeholder-only, the
+    // host's own strip-on-edit transform reads that as the user having typed and removes the
+    // zero-width space, and what is left is a lone space that the empty-verse clause below then
+    // clears to nothing. The caret ends up back on the invisible element point it started from.
+    // A host only ever appears where the caret is resting, so it is never the prose this
+    // transform exists to space.
+    isCursorPlaceholderOnly(text) ||
     // An attribute display run (char/milestone/verse — attributeDisplay.utils.ts) is engine-owned
     // presentation, not paragraph prose: it must never gain a trailing space of its own, even
     // when it sits directly in a paragraph (a verse's \va/\vp value has no CharNode parent to
