@@ -241,6 +241,8 @@ export function ContextMenuPlugin({
     setSelectedIndex(undefined);
   }, []);
 
+  const menuRef = useRef<HTMLDivElement>(null);
+
   // Register context menu event on editor root
   useEffect(() => {
     const handleContextMenu = (event: MouseEvent) => {
@@ -265,10 +267,14 @@ export function ContextMenuPlugin({
     });
   }, [editor, getContainer]);
 
-  // Close menu on scroll
+  // Close menu when the page moves beneath it
   useEffect(() => {
     if (!menuState.isOpen) return;
-    const handleScroll = () => {
+    // The listener is on the capture phase, so it also sees scrolls raised by descendants of the
+    // window — including the menu's own scrollable list. Those are the user reaching an item that
+    // the height cap put out of sight, not the page moving, so they leave the menu open.
+    const handleScroll = (event: Event) => {
+      if (event.target instanceof Node && menuRef.current?.contains(event.target)) return;
       closeMenu();
     };
     globalThis.addEventListener("scroll", handleScroll, true);
@@ -327,8 +333,6 @@ export function ContextMenuPlugin({
     [editor],
   );
 
-  const menuRef = useRef<HTMLDivElement>(null);
-
   // Clamp the menu into view before first paint to prevent off-screen rendering. Inside a
   // container scaled with CSS `zoom`, the element's own lengths are pre-zoom while the pointer
   // event's coordinates are rendered viewport pixels, so the placement divides by the factor.
@@ -343,9 +347,21 @@ export function ContextMenuPlugin({
     const clampedTop = Math.max(box.top, Math.min(menuState.y, box.bottom - height));
     menu.style.left = `${clampedLeft / factor}px`;
     menu.style.top = `${clampedTop / factor}px`;
-    // The menu's own lengths are pre-zoom, so the cap is the visible height divided by the factor.
-    // Combined with the stylesheet's own list cap, the menu never outgrows the space it opens in.
     if (container) {
+      // A `position: fixed` element is laid out against the viewport only while no ancestor
+      // establishes a containing block for it, and a `transform`, `filter`, `perspective` or
+      // `contain` anywhere above it silently makes that ancestor the origin instead — a popover
+      // wrapper, for one. Rather than hunting for such an ancestor, read back where the menu
+      // actually landed and shift it by however far it is out: the offsets are written in the
+      // container's pre-zoom units, so the viewport-pixel error is divided by the factor too.
+      const placed = menu.getBoundingClientRect();
+      if (placed.left !== clampedLeft || placed.top !== clampedTop) {
+        menu.style.left = `${(clampedLeft - (placed.left - clampedLeft)) / factor}px`;
+        menu.style.top = `${(clampedTop - (placed.top - clampedTop)) / factor}px`;
+      }
+      // The menu's own lengths are pre-zoom, so the cap is the visible height divided by the
+      // factor. Combined with the stylesheet's own list cap, the menu never outgrows the space it
+      // opens in.
       menu.style.maxHeight = `${(box.bottom - box.top) / factor}px`;
       menu.style.overflowY = "auto";
     }

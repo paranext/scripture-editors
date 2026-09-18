@@ -76,22 +76,35 @@ function stubbedContainer(
 }
 
 /**
- * Gives the portalled menu a measured size, which jsdom otherwise reports as zero. Instance stubs
- * on individual containers still win, since they shadow the prototype. Returns a restore function.
+ * Gives the portalled menu the measured size and the laid-out position that jsdom has neither of,
+ * standing in for a browser's layout: the menu's `left`/`top` are written in the units of whatever
+ * establishes its containing block, so the reported viewport position is those offsets scaled by
+ * the parent's zoom and shifted by `origin`. `origin` is where that containing block starts — the
+ * viewport's own 0,0 unless an ancestor's `transform` (or `filter`, `contain`, …) has taken the
+ * role over. Instance stubs on individual containers still win, since they shadow the prototype.
+ * Returns a restore function.
  */
-function stubMenuSize(width: number, height: number): () => void {
+function stubMenuLayout(
+  width: number,
+  height: number,
+  origin: { left: number; top: number } = { left: 0, top: 0 },
+): () => void {
   const original = Element.prototype.getBoundingClientRect;
   Element.prototype.getBoundingClientRect = function stubbed(this: Element) {
-    if (!this.classList.contains("auto-embed-menu")) return original.call(this);
+    if (!(this instanceof HTMLElement) || !this.classList.contains("auto-embed-menu"))
+      return original.call(this);
+    const zoom = this.parentElement?.currentCSSZoom ?? 1;
+    const left = zoom * (Number.parseFloat(this.style.left) || 0) + origin.left;
+    const top = zoom * (Number.parseFloat(this.style.top) || 0) + origin.top;
     return {
-      left: 0,
-      top: 0,
+      left,
+      top,
       width,
       height,
-      right: width,
-      bottom: height,
-      x: 0,
-      y: 0,
+      right: left + width,
+      bottom: top + height,
+      x: left,
+      y: top,
       toJSON: () => ({}),
     } as DOMRect;
   };
@@ -174,16 +187,58 @@ describe("ContextMenuPlugin", () => {
 
   it("divides its coordinates by the container's zoom factor", async () => {
     // The container is larger than the jsdom viewport (1024x768), so the visible box reduces to
-    // the viewport itself, and 300/400 sit well within it; no clamping applies here, so the
-    // division is what is under test.
+    // the viewport itself, and a 200x100 menu at 300/400 sits well within it; no clamping applies
+    // here, so the division is what is under test.
     const container = stubbedContainer(2, { left: 0, top: 0, width: 10000, height: 10000 });
     const { editor } = await contextMenuEnvironment(() => container);
 
-    const menu = await openMenu(editor, 300, 400);
+    const restoreMenuLayout = stubMenuLayout(200, 100);
+    try {
+      const menu = await openMenu(editor, 300, 400);
 
-    // The menu must sit at viewport (300, 400); inside a zoom:2 element that is left/top 150/200.
-    expect(menu.style.left).toBe("150px");
-    expect(menu.style.top).toBe("200px");
+      // The menu must sit at viewport (300, 400); inside a zoom:2 element that is left/top
+      // 150/200, and since the viewport is the containing block that is where it lands.
+      expect(menu.style.left).toBe("150px");
+      expect(menu.style.top).toBe("200px");
+    } finally {
+      restoreMenuLayout();
+    }
+  });
+
+  it("shifts the menu back when the containing block is not the viewport", async () => {
+    const container = stubbedContainer(2, { left: 0, top: 0, width: 10000, height: 10000 });
+    const { editor } = await contextMenuEnvironment(() => container);
+
+    // An ancestor carrying a transform takes over as the containing block, so the menu's offsets
+    // are measured from (120, 60) instead of from the viewport's corner.
+    const restoreMenuLayout = stubMenuLayout(200, 100, { left: 120, top: 60 });
+    try {
+      const menu = await openMenu(editor, 300, 400);
+
+      // Written straight, 150/200 would land at 2*150 + 120 = 420 and 2*200 + 60 = 460. Taking
+      // the error back out in pre-zoom units gives (300 - 120)/2 = 90 and (400 - 60)/2 = 170,
+      // which render at 2*90 + 120 = 300 and 2*170 + 60 = 400: the point that was right-clicked.
+      expect(menu.style.left).toBe("90px");
+      expect(menu.style.top).toBe("170px");
+    } finally {
+      restoreMenuLayout();
+    }
+  });
+
+  it("does not read the menu's placement back when there is no container", async () => {
+    const { editor } = await contextMenuEnvironment();
+
+    // The same displaced containing block. Portalled to `document.body` the menu is placed in
+    // plain viewport pixels, so the coordinates are written once and left alone.
+    const restoreMenuLayout = stubMenuLayout(200, 100, { left: 120, top: 60 });
+    try {
+      const menu = await openMenu(editor, 300, 400);
+
+      expect(menu.style.left).toBe("300px");
+      expect(menu.style.top).toBe("400px");
+    } finally {
+      restoreMenuLayout();
+    }
   });
 
   it("does not divide when there is no container", async () => {
@@ -201,7 +256,7 @@ describe("ContextMenuPlugin", () => {
     const { editor } = await contextMenuEnvironment(() => container);
 
     // The menu is measured at 200x100; jsdom otherwise reports zero and lets any left through.
-    const restoreMenuSize = stubMenuSize(200, 100);
+    const restoreMenuLayout = stubMenuLayout(200, 100);
     try {
       // Right-click near the container's right edge.
       const menu = await openMenu(editor, 380, 10);
@@ -209,7 +264,7 @@ describe("ContextMenuPlugin", () => {
       // Without container clamping it would sit at 380; clamped, it's min(380, 400 - 200) = 200.
       expect(menu.style.left).toBe("200px");
     } finally {
-      restoreMenuSize();
+      restoreMenuLayout();
     }
   });
 
@@ -238,7 +293,7 @@ describe("ContextMenuPlugin", () => {
     const { editor } = await contextMenuEnvironment(() => container);
 
     // The menu is measured at 200x100; jsdom otherwise reports zero and lets any top through.
-    const restoreMenuSize = stubMenuSize(200, 100);
+    const restoreMenuLayout = stubMenuLayout(200, 100);
     try {
       // Right-click near the pane's bottom edge.
       const menu = await openMenu(editor, 10, 290);
@@ -247,7 +302,7 @@ describe("ContextMenuPlugin", () => {
       // min(290, 300 - 100) = 200, proving the ancestor walk, not just the container, bounds it.
       expect(menu.style.top).toBe("200px");
     } finally {
-      restoreMenuSize();
+      restoreMenuLayout();
     }
   });
 
@@ -256,10 +311,15 @@ describe("ContextMenuPlugin", () => {
     const container = stubbedContainer(2, { left: 0, top: 0, width: 400, height: 300 });
     const { editor } = await contextMenuEnvironment(() => container);
 
-    const menu = await openMenu(editor, 10, 10);
+    const restoreMenuLayout = stubMenuLayout(200, 100);
+    try {
+      const menu = await openMenu(editor, 10, 10);
 
-    expect(menu.style.maxHeight).toBe("150px");
-    expect(menu.style.overflowY).toBe("auto");
+      expect(menu.style.maxHeight).toBe("150px");
+      expect(menu.style.overflowY).toBe("auto");
+    } finally {
+      restoreMenuLayout();
+    }
   });
 
   it("sets no height cap when there is no container", async () => {
@@ -268,5 +328,31 @@ describe("ContextMenuPlugin", () => {
     const menu = await openMenu(editor, 10, 10);
 
     expect(menu.style.maxHeight).toBe("");
+  });
+
+  it("stays open while the user scrolls the menu itself", async () => {
+    const { editor } = await contextMenuEnvironment();
+
+    const menu = await openMenu(editor, 10, 10);
+    const list = menu.querySelector("ul");
+    if (!list) throw new Error("no menu list to scroll");
+
+    await act(async () => {
+      list.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(document.querySelector(".auto-embed-menu")).not.toBeNull();
+  });
+
+  it("closes when the page scrolls beneath it", async () => {
+    const { editor } = await contextMenuEnvironment();
+
+    await openMenu(editor, 10, 10);
+
+    await act(async () => {
+      document.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(document.querySelector(".auto-embed-menu")).toBeNull();
   });
 });
