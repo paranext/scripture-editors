@@ -141,12 +141,6 @@ function $inLiteralOnlyBlock(node: LexicalNode): boolean {
   return false;
 }
 
-/** Pend `node`'s own key for a rebuild this update declines to perform, leaving it to the
- * caret-departure or idle settle. */
-function $pendDeferredRebuild(node: TextNode, context: MarkerEditContext): void {
-  context.pendingKeys.add(node.getKey());
-}
-
 /**
  * The engine's plain-`TextNode` transform — the TRIGGER that decides what a text edit means for
  * the settle. Exactly one of: clear the node's pend (bytes at rest/canonical), record a pend for
@@ -299,7 +293,7 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
     // rearranges the line under the caret while the user is still on it. Pending instead leaves
     // what they typed alone until they depart, and the departure settle performs the same rebuild.
     if (milestoneEjectionPending(text)) {
-      $pendDeferredRebuild(node, context);
+      context.pendingKeys.add(node.getKey());
       return;
     }
     context.pendingKeys.delete(node.getKey());
@@ -315,7 +309,7 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
       // materializes no nodes — see `$rebuildParas`), so pending never destabilizes the
       // damping; for the identical-second-paragraph case it performs the rebuild the guard
       // would otherwise have swallowed.
-      $pendDeferredRebuild(node, context);
+      context.pendingKeys.add(node.getKey());
       return;
     }
     context.rebuildAttempted.add(text);

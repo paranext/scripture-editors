@@ -1022,7 +1022,6 @@ function $appendNodesFragment(
  * against its hand-built wrapped-shape equivalent for byte-for-byte equality
  * (`tier2Rebuild.utils.test.tsx`) — the direct evidence that wrapping a run changes nothing about
  * what gets tokenized.
- *
  */
 export function $buildParaFragment(
   para: ParaNode,
