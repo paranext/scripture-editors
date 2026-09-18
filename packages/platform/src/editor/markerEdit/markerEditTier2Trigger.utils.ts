@@ -420,8 +420,9 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
       // verse-attribute-site branch). Undoing an optbreak settle restores the literal `//`, and
       // undoing a settled fold restores the empty source span's typed value — both are the same
       // divergence class and must re-pend so the next departure re-settles them. No
-      // literal-only-block guard is needed here: the scan never descends into books or
-      // unknowns (handled below), so a `//` there is never visited, and chapter interiors are
+      // literal-only-block guard is needed here: the scan never descends into unknowns (handled
+      // below), so a `//` there is never visited; a book's line is visited, but it settles like a
+      // paragraph's ($rebuildBook) rather than keeping its literals; and chapter interiors are
       // claimed by the chapter arm above.
       if (
         text.includes("\\") ||
