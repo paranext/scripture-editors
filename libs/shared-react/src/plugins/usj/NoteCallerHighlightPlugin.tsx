@@ -67,10 +67,13 @@ export const NoteCallerHighlightPlugin = forwardRef<NoteCallerHighlightHandle>(
       ref,
       () => ({
         setHighlightedNote(noteKeyOrIndex) {
+          // `editor.read` flushes any update still in flight first, as `EditorRef.getNoteIndex`
+          // does, so an index resolves against the document the caller just produced rather than
+          // the one before its last edit.
           highlightedKeyRef.current =
             noteKeyOrIndex === undefined
               ? undefined
-              : editor.getEditorState().read(() => $getNoteByKeyOrIndex(noteKeyOrIndex)?.getKey());
+              : editor.read(() => $getNoteByKeyOrIndex(noteKeyOrIndex)?.getKey());
           applyHighlight();
         },
       }),

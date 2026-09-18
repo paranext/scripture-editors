@@ -285,4 +285,19 @@ describe("EditorRef.highlightNote", () => {
     expect(after).not.toBe(before);
     expect(highlightedCallers(container)).toEqual([after]);
   });
+
+  // A host that edits and then highlights by index in the same turn means the note at that index
+  // AFTER its edit, not the one that sat there before it.
+  it("resolves an index against an edit still in flight", async () => {
+    const { editorRef, lexical, container } = await renderEditor(threeNotesUsj);
+    const [first] = noteKeys(lexical);
+    await act(async () => {
+      lexical.update(() => {
+        $getNodeByKey(first)?.remove();
+      });
+      editorRef.highlightNote(0);
+    });
+    expect(container.querySelectorAll(".note")).toHaveLength(2);
+    expect(highlightedCallers(container)).toEqual([callerOf(container, 0)]);
+  });
 });
