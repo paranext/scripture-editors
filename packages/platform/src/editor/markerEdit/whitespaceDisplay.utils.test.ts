@@ -1,4 +1,4 @@
-import { displayTextToUsj, normalizeSpaceRuns, usjTextToDisplay } from "./whitespaceDisplay.utils";
+import { displayTextToUsj, usjTextToDisplay } from "./whitespaceDisplay.utils";
 import { NBSP } from "shared";
 
 describe("usjTextToDisplay", () => {
@@ -31,19 +31,5 @@ describe("displayTextToUsj", () => {
   it("round-trips with usjTextToDisplay for normalized text", () => {
     const data = `In the days${NBSP}of the judges`;
     expect(displayTextToUsj(usjTextToDisplay(data))).toBe(data);
-  });
-});
-
-describe("normalizeSpaceRuns", () => {
-  it("collapses space runs to a single space", () => {
-    expect(normalizeSpaceRuns("a  b   c")).toBe("a b c");
-  });
-
-  it("leaves a lone single-space string untouched", () => {
-    expect(normalizeSpaceRuns(" ")).toBe(" ");
-  });
-
-  it("does not collapse NBSP", () => {
-    expect(normalizeSpaceRuns(`a${NBSP}${NBSP}b`)).toBe(`a${NBSP}${NBSP}b`);
   });
 });

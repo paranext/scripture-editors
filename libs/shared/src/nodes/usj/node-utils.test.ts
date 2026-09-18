@@ -1061,12 +1061,12 @@ describe("Editor Node Utilities", () => {
         expect($getLogicalIndexOfChild(para, trailingText)).toBe(0);
 
         // Cumulative offsets: "the " (4) + "man" (3) + " who".
-        expect($getLogicalTextLocation(markedText, 1)).toEqual({
+        expect($getLogicalTextLocation(markedText, 1, false)).toEqual({
           parent: para,
           index: 0,
           offset: 5,
         });
-        expect($getLogicalTextLocation(trailingText, 2)).toEqual({
+        expect($getLogicalTextLocation(trailingText, 2, false)).toEqual({
           parent: para,
           index: 0,
           offset: 9,
@@ -1098,7 +1098,7 @@ describe("Editor Node Utilities", () => {
         // USJ content: [0]="aaa bb cc ", [1]=char, [2]="dd" — the mark is invisible.
         expect($getLogicalIndexOfChild(para, charNode)).toBe(1);
         expect($getLogicalIndexOfChild(para, tailText)).toBe(2);
-        expect($getLogicalTextLocation(tailText, 1)).toEqual({
+        expect($getLogicalTextLocation(tailText, 1, false)).toEqual({
           parent: para,
           index: 2,
           offset: 1,
@@ -1117,7 +1117,7 @@ describe("Editor Node Utilities", () => {
         const para = $getRoot().getFirstChild();
         if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
         expect($getLogicalIndexOfChild(para, markerNode)).toBe(-1);
-        expect($getLogicalTextLocation(markerNode, 0)).toBeUndefined();
+        expect($getLogicalTextLocation(markerNode, 0, false)).toBeUndefined();
       });
     });
   });
@@ -1166,14 +1166,14 @@ describe("Editor Node Utilities", () => {
         $expectTextItem(items[0], [{ text: `${NBSP}LORD`, start: 0, lead: 1 }]);
 
         // A local offset past the separator is its distance into the content.
-        expect($getLogicalTextLocation(charText, 3)).toEqual({
+        expect($getLogicalTextLocation(charText, 3, false)).toEqual({
           parent: charText.getParent(),
           index: 0,
           offset: 2,
         });
         // Both sides of the separator itself are the start of the content.
-        expect($getLogicalTextLocation(charText, 0)?.offset).toBe(0);
-        expect($getLogicalTextLocation(charText, 1)?.offset).toBe(0);
+        expect($getLogicalTextLocation(charText, 0, false)?.offset).toBe(0);
+        expect($getLogicalTextLocation(charText, 1, false)?.offset).toBe(0);
 
         const item = items[0];
         if (item.type !== "text") throw new Error("Expected a text item");
@@ -1237,14 +1237,14 @@ describe("Editor Node Utilities", () => {
         if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
         const [nd, wj] = para.getChildren().filter($isCharNode);
 
-        $expectTextItem($getLogicalContentItems(nd)[0], [
+        $expectTextItem($getLogicalContentItems(nd, false)[0], [
           { text: `${NBSP}LORD`, start: 0, lead: 1 },
         ]);
-        expect($getLogicalTextLocation(sharedText, 3)?.offset).toBe(2);
-        $expectTextItem($getLogicalContentItems(wj)[0], [
+        expect($getLogicalTextLocation(sharedText, 3, false)?.offset).toBe(2);
+        $expectTextItem($getLogicalContentItems(wj, false)[0], [
           { text: `${NBSP}God`, start: 0, lead: 1 },
         ]);
-        expect($getLogicalTextLocation(followingText, 3)?.offset).toBe(2);
+        expect($getLogicalTextLocation(followingText, 3, false)?.offset).toBe(2);
       });
     });
 
@@ -1279,20 +1279,166 @@ describe("Editor Node Utilities", () => {
       editor.getEditorState().read(() => {
         const para = $getRoot().getFirstChild();
         if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
-        $expectTextItem($getLogicalContentItems(para)[0], [{ text: `${NBSP}data`, start: 0 }]);
+        $expectTextItem($getLogicalContentItems(para, false)[0], [
+          { text: `${NBSP}data`, start: 0 },
+        ]);
 
         const charItems = $getCharItems();
         $expectTextItem(charItems[0], [{ text: `${NBSP}LORD`, start: 0, lead: 1 }]);
         $expectTextItem(charItems[2], [{ text: `${NBSP}tail`, start: 0 }]);
-        expect($getLogicalTextLocation(tailText, 1)?.offset).toBe(1);
+        expect($getLogicalTextLocation(tailText, 1, false)?.offset).toBe(1);
 
         // The nested span owns its own opening glyph, so its first text carries a separator too.
         const nested = charItems[1];
         if (nested.type !== "element" || !$isCharNode(nested.node))
           throw new Error("Expected the nested char span");
-        $expectTextItem($getLogicalContentItems(nested.node)[0], [
+        $expectTextItem($getLogicalContentItems(nested.node, false)[0], [
           { text: `${NBSP}said`, start: 0, lead: 1 },
         ]);
+      });
+    });
+  });
+
+  describe("space runs where serialization collapses them", () => {
+    it("counts a run as the one space serialization keeps", () => {
+      let text: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        text = $createTextNode(`a${NBSP}${NBSP}${NBSP}b`);
+        $getRoot().append($createParaNode("p").append(text));
+      });
+
+      editor.getEditorState().read(() => {
+        const para = text.getParentOrThrow();
+        const [item] = $getLogicalContentItems(para, true);
+        if (item?.type !== "text") throw new Error("Expected a text item");
+
+        expect(item.length).toBe("a b".length);
+        // A point inside the run reports the character after the space the run keeps.
+        expect(
+          [0, 1, 2, 3, 4, 5].map((offset) => $getLogicalTextLocation(text, offset, true)?.offset),
+        ).toEqual([0, 1, 2, 2, 2, 3]);
+        // A settled offset lands on the live character it names, so past the whole run.
+        expect([0, 1, 2, 3].map((offset) => $getTextNodeAtLogicalOffset(item, offset))).toEqual([
+          [text, 0],
+          [text, 1],
+          [text, 4],
+          [text, 5],
+        ]);
+      });
+    });
+
+    it("keeps every character where serialization does not collapse runs", () => {
+      let text: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        text = $createTextNode(`a${NBSP}${NBSP}${NBSP}b`);
+        $getRoot().append($createParaNode("p").append(text));
+      });
+
+      editor.getEditorState().read(() => {
+        const [item] = $getLogicalContentItems(text.getParentOrThrow(), false);
+        if (item?.type !== "text") throw new Error("Expected a text item");
+
+        expect(item.length).toBe(5);
+        expect($getLogicalTextLocation(text, 4, false)?.offset).toBe(4);
+        expect($getTextNodeAtLogicalOffset(item, 3)).toEqual([text, 3]);
+      });
+    });
+
+    it("collapses a run after a char span's separator without counting the separator in it", () => {
+      let singleSpace: TextNode;
+      let run: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        singleSpace = $createTextNode(`${NBSP} LORD`);
+        run = $createTextNode(`${NBSP}${NBSP}${NBSP}God`);
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createCharNode("nd").append(
+              $createMarkerNode("nd"),
+              singleSpace,
+              $createMarkerNode("nd", "closing"),
+            ),
+            $createCharNode("wj").append(
+              $createMarkerNode("wj"),
+              run,
+              $createMarkerNode("wj", "closing"),
+            ),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        const [nd, wj] = singleSpace.getParentOrThrow().getParentOrThrow().getChildren();
+        if (!$isCharNode(nd) || !$isCharNode(wj)) throw new Error("Expected two char spans");
+
+        // The separator and the content's own leading space are not a run: the separator goes
+        // before serialization collapses anything.
+        const [ndItem] = $getLogicalContentItems(nd, true);
+        if (ndItem?.type !== "text") throw new Error("Expected a text item");
+        expect(ndItem.length).toBe(" LORD".length);
+        expect($getLogicalTextLocation(singleSpace, 2, true)?.offset).toBe(1);
+
+        // Content that starts with a run keeps the run's first space after the separator.
+        const [wjItem] = $getLogicalContentItems(wj, true);
+        if (wjItem?.type !== "text") throw new Error("Expected a text item");
+        expect(wjItem.length).toBe(" God".length);
+        expect(
+          [0, 1, 2, 3, 4].map((offset) => $getLogicalTextLocation(run, offset, true)?.offset),
+        ).toEqual([0, 0, 1, 1, 2]);
+        expect([0, 1, 4].map((offset) => $getTextNodeAtLogicalOffset(wjItem, offset))).toEqual([
+          [run, 1],
+          [run, 3],
+          [run, 6],
+        ]);
+      });
+    });
+
+    it("measures each text node on its own, as serialization does", () => {
+      // A run split across an annotation's edge is two single spaces to the exporter, which
+      // collapses each node's text before joining it with its neighbors.
+      let marked: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        marked = $createTextNode(`${NBSP}b`);
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createTextNode(`a${NBSP}`),
+            $createTypedMarkNode({ t: ["1"] }).append(marked),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        const [item] = $getLogicalContentItems($getRoot().getFirstChildOrThrow(), true);
+        if (item?.type !== "text") throw new Error("Expected a text item");
+
+        expect(item.length).toBe(4);
+        expect($getLogicalTextLocation(marked, 1, true)?.offset).toBe(3);
+      });
+    });
+
+    it("starts a following segment after the collapsed run", () => {
+      let marked: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        marked = $createTextNode("b");
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createTextNode(`a${NBSP}${NBSP}${NBSP}`),
+            $createTypedMarkNode({ t: ["1"] }).append(marked),
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        const para = marked.getParentOrThrow().getParentOrThrow();
+        const [item] = $getLogicalContentItems(para, true);
+        if (item?.type !== "text") throw new Error("Expected a text item");
+
+        expect(item.segments.map((segment) => segment.start)).toEqual([0, 2]);
+        expect($getLogicalTextLocation(marked, 0, true)?.offset).toBe(2);
+        expect($getLogicalPointFromElementPoint(para, 1, true)).toEqual({
+          type: "text",
+          index: 0,
+          offset: 2,
+        });
       });
     });
   });
@@ -1318,7 +1464,7 @@ describe("Editor Node Utilities", () => {
       editor.getEditorState().read(() => {
         const para = $getRoot().getFirstChild();
         if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
-        const items = $getLogicalContentItems(para);
+        const items = $getLogicalContentItems(para, false);
 
         expect(items.map((item) => (item.type === "text" ? "text" : item.node.getType()))).toEqual([
           "verse",
@@ -1342,7 +1488,7 @@ describe("Editor Node Utilities", () => {
       editor.getEditorState().read(() => {
         const note = content.getParent();
         if (!$isElementNode(note)) throw new Error("Expected the note");
-        const items = $getLogicalContentItems(note);
+        const items = $getLogicalContentItems(note, false);
 
         expect(items.map((item) => (item.type === "text" ? "text" : item.node.getType()))).toEqual([
           "char",
@@ -1373,7 +1519,7 @@ describe("Editor Node Utilities", () => {
       editor.getEditorState().read(() => {
         const note = content.getParent();
         if (!$isElementNode(note)) throw new Error("Expected the note");
-        const items = $getLogicalContentItems(note);
+        const items = $getLogicalContentItems(note, false);
 
         // The caller occupies the slot right after the opening glyph; the same bytes later in the
         // note are content the exporter would emit, so the rule is positional, not textual.
@@ -1403,7 +1549,7 @@ describe("Editor Node Utilities", () => {
 
       editor.getEditorState().read(() => {
         // The chapter marker itself is content; the `\c N` glyph it displays is not.
-        expect($getLogicalContentItems(chapter)).toEqual([]);
+        expect($getLogicalContentItems(chapter, false)).toEqual([]);
         expect(
           chapter.getChildren().map((child) => $shouldIgnoreNodeForContentIndexes(child)),
         ).toEqual([true, true]);
@@ -1435,23 +1581,32 @@ describe("Editor Node Utilities", () => {
         // Logical content items: 0="aaa bb cc "   1=Char     2="dd"
 
         // Boundary before child 0 = before item 0.
-        expect($getLogicalPointFromElementPoint(para, 0)).toEqual({ type: "index", index: 0 });
+        expect($getLogicalPointFromElementPoint(para, 0, false)).toEqual({
+          type: "index",
+          index: 0,
+        });
         // Boundary before the mark falls INSIDE logical item 0 at cumulative offset 4.
-        expect($getLogicalPointFromElementPoint(para, 1)).toEqual({
+        expect($getLogicalPointFromElementPoint(para, 1, false)).toEqual({
           type: "text",
           index: 0,
           offset: 4,
         });
         // Boundary before " cc " is also inside item 0, at offset 6.
-        expect($getLogicalPointFromElementPoint(para, 2)).toEqual({
+        expect($getLogicalPointFromElementPoint(para, 2, false)).toEqual({
           type: "text",
           index: 0,
           offset: 6,
         });
         // Boundary before the char is the clean boundary between items 0 and 1.
-        expect($getLogicalPointFromElementPoint(para, 3)).toEqual({ type: "index", index: 1 });
+        expect($getLogicalPointFromElementPoint(para, 3, false)).toEqual({
+          type: "index",
+          index: 1,
+        });
         // End boundary.
-        expect($getLogicalPointFromElementPoint(para, 5)).toEqual({ type: "index", index: 3 });
+        expect($getLogicalPointFromElementPoint(para, 5, false)).toEqual({
+          type: "index",
+          index: 3,
+        });
 
         // Inverse: earliest element child offset for each logical boundary.
         expect($getElementOffsetFromLogicalIndex(para, 0)).toBe(0);
@@ -1484,7 +1639,10 @@ describe("Editor Node Utilities", () => {
 
         // Boundary before the mark (child index 1) falls on the char's logical index, not the
         // mark's own (dropped) index.
-        expect($getLogicalPointFromElementPoint(para, 1)).toEqual({ type: "index", index: 1 });
+        expect($getLogicalPointFromElementPoint(para, 1, false)).toEqual({
+          type: "index",
+          index: 1,
+        });
       });
     });
   });
@@ -1501,7 +1659,7 @@ describe("Editor Node Utilities", () => {
 function $getFirstParaItems(): LogicalContentItem[] {
   const para = $getRoot().getFirstChild();
   if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
-  return $getLogicalContentItems(para);
+  return $getLogicalContentItems(para, false);
 }
 
 /**
@@ -1567,7 +1725,7 @@ function $getCharItems(): LogicalContentItem[] {
   if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
   const char = para.getChildren().find($isCharNode);
   if (!char) throw new Error("Expected a char span");
-  return $getLogicalContentItems(char);
+  return $getLogicalContentItems(char, false);
 }
 
 /** Build "the " |man| " who" where "man" is annotated, returning the three text nodes. */

@@ -1,3 +1,4 @@
+import { hasStandardViewWhitespace, ViewOptions } from "../../../views/view-options.utils";
 import { AnnotationRange, SelectionRange } from "./selection.model";
 import {
   type PropertyJsonPath,
@@ -76,6 +77,8 @@ import {
  *
  * @param selection - The USJ selection range to convert. Can be either a SelectionRange or
  *   AnnotationRange.
+ * @param viewOptions - The editor's view options, which decide how its text maps to USJ offsets
+ *   (see {@link $getNodeFromLocation}).
  * @returns A new editor RangeSelection object if the conversion is successful, or `undefined` if
  *   the required nodes or offsets cannot be found.
  *
@@ -91,6 +94,7 @@ import {
  */
 export function $getRangeFromUsjSelection(
   selection: SelectionRange | AnnotationRange,
+  viewOptions: ViewOptions | undefined,
 ): RangeSelection | undefined {
   if ($hasVerseBlocks()) return undefined;
 
@@ -99,8 +103,8 @@ export function $getRangeFromUsjSelection(
   end ??= start;
 
   // Find the start and end nodes with offsets based on the location.
-  let [startNode, startOffset] = $getNodeFromLocation(start);
-  let [endNode, endOffset] = $getNodeFromLocation(end);
+  let [startNode, startOffset] = $getNodeFromLocation(start, viewOptions);
+  let [endNode, endOffset] = $getNodeFromLocation(end, viewOptions);
   if (!startNode || !endNode || startOffset === undefined || endOffset === undefined)
     return undefined;
 
@@ -120,11 +124,15 @@ export function $getRangeFromUsjSelection(
  * This function extracts the selection range from the editor's current state. It handles both
  * forward and backward selections, as well as collapsed (single point) selections.
  *
+ * @param viewOptions - The editor's view options, which decide how its text maps to USJ offsets
+ *   (see {@link $getLocationFromNode}).
  * @returns A USJ `SelectionRange` object containing the start and end positions of the selection,
  *   or `undefined` if there is no valid range selection. Always `undefined` in the block verse
  *   layout - see {@link $getRangeFromUsjSelection} for why.
  */
-export function $getUsjSelectionFromEditor(): SelectionRange | undefined {
+export function $getUsjSelectionFromEditor(
+  viewOptions: ViewOptions | undefined,
+): SelectionRange | undefined {
   if ($hasVerseBlocks()) return undefined;
 
   const editorSelection = $getSelection();
@@ -136,7 +144,7 @@ export function $getUsjSelectionFromEditor(): SelectionRange | undefined {
   const startOffset = editorSelection.isBackward()
     ? editorSelection.focus.offset
     : editorSelection.anchor.offset;
-  const start = $getLocationFromNode(startNode, startOffset);
+  const start = $getLocationFromNode(startNode, startOffset, viewOptions);
   if (editorSelection.isCollapsed()) return { start };
 
   const endNode = editorSelection.isBackward()
@@ -145,7 +153,7 @@ export function $getUsjSelectionFromEditor(): SelectionRange | undefined {
   const endOffset = editorSelection.isBackward()
     ? editorSelection.anchor.offset
     : editorSelection.focus.offset;
-  const end = $getLocationFromNode(endNode, endOffset);
+  const end = $getLocationFromNode(endNode, endOffset, viewOptions);
 
   return { start, end };
 }
@@ -685,6 +693,7 @@ function isSameByteKind(span: DisplayByteKind, wanted: DisplayByteKind): boolean
 function $locationFromDisplayBytes(
   node: LexicalNode,
   offset: number,
+  collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation | undefined {
   const bytes = $displayBytesOf(node);
   if (!bytes || bytes.spans.length === 0) return undefined;
@@ -715,16 +724,19 @@ function $locationFromDisplayBytes(
     case "closingAttributeMarker":
       return { jsonPath, keyName: span.bytes.keyName, keyClosingMarkerOffset: within };
     case "precedingText":
-      return $precedingTextLocation(node);
+      return $precedingTextLocation(node, collapsesSpaceRuns);
   }
 }
 
 /** The end of the last text content before `node` — where a byte with no representation of its own
  * (the `|` opening an attribute run) snaps to. */
-function $precedingTextLocation(node: LexicalNode): UsjDocumentLocation | undefined {
+function $precedingTextLocation(
+  node: LexicalNode,
+  collapsesSpaceRuns: boolean,
+): UsjDocumentLocation | undefined {
   const parent = $getLogicalParent(node);
   if (!parent) return undefined;
-  const items = $getLogicalContentItems(parent);
+  const items = $getLogicalContentItems(parent, collapsesSpaceRuns);
   for (let index = items.length - 1; index >= 0; index--) {
     const item = items[index];
     if (item.type !== "text") continue;
@@ -766,9 +778,21 @@ function $pointFromDisplayBytes(
   return undefined;
 }
 
+/**
+ * Finds the live point a USJ location names.
+ *
+ * @param location - The location, in the coordinates of the USJ the editor serializes to.
+ * @param viewOptions - The editor's view options. In Standard view serialization collapses a run of
+ *   two or more spaces to one, so a text offset past such a run is that much further along in the
+ *   live text.
+ * @returns The node and offset, or `[undefined, undefined]` when nothing in the tree matches.
+ */
 export function $getNodeFromLocation(
   location: UsjDocumentLocation,
+  viewOptions: ViewOptions | undefined,
 ): [LexicalNode | undefined, number | undefined] {
+  const collapsesSpaceRuns = hasStandardViewWhitespace(viewOptions);
+
   // Handle UsjTextContentLocation first (most common case)
   if (isUsjTextContentLocation(location)) {
     const jsonPathIndexes = indexesFromUsjJsonPath(location.jsonPath);
@@ -776,8 +800,10 @@ export function $getNodeFromLocation(
     for (let i = 0; i < jsonPathIndexes.length; i++) {
       if (!currentNode || !$isElementNode(currentNode)) return [undefined, undefined];
 
-      const item: LogicalContentItem | undefined =
-        $getLogicalContentItems(currentNode)[jsonPathIndexes[i]];
+      const item: LogicalContentItem | undefined = $getLogicalContentItems(
+        currentNode,
+        collapsesSpaceRuns,
+      )[jsonPathIndexes[i]];
       if (!item) return [undefined, undefined];
 
       if (item.type === "text") {
@@ -800,7 +826,7 @@ export function $getNodeFromLocation(
   // because UsjAttributeMarkerLocation has keyName but no offsets, similar to UsjMarkerLocation.
   // Checking for keyName first ensures correct type narrowing.
   if (isUsjAttributeKeyLocation(location) || isUsjAttributeMarkerLocation(location)) {
-    const node = $navigateToNode(location.jsonPath);
+    const node = $navigateToNode(location.jsonPath, collapsesSpaceRuns);
     if (!node) return [undefined, undefined];
 
     const { keyName } = location;
@@ -814,7 +840,7 @@ export function $getNodeFromLocation(
 
   // Handle UsjClosingAttributeMarkerLocation BEFORE UsjMarkerLocation/UsjClosingMarkerLocation.
   if (isUsjClosingAttributeMarkerLocation(location)) {
-    const node = $navigateToNode(location.jsonPath);
+    const node = $navigateToNode(location.jsonPath, collapsesSpaceRuns);
     if (!node) return [undefined, undefined];
 
     const point = $pointFromDisplayBytes(
@@ -829,7 +855,7 @@ export function $getNodeFromLocation(
 
   // Handle UsjMarkerLocation - position at the beginning of the opening marker
   if (isUsjMarkerLocation(location)) {
-    const node = $navigateToNode(location.jsonPath);
+    const node = $navigateToNode(location.jsonPath, collapsesSpaceRuns);
     if (!node) return [undefined, undefined];
 
     const point = $pointFromDisplayBytes(node, { kind: "marker" }, 0);
@@ -845,7 +871,7 @@ export function $getNodeFromLocation(
 
   // Handle UsjClosingMarkerLocation - position within the closing marker
   if (isUsjClosingMarkerLocation(location)) {
-    const node = $navigateToNode(location.jsonPath);
+    const node = $navigateToNode(location.jsonPath, collapsesSpaceRuns);
     if (!node) return [undefined, undefined];
 
     const point = $pointFromDisplayBytes(
@@ -869,7 +895,7 @@ export function $getNodeFromLocation(
     const propertyMatch = location.jsonPath.match(/\.(\w+)$|^\$\.(\w+)$|\['([^']+)'\]$/);
     const propertyName = propertyMatch?.[1] ?? propertyMatch?.[2] ?? propertyMatch?.[3];
 
-    const node = $navigateToNode(location.jsonPath);
+    const node = $navigateToNode(location.jsonPath, collapsesSpaceRuns);
     if (!node || propertyName === undefined) return [undefined, undefined];
 
     const point = $pointFromDisplayBytes(
@@ -927,9 +953,11 @@ function $getPointType(node: LexicalNode | undefined): "text" | "element" {
 /**
  * Navigates to a node using jsonPath indexes.
  * @param jsonPath - The jsonPath string to navigate.
+ * @param collapsesSpaceRuns - Whether serialization collapses space runs; see
+ *   `$getLogicalContentItems`.
  * @returns The node at the path, or undefined if not found.
  */
-function $navigateToNode(jsonPath: string): LexicalNode | undefined {
+function $navigateToNode(jsonPath: string, collapsesSpaceRuns: boolean): LexicalNode | undefined {
   // Extract just the content path portion (strip property suffix if present)
   const contentPathMatch = new RegExp(/^(\$(?:\.content\[\d+\])*)(?:\.|$|\[)/).exec(jsonPath);
   const contentPath = contentPathMatch ? contentPathMatch[1] : jsonPath;
@@ -939,7 +967,10 @@ function $navigateToNode(jsonPath: string): LexicalNode | undefined {
   for (const index of jsonPathIndexes) {
     if (!currentNode || !$isElementNode(currentNode)) return undefined;
 
-    const item: LogicalContentItem | undefined = $getLogicalContentItems(currentNode)[index];
+    const item: LogicalContentItem | undefined = $getLogicalContentItems(
+      currentNode,
+      collapsesSpaceRuns,
+    )[index];
     currentNode = item?.type === "element" ? item.node : undefined;
   }
   return currentNode;
@@ -956,12 +987,28 @@ function $navigateToNode(jsonPath: string): LexicalNode | undefined {
  *
  * @param node - The Lexical node.
  * @param offset - The offset within the node's text content.
+ * @param viewOptions - The editor's view options. In Standard view serialization collapses a run of
+ *   two or more spaces to one, so a text offset past such a run reports that many fewer characters,
+ *   and a point inside the run reports the character after the space it keeps.
  * @returns The appropriate UsjDocumentLocation subtype.
  */
-export function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLocation {
+export function $getLocationFromNode(
+  node: LexicalNode,
+  offset: number,
+  viewOptions: ViewOptions | undefined,
+): UsjDocumentLocation {
+  return $locationFromNode(node, offset, hasStandardViewWhitespace(viewOptions));
+}
+
+/** {@link $getLocationFromNode} with the view's whitespace decision already made. */
+function $locationFromNode(
+  node: LexicalNode,
+  offset: number,
+  collapsesSpaceRuns: boolean,
+): UsjDocumentLocation {
   // Standard view renders USFM bytes as real nodes, so a point inside one of them is a point in
   // those bytes rather than in content.
-  const displayLocation = $locationFromDisplayBytes(node, offset);
+  const displayLocation = $locationFromDisplayBytes(node, offset, collapsesSpaceRuns);
   if (displayLocation) return displayLocation;
 
   if ($isTypedMarkNode(node)) {
@@ -971,7 +1018,7 @@ export function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocu
     const childAtOffset = node.getChildAtIndex(Math.min(offset, childrenSize - 1));
     if ($isTextNode(childAtOffset)) {
       const localOffset = offset >= childrenSize ? childAtOffset.getTextContentSize() : 0;
-      return $getLocationFromNode(childAtOffset, localOffset);
+      return $locationFromNode(childAtOffset, localOffset, collapsesSpaceRuns);
     }
 
     // Non-text child (e.g. a CharNode wrapped in the mark) or an empty mark (childAtOffset is
@@ -989,7 +1036,7 @@ export function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocu
     if (logicalParent?.is(node.getParent())) {
       const markIndex = node.getIndexWithinParent();
       const elementOffset = offset >= childrenSize ? markIndex + 1 : markIndex;
-      return $getLocationFromNode(logicalParent, elementOffset);
+      return $locationFromNode(logicalParent, elementOffset, collapsesSpaceRuns);
     }
   }
 
@@ -999,14 +1046,14 @@ export function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocu
     // A boundary in front of read-only display bytes is the only point that addresses them, so it
     // reports what those bytes are rather than a content boundary.
     if (childAtOffset && $isDisplayByteDecorator(childAtOffset)) {
-      const byteLocation = $locationFromDisplayBytes(childAtOffset, 0);
+      const byteLocation = $locationFromDisplayBytes(childAtOffset, 0, collapsesSpaceRuns);
       if (byteLocation) return byteLocation;
       return {
         jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)),
       } satisfies UsjMarkerLocation;
     }
 
-    const logicalPoint = $getLogicalPointFromElementPoint(node, offset);
+    const logicalPoint = $getLogicalPointFromElementPoint(node, offset, collapsesSpaceRuns);
     if (logicalPoint.type === "text") {
       // The boundary falls inside a coalesced USJ text item (e.g. at an annotation edge).
       return {
@@ -1022,7 +1069,7 @@ export function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocu
 
   // Regular text node - UsjTextContentLocation in coalesced-USJ coordinates.
   if ($isTextNode(node)) {
-    const logicalTextLocation = $getLogicalTextLocation(node, offset);
+    const logicalTextLocation = $getLogicalTextLocation(node, offset, collapsesSpaceRuns);
     if (logicalTextLocation) {
       return {
         jsonPath: usjJsonPathFromIndexes([

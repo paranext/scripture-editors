@@ -221,9 +221,20 @@ describe("an annotation inside a settling paragraph", () => {
     // Re-tokenizing a run of spaces collapses it to ONE, so an annotation over the run's last two
     // (which the editor displays as non-breaking spaces) is left with no bytes at all and both
     // ends of the carry resolve to the same position. Wrapping a collapsed range would mark the
-    // text in FRONT of it instead, so the carry refuses.
+    // text in FRONT of it instead, so the carry refuses. A host cannot address those two spaces \u2014
+    // the settled document it reads has already collapsed them \u2014 so the mark is wrapped straight
+    // over the live range, the shape an in-editor surface such as `CommentPlugin` creates.
     const mounted = await mountStandardViewEditor(twoParaUsj(["alpha   bravo charlie"]));
-    await annotate(mounted, atOffsets(6, 8), "1");
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const text = $textContaining("bravo");
+        const selection = $createRangeSelection();
+        selection.anchor.set(text.getKey(), 6, "text");
+        selection.focus.set(text.getKey(), 8, "text");
+        $wrapSelectionInTypedMarkNode(selection, markType("test"), "1");
+      });
+      await Promise.resolve();
+    });
     expect(annotatedText(mounted.lexical)).toEqual(["\u00a0\u00a0"]);
 
     await typeOver(mounted.lexical, "bravo charlie", "bravo charlie \\nd LORD\\nd*");

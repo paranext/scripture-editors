@@ -30,13 +30,15 @@ import {
 import { act } from "@testing-library/react";
 import {
   $getRoot,
+  $getSelection,
   $isElementNode,
+  $isRangeSelection,
   $isTextNode,
   LexicalEditor,
   LexicalNode,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
-import { $isParaNode, $isTypedMarkNode, getPendedDisplayOwners, TypedMarkNode } from "shared";
+import { $isParaNode, $isTypedMarkNode, getPendedDisplayOwners, NBSP, TypedMarkNode } from "shared";
 import { SelectionRange } from "shared-react";
 
 /** Every `TypedMarkNode` in the tree, depth-first. */
@@ -413,5 +415,99 @@ describe("setSelection reports the selection it placed", () => {
 
     expect(onSelectionChange).toHaveBeenCalledTimes(1);
     expect(onSelectionChange).toHaveBeenCalledWith(location);
+  });
+});
+
+/**
+ * Standard view shows a typed run of two or more spaces as NBSPs, so the run stays visible, and
+ * serialization collapses it to one space. A run is not marker syntax, so nothing is pending: these
+ * positions take the path that answers from the live tree directly.
+ */
+describe("positions past a space run the user typed", () => {
+  const settled = "In the beginning made";
+  const live = "In the   beginning made";
+  const liveM = live.indexOf(" made") + 1;
+  const settledMade = settled.indexOf("made");
+
+  async function typedRun(onSelectionChange?: (s: SelectionRange | undefined) => void) {
+    const mounted = await mountStandardViewEditor(twoParaUsj([settled]), { onSelectionChange });
+    await typeOver(mounted.lexical, settled, live);
+    // The shape typing leaves: the run displayed as NBSPs, nothing pending, and a settled document
+    // that already has the run collapsed.
+    const liveText = mounted.lexical
+      .getEditorState()
+      .read(() => $textContaining("beginning").getTextContent());
+    expect(liveText).toBe(`In the${NBSP}${NBSP}${NBSP}beginning made`);
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBe(0);
+    expect(settledPara(mounted.ref.current?.getUsj(), 2).content).toEqual([settled]);
+    return mounted;
+  }
+
+  async function moveCaretToMade(lexical: LexicalEditor) {
+    await act(async () => {
+      lexical.update(() => {
+        $textContaining("beginning").select(liveM, liveM);
+        lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("getSelection reports the settled character the caret is on", async () => {
+    const { ref, lexical } = await typedRun();
+    await moveCaretToMade(lexical);
+
+    const selection = ref.current?.getSelection();
+
+    if (!selection?.start) throw new Error("no selection");
+    expect(settledCharacterAt(ref.current?.getUsj(), selection.start)).toBe("m");
+  });
+
+  it("onSelectionChange reports the same coordinates getSelection does", async () => {
+    const onSelectionChange = vi.fn();
+    const { ref, lexical } = await typedRun(onSelectionChange);
+    onSelectionChange.mockClear();
+
+    await moveCaretToMade(lexical);
+
+    expect(onSelectionChange).toHaveBeenCalled();
+    const reported = onSelectionChange.mock.calls[onSelectionChange.mock.calls.length - 1][0];
+    expect(reported).toEqual(ref.current?.getSelection());
+    expect(settledCharacterAt(ref.current?.getUsj(), reported.start)).toBe("m");
+  });
+
+  it("setAnnotation wraps the characters its settled range names", async () => {
+    const { ref, lexical } = await typedRun();
+
+    await act(async () => {
+      ref.current?.setAnnotation(
+        {
+          start: { jsonPath: contentPath([2, 0]), offset: settledMade },
+          end: { jsonPath: contentPath([2, 0]), offset: settledMade + "made".length },
+        },
+        "test",
+        "1",
+      );
+      await Promise.resolve();
+    });
+
+    expect(annotatedText(lexical)).toEqual(["made"]);
+  });
+
+  it("setSelection places the caret on the character its settled offset names", async () => {
+    const { ref, lexical } = await typedRun();
+
+    await act(async () => {
+      ref.current?.setSelection({ start: { jsonPath: contentPath([2, 0]), offset: settledMade } });
+      await Promise.resolve();
+    });
+
+    const caret = lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) return undefined;
+      return selection.anchor.getNode().getTextContent()[selection.anchor.offset];
+    });
+    expect(caret).toBe("m");
   });
 });

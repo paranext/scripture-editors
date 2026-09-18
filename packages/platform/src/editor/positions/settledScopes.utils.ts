@@ -60,6 +60,7 @@ import {
   NoteNode,
   ParaNode,
 } from "shared";
+import { hasStandardViewWhitespace, ViewOptions } from "shared-react";
 
 /** The settled document's top-level content indexes, expressed against the live tree's. */
 export interface PreparedScopes {
@@ -78,6 +79,9 @@ export interface PreparedScopes {
   /** The plan whose live nodes contain `node`, if any — the NEAREST one, so a note settling
    * inside a settling paragraph answers with the note. */
   planContaining(node: LexicalNode): SettleScopePlan | undefined;
+  /** The view the scopes were prepared under, which also decides how live text maps to USJ
+   * offsets. */
+  readonly viewOptions: ViewOptions;
 }
 
 /** One settled top-level content item's provenance. */
@@ -297,7 +301,10 @@ function $planFrom(
   const scratch = materializeScratch(context.nodes, rebuilt);
   if (!scratch) return undefined;
   const { settledCount, scratchFragment } = scratch.getEditorState().read(() => ({
-    settledCount: $getLogicalContentItems($getRoot()).length,
+    settledCount: $getLogicalContentItems(
+      $getRoot(),
+      hasStandardViewWhitespace(context.tier2.viewOptions),
+    ).length,
     scratchFragment: $buildScopeFragment(kind, $getRoot().getChildren(), context.tier2),
   }));
   const sentinelMap = sentinelMapOf(
@@ -446,12 +453,13 @@ function $isPlanned(node: LexicalNode, byLiveKey: ReadonlyMap<NodeKey, SettleSco
 }
 
 /** The identity basis: the settled document IS the live tree, index for index. */
-function identityPrepared(): PreparedScopes {
+function identityPrepared(viewOptions: ViewOptions): PreparedScopes {
   return {
     byFirstLiveKey: new Map(),
     liveToSettledTopIndex: (liveIndex) => liveIndex,
     settledToLiveTopIndex: (settledIndex) => ({ liveIndex: settledIndex, indexWithinScope: 0 }),
     planContaining: () => undefined,
+    viewOptions,
   };
 }
 
@@ -461,11 +469,14 @@ function identityPrepared(): PreparedScopes {
  * contributes itself. A paragraph that splits therefore pushes everything after it DOWN, and a
  * rejoin pulls everything after it UP, by exactly what the settled output does.
  */
-function $mapTopIndexes(topPlans: ReadonlyMap<NodeKey, SettleScopePlan>): {
+function $mapTopIndexes(
+  topPlans: ReadonlyMap<NodeKey, SettleScopePlan>,
+  collapsesSpaceRuns: boolean,
+): {
   liveToSettled: number[];
   settledToLive: SettledTopIndex[];
 } {
-  const liveItems = $getLogicalContentItems($getRoot());
+  const liveItems = $getLogicalContentItems($getRoot(), collapsesSpaceRuns);
   const liveToSettled: number[] = [];
   const settledToLive: SettledTopIndex[] = [];
   let settledIndex = 0;
@@ -512,7 +523,7 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
     // Nothing is pending, so no cached plan can still be valid — and each one holds a scratch
     // editor plus references to live nodes the tree may have since replaced.
     context.cache.entries.clear();
-    return identityPrepared();
+    return identityPrepared(context.tier2.viewOptions);
   }
 
   const scopes = $collectSettleScopes(context.pendedKeys, context.tier2, transient);
@@ -599,9 +610,12 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
   for (const key of [...context.cache.entries.keys()])
     if (!stillPending.has(key)) context.cache.entries.delete(key);
 
-  if (byFirstLiveKey.size === 0) return identityPrepared();
+  if (byFirstLiveKey.size === 0) return identityPrepared(context.tier2.viewOptions);
 
-  const { liveToSettled, settledToLive } = $mapTopIndexes(topPlans);
+  const { liveToSettled, settledToLive } = $mapTopIndexes(
+    topPlans,
+    hasStandardViewWhitespace(context.tier2.viewOptions),
+  );
   return {
     byFirstLiveKey,
     liveToSettledTopIndex: (liveIndex) => liveToSettled[liveIndex] ?? liveIndex,
@@ -614,5 +628,6 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
       }
       return undefined;
     },
+    viewOptions: context.tier2.viewOptions,
   };
 }

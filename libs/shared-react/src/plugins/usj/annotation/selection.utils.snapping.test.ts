@@ -84,10 +84,10 @@ function runSnapRows(getEditor: () => LexicalEditor, rows: SnapRow[]) {
       .getEditorState()
       .read(() => {
         const [node, offset] = row.point();
-        expect($getLocationFromNode(node, offset)).toEqual(row.location);
+        expect($getLocationFromNode(node, offset, undefined)).toEqual(row.location);
 
         const [resolvedNode, resolvedOffset] = row.resolvesTo ? row.resolvesTo() : [node, offset];
-        const [gotNode, gotOffset] = $getNodeFromLocation(row.location);
+        const [gotNode, gotOffset] = $getNodeFromLocation(row.location, undefined);
         expect(gotNode?.getKey()).toBe(resolvedNode.getKey());
         expect(gotOffset).toBe(resolvedOffset);
       });

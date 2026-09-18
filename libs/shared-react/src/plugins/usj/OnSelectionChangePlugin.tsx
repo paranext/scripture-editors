@@ -1,3 +1,4 @@
+import { ViewOptions } from "../../views/view-options.utils";
 import { SelectionRange } from "./annotation/selection.model";
 import { $getUsjSelectionFromEditor } from "./annotation/selection.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -6,8 +7,11 @@ import { useEffect } from "react";
 
 export function OnSelectionChangePlugin({
   onChange,
+  viewOptions,
 }: {
   onChange: ((selection: SelectionRange | undefined) => void) | undefined;
+  /** The editor's view options, which decide how its text maps to USJ offsets. */
+  viewOptions: ViewOptions | undefined;
 }): null {
   const [editor] = useLexicalComposerContext();
 
@@ -24,13 +28,13 @@ export function OnSelectionChangePlugin({
           // while reading the last committed state instead would report every ordinary selection
           // change one interaction late, because Lexical dispatches SELECTION_CHANGE from inside
           // a not-yet-committed update on the normal DOM path too.
-          const usjSelection = $getUsjSelectionFromEditor();
+          const usjSelection = $getUsjSelectionFromEditor(viewOptions);
           onChange?.(usjSelection);
           return false;
         },
         COMMAND_PRIORITY_LOW,
       ),
-    [editor, onChange],
+    [editor, onChange, viewOptions],
   );
 
   return null;

@@ -401,7 +401,7 @@ describe("a preserved run the settle drops from one side only", () => {
     const live = liveLocation(lexical, context, location);
     expect(live).toBeDefined();
     const anchor = lexical.getEditorState().read(() => {
-      const range = live && $getRangeFromUsjSelection({ start: live });
+      const range = live && $getRangeFromUsjSelection({ start: live }, context.tier2.viewOptions);
       return (
         range && { key: range.anchor.key, offset: range.anchor.offset, type: range.anchor.type }
       );
@@ -614,7 +614,7 @@ describe("identity", () => {
     const { translated, direct } = lexical.getEditorState().read(() => {
       const prepared = $prepareSettleScopes(context);
       const point = $livePointFromSettledLocation(context, prepared, settled.start);
-      const range = $getRangeFromUsjSelection(settled);
+      const range = $getRangeFromUsjSelection(settled, context.tier2.viewOptions);
       return {
         translated: point,
         direct: range && {

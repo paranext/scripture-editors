@@ -788,7 +788,9 @@ describe("identity", () => {
       offset: 3,
     }));
 
-    const direct = lexical.getEditorState().read($getUsjSelectionFromEditor);
+    const direct = lexical
+      .getEditorState()
+      .read(() => $getUsjSelectionFromEditor(context.tier2.viewOptions));
     expect(direct).toBeDefined();
     expect(settled).toEqual(direct);
   });

@@ -54,7 +54,9 @@ import {
   $getNodeFromLocation,
   $getUsjSelectionFromEditor,
   AnnotationRange,
+  hasStandardViewWhitespace,
   SelectionRange,
+  ViewOptions,
 } from "shared-react";
 
 /** Whitespace as the fragment layer means it — everything the display may add, move, or flatten
@@ -98,7 +100,9 @@ function $noteScopeOnPath(
   let node: LexicalNode = $getRoot();
   for (let depth = 0; depth < liveIndexes.length; depth += 1) {
     if (!$isElementNode(node)) return undefined;
-    const item = $getLogicalContentItems(node)[liveIndexes[depth]];
+    const item = $getLogicalContentItems(node, hasStandardViewWhitespace(prepared.viewOptions))[
+      liveIndexes[depth]
+    ];
     if (item?.type !== "element") return undefined;
     node = item.node;
     const plan = prepared.byFirstLiveKey.get(node.getKey());
@@ -256,7 +260,7 @@ function $resolveInScratch(
   location: UsjDocumentLocation,
   tier2: Tier2Context,
 ): ScratchResolution | undefined {
-  const [node, offset] = $getNodeFromLocation(location);
+  const [node, offset] = $getNodeFromLocation(location, tier2.viewOptions);
   if (!node || offset === undefined) return undefined;
   const preserved = $preservedRunMember(fragment, node);
   if (!preserved) {
@@ -418,7 +422,7 @@ export function $livePointFromSettledLocation(
 ): FragmentPoint | undefined {
   const target = $settledTarget(prepared, location);
   if (target.kind === "scope") return $livePointInScope(context, prepared, target);
-  const [node, offset] = $getNodeFromLocation(target.location);
+  const [node, offset] = $getNodeFromLocation(target.location, prepared.viewOptions);
   if (!node || offset === undefined) return undefined;
   return { key: node.getKey(), offset, type: $isElementNode(node) ? "element" : "text" };
 }
@@ -436,7 +440,7 @@ function $liveLocationFromSettled(
   if (target.kind === "live") return target.location;
   const point = $livePointInScope(context, prepared, target);
   const node = point && $getNodeByKey(point.key);
-  return node ? $getLocationFromNode(node, point.offset) : undefined;
+  return node ? $getLocationFromNode(node, point.offset, prepared.viewOptions) : undefined;
 }
 
 /**
@@ -556,6 +560,7 @@ function $settledLocationInPreservedRun(
   settled: SettledRunMember,
   path: readonly number[],
   offset: number,
+  viewOptions: ViewOptions,
 ): UsjDocumentLocation | undefined {
   let node = scratchFragment.sentinels[settled.sentinelIndex]?.[settled.memberIndex];
   if (!node) return undefined;
@@ -565,7 +570,7 @@ function $settledLocationInPreservedRun(
     if (!child) return undefined;
     node = child;
   }
-  return $getLocationFromNode(node, offset);
+  return $getLocationFromNode(node, offset, viewOptions);
 }
 
 /** Where a live point lands in its scope's settled tree, in that tree's OWN coordinates. */
@@ -576,6 +581,7 @@ function $scratchLocationFromLivePoint(
   scratchFragment: FragmentAccumulator,
   node: LexicalNode,
   offset: number,
+  viewOptions: ViewOptions,
 ): UsjDocumentLocation | undefined {
   const preserved = $preservedRunMember(liveFragment, node);
   if (preserved) {
@@ -587,7 +593,9 @@ function $scratchLocationFromLivePoint(
     // scratch read.
     return plan.scratch
       .getEditorState()
-      .read(() => $settledLocationInPreservedRun(scratchFragment, settled, path, offset));
+      .read(() =>
+        $settledLocationInPreservedRun(scratchFragment, settled, path, offset, viewOptions),
+      );
   }
   const anchored = $anchorForPoint(liveFragment, node, cutFragmentOffset(plan, node, offset));
   if (!anchored) return undefined;
@@ -597,11 +605,13 @@ function $scratchLocationFromLivePoint(
   // in; a position in ordinary content is a caret, and keeps the caret's own addressing — which
   // at an exact boundary spells itself as the end of the run it is leaving rather than as the
   // construct that happens to start there.
-  const addressDisplayBytes = !isUsjTextContentLocation($getLocationFromNode(node, offset));
+  const addressDisplayBytes = !isUsjTextContentLocation(
+    $getLocationFromNode(node, offset, viewOptions),
+  );
   return plan.scratch.getEditorState().read(() => {
     const point = $resolveFragmentByteAnchor(scratchFragment, anchor, { addressDisplayBytes });
     const settledNode = point && $getNodeByKey(point.key);
-    return settledNode ? $getLocationFromNode(settledNode, point.offset) : undefined;
+    return settledNode ? $getLocationFromNode(settledNode, point.offset, viewOptions) : undefined;
   });
 }
 
@@ -623,6 +633,7 @@ function $settledLocationInScope(
     scratchFragment,
     node,
     offset,
+    prepared.viewOptions,
   );
   if (!scratchLocation) return undefined;
   const indexes = settledPathFromScratch(
@@ -647,7 +658,7 @@ export function $settledLocationFromLivePoint(
 ): UsjDocumentLocation | undefined {
   const plan = prepared.planContaining(node);
   if (plan) return $settledLocationInScope(prepared, plan, node, offset);
-  return settledTopTranslated(prepared, $getLocationFromNode(node, offset));
+  return settledTopTranslated(prepared, $getLocationFromNode(node, offset, prepared.viewOptions));
 }
 
 /**
@@ -663,7 +674,7 @@ export function $settledSelectionFromLive(prepared: PreparedScopes): SelectionRa
   // "this layout has no USJ locations at all" are both properties of the live tree that a settle
   // cannot change, so they stay the editor's own reporter's answers rather than being restated
   // here. Two extra location reports is nothing beside preparing a scope.
-  const live = $getUsjSelectionFromEditor();
+  const live = $getUsjSelectionFromEditor(prepared.viewOptions);
   // Nothing was rebuilt, so the live tree IS the settled document and that reporter already
   // addressed it.
   if (!live || prepared.byFirstLiveKey.size === 0) return live;

@@ -13,13 +13,14 @@
 import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 import editorUsjAdaptor from "../adaptors/editor-usj.adaptor";
 import { serializedState } from "../markerEdit/markerEdit.test-helpers";
-import { displayTextToUsj, normalizeSpaceRuns } from "../markerEdit/whitespaceDisplay.utils";
+import { displayTextToUsj } from "../markerEdit/whitespaceDisplay.utils";
 import { MarkerContent, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
 import {
   $getLogicalContentItems,
   $getLogicalTextLocation,
   $getTextNodeAtLogicalOffset,
   LogicalTextItem,
+  NBSP,
 } from "shared";
 import {
   $getRangeFromUsjSelection,
@@ -44,12 +45,18 @@ const usx =
   `<para style="p"><verse number="1" style="v" />In the beginning <char style="nd">LORD</char> made</para></usx>`;
 const charTextPath = "$.content[2].content[2].content[0]";
 
+const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
+if (!standardViewOptions) throw new Error("Standard view options are required for these tests.");
+
 describe("Standard-view char span text coordinates", () => {
   it("resolves a settled text offset inside a char span past the separator prefix", async () => {
     const { editor } = await baseTestEnvironment(serializedState(usxStringToUsj(usx)));
 
     const [text, offset] = editor.getEditorState().read(() => {
-      const range = $getRangeFromUsjSelection({ start: { jsonPath: charTextPath, offset: 2 } });
+      const range = $getRangeFromUsjSelection(
+        { start: { jsonPath: charTextPath, offset: 2 } },
+        standardViewOptions,
+      );
       return [range?.anchor.getNode().getTextContent(), range?.anchor.offset] as const;
     });
 
@@ -75,7 +82,7 @@ describe("Standard-view char span text coordinates", () => {
         selection.anchor.set(text.getKey(), at, "text");
         selection.focus.set(text.getKey(), at, "text");
         $setSelection(selection);
-        reported = $getUsjSelectionFromEditor();
+        reported = $getUsjSelectionFromEditor(standardViewOptions);
       },
       { discrete: true },
     );
@@ -103,14 +110,11 @@ interface OracleReport {
   disagreements: Disagreement[];
   /** Text items whose every offset was checked, in both directions. */
   checkedItems: number;
-  /** Segments carrying a char span's separator prefix — the coordinates this suite exists for. */
+  /** Segments carrying a char span's separator prefix. */
   leadSegments: number;
-  /** Items the exporter's space-run collapse rewrote, so no offset could be checked. */
-  collapsedItems: string[];
+  /** Segments carrying a space run that serialization collapses. */
+  collapsedSegments: number;
 }
-
-const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
-if (!standardViewOptions) throw new Error("Standard view options are required for these tests.");
 
 /** The view options the 2SA fixture generator uses for each marker mode. */
 function generatorViewOptions(markerMode: ViewOptions["markerMode"]): ViewOptions {
@@ -126,26 +130,46 @@ const modes: { name: string; viewOptions: ViewOptions; hasSeparators: boolean }[
 ];
 
 /**
- * The per-text-node display→data inversion the exporter applies, minus the space-run collapse.
- * Character-for-character, so an offset into the live text is the same offset into the result.
+ * Space runs in every place a text item can carry one: mid-paragraph, at either end of a
+ * paragraph, right after a verse, around and inside char spans (a span whose content starts with
+ * one space, and one whose content starts with a run), beside a data NBSP, and in a note. Standard
+ * view displays each run as NBSPs, exactly as it displays a run the user types.
  */
+const spaceRunUsx =
+  `<usx version="3.0"><book code="RUT" style="id">T</book><chapter number="1" style="c" />` +
+  `<para style="p"><verse number="1" style="v" />  In the   beginning <char style="nd"> LORD</char>` +
+  `  made <char style="wj">  heaven</char>  and${NBSP}  earth.  </para>` +
+  `<para style="p"><verse number="2" style="v" />The earth<note caller="+" style="f">` +
+  `<char style="ft">empty  and   void</char></note> was  dark.</para></usx>`;
+
+const corpora = [
+  { name: "2SA", usj: usj2Sa, minimumCheckedItems: 100, hasSpaceRuns: false },
+  {
+    name: "space runs",
+    usj: usxStringToUsj(spaceRunUsx),
+    minimumCheckedItems: 8,
+    hasSpaceRuns: true,
+  },
+];
+
+/** The display→data inversion serialization applies to each text node, character for character. */
 function invertDisplay(text: string, isStandard: boolean): string {
   return isStandard ? displayTextToUsj(text) : text;
 }
 
-/** The full per-text-node transform the exporter applies, collapse included. */
+/**
+ * The whole per-text-node conversion serialization applies, written independently of the editor's
+ * own: invert the display text, then collapse runs of plain spaces in the data.
+ */
 function toSettledText(text: string, isStandard: boolean): string {
-  return isStandard ? normalizeSpaceRuns(displayTextToUsj(text)) : text;
-}
-
-/** A text item's live content — every segment's text with its presentation-only lead removed. */
-function $itemContent(item: LogicalTextItem): string[] {
-  return item.segments.map((segment) => segment.node.getTextContent().slice(segment.lead));
+  return isStandard ? displayTextToUsj(text).replace(/ {2,}/g, " ") : text;
 }
 
 /**
- * Checks one logical text item against the USJ string the exporter emitted for it: the strings
- * must match, and every offset must select the same tail from both sides.
+ * Checks one logical text item against the USJ string the exporter emitted for it: the item's
+ * converted text must BE that string, every live point must report the offset whose USJ prefix is
+ * what serialization makes of the live text before the point, and every USJ offset must resolve
+ * to the live character it names and report itself back.
  */
 function $checkTextItem(
   item: LogicalTextItem,
@@ -156,22 +180,18 @@ function $checkTextItem(
   report: OracleReport,
 ): void {
   report.leadSegments += item.segments.filter((segment) => segment.lead > 0).length;
-  const contents = $itemContent(item);
-  const settled = contents.map((text) => toSettledText(text, isStandard)).join("");
-  if (settled !== usjString) {
+  report.collapsedSegments += item.segments.filter(
+    (segment) => segment.collapsed.length > 0,
+  ).length;
+  const contents = item.segments.map((segment) =>
+    segment.node.getTextContent().slice(segment.lead),
+  );
+  const settledContents = contents.map((text) => toSettledText(text, isStandard));
+  if (settledContents.join("") !== usjString) {
     report.disagreements.push({
       path,
-      detail: `item text ${JSON.stringify(settled)} vs USJ ${JSON.stringify(usjString)}`,
+      detail: `item text ${JSON.stringify(settledContents.join(""))} vs USJ ${JSON.stringify(usjString)}`,
     });
-    return;
-  }
-  const inverted = contents.map((text) => invertDisplay(text, isStandard));
-  // The exporter's space-run collapse is the one transform that is not character-for-character,
-  // so where it fires no positional model can line up with the emitted string. That is intrinsic
-  // normalization rather than a coordinate bug, so the offset property skips such an item — and
-  // records it, because a skip is coverage lost.
-  if (inverted.join("") !== usjString) {
-    report.collapsedItems.push(path);
     return;
   }
   report.checkedItems++;
@@ -182,13 +202,14 @@ function $checkTextItem(
       detail: `item length ${item.length} vs USJ ${usjString.length}`,
     });
 
-  // Forward: a live (node, offset) point must report the USJ offset selecting the same tail.
+  // Forward: a live (node, offset) point reports the offset whose USJ prefix is the converted
+  // live text before the point.
   for (let segmentIndex = 0; segmentIndex < item.segments.length; segmentIndex++) {
     const segment = item.segments[segmentIndex];
-    const rest = inverted.slice(segmentIndex + 1).join("");
+    const before = settledContents.slice(0, segmentIndex).join("");
     const size = segment.node.getTextContentSize();
-    for (let offset = segment.lead; offset <= size; offset++) {
-      const location = $getLogicalTextLocation(segment.node, offset);
+    for (let offset = 0; offset <= size; offset++) {
+      const location = $getLogicalTextLocation(segment.node, offset, isStandard);
       if (location?.index !== index) {
         report.disagreements.push({
           path,
@@ -196,21 +217,26 @@ function $checkTextItem(
         });
         return;
       }
-      const liveTail =
-        invertDisplay(segment.node.getTextContent().slice(offset), isStandard) + rest;
-      if (usjString.slice(location.offset) !== liveTail) {
+      const livePrefix =
+        before +
+        toSettledText(
+          contents[segmentIndex].slice(0, Math.max(0, offset - segment.lead)),
+          isStandard,
+        );
+      if (usjString.slice(0, location.offset) !== livePrefix) {
         report.disagreements.push({
           path,
           detail:
-            `offset ${offset} reported ${location.offset}, selecting ` +
-            `${JSON.stringify(usjString.slice(location.offset))} not ${JSON.stringify(liveTail)}`,
+            `offset ${offset} reported ${location.offset}, whose prefix is ` +
+            `${JSON.stringify(usjString.slice(0, location.offset))} not ${JSON.stringify(livePrefix)}`,
         });
         return;
       }
     }
   }
 
-  // Inverse: every USJ offset must resolve to a live point that reports it back.
+  // Inverse: every USJ offset resolves to a live point on the character it names, and that point
+  // reports the offset back.
   for (let offset = 0; offset <= usjString.length; offset++) {
     const resolved = $getTextNodeAtLogicalOffset(item, offset);
     if (!resolved) {
@@ -218,7 +244,18 @@ function $checkTextItem(
       return;
     }
     const [node, local] = resolved;
-    const back = $getLogicalTextLocation(node, local);
+    const named = offset < usjString.length ? usjString[offset] : undefined;
+    const liveCharacter = node.getTextContent()[local];
+    if (named !== undefined && invertDisplay(liveCharacter ?? "", isStandard) !== named) {
+      report.disagreements.push({
+        path,
+        detail:
+          `USJ offset ${offset} names ${JSON.stringify(named)} but resolved onto ` +
+          `${JSON.stringify(liveCharacter)}`,
+      });
+      return;
+    }
+    const back = $getLogicalTextLocation(node, local, isStandard);
     if (back?.index !== index || back.offset !== offset) {
       report.disagreements.push({
         path,
@@ -240,7 +277,7 @@ function $checkElement(
   isStandard: boolean,
   report: OracleReport,
 ): void {
-  const modeled = $getLogicalContentItems(parent);
+  const modeled = $getLogicalContentItems(parent, isStandard);
   const content = usjContent ?? [];
   if (modeled.length !== content.length) {
     const kinds = modeled
@@ -278,38 +315,35 @@ function $checkElement(
   });
 }
 
-describe.each(modes)(
-  "logical text coordinates agree with the exporter ($name)",
-  ({ viewOptions, hasSeparators }) => {
-    it("maps every offset of every text item to the character the exporter emits there", async () => {
-      const { editor } = await baseTestEnvironment(serializedState(usj2Sa, viewOptions));
-      const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions);
-      if (!usj) throw new Error("the editor state did not serialize to USJ");
+describe.each(corpora)("the $name corpus", ({ usj: corpus, minimumCheckedItems, hasSpaceRuns }) => {
+  describe.each(modes)(
+    "logical text coordinates agree with the exporter ($name)",
+    ({ viewOptions, hasSeparators }) => {
+      it("maps every offset of every text item to the character the exporter emits there", async () => {
+        const { editor } = await baseTestEnvironment(serializedState(corpus, viewOptions));
+        const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions);
+        if (!usj) throw new Error("the editor state did not serialize to USJ");
+        const isStandard = hasStandardViewWhitespace(viewOptions);
 
-      const report: OracleReport = {
-        disagreements: [],
-        checkedItems: 0,
-        leadSegments: 0,
-        collapsedItems: [],
-      };
-      editor.getEditorState().read(() => {
-        $checkElement($getRoot(), usj.content, "$", hasStandardViewWhitespace(viewOptions), report);
+        const report: OracleReport = {
+          disagreements: [],
+          checkedItems: 0,
+          leadSegments: 0,
+          collapsedSegments: 0,
+        };
+        editor.getEditorState().read(() => {
+          $checkElement($getRoot(), usj.content, "$", isStandard, report);
+        });
+
+        expect(report.disagreements).toEqual([]);
+        // A floor, not a pin: it only has to be far enough above zero that a walk which stopped
+        // early cannot pass, and low enough that editing the corpus does not churn it.
+        expect(report.checkedItems).toBeGreaterThan(minimumCheckedItems);
+        // Each kind of dropped character is what this suite exists for, so a view that drops it
+        // must actually have met some, and no other view may.
+        expect(report.leadSegments > 0).toBe(hasSeparators);
+        expect(report.collapsedSegments > 0).toBe(hasSpaceRuns && isStandard);
       });
-
-      expect(report.disagreements).toEqual([]);
-      // A DELIBERATE WAIVER, not a proven property. Standard view's exporter collapses a run of
-      // two or more spaces, which is not length-preserving, and the logical model does not model
-      // that — so every offset after such a run would disagree. This corpus contains no space run,
-      // which is the only reason this is empty. If a corpus that has one is ever added here, this
-      // will go red, and the fix is the per-segment offset map noted on `LogicalTextItem.length`,
-      // not a wider skip list.
-      expect(report.collapsedItems).toEqual([]);
-      // A floor, not a pin: it only has to be far enough above zero that a walk which stopped
-      // early cannot pass, and low enough that editing the corpus does not churn it.
-      expect(report.checkedItems).toBeGreaterThan(100);
-      // The separator prefix is what this suite exists for, so a mode that renders one must
-      // actually have met some.
-      expect(report.leadSegments > 0).toBe(hasSeparators);
-    });
-  },
-);
+    },
+  );
+});

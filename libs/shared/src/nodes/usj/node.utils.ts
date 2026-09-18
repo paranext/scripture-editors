@@ -63,6 +63,7 @@ import { $isParaNode, isSerializedParaNode, ParaNode, SerializedParaNode } from 
 import { $isVerseNode, VerseNode } from "./VerseNode.js";
 import { $noteEditableCallerNode } from "./attributeDisplay.utils.js";
 import { $charSeparatorPrefixLength } from "./markerSeparators.utils.js";
+import { collapsedSpaceRunRanges } from "./spaceRuns.utils.js";
 import {
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   IMMUTABLE_NOTE_CALLER_NODE_TYPE,
@@ -91,18 +92,32 @@ export type SomeSerializedParaNode = SerializedParaNode | SerializedImpliedParaN
 
 export type ParaLikeNode = SomeParaNode | BookNode;
 
-/** A piece of a logical text item: one Lexical TextNode and its cumulative start offset. */
+/**
+ * A piece of a logical text item: one Lexical TextNode and its cumulative start offset.
+ *
+ * The editor→USJ conversion drops some of the node's characters: its {@link lead} and its
+ * {@link collapsed} space-run characters. A local offset `o` in `node` maps to logical `start`
+ * plus the number of kept characters before `o`, so a point inside a dropped range reports the
+ * kept character after it. A logical offset maps back to the live position of the character it
+ * names, which skips forward past any dropped range in front of that character.
+ */
 export interface LogicalTextSegment {
   node: TextNode;
   /** Logical offset within the text item at which this segment's CONTENT starts. */
   start: number;
   /**
    * How many of `node`'s leading characters are presentation rather than content (0 or 1) — a
-   * char span's structural separator NBSP, which the editor→USJ conversion strips. A local offset
-   * `o` in `node` maps to logical `start + Math.max(0, o - lead)`, and the segment contributes
-   * `node.getTextContentSize() - lead` characters to the item.
+   * char span's structural separator NBSP, which the editor→USJ conversion strips.
    */
   lead: number;
+  /**
+   * The characters after the lead that the editor→USJ conversion drops when it collapses a space
+   * run, as ascending local `[start, end)` ranges (see `collapsedSpaceRunRanges`). Empty unless
+   * the editor's serialization collapses runs.
+   */
+  collapsed: readonly (readonly [number, number])[];
+  /** How many characters the segment contributes to the item: the node's kept characters. */
+  length: number;
 }
 
 /**
@@ -116,16 +131,7 @@ export interface LogicalTextSegment {
 export interface LogicalTextItem {
   type: "text";
   segments: LogicalTextSegment[];
-  /**
-   * Length of the item's USJ string — segment leads excluded, as the exporter excludes them.
-   *
-   * `lead` is the only display→data adjustment this model makes, so the equality holds for every
-   * text the exporter copies through verbatim. It does NOT hold in Standard view for a text
-   * carrying a run of two or more spaces: that view's exporter additionally collapses the run
-   * (`normalizeSpaceRuns`), which is not length-preserving, so offsets after such a run are
-   * shifted by however many spaces the run lost. Closing that gap needs a per-segment settled
-   * offset map rather than a scalar lead.
-   */
+  /** Length of the item's USJ string: the sum of its segments' lengths. */
   length: number;
 }
 
@@ -1099,28 +1105,26 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
 }
 
 /**
- * Maps a parent element's Lexical children to its logical USJ content items — the items the
- * editor→USJ conversion would export: presentation-only nodes skipped, TypedMarkNodes
- * transparent (children spliced in, recursively), contiguous text coalesced into single items,
- * and a char span's structural separator NBSP excluded from its text item's coordinates.
- *
- * Known exclusion: comment-type TypedMarkNodes are treated as transparent like every other
- * mark, even though the exporter still serializes them as milestone items. That milestone
- * serialization is deprecated and pending removal, so the model intentionally ignores it.
- * @param parent - The parent element node.
- * @returns the logical content items in document order.
+ * Which live nodes make up each logical content item, before any text is measured. An item's
+ * index depends only on this shape; its text offsets also depend on how serialization treats
+ * whitespace.
  */
-export function $getLogicalContentItems(parent: ElementNode): LogicalContentItem[] {
+type LogicalItemShape =
+  | { type: "element"; node: LexicalNode }
+  | { type: "text"; nodes: TextNode[] };
+
+/** The shape half of {@link $getLogicalContentItems}. */
+function $getLogicalItemShapes(parent: ElementNode): LogicalItemShape[] {
   // A chapter marker has no `content` in USJ: an editable ChapterNode's children are entirely the
   // `\c N` glyph it displays and the runs that ride after it.
   if ($isChapterNode(parent)) return [];
 
-  const items: LogicalContentItem[] = [];
-  let run: { segments: LogicalTextSegment[]; length: number } | undefined;
+  const shapes: LogicalItemShape[] = [];
+  let run: TextNode[] | undefined;
 
   const flushRun = () => {
     if (run) {
-      items.push({ type: "text", segments: run.segments, length: run.length });
+      shapes.push({ type: "text", nodes: run });
       run = undefined;
     }
   };
@@ -1136,21 +1140,94 @@ export function $getLogicalContentItems(parent: ElementNode): LogicalContentItem
     // Only plain TextNodes (exact "text" type) join a coalesced run, mirroring the exporter.
     // TextNode subclasses (e.g. VerseNode) fall through to become standalone items.
     if ($isTextNode(node) && node.getType() === TextNode.getType()) {
-      // A char span's separator NBSP is a prefix of its first content text and the exporter
-      // strips it, so it occupies no USJ offset — see $charSeparatorPrefixLength.
-      const lead = $charSeparatorPrefixLength(node);
-      run ??= { segments: [], length: 0 };
-      run.segments.push({ node, start: run.length, lead });
-      run.length += node.getTextContentSize() - lead;
+      run ??= [];
+      run.push(node);
       return;
     }
     flushRun();
-    items.push({ type: "element", node });
+    shapes.push({ type: "element", node });
   };
 
   parent.getChildren().forEach(visit);
   flushRun();
-  return items;
+  return shapes;
+}
+
+/**
+ * Measures a coalesced text run in the exporter's coordinates. Each node is measured on its own,
+ * as the exporter converts each node's text before joining it to its neighbors, so a space run
+ * split across an annotation's edge does not collapse.
+ */
+function $measureTextItem(nodes: TextNode[], collapsesSpaceRuns: boolean): LogicalTextItem {
+  const segments: LogicalTextSegment[] = [];
+  let length = 0;
+  for (const node of nodes) {
+    // A char span's separator NBSP is a prefix of its first content text and the exporter strips
+    // it before anything else, so it occupies no USJ offset and never belongs to a space run —
+    // see $charSeparatorPrefixLength.
+    const lead = $charSeparatorPrefixLength(node);
+    const collapsed = collapsesSpaceRuns
+      ? collapsedSpaceRunRanges(node.getTextContent().slice(lead)).map(
+          ([start, end]) => [start + lead, end + lead] as const,
+        )
+      : [];
+    const segmentLength =
+      node.getTextContentSize() -
+      lead -
+      collapsed.reduce((sum, [start, end]) => sum + end - start, 0);
+    segments.push({ node, start: length, lead, collapsed, length: segmentLength });
+    length += segmentLength;
+  }
+  return { type: "text", segments, length };
+}
+
+/** A segment's dropped characters — its lead, then its collapsed runs — as ascending ranges. */
+function droppedRanges(segment: LogicalTextSegment): readonly (readonly [number, number])[] {
+  return segment.lead > 0 ? [[0, segment.lead], ...segment.collapsed] : segment.collapsed;
+}
+
+/** The logical offset of local offset `offset` in the segment's node. */
+function segmentLogicalOffset(segment: LogicalTextSegment, offset: number): number {
+  let kept = offset;
+  for (const [start, end] of droppedRanges(segment)) {
+    if (offset <= start) break;
+    kept -= Math.min(offset, end) - start;
+  }
+  return segment.start + kept;
+}
+
+/** The local offset in the segment's node of the character `contentOffset` into its content. */
+function segmentLocalOffset(segment: LogicalTextSegment, contentOffset: number): number {
+  let local = contentOffset;
+  for (const [start, end] of droppedRanges(segment)) {
+    if (start > local) break;
+    local += end - start;
+  }
+  return local;
+}
+
+/**
+ * Maps a parent element's Lexical children to its logical USJ content items — the items the
+ * editor→USJ conversion would export: presentation-only nodes skipped, TypedMarkNodes
+ * transparent (children spliced in, recursively), contiguous text coalesced into single items,
+ * and the characters the conversion drops (a char span's structural separator NBSP, and a
+ * collapsed space run's extra characters) excluded from its text item's coordinates.
+ *
+ * Known exclusion: comment-type TypedMarkNodes are treated as transparent like every other
+ * mark, even though the exporter still serializes them as milestone items. That milestone
+ * serialization is deprecated and pending removal, so the model intentionally ignores it.
+ * @param parent - The parent element node.
+ * @param collapsesSpaceRuns - Whether this editor's serialization collapses space runs (Standard
+ *   view's whitespace, `hasStandardViewWhitespace` in shared-react).
+ * @returns the logical content items in document order.
+ */
+export function $getLogicalContentItems(
+  parent: ElementNode,
+  collapsesSpaceRuns: boolean,
+): LogicalContentItem[] {
+  return $getLogicalItemShapes(parent).map((shape) =>
+    shape.type === "element" ? shape : $measureTextItem(shape.nodes, collapsesSpaceRuns),
+  );
 }
 
 /**
@@ -1173,10 +1250,8 @@ export function $getLogicalParent(node: LexicalNode): ElementNode | null {
  * @returns the logical index, or -1 if the child is presentation-only or not found.
  */
 export function $getLogicalIndexOfChild(parent: ElementNode, child: LexicalNode): number {
-  return $getLogicalContentItems(parent).findIndex((item) =>
-    item.type === "element"
-      ? item.node.is(child)
-      : item.segments.some((segment) => segment.node.is(child)),
+  return $getLogicalItemShapes(parent).findIndex((shape) =>
+    shape.type === "element" ? shape.node.is(child) : shape.nodes.some((node) => node.is(child)),
   );
 }
 
@@ -1185,28 +1260,28 @@ export function $getLogicalIndexOfChild(parent: ElementNode, child: LexicalNode)
  * coalesced text item within the logical parent and the cumulative offset within it.
  * @param textNode - The Lexical text node.
  * @param offset - The offset within the text node.
+ * @param collapsesSpaceRuns - Whether this editor's serialization collapses space runs; see
+ *   {@link $getLogicalContentItems}.
  * @returns the logical parent, item index, and cumulative offset, or `undefined` if the text
- *   node is not part of any logical text item (e.g. presentation-only text). An offset inside the
- *   segment's presentation-only lead reports the start of the content after it, the nearest
- *   position the USJ text can express.
+ *   node is not part of any logical text item (e.g. presentation-only text). An offset inside a
+ *   character the conversion drops (the separator lead, or a collapsed run's extra spaces)
+ *   reports the kept character after it, the nearest position the USJ text can express.
  */
 export function $getLogicalTextLocation(
   textNode: TextNode,
   offset: number,
+  collapsesSpaceRuns: boolean,
 ): { parent: ElementNode; index: number; offset: number } | undefined {
   const parent = $getLogicalParent(textNode);
   if (!parent) return undefined;
 
-  const items = $getLogicalContentItems(parent);
+  const items = $getLogicalContentItems(parent, collapsesSpaceRuns);
   for (let index = 0; index < items.length; index++) {
     const item = items[index];
     if (item.type !== "text") continue;
 
     const segment = item.segments.find((segment) => segment.node.is(textNode));
-    // A point inside the presentation-only lead has no USJ offset of its own; it reports the
-    // start of the content that follows it.
-    if (segment)
-      return { parent, index, offset: segment.start + Math.max(0, offset - segment.lead) };
+    if (segment) return { parent, index, offset: segmentLogicalOffset(segment, offset) };
   }
   return undefined;
 }
@@ -1218,7 +1293,7 @@ export function $getLogicalTextLocation(
  * previous piece.
  * @param item - The logical text item.
  * @param offset - The cumulative offset within the item.
- * @returns the text node and local offset — past the segment's presentation-only lead, so the
+ * @returns the text node and local offset — past any characters the conversion drops, so the
  *   point sits on the character the USJ offset names — or `undefined` when out of range.
  */
 export function $getTextNodeAtLogicalOffset(
@@ -1228,14 +1303,13 @@ export function $getTextNodeAtLogicalOffset(
   if (offset < 0 || offset > item.length) return undefined;
 
   for (const segment of item.segments) {
-    const contentLength = segment.node.getTextContentSize() - segment.lead;
-    if (offset >= segment.start && offset < segment.start + contentLength)
-      return [segment.node, offset - segment.start + segment.lead];
+    if (offset >= segment.start && offset < segment.start + segment.length)
+      return [segment.node, segmentLocalOffset(segment, offset - segment.start)];
   }
   // offset === item.length: end of the last segment.
   const lastSegment = item.segments[item.segments.length - 1];
   if (!lastSegment) return undefined;
-  return [lastSegment.node, offset - lastSegment.start + lastSegment.lead];
+  return [lastSegment.node, segmentLocalOffset(lastSegment, offset - lastSegment.start)];
 }
 
 /**
@@ -1244,19 +1318,22 @@ export function $getTextNodeAtLogicalOffset(
  * between logical items become index points.
  * @param parent - The parent element node of the element point.
  * @param elementOffset - The child index of the element point.
+ * @param collapsesSpaceRuns - Whether this editor's serialization collapses space runs; see
+ *   {@link $getLogicalContentItems}.
  * @returns the logical point.
  */
 export function $getLogicalPointFromElementPoint(
   parent: ElementNode,
   elementOffset: number,
+  collapsesSpaceRuns: boolean,
 ): LogicalPoint {
-  const items = $getLogicalContentItems(parent);
+  const items = $getLogicalContentItems(parent, collapsesSpaceRuns);
   const child = parent.getChildAtIndex(elementOffset);
   if (!child) return { type: "index", index: items.length };
 
   // Boundary before a presentation-only node: use the boundary before the next content child.
   if ($shouldIgnoreNodeForContentIndexes(child))
-    return $getLogicalPointFromElementPoint(parent, elementOffset + 1);
+    return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
 
   for (let index = 0; index < items.length; index++) {
     const item = items[index];
@@ -1289,14 +1366,14 @@ export function $getElementOffsetFromLogicalIndex(
 ): number {
   if (logicalIndex <= 0) return 0;
 
-  const items = $getLogicalContentItems(parent);
-  if (items.length === 0 || logicalIndex > items.length) return parent.getChildrenSize();
+  const shapes = $getLogicalItemShapes(parent);
+  if (shapes.length === 0 || logicalIndex > shapes.length) return parent.getChildrenSize();
 
-  const previousItem = items[logicalIndex - 1];
+  const previousShape = shapes[logicalIndex - 1];
   const lastNode =
-    previousItem.type === "element"
-      ? previousItem.node
-      : previousItem.segments[previousItem.segments.length - 1]?.node;
+    previousShape.type === "element"
+      ? previousShape.node
+      : previousShape.nodes[previousShape.nodes.length - 1];
   const topLevelChild = lastNode ? $findChildOfParent(parent, lastNode) : undefined;
   return topLevelChild ? topLevelChild.getIndexWithinParent() + 1 : parent.getChildrenSize();
 }

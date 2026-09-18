@@ -40,7 +40,12 @@ import {
   NODE_ATTRIBUTE_PREFIX,
   textTypeState,
 } from "shared";
-import { getViewOptions, UNFORMATTED_VIEW_MODE, ViewOptions } from "shared-react";
+import {
+  getViewOptions,
+  hasStandardViewWhitespace,
+  UNFORMATTED_VIEW_MODE,
+  ViewOptions,
+} from "shared-react";
 
 // Unformatted view: editable markerMode (so glyphs and separators exist, as in the shipped
 // editable modes) WITHOUT the standard-view whitespace display encoding, which would rewrite
@@ -212,17 +217,18 @@ describe("content semantics agreement: deserializeEditorState vs $getLogicalCont
     editor.getEditorState().read(() => {
       const para = $getRoot().getFirstChild();
       if (!$isElementNode(para)) throw new Error("Expected the built para as the first root child");
-      logicalItems = $getLogicalContentItems(para).map((item) =>
-        item.type === "text"
-          ? {
-              kind: "text",
-              // `lead` drops a char span's separator NBSP, the one display byte a segment's text
-              // carries that the exporter does not emit.
-              text: item.segments
-                .map((segment) => segment.node.getTextContent().slice(segment.lead))
-                .join(""),
-            }
-          : { kind: item.node.getType() },
+      logicalItems = $getLogicalContentItems(para, hasStandardViewWhitespace(viewOptions)).map(
+        (item) =>
+          item.type === "text"
+            ? {
+                kind: "text",
+                // `lead` drops a char span's separator NBSP, the one display byte a segment's text
+                // carries that the exporter does not emit.
+                text: item.segments
+                  .map((segment) => segment.node.getTextContent().slice(segment.lead))
+                  .join(""),
+              }
+            : { kind: item.node.getType() },
       );
     });
 

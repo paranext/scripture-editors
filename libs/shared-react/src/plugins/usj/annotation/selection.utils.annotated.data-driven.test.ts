@@ -117,7 +117,7 @@ function createAnnotatedEditor(
   orderedRanges.forEach((range, i) => {
     editor.update(
       () => {
-        const selection = $getRangeFromUsjSelection(range);
+        const selection = $getRangeFromUsjSelection(range, undefined);
         if (!selection)
           throw new Error(`Failed to resolve annotation range at ${range.start.jsonPath}`);
         $wrapSelectionInTypedMarkNode(selection, "test-annotation", `${order}-${i}`);
@@ -134,7 +134,7 @@ function roundTrip(editor: LexicalEditor, entry: LocationEntry2Sa) {
   let anchorOffset: number | undefined;
 
   editor.getEditorState().read(() => {
-    const editorSelection = $getRangeFromUsjSelection({ start: entry.documentLocation });
+    const editorSelection = $getRangeFromUsjSelection({ start: entry.documentLocation }, undefined);
     if (!editorSelection)
       throw new Error(`Expected editorSelection to be defined for ${entry.description}`);
     anchorNode = editorSelection.anchor.getNode();
@@ -146,7 +146,7 @@ function roundTrip(editor: LexicalEditor, entry: LocationEntry2Sa) {
   updateSelection(editor, anchorNode, anchorOffset);
 
   editor.getEditorState().read(() => {
-    const roundTripped = $getUsjSelectionFromEditor();
+    const roundTripped = $getUsjSelectionFromEditor(undefined);
     if (!roundTripped)
       throw new Error(`Expected round-tripped selection to be defined for ${entry.description}`);
     expect(roundTripped.start).toEqual(entry.documentLocation);

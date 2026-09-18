@@ -263,7 +263,7 @@ describe("data-driven: usj2Sa location conversion", () => {
                   const usjSelection: SelectionRange = {
                     start: entry.documentLocation,
                   };
-                  const editorSelection = $getRangeFromUsjSelection(usjSelection);
+                  const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
                   expect(editorSelection).toBeDefined();
                   if (!editorSelection) {
@@ -299,7 +299,7 @@ describe("data-driven: usj2Sa location conversion", () => {
         // Step 1 — resolve USJ to Lexical
         editor.getEditorState().read(() => {
           const usjSelection: SelectionRange = { start: entry.documentLocation };
-          const editorSelection = $getRangeFromUsjSelection(usjSelection);
+          const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
           if (!editorSelection)
             throw new Error(`Expected editorSelection to be defined for ${entry.description}`);
           anchorNode = editorSelection.anchor.getNode();
@@ -321,7 +321,7 @@ describe("data-driven: usj2Sa location conversion", () => {
 
         // Step 3 — read back as USJ
         editor.getEditorState().read(() => {
-          const roundTripped = $getUsjSelectionFromEditor();
+          const roundTripped = $getUsjSelectionFromEditor(undefined);
           if (!roundTripped)
             throw new Error(
               `Expected round-tripped selection to be defined for ${entry.description}`,

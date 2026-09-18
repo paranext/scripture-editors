@@ -21,6 +21,7 @@ import {
   BookNode,
   ChapterNode,
   CharNode,
+  collapseSpaceRuns,
   COMMENT_MARK_TYPE,
   ENDING_MS_COMMENT_MARKER,
   getEditableCallerText,
@@ -79,7 +80,7 @@ import {
   SerializedImmutableVerseNode,
   ViewOptions,
 } from "shared-react";
-import { displayTextToUsj, normalizeSpaceRuns } from "../markerEdit/whitespaceDisplay.utils";
+import { displayTextToUsj } from "../markerEdit/whitespaceDisplay.utils";
 
 interface EditorUsjAdaptor {
   initialize: typeof initialize;
@@ -701,7 +702,7 @@ function recurseNodes(
           node !== callerSlot
         ) {
           let text = createTextMarker(serializedTextNode);
-          // Standard view stores display text; invert and normalize on serialization. A
+          // Standard view stores display text; collapse space runs and invert on serialization. A
           // char marker's leading NBSP separator (added by the forward adaptor's `createChar`)
           // must be stripped before inversion so it isn't misread as a collapsed space run — but
           // only when this text is the glyph-adjacent separator host, not any text that merely
@@ -713,7 +714,7 @@ function recurseNodes(
               text.startsWith(NBSP)
             )
               text = text.slice(1);
-            text = normalizeSpaceRuns(displayTextToUsj(text));
+            text = displayTextToUsj(collapseSpaceRuns(text));
           }
           combineTextContentOrAdd(markers, text);
         }

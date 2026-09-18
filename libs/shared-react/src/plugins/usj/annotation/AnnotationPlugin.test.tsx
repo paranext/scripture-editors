@@ -271,7 +271,7 @@ describe("PT-3835: inserting annotations from reported selections", () => {
     if (!target) throw new Error(`No text node contains '${word}'`);
     updateSelection(editor, target, localOffset, target, localOffset + word.length);
 
-    const reported = editor.getEditorState().read($getUsjSelectionFromEditor);
+    const reported = editor.getEditorState().read(() => $getUsjSelectionFromEditor(undefined));
     const start = reported?.start;
     const end = reported?.end;
     if (!start || !end || !isUsjTextContentLocation(start) || !isUsjTextContentLocation(end)) {
@@ -326,7 +326,7 @@ async function testEnvironment($initialEditorState: () => void) {
   const annotationPluginRef = createRef<AnnotationRef>();
   const result = await baseTestEnvironment(
     $initialEditorState,
-    <AnnotationPlugin ref={annotationPluginRef} />,
+    <AnnotationPlugin ref={annotationPluginRef} viewOptions={undefined} />,
   );
   const annotationPlugin = annotationPluginRef.current;
   if (!annotationPlugin) throw new Error("AnnotationPlugin did not mount");

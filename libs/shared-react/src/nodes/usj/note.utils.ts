@@ -114,7 +114,9 @@ export function $insertNote(
   if (!NoteNode.isValidMarker(marker))
     throw new Error(`$insertNote: Invalid note marker '${marker}'`);
 
-  const selection = selectionRange ? $getRangeFromUsjSelection(selectionRange) : $getSelection();
+  const selection = selectionRange
+    ? $getRangeFromUsjSelection(selectionRange, viewOptions)
+    : $getSelection();
   if (!$isRangeSelection(selection)) return undefined;
 
   const children = $createNoteChildren(

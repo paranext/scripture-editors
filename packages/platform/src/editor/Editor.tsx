@@ -809,7 +809,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // inside an in-flight update, where the same flush is the frozen-commit crash.
       const context = buildSettledPositionContext();
       if (!context || isLiveSettledIdentical(context))
-        return editor.read($getUsjSelectionFromEditor);
+        return editor.read(() => $getUsjSelectionFromEditor(viewOptions));
       return readSettledSelection(editor, "getSelection");
     },
     setSelection(selection) {
@@ -826,7 +826,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         return;
       }
       editorRef.current?.update(() => {
-        const editorSelection = $getRangeFromUsjSelection(live);
+        const editorSelection = $getRangeFromUsjSelection(live, viewOptions);
         if (editorSelection !== undefined) {
           $setSelection(editorSelection);
           $addUpdateTag(SELECTION_CHANGE_TAG);
@@ -1340,7 +1340,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             viewOptions={viewOptions}
             logger={stableLogger}
           />
-          <OnSelectionChangePlugin onChange={handleSelectionChange} />
+          <OnSelectionChangePlugin onChange={handleSelectionChange} viewOptions={viewOptions} />
           <DeltaOnChangePlugin
             onChange={handleChange}
             ignoreSelectionChange
@@ -1348,7 +1348,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             ignoreTags={blackListedChangeTags}
           />
           <ActiveTextPlugin viewOptions={viewOptions} />
-          <AnnotationPlugin ref={annotationRef} logger={stableLogger} />
+          <AnnotationPlugin ref={annotationRef} logger={stableLogger} viewOptions={viewOptions} />
           <ArrowNavigationPlugin viewOptions={viewOptions} />
           <CharNodePlugin />
           <ClipboardPlugin />

@@ -150,7 +150,7 @@ describe("TextSpacingPlugin", () => {
       // survives, because the caret then simply stays inside the leftover text node.
       $expectSelectionToBe(para, 1);
       // [verse 1, verse 2] — no exporter-visible content item for the now-empty verse.
-      expect($getLogicalContentItems(para)).toHaveLength(2);
+      expect($getLogicalContentItems(para, false)).toHaveLength(2);
       expect(para.getTextContent()).toBe("");
     });
   });
@@ -188,9 +188,12 @@ describe("TextSpacingPlugin", () => {
 
     editor.getEditorState().read(() => {
       // Logical index 2 is the tail text in core's shape; it must be the tail text here too.
-      const range = $getRangeFromUsjSelection({
-        start: { jsonPath: "$.content[0].content[2]", offset: 1 },
-      });
+      const range = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: "$.content[0].content[2]", offset: 1 },
+        },
+        undefined,
+      );
       if (!range) throw new Error("Expected the USJ selection to resolve");
       // `tailText` is assigned in the setup callback above.
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -428,7 +431,7 @@ describe("TextSpacingPlugin", () => {
       // [verse 1, verse 2] — the empty verse contributes no content item. Asserted on logical
       // content items rather than children so this stays invariant to whether Lexical has yet
       // garbage-collected the emptied text node.
-      expect($getLogicalContentItems(para)).toHaveLength(2);
+      expect($getLogicalContentItems(para, false)).toHaveLength(2);
       expect(para.getTextContent()).toBe("");
     });
   });
@@ -710,7 +713,7 @@ describe("TextSpacingPlugin", () => {
       const para = $getRoot().getFirstChild();
       if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
       // [verse 1, "the beginning ", verse 2] — space coalesced into the run, no index shift.
-      expect($getLogicalContentItems(para)).toHaveLength(3);
+      expect($getLogicalContentItems(para, false)).toHaveLength(3);
       expect(para.getTextContent()).toBe("the beginning ");
     });
   });
@@ -741,7 +744,7 @@ describe("TextSpacingPlugin", () => {
       if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
       // [verse 1, "text ", char, " ", verse 2] — the structural space is its own content item,
       // exactly as canonical USJ from Paratext has it.
-      const items = $getLogicalContentItems(para);
+      const items = $getLogicalContentItems(para, false);
       expect(items).toHaveLength(5);
       expect(items[3].type).toBe("text");
     });
@@ -768,7 +771,7 @@ describe("TextSpacingPlugin", () => {
       const para = $getRoot().getFirstChild();
       if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
       // [verse 1, "a ", verse 2] — no double space, no extra content item.
-      expect($getLogicalContentItems(para)).toHaveLength(3);
+      expect($getLogicalContentItems(para, false)).toHaveLength(3);
       expect(para.getTextContent()).toBe("a ");
     });
   });

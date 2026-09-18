@@ -733,7 +733,7 @@ function serializedTextTypeState(node: SerializedLexicalNode): unknown {
  * `$canSimpleTextNodesBeMerged`, which the live reconciler applies automatically to two such
  * siblings on every commit. Needed because a husk-removal splice below can leave two plain text
  * siblings adjacent that the LIVE tree would have coalesced into one node already; without
- * mirroring that coalesce here, `normalizeSpaceRuns` (editor-usj.adaptor.ts) — which only
+ * mirroring that coalesce here, `collapseSpaceRuns` (editor-usj.adaptor.ts) — which only
  * collapses a run of 2+ spaces WITHIN one serialized node's own string — never sees the combined
  * run spanning the two separate JSON entries.
  */
@@ -1046,7 +1046,7 @@ export function $collectSettleScopes(
  * The merge mirrors the live reconciler's own coalesce of two simple-mergeable TextNode siblings
  * (see `canMergeSerializedText`'s doc comment) — the mutating settle leaves the flanking
  * significant spaces untouched at removal time ($settlePendedDisplayOwner's remove-owner branch)
- * and relies on exactly this coalesce, followed by `normalizeSpaceRuns`, to collapse a run split
+ * and relies on exactly this coalesce, followed by `collapseSpaceRuns`, to collapse a run split
  * across the removed husk. It matters only for a husk removed on its own: a co-settling rebuild
  * already produces correctly normalized text through the full tokenize+serialize pipeline.
  */

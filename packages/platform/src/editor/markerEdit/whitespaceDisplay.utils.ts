@@ -24,8 +24,9 @@
  *    destroy the plain space (runs of 2+, fragment edges) (plugin utils).
  * 4. PASTE: external NBSP (including `&nbsp;` in text/html) → display `~` (plugin utils).
  * 5. SERIALIZATION (display → data): the reverse adaptor strips a char span's structural leading
- *    NBSP separator, then inverts via {@link displayTextToUsj}, then collapses runs via
- *    {@link normalizeSpaceRuns}.
+ *    NBSP separator, then collapses runs via `collapseSpaceRuns` (in `shared`, beside the run
+ *    ranges the logical position model drops, so `getUsj()` and reported offsets agree), then
+ *    inverts via {@link displayTextToUsj}.
  *
  * The split between the two files: these functions are pure whole-string transforms for the
  * load/serialize boundaries; the plugin utils are `$`-prefixed tree/clipboard-event code for the
@@ -50,9 +51,4 @@ export function usjTextToDisplay(text: string): string {
 /** Display → data: `~` → NBSP; display-NBSP → plain space. Does not collapse runs. */
 export function displayTextToUsj(text: string): string {
   return text.replaceAll(NBSP, " ").replaceAll("~", NBSP);
-}
-
-/** Collapse runs of 2+ plain spaces to one (normalization; NBSP is never collapsed). */
-export function normalizeSpaceRuns(text: string): string {
-  return text.replace(/ {2,}/g, " ");
 }

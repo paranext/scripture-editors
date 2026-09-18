@@ -225,7 +225,7 @@ ${USX_FOOTER}`,
   {
     // Paragraph leading-space display rule: a paragraph whose first content text starts
     // with a single leading space. Standard view displays that space as NBSP; the reverse
-    // adaptor inverts it back (and normalizeSpaceRuns leaves a lone space alone), so the pair
+    // adaptor inverts it back (and the space-run collapse leaves a lone space alone), so the pair
     // round-trips. The other three modes carry the leading space through untouched.
     name: "paragraph-leading space (display rule)",
     usx: book(`<para style="p"> Leading space precedes this text.</para>`),

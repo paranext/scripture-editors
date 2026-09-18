@@ -28,7 +28,7 @@ import {
   getPendedDisplayOwners,
   TypedMarkNode,
 } from "shared";
-import { usjReactNodes } from "shared-react";
+import { hasStandardViewWhitespace, usjReactNodes } from "shared-react";
 
 /** A doc shaped like the settled-output suites': a book, a chapter, `content` as the first
  * paragraph, and a second paragraph to depart to. */
@@ -159,9 +159,10 @@ export function settledParaIndex(usj: Usj | undefined, text: string): number {
 /** The top-level LOGICAL index of the live element whose text contains `needle` — what the settled
  * index is compared against to show a region actually collapsed. */
 export function $liveTopIndexContaining(needle: string): number {
-  const index = $getLogicalContentItems($getRoot()).findIndex(
-    (item) => item.type === "element" && item.node.getTextContent().includes(needle),
-  );
+  const index = $getLogicalContentItems(
+    $getRoot(),
+    hasStandardViewWhitespace(requireStandardViewOptions()),
+  ).findIndex((item) => item.type === "element" && item.node.getTextContent().includes(needle));
   if (index < 0) throw new Error(`no top-level live item containing ${JSON.stringify(needle)}`);
   return index;
 }

@@ -1,3 +1,4 @@
+import { ViewOptions } from "../../../views/view-options.utils";
 import { AnnotationRange } from "./selection.model";
 import { $getRangeFromUsjSelection } from "./selection.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -131,7 +132,14 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
 }
 
 export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger extends LoggerBasic>(
-  { logger }: { logger?: TLogger },
+  {
+    logger,
+    viewOptions,
+  }: {
+    logger?: TLogger;
+    /** The editor's view options, which decide how its text maps to USJ offsets. */
+    viewOptions: ViewOptions | undefined;
+  },
   ref: ForwardedRef<AnnotationRef>,
 ) {
   const [editor] = useLexicalComposerContext();
@@ -182,7 +190,7 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
       editor.update(
         () => {
           // Apply the annotation to the selected range.
-          const editorSelection = $getRangeFromUsjSelection(selection);
+          const editorSelection = $getRangeFromUsjSelection(selection, viewOptions);
           if (editorSelection === undefined) {
             logger?.error("Failed to find start or end node of the annotation.");
             return;
