@@ -388,14 +388,21 @@ describe("ScriptureReferencePlugin", () => {
         $editableVerseContentStartingWithNonTextState,
       );
       updateSelection(editor, firstVerseTextNode, 2);
+      // Let the setup selection's queued `selectionchange` land now, so the one that settles the
+      // placement below is always the placement's own rather than whichever happens to be pending.
+      await flushQueuedEvents();
 
       await setScrRef({ ...scrRef, verseNum: 5 });
+      // jsdom fires `selectionchange` a macrotask after the DOM selection moves; act() does not
+      // wait for it.
+      await flushQueuedEvents();
 
       editor.getEditorState().read(() => {
-        // Nothing but the NEXT verse marker follows, so placement leaves the boundary element point
-        // — and in editable-marker mode Lexical's own selection normalization then resolves that to
-        // the end of this verse's marker, which draws a caret in the right place. Either way the
-        // caret must NOT run on into verse 6's text.
+        // Nothing but the NEXT verse marker follows, so placement leaves the boundary element point,
+        // which Lexical commits as offset 0 of verse 6's marker. The `selectionchange` that follows
+        // reads the DOM selection back, and Lexical resolves a collapsed offset-0 point to the end
+        // of the previous text: this verse's marker, which draws a caret in the right place. Either
+        // way the caret must NOT run on into verse 6's text.
         $expectSelectionToBe(emptyVerseMarker, emptyVerseMarker.getTextContentSize());
       });
       expect(mockOnScrRefChange).not.toHaveBeenCalled();
