@@ -45,6 +45,7 @@ import {
   $createMarkerNode,
   $createNoteNode,
   $createParaNode,
+  $createTypedMarkNode,
   $isBookNode,
   $isCharNode,
   $isMarkerNode,
@@ -481,6 +482,42 @@ describe("$applyMarkerMenuSelection", () => {
         expect(rightSpans).toHaveLength(1);
         expect(rightSpans[0].getMarker()).toBe("nd");
         expect(rightSpans[0].getTextContent()).toContain("name");
+      });
+    });
+
+    it("leaves the line untouched when the split cannot reach the book from inside an annotation", async () => {
+      // An annotation's mark wrapper sits between the caret and the book, and only a char stack
+      // can be lifted out of. A pick that cannot split must not have deleted the selection first.
+      let markedText: TextNode;
+      const { editor } = await historyTestEnvironment(() => {
+        markedText = $createTextNode("holy name");
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+            $createTextNode("Genesis "),
+            $createTypedMarkNode({ comment: ["c1"] }).append(markedText),
+            $createTextNode(" end"),
+          ),
+        );
+      });
+      await act(async () => editor.update(() => markedText.select(0, 4)));
+
+      const item: MarkerMenuItem = { marker: "p", kind: "paragraph", isBasic: true };
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            item,
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        const children = $getRoot().getChildren();
+        expect(children).toHaveLength(1);
+        expect(children[0].getTextContent()).toBe(`\\id GEN${NBSP}Genesis holy name end`);
       });
     });
   });

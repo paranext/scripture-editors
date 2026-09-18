@@ -38,6 +38,8 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  LexicalNode,
+  PointType,
   TextNode,
 } from "lexical";
 import {
@@ -143,6 +145,19 @@ function $applyParagraphSelection(
 }
 
 /**
+ * Whether {@link $splitBookWithMarker} can cut the `\id` line at `point`. The break point lands in
+ * the point's container, and the only thing the split can lift it out of is a stack of char spans
+ * ({@link $liftOutOfCharStack}); anything else between it and the book (an annotation's mark
+ * wrapper, a note) leaves it short of the line, where the split cannot reason about it.
+ */
+function $canSplitBookAt(point: PointType, book: BookNode): boolean {
+  const node = point.getNode();
+  let container: LexicalNode | null = $isElementNode(node) ? node : node.getParent();
+  while ($isCharNode(container)) container = container.getParent();
+  return book.is(container);
+}
+
+/**
  * Splits the `\id` line at the caret and gives the tail a NEW paragraph marked `marker`, inserted
  * directly after the book — the only outcome a paragraph pick can have there. PT9 starts a new
  * paragraph wherever a paragraph marker is written, and a book can never be RETAGGED: `\id` names
@@ -159,6 +174,9 @@ function $applyParagraphSelection(
 function $splitBookWithMarker(book: BookNode, marker: string, viewOptions?: ViewOptions): void {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return;
+  // Decided before anything is mutated, so a pick that cannot split leaves the line exactly as it
+  // was rather than having already deleted the selection it was about to replace.
+  if (!$canSplitBookAt(selection.anchor, book) || !$canSplitBookAt(selection.focus, book)) return;
   // A pick over a SELECTION replaces it first — the same delete-then-split
   // `RangeSelection.insertParagraph` performs on the paragraph path.
   if (!selection.isCollapsed()) selection.removeText();
@@ -187,8 +205,8 @@ function $splitBookWithMarker(book: BookNode, marker: string, viewOptions?: View
     else return;
   }
   if ($innermostCharAncestor(breakPoint)) $liftOutOfCharStack(breakPoint, { renderGlyphs: true });
-  // The lift resolves a char stack; anything else between the caret and the book (an annotation
-  // mark wrapper, say) leaves the break point where this split cannot reason about it. Bail rather
+  // `$canSplitBookAt` ruled out a caret the lift cannot bring back to the book, but only for the
+  // points the pick started from; this covers wherever removing a selection left it. Bail rather
   // than move a partial subtree out of the line.
   if (!book.is(breakPoint.getParent())) {
     breakPoint.remove();
