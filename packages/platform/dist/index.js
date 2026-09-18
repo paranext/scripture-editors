@@ -18044,8 +18044,8 @@ function oC({ options: e, getContainer: t } = {}) {
     return [...f, ...p];
   }, [r, n, e]), u = ge(() => {
     o((f) => ({ ...f, isOpen: !1 })), c(void 0);
-  }, []);
-  z(() => {
+  }, []), d = X(null);
+  return z(() => {
     const f = (p) => {
       const g = p.target;
       r.getRootElement() === g || Wf(g) || (p.preventDefault(), o({
@@ -18061,8 +18061,8 @@ function oC({ options: e, getContainer: t } = {}) {
   }, [r, t]), z(() => {
     if (!s.isOpen)
       return;
-    const f = () => {
-      u();
+    const f = (p) => {
+      p.target instanceof Node && d.current?.contains(p.target) || u();
     };
     return globalThis.addEventListener("scroll", f, !0), () => globalThis.removeEventListener("scroll", f, !0);
   }, [s.isOpen, u]), z(() => {
@@ -18093,14 +18093,16 @@ function oC({ options: e, getContainer: t } = {}) {
     return document.addEventListener("keydown", f, !0), () => document.removeEventListener("keydown", f, !0);
   }, [s.isOpen, u, l, a, r]), z(() => r.registerEditableListener((f) => {
     i(!f);
-  }), [r]);
-  const d = X(null);
-  return ns(() => {
+  }), [r]), ns(() => {
     const f = d.current;
     if (!f)
       return;
     const { container: p } = s, g = p?.currentCSSZoom ?? 1, { width: m, height: y } = f.getBoundingClientRect(), k = sC(p), v = Math.max(k.left, Math.min(s.x, k.right - m)), C = Math.max(k.top, Math.min(s.y, k.bottom - y));
-    f.style.left = `${v / g}px`, f.style.top = `${C / g}px`, p && (f.style.maxHeight = `${(k.bottom - k.top) / g}px`, f.style.overflowY = "auto"), f.style.visibility = "visible";
+    if (f.style.left = `${v / g}px`, f.style.top = `${C / g}px`, p) {
+      const E = f.getBoundingClientRect();
+      (E.left !== v || E.top !== C) && (f.style.left = `${(v - (E.left - v)) / g}px`, f.style.top = `${(C - (E.top - C)) / g}px`), f.style.maxHeight = `${(k.bottom - k.top) / g}px`, f.style.overflowY = "auto";
+    }
+    f.style.visibility = "visible";
   }, [s]), s.isOpen ? uy.createPortal(S("div", { ref: d, className: "typeahead-popover auto-embed-menu", style: {
     left: s.x,
     position: "fixed",
