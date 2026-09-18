@@ -1900,9 +1900,19 @@ export function $buildBookFragment(
   return { out, contentNodes };
 }
 
-/** Bytes that literally OPEN with the tokenizer's default paragraph marker, so a wrapper built
- * from them is the author's own `\p` rather than the implied one — see {@link tokenizedBookLine}. */
-const LEADING_DEFAULT_PARA_MARKER = new RegExp(`^\\s*\\\\${PARA_MARKER_DEFAULT}(\\s|$)`);
+/**
+ * Bytes that literally OPEN with the tokenizer's default paragraph marker, so a wrapper built from
+ * them is the author's own `\p` rather than the implied one — see {@link tokenizedBookLine}.
+ *
+ * Both edges mirror the tokenizer, since this re-derives from the bytes a decision it already made.
+ * A leading whitespace run is dropped ahead of a block marker only when it holds a line break; any
+ * other run (a space, a tab, an NBSP) is content, which the tokenizer wraps in the implied `\p`. And
+ * a marker name ends where `scanMarkerName` ends it — at whitespace, a ZWSP, `\` or `|` — so
+ * `\p\bd …` is the author's `\p` too, while `\p*` is a different marker altogether.
+ */
+const LEADING_DEFAULT_PARA_MARKER = new RegExp(
+  `^(?:[\\s\\u200B]*[\\r\\n][\\s\\u200B]*)?\\\\${PARA_MARKER_DEFAULT}(?=[\\s\\u200B\\\\|]|$)`,
+);
 
 /**
  * The freshly tokenized `\id` line bytes, split where the line ENDS: `lineContent` is what the book
