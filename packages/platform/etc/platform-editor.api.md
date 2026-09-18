@@ -126,6 +126,7 @@ export const Editorial: ForwardRefExoticComponent<EditorProps<LoggerBasic> & Ref
 // @public
 export interface EditorOptions {
     contextMenu?: ContextMenuOptionConfig[];
+    contextMenuContainer?: () => HTMLElement | undefined;
     debug?: boolean;
     hasExternalUI?: boolean;
     hasSpellCheck?: boolean;
