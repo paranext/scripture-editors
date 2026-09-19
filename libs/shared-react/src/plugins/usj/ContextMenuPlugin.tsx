@@ -185,9 +185,8 @@ function getVisibleBox(container: HTMLElement | undefined): Box {
 const MENU_WIDTH = 200;
 
 /**
- * The style properties a container-hosted open writes to bound the menu. They are cleared before
- * every open, because the element is reused; keeping the list in one place is what stops a cap
- * added later from being set but never reset.
+ * The style properties a container-hosted open writes to bound the menu. Naming them once is what
+ * stops a cap added later from being written without also being cleared on the next open.
  */
 const BOUNDING_STYLES = ["maxWidth", "maxHeight", "overflowY"] as const;
 
@@ -365,10 +364,11 @@ export function ContextMenuPlugin({
     const { container } = menuState;
     const box = getVisibleBox(container);
 
-    // Opening the menu while it is already open reuses this element rather than remounting it — a
-    // second right-click, or the keyboard menu key. Clear last open's caps first: they would
-    // otherwise narrow the measurement the scale below is derived from, and survive into an open
-    // that portals to `document.body` and should not be capped at all.
+    // Opening the menu again into the same container reuses this element rather than remounting
+    // it — a second right-click, or the keyboard menu key. Clear last open's caps first, because
+    // the scale below is measured from the menu's rendered width and a surviving `max-width`
+    // would narrow the very thing being measured. (A change of portal target remounts instead, so
+    // that path starts clean on its own.)
     BOUNDING_STYLES.forEach((property) => {
       menu.style[property] = "";
     });
