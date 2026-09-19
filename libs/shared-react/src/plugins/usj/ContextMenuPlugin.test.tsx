@@ -374,6 +374,51 @@ describe("ContextMenuPlugin", () => {
     }
   });
 
+  it("carries no caps into an open that portals to the body", async () => {
+    // Changing the portal target remounts the menu, so this one does not depend on the cap reset
+    // the way a container-to-container re-open does — it pins the outcome the user sees: an
+    // unscaled menu is never left bounded by a pane it no longer renders in.
+    const container = stubbedContainer(2, { left: 0, top: 0, width: 300, height: 300 });
+    let withContainer = true;
+
+    const { editor } = await contextMenuEnvironment(() => (withContainer ? container : undefined));
+
+    const restoreMenuLayout = stubMenuLayout(200, 100);
+    try {
+      const first = await openMenu(editor, 10, 10);
+      expect(first.style.maxWidth).toBe("150px");
+
+      withContainer = false;
+      const second = await openMenu(editor, 10, 10);
+
+      expect(second).not.toBe(first);
+      expect(second.parentElement).toBe(document.body);
+      expect(second.style.maxWidth).toBe("");
+      expect(second.style.maxHeight).toBe("");
+      expect(second.style.overflowY).toBe("");
+    } finally {
+      restoreMenuLayout();
+    }
+  });
+
+  it("still opens the menu, unscaled, when the container getter throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { editor } = await contextMenuEnvironment(() => {
+        throw new Error("host getter blew up");
+      });
+
+      const menu = await openMenu(editor, 300, 400);
+
+      expect(menu.parentElement).toBe(document.body);
+      expect(menu.style.visibility).toBe("visible");
+      expect(menu.style.maxHeight).toBe("");
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("places the menu at the pointer when an ancestor scales it, not just translates it", async () => {
     // `currentCSSZoom` reports 1 here: the factor of 2 comes from a `transform: scale()` above the
     // menu, which it cannot see. Trusting it would place the menu by dividing by the wrong number.

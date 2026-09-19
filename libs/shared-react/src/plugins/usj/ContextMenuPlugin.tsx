@@ -184,6 +184,13 @@ function getVisibleBox(container: HTMLElement | undefined): Box {
 /** The menu's width, in its own (pre-zoom) units. Also the ruler the rendered scale is read from. */
 const MENU_WIDTH = 200;
 
+/**
+ * The style properties a container-hosted open writes to bound the menu. They are cleared before
+ * every open, because the element is reused; keeping the list in one place is what stops a cap
+ * added later from being set but never reset.
+ */
+const BOUNDING_STYLES = ["maxWidth", "maxHeight", "overflowY"] as const;
+
 export function ContextMenuPlugin({
   options: extraOptions,
   getContainer,
@@ -362,9 +369,9 @@ export function ContextMenuPlugin({
     // second right-click, or the keyboard menu key. Clear last open's caps first: they would
     // otherwise narrow the measurement the scale below is derived from, and survive into an open
     // that portals to `document.body` and should not be capped at all.
-    menu.style.maxWidth = "";
-    menu.style.maxHeight = "";
-    menu.style.overflowY = "";
+    BOUNDING_STYLES.forEach((property) => {
+      menu.style[property] = "";
+    });
 
     if (!container) {
       const { width, height } = menu.getBoundingClientRect();
