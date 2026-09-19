@@ -26,6 +26,10 @@ refused. The public surface grew substantially; nothing was removed.
 - `defaultStyleInfo` and the `StyleInfo` / `MarkerStyleInfo` / `StyleType` types.
 - `EditorOptions.styleInfo`, `EditorOptions.markerSettleDelayMs`,
   `ViewOptions.showParaMarkerPrefixes`, and the caller/separator fields on `UsjNodeOptions`.
+- `EditorOptions.contextMenuContainer` — names the element to render the right-click menu into,
+  instead of `document.body`. A host that scales its content (CSS `zoom`) passes the scaled
+  element, and the menu is then scaled with it and bounded by it. Hosts that omit it are
+  unaffected.
 - **Ctrl+Space removes character formatting from the selection.** On macOS this is ⌃Space rather than
   ⌘Space, which is Spotlight. It can collide with the macOS input-source switcher and with some IME
   on/off toggles; the handler declines while a composition is active.
@@ -50,5 +54,8 @@ refused. The public surface grew substantially; nothing was removed.
 - The in-editor marker menu no longer swallows modifier chords: a keystroke carrying Ctrl/Cmd/Alt
   while the menu is open closes the menu and reaches its normal handler instead of being appended to
   the filter.
+- Scrolling the right-click menu's own list no longer closes it. The plugin's scroll listener is on
+  the capture phase, so it also received scrolls raised inside the menu, putting any item past the
+  list's height cap out of reach of the mouse.
 - A marker flagged as unknown or invalid now carries an accessible description and a tooltip naming
   the problem, rather than communicating it through color alone.
