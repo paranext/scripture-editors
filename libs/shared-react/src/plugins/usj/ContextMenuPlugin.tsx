@@ -172,8 +172,17 @@ function getVisibleBox(container: HTMLElement | undefined): Box {
       box = intersect(box, ancestor.getBoundingClientRect());
     }
   }
-  return intersect(box, viewport);
+  const clipped = intersect(box, viewport);
+  // An ancestor that clips but has no layout of its own — a zero-height `body` under an
+  // absolutely positioned app root, a collapsed flex parent — would otherwise leave an empty or
+  // inverted box, which caps the menu to nothing and pins it to a corner. An unbounded menu is a
+  // far better failure than an invisible one.
+  const isEmpty = clipped.right <= clipped.left || clipped.bottom <= clipped.top;
+  return isEmpty ? viewport : clipped;
 }
+
+/** The menu's width, in its own (pre-zoom) units. Also the ruler the rendered scale is read from. */
+const MENU_WIDTH = 200;
 
 export function ContextMenuPlugin({
   options: extraOptions,
@@ -181,10 +190,12 @@ export function ContextMenuPlugin({
 }: {
   options?: ContextMenuOptionConfig[];
   /**
-   * Returns the element to render the menu into, instead of `document.body`. Return the element
-   * whose content the menu belongs to when that element is scaled (CSS `zoom`), so the menu is
-   * scaled with it and stays inside it. Called only while the menu is open; return `undefined`
-   * to portal to `document.body` unscaled.
+   * EXPERIMENTAL: Returns the element to render the menu into, instead of `document.body`. Return
+   * the element whose content the menu belongs to when that element is scaled (CSS `zoom`), so the
+   * menu is scaled with it and stays inside it. Called only while the menu is open; return
+   * `undefined` to portal to `document.body` unscaled. Keep the function stable across renders — a
+   * new one on every render re-registers the editor's `contextmenu` listener. The element must be
+   * in the same document as the editor.
    */
   getContainer?: () => HTMLElement | undefined;
 } = {}): ReactElement | null {
@@ -237,7 +248,9 @@ export function ContextMenuPlugin({
   }, [editor, isReadonly, extraOptions]);
 
   const closeMenu = useCallback(() => {
-    setMenuState((prev) => ({ ...prev, isOpen: false }));
+    // Dropping the container releases the host's element; holding it would keep a detached node
+    // alive for as long as the plugin lives.
+    setMenuState((prev) => ({ ...prev, isOpen: false, container: undefined }));
     setSelectedIndex(undefined);
   }, []);
 
@@ -251,12 +264,15 @@ export function ContextMenuPlugin({
         return;
       }
       event.preventDefault();
-      setMenuState({
-        isOpen: true,
-        x: event.clientX,
-        y: event.clientY,
-        container: getContainer?.(),
-      });
+      let container: HTMLElement | undefined;
+      try {
+        container = getContainer?.();
+      } catch {
+        // The native menu is already suppressed by now, so a host getter that throws would
+        // otherwise leave the user with no context menu at all. Unscaled is a usable fallback.
+        container = undefined;
+      }
+      setMenuState({ isOpen: true, x: event.clientX, y: event.clientY, container });
       setSelectedIndex(undefined);
     };
 
@@ -333,38 +349,57 @@ export function ContextMenuPlugin({
     [editor],
   );
 
-  // Clamp the menu into view before first paint to prevent off-screen rendering. Inside a
-  // container scaled with CSS `zoom`, the element's own lengths are pre-zoom while the pointer
-  // event's coordinates are rendered viewport pixels, so the placement divides by the factor.
+  // Clamp the menu into view before first paint to prevent off-screen rendering.
   useLayoutEffect(() => {
     const menu = menuRef.current;
     if (!menu) return;
     const { container } = menuState;
-    const factor = container?.currentCSSZoom ?? 1;
-    const { width, height } = menu.getBoundingClientRect();
     const box = getVisibleBox(container);
-    const clampedLeft = Math.max(box.left, Math.min(menuState.x, box.right - width));
-    const clampedTop = Math.max(box.top, Math.min(menuState.y, box.bottom - height));
-    menu.style.left = `${clampedLeft / factor}px`;
-    menu.style.top = `${clampedTop / factor}px`;
-    if (container) {
-      // A `position: fixed` element is laid out against the viewport only while no ancestor
-      // establishes a containing block for it, and a `transform`, `filter`, `perspective` or
-      // `contain` anywhere above it silently makes that ancestor the origin instead — a popover
-      // wrapper, for one. Rather than hunting for such an ancestor, read back where the menu
-      // actually landed and shift it by however far it is out: the offsets are written in the
-      // container's pre-zoom units, so the viewport-pixel error is divided by the factor too.
-      const placed = menu.getBoundingClientRect();
-      if (placed.left !== clampedLeft || placed.top !== clampedTop) {
-        menu.style.left = `${(clampedLeft - (placed.left - clampedLeft)) / factor}px`;
-        menu.style.top = `${(clampedTop - (placed.top - clampedTop)) / factor}px`;
-      }
-      // The menu's own lengths are pre-zoom, so the cap is the visible height divided by the
-      // factor. Combined with the stylesheet's own list cap, the menu never outgrows the space it
-      // opens in.
-      menu.style.maxHeight = `${(box.bottom - box.top) / factor}px`;
-      menu.style.overflowY = "auto";
+
+    if (!container) {
+      const { width, height } = menu.getBoundingClientRect();
+      menu.style.left = `${Math.max(box.left, Math.min(menuState.x, box.right - width))}px`;
+      menu.style.top = `${Math.max(box.top, Math.min(menuState.y, box.bottom - height))}px`;
+      menu.style.visibility = "visible";
+      return;
     }
+
+    // Inside a container, the menu's own lengths are in the container's units while the pointer's
+    // coordinates are rendered viewport pixels. The ratio is not just the container's CSS `zoom`:
+    // a `transform: scale()` anywhere above the menu multiplies it too, and `currentCSSZoom`
+    // reports only the former. So measure the ratio from the one length we wrote ourselves,
+    // before any cap below narrows it.
+    const unscaled = menu.getBoundingClientRect();
+    const scale = unscaled.width / MENU_WIDTH;
+    if (!Number.isFinite(scale) || scale <= 0) {
+      // No layout to place against — a pane hidden with `display: none` has none.
+      menu.style.visibility = "visible";
+      return;
+    }
+
+    // Cap both axes to the visible box, in the menu's own units. Height alone is not enough: the
+    // menu's width is fixed, so the zoom multiplies it, and past roughly 1.5x in a narrow pane the
+    // horizontal clamp below has nothing left to give and collapses to the box's leading edge,
+    // painting the remainder past it.
+    menu.style.maxWidth = `${Math.min(MENU_WIDTH, (box.right - box.left) / scale)}px`;
+    menu.style.maxHeight = `${(box.bottom - box.top) / scale}px`;
+    menu.style.overflowY = "auto";
+
+    // Re-measure, because those caps change the size the clamp has to fit.
+    const capped = menu.getBoundingClientRect();
+    const clampedLeft = Math.max(box.left, Math.min(menuState.x, box.right - capped.width));
+    const clampedTop = Math.max(box.top, Math.min(menuState.y, box.bottom - capped.height));
+
+    // A `position: fixed` element resolves against the viewport only while no ancestor establishes
+    // a containing block for it, and a `transform`, `filter`, `perspective` or `contain` anywhere
+    // above it silently makes that ancestor the origin instead — a popover wrapper, for one.
+    // Rather than hunting for such an ancestor, recover the origin from where the menu actually
+    // landed against what we wrote, then solve for the offsets. Exact in one pass for any
+    // axis-aligned scaling and translation, which is what all of those produce.
+    const originLeft = capped.left - scale * Number.parseFloat(menu.style.left);
+    const originTop = capped.top - scale * Number.parseFloat(menu.style.top);
+    menu.style.left = `${(clampedLeft - originLeft) / scale}px`;
+    menu.style.top = `${(clampedTop - originTop) / scale}px`;
     menu.style.visibility = "visible";
   }, [menuState]);
 
@@ -380,7 +415,7 @@ export function ContextMenuPlugin({
         top: menuState.y,
         userSelect: "none",
         visibility: "hidden",
-        width: 200,
+        width: MENU_WIDTH,
         zIndex: 9999,
       }}
       onPointerDown={(e) => e.stopPropagation()}

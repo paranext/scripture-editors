@@ -77,32 +77,43 @@ function stubbedContainer(
 
 /**
  * Gives the portalled menu the measured size and the laid-out position that jsdom has neither of,
- * standing in for a browser's layout: the menu's `left`/`top` are written in the units of whatever
- * establishes its containing block, so the reported viewport position is those offsets scaled by
- * the parent's zoom and shifted by `origin`. `origin` is where that containing block starts — the
- * viewport's own 0,0 unless an ancestor's `transform` (or `filter`, `contain`, …) has taken the
- * role over. Instance stubs on individual containers still win, since they shadow the prototype.
- * Returns a restore function.
+ * standing in for a browser's layout. `width`/`height` are the menu's own (pre-scale) size, the
+ * units its `left`/`top`/`max-*` are written in; everything the stub reports is in rendered
+ * viewport pixels, so it scales all of them the way a browser does. The scale is the parent's CSS
+ * `zoom` times `transformScale`, which stands in for a `transform: scale()` on an ancestor —
+ * `currentCSSZoom` cannot see that one, which is exactly why the code measures instead of asking.
+ * `origin` is where the containing block starts: the viewport's own 0,0 unless an ancestor's
+ * `transform` (or `filter`, `contain`, …) has taken the role over. Any `max-width`/`max-height`
+ * the code has written is honoured, so a re-measure after capping reports the capped size.
+ * Instance stubs on individual containers still win, since they shadow the prototype. Returns a
+ * restore function.
  */
 function stubMenuLayout(
   width: number,
   height: number,
   origin: { left: number; top: number } = { left: 0, top: 0 },
+  transformScale = 1,
 ): () => void {
   const original = Element.prototype.getBoundingClientRect;
   Element.prototype.getBoundingClientRect = function stubbed(this: Element) {
     if (!(this instanceof HTMLElement) || !this.classList.contains("auto-embed-menu"))
       return original.call(this);
-    const zoom = this.parentElement?.currentCSSZoom ?? 1;
-    const left = zoom * (Number.parseFloat(this.style.left) || 0) + origin.left;
-    const top = zoom * (Number.parseFloat(this.style.top) || 0) + origin.top;
+    const scale = (this.parentElement?.currentCSSZoom ?? 1) * transformScale;
+    const capTo = (own: number, cap: string) => {
+      const parsed = Number.parseFloat(cap);
+      return Number.isFinite(parsed) ? Math.min(own, parsed) : own;
+    };
+    const renderedWidth = scale * capTo(width, this.style.maxWidth);
+    const renderedHeight = scale * capTo(height, this.style.maxHeight);
+    const left = scale * (Number.parseFloat(this.style.left) || 0) + origin.left;
+    const top = scale * (Number.parseFloat(this.style.top) || 0) + origin.top;
     return {
       left,
       top,
-      width,
-      height,
-      right: left + width,
-      bottom: top + height,
+      width: renderedWidth,
+      height: renderedHeight,
+      right: left + renderedWidth,
+      bottom: top + renderedHeight,
       x: left,
       y: top,
       toJSON: () => ({}),
@@ -317,6 +328,79 @@ describe("ContextMenuPlugin", () => {
 
       expect(menu.style.maxHeight).toBe("150px");
       expect(menu.style.overflowY).toBe("auto");
+    } finally {
+      restoreMenuLayout();
+    }
+  });
+
+  it("caps its width so a zoomed menu cannot paint past the pane", async () => {
+    // A 300px-wide pane at zoom 2. The menu's fixed 200 own-pixels would render 400 wide — wider
+    // than the pane it is supposed to stay inside.
+    const container = stubbedContainer(2, { left: 0, top: 0, width: 300, height: 1000 });
+    const { editor } = await contextMenuEnvironment(() => container);
+
+    const restoreMenuLayout = stubMenuLayout(200, 100);
+    try {
+      const menu = await openMenu(editor, 280, 10);
+
+      // 300 visible pixels is 150 of the menu's own, so the cap is 150 and it renders 300 wide.
+      expect(menu.style.maxWidth).toBe("150px");
+      expect(menu.getBoundingClientRect().right).toBeLessThanOrEqual(300);
+    } finally {
+      restoreMenuLayout();
+    }
+  });
+
+  it("places the menu at the pointer when an ancestor scales it, not just translates it", async () => {
+    // `currentCSSZoom` reports 1 here: the factor of 2 comes from a `transform: scale()` above the
+    // menu, which it cannot see. Trusting it would place the menu by dividing by the wrong number.
+    const container = stubbedContainer(1, { left: 0, top: 0, width: 10000, height: 10000 });
+    const { editor } = await contextMenuEnvironment(() => container);
+
+    const restoreMenuLayout = stubMenuLayout(200, 100, { left: 100, top: 50 }, 2);
+    try {
+      const menu = await openMenu(editor, 300, 400);
+
+      // What matters is where it ends up, not what was written: the point that was right-clicked.
+      const placed = menu.getBoundingClientRect();
+      expect(placed.left).toBe(300);
+      expect(placed.top).toBe(400);
+    } finally {
+      restoreMenuLayout();
+    }
+  });
+
+  it("falls back to the viewport when a clipping ancestor has no layout", async () => {
+    // A clipping ancestor with zero height — a collapsed `body` under an absolutely positioned
+    // app root. Intersecting with it would cap the menu to nothing and pin it to a corner.
+    const collapsed = document.createElement("div");
+    collapsed.style.overflow = "hidden";
+    collapsed.getBoundingClientRect = () =>
+      ({
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0,
+        right: 0,
+        bottom: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    document.body.append(collapsed);
+
+    const container = stubbedContainer(1, { left: 0, top: 0, width: 400, height: 400 });
+    collapsed.append(container);
+
+    const { editor } = await contextMenuEnvironment(() => container);
+
+    const restoreMenuLayout = stubMenuLayout(200, 100);
+    try {
+      const menu = await openMenu(editor, 10, 10);
+
+      // The jsdom viewport is 768 tall, so the cap is the viewport's, and the menu is usable.
+      expect(menu.style.maxHeight).toBe("768px");
+      expect(menu.style.left).toBe("10px");
     } finally {
       restoreMenuLayout();
     }

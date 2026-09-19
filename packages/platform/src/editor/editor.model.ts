@@ -622,10 +622,12 @@ export interface EditorOptions {
   /** Additional items to append to the editor context menu. */
   contextMenu?: ContextMenuOptionConfig[];
   /**
-   * Returns the element to render the context menu into, instead of `document.body`. Return the
-   * element whose content the menu belongs to when that element is scaled (CSS `zoom`), so the
-   * menu is scaled with it and stays inside it. Called only while the menu is open; omit the
-   * option, or return `undefined`, to portal to `document.body` unscaled.
+   * EXPERIMENTAL: Returns the element to render the context menu into, instead of
+   * `document.body`. Return the element whose content the menu belongs to when that element is
+   * scaled (CSS `zoom`), so the menu is scaled with it and stays inside it. Called only while the
+   * menu is open; omit the option, or return `undefined`, to portal to `document.body` unscaled.
+   * Keep the function stable across renders — a new one on every render re-registers the editor's
+   * `contextmenu` listener. The element must be in the same document as the editor.
    */
   contextMenuContainer?: () => HTMLElement | undefined;
   /**
