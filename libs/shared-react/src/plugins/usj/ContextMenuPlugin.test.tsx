@@ -351,6 +351,29 @@ describe("ContextMenuPlugin", () => {
     }
   });
 
+  it("measures a re-open against the uncapped menu, not last open's cap", async () => {
+    // Re-opening without closing reuses the same element, so last open's `max-width` is still on
+    // it. Measuring the scale from a capped width would read 1.5 instead of 2 and misplace the
+    // menu from the second right-click onward.
+    const container = stubbedContainer(2, { left: 0, top: 0, width: 300, height: 1000 });
+    const { editor } = await contextMenuEnvironment(() => container);
+
+    const restoreMenuLayout = stubMenuLayout(200, 100);
+    try {
+      await openMenu(editor, 280, 10);
+      const menu = await openMenu(editor, 40, 20);
+
+      // Measured off the capped width the scale reads 1.5 instead of 2, which lifts the cap to
+      // 200 and then places the menu at a negative offset.
+      expect(menu.style.maxWidth).toBe("150px");
+      // A cap that binds makes the menu exactly as wide as the pane, so the only place it fits is
+      // the leading edge.
+      expect(menu.style.left).toBe("0px");
+    } finally {
+      restoreMenuLayout();
+    }
+  });
+
   it("places the menu at the pointer when an ancestor scales it, not just translates it", async () => {
     // `currentCSSZoom` reports 1 here: the factor of 2 comes from a `transform: scale()` above the
     // menu, which it cannot see. Trusting it would place the menu by dividing by the wrong number.

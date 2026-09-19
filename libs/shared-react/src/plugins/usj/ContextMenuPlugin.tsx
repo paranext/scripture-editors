@@ -267,9 +267,11 @@ export function ContextMenuPlugin({
       let container: HTMLElement | undefined;
       try {
         container = getContainer?.();
-      } catch {
+      } catch (error) {
         // The native menu is already suppressed by now, so a host getter that throws would
-        // otherwise leave the user with no context menu at all. Unscaled is a usable fallback.
+        // otherwise leave the user with no context menu at all. Unscaled is a usable fallback,
+        // but a silent one looks like the option never being passed, so say so.
+        console.warn("contextMenuContainer threw; rendering the menu unscaled", error);
         container = undefined;
       }
       setMenuState({ isOpen: true, x: event.clientX, y: event.clientY, container });
@@ -355,6 +357,14 @@ export function ContextMenuPlugin({
     if (!menu) return;
     const { container } = menuState;
     const box = getVisibleBox(container);
+
+    // Opening the menu while it is already open reuses this element rather than remounting it — a
+    // second right-click, or the keyboard menu key. Clear last open's caps first: they would
+    // otherwise narrow the measurement the scale below is derived from, and survive into an open
+    // that portals to `document.body` and should not be capped at all.
+    menu.style.maxWidth = "";
+    menu.style.maxHeight = "";
+    menu.style.overflowY = "";
 
     if (!container) {
       const { width, height } = menu.getBoundingClientRect();
