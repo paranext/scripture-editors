@@ -17,21 +17,30 @@ import { describe, expect, it } from "vitest";
  * gap there on the next sync. paranext-core runs the same derivation over its copies in
  * `extensions/src/platform-scripture-editor/src/usj-nodes-scss-coverage.test.ts`.
  *
- * Known limits, each unreachable in today's stylesheet: a `calc()` value is reported as unreadable
- * rather than evaluated, and a selector's direction is read from `[dir=…]` / `:dir(…)` only.
+ * Known limits, each unreachable in today's stylesheet. Selectors are classified by class-name
+ * tokens, not resolved against the DOM: a descendant form such as
+ * `.psc-gutter-markers .text-spacing` still reads as a gutter rule, and a rule with no marker class
+ * (a blanket `.para` rule) is not modelled. The cascade is approximated as "direction-qualified
+ * beats agnostic", ignoring equal-specificity source order. Padding is not tracked, only margins
+ * and `text-indent`. A `calc()` value is reported as unreadable rather than evaluated. Direction is
+ * read from `[dir=…]` and `:dir(…)` only, with `:not()` flipping it, and a direction-agnostic
+ * `margin-right` counts as an inline-start margin.
  */
 
 describe("usj-nodes.css .psc-gutter-markers.text-spacing coverage", () => {
   it("can read every rule and value it derives from", () => {
-    // Rules nested in an at-rule (a media query, keyframes) would be scoped away by the browser;
-    // none of the tracked properties may be set there.
+    // A tracked property set anywhere but directly in a top-level marker rule (inside an at-rule,
+    // or an at-rule nested in the rule) is scoped away by the browser and unread here.
     expect(nestedTrackedRules()).toEqual([]);
-    // A margin spelled as shorthand, a logical property, a keyword or a `calc()` cannot be derived
-    // from, and a `!important` would win over the compensation's own rule.
+    // Reports margins spelled in a way the derivation cannot read, tracked properties in marker
+    // rules outside the scopes it models, real margins inside a compensation rule, keyword or
+    // `calc()` values, and `!important`.
     expect(unreadableDeclarations()).toEqual([]);
-    // If the parser ever read nothing, the comparisons below would pass vacuously.
-    expect(EXPECTED_PARA_INDENT.size).toBeGreaterThan(0);
-    expect(EXPECTED_VERSE_TEXT_START.size).toBeGreaterThan(0);
+    // Both sides of the comparisons below come from the same parser, so a parser that started
+    // reading less would shrink them in step. The floors sit well below the real sizes and well
+    // above zero.
+    expect(EXPECTED_PARA_INDENT.size).toBeGreaterThan(40);
+    expect(EXPECTED_VERSE_TEXT_START.size).toBeGreaterThan(20);
     // The gutter values are identical for LTR and RTL by design, so no gutter rule may be
     // direction-qualified: it would leave one direction uncompensated while counting as covered.
     expect(directionQualifiedGutterRules("--para-indent")).toEqual([]);
@@ -67,14 +76,21 @@ describe("usj-nodes.css .psc-gutter-markers.text-spacing coverage", () => {
       (marker) => !EXPECTED_PARA_INDENT.has(marker),
     );
     expect(hangingWithoutMargin).toEqual([]);
+    // The focus-box comments say the marker's own column wins that min() for every marker here.
+    // That holds while no hanging indent reaches past its marker's margin.
+    const hangingBeyondMargin = [...EXPECTED_VERSE_TEXT_START].filter(
+      ([marker, indent]) => !isWithin(indent, EXPECTED_PARA_INDENT.get(marker) ?? "0"),
+    );
+    expect(hangingBeyondMargin).toEqual([]);
   });
 });
 
 /**
  * Markers whose base rules indent them but which must NOT have gutter compensation. A real table
  * row (`\tr`) is a `<tr>` (`ImmutableTableRowNode`), not a `.para`, so the glyph rule never matches
- * it. The obsolete `\tr1` and `\tr2` are not excluded: the converter matches `tr` exactly, so they
- * become plain paragraphs and need an entry like any other indented marker.
+ * it. `usfmFragmentToUsj` builds a table row only for a marker that is exactly `tr`; the obsolete
+ * `\tr1` and `\tr2` come through as ordinary paragraphs and need an entry like any other indented
+ * marker.
  */
 const NOT_COMPENSATED = new Set(["tr"]);
 
@@ -83,6 +99,7 @@ const NOT_COMPENSATED = new Set(["tr"]);
 // derivation below guarantees base-to-gutter consistency, not base-to-spec; this catches a drift in
 // one of these markers; a re-sync that changes any other marker's base value is not caught here.
 const USFM_LEFT_MARGIN: { [key: string]: string } = {
+  p2: "2.5vw", // 0.125"
   pi: "5vw", // 0.25"
   li1: "10vw", // 0.5"
   q1: "15vw", // 0.75"
@@ -107,8 +124,16 @@ const TRACKED_PROPERTIES = new Set([
   "--verse-text-start",
 ]);
 
+/** The only properties a compensation rule may set; a margin there would be invisible. */
+const GUTTER_PROPERTIES = new Set(["--para-indent", "--verse-text-start"]);
+
 /** Margin spellings the derivation cannot read; a marker rule using one must fail loudly. */
-const UNREADABLE_MARGIN_PROPERTIES = new Set(["margin", "margin-inline", "margin-inline-start"]);
+const UNREADABLE_MARGIN_PROPERTIES = new Set([
+  "margin",
+  "margin-inline",
+  "margin-inline-start",
+  "margin-inline-end",
+]);
 
 type Direction = "ltr" | "rtl" | "agnostic";
 
@@ -128,24 +153,40 @@ interface Block {
 const root = postcss.parse(readFileSync(new URL("./usj-nodes.css", import.meta.url), "utf-8"));
 
 /**
- * The `.usfm_<marker>` class in a selector. Marker classes may carry hyphens and capitals
- * (`usfm_qt-s`, `usfm_xtSeeAlso`), so the match runs to the end of the class name; a `.usfm_` that
- * does not match whole is a parser gap and throws rather than attributing the rule to a shorter
- * marker.
+ * The marker a selector styles: the LAST `.usfm_<marker>` class in it, since a rule such as
+ * `.usfm_c .usfm_ca` styles the child. Marker classes may carry hyphens and capitals (`usfm_qt-s`,
+ * `usfm_xtSeeAlso`), so each token is read to the end of the class name; a `.usfm_` token that is
+ * not a whole class name is a parser gap and throws rather than being read as a shorter marker.
  */
 function markerOf(selector: string): string | undefined {
-  if (!selector.includes(".usfm_")) return undefined;
-  const match = /\.usfm_([A-Za-z0-9-]+)(?![A-Za-z0-9_-])/.exec(selector);
-  if (!match) throw new Error(`Cannot read the marker class in "${selector}"`);
+  const tokens = [...selector.matchAll(/\.usfm_[^\s.:#[>+~,)]*/g)].map((match) => match[0]);
+  if (tokens.length === 0) return undefined;
+  const last = tokens[tokens.length - 1];
+  const match = /^\.usfm_([A-Za-z0-9-]+)$/.exec(last);
+  if (!match) throw new Error(`Cannot read the marker class "${last}" in "${selector}"`);
   return match[1];
 }
 
-/** Attribute quotes normalised so `[dir="ltr"]` and `[dir='ltr']` compare equal. */
+/** A `[dir=…]` attribute in any quoting or case, with or without a case flag, or a `:dir()`. */
+const DIRECTION_SELECTOR =
+  /\[\s*dir\s*=\s*["']?([a-z]+)["']?(?:\s+[is])?\s*\]|:dir\(\s*([a-z]+)\s*\)/i;
+
+/**
+ * The writing direction a selector is scoped to; a value other than `ltr` or `rtl` is neither. A
+ * direction inside `:not()` scopes the selector to the other direction.
+ */
 function directionOf(selector: string): Direction {
-  const normalised = selector.replace(/"/g, "'");
-  if (normalised.includes("[dir='rtl']") || normalised.includes(":dir(rtl)")) return "rtl";
-  if (normalised.includes("[dir='ltr']") || normalised.includes(":dir(ltr)")) return "ltr";
-  return "agnostic";
+  const match = DIRECTION_SELECTOR.exec(selector);
+  const direction = (match?.[1] ?? match?.[2])?.toLowerCase();
+  if (direction !== "ltr" && direction !== "rtl") return "agnostic";
+  const negated = match && /:not\(\s*$/i.test(selector.slice(0, match.index));
+  if (!negated) return direction;
+  return direction === "ltr" ? "rtl" : "ltr";
+}
+
+/** Whether a selector mentions text direction at all, in any spelling. */
+function isDirectionQualified(selector: string): boolean {
+  return /\[\s*dir\b|:dir\(/i.test(selector);
 }
 
 /** A gutter compensation selector carries both scoping classes. */
@@ -162,11 +203,15 @@ function isBaseSelector(selector: string): boolean {
 function declarationValue(rule: Rule, property: string): string | undefined {
   let value: string | undefined;
   rule.each((node) => {
-    if (node.type === "decl" && node.prop === property) value = node.value.replace(/\s+/g, " ");
+    if (node.type === "decl" && node.prop.toLowerCase() === property)
+      value = node.value.replace(/\s+/g, " ");
   });
   return value;
 }
 
+// Top-level rules that name a marker class. Rules nested in at-rules are left out on purpose;
+// `nestedTrackedRules` is what makes that safe, by failing when one of them sets a property this
+// test would otherwise have read.
 const BLOCKS: Block[] = [];
 root.walkRules((rule) => {
   if (rule.parent?.type !== "root") return;
@@ -177,34 +222,54 @@ root.walkRules((rule) => {
   if (markers.length > 0) BLOCKS.push({ rule, markers });
 });
 
-/** Tracked properties set inside an at-rule, where the cascade would scope them away. */
+/**
+ * Tracked properties of marker rules that are not set directly in a top-level rule: the rule sits
+ * inside an at-rule, or the declaration sits inside an at-rule nested in the rule. The browser
+ * scopes both away and the flat derivation reads neither. Rules with no marker class are ignored,
+ * so an unrelated `@media print { .usfm .note { margin: 0 } }` does not trip this.
+ */
 function nestedTrackedRules(): string[] {
-  const found: string[] = [];
-  root.walkDecls((decl) => {
-    if (!TRACKED_PROPERTIES.has(decl.prop) && !UNREADABLE_MARGIN_PROPERTIES.has(decl.prop)) return;
-    if (decl.parent?.type === "rule" && decl.parent.parent?.type !== "root")
-      found.push(`${decl.prop} inside a nested rule: ${decl.parent.selector}`);
+  const found = new Set<string>();
+  root.walkRules((rule) => {
+    if (!rule.selectors.some((selector) => markerOf(selector))) return;
+    rule.walkDecls((decl) => {
+      const property = decl.prop.toLowerCase();
+      if (!TRACKED_PROPERTIES.has(property) && !UNREADABLE_MARGIN_PROPERTIES.has(property)) return;
+      if (decl.parent !== rule || rule.parent?.type !== "root")
+        found.add(`${property} inside a nested rule: ${rule.selector}`);
+    });
   });
-  return found;
+  return [...found];
 }
 
 /**
- * Marker declarations the derivation cannot read: a `margin` shorthand or logical margin, a
- * keyword or `calc()` in place of a plain length, or `!important` on a tracked property.
+ * Marker declarations the derivation cannot read: a `margin` shorthand or logical margin; a tracked
+ * property in a marker rule that is neither a base nor a gutter rule (the derivation only models
+ * those two scopes); a real margin or indent inside a compensation rule (which may set only the two
+ * custom properties); a keyword or `calc()` in place of a plain length; `!important`.
  */
 function unreadableDeclarations(): string[] {
   const found: string[] = [];
   BLOCKS.forEach(({ rule, markers }) => {
-    if (!markers.some(({ selector }) => isBaseSelector(selector) || isGutterSelector(selector)))
-      return;
+    const isGutter = markers.some(({ selector }) => isGutterSelector(selector));
+    const isBase = markers.some(({ selector }) => isBaseSelector(selector));
     rule.each((node) => {
       if (node.type !== "decl") return;
-      if (UNREADABLE_MARGIN_PROPERTIES.has(node.prop))
-        found.push(`${rule.selector}: ${node.prop} is not derivable; use margin-left/right`);
-      if (!TRACKED_PROPERTIES.has(node.prop)) return;
-      if (node.important) found.push(`${rule.selector}: ${node.prop} !important`);
-      if (!/^-?\d*\.?\d+[a-z%]+$|^0$/.test(node.value.trim()))
-        found.push(`${rule.selector}: ${node.prop}: ${node.value} is not a plain length`);
+      const property = node.prop.toLowerCase();
+      if (UNREADABLE_MARGIN_PROPERTIES.has(property))
+        found.push(`${rule.selector}: ${property} is not derivable; use margin-left/right`);
+      if (!TRACKED_PROPERTIES.has(property)) return;
+      if (!isBase && !isGutter)
+        found.push(
+          `${rule.selector}: ${property} is outside .text-spacing; the derivation is blind to it`,
+        );
+      if (isGutter && !GUTTER_PROPERTIES.has(property))
+        found.push(
+          `${rule.selector}: a compensation rule may set only --para-indent/--verse-text-start`,
+        );
+      if (node.important) found.push(`${rule.selector}: ${property} !important`);
+      if (!/^-?\d*\.?\d+[a-z%]+$|^0$/i.test(node.value.trim()))
+        found.push(`${rule.selector}: ${property}: ${node.value} is not a plain length`);
     });
   });
   return found;
@@ -225,8 +290,9 @@ function gutterValues(property: string): Map<string, string> {
 
 /**
  * Maps each marker to the value the BASE text-spacing rules resolve for `property` in the given
- * direction: a `[dir=…]` rule for that direction wins over a direction-agnostic one, matching the
- * cascade (the qualified selector is more specific). Zeros are kept: a `margin-left: 0` LTR
+ * direction. A `[dir=…]` rule for that direction wins over a direction-agnostic one; this
+ * approximates the cascade, where the qualified selector is usually the more specific (see the
+ * known limits in the header for the case it misses). Zeros are kept: a `margin-left: 0` LTR
  * override must be allowed to beat an agnostic `5vw` before any filtering.
  */
 function baseValues(property: string, direction: "ltr" | "rtl"): Map<string, string> {
@@ -252,6 +318,19 @@ function isNonZeroLength(value: string): boolean {
 /** A negative length: the hanging indent that pulls the first line before the border edge. */
 function isNegativeLength(value: string): boolean {
   return value.startsWith("-") && isNonZeroLength(value);
+}
+
+/**
+ * Whether a hanging indent stays within its marker's margin: the same unit and no larger a
+ * magnitude. Lengths in different units cannot be compared here and count as beyond.
+ */
+function isWithin(indent: string, margin: string): boolean {
+  const parse = (value: string) => /^(-?\d*\.?\d+)([a-z%]*)$/i.exec(value);
+  const parsedIndent = parse(indent);
+  const parsedMargin = parse(margin);
+  if (!parsedIndent || !parsedMargin) return false;
+  if (parsedIndent[2].toLowerCase() !== parsedMargin[2].toLowerCase()) return false;
+  return Math.abs(Number(parsedIndent[1])) <= Math.abs(Number(parsedMargin[1]));
 }
 
 /** The `markers` entries of `values`, as an object, so a whole oracle can be compared in one go. */
@@ -289,14 +368,12 @@ function directionAsymmetries(ltrProperty: string, rtlProperty: string): string[
     );
 }
 
-/** Gutter rules for `property` qualified by writing direction, which the design forbids. */
+/** Gutter rules for `property` that mention text direction at all, which the design forbids. */
 function directionQualifiedGutterRules(property: string): string[] {
   return BLOCKS.filter(
     ({ rule, markers }) =>
       declarationValue(rule, property) !== undefined &&
-      markers.some(
-        ({ selector, direction }) => isGutterSelector(selector) && direction !== "agnostic",
-      ),
+      markers.some(({ selector }) => isGutterSelector(selector) && isDirectionQualified(selector)),
   ).map(({ rule }) => `${property}: direction-qualified selector "${rule.selector}"`);
 }
 
