@@ -17,14 +17,19 @@ import { describe, expect, it } from "vitest";
  * gap there on the next sync. paranext-core runs the same derivation over its copies in
  * `extensions/src/platform-scripture-editor/src/usj-nodes-scss-coverage.test.ts`.
  *
- * Known limits, each unreachable in today's stylesheet. Selectors are classified by class-name
- * tokens, not resolved against the DOM: a descendant form such as
- * `.psc-gutter-markers .text-spacing` still reads as a gutter rule, and a rule with no marker class
- * (a blanket `.para` rule) is not modelled. The cascade is approximated as "direction-qualified
- * beats agnostic", ignoring equal-specificity source order. Padding is not tracked, only margins
- * and `text-indent`. A `calc()` value is reported as unreadable rather than evaluated. Direction is
- * read from `[dir=…]` and `:dir(…)` only, with `:not()` flipping it, and a direction-agnostic
- * `margin-right` counts as an inline-start margin.
+ * Known limits of the derivation. Approximations in play today, each benign as the sheet stands:
+ * - Selectors are classified by class-name token, not resolved against the DOM, so a rule with no
+ *   marker class is not modelled. That includes the blanket `.psc-gutter-markers .para` rule that
+ *   sets the `0px` defaults every compensation rests on.
+ * - A direction-agnostic `margin-right` counts as an inline-start margin. Thirteen base rules set
+ *   one today; each also sets the same `margin-left`, which wins the merge.
+ * Cases today's sheet does not reach:
+ * - A descendant form such as `.psc-gutter-markers .text-spacing` still reads as a gutter rule.
+ * - The cascade is approximated as "direction-qualified beats agnostic", ignoring
+ *   equal-specificity source order.
+ * - Padding is not tracked, only margins and `text-indent`.
+ * - A `calc()` value is reported as unreadable rather than evaluated.
+ * - Direction is read from `[dir=…]` and `:dir(…)` only, with `:not()` flipping it.
  */
 
 describe("usj-nodes.css .psc-gutter-markers.text-spacing coverage", () => {
@@ -156,9 +161,14 @@ const root = postcss.parse(readFileSync(new URL("./usj-nodes.css", import.meta.u
  * The marker a selector styles: the LAST `.usfm_<marker>` class in it, since a rule such as
  * `.usfm_c .usfm_ca` styles the child. Marker classes may carry hyphens and capitals (`usfm_qt-s`,
  * `usfm_xtSeeAlso`), so each token is read to the end of the class name; a `.usfm_` token that is
- * not a whole class name is a parser gap and throws rather than being read as a shorter marker.
+ * not a whole class name is a parser gap and throws rather than being read as a shorter marker, and
+ * so does a marker class inside a functional pseudo-class (`:not()`, `:is()`), which cannot be
+ * attributed to one marker.
  */
 function markerOf(selector: string): string | undefined {
+  const inPseudoFunction = /:[a-z-]+\([^()]*\.usfm_/i.exec(selector);
+  if (inPseudoFunction)
+    throw new Error(`Cannot attribute the marker in "${inPseudoFunction[0]}…)" in "${selector}"`);
   const tokens = [...selector.matchAll(/\.usfm_[^\s.:#[>+~,)]*/g)].map((match) => match[0]);
   if (tokens.length === 0) return undefined;
   const last = tokens[tokens.length - 1];
@@ -199,11 +209,16 @@ function isBaseSelector(selector: string): boolean {
   return selector.includes("text-spacing") && !isGutterSelector(selector);
 }
 
+/** Standard property names are case-insensitive and fold to lower case; custom properties are not. */
+function propertyName(prop: string): string {
+  return prop.startsWith("--") ? prop : prop.toLowerCase();
+}
+
 /** The value a rule sets for `property`, whitespace-collapsed; the last declaration wins. */
 function declarationValue(rule: Rule, property: string): string | undefined {
   let value: string | undefined;
   rule.each((node) => {
-    if (node.type === "decl" && node.prop.toLowerCase() === property)
+    if (node.type === "decl" && propertyName(node.prop) === property)
       value = node.value.replace(/\s+/g, " ");
   });
   return value;
@@ -233,7 +248,7 @@ function nestedTrackedRules(): string[] {
   root.walkRules((rule) => {
     if (!rule.selectors.some((selector) => markerOf(selector))) return;
     rule.walkDecls((decl) => {
-      const property = decl.prop.toLowerCase();
+      const property = propertyName(decl.prop);
       if (!TRACKED_PROPERTIES.has(property) && !UNREADABLE_MARGIN_PROPERTIES.has(property)) return;
       if (decl.parent !== rule || rule.parent?.type !== "root")
         found.add(`${property} inside a nested rule: ${rule.selector}`);
@@ -255,7 +270,7 @@ function unreadableDeclarations(): string[] {
     const isBase = markers.some(({ selector }) => isBaseSelector(selector));
     rule.each((node) => {
       if (node.type !== "decl") return;
-      const property = node.prop.toLowerCase();
+      const property = propertyName(node.prop);
       if (UNREADABLE_MARGIN_PROPERTIES.has(property))
         found.push(`${rule.selector}: ${property} is not derivable; use margin-left/right`);
       if (!TRACKED_PROPERTIES.has(property)) return;
