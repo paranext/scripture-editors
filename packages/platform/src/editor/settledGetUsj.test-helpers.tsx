@@ -83,6 +83,7 @@ interface MountOptions {
   onUsjChange?: OnUsjChange;
   onSelectionChange?: EditorProps<LoggerBasic>["onSelectionChange"];
   scrRef?: SerializedVerseRef;
+  logger?: LoggerBasic;
 }
 
 export function requireStandardViewOptions(): ViewOptions {
@@ -128,7 +129,7 @@ interface MountedEditor {
 async function mountEditor(
   usj: Usj,
   view: ViewOptions,
-  { onUsjChange, onSelectionChange, scrRef }: MountOptions = {},
+  { onUsjChange, onSelectionChange, scrRef, logger }: MountOptions = {},
 ): Promise<MountedEditor> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
@@ -143,6 +144,7 @@ async function mountEditor(
         options={{ view }}
         onUsjChange={onUsjChange}
         onSelectionChange={onSelectionChange}
+        logger={logger}
       >
         {capture}
       </Editor>,
@@ -164,6 +166,8 @@ async function mountEditor(
  *
  * `scrRef` is only needed by the ref methods that guard on it (`applyMarkerMenuSelection`,
  * `insertMarker`); the rest of the suite leaves it off, and those methods then throw by design.
+ *
+ * `logger` is for a row that asserts what the editor reports, such as a ref method's refusal.
  */
 export async function mountStandardViewEditor(
   usj: Usj,
@@ -178,8 +182,11 @@ export async function mountStandardViewEditor(
  * note's content to be genuinely inline-editable in the mounted editor (the default Standard view
  * collapses notes to a caller preview, never inline-editable).
  */
-export async function mountExpandedNoteEditor(usj: Usj): Promise<MountedEditor> {
-  return mountEditor(usj, expandedNoteViewOptions());
+export async function mountExpandedNoteEditor(
+  usj: Usj,
+  options: MountOptions = {},
+): Promise<MountedEditor> {
+  return mountEditor(usj, expandedNoteViewOptions(), options);
 }
 
 /** Load `usj` into a fresh headless editor under `viewOptions`; mirrors
