@@ -2,7 +2,7 @@
 // (jsdom rewrites `import.meta.url` to an http URL, which breaks the stylesheet read; this test
 // only reads a file, so the node environment is the correct one anyway.)
 import { readFileSync } from "node:fs";
-import postcss, { type Rule } from "postcss";
+import postcss, { AtRule, Rule, type Container } from "postcss";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -133,12 +133,7 @@ const TRACKED_PROPERTIES = new Set([
 const GUTTER_PROPERTIES = new Set(["--para-indent", "--verse-text-start"]);
 
 /** Margin spellings the derivation cannot read; a marker rule using one must fail loudly. */
-const UNREADABLE_MARGIN_PROPERTIES = new Set([
-  "margin",
-  "margin-inline",
-  "margin-inline-start",
-  "margin-inline-end",
-]);
+const UNREADABLE_MARGIN_PROPERTIES = new Set(["margin", "margin-inline", "margin-inline-start"]);
 
 type Direction = "ltr" | "rtl" | "agnostic";
 
@@ -214,14 +209,21 @@ function propertyName(prop: string): string {
   return prop.startsWith("--") ? prop : prop.toLowerCase();
 }
 
-/** The value a rule sets for `property`, whitespace-collapsed; the last declaration wins. */
+/** The value a rule sets for `property`, whitespace-collapsed and trimmed; the last one wins. */
 function declarationValue(rule: Rule, property: string): string | undefined {
   let value: string | undefined;
   rule.each((node) => {
     if (node.type === "decl" && propertyName(node.prop) === property)
-      value = node.value.replace(/\s+/g, " ");
+      value = node.value.replace(/\s+/g, " ").trim();
   });
   return value;
+}
+
+/** Where a declaration sits, for a report: its rule's selector or its at-rule's prelude. */
+function nodeLabel(node: Container | undefined): string | undefined {
+  if (node instanceof Rule) return node.selector;
+  if (node instanceof AtRule) return `@${node.name} ${node.params}`;
+  return undefined;
 }
 
 // Top-level rules that name a marker class. Rules nested in at-rules are left out on purpose;
@@ -251,7 +253,7 @@ function nestedTrackedRules(): string[] {
       const property = propertyName(decl.prop);
       if (!TRACKED_PROPERTIES.has(property) && !UNREADABLE_MARGIN_PROPERTIES.has(property)) return;
       if (decl.parent !== rule || rule.parent?.type !== "root")
-        found.add(`${property} inside a nested rule: ${rule.selector}`);
+        found.add(`${property} inside a nested rule: ${nodeLabel(decl.parent) ?? rule.selector}`);
     });
   });
   return [...found];
@@ -336,8 +338,9 @@ function isNegativeLength(value: string): boolean {
 }
 
 /**
- * Whether a hanging indent stays within its marker's margin: the same unit and no larger a
- * magnitude. Lengths in different units cannot be compared here and count as beyond.
+ * Whether a hanging indent stays within its marker's margin: a positive margin in the same unit,
+ * no smaller than the indent's magnitude. Lengths in different units cannot be compared here and
+ * count as beyond.
  */
 function isWithin(indent: string, margin: string): boolean {
   const parse = (value: string) => /^(-?\d*\.?\d+)([a-z%]*)$/i.exec(value);
@@ -345,7 +348,8 @@ function isWithin(indent: string, margin: string): boolean {
   const parsedMargin = parse(margin);
   if (!parsedIndent || !parsedMargin) return false;
   if (parsedIndent[2].toLowerCase() !== parsedMargin[2].toLowerCase()) return false;
-  return Math.abs(Number(parsedIndent[1])) <= Math.abs(Number(parsedMargin[1]));
+  const marginLength = Number(parsedMargin[1]);
+  return marginLength > 0 && Math.abs(Number(parsedIndent[1])) <= marginLength;
 }
 
 /** The `markers` entries of `values`, as an object, so a whole oracle can be compared in one go. */
