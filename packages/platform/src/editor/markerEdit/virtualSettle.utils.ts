@@ -1165,12 +1165,12 @@ export function $settledUsj(
     site.siblings.splice(bookIndex + 1, 0, ...built.followingBlocks);
   }
 
-  // Chapters are top-level and disjoint from both passes above — a chapter is never inside a
-  // paragraph or a note — so ordering against them is free. The whole REGION's slots are
-  // replaced — the chapter plus the adjacent first-class `\ca`/`\cp` spans and `\cp` paragraph
-  // ($chapterAdjacentAttributeNodes), mirroring `$rebuildChapter`'s whole-region splice: a
-  // folded span or paragraph must vanish from the settled output, not linger beside the updated
-  // chapter.
+  // Chapters are top-level and disjoint from all three passes above — a chapter is never inside a
+  // paragraph, a note, or the `\id` line's book — so ordering against them is free. The whole
+  // REGION's slots are replaced — the chapter plus the adjacent first-class `\ca`/`\cp` spans and
+  // `\cp` paragraph ($chapterAdjacentAttributeNodes), mirroring `$rebuildChapter`'s whole-region
+  // splice: a folded span or paragraph must vanish from the settled output, not linger beside the
+  // updated chapter.
   for (const chapter of chapterScopes.values()) {
     const site = sites.get(chapter.getKey());
     if (!site) continue;
