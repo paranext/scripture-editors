@@ -28,6 +28,7 @@ import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
 import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
 import { COMMIT_PENDING_MARKERS_COMMAND, MarkerEditPlugin } from "./markerEdit/MarkerEditPlugin";
 import { MarkerValidationPlugin } from "./markerEdit/MarkerValidationPlugin";
+import { MarkersViewCopyPlugin } from "./MarkersViewCopyPlugin";
 import {
   $settledUsj,
   AnchoredTransientInput,
@@ -1126,6 +1127,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <DecoratorBoundarySelectionPlugin />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
+          {/* Standard view writes its own USFM copy (MarkerEditPlugin); the read-only Markers view
+              needs one too, since its display text is not USFM. The hidden-marker views copy prose. */}
+          {viewOptions?.markerMode === "visible" && (
+            <MarkersViewCopyPlugin viewOptions={viewOptions} />
+          )}
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects
               depend on it, so a host handing over a fresh-but-equivalent logger object each
               render would re-register their command listeners at the END of Lexical's

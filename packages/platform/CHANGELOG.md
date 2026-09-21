@@ -91,6 +91,12 @@ refused. The public surface grew substantially; nothing was removed.
   `application/x-lexical-editor` flavor either.** A native paste event rebuilt the copied
   `ChapterNode`/`BookNode` from it verbatim, past the `\c`/`\id` strip every text paste gets, and a
   second chapter node made every later save of that chapter fail. The readable flavors are unchanged.
+- **The read-only Markers view (`markerMode: "visible"`) now copies USFM.** Its copy used to be the
+  display text — no note caller, no space after a char marker, no verse or chapter numbers, no
+  figure markers, and a note layout's spacer NBSPs — so pasting it anywhere produced broken USFM.
+  It now writes the same bytes a Standard-view copy of the same range writes, in `text/plain` and
+  `text/html`, and no `application/x-lexical-editor` flavor. A cut in a read-only editor copies and
+  removes nothing.
 - **A structure-protected editor's cut of a selection `StructureKeyboardPlugin` refuses to replace is
   now refused whole.** With `structureProtectionMode: "protected"`, the Standard-view cut handler
   claimed the cut ahead of that refusal and removed the range — a paragraph boundary or a verse
@@ -98,6 +104,10 @@ refused. The public surface grew substantially; nothing was removed.
   removed.
 
 ### Fixed
+
+- In Standard view, the USJ positions the editor reports and accepts (selections, annotations)
+  after a milestone, a verse's `\va`/`\vp`, or a chapter's `\ca` were one content item too far:
+  the wrapper that carries the attribute display run was counted as content.
 
 - The attribute-run hover color resolves against the host's `--foreground` instead of a fixed
   near-black, which was all but invisible against a dark theme.
