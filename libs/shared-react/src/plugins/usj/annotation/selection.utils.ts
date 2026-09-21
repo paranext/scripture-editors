@@ -729,7 +729,8 @@ function $locationFromDisplayBytes(
 }
 
 /** The end of the last text content before `node` — where a byte with no representation of its own
- * (the `|` opening an attribute run) snaps to. */
+ * (the `|` opening an attribute run) snaps to. Text AFTER `node` in the same parent does not count,
+ * even when it joins the same USJ string (the run between them is presentation-only). */
 function $precedingTextLocation(
   node: LexicalNode,
   collapsesSpaceRuns: boolean,
@@ -740,9 +741,11 @@ function $precedingTextLocation(
   for (let index = items.length - 1; index >= 0; index--) {
     const item = items[index];
     if (item.type !== "text") continue;
+    const before = item.segments.filter((segment) => segment.node.isBefore(node)).at(-1);
+    if (!before) continue;
     return {
       jsonPath: usjJsonPathFromIndexes([...$getJsonPathIndexes(parent), index]),
-      offset: item.length,
+      offset: before.start + before.length,
     };
   }
   return undefined;

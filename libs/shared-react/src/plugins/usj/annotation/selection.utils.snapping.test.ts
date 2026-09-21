@@ -292,6 +292,35 @@ describe("a char run collapsed to its default attribute", () => {
   );
 });
 
+describe("the `|` of an attribute run with content after it", () => {
+  // \p \w marker|stuff more\w* — text typed after the run, before the span re-tokenizes. The `|`
+  // has no USJ representation of its own and snaps LEFT, so it must land at the end of the text
+  // BEFORE it, not at the end of the span's text.
+  let editor: LexicalEditor;
+  let run: TextNode;
+  const charTextPath = "$.content[0].content[0].content[0]";
+
+  beforeAll(() => {
+    editor = createBasicTestEnvironment(NODES, () => {
+      run = $attributeText("|stuff");
+      const char = $createCharNode("w", { lemma: "stuff" }).append(
+        $createMarkerNode("w", "opening"),
+        $createTextNode(`${NBSP}marker`),
+        run,
+        $createTextNode(" more"),
+        $createMarkerNode("w", "closing"),
+      );
+      $getRoot().append($createParaNode("p").append($createMarkerNode("p", "opening"), char));
+    }).editor;
+  });
+
+  it("snaps to the end of the text before the run", () => {
+    const location = editor.getEditorState().read(() => $getLocationFromNode(run, 0, undefined));
+
+    expect(location).toEqual({ jsonPath: charTextPath, offset: "marker".length });
+  });
+});
+
 describe("a verse's `\\va` attribute-marker run", () => {
   // \p \v 1 \va 3\va*In the beginning
   let editor: LexicalEditor;
