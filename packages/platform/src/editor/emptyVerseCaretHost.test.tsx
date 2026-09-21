@@ -1,9 +1,13 @@
 /**
- * The transient caret host in an empty verse, in the plugin combination the app actually mounts.
+ * The transient caret host in an empty verse, against the production transforms.
+ *
+ * This is a SUBSET of what `Editor.tsx` mounts, not a replica of it: the transform-registering
+ * plugins, in this file's own order. History, structure-keyboard, delta, para and note plugins are
+ * absent, and `MarkerEditPlugin` registers its transforms but does little in a marker-hidden view.
  *
  * `EmptyVerseCaretGuardPlugin`'s own tests (shared-react) pin its rule and its lifecycle against one
- * or two plugins. What only this combination can answer is whether the host survives contact with
- * the transforms that run when its insertion dirties the paragraph — the marker-edit engine's
+ * or two plugins. What only a combination like this can answer is whether the host survives contact
+ * with the transforms that run when its insertion dirties the paragraph — the marker-edit engine's
  * pend/settle machinery, the char transforms, and the trailing-space transform, which is the one
  * that spaces text before a verse marker and so acts on exactly the position a host occupies — and
  * whether the character can reach the file. Loading real USJ through the production adaptor and
@@ -199,9 +203,9 @@ describe("the caret host in an empty verse, with the production transforms mount
     //
     // Deliberately no assertion that the host is still THERE afterwards. A full-subtree dirty pass
     // re-resolves the DOM selection, and the hook drops a host the caret no longer anchors in; that
-    // is the host's documented lifetime, not a transform padding or swallowing it, and it is the
-    // question this file exists to ask. Whether the caret keeps its host across such a pass is the
-    // hook's business and is pinned in its own tests.
+    // is the host's lifetime rather than a transform padding or swallowing it, which is the question
+    // this file exists to ask. Whether the caret should keep its host across such a pass is the
+    // hook's business and is asserted nowhere today.
     const { editor, usj, viewOptions } = await mountLoaded();
     const para = readVerseParagraph(editor);
     await restCaretInEmptyVerse(editor, para);
