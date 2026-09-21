@@ -41,6 +41,7 @@ import {
   $isBookNode,
   getSelectionStartNode,
   getVisibleOpenMarkerText,
+  NoteNode,
   ParaNode,
 } from "shared";
 import { $createImmutableVerseNode, SomeVerseNode, usjReactNodes } from "shared-react";
@@ -96,6 +97,9 @@ let charVerseMarker: SomeVerseNode;
 let emptyVerseMarker: SomeVerseNode;
 let noteVersePara: ParaNode;
 let emptyVersePara: ParaNode;
+let verseFinalNote: NoteNode;
+let verseFinalNotePara: ParaNode;
+let verseAfterFinalNoteTextNode: TextNode;
 
 beforeAll(() => {
   // jsdom's Range lacks getBoundingClientRect; Lexical's post-commit scroll-into-view calls it
@@ -438,6 +442,57 @@ describe("ScriptureReferencePlugin", () => {
         // The caret must NOT run on into the next verse looking for text.
         $expectSelectionToBe(emptyVersePara, 1);
       });
+      expect(mockOnScrRefChange).not.toHaveBeenCalled();
+    });
+
+    // A note that ends a verse is followed by the next verse's marker, so the caret a footnotes
+    // pane parks just past such a note sits at the slot that marker occupies. That slot is the end
+    // of the note's OWN verse - which is what BCV reports for it - so the host publishing that
+    // verse must find the caret already there and leave it alone. Resolving the slot as the next
+    // verse instead makes the publish a cross-verse navigation and yanks the caret back to the
+    // start of the verse the user just picked a note in.
+    it("leaves the caret alone when it is parked after a note that ends the target verse", async () => {
+      const { editor, setScrRef } = await testEnvironment(
+        scrRef,
+        mockOnScrRefChange,
+        $editableVerseFinalNoteState,
+      );
+      selectAfterVerseFinalNote(editor);
+
+      await setScrRef({ ...scrRef, verseNum: 2 });
+
+      editor.getEditorState().read($expectCaretPastVerseFinalNote);
+      expect(mockOnScrRefChange).not.toHaveBeenCalled();
+    });
+
+    it("leaves the caret after a verse-final note when the marker is an immutable decorator", async () => {
+      const { editor, setScrRef } = await testEnvironment(
+        scrRef,
+        mockOnScrRefChange,
+        $immutableVerseFinalNoteState,
+      );
+      selectAfterVerseFinalNote(editor);
+
+      await setScrRef({ ...scrRef, verseNum: 2 });
+
+      editor.getEditorState().read($expectCaretPastVerseFinalNote);
+      expect(mockOnScrRefChange).not.toHaveBeenCalled();
+    });
+
+    // The counterpart of the two above: the same slot must still be reachable as a genuine
+    // navigation target. Verse 3 starts there, so navigating to it moves the caret rather than
+    // reading "already here" off the slot's other meaning.
+    it("still navigates to the verse whose marker follows a verse-final note", async () => {
+      const { editor, setScrRef } = await testEnvironment(
+        scrRef,
+        mockOnScrRefChange,
+        $editableVerseFinalNoteState,
+      );
+      selectAfterVerseFinalNote(editor);
+
+      await setScrRef({ ...scrRef, verseNum: 3 });
+
+      editor.getEditorState().read($expectCaretAtVerseAfterFinalNoteStart);
       expect(mockOnScrRefChange).not.toHaveBeenCalled();
     });
 
@@ -1311,6 +1366,47 @@ function $appendVerseContentStartingWithNonText($createVerse: (number: string) =
   );
 }
 
+/**
+ * A GEN chapter whose verse 2 ENDS with a note — `\v 2 second verse text \f + \ft note\f*\v 3 ...`,
+ * the next verse's marker following the note in the SAME paragraph. Common in real Scripture: a
+ * footnote on a verse's last word.
+ *
+ * The slot just past that note is the position a footnotes pane parks the caret in
+ * (`EditorRef.selectAfterNote`), and it is ambiguous by construction — the end of verse 2's content
+ * and the slot verse 3's marker occupies are the same child index.
+ */
+function $appendVerseFinalNote($createVerse: (number: string) => SomeVerseNode) {
+  firstVerseTextNode = $createTextNode("first verse text ");
+  verseFinalNote = $createNoteNode("f", "+", true).append($createTextNode("note body "));
+  verseAfterFinalNoteTextNode = $createTextNode("third verse text ");
+  verseFinalNotePara = $createParaNode().append(
+    $createVerse("2"),
+    $createTextNode("second verse text "),
+    verseFinalNote,
+    $createVerse("3"),
+    verseAfterFinalNoteTextNode,
+  );
+
+  $getRoot().append(
+    $createBookNode("GEN").append($createTextNode("Test Book")),
+    $createImmutableChapterNode("1"),
+    $createParaNode().append($createVerse("1"), firstVerseTextNode),
+    verseFinalNotePara,
+  );
+}
+
+/** The above with Standard view's editable verse markers. */
+function $editableVerseFinalNoteState() {
+  $appendVerseFinalNote((number) =>
+    $createVerseNode(number, getVisibleOpenMarkerText("v", number)),
+  );
+}
+
+/** The above with the immutable verse decorator every non-editable-marker view renders. */
+function $immutableVerseFinalNoteState() {
+  $appendVerseFinalNote($createImmutableVerseNode);
+}
+
 /** The above with Standard view's editable verse markers, whose text is literally `\v N `. */
 function $editableVerseContentStartingWithNonTextState() {
   $appendVerseContentStartingWithNonText((number) =>
@@ -1479,4 +1575,57 @@ async function pressEditor(editor: LexicalEditor) {
 
 function getSelectionStartNodeForTest(selection: BaseSelection | null) {
   return getSelectionStartNode(selection);
+}
+
+/**
+ * Assert the caret is on the slot just past the verse-final note, in either spelling Lexical may
+ * hold it in: the paragraph's element point on the slot, or offset 0 of the node occupying it.
+ * Which one it is depends on the marker mode (an editable verse marker can carry a text point, an
+ * immutable verse decorator cannot) and on whether a DOM reconcile has normalized it yet — neither
+ * of which is what these tests are about.
+ */
+function $expectCaretPastVerseFinalNote() {
+  const slot = verseFinalNote.getIndexWithinParent() + 1;
+  const occupant = verseFinalNotePara.getChildAtIndex(slot);
+  const acceptable = [{ key: verseFinalNotePara.getKey(), offset: slot, type: "element" }];
+  if (occupant) acceptable.push({ key: occupant.getKey(), offset: 0, type: "text" });
+
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+  const { key, offset, type } = selection.anchor;
+  expect(acceptable).toContainEqual({ key, offset, type });
+}
+
+/**
+ * Assert the caret is at the start of the content of the verse whose marker follows the note. The
+ * end of that editable marker and offset 0 of the text after it are the same screen position, and
+ * Lexical normalizes between them, so either spelling counts.
+ */
+function $expectCaretAtVerseAfterFinalNoteStart() {
+  const marker = verseAfterFinalNoteTextNode.getPreviousSibling();
+  if (!marker) throw new Error("expected a verse marker before the text");
+  const acceptable = [
+    { key: marker.getKey(), offset: marker.getTextContentSize(), type: "text" },
+    { key: verseAfterFinalNoteTextNode.getKey(), offset: 0, type: "text" },
+  ];
+
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+  const { key, offset, type } = selection.anchor;
+  expect(acceptable).toContainEqual({ key, offset, type });
+}
+
+/**
+ * Park the caret exactly where `EditorRef.selectAfterNote` parks it for a verse-final note: the
+ * paragraph's element point at the child slot just past the note.
+ *
+ * @param editor - The editor holding a `$appendVerseFinalNote` document.
+ */
+function selectAfterVerseFinalNote(editor: LexicalEditor) {
+  let slot = 0;
+  editor.getEditorState().read(() => {
+    slot = verseFinalNote.getIndexWithinParent() + 1;
+  });
+  updateSelection(editor, verseFinalNotePara, slot);
+  editor.getEditorState().read($expectCaretPastVerseFinalNote);
 }

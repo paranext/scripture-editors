@@ -53,6 +53,7 @@ import {
   ImmutableChapterNode,
   MarkerNode,
   NoteNode,
+  getVisibleOpenMarkerText,
   ParaNode,
   TypedMarkNode,
   VerseBlockNode,
@@ -825,6 +826,55 @@ describe("$getEffectiveVerseForBcv()", () => {
       const result = $getEffectiveVerseForBcv(verseNode, $getSelection());
 
       expect(result).toEqual({ verseNum: 1 });
+    });
+  });
+
+  // Views that render markers as editable text make the verse node's text the WHOLE marker
+  // (`\v 3 `), so the verse number no longer sits at offset 0. Everything before it is marker
+  // syntax, and a caret there belongs to the preceding verse — that position is where a note
+  // ending the previous verse leaves the caret, since the next verse's marker follows it directly.
+  it("returns the previous verse when the cursor is before the number of an editable verse marker", () => {
+    let verse3Key: string;
+    const { editor } = createBasicTestEnvironment([ParaNode, VerseNode]);
+    editor.update(
+      () => {
+        const v3 = $createVerseNode("3", getVisibleOpenMarkerText("v", "3"));
+        $getRoot().append($createParaNode().append(v3));
+        verse3Key = v3.getKey();
+        v3.select(0, 0);
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      const node = $getNodeByKey(verse3Key);
+      const verseNode = $isSomeVerseNode(node) ? node : undefined;
+
+      const result = $getEffectiveVerseForBcv(verseNode, $getSelection());
+
+      expect(result).toEqual({ verseNum: 2 });
+    });
+  });
+
+  it("returns the current verse once the cursor is past the number of an editable verse marker", () => {
+    let verse3Key: string;
+    const { editor } = createBasicTestEnvironment([ParaNode, VerseNode]);
+    editor.update(
+      () => {
+        const markerText = getVisibleOpenMarkerText("v", "3");
+        const v3 = $createVerseNode("3", markerText);
+        $getRoot().append($createParaNode().append(v3));
+        verse3Key = v3.getKey();
+        v3.select(markerText.length, markerText.length);
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      const node = $getNodeByKey(verse3Key);
+      const verseNode = $isSomeVerseNode(node) ? node : undefined;
+
+      const result = $getEffectiveVerseForBcv(verseNode, $getSelection());
+
+      expect(result).toEqual({ verseNum: 3 });
     });
   });
 

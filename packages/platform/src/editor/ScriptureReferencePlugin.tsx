@@ -55,6 +55,10 @@
  *                           document; arrival-driven placement targets the arriving document only
  *   I7 mount-correction     a mounted document with a mismatched book corrects the host once
  *   I8 verse-0-is-data      verse 0 reports from idle and applies as a target
+ *   I9 one-verse-question   the caret's verse is resolved ONE way ($resolveVerseNode +
+ *                           $getEffectiveVerseForBcv), for reporting and for the "already here"
+ *                           no-op alike - so a position between two verses belongs to the same
+ *                           verse whichever of the two asks
  *
  * Documented trade-offs (deliberate; do not "fix" one without weighing its counterpart):
  *   - A late echo arriving after a newer external navigation cleared the queue is treated as a
@@ -120,14 +124,12 @@ import {
   ImmutableChapterNode,
   getSelectionStartNode,
   isVerseInRange,
-  isVerseRange,
   removeNodeAndAfter,
   removeNodesBeforeNode,
   VerseNode,
 } from "shared";
 import {
   $advancePastParaPrefixes,
-  $findThisVerse,
   $findVerseOrPara,
   $getEffectiveVerseForBcv,
   $isSomeVerseNode,
@@ -488,11 +490,19 @@ function schedulePlacingCaretAtVerseStart(machine: Machine, editor: LexicalEdito
   });
 }
 
-/** Moves the caret to the start of `verseNum` in `chapterNum`. No-op when the caret is already
- * inside a verse range containing `verseNum` (a range is one location), or the target is absent. */
+/** Moves the caret to the start of `verseNum` in `chapterNum`. No-op when the caret already
+ * resolves to that verse - a range containing it counts, a range being one location - or when the
+ * target is absent. */
 function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
-  const startNode = getSelectionStartNode($getSelection());
-  const selectedVerse = $findThisVerse(startNode)?.getNumber();
+  const selection = $getSelection();
+  const startNode = getSelectionStartNode(selection);
+  // Which verse the caret is in is ONE question, and $resolvePosition already answers it - so ask
+  // it the same way here. Reading the verse off the caret's node alone is offset-blind, and the
+  // two answers then disagree at every position that sits between two verses: the slot just past a
+  // note that ends a verse resolves to the NEXT verse's marker, so the host publishing the note's
+  // own verse looked like a cross-verse navigation and yanked the caret back to that verse's
+  // start.
+  const selectedVerseNode = startNode ? $resolveVerseNode(startNode, selection) : undefined;
   // Resolve the caret's CHAPTER too, mirroring $resolvePosition's counting (content before the
   // first chapter of a loaded document addresses as chapter 1). The verse-number match alone is
   // chapter-blind: in a multi-chapter document, navigating chapter N verse K -> chapter M verse K
@@ -511,14 +521,16 @@ function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
   // is also the deliberate UX no-op for clicking the verse the caret is already in: it is left
   // where the user placed it, not snapped to the verse start. Genuine cross-verse OR cross-chapter
   // navigation still moves, since the caret is not in the target chapter's target verse.
-  if (
-    selectedChapterNum === chapterNum &&
-    selectedVerse &&
-    (isVerseRange(selectedVerse)
-      ? verseInRangeSafe(verseNum, selectedVerse)
-      : parseInt(selectedVerse, 10) === verseNum)
-  ) {
-    return;
+  //
+  // Gated on a verse node actually being resolved, never on the effective number alone: a document
+  // swap nulls the selection, which resolves to verse 0, and a navigation to verse 0 must still
+  // place a caret in the arriving document rather than read "already here" off having none.
+  if (selectedVerseNode && selectedChapterNum === chapterNum) {
+    const { verseNum: caretVerseNum, verse: caretVerse } = $getEffectiveVerseForBcv(
+      selectedVerseNode,
+      selection,
+    );
+    if (caretVerse ? verseInRangeSafe(verseNum, caretVerse) : caretVerseNum === verseNum) return;
   }
 
   const children = $getRoot().getChildren();

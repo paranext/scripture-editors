@@ -220,16 +220,27 @@ export function $findLastVerse(nodes: LexicalNode[]) {
 }
 
 /**
- * Length of verse number prefix in verse text for BCV "before vs after" check.
- * If text doesn't start with the verse number (e.g. $createVerseNode("1", " verse one")
- * or node is non-VerseNode (e.g. ImmutableVerseNode), returns 0 — treats all positions
- * as "after" and shows the current verse.
+ * Offset just past the verse number within a verse node's own text, for the BCV "before vs after"
+ * check. Everything up to it is the marker rather than the verse's content, so a caret there
+ * belongs to the PRECEDING verse.
+ *
+ * The number does not always sit at offset 0: in views that render markers as editable text the
+ * verse node's text is the whole marker (`\v 3 `), and a caret at its offset 0 is the position
+ * just past whatever ends the previous verse — a note caller, most often, since a note on a
+ * verse's last word puts the next verse's marker directly after it.
+ *
+ * If the text doesn't contain the verse number (e.g. `$createVerseNode("1", " verse one")`) or the
+ * node is a non-VerseNode (e.g. ImmutableVerseNode, whose whole node is the number), returns 0 —
+ * treats all positions as "after" and shows the current verse.
  */
 function getVerseNumberPrefixLength(verseNode: SomeVerseNode): number {
   if (!$isVerseNode(verseNode)) return 0;
   const verseNumber = verseNode.getNumber();
-  const text = verseNode.getTextContent();
-  return text.startsWith(verseNumber) ? verseNumber.length : 0;
+  if (!verseNumber) return 0;
+  // Only the marker's own syntax can precede the number, and no digit appears in it, so the first
+  // occurrence is the number itself.
+  const numberIndex = verseNode.getTextContent().indexOf(verseNumber);
+  return numberIndex < 0 ? 0 : numberIndex + verseNumber.length;
 }
 
 /**
