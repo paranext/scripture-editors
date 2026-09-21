@@ -413,15 +413,15 @@ describe("NoteNodePlugin", () => {
         { markerMode: "hidden", hasSpacing: true, isFormattedFont: true, noteMode: "expandInline" },
         () => {
           noteText = $createTextNode(NOTE_TEXT);
-          note = $createNoteNode("f", "+").append(
-            $createImmutableNoteCallerNode("+", "preview"),
-            $createCharNode("ft").append(noteText),
-          );
+          note = $createNoteNode("f", "+");
           $getRoot().append(
             $createBookNode("GEN").append(
               $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
               $createTextNode("description "),
-              note,
+              note.append(
+                $createImmutableNoteCallerNode("+", "preview"),
+                $createCharNode("ft").append(noteText),
+              ),
             ),
           );
         },

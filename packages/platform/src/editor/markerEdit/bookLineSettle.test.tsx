@@ -10,14 +10,17 @@
  * ends the line exactly where the file bytes would, starting the new block after it.
  */
 
-import { testEnvironment, viewOptions } from "./markerEdit.test-helpers";
-import { $settledUsj } from "./virtualSettle.utils";
+import {
+  $buildBookLine,
+  settledUsjOf,
+  testEnvironment,
+  unsettledUsjOf,
+  viewOptions,
+} from "./markerEdit.test-helpers";
 import { Tier2Context, tokenizedBookLine } from "./tier2Rebuild.utils";
-import { deserializeSerializedEditorState } from "../adaptors/editor-usj.adaptor";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
-  $createTextNode,
   $getRoot,
   $getSelection,
   $isRangeSelection,
@@ -27,8 +30,6 @@ import {
   TextNode,
 } from "lexical";
 import {
-  $createBookNode,
-  $createImmutableTypedTextNode,
   $isBookNode,
   $isChapterNode,
   $isCharNode,
@@ -36,7 +37,6 @@ import {
   $isParaNode,
   BookNode,
   getMarker as bundledGetMarker,
-  getPendedDisplayOwners,
   NBSP,
 } from "shared";
 
@@ -47,17 +47,6 @@ if (typeof Range.prototype.getBoundingClientRect !== "function")
   Range.prototype.getBoundingClientRect = () => new DOMRect();
 
 const context: Tier2Context = { viewOptions, getMarker: bundledGetMarker };
-
-/** The `\id` line as `createBook` builds it in markerMode "editable": one immutable `\id GEN `
- * glyph decorator, then the line's own content. */
-function $buildBookLine(content: string): void {
-  $getRoot().append(
-    $createBookNode("GEN").append(
-      $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
-      $createTextNode(content),
-    ),
-  );
-}
 
 function $bookLine(): BookNode {
   const book = $getRoot().getChildren().find($isBookNode);
@@ -102,22 +91,6 @@ function $caretContext(): { inBook: boolean; before: string; after: string } {
     after:
       offset < text.length ? text.slice(offset) : (node.getNextSibling()?.getTextContent() ?? ""),
   };
-}
-
-/** Read the settled USJ exactly as `Editor.tsx`'s `getUsj()` does. */
-function settledUsjOf(editor: LexicalEditor): Usj | undefined {
-  const editorState = editor.getEditorState();
-  const serializedState = editorState.toJSON();
-  const pendedKeys = getPendedDisplayOwners(editor) ?? new Set<string>();
-  return editorState.read(() => $settledUsj(serializedState, pendedKeys, context));
-}
-
-/** The plain editor->USJ conversion, with no settle logic — what a refusing scope must match. */
-function unsettledUsjOf(editor: LexicalEditor): Usj | undefined {
-  const editorState = editor.getEditorState();
-  return editorState.read(() =>
-    deserializeSerializedEditorState(editorState.toJSON(), viewOptions),
-  );
 }
 
 /** The first USJ content entry, which is always the book. */
@@ -268,7 +241,7 @@ describe("the `\\id` line's settle scope", () => {
     // literal while the settled USJ must already carry the span a caret departure would produce.
     await typeInBookLine(editor, "Genesis \\nd");
 
-    const settledBook = bookUsj(settledUsjOf(editor));
+    const settledBook = bookUsj(settledUsjOf(editor, context));
     expect(settledBook?.type).toBe("book");
     expect(settledBook?.code).toBe("GEN");
     const span = settledBook?.content?.find(
@@ -291,7 +264,7 @@ describe("the `\\id` line's settle scope", () => {
     // carry the paragraph a caret departure would split off.
     await typeInBookLine(editor, "Genesis \\ip");
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     expect(bookUsj(settled)?.code).toBe("GEN");
     expect(JSON.stringify(bookUsj(settled))).not.toContain("\\\\ip");
     expect(settled?.content[1]).toMatchObject({ type: "para", marker: "ip" });
@@ -309,7 +282,7 @@ describe("the `\\id` line's settle scope", () => {
     await typeInBookLine(editor, "Genesis \\ more");
 
     // A refusal contributes the unsettled shape, never a partial patch.
-    expect(bookUsj(settledUsjOf(editor)) ?? bookUsj(unsettledUsjOf(editor))).toEqual(
+    expect(bookUsj(settledUsjOf(editor, context)) ?? bookUsj(unsettledUsjOf(editor))).toEqual(
       bookUsj(unsettledUsjOf(editor)),
     );
   });

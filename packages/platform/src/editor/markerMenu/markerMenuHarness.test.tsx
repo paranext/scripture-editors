@@ -27,6 +27,7 @@ import {
 } from "./markerMenuApply.utils";
 import { $getMarkerMenuContext } from "./markerMenuContext.utils";
 import {
+  $buildBookLine,
   $noteContentText,
   findOnlyNote,
   noteUsx,
@@ -56,10 +57,8 @@ import {
 } from "lexical";
 import { useEffect } from "react";
 import {
-  $createBookNode,
   $createChapterNode,
   $createCharNode,
-  $createImmutableTypedTextNode,
   $createMarkerNode,
   $createParaNode,
   $isBookNode,
@@ -271,16 +270,6 @@ function $buildEnterMenuFixture(): { caretText: TextNode } {
   return { caretText };
 }
 
-/** The `\id` line as `createBook` builds it in markerMode "editable": one immutable `\id GEN `
- * glyph decorator, then the line's own content. */
-function $buildBookLineFixture(): { text: TextNode } {
-  const text = $createTextNode("Genesis description");
-  $getRoot().append(
-    $createBookNode("GEN").append($createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`), text),
-  );
-  return { text };
-}
-
 describe("editable-mode marker menu harness", () => {
   describe("`\\` trigger", () => {
     it("preventDefaults for a collapsed selection too - the active palette's trigger never lands - and opens the menu", async () => {
@@ -386,7 +375,7 @@ describe("editable-mode marker menu harness", () => {
       // retag and nothing the paragraph palette could do.
       let text: TextNode | undefined;
       const { editor } = await harnessTestEnvironment(() => {
-        text = $buildBookLineFixture().text;
+        text = $buildBookLine("Genesis description");
       });
       await act(async () => editor.update(() => requireDefined(text, "text").select(7, 7)));
 
@@ -403,7 +392,7 @@ describe("editable-mode marker menu harness", () => {
     it("Enter opens the paragraph menu, and the pick lands the paragraph after the line", async () => {
       let text: TextNode | undefined;
       const { editor } = await harnessTestEnvironment(() => {
-        text = $buildBookLineFixture().text;
+        text = $buildBookLine("Genesis description");
       });
       await act(async () => editor.update(() => requireDefined(text, "text").select(7, 7)));
 

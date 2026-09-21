@@ -9,6 +9,7 @@ import { deserializeEditorState } from "../adaptors/editor-usj.adaptor";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import { MarkerEditPlugin } from "../markerEdit/MarkerEditPlugin";
 import {
+  $buildBookLine,
   historyTestEnvironment,
   testEnvironment,
   usjNoteFromUsfm,
@@ -114,16 +115,6 @@ function makeDeps(styleInfo?: StyleInfo): ApplyMarkerMenuSelectionDeps {
     logger: undefined,
     styleInfo,
   };
-}
-
-/** The `\id` line as `createBook` builds it in markerMode "editable": one immutable `\id GEN `
- * glyph decorator, then the line's own content. */
-function $buildBookLine(content: string): TextNode {
-  const text = $createTextNode(content);
-  $getRoot().append(
-    $createBookNode("GEN").append($createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`), text),
-  );
-  return text;
 }
 
 /**
