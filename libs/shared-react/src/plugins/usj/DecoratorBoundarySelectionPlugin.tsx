@@ -276,6 +276,15 @@ export function DecoratorBoundarySelectionPlugin(): null {
     // the DOM, which is exactly what stops a drag dead. A press with no editor selection behind it
     // costs nothing: the flag is only ever read while repairing a selection inside the editor.
     // (`NoteShellCaretGuardPlugin` registers all three on the document for the same reason.)
+    //
+    // `release` opens an `editor.update()` from a DOM listener, a deliberate exception to the rule
+    // that mutations enter through commands (`NoteNodePlugin` and `ContextMenuPlugin` make the same
+    // one). A command would not remove the dependency that makes the call safe: it must run
+    // synchronously inside the trusted `pointerup`/`pointercancel` dispatch, with no update of this
+    // editor already active. Lexical queues an update requested during another one, and the queued
+    // callback runs after that dispatch has ended, where `window.event` no longer says `pointerup`
+    // and the update re-derives its selection from the raw interior DOM points instead of cloning the
+    // snapped one.
     const release = () => {
       isPointerDown.current = false;
       if (!isMaterializePending.current) return;

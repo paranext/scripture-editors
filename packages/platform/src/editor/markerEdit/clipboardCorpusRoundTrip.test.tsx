@@ -316,7 +316,7 @@ function withoutParagraphLeadingSpace(usj: Usj): Usj {
  *
  * It round-trips byte-for-byte with ONE exception, asserted by name below rather than waived: a
  * verse's `sid`. That attribute is DERIVED (book + chapter + verse) when ParatextData produces
- * USX/USJ; USFM has no bytes for it anywhere, so the plain-text clipboard carrier (S3) cannot carry
+ * USX/USJ; USFM has no bytes for it anywhere, so the plain-text clipboard carrier cannot carry
  * one and the paste cannot invent one. Measured, not assumed: a plain load→save of this same fixture
  * keeps all 26 of them, so the loss belongs to the carrier and not to the adaptors. The chapter's
  * own `sid` survives only because the target editor is SEEDED with the chapter header. Same family

@@ -346,7 +346,7 @@ describe("root cause: a native paste event carrying a same-namespace application
     // plain text elsewhere in the SAME editor and capture $getLexicalContent, exactly as
     // copyToClipboard does. `$handlePasteForStandardView`'s same-namespace-flavor guard exists so
     // a live native paste event that still carries the flavor (a genuine same-page copy, not the
-    // reconstructed-DataTransfer paste path S3's own doc comment shows can never carry it) keeps
+    // reconstructed-DataTransfer paste path's own doc comment shows can never carry it) keeps
     // Lexical's exact-node-tree fast path for ORDINARY content — but that guard must never win over
     // an attribute-context destination, so this pins the corruption that fast path would otherwise
     // cause there.

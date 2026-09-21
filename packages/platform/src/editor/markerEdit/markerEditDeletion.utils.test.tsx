@@ -1046,7 +1046,7 @@ describe("load/engine para prefix drift pin", () => {
   });
 });
 
-describe("selection-delete at a settled char-span boundary (WI-2 filed)", () => {
+describe("selection-delete at a settled char-span boundary", () => {
   // A PROGRAMMATIC DOM selection built with `range.setEndAfter(spanElement)` — anchor in the text
   // BEFORE a settled `\wj …\wj*` char span, focus set immediately after the span's whole DOM
   // element — must not absorb the character AFTER the selection's own end: the closing curly quote
