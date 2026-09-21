@@ -11,7 +11,11 @@ import {
   $paraMarkerDeletionTransform,
   $prepareReplaceSelection,
 } from "./markerEditDeletion.utils";
-import { $pasteOnChapterLine, $refuseSplitOnChapterLine } from "./chapterLine.utils";
+import {
+  $pasteOnChapterLine,
+  $refuseLineBreakOnChapterLine,
+  $splitOnChapterLine,
+} from "./chapterLine.utils";
 import {
   $adoptDomCaretInExpandedNote,
   $handleEnterInNote,
@@ -94,6 +98,7 @@ import {
   MilestoneNode,
   NBSP,
   NoteNode,
+  PARA_MARKER_DEFAULT,
   ParaNode,
   registerPendedDisplayOwners,
   textTypeState,
@@ -1004,16 +1009,17 @@ export function MarkerEditPlugin({
         },
         COMMAND_PRIORITY_HIGH,
       ),
-      // A chapter line cannot be split (see chapterLine.utils.ts). CRITICAL so the refusal runs
-      // ahead of every split, including this plugin's own char-stack split below.
+      // A chapter line cannot be split: Enter there starts a `\p` after it and a line break is
+      // refused (see chapterLine.utils.ts). CRITICAL so both run ahead of every split, including
+      // this plugin's own char-stack split below.
       editor.registerCommand(
         INSERT_PARAGRAPH_COMMAND,
-        () => $refuseSplitOnChapterLine(),
+        () => $splitOnChapterLine(PARA_MARKER_DEFAULT, context.viewOptions),
         COMMAND_PRIORITY_CRITICAL,
       ),
       editor.registerCommand(
         INSERT_LINE_BREAK_COMMAND,
-        () => $refuseSplitOnChapterLine(),
+        () => $refuseLineBreakOnChapterLine(),
         COMMAND_PRIORITY_CRITICAL,
       ),
       editor.registerCommand(

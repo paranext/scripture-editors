@@ -171,7 +171,7 @@ export class ChapterNode extends ElementNode {
    * be dropped on save. Reporting that it cannot be empty is what keeps Lexical from treating it as
    * a block to merge a following paragraph into when a deletion starts on the chapter line, and
    * what removes the chapter once every byte of its marker is deleted. Editors that let the caret
-   * into a chapter must refuse splits there themselves, since Lexical then has no block to split
+   * into a chapter must handle splits there themselves, since Lexical then has no block to split
    * (see the platform editor's `chapterLine.utils.ts`).
    */
   override canBeEmpty(): false {

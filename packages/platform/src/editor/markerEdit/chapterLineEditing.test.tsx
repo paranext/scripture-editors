@@ -7,10 +7,12 @@
  * the paragraph into the chapter line that way — kept on screen, silently dropped on save — for
  * every gesture that deletes a selection: Delete, Backspace, typing over it, cut, Enter, and paste.
  * Such a deletion now deletes the chapter marker, as it does in the USFM text, and leaves the text
- * after the selection in its own paragraph. The other half pins what must not change: a chapter
- * line cannot be split, so Enter and Shift+Enter there do nothing, and a paste goes in as one line.
+ * after the selection in its own paragraph. The other half pins editing on the chapter line itself:
+ * it cannot be split, so Enter there starts a new paragraph after it, Shift+Enter does nothing, and
+ * a paste goes in as one line.
  */
 import { EditorRef } from "../editor.model";
+import { getEnterMenuItems } from "../markerMenu/markerItemSource";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { requireDefined } from "./markerEdit.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -30,6 +32,7 @@ import {
   LexicalNode,
   PASTE_COMMAND,
   TextNode,
+  UNDO_COMMAND,
 } from "lexical";
 import {
   $chapterGlyphTextNode,
@@ -37,6 +40,7 @@ import {
   ChapterNode,
   getVisibleOpenMarkerText,
   NBSP,
+  StyleInfo,
 } from "shared";
 import { describe, expect, it } from "vitest";
 
@@ -48,7 +52,21 @@ const VERSE_1_PARA: MarkerContent = {
 };
 const POETRY_PARA: MarkerContent = { type: "para", marker: "q1", content: ["poem"] };
 
+const CHAPTER_2_GLYPH = requireDefined(getVisibleOpenMarkerText("c", "2"), "no chapter glyph text");
 const GEN_2_1: SerializedVerseRef = { book: "GEN", chapterNum: 2, verseNum: 1 };
+
+/**
+ * Enough of a stylesheet to rank the Enter menu: `\ip` belongs to the book introduction (under
+ * `\id`) and `\p` to a chapter (under `\c`).
+ */
+const PARAGRAPH_SHEET: StyleInfo = {
+  markers: {
+    id: { marker: "id", styleType: "paragraph" },
+    c: { marker: "c", styleType: "paragraph", occursUnder: ["id"] },
+    p: { marker: "p", styleType: "paragraph", occursUnder: ["c"], rank: 4 },
+    ip: { marker: "ip", styleType: "paragraph", occursUnder: ["id"] },
+  },
+};
 
 const chapterDoc: Usj = {
   type: "USJ",
@@ -79,6 +97,15 @@ function $verseText(): TextNode {
 
 const keyDown = (key: string, init: KeyboardEventInit = {}) =>
   new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
+
+/** Types `text` at the caret, in an update of its own as a keystroke is. */
+async function typeText(editor: LexicalEditor, text: string): Promise<void> {
+  await act(async () =>
+    editor.update(() => {
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+    }),
+  );
+}
 
 /** A duck-typed paste event carrying only text/plain (jsdom has no ClipboardEvent). */
 function plainTextPaste(text: string): ClipboardEvent {
@@ -275,17 +302,38 @@ describe("deleting from the chapter line into the text", () => {
 });
 
 describe("a caret on the chapter line", () => {
+  // A chapter line holds nothing but its own marker, so Enter cannot split it: wherever the caret
+  // is on the line, Enter starts a new paragraph after it — the way a paragraph is added after
+  // `\c N` in the USFM text — and the caret goes into that paragraph.
   it.each([
-    ["Enter in the middle of the marker", 2],
-    ["Enter at the end of the line", 0],
-  ])("%s does nothing", async (_label, fromEnd) => {
+    ["at the end of the line", 0],
+    ["in the middle of the marker", 2],
+    ["at the start of the line", CHAPTER_2_GLYPH.length],
+  ])("Enter %s starts a \\p paragraph after it", async (_label, fromEnd) => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
     await onChapterLine(
       lexical,
       () => lexical.dispatchCommand(KEY_ENTER_COMMAND, keyDown("Enter")),
       fromEnd,
     );
-    lexical.getEditorState().read(() => expect($getRoot().getChildrenSize()).toBe(3));
+    await typeText(lexical, "new");
+    expect(ref.current?.getUsj()?.content).toEqual([
+      CHAPTER_2,
+      { type: "para", marker: "p", content: ["new"] },
+      VERSE_1_PARA,
+      POETRY_PARA,
+    ]);
+  });
+
+  it("Enter is undone in one step", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await onChapterLine(lexical, () =>
+      lexical.dispatchCommand(KEY_ENTER_COMMAND, keyDown("Enter")),
+    );
+    expect(ref.current?.getUsj()?.content).toHaveLength(chapterDoc.content.length + 1);
+    await act(async () => {
+      lexical.dispatchCommand(UNDO_COMMAND, undefined);
+    });
     expect(ref.current?.getUsj()?.content).toEqual(chapterDoc.content);
   });
 
@@ -299,25 +347,40 @@ describe("a caret on the chapter line", () => {
   });
 
   // A host's marker menus apply a paragraph pick through the `EditorRef`, which splits without
-  // dispatching INSERT_PARAGRAPH_COMMAND, so the chapter line's refusal has to hold there too.
+  // dispatching INSERT_PARAGRAPH_COMMAND, so it has to start the paragraph after the chapter line
+  // itself.
   it.each([
-    ["an Enter-menu pick", (editor: EditorRef) => editor.splitParagraphWithMarker("p")],
+    ["an Enter-menu pick", (editor: EditorRef) => editor.splitParagraphWithMarker("q1")],
     [
       "a backslash-menu paragraph pick",
       (editor: EditorRef) =>
         editor.applyMarkerMenuSelection(
-          { marker: "p", kind: "paragraph", isBasic: true },
+          { marker: "q1", kind: "paragraph", isBasic: false },
           { trigger: "backslash", literalPrefixLanded: false },
         ),
     ],
-  ])("%s does nothing", async (_label, pick) => {
+  ])("%s starts a paragraph with that marker after it", async (_label, pick) => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc, { scrRef: GEN_2_1 });
     await onChapterLine(lexical, () => undefined);
     await act(async () => {
       pick(requireDefined(ref.current ?? undefined, "editor ref not set"));
     });
-    lexical.getEditorState().read(() => expect($getRoot().getChildrenSize()).toBe(3));
-    expect(ref.current?.getUsj()?.content).toEqual(chapterDoc.content);
+    await typeText(lexical, "new");
+    expect(ref.current?.getUsj()?.content).toEqual([
+      CHAPTER_2,
+      { type: "para", marker: "q1", content: ["new"] },
+      VERSE_1_PARA,
+      POETRY_PARA,
+    ]);
+  });
+
+  // The paragraph Enter starts goes after the chapter, so the Enter menu ranks what may follow a
+  // chapter first — `\p`, not the book introduction's `\ip`.
+  it("puts the paragraph that follows a chapter first in the Enter menu", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc, { scrRef: GEN_2_1 });
+    await onChapterLine(lexical, () => undefined);
+    const context = requireDefined(ref.current?.getMarkerMenuContext(), "no marker menu context");
+    expect(getEnterMenuItems(PARAGRAPH_SHEET, context)[0]?.marker).toBe("p");
   });
 
   it("takes a multi-line paste as one line of text", async () => {
