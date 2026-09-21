@@ -50,6 +50,7 @@ import {
   $isMarkerNode,
   $isMilestoneNode,
   $isNoteNode,
+  $isParaLikeNode,
   $isParaNode,
   $isSynthesizedMarkerNode,
   $isUnknownNode,
@@ -1887,6 +1888,8 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
  *
  * Exported for the read-only settle (virtualSettle.utils.ts), the same sharing contract
  * `$buildNoteFragment` has.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
  */
 export function $buildBookFragment(
   book: BookNode,
@@ -1958,6 +1961,9 @@ export function tokenizedBookLine(
  * BLOCK marker ends the line the same way ({@link tokenizedBookLine}): the tail after it becomes
  * the new block, inserted directly after the book, just as a paragraph split starts its new
  * paragraph after the old one.
+ *
+ * Mutating: call inside `editor.update()` (dispatched from the Tier-2 trigger transform, the
+ * caret-departure and commit paths in MarkerEditPlugin.tsx, and `$requestTier2ForNode`).
  */
 export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
@@ -2499,7 +2505,7 @@ export function $idleSettleWouldDiscardCaretHeldBytes(
   viewOptions: ViewOptions | undefined,
 ): boolean {
   const scope = $settleScopeForNode(node);
-  if (!$isParaNode(scope) && !$isBookNode(scope)) return false;
+  if (!$isParaLikeNode(scope)) return false;
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   let caretInScope = false;
