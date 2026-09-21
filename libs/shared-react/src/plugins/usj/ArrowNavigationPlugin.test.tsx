@@ -2698,6 +2698,77 @@ describe("Backward navigation in the book line", () => {
   });
 });
 
+// A collapsed note ending a block is immediately followed by another block. Backward navigation
+// from the new block's content start must stop before the note rather than entering it — the same
+// rule for every kind of block that can end in a note, not just an ordinary paragraph.
+describe("Backward navigation into a collapsed note ending the previous block", () => {
+  const standardView = getViewOptions(STANDARD_VIEW_MODE);
+
+  it("stops before a collapsed note ending the previous paragraph", async () => {
+    let para1: ParaNode;
+    let note: NoteNode;
+    let para2Text: TextNode;
+    const { editor } = await testEnvironment(
+      () => {
+        para1 = $createParaNode();
+        note = $createNoteNode("f", "+");
+        para2Text = $createTextNode("p2 text");
+        $getRoot().append(
+          para1.append(
+            $createTextNode("p1 text"),
+            note.append(
+              $createImmutableNoteCallerNode("+", "note1 preview"),
+              $createCharNode("ft").append($createTextNode("note1 text")),
+            ),
+          ),
+          $createParaNode().append(para2Text),
+        );
+      },
+      "ltr",
+      standardView,
+    );
+    updateSelection(editor, para2Text!, 0);
+
+    await pressKey(editor, "ArrowLeft");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(para1!, note!.getIndexWithinParent());
+    });
+  });
+
+  it("stops before a collapsed note ending the \\id line, same as the paragraph case", async () => {
+    let book: BookNode;
+    let note: NoteNode;
+    let para2Text: TextNode;
+    const { editor } = await testEnvironment(
+      () => {
+        book = $createBookNode("GEN");
+        note = $createNoteNode("f", "+");
+        para2Text = $createTextNode("p2 text");
+        $getRoot().append(
+          book.append(
+            $createImmutableTypedTextNode("marker", "\\id GEN "),
+            note.append(
+              $createImmutableNoteCallerNode("+", "note1 preview"),
+              $createCharNode("ft").append($createTextNode("note1 text")),
+            ),
+          ),
+          $createParaNode().append(para2Text),
+        );
+      },
+      "ltr",
+      standardView,
+    );
+    updateSelection(editor, para2Text!, 0);
+
+    await pressKey(editor, "ArrowLeft");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(book!, note!.getIndexWithinParent());
+    });
+  });
+});
+
 async function testEnvironment(
   $initialEditorState: () => void,
   textDirection: "ltr" | "rtl" = "ltr",

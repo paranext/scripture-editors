@@ -40,6 +40,7 @@ import {
   $isMarkerNode,
   $isMilestoneNode,
   $isNoteNode,
+  $isParaLikeNode,
   $isSomeParaNode,
   $placeCaretAtBoundary,
   CharNode,
@@ -983,7 +984,11 @@ function $handleBackwardNavigation(
   // under "expandInline" the caret must instead land inside the note's end (Lexical's default
   // move), where the NoteNodePlugin expands it for inline editing — hopping over the note here
   // would defeat that enter-and-expand behavior.
-  if ($isSomeParaNode(prevNode) && viewOptions?.noteMode === "collapsed") {
+  //
+  // `ParaLike`, not `SomePara`: the `\id` line is a `BookNode` and can end in a note like any
+  // other content container, so backing into it from the following block hops over the note the
+  // same way.
+  if ($isParaLikeNode(prevNode) && viewOptions?.noteMode === "collapsed") {
     // caret at beginning of para after collapsed note → move to start in previous para
     const lastChild = prevNode.getLastChild();
     if (!lastChild) return false;
