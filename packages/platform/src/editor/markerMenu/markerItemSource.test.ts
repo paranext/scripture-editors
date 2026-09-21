@@ -155,6 +155,30 @@ describe("getMarkerMenuItems — character source (PT9 MarkerItemSource.GetChara
     expect(items.map((item) => item.marker).sort()).toEqual(["f", "nd"]);
     expect(items.some((item) => item.kind === "paragraph")).toBe(false);
   });
+
+  it("falls back to the paragraph list for the `\\id` line when no character or note entry applies there", () => {
+    // A stylesheet with no note style at all, and no character style valid under `id` (every
+    // character entry's `occursUnder` excludes it): the CHARACTER source `$getMarkerMenuContext`
+    // reports for a caret in the `\id` line (`source: "character"`, `paraMarker: "id"`) is
+    // unconditionally empty for this sheet, so the empty-to-paragraph fallback — the same one an
+    // ordinary paragraph relies on — is what has to supply a list, rather than leaving the `\`
+    // menu empty for the line.
+    const sheetWithNoIdCharacterEntries: StyleInfo = {
+      markers: {
+        id: { marker: "id", styleType: "paragraph" },
+        ip: { marker: "ip", styleType: "paragraph", occursUnder: ["id"] },
+        p: { marker: "p", styleType: "paragraph", occursUnder: ["c"], rank: 4 },
+        wj: { marker: "wj", styleType: "character", occursUnder: ["p"], endMarker: "wj*" },
+      },
+    };
+    const items = getMarkerMenuItems(
+      sheetWithNoIdCharacterEntries,
+      makeContext({ source: "character", paraMarker: "id", previousParaMarkers: ["id"] }),
+    );
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every((item) => item.kind === "paragraph")).toBe(true);
+    expect(items.map((item) => item.marker)).toContain("ip");
+  });
 });
 
 describe("getMarkerMenuItems — ordering (PT9 MarkerItemSource.TagComparer)", () => {

@@ -1,16 +1,20 @@
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
+import { Tier2Context } from "./tier2Rebuild.utils";
+import { $settledUsj } from "./virtualSettle.utils";
 import {
   initialize as initializeSerialize,
   reset,
   serializeEditorState,
 } from "../adaptors/usj-editor.adaptor";
 import editorUsjAdaptor, {
+  deserializeSerializedEditorState,
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import {
   MarkerContent,
   MarkerObject,
+  Usj,
   usxStringToUsj,
 } from "@eten-tech-foundation/scripture-utilities";
 import {
@@ -26,7 +30,9 @@ import {
 } from "lexical";
 import {
   $createAttributeRunNode,
+  $createBookNode,
   $createCharNode,
+  $createImmutableTypedTextNode,
   $createMarkerNode,
   $createParaNode,
   $createVerseNode,
@@ -37,6 +43,7 @@ import {
   AttributeRunNode,
   CharNode,
   createMarkerLookup,
+  getPendedDisplayOwners,
   getVisibleOpenMarkerText,
   LoggerBasic,
   MarkerNode,
@@ -324,6 +331,18 @@ export async function historyTestEnvironment($initialEditorState: () => void) {
   );
 }
 
+/**
+ * The `\id` line as `createBook` builds it in markerMode "editable": one immutable `\id GEN `
+ * glyph decorator, then the line's own content. Returns the content TextNode.
+ */
+export function $buildBookLine(content: string): TextNode {
+  const text = $createTextNode(content);
+  $getRoot().append(
+    $createBookNode("GEN").append($createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`), text),
+  );
+  return text;
+}
+
 export function $appendCharPara(): { marker: MarkerNode; char: CharNode; closer: MarkerNode } {
   const para = $createParaNode("p");
   const paraMarker = $createMarkerNode("p");
@@ -597,4 +616,25 @@ export function pasteEvent(payload: { [key: string]: string }): {
  * (terminal, text editor, address bar) delivers. */
 export function plainTextPasteEvent(text: string): ClipboardEvent {
   return pasteEvent({ "text/plain": text }).event;
+}
+
+/** Read the settled USJ exactly as `Editor.tsx`'s `getUsj()` does. */
+export function settledUsjOf(editor: LexicalEditor, context: Tier2Context): Usj | undefined {
+  const editorState = editor.getEditorState();
+  const serializedState = editorState.toJSON();
+  const pendedKeys = getPendedDisplayOwners(editor) ?? new Set<string>();
+  return editorState.read(() => $settledUsj(serializedState, pendedKeys, context));
+}
+
+/**
+ * The UNSETTLED USJ: a plain editor->USJ conversion of the editor's current serialized state,
+ * with no settle logic involved at all — what the caller already has cached before ever calling
+ * `$settledUsj` (see its `undefined` fast-path return). The reference a refusing scope's settled
+ * output must match byte-for-byte, since a refusal contributes "as-is", never a partial patch.
+ */
+export function unsettledUsjOf(editor: LexicalEditor): Usj | undefined {
+  const editorState = editor.getEditorState();
+  return editorState.read(() =>
+    deserializeSerializedEditorState(editorState.toJSON(), viewOptions),
+  );
 }
