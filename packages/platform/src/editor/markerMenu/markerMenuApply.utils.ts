@@ -20,6 +20,7 @@
 import { $insertNoteForMarker, getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
 import { $applyParaMarker } from "../markerEdit/applyParaMarker.utils";
 import { LITERAL_TRIGGER_PREFIX_REGEX } from "../markerEdit/markerName.pattern";
+import { $refuseSplitOnChapterLine } from "../markerEdit/chapterLine.utils";
 import { $splitParagraphAtCharStack } from "../markerEdit/charFormatting.utils";
 import { $handleEnterInNote } from "../markerEdit/markerEditNote.utils";
 import {
@@ -315,8 +316,13 @@ export function $applyMarkerMenuSelection(
  * new paragraph gets its marker state WITHOUT the visible prefix — the same stand-down as the
  * deletion transform and `$applyParaMarker`, so no flow re-materializes bytes the option
  * promises are never built.
+ *
+ * A caret on a chapter line refuses the split, exactly as Enter there does: because this bypasses
+ * `INSERT_PARAGRAPH_COMMAND`, the refusal registered on that command never sees it, and Lexical
+ * would otherwise split at the document root (see `chapterLine.utils.ts`).
  */
 export function $splitParagraphWithMarker(marker: string, viewOptions?: ViewOptions): void {
+  if ($refuseSplitOnChapterLine()) return;
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return;
   const showPrefix = showParaMarkerPrefix(viewOptions);

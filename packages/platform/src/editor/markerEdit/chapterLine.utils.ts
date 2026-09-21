@@ -39,7 +39,7 @@ function $selectionTouchesChapterLine(selection: RangeSelection): boolean {
  * since a chapter line cannot be split.
  *
  * Mutating: call from an `INSERT_PARAGRAPH_COMMAND` / `INSERT_LINE_BREAK_COMMAND` handler that
- * runs before Lexical's own split.
+ * runs before Lexical's own split, and ahead of any split that bypasses those commands.
  *
  * @returns Whether the split was refused — the caret is on a chapter line, so the command is
  *   claimed.

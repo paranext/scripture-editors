@@ -10,9 +10,11 @@
  * after the selection in its own paragraph. The other half pins what must not change: a chapter
  * line cannot be split, so Enter and Shift+Enter there do nothing, and a paste goes in as one line.
  */
+import { EditorRef } from "../editor.model";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { requireDefined } from "./markerEdit.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { SerializedVerseRef } from "@sillsdev/scripture";
 import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
@@ -45,6 +47,8 @@ const VERSE_1_PARA: MarkerContent = {
   content: [{ type: "verse", marker: "v", number: "1" }, "one two"],
 };
 const POETRY_PARA: MarkerContent = { type: "para", marker: "q1", content: ["poem"] };
+
+const GEN_2_1: SerializedVerseRef = { book: "GEN", chapterNum: 2, verseNum: 1 };
 
 const chapterDoc: Usj = {
   type: "USJ",
@@ -291,6 +295,28 @@ describe("a caret on the chapter line", () => {
     lexical
       .getEditorState()
       .read(() => expect($glyph().getTextContent()).toBe(getVisibleOpenMarkerText("c", "2")));
+    expect(ref.current?.getUsj()?.content).toEqual(chapterDoc.content);
+  });
+
+  // A host's marker menus apply a paragraph pick through the `EditorRef`, which splits without
+  // dispatching INSERT_PARAGRAPH_COMMAND, so the chapter line's refusal has to hold there too.
+  it.each([
+    ["an Enter-menu pick", (editor: EditorRef) => editor.splitParagraphWithMarker("p")],
+    [
+      "a backslash-menu paragraph pick",
+      (editor: EditorRef) =>
+        editor.applyMarkerMenuSelection(
+          { marker: "p", kind: "paragraph", isBasic: true },
+          { trigger: "backslash", literalPrefixLanded: false },
+        ),
+    ],
+  ])("%s does nothing", async (_label, pick) => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc, { scrRef: GEN_2_1 });
+    await onChapterLine(lexical, () => undefined);
+    await act(async () => {
+      pick(requireDefined(ref.current ?? undefined, "editor ref not set"));
+    });
+    lexical.getEditorState().read(() => expect($getRoot().getChildrenSize()).toBe(3));
     expect(ref.current?.getUsj()?.content).toEqual(chapterDoc.content);
   });
 
