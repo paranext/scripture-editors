@@ -87,6 +87,15 @@ refused. The public surface grew substantially; nothing was removed.
   flavor off the clipboard must handle its absence for such a selection; a host pasting through
   `navigator.clipboard.read()` (the editor's own Ctrl+V and context-menu Paste) sees no change, since
   that API never exposed the flavor.
+- **A Standard-view copy whose selection touches a book or chapter line no longer writes the private
+  `application/x-lexical-editor` flavor either.** A native paste event rebuilt the copied
+  `ChapterNode`/`BookNode` from it verbatim, past the `\c`/`\id` strip every text paste gets, and a
+  second chapter node made every later save of that chapter fail. The readable flavors are unchanged.
+- **A structure-protected editor's cut of a selection `StructureKeyboardPlugin` refuses to replace is
+  now refused whole.** With `structureProtectionMode: "protected"`, the Standard-view cut handler
+  claimed the cut ahead of that refusal and removed the range — a paragraph boundary or a verse
+  marker included. It now declines, as the paste handler already did, so nothing is copied or
+  removed.
 
 ### Fixed
 

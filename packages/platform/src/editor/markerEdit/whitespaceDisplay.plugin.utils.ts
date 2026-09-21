@@ -109,7 +109,8 @@ export function htmlPasteText(html: string): string {
 export interface PastePayload {
   /**
    * What a claim replays: the USFM decoded from a Paratext 9 clipboard's `text/html` when the html
-   * is one, else `text/plain` when it carries anything, else the decoded `text/html`. Some sources
+   * is one and decodes to anything, else `text/plain` when it carries anything, else the decoded
+   * `text/html`. Some sources
    * (word processors, intermediaries) ship html alone, and those pastes otherwise reach the generic
    * handling this editor's claims exist to pre-empt.
    *
@@ -198,10 +199,14 @@ export function getPastePayload(
   const normalizeLineEndings = (text: string) => text.replace(/\r\n?/g, "\n");
   const plainText = normalizeLineEndings(clipboardData.getData("text/plain"));
   const html = clipboardData.getData("text/html");
-  const htmlText = html ? normalizeLineEndings(htmlPasteText(html)) : "";
   // A Paratext 9 clipboard's html is decoded to USFM and WINS over its own `text/plain`
-  // (`paratext9Clipboard.utils.ts`); every other source's `text/plain` wins whenever it carries
-  // anything; a clipboard with only `text/html` falls back to that html's decoded text.
+  // (`paratext9Clipboard.utils.ts`) whenever the decode has anything in it; every other source's
+  // `text/plain` wins whenever it carries anything; a clipboard with only `text/html` falls back to
+  // that html's decoded text. A P9 fragment can match the signature and still decode to nothing
+  // (all of it in `exclude` spans with no `usfm:` comment), and its own `text/plain` is then the
+  // better carrier than an empty paste. The html is decoded only when the choice reaches it: a
+  // word processor's or browser's html routinely runs to hundreds of KB beside the `text/plain`
+  // that wins, and every claim reads the payload.
   //
   // The P9 clause is the one place a source's html is strictly MORE faithful than its plain text, and
   // it is more faithful by construction rather than by luck: P9 writes `text/plain` as the selection's
@@ -219,8 +224,9 @@ export function getPastePayload(
   // ({@link $getStandardViewClipboardData}) — so the plain carrier stays authoritative and the foreign
   // data-NBSP loss is accepted.
   const paratext9Text = html ? paratext9HtmlToUsfm(html) : undefined;
+  const htmlText = () => (html ? normalizeLineEndings(htmlPasteText(html)) : "");
   return {
-    text: paratext9Text !== undefined ? normalizeLineEndings(paratext9Text) : plainText || htmlText,
+    text: paratext9Text ? normalizeLineEndings(paratext9Text) : plainText || htmlText(),
     isInternal: isSameNamespaceLexicalPayload(
       clipboardData.getData("application/x-lexical-editor"),
       namespace,
@@ -259,10 +265,11 @@ const BEFORE_MARKER_NBSP = new RegExp(String.raw`\u00A0(?=${MARKER_TOKEN})`, "g"
  *
  * The two are told apart POSITIONALLY, mirroring PT9's `PostprocessUsfm`, in three passes:
  *
- * 1. A leading NBSP — at the very start of the text, or right after a newline (a later paragraph
- *    of a multi-line paste can itself start mid-span) — reads as a structural separator with
+ * 1. A leading NBSP run — at the very start of the text, or right after a newline (a later
+ *    paragraph of a multi-line paste can itself start mid-span) — reads as display spacing with
  *    nothing in front of it to match against (a partial selection starting exactly at a char
- *    span's structural leading NBSP) and becomes a plain space.
+ *    span's structural leading NBSP, or inside a paragraph-leading space run, which Standard view
+ *    stores as all-NBSP) and becomes plain spaces, one per NBSP.
  * 2. An NBSP immediately FOLLOWING a marker token is the required opener/closer separator and
  *    becomes a plain space (e.g. the mandatory space after `\f`/`\fr`, or a char span's own
  *    leading separator when the marker literal IS present in the pasted text).
@@ -278,7 +285,7 @@ const BEFORE_MARKER_NBSP = new RegExp(String.raw`\u00A0(?=${MARKER_TOKEN})`, "g"
  */
 export function normalizePastedNbsp(text: string): string {
   return text
-    .replace(/^\u00A0/gm, " ")
+    .replace(/^\u00A0+/gm, (run) => " ".repeat(run.length))
     .replace(AFTER_MARKER_NBSP, "$1 ")
     .replace(BEFORE_MARKER_NBSP, "")
     .replaceAll(NBSP, "~");
@@ -327,10 +334,11 @@ const BOOK_ID_TOKEN = new RegExp(String.raw`\\id(?![${ENGINE_MARKER_NAME_BYTES}]
  *
  * Splits on lines and strips per line (not one global pass over the whole text) so a token that
  * consumes an ENTIRE line can cleanly take that line's own newline with it too (no stray empty
- * paragraph left behind). A line that already carried no other content becomes empty after
- * stripping and is dropped from the output entirely, rather than surviving as a blank paragraph;
- * a line that was ALREADY blank in the source paste (nothing to do with `\c`/`\id`) is left
- * alone.
+ * paragraph left behind). A line that carried no other content becomes empty after stripping and is
+ * dropped from the output entirely, rather than surviving as a blank paragraph — whitespace does
+ * not count as other content, because a chapter line copies with its glyph's trailing separator
+ * (`\c 5 `) and the token stops short of it; a line that was ALREADY blank in the source paste
+ * (nothing to do with `\c`/`\id`) is left alone.
  *
  * Exported for the in-note CRITICAL multi-line paste claim (`MarkerEditPlugin.tsx`), which shares
  * this strip the same way it shares `normalizePastedNbsp` — a `\c`/`\id` token pasted into note
@@ -342,7 +350,7 @@ export function stripPastedChapterAndBookId(text: string): string {
     .split("\n")
     .map((line) => {
       const stripped = line.replace(CHAPTER_TOKEN, "").replace(BOOK_ID_TOKEN, "");
-      return stripped === "" && line !== "" ? undefined : stripped;
+      return stripped.trim() === "" && line.trim() !== "" ? undefined : stripped;
     })
     .filter((line): line is string => line !== undefined)
     .join("\n");
@@ -453,7 +461,9 @@ function $isSelectionWithinOneAttributeNode(selection: RangeSelection): boolean 
 function $insertPastedTextIntoAttributeContext(selection: RangeSelection, text: string): void {
   const valueBytes = $isSelectionWithinOneAttributeNode(selection);
   const resolved = valueBytes ? text : normalizePastedNbsp(stripPastedChapterAndBookId(text));
-  selection.insertText(resolved.replace(/\n/g, " "));
+  // Nothing survived the strip, so there is nothing to replace the selection with — see
+  // `$handlePasteForStandardView`.
+  if (resolved) selection.insertText(resolved.replace(/\n/g, " "));
 }
 
 /**
@@ -487,6 +497,10 @@ function $insertPastedTextIntoAttributeContext(selection: RangeSelection, text: 
  * ({@link $shouldBlockSelectionReplacement} — a range spanning a paragraph boundary, or one
  * containing a verse marker, the mutable `VerseNode`'s own caret included); or no text can be
  * resolved.
+ *
+ * A payload the `\c`/`\id` strip empties ({@link stripPastedChapterAndBookId}) is CLAIMED and
+ * changes nothing: there is nothing left to replace the selection with, so the selection stays, and
+ * declining would hand the raw `\c` to Lexical's own paste, which the strip exists to keep it from.
  *
  * A structure-protected document is otherwise handled HERE, with the same bytes an unprotected one
  * gets — `structureProtectionMode: "protected"` (Platform.Bible's Simple interface mode) changes only
@@ -574,6 +588,7 @@ export function $handlePasteForStandardView(
     return true;
   }
   const normalized = normalizePastedNbsp(stripPastedChapterAndBookId(text));
+  if (!normalized) return true;
   const lines = normalized.split("\n");
   // A protected document never gains a paragraph from a paste: each newline becomes a single space
   // and the payload goes in as one insertion, so the block structure the user sees is exactly the
@@ -703,16 +718,21 @@ function $startsBlockLine(node: LexicalNode): boolean {
  *
  * 1. An `ImmutableNoteCallerNode` — which renders as `""` on screen for a collapsed note with an
  *    auto-generated caller — contributes the enclosing note's real USJ caller (`+`, `-`, or a
- *    literal) plus its own leading separating space (the mandatory space after `\f`/`\x`). The node
+ *    literal), preceded by the separating space it stands after (the mandatory space after
+ *    `\f`/`\x`) unless the selection STARTS at the caller, leaving that opener out. The node
  *    itself is left untouched (`getTextContent()` still returns `""`): it serves every view mode,
  *    and formatted-view prose copy depends on staying caller-free.
  * 2. NBSP inverts to a plain space per node instead of via a blanket `replaceAll` — a note's
  *    internal display-only separators (`$isNoteInternalDisplaySeparator`) contribute nothing
  *    instead of becoming phantom spaces; every other NBSP (marker-trailing spaces, a char span's
- *    structural leading separator, a verse's own marker-to-number gap) represents a real source
- *    space and still maps to one. Data-NBSP (displayed as `~`) is untouched either way.
+ *    structural leading separator, a verse's own marker-to-number gap, the `\id` line's
+ *    book-code separator a decorator carries) represents a real source space and still maps to
+ *    one. Data-NBSP (displayed as `~`) is untouched either way.
  * 3. A block boundary INSIDE an opaque construct contributes no line break, so the construct
  *    copies out on ONE line (see {@link $startsBlockLine}).
+ *
+ * Read-only: safe inside `editor.getEditorState().read(...)`, an `editor.update(...)`, or a command
+ * handler.
  */
 export function $selectionToUsfmText(selection: RangeSelection): string {
   const nodes = selection.getNodes();
@@ -732,7 +752,8 @@ export function $selectionToUsfmText(selection: RangeSelection): string {
     }
     prevWasElement = false;
     if ($isImmutableNoteCallerNode(node)) {
-      if (node !== lastNode || !selection.isCollapsed()) text += ` ${$noteCallerText(node)}`;
+      if (node !== lastNode || !selection.isCollapsed())
+        text += (node === firstNode ? "" : " ") + $noteCallerText(node);
     } else if ($isTextNode(node)) {
       let nodeText = node.getTextContent();
       if (node === firstNode) {
@@ -757,7 +778,7 @@ export function $selectionToUsfmText(selection: RangeSelection): string {
       ($isDecoratorNode(node) || $isLineBreakNode(node)) &&
       (node !== lastNode || !selection.isCollapsed())
     ) {
-      text += node.getTextContent();
+      text += node.getTextContent().replaceAll(NBSP, " ");
     }
   }
   return text;
@@ -767,7 +788,7 @@ export function $selectionToUsfmText(selection: RangeSelection): string {
  * The `text/html` clipboard flavor for `usfm` — the SAME bytes as `text/plain`, HTML-escaped and
  * laid out one block per line.
  *
- * Standard view's fidelity carrier is USFM text (`docs/clipboard-semantics.md`, S1/S3), and the two
+ * Standard view's fidelity carrier is USFM text (`docs/clipboard-semantics.md`), and the two
  * flavors a clipboard consumer can actually read must therefore decode to the same document.
  * Lexical's own DOM export cannot provide that, in two independent ways:
  * `ImmutableNoteCallerNode.exportDOM` carries a collapsed note's caller as a `data-caller`
@@ -784,9 +805,10 @@ export function $selectionToUsfmText(selection: RangeSelection): string {
  * sanitizes a protected DROP that way, and a foreign consumer may rebuild nodes from html at all)
  * still sees one block per line.
  * `white-space: pre-wrap` is what keeps an edge space and a run of spaces alive through such a
- * re-import; P9 ignores the style and reads the text. An empty line becomes a bare `<p></p>`;
- * nothing the copy walker produces contains one (an empty block contributes no line break of its
- * own — {@link $selectionToUsfmText}), and a re-decode would collapse it away.
+ * re-import; P9 ignores the style and reads the text. An empty line becomes a bare `<p></p>`. The
+ * copy walker produces one only for an empty top-level block inside the selection, and that is the
+ * one place the two flavors part: {@link htmlPasteText} collapses newline runs and trims the outer
+ * ones for every html source it reads, so a blank line survives in `text/plain` alone.
  *
  * `&`, `<` and `>` are escaped, `&` first so an escape's own ampersand is not escaped twice. USFM
  * needs nothing else escaped here: the bytes live in a text node, where quotes and backslashes are
@@ -800,6 +822,18 @@ export function usfmToClipboardHtml(usfm: string): string {
       line ? `<p><span style="white-space: pre-wrap;">${line}</span></p>` : "<p></p>",
     )
     .join("");
+}
+
+/**
+ * Whether any node of `selection` is, or sits inside, a `BookNode` or `ChapterNode` — a structure
+ * USFM allows once per book, which a paste must never duplicate.
+ */
+function $selectionTouchesBookOrChapter(selection: RangeSelection): boolean {
+  return selection.getNodes().some((node) => {
+    for (let current: LexicalNode | null = node; current; current = current.getParent())
+      if ($isBookNode(current) || $isChapterNode(current)) return true;
+    return false;
+  });
 }
 
 /**
@@ -826,6 +860,15 @@ export function usfmToClipboardHtml(usfm: string): string {
  * A selection whose ends are both OUTSIDE still ships the flavor: the construct is covered whole
  * there, and the fast path rebuilds it with a fidelity re-tokenization cannot match for the kinds
  * USFM has no bytes for (`ref`).
+ *
+ * The internal flavor is omitted, too, for a selection touching a book or chapter line
+ * ({@link $selectionTouchesBookOrChapter}). The fast path would rebuild the copied `BookNode`/
+ * `ChapterNode` verbatim — or, for a selection starting inside the line, its glyph text, which
+ * re-tokenizes into one — past the `\c`/`\id` strip every text paste gets
+ * ({@link stripPastedChapterAndBookId}), and a second chapter node makes every later save of the
+ * chapter fail. Only a paste that arrives as a real `ClipboardEvent` (Shift+Insert, the browser's
+ * own context-menu Paste) can read the flavor at all, so the text flavors are what Ctrl+V gets in
+ * any case.
  */
 export function $getStandardViewClipboardData(
   editor: LexicalEditor,
@@ -837,7 +880,7 @@ export function $getStandardViewClipboardData(
     "text/plain": usfm,
     "text/html": usfmToClipboardHtml(usfm),
   };
-  if ($selectionReachesIntoOpaqueBlock()) return data;
+  if ($selectionReachesIntoOpaqueBlock() || $selectionTouchesBookOrChapter(selection)) return data;
   const lexical = $getLexicalContent(editor);
   if (lexical) data["application/x-lexical-editor"] = lexical;
   return data;
@@ -878,13 +921,15 @@ export function $handleCopyForStandardView(
   const data = $getStandardViewClipboardData(editor);
   if (!data) return false;
   // The same "nothing to copy" rule the collapsed-selection leg above states, reached through the
-  // non-collapsed door: a RANGE can cover nodes that contribute no bytes at all (an optbreak husk
-  // whose `//` display child was deleted, selected by the two element points either side of it),
-  // and writing the payload anyway replaces the clipboard's real contents with an empty string and
-  // an empty `<p>`. The event is still CLAIMED — the selection is this handler's to answer — it
-  // just writes nothing, leaving whatever the user copied last intact. A cut still removes the
-  // range: the bytes it would have carried are the ones that do not exist, not the nodes.
-  const isEmptyPayload = !data["text/plain"] && !data["application/x-lexical-editor"];
+  // non-collapsed door: a RANGE can cover nodes that contribute no bytes at all (a construct with no
+  // children left, selected by the two element points either side of it), and writing the payload
+  // anyway replaces the clipboard's real contents with an empty string and an empty `<p>`. Keyed on
+  // the readable bytes alone: the internal flavor serializes such a range as an empty `nodes` array,
+  // which is still a non-empty string. The event is still CLAIMED — the selection is this handler's
+  // to answer — it just writes nothing, leaving whatever the user copied last intact. A cut still
+  // removes the range: the bytes it would have carried are the ones that do not exist, not the
+  // nodes.
+  const isEmptyPayload = !data["text/plain"];
   if (!event || !("clipboardData" in event)) {
     // Null-payload dispatch (ClipboardPlugin / ContextMenuPlugin / EditorRef): write via
     // Lexical's execCommand mechanism with OUR pre-normalized payload. copyToClipboard(null)

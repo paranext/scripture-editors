@@ -29,7 +29,7 @@
  *   foreign source, and settles to the correct display form for real data-NBSP (`~`), just one
  *   position off from where a marker-adjacent rule would have recognized it as a separator.
  * - **H3** (the root cause, TWO independent gaps): the same-namespace `application/x-lexical-editor`
- *   fast path (S2 in the clipboard semantics doc) reconstructs nodes via `@lexical/clipboard`'s
+ *   fast path (see the clipboard semantics doc) reconstructs nodes via `@lexical/clipboard`'s
  *   JSON generator/parser, not DOM `importDOM`. That generator (`$appendNodesToJSON`, inside
  *   `@lexical/clipboard`'s `LexicalClipboard.dev.js`) computes `shouldExclude` from
  *   `currentNode.excludeFromCopy('html')` — the literal string `'html'`, hardcoded, for EVERY
@@ -67,7 +67,11 @@ import {
   testEnvironment,
   viewOptions,
 } from "./markerEdit.test-helpers";
-import { $handlePasteForStandardView, htmlPasteText } from "./whitespaceDisplay.plugin.utils";
+import {
+  $handleCopyForStandardView,
+  $handlePasteForStandardView,
+  htmlPasteText,
+} from "./whitespaceDisplay.plugin.utils";
 import {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,
@@ -271,6 +275,35 @@ describe("copy characterization: what the walker actually emits around an optbre
     const { event, getData } = copyEvent();
     await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
     expect(getData("text/plain")).not.toContain("//");
+    expect(getData("application/x-lexical-editor")).toBe("");
+  });
+
+  it("a copy covering nothing but a childless optbreak husk writes nothing to the clipboard", async () => {
+    // A husk contributes no bytes, so the range is an empty copy however many nodes it covers, and
+    // the clipboard keeps what the user copied last. The internal flavor is no evidence otherwise:
+    // it serializes the covered range as an empty `nodes` array, which is still a non-empty string.
+    // Driven through the handler directly on an editor without the marker engine, whose transform
+    // reaps a husk in the same update that makes one.
+    const { editor } = await baseTestEnvironment(serializedState(optbreakUsj()));
+    const { event, getData } = copyEvent();
+    let handled = false;
+    await act(async () =>
+      editor.update(() => {
+        const para = $getRoot().getChildren().filter($isParaNode)[0];
+        const optbreak = para.getChildren().find($isUnknownNode);
+        if (!optbreak) throw new Error("expected an optbreak UnknownNode");
+        optbreak.getFirstChild()?.remove();
+        const index = optbreak.getIndexWithinParent();
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(para.getKey(), index, "element");
+        selection.focus = $createPoint(para.getKey(), index + 1, "element");
+        $setSelection(selection);
+        handled = $handleCopyForStandardView(event, editor, false);
+      }),
+    );
+    expect(handled).toBe(true);
+    expect(getData("text/plain")).toBe("");
+    expect(getData("text/html")).toBe("");
     expect(getData("application/x-lexical-editor")).toBe("");
   });
 

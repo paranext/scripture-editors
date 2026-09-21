@@ -10,6 +10,7 @@
  */
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
 import {
+  copyEvent,
   findOnlyNote,
   historyTestEnvironment,
   pasteEvent,
@@ -31,6 +32,7 @@ import {
   $getRoot,
   $isTextNode,
   $setState,
+  COPY_COMMAND,
   LexicalEditor,
   PASTE_COMMAND,
   TextNode,
@@ -66,8 +68,8 @@ async function pasteAndSettle(
 }
 
 /** Like `pasteAndSettle`, but takes the full clipboard payload map rather than assuming a bare
- * `text/plain` string — used by the S4 equivalence pins below to dispatch a "full" (plain+html)
- * payload and compare it against a plain-only one. */
+ * `text/plain` string — used by the paste-as-plain-text equivalence pins below to dispatch a
+ * "full" (plain+html) payload and compare it against a plain-only one. */
 async function pastePayloadAndSettle(
   editor: LexicalEditor,
   $select: () => void,
@@ -426,6 +428,67 @@ describe("\\c/\\id strip on paste", () => {
     expect(topLevelBareStrings(usj)).toEqual([]);
     expect((usj.content[2] as MarkerObject).content).toEqual(["before text after"]);
   });
+
+  it.each([["\\c 5"], ["\\id MAT"], ["\\c 5\n\\id MAT"]])(
+    "a paste of %j over a selection is a no-op: nothing survives the strip, so nothing replaces the selection",
+    async (payload) => {
+      // The strip leaves nothing to insert, so the paste has nothing to replace the selection
+      // WITH. Declining is not an option either — it would hand the raw `\c` to Lexical's own
+      // paste — so the paste is claimed and changes nothing.
+      const { editor, text } = await singleParaHost();
+      await pasteAndSettle(editor, () => text.select(0, 1), payload);
+
+      expect(paraMarkerText(usjOf(editor))).toEqual([["p", "A"]]);
+    },
+  );
+
+  it('paste "before\\n\\c 5 \\nafter" — the chapter line as this editor copies it, trailing separator included: no near-empty paragraph where the chapter was', async () => {
+    // A chapter line copies as `\c 5 ` (its glyph's trailing separator becomes a plain space), so
+    // stripping the token leaves a lone space. That residue is the token's own separator, not
+    // content, and the line goes with the token exactly as a separator-less `\c 5` line does.
+    const { editor, text } = await singleParaHost();
+    await pasteAndSettle(editor, () => text.select(1, 1), "before\n\\c 5 \nafter");
+
+    expect(paraMarkerText(usjOf(editor))).toEqual([
+      ["p", "Abefore"],
+      ["p", "after"],
+    ]);
+  });
+
+  it("a native paste of this editor's own copy of a chapter line adds no chapter or book node", async () => {
+    // Ctrl+V reaches the editor through `navigator.clipboard.read()`, which cannot carry the
+    // private `application/x-lexical-editor` flavor, but a paste that arrives as a real
+    // `ClipboardEvent` (Shift+Insert, the browser's own context-menu Paste) still has it — and
+    // that flavor would rebuild the copied `ChapterNode`/`BookNode` verbatim, past the `\c`/`\id`
+    // strip. So the copy omits the flavor for a selection touching either, and this payload is
+    // every flavor that copy actually wrote.
+    const { editor, text } = await bookChapterParaHost();
+    await act(async () =>
+      editor.update(() => {
+        const root = $getRoot();
+        root.select(0, root.getChildrenSize());
+      }),
+    );
+    const { event: copy, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, copy));
+    const payload = Object.fromEntries(
+      ["text/plain", "text/html", "application/x-lexical-editor"]
+        .map((type) => [type, getData(type)])
+        .filter(([, value]) => value !== ""),
+    );
+    expect(payload["text/plain"]).toContain("\\c 1");
+
+    await pastePayloadAndSettle(editor, () => text.select(7, 7), payload);
+
+    const usj = usjOf(editor);
+    const ofType = (type: string) =>
+      usj.content.filter(
+        (item): item is MarkerObject => typeof item !== "string" && item.type === type,
+      );
+    expect(ofType("chapter")).toHaveLength(1);
+    expect(ofType("book")).toHaveLength(1);
+    expect(topLevelBareStrings(usj)).toEqual([]);
+  });
 });
 
 describe("a pasted marker literal splits rather than retagging the host", () => {
@@ -433,9 +496,10 @@ describe("a pasted marker literal splits rather than retagging the host", () => 
     // A paste inserts what was pasted and nothing more. The host paragraph keeps the marker it
     // had — deleting it would be destroying a byte the user never selected — so the line splits,
     // leaving the (now empty) host ahead of the pasted paragraph. Paratext 9 reads the same bytes
-    // the same way: `NormalizeTokenUsfm` (ParatextData/UsfmToken.cs) emits a line break before
-    // every Paragraph token. An UNKNOWN marker is paragraph-kind here, same as everywhere else in
-    // the engine, so `\zz` behaves exactly as `\q1` would.
+    // the same way: `NormalizeTokenUsfm` (ParatextData/UsfmToken.cs) writes a line break before a
+    // Paragraph token whenever the output already has content (its legacy USFM-2.0-conversion mode
+    // aside), which is exactly this two-markers-in-a-row case. An UNKNOWN marker is paragraph-kind
+    // here, same as everywhere else in the engine, so `\zz` behaves exactly as `\q1` would.
     initializeDeserialize(undefined);
     let sep!: TextNode;
     const { editor } = await historyTestEnvironment(() => {
@@ -610,7 +674,7 @@ describe("a DEFERRED settle treats pasted and typed bytes identically", () => {
   });
 });
 
-describe("paste-as-plain-text equivalence (S4): no literal mode, plain always wins", () => {
+describe("paste-as-plain-text equivalence: no literal mode, plain always wins", () => {
   // Paste-as-plain-text (docs/clipboard-semantics.md): Ctrl+Shift+V / "paste as plain
   // text" narrows the clipboard payload down to `text/plain` only, but `$handlePasteForStandardView`
   // reads `text/plain` unconditionally whenever it is present — the `text/html` leg only comes into
@@ -693,7 +757,7 @@ describe("Paratext 9 clipboard html (P9→P10 paste)", () => {
   // html instead, and the decoder's own unit pins live in `paratext9Clipboard.utils.test.ts`; these
   // pins are the end-to-end half — the paste really materializes a NoteNode with P9's caller and
   // body. A NON-P9 html alongside `text/plain` is unaffected and still ignored outright (the
-  // `MISMATCHED_HTML` pins in the S4 describe above).
+  // `MISMATCHED_HTML` pins in the paste-as-plain-text equivalence describe above).
 
   /** P9's `XsltExtensions.EscapeComment`: every character except `a-zA-Z` becomes `%` plus four
    * uppercase hex digits, because an html comment may contain neither `--` nor `>`. Duplicated from

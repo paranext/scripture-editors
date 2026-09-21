@@ -29,6 +29,7 @@ import {
   $createRangeSelection,
   $createTextNode,
   $getRoot,
+  $isTextNode,
   $setSelection,
   $setState,
   COPY_COMMAND,
@@ -41,7 +42,9 @@ import {
   $createMarkerNode,
   $createParaNode,
   $createVerseNode,
+  $isChapterNode,
   $isNoteNode,
+  $isParaNode,
   getVisibleOpenMarkerText,
   NBSP,
   NoteNode,
@@ -50,7 +53,7 @@ import {
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
-import { Usj } from "@eten-tech-foundation/scripture-utilities";
+import { Usj, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
 
 // jsdom implements neither `ClipboardEvent` nor `DragEvent`, but Lexical's default (non-Standard-
 // view-specific) paste path — reached once our copied text carries no NBSP for
@@ -238,6 +241,91 @@ describe("phantom-space live-repro pins (2026-08-07) — collapsed note, byte-id
     const { event, getData } = copyEvent();
     await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
     expect(getData("text/plain")).toBe("\\x - \\xo 1:3: \\xo*\\xt 2Cor 4:6\\xt*\\x*");
+  });
+
+  it("copies a selection starting AT a collapsed note's caller with no separator ahead of it", async () => {
+    // The space the caller contributes stands for the separator after the `\f` opener, so it
+    // belongs to the copy only when that opener is in it. A click at the left edge of the caller's
+    // glyph anchors exactly here: every other node inside a collapsed note is hidden.
+    const { editor } = await renderUsjEditor(footnoteReproUsj());
+    await act(async () =>
+      editor.update(() => {
+        const note = findOnlyNote($getRoot());
+        const last = note.getLastDescendant();
+        if (!last) throw new Error("note has no descendants to select");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(note.getKey(), 1, "element"); // opening glyph, caller, …
+        selection.focus = $createPoint(last.getKey(), last.getTextContentSize(), "text");
+        $setSelection(selection);
+      }),
+    );
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).toBe("- \\fr 1:1 \\ft Caller test.\\f*");
+  });
+});
+
+describe("a book or chapter line in the selection", () => {
+  const bookChapterUsx =
+    `<usx version="3.0"><book code="RUT" style="id">Ruth</book>` +
+    `<chapter number="1" style="c" /><para style="p">text</para></usx>`;
+
+  it("copies the `\\id` line's separator as a plain space, not the NBSP the display carries", async () => {
+    const { editor } = await renderUsjEditor(usxStringToUsj(bookChapterUsx));
+    await act(async () => editor.update($selectWholeDocument));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    const plain = getData("text/plain");
+    expect(plain).not.toContain(NBSP);
+    expect(plain.split("\n")[0]).toBe("\\id RUT Ruth");
+  });
+
+  it("ships no internal flavor for a selection covering a chapter or book node", async () => {
+    // That flavor would rebuild both verbatim on a native paste, past the `\c`/`\id` strip — a
+    // second chapter node every later save of the chapter is rejected for. The two text flavors
+    // carry the same bytes, which the strip does see.
+    const { editor } = await renderUsjEditor(usxStringToUsj(bookChapterUsx));
+    await act(async () => editor.update($selectWholeDocument));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).toContain("\\c 1");
+    expect(getData("application/x-lexical-editor")).toBe("");
+  });
+
+  it("ships no internal flavor for a selection starting inside the chapter line", async () => {
+    // Starting inside the line leaves the `ChapterNode` itself out of `getNodes()`, but its glyph
+    // text is in it, and a pasted `\c 1` literal re-tokenizes into a chapter node just the same.
+    const { editor } = await renderUsjEditor(usxStringToUsj(bookChapterUsx));
+    await act(async () =>
+      editor.update(() => {
+        const chapter = $getRoot().getChildren().find($isChapterNode);
+        const first = chapter?.getFirstDescendant();
+        const para = $getRoot().getLastChild();
+        if (!$isTextNode(first) || !para) throw new Error("fixture is missing its chapter glyph");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(first.getKey(), 1, "text");
+        selection.focus = $createPoint(para.getKey(), 1, "element");
+        $setSelection(selection);
+      }),
+    );
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).not.toBe("");
+    expect(getData("application/x-lexical-editor")).toBe("");
+  });
+
+  it("still ships the internal flavor for a selection inside ordinary paragraph text", async () => {
+    const { editor } = await renderUsjEditor(usxStringToUsj(bookChapterUsx));
+    await act(async () =>
+      editor.update(() => {
+        const para = $getRoot().getLastChild();
+        if (!$isParaNode(para)) throw new Error("fixture is missing its paragraph");
+        para.select(0, para.getChildrenSize());
+      }),
+    );
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("application/x-lexical-editor")).not.toBe("");
   });
 });
 

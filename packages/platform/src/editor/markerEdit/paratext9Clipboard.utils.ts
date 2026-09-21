@@ -43,6 +43,14 @@ import { NBSP } from "shared";
 /** The comment-data prefix marking P9's escaped-USFM fidelity comment. */
 const USFM_COMMENT_PREFIX = "usfm:";
 
+/**
+ * Byte runs at least one of which every html matching {@link hasParatext9Signature} contains: a
+ * `usfm:` comment's own prefix, or an `usfmopen`/`usfmclosed` class. Tested on the raw string before
+ * anything is parsed, so the html a word processor or browser puts beside a winning `text/plain` —
+ * routinely hundreds of KB — costs a substring scan rather than a DOM parse on every paste.
+ */
+const PARATEXT_9_SIGNATURE_BYTES = /usfm:|usfmopen|usfmclosed/;
+
 /** P9 inserts U+FEFF purely for caret positioning and strips it on every reformat, so it is never
  * document data. */
 const ZERO_WIDTH_NO_BREAK_SPACE = "\uFEFF";
@@ -229,6 +237,7 @@ function appendNodeUsfm(node: Node, excluded: boolean, out: string[]): void {
  * the same line shape every other multi-line paste does.
  */
 export function paratext9HtmlToUsfm(html: string): string | undefined {
+  if (!PARATEXT_9_SIGNATURE_BYTES.test(html)) return undefined;
   // DOMParser yields an inert document: parsing never executes scripts or loads subresources, and
   // no node from the parsed document is ever adopted into the live DOM — only text is read out.
   const { body } = new DOMParser().parseFromString(html, "text/html");

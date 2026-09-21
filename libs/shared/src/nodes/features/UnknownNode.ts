@@ -294,6 +294,9 @@ export class UnknownNode extends ElementNode {
     // (also unselected) children in its place — so a node the user selected outright would copy as
     // nothing at all, the same convincing-lie hazard the range case above exists to prevent.
     if ($isNodeSelection(targetSelection) && super.isSelected(targetSelection)) return true;
+    // A caret selects nothing, though its one point puts the child it rests in into `getNodes()`.
+    // (`NodeSelection.isCollapsed()` is always false, so this cannot shadow the branch above.)
+    if (targetSelection.isCollapsed()) return false;
     const selectedNodes = targetSelection.getNodes();
     return this.getChildren().some((child) => selectedNodes.some((node) => node.is(child)));
   }

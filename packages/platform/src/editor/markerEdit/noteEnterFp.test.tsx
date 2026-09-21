@@ -1015,6 +1015,25 @@ describe("multi-line plain-text paste inside note content", () => {
     });
   });
 
+  it("leaves a selection in the note untouched when the `\\c`/`\\id` strip empties the payload", async () => {
+    // Every line of the payload is a token the strip removes, so there is nothing to replace the
+    // selection with. Replacing it anyway deleted the selected note text and inserted nothing.
+    const { editor } = await renderStandardEditorWithUnclosedNote();
+
+    await pasteAt(editor, "\\c 5\n\\id MAT", () => {
+      const { ftText } = $noteFtTextAndTrailingBodyText();
+      const start = ftText.getTextContent().indexOf("no"); // select "no" out of "A note"
+      expect(start).toBeGreaterThan(0);
+      ftText.select(start, start + 2);
+    });
+
+    editor.getEditorState().read(() => {
+      expect($countNoteNodes()).toBe(1);
+      expect($countFpSpans()).toBe(0);
+      expect(findOnlyNote($getRoot()).getTextContent()).toContain("A note");
+    });
+  });
+
   it("falls back to the ordinary paragraph-splitting paste when the removal destroys the note's opener", async () => {
     // Range from the note's opening `\f` glyph into the content: the replacement destroys the
     // opening marker, so there is no longer a note to break inside — the rest of the paste is

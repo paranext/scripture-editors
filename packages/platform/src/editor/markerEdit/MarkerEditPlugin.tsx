@@ -361,23 +361,27 @@ function registerPasteNormalization(
         if ($selectionReachesIntoOpaqueBlock()) return false;
         const payload = getPastePayload(event, editor._config.namespace);
         if (!payload) return false;
-        const pastedText = payload.text;
-        if (pastedText.includes("\n")) {
-          // Standard view: every pasted NBSP is normalized POSITIONALLY here, via the same
-          // `normalizePastedNbsp` the Standard-view external-paste handler uses
-          // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after
-          // `\fr`/`\ft`, a note's inter-child spacer) settles to a space or is dropped exactly
-          // as it would outside a note, and only genuine data survives as `~`. Inserted raw an
-          // NBSP is indistinguishable from a display-NBSP (a plain space in a run), so
-          // serialization would corrupt it into a plain space if left unmapped. A pasted
-          // literal `~` is already the display form and passes through unchanged. `\c`/`\id`
-          // bytes are dropped first, via the same `stripPastedChapterAndBookId` the external
-          // handler uses — note content re-tokenizes literal text through the SAME Tier 2
-          // tokenizer a paragraph does, so a pasted `\c`/`\id` landing here is just as reachable
-          // (and just as save-poisoning) as one landing in body text.
-          const noteText = isStandardView
-            ? normalizePastedNbsp(stripPastedChapterAndBookId(pastedText))
-            : pastedText;
+        // Standard view: every pasted NBSP is normalized POSITIONALLY here, via the same
+        // `normalizePastedNbsp` the Standard-view external-paste handler uses
+        // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`,
+        // a note's inter-child spacer) settles to a space or is dropped exactly as it would
+        // outside a note, and only genuine data survives as `~`. Inserted raw an NBSP is
+        // indistinguishable from a display-NBSP (a plain space in a run), so serialization would
+        // corrupt it into a plain space if left unmapped. A pasted literal `~` is already the
+        // display form and passes through unchanged. `\c`/`\id` bytes are dropped first, via the
+        // same `stripPastedChapterAndBookId` the external handler uses — note content
+        // re-tokenizes literal text through the SAME Tier 2 tokenizer a paragraph does, so a
+        // pasted `\c`/`\id` landing here is just as reachable (and just as save-poisoning) as one
+        // landing in body text.
+        //
+        // Both run BEFORE the line-break test, because the claim below removes the selected range
+        // before it inserts anything: a payload the strip reduces to one line, or to nothing, is
+        // not a multi-line paste, and is left to the Standard-view claim exactly as that line
+        // pasted on its own would be — which, for nothing at all, keeps the selection.
+        const noteText = isStandardView
+          ? normalizePastedNbsp(stripPastedChapterAndBookId(payload.text))
+          : payload.text;
+        if (noteText.includes("\n")) {
           const lines = noteText.split("\n");
           let outcome = $handlePasteLinesInNote(lines, context.getMarker);
           if (outcome === "declined" && $adoptDomCaretInExpandedNote(editor)) {
@@ -892,12 +896,24 @@ export function MarkerEditPlugin({
             ),
             editor.registerCommand(
               CUT_COMMAND,
-              (event) =>
-                $handleCopyForStandardView(
+              (event) => {
+                // A structure-protected document's cut of a selection `StructureKeyboardPlugin`
+                // refuses to replace is that plugin's to refuse, for the reason the paste claim
+                // below declines the same selection: both register at HIGH and this plugin mounts
+                // first, so claiming it here removed the range before the refusal ever ran.
+                const selection = $getSelection();
+                if (
+                  context.structureProtectionMode === "protected" &&
+                  $isRangeSelection(selection) &&
+                  $shouldBlockSelectionReplacement(selection)
+                )
+                  return false;
+                return $handleCopyForStandardView(
                   event && typeof event === "object" && "clipboardData" in event ? event : null,
                   editor,
                   true,
-                ),
+                );
+              },
               COMMAND_PRIORITY_HIGH,
             ),
             editor.registerCommand(

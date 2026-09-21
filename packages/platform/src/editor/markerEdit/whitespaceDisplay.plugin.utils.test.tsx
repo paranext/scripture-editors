@@ -14,6 +14,7 @@ import {
   $getStandardViewClipboardData,
   $handleCopyForStandardView,
   $handlePasteForStandardView,
+  getPastePayload,
   htmlPasteText,
   normalizePastedNbsp,
   stripPastedChapterAndBookId,
@@ -512,6 +513,14 @@ describe("text/html flavor — the same USFM bytes as text/plain", () => {
       expect(html).toContain("a &amp; b &lt; c &gt; d");
       expect(htmlPasteText(html)).toBe("a & b < c > d");
     });
+
+    it("does not carry a blank line through a re-decode: `text/plain` is the only flavor that keeps one", () => {
+      // `htmlPasteText` collapses newline runs and trims the outer ones for every html source it
+      // reads, so an interior or trailing blank line (an empty top-level paragraph in the selection)
+      // survives only in `text/plain`. Pinned so the limit stays a known one.
+      expect(htmlPasteText(usfmToClipboardHtml("a\n\nb"))).toBe("a\nb");
+      expect(htmlPasteText(usfmToClipboardHtml("a\nb\n"))).toBe("a\nb");
+    });
   });
 });
 
@@ -828,6 +837,51 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       // The NBSP shows as `~` on screen; serialization inverts `~` → NBSP, so the data keeps it.
       expect($getRoot().getTextContent()).toContain("3~000");
     });
+  });
+
+  it("pastes `text/plain` when a Paratext 9 html fragment decodes to nothing", async () => {
+    // A fragment can carry P9's signature and still contribute no bytes — everything visible sits
+    // in an `exclude` span, with no `usfm:` comment to stand in for it. The html carrier wins only
+    // when its decode has something to say.
+    let text: TextNode;
+    const { editor } = await testEnvironment(() => {
+      const para = $createParaNode("p");
+      text = $createTextNode("before after");
+      $getRoot().append(para.append($createMarkerNode("p"), text));
+    });
+    await act(async () => editor.update(() => text.select(7, 7)));
+
+    const { event } = pasteEvent({
+      "text/plain": "plain words ",
+      "text/html": '<span class="exclude usfmopen usfm_f">a</span>',
+    });
+    let handled = false;
+    await act(async () =>
+      editor.update(() => {
+        handled = $handlePasteForStandardView(event);
+      }),
+    );
+
+    expect(handled).toBe(true);
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toContain("before plain words after");
+    });
+  });
+
+  it("parses no html for a paste whose `text/plain` wins and whose html is not Paratext 9's", () => {
+    // Word, Outlook and browser clipboards routinely carry hundreds of KB of html next to the
+    // `text/plain` that wins; parsing it on every paste claim is main-thread time for nothing.
+    const parse = vi.spyOn(DOMParser.prototype, "parseFromString");
+    try {
+      const { event } = pasteEvent({
+        "text/plain": "plain words",
+        "text/html": '<html><body><p class="MsoNormal">plain&nbsp;words</p></body></html>',
+      });
+      expect(getPastePayload(event, "TestEditor")?.text).toBe("plain words");
+      expect(parse).not.toHaveBeenCalled();
+    } finally {
+      parse.mockRestore();
+    }
   });
 
   it("declines internal pastes (a same-namespace `application/x-lexical-editor` payload is present)", async () => {
@@ -1160,6 +1214,13 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       it("leaves an NBSP that is not adjacent to any marker as data", () => {
         expect(normalizePastedNbsp(`a${NBSP}b`)).toBe("a~b");
       });
+
+      it("maps EVERY member of a leading NBSP run to a plain space, not just the first", () => {
+        // A Standard-view paragraph-leading space run is stored as all-NBSP, so a run at a line's
+        // start is display spacing from its first member to its last, never data.
+        expect(normalizePastedNbsp(`${NBSP}${NBSP}word`)).toBe("  word");
+        expect(normalizePastedNbsp(`a\n${NBSP}${NBSP}${NBSP}word`)).toBe("a\n   word");
+      });
     });
 
     describe("chapter/book-id strip takes the token and nothing else", () => {
@@ -1180,6 +1241,16 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
 
       it("takes an `\\id` line's whole remainder — book code plus description are all payload", () => {
         expect(stripPastedChapterAndBookId("text \\id GEN more")).toBe("text ");
+      });
+
+      it("drops a line the token filled but for its own trailing separator", () => {
+        // A chapter line copies as `\\c 5 `: the glyph's trailing separator is part of the line,
+        // and the token (marker plus one word) stops just short of it.
+        expect(stripPastedChapterAndBookId("\\c 5 ")).toBe("");
+        expect(stripPastedChapterAndBookId("\\id MAT ")).toBe("");
+        expect(stripPastedChapterAndBookId("before\n\\c 5 \nafter")).toBe("before\nafter");
+        // A line that was blank before any token was stripped is the user's, and stays.
+        expect(stripPastedChapterAndBookId("before\n  \nafter")).toBe("before\n  \nafter");
       });
 
       it("leaves a name that merely starts with `c`/`id` alone", () => {
@@ -1580,6 +1651,40 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       editor.getEditorState().read(() => {
         const content = $getRoot().getTextContent();
         expect(content).not.toContain("pasted");
+        expect(content).toContain("hello world");
+        expect(content).toContain("second para");
+      });
+    });
+
+    it("declines a CUT of a selection StructureKeyboardPlugin refuses to replace, so the refusal keeps it", async () => {
+      // The same one-owner rule as paste. Claiming the cut here removed the selected range —
+      // the paragraph boundary protection exists to keep — before the refusal ever ran.
+      let first!: TextNode;
+      let second!: TextNode;
+      const { editor } = await protectedTestEnvironment(() => {
+        first = $createTextNode("hello world");
+        second = $createTextNode("second para");
+        $getRoot().append(
+          $createParaNode("p").append($createMarkerNode("p"), first),
+          $createParaNode("p").append($createMarkerNode("p"), second),
+        );
+      });
+      await act(async () =>
+        editor.update(() => {
+          const selection = $createRangeSelection();
+          selection.anchor = $createPoint(first.getKey(), 5, "text");
+          selection.focus = $createPoint(second.getKey(), 6, "text");
+          $setSelection(selection);
+        }),
+      );
+      const { event } = copyEvent();
+      await act(async () => {
+        editor.dispatchCommand(CUT_COMMAND, event);
+      });
+
+      editor.getEditorState().read(() => {
+        expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(2);
+        const content = $getRoot().getTextContent();
         expect(content).toContain("hello world");
         expect(content).toContain("second para");
       });

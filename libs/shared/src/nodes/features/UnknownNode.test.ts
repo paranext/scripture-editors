@@ -500,5 +500,28 @@ describe("UnknownNode", () => {
         expect(figure.isSelected(selection)).toBe(true);
       });
     });
+
+    it("answers false for a collapsed caret resting inside one of the node's own children", () => {
+      // A caret selects nothing. Its one point puts the child in `getNodes()`, so child membership
+      // alone would call the construct selected — unlike Lexical's own answer for any element at a
+      // collapsed range.
+      const { editor } = createBasicTestEnvironment([
+        UnknownNode,
+        ImmutableTypedTextNode,
+        ParaNode,
+      ]);
+      editor.update(() => {
+        const { figure } = $figureAfterTextInDocument();
+        const caption = $createTextNode("caption");
+        figure.append(caption);
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(caption.getKey(), 2, "text");
+        selection.focus = $createPoint(caption.getKey(), 2, "text");
+        $setSelection(selection);
+
+        expect(selection.getNodes().some((node) => node.is(caption))).toBe(true);
+        expect(figure.isSelected(selection)).toBe(false);
+      });
+    });
   });
 });
