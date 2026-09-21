@@ -24,11 +24,11 @@ import {
 import {
   $createMarkerNode,
   $createMarkerTrailingSeparator,
-  $isBookNode,
   $isMarkerNode,
   $isMarkerTrailingSeparator,
   $isSynthesizedMarkerNode,
   $paraPrefixSeparatorCaretHeld,
+  $isParaLikeNode,
   $isParaNode,
   $placeCaretAtBoundary,
   canonicalAttributeText,
@@ -429,9 +429,11 @@ export function $paraMarkerDeletionTransform(para: ParaNode, context: MarkerEdit
   }
 
   const previous = para.getPreviousSibling();
-  // The `\id` line is a BookNode, not a ParaNode, but its text is content like any paragraph's, so
-  // a paragraph right below it merges into it the same way.
-  if ($isParaNode(previous) || $isBookNode(previous)) {
+  // `ParaLike`, not `ParaNode`: the previous block can be an ordinary paragraph, an IMPLIED
+  // (unmarked) paragraph — bare root-level content that precedes an explicit `\p` loads as one,
+  // `insertImpliedParasRecurse` in usj-editor.adaptor.ts — or the `\id` line's BookNode. All three
+  // hold content the way a paragraph does, so a paragraph right below any of them merges into it.
+  if ($isParaLikeNode(previous)) {
     // Deleting a para's marker text merges its content into the previous para.
     const children = para.getChildren().filter((child) => {
       if ($isMarkerTrailingSeparator(child)) return false; // drop the orphaned separator

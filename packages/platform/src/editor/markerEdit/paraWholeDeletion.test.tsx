@@ -63,6 +63,7 @@ import {
   $createBookNode,
   $createCharNode,
   $createImmutableTypedTextNode,
+  $createImpliedParaNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createParaNode,
@@ -70,6 +71,7 @@ import {
   $isMarkerNode,
   $isParaNode,
   BookNode,
+  ImpliedParaNode,
   NBSP,
   ParaNode,
   VerseNode,
@@ -703,21 +705,25 @@ describe("backspacing an Enter-Enter split back together (content bytes survive 
     // Backspace deletes and re-creates the same marker forever.
     let book!: BookNode, next!: ParaNode, after!: ParaNode;
     const { editor } = await testEnvironmentWithDisplaySyncs(() => {
-      book = $createBookNode("GEN").append(
-        $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
-        $createTextNode("gen"),
+      book = $createBookNode("GEN");
+      next = $createParaNode("ip");
+      after = $createParaNode("p");
+      $getRoot().append(
+        book.append(
+          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createTextNode("gen"),
+        ),
+        next.append(
+          $createMarkerNode("ip"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("stuff"),
+        ),
+        after.append(
+          $createMarkerNode("p"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("more"),
+        ),
       );
-      next = $createParaNode("ip").append(
-        $createMarkerNode("ip"),
-        $createMarkerTrailingSeparator(),
-        $createTextNode("stuff"),
-      );
-      after = $createParaNode("p").append(
-        $createMarkerNode("p"),
-        $createMarkerTrailingSeparator(),
-        $createTextNode("more"),
-      );
-      $getRoot().append(book, next, after);
     });
     await act(async () =>
       editor.update(() => {
@@ -762,6 +768,79 @@ describe("backspacing an Enter-Enter split back together (content bytes survive 
     expect(usj?.content[0]).toMatchObject({ type: "book", code: "GEN", content: ["genstuff"] });
     expect(paraMarkersOf(usj)).toEqual(["p"]);
   });
+
+  it("merges the paragraph below an implied paragraph INTO it when its prefix is backspaced away", async () => {
+    // Bare content that precedes any explicit paragraph marker loads as an ImpliedParaNode
+    // (`insertImpliedParasRecurse` in usj-editor.adaptor.ts) — e.g. a verse sitting right after
+    // `\c 1` with no `\p` of its own. It takes content exactly like a real paragraph, so a
+    // marker-deleted paragraph below it must join it the same way it joins an ordinary paragraph
+    // or the `\id` line: resetting to `\p` instead would grow a marker into a place the source
+    // never had one, and `removeImpliedParasRecurse` (editor-usj.adaptor.ts) serializes an
+    // implied paragraph's children as bare content, so the merge must leave none behind.
+    let impliedPara!: ImpliedParaNode, next!: ParaNode, after!: ParaNode;
+    const { editor } = await testEnvironmentWithDisplaySyncs(() => {
+      impliedPara = $createImpliedParaNode();
+      next = $createParaNode("p");
+      after = $createParaNode("q1");
+      $getRoot().append(
+        impliedPara.append($createTextNode("gen")),
+        next.append(
+          $createMarkerNode("p"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("stuff"),
+        ),
+        after.append(
+          $createMarkerNode("q1"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("more"),
+        ),
+      );
+    });
+    await act(async () =>
+      editor.update(() => {
+        const content = next.getLastChild();
+        if (!$isTextNode(content)) throw new Error("expected the paragraph's content text");
+        content.select(0, 0);
+      }),
+    );
+
+    const unblock = editor.registerCommand(KEY_DOWN_COMMAND, () => true, COMMAND_PRIORITY_NORMAL);
+    // Three presses: the separator, then `p`, and `\`.
+    for (let press = 0; press < 3; press++) await pressBackspace(editor);
+    unblock();
+
+    editor.getEditorState().read(() => {
+      expect(next.isAttached()).toBe(false);
+      const blocks = $getRoot().getChildren();
+      expect(blocks).toHaveLength(2);
+      expect(blocks[0].is(impliedPara)).toBe(true);
+      expect(blocks[1].is(after)).toBe(true);
+      expect(impliedPara.getTextContent()).toBe("genstuff");
+      // The caret stays at the junction: typing continues where the deleted prefix was.
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection after merge");
+      expect(selection.isCollapsed()).toBe(true);
+      const anchorNode = selection.anchor.getNode();
+      if (!$isTextNode(anchorNode)) throw new Error("caret is not on text");
+      expect(impliedPara.isParentOf(anchorNode)).toBe(true);
+      const text = anchorNode.getTextContent();
+      const before =
+        selection.anchor.offset > 0
+          ? text.slice(0, selection.anchor.offset)
+          : (anchorNode.getPreviousSibling()?.getTextContent() ?? "");
+      const afterCaret =
+        selection.anchor.offset < text.length
+          ? text.slice(selection.anchor.offset)
+          : (anchorNode.getNextSibling()?.getTextContent() ?? "");
+      expect(before.endsWith("gen")).toBe(true);
+      expect(afterCaret.startsWith("stuff")).toBe(true);
+    });
+    const usj = usjOf(editor);
+    // The merged content serializes as bare content with no `\p` marker of its own — the implied
+    // paragraph's own contract — while the following paragraph keeps its marker.
+    expect(usj?.content[0]).toBe("genstuff");
+    expect(paraMarkersOf(usj)).toEqual(["q1"]);
+  });
 });
 
 describe("backspacing a fresh paragraph below the `\\id` line away (collapsed-caret provenance)", () => {
@@ -770,14 +849,14 @@ describe("backspacing a fresh paragraph below the `\\id` line away (collapsed-ca
     // backspacing its prefix away must dissolve it back into nothing, exactly as below a paragraph.
     let book!: BookNode, fresh!: ParaNode;
     const { editor } = await testEnvironment(() => {
-      book = $createBookNode("GEN").append(
-        $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
-        $createTextNode("gen"),
-      );
-      fresh = $createParaNode("ip").append($createMarkerNode("ip"), $createTextNode(NBSP));
+      book = $createBookNode("GEN");
+      fresh = $createParaNode("ip");
       $getRoot().append(
-        book,
-        fresh,
+        book.append(
+          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createTextNode("gen"),
+        ),
+        fresh.append($createMarkerNode("ip"), $createTextNode(NBSP)),
         $createParaNode("p").append(
           $createMarkerNode("p"),
           $createTextNode(NBSP),
