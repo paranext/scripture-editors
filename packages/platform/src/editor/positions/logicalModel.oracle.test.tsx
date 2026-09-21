@@ -198,6 +198,14 @@ function $markCorpus(): void {
   $wrapInMark(tail);
 }
 
+/** Content before the document's first paragraph, which loads inside an implied paragraph the
+ * exporter splices into the root, followed by paragraphs whose indexes it shifts. */
+const impliedParaUsx =
+  `<usx version="3.0"><book code="RUT" style="id">T</book><chapter number="1" style="c" />` +
+  `<verse number="1" style="v" />In the beginning <char style="nd">LORD</char> made ` +
+  `<para style="p"><verse number="2" style="v" />The earth <char style="wj">was</char> void.</para>` +
+  `<para style="p">And darkness.</para></usx>`;
+
 const corpora: {
   name: string;
   usj: Usj;
@@ -212,6 +220,12 @@ const corpora: {
     usj: usxStringToUsj(spaceRunUsx),
     minimumCheckedItems: 8,
     hasSpaceRuns: true,
+  },
+  {
+    name: "implied paragraph",
+    usj: usxStringToUsj(impliedParaUsx),
+    minimumCheckedItems: 4,
+    hasSpaceRuns: false,
   },
   {
     name: "annotation marks",

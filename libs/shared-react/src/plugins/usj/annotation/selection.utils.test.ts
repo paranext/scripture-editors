@@ -11,7 +11,12 @@ import {
 import { SelectionRange, AnnotationRange } from "./selection.model";
 import { STANDARD_VIEW_MODE, UNFORMATTED_VIEW_MODE } from "../../../views/view-mode.model";
 import { getViewOptions } from "../../../views/view-options.utils";
-import { $getRangeFromUsjSelection, $getUsjSelectionFromEditor } from "./selection.utils";
+import {
+  $getLocationFromNode,
+  $getNodeFromLocation,
+  $getRangeFromUsjSelection,
+  $getUsjSelectionFromEditor,
+} from "./selection.utils";
 import {
   $createLineBreakNode,
   $createTextNode,
@@ -25,6 +30,7 @@ import {
   $createCharNode,
   $createImmutableChapterNode,
   $createImmutableTypedTextNode,
+  $createImpliedParaNode,
   $createMarkerNode,
   $createMilestoneNode,
   $createParaNode,
@@ -36,6 +42,7 @@ import {
   closingMarkerText,
   ImmutableChapterNode,
   ImmutableTypedTextNode,
+  ImpliedParaNode,
   MarkerNode,
   MilestoneNode,
   NBSP,
@@ -1776,5 +1783,74 @@ describe("space runs where serialization collapses them", () => {
       .read(() => $getUsjSelectionFromEditor(unformattedViewOptions));
 
     expect(reported).toEqual({ start: { jsonPath: "$.content[0].content[0]", offset: 5 } });
+  });
+});
+
+describe("positions around a root-level implied paragraph", () => {
+  const unformattedViewOptions = getViewOptions(UNFORMATTED_VIEW_MODE);
+  // Content before a document's first paragraph loads inside an ImpliedParaNode, which the
+  // editor→USJ conversion splices into the root:
+  //
+  //   Lexical root: ImpliedPara[verse 1, "orphan text ", Mark[Char nd "LORD"]], Para["later"]
+  //   USJ content:  [verse, "orphan text ", char, para]
+  function build() {
+    let implied: ImpliedParaNode | undefined;
+    let orphan: TextNode | undefined;
+    let mark: TypedMarkNode | undefined;
+    let later: TextNode | undefined;
+    const { editor } = createBasicTestEnvironment(
+      [ParaNode, VerseNode, CharNode, TypedMarkNode, ImpliedParaNode],
+      () => {
+        orphan = $createTextNode("orphan text ");
+        mark = $createTypedMarkNode({ spelling: ["s1"] }).append(
+          $createCharNode("nd").append($createTextNode("LORD")),
+        );
+        later = $createTextNode("later");
+        implied = $createImpliedParaNode().append($createVerseNode("1"), orphan, mark);
+        $getRoot().append(implied, $createParaNode().append(later));
+      },
+    );
+    if (!implied || !orphan || !mark || !later) throw new Error("fixture not built");
+    return { editor, implied, orphan, mark, later };
+  }
+
+  it("addresses text after it at the USJ index the paragraph actually has", () => {
+    const { editor, later } = build();
+    editor.getEditorState().read(() => {
+      const location = { jsonPath: "$.content[3].content[0]", offset: 3 } as const;
+      expect($getLocationFromNode(later, 3, unformattedViewOptions)).toEqual(location);
+      const [node, offset] = $getNodeFromLocation(location, unformattedViewOptions);
+      expect([node?.getKey(), offset]).toEqual([later.getKey(), 3]);
+    });
+  });
+
+  it("addresses text inside it as root content", () => {
+    const { editor, orphan } = build();
+    editor.getEditorState().read(() => {
+      const location = { jsonPath: "$.content[1]", offset: 2 } as const;
+      expect($getLocationFromNode(orphan, 2, unformattedViewOptions)).toEqual(location);
+      const [node, offset] = $getNodeFromLocation(location, unformattedViewOptions);
+      expect([node?.getKey(), offset]).toEqual([orphan.getKey(), 2]);
+    });
+  });
+
+  it("reports an element point on it as a root boundary, and resolves that boundary inside it", () => {
+    const { editor, implied, mark } = build();
+    editor.getEditorState().read(() => {
+      // In front of the orphan text, and in front of the mark wrapping the char.
+      expect($getLocationFromNode(implied, 1, unformattedViewOptions)).toEqual({
+        jsonPath: "$",
+        offset: 1,
+      });
+      expect($getLocationFromNode(mark, 0, unformattedViewOptions)).toEqual({
+        jsonPath: "$",
+        offset: 2,
+      });
+      const [node, offset] = $getNodeFromLocation(
+        { jsonPath: "$", offset: 1 },
+        unformattedViewOptions,
+      );
+      expect([node?.getKey(), offset]).toEqual([implied.getKey(), 1]);
+    });
   });
 });

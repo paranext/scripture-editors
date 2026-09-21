@@ -32,7 +32,7 @@ import {
 } from "lexical";
 import {
   $chapterGlyphTextNode,
-  $getElementOffsetFromLogicalIndex,
+  $getElementPointFromLogicalIndex,
   $getLogicalContentItems,
   $getLogicalIndexOfChild,
   $getLogicalParent,
@@ -820,7 +820,7 @@ export function $getNodeFromLocation(
     // The jsonPath resolved to an ElementNode (e.g. "$.content[0]"): interpret offset as a
     // logical child boundary offset and return an element point.
     if (currentNode && $isElementNode(currentNode)) {
-      return [currentNode, $getElementOffsetFromLogicalIndex(currentNode, location.offset)];
+      return $getElementPointFromLogicalIndex(currentNode, location.offset);
     }
     return [undefined, undefined];
   }
@@ -1025,21 +1025,22 @@ function $locationFromNode(
     }
 
     // Non-text child (e.g. a CharNode wrapped in the mark) or an empty mark (childAtOffset is
-    // null): anchor on the logical parent at the mark's own position instead of falling through
+    // null): anchor on the mark's parent at the mark's own position instead of falling through
     // to treat the mark itself as the logical parent, which would drop the mark's content index.
     // The mark contributes no content of its own, so the boundary before/after it is the
-    // boundary before/after its own position in the logical parent.
+    // boundary before/after its own position in its parent — which, for a mark inside the root's
+    // implied paragraph, is itself a boundary among the root's items.
     // Known approximation: for a mark with several children of different kinds, an INTERIOR
     // boundary (offset between two of the mark's children) does not place the point between
     // those exact children — it snaps to the front (or back) edge of the whole mark, so the
     // reported position can be off by the length of the mark's preceding text. That is a valid
     // nearby point in the correct text run; placing it exactly would require the resolution
     // side to express points inside a mark.
-    const logicalParent = $getLogicalParent(node);
-    if (logicalParent?.is(node.getParent())) {
+    const parent = node.getParent();
+    if (parent) {
       const markIndex = node.getIndexWithinParent();
       const elementOffset = offset >= childrenSize ? markIndex + 1 : markIndex;
-      return $locationFromNode(logicalParent, elementOffset, collapsesSpaceRuns);
+      return $locationFromNode(parent, elementOffset, collapsesSpaceRuns);
     }
   }
 

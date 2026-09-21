@@ -511,3 +511,73 @@ describe("positions past a space run the user typed", () => {
     expect(caret).toBe("m");
   });
 });
+
+describe("positions after content before the first paragraph", () => {
+  /** Text before the first paragraph loads inside an implied paragraph the exporter splices into
+   * the root, so the paragraphs after it sit further along in `getUsj()` than they do among the
+   * editor's own root children. */
+  const impliedParaUsj: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      { type: "verse", marker: "v", number: "1" },
+      "orphan text ",
+      { type: "para", marker: "p", content: ["plain body"] },
+      { type: "para", marker: "p", content: ["depart here"] },
+    ],
+  };
+
+  it("getSelection reports the index the paragraph has in getUsj()", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(impliedParaUsj);
+    await act(async () => {
+      lexical.update(() => $textContaining("plain body").select(3, 3));
+      await Promise.resolve();
+    });
+
+    const selection = ref.current?.getSelection();
+
+    const [index] = indexesFromUsjJsonPath(selection?.start.jsonPath ?? "$");
+    expect(ref.current?.getUsj()?.content[index]).toEqual({
+      type: "para",
+      marker: "p",
+      content: ["plain body"],
+    });
+    expect(selection).toEqual({ start: { jsonPath: contentPath([index, 0]), offset: 3 } });
+  });
+
+  it("setAnnotation lands on the text a settled path names while a later paragraph is pending", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(impliedParaUsj);
+    await act(async () => {
+      lexical.update(() => {
+        const node = $textContaining("plain body");
+        node.setTextContent("plain \\q1 body");
+        node.select(0, 0);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
+    // The typed `\q1` has already split the paragraph in the document the host reads.
+    const settled = ref.current?.getUsj();
+    const depart = settled?.content.findIndex(
+      (item) => typeof item !== "string" && item.content?.[0] === "depart here",
+    );
+    expect(depart).toBe(6);
+
+    await act(async () => {
+      ref.current?.setAnnotation(
+        {
+          start: { jsonPath: contentPath([depart ?? -1, 0]), offset: 0 },
+          end: { jsonPath: contentPath([depart ?? -1, 0]), offset: 6 },
+        },
+        "test",
+        "1",
+      );
+      await Promise.resolve();
+    });
+
+    expect(annotatedText(lexical)).toEqual(["depart"]);
+  });
+});

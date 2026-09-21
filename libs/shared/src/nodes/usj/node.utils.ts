@@ -10,6 +10,7 @@ import {
   $isElementNode,
   $isLineBreakNode,
   $isRangeSelection,
+  $isRootNode,
   $isTextNode,
   $setState,
   BaseSelection,
@@ -1105,6 +1106,23 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
 }
 
 /**
+ * Whether `node` is an implied paragraph the editor→USJ conversion splices away: one directly under
+ * the root, where the loader puts content that comes before a document's first block. Its children
+ * are the root's own content items in USJ, so it is as transparent to content indexes as an
+ * annotation mark. The conversion splices root children only, so an implied paragraph anywhere
+ * else keeps its index.
+ */
+function $isSplicedImpliedPara(node: LexicalNode | null | undefined): node is ImpliedParaNode {
+  return $isImpliedParaNode(node) && $isRootNode(node.getParent());
+}
+
+/** Whether `node` contributes no content item of its own, its children standing in its place: an
+ * annotation mark, or an implied paragraph the conversion splices away. */
+function $isContentTransparent(node: LexicalNode | null | undefined): node is ElementNode {
+  return $isTypedMarkNode(node) || $isSplicedImpliedPara(node);
+}
+
+/**
  * Which live nodes make up each logical content item, before any text is measured. An item's
  * index depends only on this shape; its text offsets also depend on how serialization treats
  * whitespace.
@@ -1131,8 +1149,8 @@ function $getLogicalItemShapes(parent: ElementNode): LogicalItemShape[] {
 
   const visit = (node: LexicalNode) => {
     if ($shouldIgnoreNodeForContentIndexes(node)) return;
-    if ($isTypedMarkNode(node)) {
-      // Recursion is defense-in-depth: nested marks only exist transiently before the
+    if ($isContentTransparent(node)) {
+      // For marks, recursion is defense-in-depth: nested marks only exist transiently before the
       // AnnotationPlugin's nested-element resolver flattens them into siblings.
       node.getChildren().forEach(visit);
       return;
@@ -1211,7 +1229,9 @@ function segmentLocalOffset(segment: LogicalTextSegment, contentOffset: number):
  * editor→USJ conversion would export: presentation-only nodes skipped, TypedMarkNodes
  * transparent (children spliced in, recursively), contiguous text coalesced into single items,
  * and the characters the conversion drops (a char span's structural separator NBSP, and a
- * collapsed space run's extra characters) excluded from its text item's coordinates.
+ * collapsed space run's extra characters) excluded from its text item's coordinates. The root's
+ * implied paragraph is transparent the same way marks are: the conversion splices its children
+ * into the root.
  *
  * Known exclusion: comment-type TypedMarkNodes are treated as transparent like every other
  * mark, even though the exporter still serializes them as milestone items. That milestone
@@ -1231,14 +1251,14 @@ export function $getLogicalContentItems(
 }
 
 /**
- * Gets the nearest ancestor that is not a TypedMarkNode — the element that owns the node's
- * logical content index (annotation wrappers are transparent in USJ).
+ * Gets the nearest ancestor that owns the node's logical content index — skipping annotation
+ * wrappers and the root's implied paragraph, which are transparent in USJ.
  * @param node - The node to get the logical parent of.
  * @returns the logical parent element, or `null` at the root.
  */
 export function $getLogicalParent(node: LexicalNode): ElementNode | null {
   let parent: ElementNode | null = node.getParent();
-  while (parent && $isTypedMarkNode(parent)) parent = parent.getParent();
+  while (parent && $isContentTransparent(parent)) parent = parent.getParent();
   return parent;
 }
 
@@ -1315,26 +1335,68 @@ export function $getTextNodeAtLogicalOffset(
 /**
  * Converts an element point (parent + child index) to a logical point. Boundaries that fall
  * inside a coalesced text item (e.g. at an annotation edge) become text points; boundaries
- * between logical items become index points.
+ * between logical items become index points. A point on the root's implied paragraph is a
+ * boundary among the ROOT's items, since the implied paragraph has none of its own.
  * @param parent - The parent element node of the element point.
  * @param elementOffset - The child index of the element point.
  * @param collapsesSpaceRuns - Whether this editor's serialization collapses space runs; see
  *   {@link $getLogicalContentItems}.
- * @returns the logical point.
+ * @returns the logical point, in the coordinates of `parent`'s logical parent when `parent` is the
+ *   root's implied paragraph and of `parent` otherwise.
  */
 export function $getLogicalPointFromElementPoint(
   parent: ElementNode,
   elementOffset: number,
   collapsesSpaceRuns: boolean,
 ): LogicalPoint {
-  const items = $getLogicalContentItems(parent, collapsesSpaceRuns);
   const child = parent.getChildAtIndex(elementOffset);
+  if ($isSplicedImpliedPara(parent)) {
+    const root = parent.getParentOrThrow();
+    // Past the implied paragraph's last child is the boundary in front of whatever follows it.
+    if (!child)
+      return $getLogicalPointFromElementPoint(
+        root,
+        parent.getIndexWithinParent() + 1,
+        collapsesSpaceRuns,
+      );
+    if ($shouldIgnoreNodeForContentIndexes(child))
+      return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
+    return $logicalPointBefore(root, child, collapsesSpaceRuns);
+  }
+
+  const items = $getLogicalContentItems(parent, collapsesSpaceRuns);
   if (!child) return { type: "index", index: items.length };
 
   // Boundary before a presentation-only node: use the boundary before the next content child.
   if ($shouldIgnoreNodeForContentIndexes(child))
     return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
 
+  // An implied paragraph with no content items of its own: the boundary in front of it is the one
+  // in front of whatever follows it.
+  if ($isSplicedImpliedPara(child) && !$logicalItemWithin(items, child))
+    return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
+
+  return $logicalPointBefore(parent, child, collapsesSpaceRuns);
+}
+
+/** Whether any of `items` is `node` or lies inside it. */
+function $logicalItemWithin(items: LogicalContentItem[], node: LexicalNode): boolean {
+  return items.some((item) =>
+    item.type === "element"
+      ? item.node.is(node) || $isDescendantOf(item.node, node.getKey())
+      : item.segments.some(
+          (segment) => segment.node.is(node) || $isDescendantOf(segment.node, node.getKey()),
+        ),
+  );
+}
+
+/** The logical point in front of `child`, which is `parent`'s logical content or holds some. */
+function $logicalPointBefore(
+  parent: ElementNode,
+  child: LexicalNode,
+  collapsesSpaceRuns: boolean,
+): LogicalPoint {
+  const items = $getLogicalContentItems(parent, collapsesSpaceRuns);
   for (let index = 0; index < items.length; index++) {
     const item = items[index];
     if (item.type === "element") {
@@ -1354,20 +1416,23 @@ export function $getLogicalPointFromElementPoint(
 }
 
 /**
- * Converts a logical boundary index to the earliest element child offset at that boundary
- * (the inverse of `$getLogicalPointFromElementPoint` for index points).
+ * Converts a logical boundary index to the earliest element point at that boundary (the inverse
+ * of `$getLogicalPointFromElementPoint` for index points). A boundary among the items of the
+ * root's implied paragraph lies inside that paragraph, so the point's element is not always
+ * `parent`.
  * @param parent - The parent element node.
  * @param logicalIndex - The logical boundary index (0 = before the first item).
- * @returns the element child offset.
+ * @returns the element holding the point and the child offset within it.
  */
-export function $getElementOffsetFromLogicalIndex(
+export function $getElementPointFromLogicalIndex(
   parent: ElementNode,
   logicalIndex: number,
-): number {
-  if (logicalIndex <= 0) return 0;
+): [ElementNode, number] {
+  if (logicalIndex <= 0) return [parent, 0];
 
   const shapes = $getLogicalItemShapes(parent);
-  if (shapes.length === 0 || logicalIndex > shapes.length) return parent.getChildrenSize();
+  if (shapes.length === 0 || logicalIndex > shapes.length)
+    return [parent, parent.getChildrenSize()];
 
   const previousShape = shapes[logicalIndex - 1];
   const lastNode =
@@ -1375,7 +1440,12 @@ export function $getElementOffsetFromLogicalIndex(
       ? previousShape.node
       : previousShape.nodes[previousShape.nodes.length - 1];
   const topLevelChild = lastNode ? $findChildOfParent(parent, lastNode) : undefined;
-  return topLevelChild ? topLevelChild.getIndexWithinParent() + 1 : parent.getChildrenSize();
+  if (!topLevelChild) return [parent, parent.getChildrenSize()];
+  if ($isSplicedImpliedPara(topLevelChild)) {
+    const impliedChild = $findChildOfParent(topLevelChild, lastNode);
+    if (impliedChild) return [topLevelChild, impliedChild.getIndexWithinParent() + 1];
+  }
+  return [parent, topLevelChild.getIndexWithinParent() + 1];
 }
 
 /** Walks up from a descendant to the direct child of the given parent. */

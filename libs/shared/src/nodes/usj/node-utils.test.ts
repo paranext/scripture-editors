@@ -7,10 +7,11 @@ import { $createAttributeRunNode } from "./AttributeRunNode.js";
 import { $createChapterNode, ChapterNode } from "./ChapterNode.js";
 import { $createCharNode, $isCharNode, CharNode } from "./CharNode.js";
 import { $createImmutableChapterNode } from "./ImmutableChapterNode.js";
+import { $createImpliedParaNode, ImpliedParaNode } from "./ImpliedParaNode.js";
 import { usjBaseNodes } from "./index.js";
 import { $createNoteNode } from "./NoteNode.js";
 import {
-  $getElementOffsetFromLogicalIndex,
+  $getElementPointFromLogicalIndex,
   $getLogicalContentItems,
   $getLogicalIndexOfChild,
   $getLogicalParent,
@@ -1560,7 +1561,7 @@ describe("Editor Node Utilities", () => {
     });
   });
 
-  describe("$getLogicalPointFromElementPoint / $getElementOffsetFromLogicalIndex", () => {
+  describe("$getLogicalPointFromElementPoint / $getElementPointFromLogicalIndex", () => {
     it("maps element boundaries around an annotated run", () => {
       const { editor } = createBasicTestEnvironment(nodes, () => {
         $getRoot().append(
@@ -1608,11 +1609,15 @@ describe("Editor Node Utilities", () => {
           index: 3,
         });
 
-        // Inverse: earliest element child offset for each logical boundary.
-        expect($getElementOffsetFromLogicalIndex(para, 0)).toBe(0);
-        expect($getElementOffsetFromLogicalIndex(para, 1)).toBe(3); // after " cc "
-        expect($getElementOffsetFromLogicalIndex(para, 2)).toBe(4); // after Char
-        expect($getElementOffsetFromLogicalIndex(para, 3)).toBe(5); // after "dd"
+        // Inverse: earliest element point for each logical boundary.
+        const $pointAt = (index: number) => {
+          const [node, offset] = $getElementPointFromLogicalIndex(para, index);
+          return [node.getKey(), offset];
+        };
+        expect($pointAt(0)).toEqual([para.getKey(), 0]);
+        expect($pointAt(1)).toEqual([para.getKey(), 3]); // after " cc "
+        expect($pointAt(2)).toEqual([para.getKey(), 4]); // after Char
+        expect($pointAt(3)).toEqual([para.getKey(), 5]); // after "dd"
       });
     });
 
@@ -1644,6 +1649,87 @@ describe("Editor Node Utilities", () => {
           index: 1,
         });
       });
+    });
+  });
+});
+
+describe("a root-level implied paragraph", () => {
+  // Content before a document's first paragraph loads inside an ImpliedParaNode, which the
+  // editor→USJ conversion splices away: its children are the ROOT's content items in USJ.
+  //
+  // Lexical root children:  0=ImpliedPara[verse, "orphan text "]  1=Para["later"]
+  // Logical root items:     0=verse  1="orphan text "  2=Para
+  function build() {
+    let implied: ImpliedParaNode | undefined;
+    let orphan: TextNode | undefined;
+    let later: TextNode | undefined;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      orphan = $createTextNode("orphan text ");
+      later = $createTextNode("later");
+      implied = $createImpliedParaNode().append($createVerseNode("1"), orphan);
+      $getRoot().append(implied, $createParaNode().append(later));
+    });
+    if (!implied || !orphan || !later) throw new Error("fixture not built");
+    return { editor, implied, orphan, later };
+  }
+
+  it("splices the implied paragraph's children into the root's content items", () => {
+    const { editor, orphan } = build();
+    editor.getEditorState().read(() => {
+      const items = $getLogicalContentItems($getRoot(), false);
+      expect(items.map((item) => (item.type === "text" ? "text" : item.node.getType()))).toEqual([
+        VerseNode.getType(),
+        "text",
+        "para",
+      ]);
+      expect($getLogicalParent(orphan)?.is($getRoot())).toBe(true);
+      expect($getLogicalTextLocation(orphan, 3, false)).toMatchObject({ index: 1, offset: 3 });
+    });
+  });
+
+  it("maps element points on and around it to root boundaries, and back", () => {
+    const { editor, implied } = build();
+    editor.getEditorState().read(() => {
+      const root = $getRoot();
+      // Before the implied paragraph is before its first item; before the paragraph after it is
+      // past all of its items.
+      expect($getLogicalPointFromElementPoint(root, 0, false)).toEqual({ type: "index", index: 0 });
+      expect($getLogicalPointFromElementPoint(root, 1, false)).toEqual({ type: "index", index: 2 });
+      // An element point ON the implied paragraph is a boundary among the root's items.
+      expect($getLogicalPointFromElementPoint(implied, 1, false)).toEqual({
+        type: "index",
+        index: 1,
+      });
+      expect($getLogicalPointFromElementPoint(implied, 2, false)).toEqual({
+        type: "index",
+        index: 2,
+      });
+
+      // A root boundary among the implied paragraph's items is expressed inside it.
+      const $pointAt = (index: number) => {
+        const [node, offset] = $getElementPointFromLogicalIndex(root, index);
+        return [node.getKey(), offset];
+      };
+      expect($pointAt(0)).toEqual([root.getKey(), 0]);
+      expect($pointAt(1)).toEqual([implied.getKey(), 1]);
+      expect($pointAt(2)).toEqual([implied.getKey(), 2]);
+      expect($pointAt(3)).toEqual([root.getKey(), 2]);
+    });
+  });
+
+  it("is only transparent at the root", () => {
+    // The conversion splices implied paragraphs out of the ROOT's children only, so one anywhere
+    // else keeps its own content index.
+    let nested: ImpliedParaNode | undefined;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      nested = $createImpliedParaNode().append($createTextNode("inner"));
+      $getRoot().append($createParaNode().append(nested));
+    });
+    editor.getEditorState().read(() => {
+      const para = $getRoot().getFirstChildOrThrow();
+      if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
+      const [item] = $getLogicalContentItems(para, false);
+      expect(item?.type === "element" && item.node.is(nested)).toBe(true);
     });
   });
 });
