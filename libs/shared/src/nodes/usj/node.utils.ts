@@ -36,6 +36,7 @@ import {
 import { $isMarkerNode, isSerializedMarkerNode } from "../features/MarkerNode.js";
 import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { $isUnknownNode, UnknownNode } from "../features/UnknownNode.js";
+import { $isAttributeRunNode } from "./AttributeRunNode.js";
 import { $isBookNode, BookNode } from "./BookNode.js";
 import {
   $isChapterNode,
@@ -942,11 +943,12 @@ function getSelectionStartNodeInner(selection: BaseSelection | null): LexicalNod
 
 /**
  * Checks whether a node is presentation-only and therefore not part of USJ content:
- * line breaks, marker scaffolding (editable and visible), marker-trailing-space or
- * attribute text (as a plain TextNode or as an opaque block's folded ImmutableTypedTextNode
- * display run, e.g. an UnknownNode's `\cat` byte display), and empty or NBSP-only spacer text
- * (which the editor→USJ conversion drops as well; ideally the USJ→editor conversion would
- * create such spacers as presentation-typed text nodes instead — follow-up work).
+ * line breaks, marker scaffolding (editable and visible), the `AttributeRunNode` wrapper that
+ * carries a verse's, milestone's, chapter's or note's attribute display run,
+ * marker-trailing-space or attribute text (as a plain TextNode or as an opaque block's folded
+ * ImmutableTypedTextNode display run, e.g. an UnknownNode's `\cat` byte display), and empty or
+ * NBSP-only spacer text (which the editor→USJ conversion drops as well; ideally the USJ→editor
+ * conversion would create such spacers as presentation-typed text nodes instead — follow-up work).
  * @param node - The node to check.
  * @returns `true` if the node must be skipped when computing USJ content indexes.
  */
@@ -955,6 +957,9 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
   if ($isLineBreakNode(node)) return true;
   if ($isMarkerNode(node)) return true;
   if ($isVisibleMarkerNode(node)) return true;
+  // The owner's attributes are what the exporter reads; the wrapper and everything in it is the
+  // display of them, skipped wholesale by the editor→USJ conversion as well.
+  if ($isAttributeRunNode(node)) return true;
   // ImmutableTypedTextNode's "attribute" flavor (an opaque block's folded attribute-byte display
   // run, e.g. an UnknownNode's `\cat ...\cat*`) is a DecoratorNode, not a TextNode, so it never
   // reaches the $isTextNode branch below — mirror the "marker" flavor handled above by
