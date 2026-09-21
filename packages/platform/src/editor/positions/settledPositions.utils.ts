@@ -21,6 +21,7 @@ import {
   $caretSpanByteAnchor,
   $resolveFragmentByteAnchor,
   CaretByteAnchor,
+  FRAGMENT_WS,
   FragmentAccumulator,
   FragmentPoint,
   FragmentSpan,
@@ -58,10 +59,6 @@ import {
   SelectionRange,
   ViewOptions,
 } from "shared-react";
-
-/** Whitespace as the fragment layer means it — everything the display may add, move, or flatten
- * across a settle. */
-const WHITESPACE = /\s/;
 
 /** The `$.content[…]` prefix of a jsonPath, with any property suffix (`['marker']`) stripped. */
 const CONTENT_PATH = /^(\$(?:\.content\[\d+\])*)(?:\.|$|\[)/;
@@ -276,7 +273,7 @@ function $resolveInScratch(
     return {
       kind: "anchor",
       anchor: anchored.anchor,
-      atWordByte: byte !== undefined && !WHITESPACE.test(byte),
+      atWordByte: byte !== undefined && !FRAGMENT_WS.test(byte),
     };
   }
   const path = $childPath(preserved.member, node);
@@ -307,7 +304,7 @@ function advancePastWhitespace(fragment: FragmentAccumulator, point: FragmentPoi
   if (!span) return point;
   const length = span.end - span.start;
   let offset = point.offset;
-  while (offset < length && WHITESPACE.test(fragment.text[span.start + offset])) offset += 1;
+  while (offset < length && FRAGMENT_WS.test(fragment.text[span.start + offset])) offset += 1;
   return offset === point.offset ? point : { ...point, offset };
 }
 

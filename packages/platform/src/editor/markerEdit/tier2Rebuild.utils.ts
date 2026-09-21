@@ -1223,7 +1223,7 @@ function $spansForNodes(
  * flatten across a rebuild (the NBSP separators arrive here already flattened to spaces by
  * `toFragmentText`). The U+FFFC sentinel placeholder is deliberately NOT whitespace — it stands
  * for a preserved node and anchors like a document byte. */
-const FRAGMENT_WS = /\s/;
+export const FRAGMENT_WS = /\s/;
 
 /**
  * The caret as a BYTE anchor over the span text: how many non-whitespace characters precede it
