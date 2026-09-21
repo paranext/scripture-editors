@@ -463,7 +463,9 @@ function replaceMarkWithMilestones(
  * place a bare "opening" marker sibling here for anything but a char span's own opener — a
  * milestone or verse-attribute display run's glyphs live inside an `AttributeRunNode` wrapper
  * (`recurseNodes` skips it wholesale below) or a textType "attribute" `TextNode` (filtered out
- * before this runs) — so "found inside a char span's children" already is the distinction.
+ * before this runs) — so "found inside a char span's children" already is the distinction. The
+ * exporter oracle (positions/logicalModel.oracle.test.tsx) checks that premise on every span it
+ * walks.
  */
 function precedesOpeningCharGlyph(
   nodes: SerializedLexicalNode[],

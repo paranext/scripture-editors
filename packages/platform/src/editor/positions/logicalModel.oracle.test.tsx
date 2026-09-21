@@ -14,12 +14,19 @@ import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugin
 import editorUsjAdaptor from "../adaptors/editor-usj.adaptor";
 import { serializedState } from "../markerEdit/markerEdit.test-helpers";
 import { displayTextToUsj } from "../markerEdit/whitespaceDisplay.utils";
-import { MarkerContent, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerContent, Usj, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
 import {
+  $charGlyphNestedValue,
+  $createTypedMarkNode,
   $getLogicalContentItems,
   $getLogicalTextLocation,
   $getTextNodeAtLogicalOffset,
+  $isCharNode,
+  $isMarkerNode,
+  $isTypedMarkNode,
+  CharNode,
   LogicalTextItem,
+  MarkerNode,
   NBSP,
 } from "shared";
 import {
@@ -37,6 +44,8 @@ import {
   $isTextNode,
   $setSelection,
   ElementNode,
+  LexicalNode,
+  TextNode,
 } from "lexical";
 import { usj2Sa } from "test-data";
 
@@ -114,6 +123,8 @@ interface OracleReport {
   leadSegments: number;
   /** Segments carrying a space run that serialization collapses. */
   collapsedSegments: number;
+  /** Segments inside an annotation mark. */
+  markedSegments: number;
 }
 
 /** The view options the 2SA fixture generator uses for each marker mode. */
@@ -142,13 +153,72 @@ const spaceRunUsx =
   `<para style="p"><verse number="2" style="v" />The earth<note caller="+" style="f">` +
   `<char style="ft">empty  and   void</char></note> was  dark.</para></usx>`;
 
-const corpora = [
+/** The first text node (not a marker glyph) whose content includes `needle`. */
+function $contentText(needle: string): TextNode {
+  const node = $getRoot()
+    .getAllTextNodes()
+    .find((text) => !$isMarkerNode(text) && text.getTextContent().includes(needle));
+  if (!node) throw new Error(`no text node containing ${JSON.stringify(needle)}`);
+  return node;
+}
+
+/** Wrap `nodes`, which must be adjacent siblings, in one annotation mark. */
+function $wrapInMark(...nodes: LexicalNode[]): void {
+  const mark = $createTypedMarkNode({ spelling: ["oracle"] });
+  nodes[0].insertBefore(mark);
+  mark.append(...nodes);
+}
+
+/** The space-run corpus plus a char span whose content starts with a word, so a separator the
+ * exporter fails to strip shows as an extra leading space instead of merging into a run. */
+const markedUsx = spaceRunUsx.replace(
+  " was  dark.",
+  ` was <char style="add">formless</char>  dark.`,
+);
+
+/**
+ * Annotation marks where they meet the dropped characters: around a char span's separator-bearing
+ * text with the opener outside the mark (one span whose text starts with a space, one whose text
+ * starts with a word), around an opener AND its text, around an opener alone, and around the tail
+ * of a text split inside a space run. A mark is presentation the exporter splices away, so the
+ * model has to see through it exactly where the exporter does. A glyph is only wrapped where the
+ * mode renders one.
+ */
+function $markCorpus(): void {
+  $wrapInMark($contentText("LORD"));
+  $wrapInMark($contentText("formless"));
+  const heaven = $contentText("heaven");
+  const heavenOpener = heaven.getPreviousSibling();
+  if ($isMarkerNode(heavenOpener)) $wrapInMark(heavenOpener, heaven);
+  const empty = $contentText("empty");
+  const emptyOpener = empty.getPreviousSibling();
+  if ($isMarkerNode(emptyOpener)) $wrapInMark(emptyOpener);
+  const beginning = $contentText("beginning");
+  const [, tail] = beginning.splitText(beginning.getTextContent().indexOf("the") + "the ".length);
+  $wrapInMark(tail);
+}
+
+const corpora: {
+  name: string;
+  usj: Usj;
+  minimumCheckedItems: number;
+  hasSpaceRuns: boolean;
+  /** Decorates the loaded editor before it is exported; a corpus that has one must have marks. */
+  $decorate?: () => void;
+}[] = [
   { name: "2SA", usj: usj2Sa, minimumCheckedItems: 100, hasSpaceRuns: false },
   {
     name: "space runs",
     usj: usxStringToUsj(spaceRunUsx),
     minimumCheckedItems: 8,
     hasSpaceRuns: true,
+  },
+  {
+    name: "annotation marks",
+    usj: usxStringToUsj(markedUsx),
+    minimumCheckedItems: 8,
+    hasSpaceRuns: true,
+    $decorate: $markCorpus,
   },
 ];
 
@@ -182,6 +252,9 @@ function $checkTextItem(
   report.leadSegments += item.segments.filter((segment) => segment.lead > 0).length;
   report.collapsedSegments += item.segments.filter(
     (segment) => segment.collapsed.length > 0,
+  ).length;
+  report.markedSegments += item.segments.filter((segment) =>
+    $isTypedMarkNode(segment.node.getParent()),
   ).length;
   const contents = item.segments.map((segment) =>
     segment.node.getTextContent().slice(segment.lead),
@@ -310,40 +383,70 @@ function $checkElement(
       });
       return;
     }
+    if ($isCharNode(item.node)) $checkCharGlyphs(item.node, itemPath, report);
     if ($isElementNode(item.node))
       $checkElement(item.node, entry.content, itemPath, isStandard, report);
   });
 }
 
-describe.each(corpora)("the $name corpus", ({ usj: corpus, minimumCheckedItems, hasSpaceRuns }) => {
-  describe.each(modes)(
-    "logical text coordinates agree with the exporter ($name)",
-    ({ viewOptions, hasSeparators }) => {
-      it("maps every offset of every text item to the character the exporter emits there", async () => {
-        const { editor } = await baseTestEnvironment(serializedState(corpus, viewOptions));
-        const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions);
-        if (!usj) throw new Error("the editor state did not serialize to USJ");
-        const isStandard = hasStandardViewWhitespace(viewOptions);
+/**
+ * The exporter's separator strip decides "an opening char glyph precedes this text" by finding ANY
+ * opening marker among a char span's children, where the live model asks `$charGlyphNestedValue`
+ * whether that glyph really describes a char span (`precedesOpeningCharGlyph`,
+ * editor-usj.adaptor.ts). The two agree only while every opening glyph the editor builds inside a
+ * span is a char glyph, so every one the walk meets must be.
+ */
+function $checkCharGlyphs(char: CharNode, path: string, report: OracleReport): void {
+  const $children = (parent: ElementNode): LexicalNode[] =>
+    parent.getChildren().flatMap((child) => ($isTypedMarkNode(child) ? $children(child) : [child]));
+  $children(char)
+    .filter(
+      (child): child is MarkerNode => $isMarkerNode(child) && child.getMarkerSyntax() === "opening",
+    )
+    .filter((glyph) => $charGlyphNestedValue(glyph, char) === undefined)
+    .forEach((glyph) =>
+      report.disagreements.push({
+        path,
+        detail: `opening glyph \\${glyph.getMarker()} inside \\${char.getMarker()} is not a char glyph`,
+      }),
+    );
+}
 
-        const report: OracleReport = {
-          disagreements: [],
-          checkedItems: 0,
-          leadSegments: 0,
-          collapsedSegments: 0,
-        };
-        editor.getEditorState().read(() => {
-          $checkElement($getRoot(), usj.content, "$", isStandard, report);
+describe.each(corpora)(
+  "the $name corpus",
+  ({ usj: corpus, minimumCheckedItems, hasSpaceRuns, $decorate }) => {
+    describe.each(modes)(
+      "logical text coordinates agree with the exporter ($name)",
+      ({ viewOptions, hasSeparators }) => {
+        it("maps every offset of every text item to the character the exporter emits there", async () => {
+          const { editor } = await baseTestEnvironment(serializedState(corpus, viewOptions));
+          if ($decorate) editor.update($decorate, { discrete: true });
+          const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions);
+          if (!usj) throw new Error("the editor state did not serialize to USJ");
+          const isStandard = hasStandardViewWhitespace(viewOptions);
+
+          const report: OracleReport = {
+            disagreements: [],
+            checkedItems: 0,
+            leadSegments: 0,
+            collapsedSegments: 0,
+            markedSegments: 0,
+          };
+          editor.getEditorState().read(() => {
+            $checkElement($getRoot(), usj.content, "$", isStandard, report);
+          });
+
+          expect(report.disagreements).toEqual([]);
+          // A floor, not a pin: it only has to be far enough above zero that a walk which stopped
+          // early cannot pass, and low enough that editing the corpus does not churn it.
+          expect(report.checkedItems).toBeGreaterThan(minimumCheckedItems);
+          // Each kind of dropped character is what this suite exists for, so a view that drops it
+          // must actually have met some, and no other view may.
+          expect(report.leadSegments > 0).toBe(hasSeparators);
+          expect(report.collapsedSegments > 0).toBe(hasSpaceRuns && isStandard);
+          expect(report.markedSegments > 0).toBe($decorate !== undefined);
         });
-
-        expect(report.disagreements).toEqual([]);
-        // A floor, not a pin: it only has to be far enough above zero that a walk which stopped
-        // early cannot pass, and low enough that editing the corpus does not churn it.
-        expect(report.checkedItems).toBeGreaterThan(minimumCheckedItems);
-        // Each kind of dropped character is what this suite exists for, so a view that drops it
-        // must actually have met some, and no other view may.
-        expect(report.leadSegments > 0).toBe(hasSeparators);
-        expect(report.collapsedSegments > 0).toBe(hasSpaceRuns && isStandard);
-      });
-    },
-  );
-});
+      },
+    );
+  },
+);
