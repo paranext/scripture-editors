@@ -37,12 +37,44 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
   it("emits the base rule and per-marker rules (ltr, zoom 1)", () => {
     expect(generateUsjCss(styleInfo)).toBe(
       [
-        '.editor-input.usfm { font-family: "Charis SIL"; font-size: 12pt; }',
+        '.editor-input.usfm { font-family: "Charis SIL", var(--usj-font-fallback, serif); font-size: 12pt; }',
         ".editor-input.usfm .usfm_s1 { font-weight: bold; color: #003380; font-size: 116%; margin-top: 8pt; margin-bottom: 4pt; text-align: center; }",
         ".editor-input.usfm .usfm_q1 { text-indent: -10vw; margin-left: 25vw; line-height: 1.5; }",
         ".editor-input.usfm .usfm_v { vertical-align: text-top; font-size: 66%; white-space: nowrap; unicode-bidi: embed; }",
         ".editor-input.usfm .usfm_nd { font-variant: small-caps; }",
       ].join("\n"),
+    );
+  });
+
+  it("puts the fallback chain behind every font it names", () => {
+    // A project font that is not installed and not declared by the host application has to land
+    // somewhere readable. This sheet's rules outrank the static `.usfm.formatted-font` chain, so
+    // without this the project font is the whole list and an unavailable one falls through to the
+    // user agent's default — a sans face, in the middle of Scripture text.
+    const css = generateUsjCss({
+      defaultFont: "Nonexistent Project Font",
+      defaultFontSize: 12,
+      markers: { wj: { marker: "wj", styleType: "character", fontName: "Also Nonexistent" } },
+    });
+    expect(css).toContain(
+      '.editor-input.usfm { font-family: "Nonexistent Project Font", var(--usj-font-fallback, serif); font-size: 12pt; }',
+    );
+    // The project's own default sits between a marker font and the chain: a marker font that is
+    // unavailable should land on what the rest of the project's text is already using. Without it,
+    // a project whose default font is not Latin shows the marker's runs in a Latin serif while the
+    // text around them stays in the project font — a typeface break mid-verse.
+    expect(css).toContain(
+      '.editor-input.usfm .usfm_wj { font-family: "Also Nonexistent", "Nonexistent Project Font", var(--usj-font-fallback, serif); }',
+    );
+  });
+
+  it("does not repeat the project default when a marker names the same font", () => {
+    const css = generateUsjCss({
+      defaultFont: "Charis SIL",
+      markers: { wj: { marker: "wj", styleType: "character", fontName: "Charis SIL" } },
+    });
+    expect(css).toContain(
+      '.editor-input.usfm .usfm_wj { font-family: "Charis SIL", var(--usj-font-fallback, serif); }',
     );
   });
 
@@ -57,7 +89,9 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
 
   it("flips margins and justification under rtl and scales with zoom", () => {
     const css = generateUsjCss(styleInfo, { zoom: 2, rtl: true });
-    expect(css).toContain('.editor-input.usfm { font-family: "Charis SIL"; font-size: 24pt; }');
+    expect(css).toContain(
+      '.editor-input.usfm { font-family: "Charis SIL", var(--usj-font-fallback, serif); font-size: 24pt; }',
+    );
     expect(css).toContain("margin-right: 50vw"); // q1 leftMargin flipped + zoomed
     expect(css).toContain("text-indent: -20vw");
     expect(css).toContain("margin-top: 16pt"); // s1 spaceBefore zoomed
@@ -87,7 +121,7 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
         ".editor-input.usfm .usfm_pd { line-height: 2; }",
         ".editor-input.usfm .usfm_p3 { font-weight: bold; }",
         ".editor-input.usfm .usfm_em { font-style: italic; text-decoration: underline; }",
-        '.editor-input.usfm .usfm_wj { font-family: "Andika"; }',
+        '.editor-input.usfm .usfm_wj { font-family: "Andika", var(--usj-font-fallback, serif); }',
         ".editor-input.usfm .usfm_zsub { vertical-align: text-bottom; font-size: 66%; }",
         ".editor-input.usfm .usfm_fr { font-size: 116%; vertical-align: text-top; font-size: 66%; }",
       ].join("\n"),
@@ -110,7 +144,7 @@ describe("generateUsjCss (PT9 CSSCreator port)", () => {
     expect(generateUsjCss(smallBaseStyleInfo)).toBe(
       [
         // The base rule carries the non-default project size…
-        '.editor-input.usfm { font-family: "Charis SIL"; font-size: 10pt; }',
+        '.editor-input.usfm { font-family: "Charis SIL", var(--usj-font-fallback, serif); font-size: 10pt; }',
         // …and the marker percentages stay /12: floor(14*100/12) = 116, NOT floor(14*100/10) = 140.
         ".editor-input.usfm .usfm_s1 { font-size: 116%; }",
         // floor(9*100/12) = 75, NOT floor(9*100/10) = 90.
