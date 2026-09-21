@@ -286,8 +286,8 @@ function sentinelMapOf(
  * spell the same document bytes again, which is the property the anchor relies on.
  *
  * The run's own span stays in the list, emptied, so the dropped node is still findable by key and
- * a position INSIDE it still resolves to the run it belongs to (and is refused there, the settled
- * document having nothing for it).
+ * a position INSIDE it still resolves to the run it belongs to — which reports it at the boundary
+ * where the run stood, the settled document having no node for it.
  */
 function withoutDroppedSentinels(
   fragment: FragmentAccumulator,

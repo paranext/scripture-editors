@@ -14,7 +14,6 @@ import {
   $liveSelectionFromSettled,
   $livePointFromSettledLocation,
   $settledLocationFromLivePoint,
-  $settledSelectionFromLive,
 } from "./settledPositions.utils";
 import {
   chapterCaCharUsj,
@@ -50,7 +49,6 @@ import {
   $isNoteNode,
   $isParaNode,
   $isTypedMarkNode,
-  $isUnknownNode,
   getPendedDisplayOwners,
   NBSP,
 } from "shared";
@@ -232,63 +230,6 @@ describe("a scope whose two documents cannot be paired", () => {
     });
 
     expect(point).toEqual({ key: departKey, offset: 2, type: "text" });
-  });
-});
-
-describe("a caret inside a preserved run the settled document dropped", () => {
-  /** An emptied optbreak husk is a preserved run the settle splices out, so the settled document
-   * has nothing for a point INSIDE it. `emptyOptbreakHusk` leaves the caret there, as deleting the
-   * optbreak's `//` does. */
-  async function caretInEmptiedHusk() {
-    const mounted = await mountExpandedNoteEditor(optbreakAndTwoNotesUsj());
-    const huskKey = await emptyOptbreakHusk(mounted.lexical);
-    return { ...mounted, huskKey, context: settledPositionContext(mounted.lexical) };
-  }
-
-  it("refuses the point and the selection holding it", async () => {
-    const { lexical, huskKey, context } = await caretInEmptiedHusk();
-
-    const [caretKey, location, selection] = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      const current = $getSelection();
-      const para = $getRoot().getChildren().filter($isParaNode)[0];
-      const husk = para.getChildren().find($isUnknownNode);
-      if (!husk) throw new Error("no husk");
-      return [
-        $isRangeSelection(current) ? current.anchor.key : undefined,
-        $settledLocationFromLivePoint(prepared, husk, 0),
-        $settledSelectionFromLive(prepared),
-      ] as const;
-    });
-
-    expect(caretKey).toBe(huskKey);
-    expect(location).toBeUndefined();
-    expect(selection).toBeUndefined();
-  });
-
-  it("refuses a range whose far end is inside the husk", async () => {
-    const { lexical, huskKey, context } = await caretInEmptiedHusk();
-    await act(async () => {
-      lexical.update(() => {
-        const selection = $getSelection();
-        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
-        selection.anchor.set($textContaining("head").getKey(), 1, "text");
-        selection.focus.set(huskKey, 0, "element");
-      });
-      await Promise.resolve();
-    });
-
-    const [start, selection] = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      return [
-        $settledLocationFromLivePoint(prepared, $textContaining("head"), 1),
-        $settledSelectionFromLive(prepared),
-      ] as const;
-    });
-
-    // The near end is carried on its own, so the refusal is the far end's.
-    expect(start).toBeDefined();
-    expect(selection).toBeUndefined();
   });
 });
 
@@ -576,9 +517,16 @@ describe("the public methods, when the translation refuses", () => {
   });
 
   it("getSelection logs the refusal and reports nothing", async () => {
+    // The caret is left in a paragraph pending on a typed note literal, which cannot be paired.
     const { logger, warnings } = warningLogger();
-    const mounted = await mountExpandedNoteEditor(optbreakAndTwoNotesUsj(), { logger });
-    await emptyOptbreakHusk(mounted.lexical);
+    const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]), {
+      logger,
+    });
+    await typeOver(
+      mounted.lexical,
+      "In the beginning made",
+      "In the beginning \\f + \\ft note\\f* made",
+    );
 
     const selection = mounted.ref.current?.getSelection();
 

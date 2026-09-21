@@ -590,6 +590,25 @@ function $scratchLocationFromLivePoint(
 ): UsjDocumentLocation | undefined {
   const preserved = $preservedRunMember(liveFragment, node);
   if (preserved) {
+    // A run the settled document dropped entirely (an emptied optbreak husk, which the settle
+    // splices out) has no node there, but the place it stood does: the boundary in front of it,
+    // where the text on either side meets once it is gone. It is where the caret sits after the
+    // user deletes an optbreak's `//`.
+    const run = liveFragment.sentinels[preserved.sentinelIndex];
+    if (!sentinelMap[preserved.sentinelIndex]?.some((member) => member !== undefined)) {
+      const parent = run[0].getParent();
+      return parent
+        ? $scratchLocationFromLivePoint(
+            plan,
+            sentinelMap,
+            liveFragment,
+            scratchFragment,
+            parent,
+            run[0].getIndexWithinParent(),
+            viewOptions,
+          )
+        : undefined;
+    }
     const path = $childPath(preserved.member, node);
     if (!path) return undefined;
     const settled = sentinelMap[preserved.sentinelIndex]?.[preserved.memberIndex];

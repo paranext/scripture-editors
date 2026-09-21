@@ -39,7 +39,9 @@ import { act } from "@testing-library/react";
 import {
   $getNodeByKey,
   $getRoot,
+  $getSelection,
   $isElementNode,
+  $isRangeSelection,
   $isTextNode,
   LexicalEditor,
   LexicalNode,
@@ -49,6 +51,7 @@ import {
   $isChapterNode,
   $isMarkerNode,
   $isParaNode,
+  $isUnknownNode,
   $isVerseNode,
   getPendedDisplayOwners,
   MarkerNode,
@@ -509,6 +512,67 @@ describe("a preserved run the settle drops from one side only", () => {
     expect(location).toEqual({
       jsonPath: contentPath([2, tail.index]),
       offset: tail.offset + 2,
+    });
+  });
+
+  /**
+   * Deleting an optbreak's `//` leaves the caret in the emptied husk, which the settled document
+   * has no node for. The caret still has a place there: where the husk stood, which is where the
+   * text on either side of it meets once the husk is spliced out.
+   */
+  it("reports a caret left where the husk stood at the join of the text around it", async () => {
+    const { ref, lexical, para, context } = await huskBeforeTwoNotes();
+    const head = settledTextSite(para, "head");
+    const join = { jsonPath: contentPath([2, head.index]), offset: head.offset + "head ".length };
+
+    const [caretIsInHusk, location, selection] = lexical.getEditorState().read(() => {
+      const prepared = $prepareSettleScopes(context);
+      const husk = $getRoot()
+        .getChildren()
+        .filter($isParaNode)[0]
+        .getChildren()
+        .find($isUnknownNode);
+      if (!husk) throw new Error("no husk");
+      const current = $getSelection();
+      return [
+        $isRangeSelection(current) && current.anchor.key === husk.getKey(),
+        $settledLocationFromLivePoint(prepared, husk, 0),
+        $settledSelectionFromLive(prepared),
+      ] as const;
+    });
+
+    expect(caretIsInHusk).toBe(true);
+    expect(location).toEqual(join);
+    expect(selection).toEqual({ start: join });
+    expect(ref.current?.getSelection()).toEqual({ start: join });
+  });
+
+  it("reports a range ending where the husk stood", async () => {
+    const { lexical, para, context } = await huskBeforeTwoNotes();
+    const head = settledTextSite(para, "head");
+    await act(async () => {
+      lexical.update(() => {
+        const current = $getSelection();
+        if (!$isRangeSelection(current)) throw new Error("expected a range selection");
+        const husk = $getRoot()
+          .getChildren()
+          .filter($isParaNode)[0]
+          .getChildren()
+          .find($isUnknownNode);
+        if (!husk) throw new Error("no husk");
+        current.anchor.set($textContaining("head").getKey(), 1, "text");
+        current.focus.set(husk.getKey(), 0, "element");
+      });
+      await Promise.resolve();
+    });
+
+    const selection = lexical
+      .getEditorState()
+      .read(() => $settledSelectionFromLive($prepareSettleScopes(context)));
+
+    expect(selection).toEqual({
+      start: { jsonPath: contentPath([2, head.index]), offset: head.offset + 1 },
+      end: { jsonPath: contentPath([2, head.index]), offset: head.offset + "head ".length },
     });
   });
 
