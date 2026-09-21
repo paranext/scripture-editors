@@ -111,11 +111,17 @@ function $noteScopeOnPath(
   return undefined;
 }
 
-function $settledTarget(prepared: PreparedScopes, location: UsjDocumentLocation): SettledTarget {
+/** Where `location` has to be resolved, or `undefined` when its top-level index names no item of
+ * the settled document at all. */
+function $settledTarget(
+  prepared: PreparedScopes,
+  location: UsjDocumentLocation,
+): SettledTarget | undefined {
   const indexes = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
   // The document root addresses itself: no top-level index to restate.
   if (indexes.length === 0) return { kind: "live", location };
   const top = prepared.settledToLiveTopIndex(indexes[0]);
+  if (!top) return undefined;
   if (top.plan)
     return {
       kind: "scope",
@@ -421,6 +427,7 @@ export function $livePointFromSettledLocation(
   location: UsjDocumentLocation,
 ): FragmentPoint | undefined {
   const target = $settledTarget(prepared, location);
+  if (!target) return undefined;
   if (target.kind === "scope") return $livePointInScope(context, prepared, target);
   const [node, offset] = $getNodeFromLocation(target.location, prepared.viewOptions);
   if (!node || offset === undefined) return undefined;
@@ -434,6 +441,7 @@ function $liveLocationFromSettled(
   location: UsjDocumentLocation,
 ): UsjDocumentLocation | undefined {
   const target = $settledTarget(prepared, location);
+  if (!target) return undefined;
   // Outside every rebuilt scope only the top-level index moves, and restating it keeps the
   // location's own subtype and offsets exactly as the host wrote them — resolving and
   // re-reporting it would put it through the snapping rules a second time.

@@ -70,12 +70,16 @@ export interface PreparedScopes {
    * node. */
   liveToSettledTopIndex(liveIndex: number): number;
   /** Settled top-level index → the live index it came from, the plan that replaced it (when one
-   * did), and which of that plan's settled items this index is. */
-  settledToLiveTopIndex(settledIndex: number): {
-    liveIndex: number;
-    plan?: SettleScopePlan;
-    indexWithinScope: number;
-  };
+   * did), and which of that plan's settled items this index is — or `undefined` for an index past
+   * the settled document's end, which names nothing a host can have read even where the live tree
+   * has an item at that index. */
+  settledToLiveTopIndex(settledIndex: number):
+    | {
+        liveIndex: number;
+        plan?: SettleScopePlan;
+        indexWithinScope: number;
+      }
+    | undefined;
   /** The plan whose live nodes contain `node`, if any — the NEAREST one, so a note settling
    * inside a settling paragraph answers with the note. */
   planContaining(node: LexicalNode): SettleScopePlan | undefined;
@@ -619,8 +623,7 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
   return {
     byFirstLiveKey,
     liveToSettledTopIndex: (liveIndex) => liveToSettled[liveIndex] ?? liveIndex,
-    settledToLiveTopIndex: (settledIndex) =>
-      settledToLive[settledIndex] ?? { liveIndex: settledIndex, indexWithinScope: 0 },
+    settledToLiveTopIndex: (settledIndex) => settledToLive[settledIndex],
     planContaining: (node) => {
       for (let current: LexicalNode | null = node; current; current = current.getParent()) {
         const plan = byLiveKey.get(current.getKey());
