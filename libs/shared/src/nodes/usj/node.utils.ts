@@ -10,7 +10,6 @@ import {
   $isElementNode,
   $isLineBreakNode,
   $isRangeSelection,
-  $isRootNode,
   $isTextNode,
   $setState,
   BaseSelection,
@@ -35,7 +34,6 @@ import {
   isSerializedImmutableTypedTextNode,
 } from "../features/ImmutableTypedTextNode.js";
 import { $isMarkerNode, isSerializedMarkerNode } from "../features/MarkerNode.js";
-import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { $isUnknownNode, UnknownNode } from "../features/UnknownNode.js";
 import { $isAttributeRunNode } from "./AttributeRunNode.js";
 import { $isBookNode, BookNode } from "./BookNode.js";
@@ -64,6 +62,12 @@ import { $isParaNode, isSerializedParaNode, ParaNode, SerializedParaNode } from 
 import { $isVerseNode, VerseNode } from "./VerseNode.js";
 import { $noteEditableCallerNode } from "./attributeDisplay.utils.js";
 import { $charSeparatorPrefixLength } from "./markerSeparators.utils.js";
+import {
+  $getLogicalParent,
+  $isContentTransparent,
+  $isSplicedImpliedPara,
+} from "./logicalParent.utils.js";
+import { closingMarkerText, openingMarkerText } from "./markerText.utils.js";
 import { collapsedSpaceRunRanges } from "./spaceRuns.utils.js";
 import {
   EMPTY_CHAR_PLACEHOLDER_TEXT,
@@ -72,6 +76,14 @@ import {
   UnknownAttributes,
 } from "./node-constants.js";
 import { isCursorPlaceholderOnly } from "../../plugins/CursorHandler/index.js";
+
+export { $getLogicalParent } from "./logicalParent.utils.js";
+export {
+  closingMarkerText,
+  getEditableCallerText,
+  getVisibleOpenMarkerText,
+  openingMarkerText,
+} from "./markerText.utils.js";
 
 export type NodesWithMarker =
   | BookNode
@@ -460,29 +472,6 @@ export function removeNodesBeforeNode(
 }
 
 /**
- * Gets the opening marker text.
- * @param marker - The USFM marker.
- * @param nested - Whether the span nests inside another char span. A nested span's marker carries
- *   the `+` prefix (`\+w`) — ParatextData's writer rule and PT9's on-screen display for USFM ≤3.0,
- *   where `+` is what makes a bare char marker nest instead of closing the enclosing span. The
- *   glyph must show it so a re-tokenization of the visible text reproduces the same nesting.
- * @returns the opening marker text.
- */
-export function openingMarkerText(marker: string, nested = false): string {
-  return `\\${nested ? "+" : ""}${marker}`;
-}
-
-/**
- * Gets the closing marker text.
- * @param marker - The USFM marker.
- * @param nested - Whether the span nests inside another char span (see {@link openingMarkerText}).
- * @returns the closing marker text.
- */
-export function closingMarkerText(marker: string, nested = false): string {
-  return `\\${nested ? "+" : ""}${marker}*`;
-}
-
-/**
  * Parse number from marker text.
  * @param marker - Chapter or verse marker.
  * @param text - Text to parse.
@@ -513,19 +502,6 @@ export function parseNumberFromMarkerText(
     if (match) number = match[1];
   }
   return number;
-}
-
-/**
- * Gets the open marker text with the marker visible.
- * @param marker - Verse marker.
- * @param content - Content such as chapter or verse number.
- * @returns the marker text with the open marker visible.
- */
-export function getVisibleOpenMarkerText(marker: string, content: string | undefined): string {
-  let text = openingMarkerText(marker);
-  if (content) text += `${NBSP}${content}`;
-  text += " ";
-  return text;
 }
 
 /** The `textType` NodeState of a serialized node, if any — the serialize-only mirror of the live
@@ -584,15 +560,6 @@ export function getPreviewTextFromSerializedNodes(childNodes: SerializedLexicalN
     .trim();
 
   return previewText;
-}
-
-/**
- * Get editable note caller text.
- * @param noteCaller - Note caller.
- * @returns caller text.
- */
-export function getEditableCallerText(noteCaller: string): string {
-  return " " + noteCaller + NBSP;
 }
 
 /**
@@ -1106,23 +1073,6 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
 }
 
 /**
- * Whether `node` is an implied paragraph the editor→USJ conversion splices away: one directly under
- * the root, where the loader puts content that comes before a document's first block. Its children
- * are the root's own content items in USJ, so it is as transparent to content indexes as an
- * annotation mark. The conversion splices root children only, so an implied paragraph anywhere
- * else keeps its index.
- */
-function $isSplicedImpliedPara(node: LexicalNode | null | undefined): node is ImpliedParaNode {
-  return $isImpliedParaNode(node) && $isRootNode(node.getParent());
-}
-
-/** Whether `node` contributes no content item of its own, its children standing in its place: an
- * annotation mark, or an implied paragraph the conversion splices away. */
-function $isContentTransparent(node: LexicalNode | null | undefined): node is ElementNode {
-  return $isTypedMarkNode(node) || $isSplicedImpliedPara(node);
-}
-
-/**
  * Which live nodes make up each logical content item, before any text is measured. An item's
  * index depends only on this shape; its text offsets also depend on how serialization treats
  * whitespace.
@@ -1248,18 +1198,6 @@ export function $getLogicalContentItems(
   return $getLogicalItemShapes(parent).map((shape) =>
     shape.type === "element" ? shape : $measureTextItem(shape.nodes, collapsesSpaceRuns),
   );
-}
-
-/**
- * Gets the nearest ancestor that owns the node's logical content index — skipping annotation
- * wrappers and the root's implied paragraph, which are transparent in USJ.
- * @param node - The node to get the logical parent of.
- * @returns the logical parent element, or `null` at the root.
- */
-export function $getLogicalParent(node: LexicalNode): ElementNode | null {
-  let parent: ElementNode | null = node.getParent();
-  while (parent && $isContentTransparent(parent)) parent = parent.getParent();
-  return parent;
 }
 
 /**

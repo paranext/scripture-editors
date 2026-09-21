@@ -33,7 +33,7 @@
 
 import { $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
 import { $isCharNode, CharNode } from "./CharNode.js";
-import { $getLogicalParent } from "./node.utils.js";
+import { $getLogicalParent } from "./logicalParent.utils.js";
 import { LexicalNode } from "lexical";
 
 /** Whether `char` is a nested char span — its LOGICAL parent is another char span. Read through

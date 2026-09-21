@@ -58,7 +58,7 @@ import { ChapterNode } from "./ChapterNode.js";
 import { $isCharNode, CharNode } from "./CharNode.js";
 import { MilestoneNode, MS_NON_ATTRIBUTE_PROPS } from "./MilestoneNode.js";
 import { UnknownAttributes } from "./node-constants.js";
-import { getEditableCallerText, openingMarkerText } from "./node.utils.js";
+import { getEditableCallerText, openingMarkerText } from "./markerText.utils.js";
 import { NoteNode } from "./NoteNode.js";
 import { $isVerseNode, VerseNode } from "./VerseNode.js";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";

@@ -15,7 +15,7 @@ import {
   isHTMLElement,
 } from "lexical";
 import { CHAPTER_CLASS_NAME, UnknownAttributes } from "./node-constants.js";
-import { getVisibleOpenMarkerText } from "./node.utils.js";
+import { getVisibleOpenMarkerText } from "./markerText.utils.js";
 
 export const IMMUTABLE_CHAPTER_VERSION = 1;
 
