@@ -145,7 +145,11 @@ export interface EditorRef {
    * it implicitly.
    */
   setTransientInput(input: TransientInput | undefined): void;
-  /** Set the USJ Scripture data. */
+  /**
+   * Set the USJ Scripture data. Does nothing when `usj` is the document {@link EditorRef.getUsj}
+   * returns now, so the caret and the undo history survive; any other document replaces the
+   * editor's content, including one that differs only in a marker edit still in progress.
+   */
   setUsj(usj: Usj): void;
   /**
    * EXPERIMENTAL: Apply Operational Transform delta update.
