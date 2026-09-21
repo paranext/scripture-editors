@@ -491,6 +491,24 @@ describe("\\c/\\id strip on paste", () => {
   });
 });
 
+describe("a space pasted as an NBSP", () => {
+  it("keeps the space between a word and the opening marker that follows it", async () => {
+    // A word processor's non-breaking space (or any source whose `text/plain` keeps one) in front
+    // of a marker is still the space between two words; dropping it glued them together.
+    const { editor, text } = await bookChapterParaHost();
+    await pasteAndSettle(editor, () => text.select(7, 7), `the${NBSP}\\nd Lord\\nd* said `);
+    await act(async () => editor.update(() => $getRoot().selectStart()));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const para = usjOf(editor).content[2] as MarkerObject;
+    expect(para.content?.[0]).toBe("before the ");
+    expect(para.content?.[1]).toMatchObject({ type: "char", marker: "nd", content: ["Lord"] });
+  });
+});
+
 describe("a pasted marker literal splits rather than retagging the host", () => {
   it('paste "\\zz one two" at a "\\p" host\'s content start: the host stays a `\\p`, the pasted marker gets its own paragraph', async () => {
     // A paste inserts what was pasted and nothing more. The host paragraph keeps the marker it

@@ -273,10 +273,13 @@ const BEFORE_MARKER_NBSP = new RegExp(String.raw`\u00A0(?=${MARKER_TOKEN})`, "g"
  * 2. An NBSP immediately FOLLOWING a marker token is the required opener/closer separator and
  *    becomes a plain space (e.g. the mandatory space after `\f`/`\fr`, or a char span's own
  *    leading separator when the marker literal IS present in the pasted text).
- * 3. An NBSP immediately PRECEDING a marker token is a structural spacer with no source
- *    counterpart — `createNote`'s inter-child spacer sits exactly here — and is DROPPED entirely
- *    (neither spaced nor kept as data): `\nd Lord\u00A0\nd*` settles to `\nd Lord\nd*`, matching
- *    the source USFM, which needs no byte there at all.
+ * 3. An NBSP immediately PRECEDING a marker token becomes a plain space — `the\u00A0\nd Lord`
+ *    keeps the space between its words, and `\nd Lord\u00A0\nd*` keeps its span's trailing space.
+ *    None is dropped, even where a note's display layout puts a spacer (before a child's marker or
+ *    the note's own `\f*`): the one copy that still puts that layout on the clipboard, the read-only
+ *    Markers view's, is not valid USFM on other counts either (no caller, no separator after a char
+ *    marker), and telling its spacers apart from a space the user typed there is not possible from
+ *    the text alone. Keeping a spacer costs a stray space; dropping a user's space loses content.
  *
  * Passes 2 and 3 both match against the SAME `AFTER_MARKER_NBSP`/`BEFORE_MARKER_NBSP` token set,
  * so a marker recognized by one is recognized by the other. Every remaining NBSP is genuine data
@@ -287,7 +290,7 @@ export function normalizePastedNbsp(text: string): string {
   return text
     .replace(/^\u00A0+/gm, (run) => " ".repeat(run.length))
     .replace(AFTER_MARKER_NBSP, "$1 ")
-    .replace(BEFORE_MARKER_NBSP, "")
+    .replace(BEFORE_MARKER_NBSP, " ")
     .replaceAll(NBSP, "~");
 }
 

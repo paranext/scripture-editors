@@ -364,8 +364,8 @@ function registerPasteNormalization(
         // Standard view: every pasted NBSP is normalized POSITIONALLY here, via the same
         // `normalizePastedNbsp` the Standard-view external-paste handler uses
         // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`,
-        // a note's inter-child spacer) settles to a space or is dropped exactly as it would
-        // outside a note, and only genuine data survives as `~`. Inserted raw an NBSP is
+        // a note's inter-child spacer) settles to a space exactly as it would outside a note, and
+        // only genuine data survives as `~`. Inserted raw an NBSP is
         // indistinguishable from a display-NBSP (a plain space in a run), so serialization would
         // corrupt it into a plain space if left unmapped. A pasted literal `~` is already the
         // display form and passes through unchanged. `\c`/`\id` bytes are dropped first, via the
