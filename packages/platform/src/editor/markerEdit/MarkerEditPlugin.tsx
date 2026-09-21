@@ -906,8 +906,13 @@ export function MarkerEditPlugin({
                   context.structureProtectionMode === "protected" &&
                   $isRangeSelection(selection) &&
                   $shouldBlockSelectionReplacement(selection)
-                )
+                ) {
+                  // The CRITICAL cut arm below has already armed the whole-paragraph reap for this
+                  // selection. A refused cut changes nothing, so no commit runs the update listener
+                  // that resets it, and the next commit's transforms would read it as fresh.
+                  context.wholeParaDeleteExpected?.clear();
                   return false;
+                }
                 return $handleCopyForStandardView(
                   event && typeof event === "object" && "clipboardData" in event ? event : null,
                   editor,
