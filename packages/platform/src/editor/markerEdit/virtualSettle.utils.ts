@@ -864,7 +864,7 @@ function rewriteSettledGlyphMarker(json: SerializedLexicalNode, marker: string):
  * a faithful mirror of the live mutation, not just the slice of it this settle's own OUTPUT
  * happens to expose today.
  */
-function $applySettledNoteGlyphRename(
+export function $applySettledNoteGlyphRename(
   rename: { glyph: MarkerNode; note: NoteNode; oldMarker: string; newMarker: string },
   sites: Map<NodeKey, SerializedSite>,
 ): void {

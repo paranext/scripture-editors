@@ -19,6 +19,7 @@ import {
   Tier2Context,
 } from "../markerEdit/tier2Rebuild.utils";
 import {
+  $applySettledNoteGlyphRename,
   $applySettledNoteScope,
   $collectSettleScopes,
   $settledChapterScope,
@@ -200,8 +201,22 @@ function materializeScratch(
  * as the same signature. */
 const SIGNATURE_SEPARATOR = "\u0000";
 
-/** The content signature a plan is memoized on: the same displayed bytes under the same view, with
- * the same declaration over them, settle to the same thing. */
+/** Every key in `nodes`' subtrees, depth-first. */
+function $subtreeKeys(nodes: readonly LexicalNode[], out: NodeKey[] = []): NodeKey[] {
+  for (const node of nodes) {
+    out.push(node.getKey());
+    if ($isElementNode(node)) $subtreeKeys(node.getChildren(), out);
+  }
+  return out;
+}
+
+/**
+ * The signature a plan is memoized on: the same displayed bytes under the same view, with the same
+ * declaration over them, settle to the same thing — and the same NODES hold them. A plan keeps live
+ * node references and pairs them with the settled tree by position, so an edit that changes no
+ * displayed byte but splits, wraps or replaces a node (annotating text does exactly that) must not
+ * reuse it: its spans would still claim the split node's old extent.
+ */
 function $planSignature(
   kind: SettleScopePlan["kind"],
   liveNodes: readonly LexicalNode[],
@@ -211,12 +226,13 @@ function $planSignature(
 ): string {
   const view = `${tier2.viewOptions.markerMode}/${tier2.viewOptions.noteMode}`;
   const content = liveNodes.map((node) => node.getTextContent()).join(SIGNATURE_SEPARATOR);
+  const nodes = $subtreeKeys(liveNodes).join(" ");
   // The declaration's own NODE is part of what it means: the same run at the same offset in a
   // different node is a different cut, and therefore a different settled scope.
   const declared = transient
     ? `${transient.node.getKey()}:${transient.run}@${transient.caretOffset}`
     : "";
-  return [kind, view, fragmentText, content, declared].join(SIGNATURE_SEPARATOR);
+  return [kind, view, fragmentText, content, nodes, declared].join(SIGNATURE_SEPARATOR);
 }
 
 /** Every NoteNode under `nodes`, depth-first. */
@@ -349,6 +365,15 @@ function $cutLiveFragment(
   };
 }
 
+/** Every pending note-marker rename, applied to a scope's serialized copy the way the read-only
+ * settle applies it to the whole document, so the scratch tree is the note `getUsj()` returns
+ * rather than one still carrying the old marker. A rename whose note is not in `sites` is not this
+ * scope's, and is a no-op. */
+function $applyNoteGlyphRenames(scopes: SettleScopes, sites: Map<NodeKey, SerializedSite>): void {
+  for (const rename of scopes.noteGlyphRenames.values())
+    $applySettledNoteGlyphRename(rename, sites);
+}
+
 /** The note scope's plan: the note's own serialized form with its settled content spliced in. */
 function $planForNote(
   note: NoteNode,
@@ -361,6 +386,7 @@ function $planForNote(
   const serialized = $exportSubtree(note);
   const sites = new Map<NodeKey, SerializedSite>();
   $mapSerializedSites([note], [serialized], sites);
+  $applyNoteGlyphRenames(scopes, sites);
   // A refusal leaves the serialized note untouched, which is the settle saying this scope is
   // already what it settles to — no plan, so positions in it address the live tree directly.
   if (!$applySettledNoteScope(note, sites, context.tier2, scopes.huskKeys, transient))
@@ -384,6 +410,7 @@ function $planForParas(
   const serialized = paras.map($exportSubtree);
   const sites = new Map<NodeKey, SerializedSite>();
   $mapSerializedSites(paras, serialized, sites);
+  $applyNoteGlyphRenames(scopes, sites);
   $notesWithin(paras)
     .filter((note) => scopes.noteScopes.has(note.getKey()))
     .forEach((note) =>
@@ -430,6 +457,7 @@ function $planForHuskOnlyPara(
   const serialized = $exportSubtree(para);
   const sites = new Map<NodeKey, SerializedSite>();
   $mapSerializedSites([para], [serialized], sites);
+  $applyNoteGlyphRenames(scopes, sites);
   $notesWithin([para])
     .filter((note) => scopes.noteScopes.has(note.getKey()))
     .forEach((note) =>

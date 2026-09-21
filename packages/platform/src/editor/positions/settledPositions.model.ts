@@ -114,10 +114,10 @@ export interface SettledRunMember {
 }
 
 /**
- * Plans memoized on their scope's content, so repeated position calls against an unchanged
- * pending state reuse one basis rather than re-running the settle and rebuilding a scratch editor
- * per call. Keyed by the scope's first live node; entries whose scope is no longer pending are
- * dropped on the next preparation.
+ * Plans memoized on their scope's content and nodes, so repeated position calls against an
+ * unchanged pending state reuse one basis rather than re-running the settle and rebuilding a
+ * scratch editor per call. Keyed by the scope's first live node; entries whose scope is no longer
+ * pending are dropped on the next preparation.
  */
 export interface SettledScopeCache {
   entries: Map<NodeKey, { signature: string; plan: SettleScopePlan }>;

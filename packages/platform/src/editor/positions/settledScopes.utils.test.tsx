@@ -5,14 +5,32 @@
  * that is the whole premise of carrying a position across a settle — so the scope rows assert the
  * settled fragment against the live one rather than against a transcribed string.
  */
-import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { FragmentAccumulator } from "../markerEdit/tier2Rebuild.utils";
 import { $prepareSettleScopes, cutFragment } from "./settledScopes.utils";
+import { $livePointFromSettledLocation } from "./settledPositions.utils";
 import { SettleScopePlan } from "./settledPositions.model";
-import { settledPositionContext, twoParaUsj, $textContaining } from "./positions.test-helpers";
+import {
+  emptyOptbreakHusk,
+  optbreakAndTwoNotesUsj,
+  settledPara,
+  settledPositionContext,
+  settledTextSite,
+  twoParaUsj,
+  $textContaining,
+} from "./positions.test-helpers";
 import { act } from "@testing-library/react";
-import { LexicalEditor } from "lexical";
-import { getPendedDisplayOwners } from "shared";
+import { $getRoot, LexicalEditor } from "lexical";
+import {
+  $isCharNode,
+  $isMarkerNode,
+  $isNoteNode,
+  $isParaNode,
+  $isTypedMarkNode,
+  getPendedDisplayOwners,
+} from "shared";
+import { $pendGlyphEdit } from "../markerEdit/markerEdit.test-helpers";
+import { usjJsonPathFromIndexes } from "@eten-tech-foundation/scripture-utilities";
 
 /** Type `text` into the paragraph's body and leave the caret at its start — the shape that keeps a
  * terminated literal PENDING instead of re-tokenizing inline in the same commit (see the
@@ -164,6 +182,100 @@ describe("$prepareSettleScopes", () => {
     const afterPlan = onlyPlan(after.byFirstLiveKey);
     expect(afterPlan).not.toBe(beforePlan);
     expect(afterPlan.scratchFragment?.text).toContain("other");
+  });
+
+  it("rebuilds the plan once the scope's nodes change under unchanged bytes", async () => {
+    // Annotating text splits its text node and changes no displayed byte, so a plan memoized on
+    // bytes alone outlives the nodes it pairs with the settled tree — and carries a position onto
+    // the split node's old extent, past its new end. The paragraph is pending on an emptied
+    // optbreak husk, which an annotation elsewhere in it leaves pending.
+    const { ref, lexical } = await mountExpandedNoteEditor(optbreakAndTwoNotesUsj());
+    await emptyOptbreakHusk(lexical);
+    const tail = settledTextSite(settledPara(ref.current?.getUsj(), 2), "tail text");
+    const cache = { entries: new Map() };
+    const context = settledPositionContext(lexical, { cache });
+    const before = lexical.getEditorState().read(() => $prepareSettleScopes(context));
+
+    await act(async () => {
+      ref.current?.setAnnotation(
+        {
+          start: { jsonPath: usjJsonPathFromIndexes([2, tail.index]), offset: tail.offset },
+          end: { jsonPath: usjJsonPathFromIndexes([2, tail.index]), offset: tail.offset + 4 },
+        },
+        "spelling",
+        "s1",
+      );
+      await Promise.resolve();
+    });
+    // The premise: the annotation landed, and the paragraph is still pending.
+    expect(lexical.getEditorState().read(() => $textContaining("tail").getParent())).toSatisfy(
+      $isTypedMarkNode,
+    );
+    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
+
+    const [plan, point, text] = lexical.getEditorState().read(() => {
+      const prepared = $prepareSettleScopes(context);
+      const textNode = $textContaining(" text");
+      return [
+        onlyPlan(prepared.byFirstLiveKey),
+        // The `x` of "tail text", past the annotated "tail".
+        $livePointFromSettledLocation(context, prepared, {
+          jsonPath: usjJsonPathFromIndexes([2, tail.index]),
+          offset: tail.offset + "tail te".length,
+        }),
+        { key: textNode.getKey(), offset: textNode.getTextContent().indexOf("x") },
+      ] as const;
+    });
+
+    expect(plan).not.toBe(onlyPlan(before.byFirstLiveKey));
+    expect(point).toEqual({ ...text, type: "text" });
+  });
+
+  it("materializes a note's pending marker rename, as the settled document carries it", async () => {
+    // The note's own opening glyph is retyped to another note marker while its content is also
+    // pending, so the note is planned — and its scratch tree must be the note `getUsj()` returns.
+    const { ref, lexical } = await mountExpandedNoteEditor(
+      twoParaUsj([
+        "before ",
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ type: "char", marker: "fr", content: ["1.1"] }, "note body"],
+        },
+        " after",
+      ]),
+    );
+    await act(async () => {
+      lexical.update(() => {
+        const note = $getRoot()
+          .getChildren()
+          .filter($isParaNode)[0]
+          .getChildren()
+          .find($isNoteNode);
+        const glyph = note?.getFirstChild();
+        const reference = note?.getChildren().find($isCharNode);
+        const glyphs = reference?.getChildren().filter($isMarkerNode) ?? [];
+        if (!$isMarkerNode(glyph) || glyphs.length < 2) throw new Error("unexpected note shape");
+        $pendGlyphEdit(glyph, "\\fe");
+        $pendGlyphEdit(glyphs[0], "\\fq");
+        $pendGlyphEdit(glyphs[glyphs.length - 1], "\\fq*");
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const settledNote = settledPara(ref.current?.getUsj(), 2).content?.[1];
+    if (!settledNote || typeof settledNote === "string") throw new Error("expected a settled note");
+
+    const scratchMarker = lexical.getEditorState().read(() => {
+      const plan = onlyPlan($prepareSettleScopes(settledPositionContext(lexical)).byFirstLiveKey);
+      return plan.scratch
+        .getEditorState()
+        .read(() => $getRoot().getChildren().find($isNoteNode)?.getMarker());
+    });
+
+    expect(settledNote.marker).toBe("fe");
+    expect(scratchMarker).toBe(settledNote.marker);
   });
 
   it("drops a cached entry once its scope stops being pending", async () => {
