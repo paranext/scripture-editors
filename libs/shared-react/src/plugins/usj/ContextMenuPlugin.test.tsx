@@ -15,6 +15,7 @@ import {
   $createTextNode,
   $getRoot,
   COMMAND_PRIORITY_NORMAL,
+  COPY_COMMAND,
   KEY_ENTER_COMMAND,
   LexicalEditor,
   TextNode,
@@ -188,6 +189,57 @@ describe("ContextMenuPlugin keyboard selection", () => {
       expect(buttonSawEnter).toHaveBeenCalled();
       expect(press.defaultPrevented).toBe(false);
       expect(onSelect).not.toHaveBeenCalled();
+    } finally {
+      button.remove();
+    }
+  });
+
+  // A read-only editor's root is never `contentEditable`, so it can never take focus itself — a
+  // right-click there leaves focus on whatever the mousedown focused OUTSIDE the root (in a
+  // browser, a mouse-focusable ancestor such as a scroll container; here, a button standing in for
+  // it, since jsdom's right-click moves no focus). That focus target is still the menu's own:
+  // nothing has moved focus AWAY from it since the menu opened, which is the only thing that hands
+  // the keyboard to a different control.
+  it("still drives arrow/Enter when a read-only editor's root leaves focus on an already-focused control", async () => {
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append($createParaNode().append($createTextNode("In the beginning")));
+      },
+      <ContextMenuPlugin />,
+    );
+    const rootElement = editor.getRootElement();
+    if (!rootElement) throw new Error("editor has no root element");
+    await act(async () => {
+      editor.setEditable(false);
+    });
+    const copySeen = vi.fn();
+    editor.registerCommand(
+      COPY_COMMAND,
+      () => {
+        copySeen();
+        return true;
+      },
+      COMMAND_PRIORITY_NORMAL,
+    );
+    const button = document.createElement("button");
+    document.body.append(button);
+    try {
+      button.focus();
+      expect(document.activeElement).toBe(button);
+
+      await rightClick(rootElement);
+      // jsdom's right-click moves no focus, so the button stays where a focusable ancestor would.
+      expect(document.activeElement).toBe(button);
+
+      const indexOfCopy = menuItemTitles().indexOf("Copy");
+      expect(indexOfCopy).toBeGreaterThanOrEqual(0);
+      for (let i = 0; i <= indexOfCopy; i++) await pressKeyOnDocument("ArrowDown");
+      expect(selectedMenuItemTitle()).toBe("Copy");
+
+      await pressKeyOnDocument("Enter");
+
+      expect(copySeen).toHaveBeenCalledTimes(1);
+      expect(menuList()).toBeNull();
     } finally {
       button.remove();
     }

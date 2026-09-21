@@ -191,6 +191,10 @@ export function ContextMenuPlugin({
   }, [editor, isReadonly, extraOptions]);
 
   const menuRef = useRef<HTMLDivElement>(null);
+  // What had focus when the menu opened, so the keydown guard below can tell "focus never moved"
+  // apart from "focus moved to a control outside the editor" — see that guard for why the
+  // distinction matters.
+  const focusAtOpenRef = useRef<Element | null>(null);
 
   const closeMenu = useCallback(() => {
     setMenuState((prev) => ({ ...prev, isOpen: false }));
@@ -213,6 +217,7 @@ export function ContextMenuPlugin({
         return;
       }
       event.preventDefault();
+      focusAtOpenRef.current = document.activeElement;
       setMenuState({ isOpen: true, x: event.clientX, y: event.clientY });
       setSelectedIndex(undefined);
     };
@@ -260,12 +265,22 @@ export function ContextMenuPlugin({
         closeMenu();
         return;
       }
-      // The menu drives the keyboard only while the editor holds focus behind it. Nothing closes
-      // the menu when focus moves on (Tab), and this listener hears the whole document, so once
-      // another control has focus its keys are its own — claiming Enter there would stop a focused
-      // button from ever activating.
+      // The menu drives the keyboard only while focus is still where it was when the menu opened.
+      // Nothing closes the menu when focus moves on (Tab), and this listener hears the whole
+      // document, so once focus has MOVED to a control outside the editor root, that control's
+      // keys are its own — claiming Enter there would stop a focused button from ever activating.
+      // Focus-at-open still counts as "the editor's own" even when it sits outside the root: a
+      // READ-ONLY editor's root (`contentEditable=false`, no tabIndex) can never take focus, so a
+      // right-click there leaves focus wherever the mousedown happened to land — `body`, or a
+      // mouse-focusable ancestor such as a scroll container — and that pre-existing focus target
+      // has not "moved on" from anywhere; it was never inside the root to begin with.
       const focused = document.activeElement;
-      if (focused && focused !== document.body && !editor.getRootElement()?.contains(focused))
+      if (
+        focused &&
+        focused !== document.body &&
+        focused !== focusAtOpenRef.current &&
+        !editor.getRootElement()?.contains(focused)
+      )
         return;
       if (event.key === "ArrowDown") {
         event.preventDefault();
