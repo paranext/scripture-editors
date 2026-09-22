@@ -257,6 +257,52 @@ describe("char attribute display runs", () => {
   );
 });
 
+describe("a char run in a span with no content", () => {
+  // \p \w |lemma="stuff"\w* — the shape `createChar` builds for a char span whose USJ carries
+  // attributes but no content: the NBSP placeholder stands alone in front of the run.
+  //
+  // The placeholder has no bytes and no logical content of its own, so asked for a location it
+  // defers to its neighbor — the run. The run's `|` snaps LEFT, which is the placeholder. Nothing
+  // may take the other's answer, or the pair recurses until the stack overflows.
+  let editor: LexicalEditor;
+  let placeholder: TextNode;
+  let run: TextNode;
+  const charPath = "$.content[0].content[0]";
+
+  beforeAll(() => {
+    editor = createBasicTestEnvironment(NODES, () => {
+      placeholder = $createTextNode(NBSP);
+      run = $attributeText('|lemma="stuff"');
+      const char = $createCharNode("w", { lemma: "stuff" }).append(
+        $createMarkerNode("w", "opening"),
+        placeholder,
+        run,
+        $createMarkerNode("w", "closing"),
+      );
+      $getRoot().append($createParaNode("p").append($createMarkerNode("p", "opening"), char));
+    }).editor;
+  });
+
+  it("reports a caret at the end of the placeholder instead of recursing", () => {
+    editor.getEditorState().read(() => {
+      // Snapped left past the placeholder, which carries nothing, onto the opening glyph.
+      expect($getLocationFromNode(placeholder, 1, undefined)).toEqual({
+        jsonPath: `${charPath}['marker']`,
+        propertyOffset: 1,
+      });
+    });
+  });
+
+  it("reports the run's `|` instead of recursing", () => {
+    editor.getEditorState().read(() => {
+      expect($getLocationFromNode(run, 0, undefined)).toEqual({
+        jsonPath: `${charPath}['marker']`,
+        propertyOffset: 1,
+      });
+    });
+  });
+});
+
 describe("a char run collapsed to its default attribute", () => {
   // \p \w marker|stuff\w* — `lemma` is `\w`'s default attribute, so the run shows the bare value.
   let editor: LexicalEditor;

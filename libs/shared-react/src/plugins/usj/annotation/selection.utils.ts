@@ -744,6 +744,22 @@ function $locationFromDisplayBytes(
   }
 }
 
+/**
+ * Whether `node` is text that has no location of its own to report — neither display bytes nor a
+ * place in the logical content model — so being asked for one only makes it defer to a neighbor.
+ * An empty char span's NBSP placeholder is the shape that matters: `\w |lemma="x"\w*` renders as
+ * the opening glyph, the placeholder, then the attribute run. Whoever asks such a node must not
+ * take its answer, because for the run's own `|` that answer comes straight back to the run, and
+ * the two hops then recurse until the stack blows.
+ */
+function $defersToNeighbor(node: LexicalNode, collapsesSpaceRuns: boolean): boolean {
+  return (
+    $isTextNode(node) &&
+    !$displayBytesOf(node) &&
+    !$getLogicalTextLocation(node, 0, collapsesSpaceRuns)
+  );
+}
+
 /** Where the byte just before `node` sits — the answer for a byte with no representation of its own
  * (the `|` opening an attribute run), which keeps counting into that byte's offset space: the end
  * of the text before it, or the end of a nested span's closing glyph. Only what comes BEFORE
@@ -759,11 +775,19 @@ function $precedingTextLocation(
     start = mark;
     mark = start.getParent();
   }
-  const previous = start.getPreviousSibling();
+  // Walk back over text that would only defer to its neighbor — the deferral points forward, at
+  // this run, so taking it would cycle. Stepping strictly backwards through siblings terminates.
+  let previous = start.getPreviousSibling();
+  while (previous && $defersToNeighbor(previous, collapsesSpaceRuns))
+    previous = previous.getPreviousSibling();
   if (!previous) return undefined;
   const last = $isElementNode(previous) ? previous.getLastDescendant() : previous;
-  if (last && ($isTextNode(last) || $isDisplayByteDecorator(last)))
+  if (last && ($isTextNode(last) || $isDisplayByteDecorator(last))) {
+    // The same deferral one level down (a wrapper whose last descendant is that placeholder).
+    // Nothing here can answer, so report no preceding byte rather than following it.
+    if ($defersToNeighbor(last, collapsesSpaceRuns)) return undefined;
     return $locationFromNode(last, last.getTextContentSize(), collapsesSpaceRuns);
+  }
   const parent = previous.getParent();
   if (!parent) return undefined;
   return $locationFromNode(parent, previous.getIndexWithinParent() + 1, collapsesSpaceRuns);
