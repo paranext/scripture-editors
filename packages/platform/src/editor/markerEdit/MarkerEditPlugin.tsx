@@ -1022,6 +1022,19 @@ export function MarkerEditPlugin({
         () => $refuseLineBreakOnChapterLine(),
         COMMAND_PRIORITY_CRITICAL,
       ),
+      // A drop inserts through Lexical's clipboard path, which splits at every line break without
+      // going through INSERT_PARAGRAPH_COMMAND, so a drop on a chapter line goes in as one line,
+      // as a paste there does. LOW: below structure protection's HIGH block and the NORMAL
+      // replace-selection delete, above Lexical's own insertion at EDITOR.
+      editor.registerCommand(
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        (payload) => {
+          if (typeof payload === "string") return false;
+          const text = payload.dataTransfer?.getData("text/plain").replace(/\r\n?/g, "\n");
+          return !!text && $pasteOnChapterLine(text);
+        },
+        COMMAND_PRIORITY_LOW,
+      ),
       editor.registerCommand(
         INSERT_PARAGRAPH_COMMAND,
         () => {

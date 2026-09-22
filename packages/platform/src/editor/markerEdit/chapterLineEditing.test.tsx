@@ -9,7 +9,7 @@
  * Such a deletion now deletes the chapter marker, as it does in the USFM text, and leaves the text
  * after the selection in its own paragraph. The other half pins editing on the chapter line itself:
  * it cannot be split, so Enter there starts a new paragraph after it, Shift+Enter does nothing, and
- * a paste goes in as one line.
+ * a paste or a drop goes in as one line.
  */
 import { EditorRef } from "../editor.model";
 import { getEnterMenuItems } from "../markerMenu/markerItemSource";
@@ -117,6 +117,22 @@ function plainTextPaste(text: string): ClipboardEvent {
     },
     preventDefault: () => undefined,
   } as unknown as ClipboardEvent;
+}
+
+/**
+ * A duck-typed text drop, as Lexical hands it on from the browser's `insertFromDrop` input event
+ * (jsdom has no DataTransfer).
+ */
+function plainTextDrop(text: string): InputEvent {
+  return {
+    dataTransfer: {
+      types: ["text/plain"],
+      files: [],
+      getData: (type: string) => (type === "text/plain" ? text : ""),
+    },
+    inputType: "insertFromDrop",
+    preventDefault: () => undefined,
+  } as unknown as InputEvent;
 }
 
 /** A duck-typed cut event whose clipboard accepts writes (jsdom has no ClipboardEvent). */
@@ -387,6 +403,17 @@ describe("a caret on the chapter line", () => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
     await onChapterLine(lexical, () =>
       lexical.dispatchCommand(PASTE_COMMAND, plainTextPaste("aa\nbb")),
+    );
+    lexical.getEditorState().read(() => expect($getRoot().getChildrenSize()).toBe(3));
+    expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, "aa bb", VERSE_1_PARA, POETRY_PARA]);
+  });
+
+  // A drop inserts through Lexical's clipboard path, not the paste command, so it needs a claim of
+  // its own: without one the second line lands after the last paragraph of the chapter.
+  it("takes a multi-line drop as one line of text", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await onChapterLine(lexical, () =>
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, plainTextDrop("aa\r\nbb")),
     );
     lexical.getEditorState().read(() => expect($getRoot().getChildrenSize()).toBe(3));
     expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, "aa bb", VERSE_1_PARA, POETRY_PARA]);
