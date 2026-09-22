@@ -23,7 +23,7 @@
  * host, and how many key presses a crossing costs, cannot be asserted anywhere headless. Those stay
  * manual checks. Arrow traversal out of a host is not driven here either: jsdom re-resolves the DOM
  * selection between a guard-made arrival and a key press, so the sequence is unreliable in this
- * harness. `ArrowNavigationPlugin`'s own tests pin that rule against a directly-built host instead.
+ * harness. Nothing on this branch asserts it.
  */
 
 import editorUsjAdaptor, {

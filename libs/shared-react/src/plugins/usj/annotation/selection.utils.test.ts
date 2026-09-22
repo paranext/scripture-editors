@@ -27,6 +27,7 @@ import {
   $createMilestoneNode,
   $createParaNode,
   $createTypedMarkNode,
+  $createCursorPlaceholderNode,
   $createVerseBlockNode,
   $createVerseNode,
   ChapterNode,
@@ -1742,5 +1743,37 @@ describe("block verse layout", () => {
       .read(() => $getRangeFromUsjSelection({ start: { jsonPath: "$.content[0]", offset: 0 } }));
 
     expect(range).toBeUndefined();
+  });
+});
+
+describe("$getUsjSelectionFromEditor with a transient caret host", () => {
+  // A caret host is presentation, absent from the USJ the host application sees, so a caret
+  // resting in one has to report the position the host stands in for — the boundary just past the
+  // verse marker — and not fall back to the paragraph's start.
+  it("reports the empty verse's own position, not the paragraph start", () => {
+    let host: TextNode;
+    const { editor } = createBasicTestEnvironment([ParaNode, ImmutableVerseNode], () => {
+      host = $createCursorPlaceholderNode();
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createImmutableVerseNode("2"),
+          $createTextNode("And the earth. "),
+          $createImmutableVerseNode("3"),
+          host,
+          $createImmutableVerseNode("4"),
+          $createTextNode("Light."),
+        ),
+      );
+    });
+    // Non-null assertion is safe: host is assigned during setup.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    updateSelection(editor, host!, 0);
+
+    editor.getEditorState().read(() => {
+      // Same position the caret reports at this boundary when no host is present.
+      expect($getUsjSelectionFromEditor()).toEqual({
+        start: { jsonPath: "$.content[0]", offset: 3 },
+      });
+    });
   });
 });
