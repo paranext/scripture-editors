@@ -570,6 +570,29 @@ describe("clipboard normalization — null-event leg (ClipboardPlugin/ContextMen
     editor.getEditorState().read(() => expect(text.getTextContent()).toBe("ab"));
   });
 
+  it("CUT_COMMAND(null) against a read-only editor copies but removes nothing", async () => {
+    // `ClipboardPlugin`'s Ctrl+X listener dispatches CUT_COMMAND with no editability check of its
+    // own, and it is bound to the root element in every view — so a read-only surface reaches this
+    // handler with `isCut` set, and only the editor's own `isEditable` stands between the
+    // keystroke and a removal the surface exists to prevent.
+    let text: TextNode;
+    const { editor } = await testEnvironment(() => {
+      text = $createTextNode(`a${NBSP}${NBSP}b`);
+      $appendMarkerAndText(text);
+    });
+    await act(async () => editor.update(() => text.select(1, 3)));
+    await act(async () => editor.setEditable(false));
+    copyToClipboardSpy.mockClear();
+    let handled: boolean | undefined;
+    await act(async () => {
+      handled = editor.dispatchCommand(CUT_COMMAND, null);
+    });
+    expect(handled).toBe(true);
+    expect(copyToClipboardSpy).toHaveBeenCalledTimes(1);
+    expect(copyToClipboardSpy.mock.calls[0][2]?.["text/plain"]).toBe("  ");
+    editor.getEditorState().read(() => expect(text.getTextContent()).toBe(`a${NBSP}${NBSP}b`));
+  });
+
   it("declines an event-shaped payload whose clipboardData is null (no dispatch, no removal)", async () => {
     // A real ClipboardEvent can carry a null clipboardData (the DOM data store is only
     // guaranteed during dispatch of a trusted clipboard event). The pre-null-leg code declined
@@ -714,9 +737,8 @@ describe("copying an empty selection leaves the clipboard alone", () => {
     const { editor } = await copyEnvironmentWithFigure();
     await act(async () =>
       editor.update(() => {
-        const before = $dfs($getRoot())
-          .map(({ node }) => node)
-          .filter($isTextNode)
+        const before = $getRoot()
+          .getAllTextNodes()
           .find((node) => node.getTextContent() === "Before ");
         if (!before) throw new Error("expected the text before the figure to exist");
         before.select(before.getTextContentSize(), before.getTextContentSize());
@@ -1126,9 +1148,7 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
       expect($getRoot().getTextContent()).toContain("bold text");
       // No formatting survived the plain-text carrier: every text node is unformatted, unlike a
       // real Lexical HTML import of `<b>`, which would set the bold flag on a new TextNode.
-      const textNodes = $dfs($getRoot())
-        .map(({ node }) => node)
-        .filter($isTextNode);
+      const textNodes = $getRoot().getAllTextNodes();
       textNodes.forEach((node) => expect(node.getFormat()).toBe(0));
     });
   });
@@ -1279,10 +1299,32 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
         expect(stripPastedChapterAndBookId("before\n  \nafter")).toBe("before\n  \nafter");
       });
 
+      it("keeps whitespace the user wrote AHEAD of the token, and the line it sits on", () => {
+        // Only a line the token OPENS may go whole. A space or NBSP in front of it is content,
+        // and dropping the line would take that byte — and the line break — with the token.
+        expect(stripPastedChapterAndBookId(" \\c 5")).toBe(" ");
+        expect(stripPastedChapterAndBookId(`${NBSP}\\c 5`)).toBe(NBSP);
+        expect(stripPastedChapterAndBookId(" \\id MAT")).toBe(" ");
+        expect(stripPastedChapterAndBookId("before\n \\c 5\nafter")).toBe("before\n \nafter");
+      });
+
       it("leaves a name that merely starts with `c`/`id` alone", () => {
         expect(stripPastedChapterAndBookId(`\\cls${NBSP}x`)).toBe(`\\cls${NBSP}x`);
         expect(stripPastedChapterAndBookId("\\ide UTF-8")).toBe("\\ide UTF-8");
       });
+    });
+
+    it("keeps an NBSP pasted between `\\va*` and `\\vp` as a space, which unfolds `\\vp` — the byte is the user's", () => {
+      // The tokenizer treats any same-line whitespace between a verse and its attribute marker as
+      // content, so the space this leaves behind makes `\\vp` a standalone span instead of the
+      // verse's pubnumber (usfmFragmentToUsj.ts, the `attrTarget` text branch). That is the same
+      // outcome Paratext 9 reaches from the same bytes: with `AllowInvisibleChars` off — the
+      // default, and the semantics Standard view adopts — its own paste postprocessing turns every
+      // literal NBSP into a space too. Dropping the byte to preserve the fold would lose content
+      // the user pasted, which is the worse trade.
+      expect(normalizePastedNbsp(`\\v 12 \\va 12b\\va*${NBSP}\\vp 12p\\vp*`)).toBe(
+        "\\v 12 \\va 12b\\va* \\vp 12p\\vp*",
+      );
     });
 
     // The pins above hold byte-for-byte under the positional rule wherever the pasted text carries

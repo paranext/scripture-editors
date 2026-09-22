@@ -81,7 +81,8 @@ export function $selectionToUsfmViaStandardView(
  * No `application/x-lexical-editor` flavor is written: it would carry this view's display-shaped
  * nodes, which a native paste into an editable view would rebuild verbatim.
  *
- * A cut in a read-only editor copies and removes nothing; Ctrl+X reaches the command there too.
+ * A cut in a read-only editor copies and removes nothing ({@link $writeCopyPayload} owns that
+ * rule); Ctrl+X reaches the command there too.
  *
  * Registered at `COMMAND_PRIORITY_HIGH`, above the empty-copy guard and Lexical's own copy. Mount it
  * only for `markerMode: "visible"`. A range it cannot map is left to Lexical's own copy.
@@ -96,11 +97,15 @@ export function MarkersViewCopyPlugin({ viewOptions }: { viewOptions: ViewOption
       const usfm = $selectionToUsfmViaStandardView(editor, viewOptions);
       if (usfm === undefined) return false;
       return $writeCopyPayload(
-        event && "clipboardData" in event ? event : null,
+        // COPY_COMMAND's payload is `ClipboardEvent | KeyboardEvent | null`, and jsdom (our test
+        // environment) has no `ClipboardEvent` for `instanceof` to narrow against, so this
+        // duck-checks the one property `$writeCopyPayload` needs. `in` throws on a non-object, so
+        // the type check comes first.
+        event && typeof event === "object" && "clipboardData" in event ? event : null,
         editor,
         selection,
         { "text/plain": usfm, "text/html": usfmToClipboardHtml(usfm) },
-        isCut && editor.isEditable(),
+        isCut,
       );
     };
     return mergeRegister(

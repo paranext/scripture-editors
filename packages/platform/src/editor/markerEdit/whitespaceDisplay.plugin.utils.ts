@@ -224,9 +224,10 @@ export function getPastePayload(
   // ({@link $getStandardViewClipboardData}) — so the plain carrier stays authoritative and the foreign
   // data-NBSP loss is accepted.
   const paratext9Text = html ? paratext9HtmlToUsfm(html) : undefined;
-  const htmlText = () => (html ? normalizeLineEndings(htmlPasteText(html)) : "");
   return {
-    text: paratext9Text ? normalizeLineEndings(paratext9Text) : plainText || htmlText(),
+    text: paratext9Text
+      ? normalizeLineEndings(paratext9Text)
+      : plainText || (html ? normalizeLineEndings(htmlPasteText(html)) : ""),
     isInternal: isSameNamespaceLexicalPayload(
       clipboardData.getData("application/x-lexical-editor"),
       namespace,
@@ -314,6 +315,14 @@ const CHAPTER_TOKEN = new RegExp(
 const BOOK_ID_TOKEN = new RegExp(String.raw`\\id(?![${ENGINE_MARKER_NAME_BYTES}])[^\n\\]*`, "g");
 
 /**
+ * Either stripped token at the very START of a line — the one placement whose whole line may be
+ * dropped. Non-global on purpose: `.test` on a global regex carries `lastIndex` between calls.
+ */
+const LINE_LEADING_STRIPPED_TOKEN = new RegExp(
+  String.raw`^(?:${CHAPTER_TOKEN.source}|${BOOK_ID_TOKEN.source})`,
+);
+
+/**
  * Drops every pasted `\c`/`\id` token and its payload (the chapter number / book code, up to the
  * next marker or newline) before insertion. Both create a document-structural node PT9 allows
  * only once per book (a `ChapterNode`/`BookNode`, materialized from the marker name alone —
@@ -338,10 +347,11 @@ const BOOK_ID_TOKEN = new RegExp(String.raw`\\id(?![${ENGINE_MARKER_NAME_BYTES}]
  *
  * Splits on lines and strips per line (not one global pass over the whole text) so a token that
  * consumes an ENTIRE line can cleanly take that line's own newline with it too (no stray empty
- * paragraph left behind). A line that carried no other content becomes empty after stripping and is
- * dropped from the output entirely, rather than surviving as a blank paragraph — whitespace does
- * not count as other content, because a chapter line copies with its glyph's trailing separator
- * (`\c 5 `) and the token stops short of it; a line that was ALREADY blank in the source paste
+ * paragraph left behind). Only a line the token OPENS may go whole: whatever whitespace trails it
+ * is the glyph's own separator (a chapter line copies as `\c 5 `, and the token stops short of
+ * that space), so it goes with the token. Whitespace BEFORE the token is the user's: a space or
+ * NBSP ahead of `\c 5` survives as a one-character line instead of going with the token, because
+ * a byte the user wrote is never dropped. A line that was ALREADY blank in the source paste
  * (nothing to do with `\c`/`\id`) is left alone.
  *
  * Exported for the in-note CRITICAL multi-line paste claim (`MarkerEditPlugin.tsx`), which shares
@@ -354,7 +364,12 @@ export function stripPastedChapterAndBookId(text: string): string {
     .split("\n")
     .map((line) => {
       const stripped = line.replace(CHAPTER_TOKEN, "").replace(BOOK_ID_TOKEN, "");
-      return stripped.trim() === "" && line.trim() !== "" ? undefined : stripped;
+      // Anchored, so the line goes only when the token is what opened it. A token further in
+      // leaves whatever preceded it behind, whitespace included: that byte is content the user
+      // wrote, and dropping the line would take it — and the line break — with the token.
+      const isTokenOnlyLine =
+        LINE_LEADING_STRIPPED_TOKEN.test(line) && stripped.trim() === "" && line.trim() !== "";
+      return isTokenOnlyLine ? undefined : stripped;
     })
     .filter((line): line is string => line !== undefined)
     .join("\n");
@@ -833,11 +848,13 @@ export function usfmToClipboardHtml(usfm: string): string {
  * USFM allows once per book, which a paste must never duplicate.
  */
 function $selectionTouchesBookOrChapter(selection: RangeSelection): boolean {
-  return selection.getNodes().some((node) => {
-    for (let current: LexicalNode | null = node; current; current = current.getParent())
-      if ($isBookNode(current) || $isChapterNode(current)) return true;
-    return false;
-  });
+  return selection
+    .getNodes()
+    .some((node) =>
+      [node, ...node.getParents()].some(
+        (ancestor) => $isBookNode(ancestor) || $isChapterNode(ancestor),
+      ),
+    );
 }
 
 /**
@@ -932,6 +949,11 @@ export function $handleCopyForStandardView(
  * claims it — shared by Standard view's handler above and the Markers view's
  * (`MarkersViewCopyPlugin.tsx`), so both write their payloads the same way.
  *
+ * A cut removes the range only when the editor is editable: `ClipboardPlugin`'s Ctrl+X listener
+ * (and `ContextMenuPlugin`/`EditorRef`) dispatches `CUT_COMMAND` with no editability check of its
+ * own, so a read-only surface reaching this function must still copy and remove nothing. The rule
+ * lives here rather than at each call site so every caller gets it.
+ *
  * Mutating when `isCut`: call inside `editor.update()` — in practice, from a `COPY_COMMAND` or
  * `CUT_COMMAND` handler.
  */
@@ -952,13 +974,14 @@ export function $writeCopyPayload(
   // the user copied last intact. A cut still removes the range: the bytes it would have carried are
   // the ones that do not exist, not the nodes.
   const isEmptyPayload = !data["text/plain"];
+  const shouldRemoveRange = isCut && editor.isEditable();
   if (!event || !("clipboardData" in event)) {
     // Null-payload dispatch (ClipboardPlugin / ContextMenuPlugin / EditorRef): write via
     // Lexical's execCommand mechanism with OUR pre-normalized payload. copyToClipboard(null)
     // without `data` would intercept its own synthesized event at COMMAND_PRIORITY_CRITICAL
     // and write the stock payload — which is why this branch must pass `data`.
     if (!isEmptyPayload) void copyToClipboard(editor, null, data);
-    if (isCut) selection.removeText();
+    if (shouldRemoveRange) selection.removeText();
     return true;
   }
   // Event-shaped payload whose clipboardData is null/absent: decline outright. This is an
@@ -969,6 +992,6 @@ export function $writeCopyPayload(
   event.preventDefault();
   if (!isEmptyPayload)
     for (const [mime, value] of Object.entries(data)) event.clipboardData.setData(mime, value);
-  if (isCut) selection.removeText();
+  if (shouldRemoveRange) selection.removeText();
   return true;
 }
