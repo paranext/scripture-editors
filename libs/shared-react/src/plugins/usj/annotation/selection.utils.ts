@@ -607,16 +607,18 @@ function $displayBytesOf(node: LexicalNode): DisplayBytes | undefined {
     const spans = markerAndNumberSpans(parent.getMarker(), node.getTextContent());
     return spans ? { owner: parent, length: node.getTextContentSize(), spans } : undefined;
   }
-  if ($isNoteNode(parent) && $noteEditableCallerNode(parent)?.is(node)) {
+  // An annotation mark around the caller is transparent in USJ, so the note is the logical parent.
+  const note = $getLogicalParent(node);
+  if ($isNoteNode(note) && $noteEditableCallerNode(note)?.is(node)) {
     return {
-      owner: parent,
+      owner: note,
       length: node.getTextContentSize(),
       spans: [
         // The caller's leading space is the space after the note's own marker, which counts into
         // that marker name's offset space.
         {
           start: 0,
-          base: parent.getMarker().length,
+          base: note.getMarker().length,
           bytes: { kind: "property", property: "marker" },
         },
         { start: 1, base: 0, bytes: { kind: "property", property: "caller" } },
@@ -648,13 +650,15 @@ function $displayByteCarriers(owner: LexicalNode): LexicalNode[] {
     const chapterGlyph = $isChapterNode(owner) ? $chapterGlyphTextNode(owner) : undefined;
     const noteCaller = $isNoteNode(owner) ? $noteEditableCallerNode(owner) : undefined;
     for (const child of owner.getChildren()) {
-      if (
+      // The caller can sit inside an annotation mark, which is transparent in USJ.
+      if (noteCaller && (noteCaller.is(child) || child.isParentOf(noteCaller)))
+        carriers.push(noteCaller);
+      else if (
         $isMarkerNode(child) ||
         $isVisibleMarkerNode(child) ||
         ($isImmutableTypedTextNode(child) && child.getTextType() === "attribute") ||
         child.getType() === IMMUTABLE_NOTE_CALLER_NODE_TYPE ||
-        chapterGlyph?.is(child) ||
-        noteCaller?.is(child)
+        chapterGlyph?.is(child)
       )
         carriers.push(child);
     }

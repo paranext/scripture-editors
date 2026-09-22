@@ -43,6 +43,7 @@ import {
   $createMilestoneNode,
   $createNoteNode,
   $createParaNode,
+  $createTypedMarkNode,
   $createUnknownNode,
   $createVerseNode,
   getEditableCallerText,
@@ -682,6 +683,46 @@ describe("a note's glyph, caller, and `\\cat` run", () => {
         name: "`\\` of `\\cat*` opens the closing attribute marker's offset space",
         point: () => [catCloser, 0],
         location: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 0 },
+      },
+    ],
+  );
+});
+
+describe("a note's caller wrapped in an annotation mark", () => {
+  // \p \f + \ft Some footnote text.\f* — with a comment placed on the caller. The mark is
+  // transparent in USJ, so the caller's bytes keep their locations.
+  let editor: LexicalEditor;
+  let caller: TextNode;
+  const notePath = "$.content[0].content[0]";
+
+  beforeAll(() => {
+    editor = createBasicTestEnvironment(NODES, () => {
+      caller = $createTextNode(getEditableCallerText("+"));
+      const note = $createNoteNode("f", "+").append(
+        $createMarkerNode("f", "opening"),
+        $createTypedMarkNode({ comment: ["1"] }).append(caller),
+        $createCharNode("ft").append(
+          $createMarkerNode("ft", "opening"),
+          $createTextNode(`${NBSP}Some footnote text.`),
+        ),
+        $createMarkerNode("f", "closing"),
+      );
+      $getRoot().append($createParaNode("p").append($createMarkerNode("p", "opening"), note));
+    }).editor;
+  });
+
+  runSnapRows(
+    () => editor,
+    [
+      {
+        name: "the caller",
+        point: () => [caller, 1],
+        location: { jsonPath: `${notePath}['caller']`, propertyOffset: 0 },
+      },
+      {
+        name: "the space after the caller runs one past it",
+        point: () => [caller, 2],
+        location: { jsonPath: `${notePath}['caller']`, propertyOffset: 1 },
       },
     ],
   );
