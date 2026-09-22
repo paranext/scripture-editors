@@ -68,12 +68,17 @@ describe("a DOM point that IS a decorator's own element", () => {
   async function figureEnvironment(): Promise<{ editor: LexicalEditor }> {
     return baseTestEnvironment(
       () => {
-        const figure = $createUnknownNode("figure", "fig").append(
-          $createImmutableTypedTextNode("marker", "\\fig "),
-          $createTextNode("cap"),
-          $createImmutableTypedTextNode("marker", "\\fig*"),
+        const figure = $createUnknownNode("figure", "fig");
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createTextNode("before "),
+            figure.append(
+              $createImmutableTypedTextNode("marker", "\\fig "),
+              $createTextNode("cap"),
+              $createImmutableTypedTextNode("marker", "\\fig*"),
+            ),
+          ),
         );
-        $getRoot().append($createParaNode("p").append($createTextNode("before "), figure));
       },
       <DecoratorBoundarySelectionPlugin />,
     );
@@ -102,17 +107,22 @@ describe("a landing on a collapsed note's caller", () => {
    * `TrailingNoteCaretGuardPlugin` hosts a caret for. */
   async function noteEnvironment(children: ReactNode): Promise<{ editor: LexicalEditor }> {
     return baseTestEnvironment(() => {
-      const note = $createNoteNode("f", "+").append(
-        $createMarkerNode("f", "opening"),
-        $createImmutableNoteCallerNode("+", "note preview"),
-        $createMarkerTrailingSeparator(),
-        $createCharNode("ft").append(
-          $createMarkerNode("ft", "opening"),
-          $createTextNode("note body"),
+      const note = $createNoteNode("f", "+");
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("before "),
+          note.append(
+            $createMarkerNode("f", "opening"),
+            $createImmutableNoteCallerNode("+", "note preview"),
+            $createMarkerTrailingSeparator(),
+            $createCharNode("ft").append(
+              $createMarkerNode("ft", "opening"),
+              $createTextNode("note body"),
+            ),
+            $createMarkerNode("f", "closing"),
+          ),
         ),
-        $createMarkerNode("f", "closing"),
       );
-      $getRoot().append($createParaNode("p").append($createTextNode("before "), note));
     }, children);
   }
 

@@ -324,7 +324,16 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         "Editor: a visible `markerMode`, `hasSpacing: false`, `hasGutterParaMarkers` and " +
           "`hasActiveTextFocusBox` are not supported with the block verse layout and are ignored.",
       );
-  }, [isBlockVerse, isReadonly, isIgnoringParaFeatures, stableLogger]);
+    // The marker-edit engine that heals a damaged glyph, merges a paragraph whose prefix was
+    // deleted and polices what an edit to marker bytes MEANS is gated to `markerMode: "editable"`.
+    // A visible-marker surface left editable therefore takes ordinary edits — a typed character
+    // inside a glyph, a Ctrl+X across one — with none of that repair behind them.
+    if (viewOptions?.markerMode === "visible" && !isReadonly)
+      stableLogger?.warn(
+        "Editor: `markerMode: 'visible'` renders markers as read-only glyphs, but the editor is " +
+          "editable and no marker repair runs there. Pass `isReadonly: true` alongside it.",
+      );
+  }, [isBlockVerse, isReadonly, isIgnoringParaFeatures, stableLogger, viewOptions?.markerMode]);
 
   // Editable-mode document-first marker-menu harness (drives shared-react's `UsjNodesMenuPlugin`
   // "editableHarness" branch; see its doc comment). `undefined` outside markerMode "editable" so
@@ -681,33 +690,40 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     formatPara(blockMarker) {
       assertEditable("format a paragraph");
-      editorRef.current?.update(() => {
-        const selection = $getSelection();
-        // A caller with no live selection has nothing to retag. Say so rather than returning
-        // quietly: this is the toolbar's paragraph-marker path, and the popover that drives it
-        // takes focus off the editor — whose blur processing can null the editor-state selection
-        // — so an unheard refusal here looks exactly like a dropdown that does not work.
-        if (!$isRangeSelection(selection)) {
-          logger?.warn(
-            `formatPara refused: no range selection to retag with "${blockMarker}" ` +
-              "(restore the caret before applying, as the marker palettes do)",
-          );
-          return;
-        }
-        $setBlocksType(selection, () => $createParaNode(blockMarker));
-        // `$setBlocksType` MOVES each old block's children into its fresh ParaNode, so in
-        // editable marker mode the old marker's prefix glyph migrates over still reading the
-        // old marker. Re-apply the marker on every affected paragraph so glyph text (or a
-        // missing prefix) is brought back into agreement with the new marker state.
-        const updated = $getSelection();
-        if (!$isRangeSelection(updated)) return;
-        const affectedParas = new Set<ParaNode>();
-        updated.getNodes().forEach((node) => {
-          const block = node.getTopLevelElement();
-          if ($isParaNode(block)) affectedParas.add(block);
-        });
-        affectedParas.forEach((para) => $applyParaMarker(para, blockMarker, viewOptions));
-      });
+      // `discrete` for the same reason every other content-mutating method here uses it: a
+      // deferred commit leaves the committed state behind the live tree, and anything the caller
+      // does next against `editor.getEditorState()` — a copy, most visibly — reads the document
+      // as it was before this call.
+      editorRef.current?.update(
+        () => {
+          const selection = $getSelection();
+          // A caller with no live selection has nothing to retag. Say so rather than returning
+          // quietly: this is the toolbar's paragraph-marker path, and the popover that drives it
+          // takes focus off the editor — whose blur processing can null the editor-state selection
+          // — so an unheard refusal here looks exactly like a dropdown that does not work.
+          if (!$isRangeSelection(selection)) {
+            logger?.warn(
+              `formatPara refused: no range selection to retag with "${blockMarker}" ` +
+                "(restore the caret before applying, as the marker palettes do)",
+            );
+            return;
+          }
+          $setBlocksType(selection, () => $createParaNode(blockMarker));
+          // `$setBlocksType` MOVES each old block's children into its fresh ParaNode, so in
+          // editable marker mode the old marker's prefix glyph migrates over still reading the
+          // old marker. Re-apply the marker on every affected paragraph so glyph text (or a
+          // missing prefix) is brought back into agreement with the new marker state.
+          const updated = $getSelection();
+          if (!$isRangeSelection(updated)) return;
+          const affectedParas = new Set<ParaNode>();
+          updated.getNodes().forEach((node) => {
+            const block = node.getTopLevelElement();
+            if ($isParaNode(block)) affectedParas.add(block);
+          });
+          affectedParas.forEach((para) => $applyParaMarker(para, blockMarker, viewOptions));
+        },
+        { discrete: true },
+      );
     },
     getElementByKey(nodeKey: string): HTMLElement | undefined {
       return editorRef.current?.read(
@@ -888,18 +904,23 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     insertNote(marker, caller, selection) {
       assertEditable("insert a note");
-      editorRef.current?.update(() => {
-        const noteNode = $insertNote(
-          marker,
-          caller,
-          selection,
-          scrRef,
-          viewOptions,
-          nodeOptions,
-          stableLogger,
-        );
-        if (noteNode && !noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
-      });
+      // `discrete` for the same reason `formatPara` above uses it.
+      editorRef.current?.update(
+        () => {
+          const noteNode = $insertNote(
+            marker,
+            caller,
+            selection,
+            scrRef,
+            viewOptions,
+            nodeOptions,
+            stableLogger,
+          );
+          if (noteNode && !noteNode.getIsCollapsed())
+            expandedNoteKeyRef.current = noteNode.getKey();
+        },
+        { discrete: true },
+      );
     },
     selectNote(noteKeyOrIndex) {
       editorRef.current?.update(() => {
@@ -1127,11 +1148,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <DecoratorBoundarySelectionPlugin />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
-          {/* Standard view writes its own USFM copy (MarkerEditPlugin); the read-only Markers view
-              needs one too, since its display text is not USFM. The hidden-marker views copy prose. */}
-          {viewOptions?.markerMode === "visible" && (
-            <MarkersViewCopyPlugin viewOptions={viewOptions} />
-          )}
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects
               depend on it, so a host handing over a fresh-but-equivalent logger object each
               render would re-register their command listeners at the END of Lexical's
@@ -1144,6 +1160,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             markerSettleDelayMs={markerSettleDelayMs}
             structureProtectionMode={structureProtectionMode}
           />
+          {/* Standard view writes its own USFM copy (MarkerEditPlugin); the read-only Markers view
+              needs one too, since its display text is not USFM. The hidden-marker views copy prose. */}
+          {viewOptions?.markerMode === "visible" && (
+            <MarkersViewCopyPlugin viewOptions={viewOptions} />
+          )}
           <MarkerValidationPlugin
             styleInfo={styleInfo}
             viewOptions={viewOptions}

@@ -43,13 +43,26 @@ import { NBSP } from "shared";
 /** The comment-data prefix marking P9's escaped-USFM fidelity comment. */
 const USFM_COMMENT_PREFIX = "usfm:";
 
+/** The class names P9 stamps on a marker-bearing element to mark its opening/closing half, read by
+ * both {@link hasParatext9Signature} and {@link PARATEXT_9_SIGNATURE_BYTES}. */
+const USFM_OPEN_CLASS = "usfmopen";
+const USFM_CLOSED_CLASS = "usfmclosed";
+
+/** Escapes every regex-special character in `value` so it can be interpolated into a `RegExp`
+ * literally. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Byte runs at least one of which every html matching {@link hasParatext9Signature} contains: a
  * `usfm:` comment's own prefix, or an `usfmopen`/`usfmclosed` class. Tested on the raw string before
  * anything is parsed, so the html a word processor or browser puts beside a winning `text/plain` —
  * routinely hundreds of KB — costs a substring scan rather than a DOM parse on every paste.
  */
-const PARATEXT_9_SIGNATURE_BYTES = /usfm:|usfmopen|usfmclosed/;
+const PARATEXT_9_SIGNATURE_BYTES = new RegExp(
+  [USFM_COMMENT_PREFIX, USFM_OPEN_CLASS, USFM_CLOSED_CLASS].map(escapeRegExp).join("|"),
+);
 
 /** P9 inserts U+FEFF purely for caret positioning and strips it on every reformat, so it is never
  * document data. */
@@ -150,7 +163,7 @@ function hasParatext9Signature(body: HTMLElement): boolean {
     if ((node.nodeValue ?? "").startsWith(USFM_COMMENT_PREFIX)) return true;
   for (const element of body.querySelectorAll("*")) {
     const { classList } = element;
-    if (!classList.contains("usfmopen") && !classList.contains("usfmclosed")) continue;
+    if (!classList.contains(USFM_OPEN_CLASS) && !classList.contains(USFM_CLOSED_CLASS)) continue;
     if (markerNameFromClass(element) !== undefined) return true;
   }
   return false;
