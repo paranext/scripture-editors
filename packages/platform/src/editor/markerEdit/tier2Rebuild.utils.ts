@@ -1637,7 +1637,11 @@ function $captureMarkByteRanges(
   for (const mark of $collectTypedMarks(scope)) {
     const owners = $subtreeKeys(mark);
     const covered = fragment.spans.filter((span) => owners.has(span.key));
-    const first = covered[0];
+    // A mark that begins with a whole char span starts on the span's opening glyph, and a glyph
+    // point is never re-wrapped (see `$isGlyphPoint`), so anchor on the first CONTENT byte instead.
+    const first =
+      covered.find((span) => span.isSentinel || !$isMarkerNode($getNodeByKey(span.key))) ??
+      covered[0];
     const last = covered[covered.length - 1];
     if (!first || !last) continue;
     const start = $markStartAt(fragment, first);
@@ -2291,14 +2295,22 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
     node.remove();
   });
   // Before the caret restore, so the caret resolves against the final tree — mirror
-  // `$rebuildParas`. Note content is one contiguous region, so its spans carry no inter-node
-  // separators, exactly as `$restoreSelectionInNoteContent` builds them.
-  $restoreMarkByteRanges(markRanges, () => {
-    const spans: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
-    $appendNodesFragment(newNodes, spans, getMarkerFn, viewOptions);
-    return spans;
-  });
-  $restoreSelectionInNoteContent(newNodes, caretAnchor, anchorInNote, getMarkerFn, viewOptions);
+  // `$rebuildParas`. Both re-read the note's CURRENT content rather than reuse `newNodes`:
+  // moving a preserved run into place and re-wrapping a mark both split direct text children of
+  // the note, which `newNodes` then no longer lists. The same walk the capture above used, so the
+  // bytes line up.
+  const $settledNoteContent = () => $buildNoteFragment(note, getMarkerFn, viewOptions);
+  $restoreMarkByteRanges(
+    markRanges,
+    () => $settledNoteContent()?.out ?? { text: "", spans: [], sentinels: [] },
+  );
+  $restoreSelectionInNoteContent(
+    $settledNoteContent()?.contentNodes ?? newNodes,
+    caretAnchor,
+    anchorInNote,
+    getMarkerFn,
+    viewOptions,
+  );
   return true;
 }
 

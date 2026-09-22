@@ -555,3 +555,131 @@ describe("an annotation that begins on a preserved node", () => {
     expect(onRemove).not.toHaveBeenCalled();
   });
 });
+
+/** An expanded note whose content is `\fr 1.1` then `body` as a direct text child, and optionally a
+ * preserved span (an unknown char marker, carried across the splice whole) inside that text. */
+function directTextNoteUsj(noteContent: NonNullable<Usj["content"]>): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          "before ",
+          { type: "note", marker: "f", caller: "+", content: noteContent },
+          " after",
+        ],
+      },
+      { type: "para", marker: "p", content: ["depart here"] },
+    ],
+  };
+}
+
+describe("annotations in a note's direct text", () => {
+  it("carries every annotation, not just the first, when the note's content settles", async () => {
+    const mounted = await mountExpandedNoteEditor(
+      directTextNoteUsj([{ type: "char", marker: "fr", content: ["1.1"] }, body]),
+    );
+    for (const word of ["alpha", "bravo"])
+      await annotate(
+        mounted,
+        {
+          start: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf(word) },
+          end: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf(word) + word.length },
+        },
+        word,
+      );
+    expect(annotatedText(mounted.lexical)).toEqual(["alpha", "bravo"]);
+
+    await typeOver(mounted.lexical, literalHost, withLiteral);
+    settle(mounted);
+
+    expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
+    expect(annotatedText(mounted.lexical)).toEqual(["alpha", "bravo"]);
+  });
+
+  describe("after a preserved span", () => {
+    const preservedUsj = directTextNoteUsj([
+      { type: "char", marker: "fr", content: ["1.1 "] },
+      "aa ",
+      { type: "char", marker: "zcustom", content: ["x"] },
+      " bb cc ee",
+    ]);
+
+    it("carries an annotation when the note's content settles", async () => {
+      const mounted = await mountExpandedNoteEditor(preservedUsj);
+      await annotate(
+        mounted,
+        {
+          start: { jsonPath: contentPath([2, 1, 3]), offset: 1 },
+          end: { jsonPath: contentPath([2, 1, 3]), offset: 3 },
+        },
+        "1",
+      );
+      expect(annotatedText(mounted.lexical)).toEqual(["bb"]);
+
+      await typeOver(mounted.lexical, " cc ee", " cc ee \\nd LORD\\nd*");
+      settle(mounted);
+
+      expect(annotatedText(mounted.lexical)).toEqual(["bb"]);
+    });
+
+    it("puts the caret back where it was when the note's content settles", async () => {
+      const mounted = await mountExpandedNoteEditor(preservedUsj);
+      await typeOver(mounted.lexical, " bb cc ee", " bb cc ee \\nd LORD\\nd*", " bb cc".length);
+      act(() => mounted.ref.current?.commitPendingMarkerEdits());
+
+      expect(caretAt(mounted.lexical)).toBe(" bb cc ee @6");
+    });
+  });
+});
+
+describe("an annotation that begins with a whole char span", () => {
+  it("still wraps the span's text and what follows it once the paragraph settles", async () => {
+    const mounted = await mountStandardViewEditor(
+      twoParaUsj(["start ", { type: "char", marker: "nd", content: ["name"] }, " end words"]),
+    );
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: contentPath([2, 0]), offset: 2 },
+        end: { jsonPath: contentPath([2, 2]), offset: 4 },
+      },
+      "1",
+    );
+    // The shape a user leaves by deleting the mark's leading text: the char span is now the mark's
+    // first child.
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const lead = $marks()[0]?.getFirstChild();
+        if (!lead || $isCharNode(lead)) throw new Error("expected leading text in the mark");
+        lead.remove();
+      });
+      await Promise.resolve();
+    });
+    expect(
+      treeHas(
+        mounted.lexical,
+        (node) => $isTypedMarkNode(node) && $isCharNode(node.getFirstChild()),
+      ),
+    ).toBe(true);
+
+    await typeOver(mounted.lexical, " words", " words \\wj x\\wj*");
+    settle(mounted);
+
+    // The span's glyphs and separator are display, not content.
+    expect(
+      annotatedText(mounted.lexical)
+        .join("")
+        .replace(/\\nd\*?/g, "")
+        .trim(),
+    ).toBe("name end");
+    expect(annotatedIDs(mounted.lexical)).toEqual(
+      annotatedText(mounted.lexical).map(() => ({ [markType("test")]: ["1"] })),
+    );
+  });
+});
