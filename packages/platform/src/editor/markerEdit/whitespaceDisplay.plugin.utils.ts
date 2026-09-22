@@ -246,8 +246,17 @@ export function getPastePayload(
  * separator NBSP survives into content as a data `~`.
  */
 const MARKER_TOKEN = String.raw`\\(?:\+?[${ENGINE_MARKER_NAME_BYTES}]+\*?|\*)`;
-const AFTER_MARKER_NBSP = new RegExp(String.raw`(${MARKER_TOKEN})\u00A0`, "g");
-const BEFORE_MARKER_NBSP = new RegExp(String.raw`\u00A0(?=${MARKER_TOKEN})`, "g");
+
+/**
+ * An NBSP directly after a marker token or directly before one — the two adjacencies
+ * {@link normalizePastedNbsp} resolves to a plain space. One alternation rather than a pass each,
+ * so the two directions cannot drift apart in what they recognize or in what they substitute; the
+ * lookbehind and lookahead read as the mirror images the rule actually is.
+ */
+const MARKER_ADJACENT_NBSP = new RegExp(
+  String.raw`(?<=${MARKER_TOKEN})\u00A0|\u00A0(?=${MARKER_TOKEN})`,
+  "g",
+);
 
 /**
  * Positional NBSP normalization for an external paste's resolved text. Standard view has no
@@ -283,16 +292,15 @@ const BEFORE_MARKER_NBSP = new RegExp(String.raw`\u00A0(?=${MARKER_TOKEN})`, "g"
  *    possible from the text alone. Keeping a spacer costs a stray space; dropping a user's space
  *    loses content.
  *
- * Passes 2 and 3 both match against the SAME `AFTER_MARKER_NBSP`/`BEFORE_MARKER_NBSP` token set,
- * so a marker recognized by one is recognized by the other. Every remaining NBSP is genuine data
+ * Rules 2 and 3 run as ONE pass over `MARKER_ADJACENT_NBSP`, so a marker recognized on one side is
+ * recognized on the other and both resolve to the same byte. Every remaining NBSP is genuine data
  * and is preserved as `~`, the same display form typed data-NBSP takes, so serialization
  * round-trips it to a real NBSP instead of silently collapsing it to a plain space or dropping it.
  */
 export function normalizePastedNbsp(text: string): string {
   return text
     .replace(/^\u00A0+/gm, (run) => " ".repeat(run.length))
-    .replace(AFTER_MARKER_NBSP, "$1 ")
-    .replace(BEFORE_MARKER_NBSP, " ")
+    .replace(MARKER_ADJACENT_NBSP, " ")
     .replaceAll(NBSP, "~");
 }
 

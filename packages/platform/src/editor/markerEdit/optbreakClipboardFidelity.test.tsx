@@ -308,9 +308,10 @@ describe("copy characterization: what the walker actually emits around an optbre
   });
 
   it("characterization only (not fixed — unreachable via this branch's own copy): a synthetic html-only foreign payload with an NBSP directly before `//` still settles to a real optbreak node, with the foreign source's own NBSP kept as data `~` rather than folded into a display space", async () => {
-    // normalizePastedNbsp's marker-token regexes only match `\`-shaped tokens (AFTER_MARKER_NBSP /
-    // BEFORE_MARKER_NBSP, whitespaceDisplay.plugin.utils.ts) — `//` has no backslash, so neither
-    // pass recognizes an NBSP next to it, and the final blanket `.replaceAll(NBSP, "~")` converts
+    // normalizePastedNbsp's marker-token regex only matches `\`-shaped tokens
+    // (MARKER_ADJACENT_NBSP, whitespaceDisplay.plugin.utils.ts) — `//` has no backslash, so
+    // neither side recognizes an NBSP next to it, and the final blanket `.replaceAll(NBSP, "~")`
+    // converts
     // it to a literal data tilde — the correct display form for genuine data-NBSP, just one
     // position off from where a marker-adjacent rule would have folded it to a space instead. The
     // optbreak TOKEN itself still tokenizes correctly on caret departure (the tokenizer's `//`
