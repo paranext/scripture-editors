@@ -46,7 +46,6 @@ import {
   $isMarkerNode,
   $isMilestoneNode,
   $isNoteNode,
-  $isParaLikeNode,
   $isTypedMarkNode,
   $isUnknownNode,
   $isVerseBlockNode,
@@ -377,23 +376,23 @@ function attributeMarkerRunSpans(text: string, enclosingMarkerLength: number): D
   return spans;
 }
 
-/** The USJ node an editable marker glyph's bytes belong to: the sibling it is scaffolding for, or
- * else the element it opens. */
+/** The USJ node a marker glyph's bytes belong to: the element it sits in (looking through an
+ * annotation mark) — except the loose read-only glyphs markerMode "visible" renders AFTER a
+ * milestone (`\qt-s`, `\*`), which are that milestone's. Any other glyph that follows an element is
+ * its own parent's (`\f*` after the note's last `\ft`, `\wj*` after a nested `\+nd*`). Editable
+ * mode wraps a milestone's glyphs in a display run, which `$runPieceOf` resolves before this is
+ * asked. */
 function $glyphOwner(glyph: LexicalNode): LexicalNode {
-  const parent = glyph.getParent();
-  if (!parent || !$isElementNode(parent)) return glyph;
-
-  const previousContentSibling = $getPreviousContentSibling(glyph);
-  if (
-    previousContentSibling &&
-    !$isParaLikeNode(previousContentSibling) &&
-    !$isTextNode(previousContentSibling) &&
-    !$isTypedMarkNode(previousContentSibling)
-  ) {
-    return previousContentSibling;
+  if ($isVisibleMarkerNode(glyph)) {
+    const previous = $getPreviousContentSibling(glyph);
+    const text = glyph.getTextContent();
+    if (
+      $isMilestoneNode(previous) &&
+      (text === "\\*" || text.startsWith(openingMarkerText(previous.getMarker())))
+    )
+      return previous;
   }
-
-  return parent;
+  return $getLogicalParent(glyph) ?? glyph;
 }
 
 /** The spans of an editable `MarkerNode` glyph. */
@@ -586,9 +585,11 @@ function $displayBytesOf(node: LexicalNode): DisplayBytes | undefined {
     const note = node.getParent();
     if (!$isNoteNode(note)) return undefined;
     // A collapsed caller renders no glyph bytes of its own; the caller value is what it stands for.
+    // The decorator's own text size is 0, so measure the value it stands for: every offset into
+    // that value then resolves to the decorator rather than falling back to another carrier.
     return {
       owner: note,
-      length: node.getTextContentSize(),
+      length: note.getCaller().length,
       spans: [{ start: 0, base: 0, bytes: { kind: "property", property: "caller" } }],
     };
   }
@@ -732,27 +733,29 @@ function $locationFromDisplayBytes(
   }
 }
 
-/** The end of the last text content before `node` — where a byte with no representation of its own
- * (the `|` opening an attribute run) snaps to. Text AFTER `node` in the same parent does not count,
- * even when it joins the same USJ string (the run between them is presentation-only). */
+/** Where the byte just before `node` sits — the answer for a byte with no representation of its own
+ * (the `|` opening an attribute run), which keeps counting into that byte's offset space: the end
+ * of the text before it, or the end of a nested span's closing glyph. Only what comes BEFORE
+ * `node` counts, even when text after it joins the same USJ string (the run between them is
+ * presentation-only). */
 function $precedingTextLocation(
   node: LexicalNode,
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation | undefined {
-  const parent = $getLogicalParent(node);
-  if (!parent) return undefined;
-  const items = $getLogicalContentItems(parent, collapsesSpaceRuns);
-  for (let index = items.length - 1; index >= 0; index--) {
-    const item = items[index];
-    if (item.type !== "text") continue;
-    const before = item.segments.filter((segment) => segment.node.isBefore(node)).at(-1);
-    if (!before) continue;
-    return {
-      jsonPath: usjJsonPathFromIndexes([...$getJsonPathIndexes(parent), index]),
-      offset: before.start + before.length,
-    };
+  // An annotation mark around the run is transparent: step out of it to find what precedes.
+  let start: LexicalNode = node;
+  for (let mark = start.getParent(); !start.getPreviousSibling() && $isTypedMarkNode(mark); ) {
+    start = mark;
+    mark = start.getParent();
   }
-  return undefined;
+  const previous = start.getPreviousSibling();
+  if (!previous) return undefined;
+  const last = $isElementNode(previous) ? previous.getLastDescendant() : previous;
+  if (last && ($isTextNode(last) || $isDisplayByteDecorator(last)))
+    return $locationFromNode(last, last.getTextContentSize(), collapsesSpaceRuns);
+  const parent = previous.getParent();
+  if (!parent) return undefined;
+  return $locationFromNode(parent, previous.getIndexWithinParent() + 1, collapsesSpaceRuns);
 }
 
 /**
@@ -1087,9 +1090,23 @@ function $locationFromNode(
         offset: logicalTextLocation.offset,
       };
     }
+    // Presentation-only text (the space Standard view shows after a paragraph's `\p` glyph, where
+    // a caret at the paragraph's content start sits) is no USJ content of its own: a point in it
+    // is the point beside it — the start of the text after it, or the end of the bytes before it.
+    const isAfter = offset > 0;
+    const neighbor = isAfter ? node.getNextSibling() : node.getPreviousSibling();
+    if (
+      $isTextNode(neighbor) &&
+      ($displayBytesOf(neighbor) || $getLogicalTextLocation(neighbor, 0, collapsesSpaceRuns))
+    )
+      return $locationFromNode(
+        neighbor,
+        isAfter ? 0 : neighbor.getTextContentSize(),
+        collapsesSpaceRuns,
+      );
   }
 
-  // Fallback for nodes outside the logical content model (e.g. presentation-only text).
+  // Fallback for nodes outside the logical content model.
   return { jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)), offset };
 }
 

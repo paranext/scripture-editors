@@ -85,7 +85,7 @@ const EDITABLE_ONLY_ROUND_TRIP_TYPES: LocationType[] = [
  * all of those bytes and has no resolution gaps.
  */
 const KNOWN_RESOLUTION_GAPS = new Set<string>([
-  // ── visible (49) ──
+  // ── visible (48) ──
   "visible:attributeKey at $.content[20].content[1] key 'strong' offset 0",
   "visible:attributeKey at $.content[20].content[1] key 'strong' offset 1",
   "visible:attributeKey at $.content[20].content[1] key 'strong' offset 2",
@@ -107,7 +107,6 @@ const KNOWN_RESOLUTION_GAPS = new Set<string>([
   "visible:marker at $.content[4]",
   "visible:marker at $.content[6].content[0]",
   "visible:marker at $.content[85].content[1]",
-  "visible:propertyValue at $.content[10].content[1]['caller'] offset 1",
   "visible:propertyValue at $.content[140]['marker'] offset 0",
   "visible:propertyValue at $.content[140]['marker'] offset 1",
   "visible:propertyValue at $.content[140]['marker'] offset 2",
@@ -135,7 +134,7 @@ const KNOWN_RESOLUTION_GAPS = new Set<string>([
   "visible:propertyValue at $.content[6].content[0]['marker'] offset 1",
   "visible:propertyValue at $.content[6].content[0]['number'] offset 0",
   "visible:propertyValue at $.content[6].content[0]['number'] offset 1",
-  // ── hidden (38) ──
+  // ── hidden (37) ──
   "hidden:closingMarker at $.content[140] offset 0",
   "hidden:closingMarker at $.content[140] offset 1",
   "hidden:closingMarker at $.content[140] offset 2",
@@ -148,7 +147,6 @@ const KNOWN_RESOLUTION_GAPS = new Set<string>([
   "hidden:marker at $.content[4]",
   "hidden:marker at $.content[6].content[0]",
   "hidden:marker at $.content[85].content[1]",
-  "hidden:propertyValue at $.content[10].content[1]['caller'] offset 1",
   "hidden:propertyValue at $.content[10].content[1]['marker'] offset 0",
   "hidden:propertyValue at $.content[10].content[1]['marker'] offset 1",
   "hidden:propertyValue at $.content[140]['marker'] offset 0",
