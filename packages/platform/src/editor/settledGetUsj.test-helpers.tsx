@@ -24,6 +24,7 @@ import {
   getMarker as bundledGetMarker,
   LoggerBasic,
   NoteNode,
+  StyleInfo,
   TypedMarkNode,
 } from "shared";
 import { getViewOptions, STANDARD_VIEW_MODE, usjReactNodes, ViewOptions } from "shared-react";
@@ -84,6 +85,8 @@ interface MountOptions {
   onSelectionChange?: EditorProps<LoggerBasic>["onSelectionChange"];
   scrRef?: SerializedVerseRef;
   logger?: LoggerBasic;
+  isReadonly?: boolean;
+  styleInfo?: StyleInfo;
 }
 
 export function requireStandardViewOptions(): ViewOptions {
@@ -124,35 +127,51 @@ interface MountedEditor {
   ref: RefObject<EditorRef | null>;
   lexical: LexicalEditor;
   unmount: () => void;
+  /** Re-render the same editor with a different project stylesheet, the way a host passes one in
+   * once it has loaded. */
+  rerenderWithStyleInfo: (styleInfo: StyleInfo | undefined) => Promise<void>;
 }
 
 async function mountEditor(
   usj: Usj,
   view: ViewOptions,
-  { onUsjChange, onSelectionChange, scrRef, logger }: MountOptions = {},
+  { onUsjChange, onSelectionChange, scrRef, logger, isReadonly, styleInfo }: MountOptions = {},
 ): Promise<MountedEditor> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
   const capture: ReactElement = <EditorRefPlugin editorRef={lexicalRef} />;
+  const editorWith = (currentStyleInfo: StyleInfo | undefined): ReactElement => (
+    <Editor
+      ref={ref}
+      defaultUsj={usj}
+      scrRef={scrRef}
+      options={{ view, isReadonly, styleInfo: currentStyleInfo }}
+      onUsjChange={onUsjChange}
+      onSelectionChange={onSelectionChange}
+      logger={logger}
+    >
+      {capture}
+    </Editor>
+  );
   let unmount: (() => void) | undefined;
+  let rerender: ((ui: ReactElement) => void) | undefined;
   await act(async () => {
-    ({ unmount } = render(
-      <Editor
-        ref={ref}
-        defaultUsj={usj}
-        scrRef={scrRef}
-        options={{ view }}
-        onUsjChange={onUsjChange}
-        onSelectionChange={onSelectionChange}
-        logger={logger}
-      >
-        {capture}
-      </Editor>,
-    ));
+    ({ unmount, rerender } = render(editorWith(styleInfo)));
   });
   if (!lexicalRef.current) throw new Error("lexical editor was not captured");
-  if (!unmount) throw new Error("render did not return a teardown");
-  return { ref, lexical: lexicalRef.current, unmount };
+  if (!unmount || !rerender) throw new Error("render did not return a teardown");
+  const rerenderEditor = rerender;
+  return {
+    ref,
+    lexical: lexicalRef.current,
+    unmount,
+    rerenderWithStyleInfo: async (nextStyleInfo) => {
+      await act(async () => {
+        rerenderEditor(editorWith(nextStyleInfo));
+        await Promise.resolve();
+      });
+    },
+  };
 }
 
 /**
@@ -168,6 +187,7 @@ async function mountEditor(
  * `insertMarker`); the rest of the suite leaves it off, and those methods then throw by design.
  *
  * `logger` is for a row that asserts what the editor reports, such as a ref method's refusal.
+ * `isReadonly` mounts the editor a host shows a resource in, and `styleInfo` a project stylesheet.
  */
 export async function mountStandardViewEditor(
   usj: Usj,

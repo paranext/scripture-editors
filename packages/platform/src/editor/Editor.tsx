@@ -58,6 +58,7 @@ import { $setBlocksType } from "@lexical/selection";
 import { deepEqual } from "fast-equals";
 import {
   $addUpdateTag,
+  $getEditor,
   $getSelection,
   $isRangeSelection,
   $isTextNode,
@@ -95,7 +96,6 @@ import {
   getPendedDisplayOwners,
   LoggerBasic,
   ParaNode,
-  SELECTION_CHANGE_TAG,
   TypedMarkNode,
   TypedMarkOnClick,
   TypedMarkOnMouseEnter,
@@ -806,7 +806,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // is a host QUESTION, asked from outside any dispatch, and the answer has to describe the
       // document the host would get from `getUsj()` — so flushing an update that is merely queued
       // is the point, not a hazard. The inbound methods are called from anywhere, including from
-      // inside an in-flight update, where the same flush is the frozen-commit crash.
+      // inside an in-flight update, where the same flush is the frozen-commit crash. Flush before
+      // reading the pending state below, too: a commit can itself change it (the historic re-pend
+      // on undo, owner pends from mutation listeners).
+      editor.read(() => undefined);
       const context = buildSettledPositionContext();
       if (!context || isLiveSettledIdentical(context))
         return editor.read(() => $getUsjSelectionFromEditor(viewOptions));
@@ -828,8 +831,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       editorRef.current?.update(() => {
         const editorSelection = $getRangeFromUsjSelection(live, viewOptions);
         if (editorSelection !== undefined) {
+          // No update tag here, deliberately: Lexical clears an update's tags only when its commit
+          // dirties a node, so a tag on this selection-only update would ride along on the user's
+          // next edit — and `SELECTION_CHANGE_TAG` is in `blackListedChangeTags`, so that edit
+          // would never reach `onUsjChange`. A selection-only update emits no change anyway.
           $setSelection(editorSelection);
-          $addUpdateTag(SELECTION_CHANGE_TAG);
           // A placement whose anchor and focus both land inside a text run's interior is exactly
           // the shape Lexical's own selectionchange listener drops (see `$isInteriorTextPoint`),
           // so the host would otherwise never hear the caret moved. Dispatching here instead of
@@ -837,11 +843,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           // bare `$` listener, and Lexical runs command listeners for the currently active editor
           // inline (`triggerCommandListeners` -> `updateEditorSync`), so this still executes inside
           // THIS update, against the pending selection just set above, exactly once. A boundary or
-          // element-type endpoint is left alone: Lexical's own listener already reports those, and
-          // dispatching again here would report the same placement twice.
+          // element-type endpoint is left alone in an editable editor: Lexical's own listener
+          // already reports those, and dispatching again here would report the same placement
+          // twice. A read-only editor gets no such report at all — Lexical never writes the DOM
+          // selection of a non-editable editor, so no selectionchange follows — so it is always
+          // dispatched here.
           if (
-            $isInteriorTextPoint(editorSelection.anchor) &&
-            $isInteriorTextPoint(editorSelection.focus)
+            !$getEditor().isEditable() ||
+            ($isInteriorTextPoint(editorSelection.anchor) &&
+              $isInteriorTextPoint(editorSelection.focus))
           ) {
             editorRef.current?.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
           }

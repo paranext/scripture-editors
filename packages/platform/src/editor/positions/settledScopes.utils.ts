@@ -557,6 +557,10 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
     context.cache.entries.clear();
     return identityPrepared(context.tier2.viewOptions);
   }
+  if (context.cache.getMarker !== context.tier2.getMarker) {
+    context.cache.entries.clear();
+    context.cache.getMarker = context.tier2.getMarker;
+  }
 
   const scopes = $collectSettleScopes(context.pendedKeys, context.tier2, transient);
   const byFirstLiveKey = new Map<NodeKey, SettleScopePlan>();

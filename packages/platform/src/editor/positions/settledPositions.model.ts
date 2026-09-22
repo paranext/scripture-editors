@@ -121,4 +121,10 @@ export interface SettledRunMember {
  */
 export interface SettledScopeCache {
   entries: Map<NodeKey, { signature: string; plan: SettleScopePlan }>;
+  /**
+   * The marker lookup the entries were planned under. A stylesheet change re-tokenizes the same
+   * bytes differently without touching the tree — so without changing any entry's signature — and
+   * so clears every entry.
+   */
+  getMarker?: Tier2Context["getMarker"];
 }
