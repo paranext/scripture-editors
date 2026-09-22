@@ -1309,9 +1309,11 @@ export function $getLogicalPointFromElementPoint(
   if ($shouldIgnoreNodeForContentIndexes(child))
     return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
 
-  // An implied paragraph with no content items of its own: the boundary in front of it is the one
-  // in front of whatever follows it.
-  if ($isSplicedImpliedPara(child) && !$logicalItemWithin(items, child))
+  // A transparent child with no content items of its own — an implied paragraph the conversion
+  // splices away, or an annotation mark left holding nothing USJ carries. It contributes no item
+  // to search for, so the boundary in front of it is the one in front of whatever follows it;
+  // falling through would report the END of the parent's content instead.
+  if ($isContentTransparent(child) && !$logicalItemWithin(items, child))
     return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
 
   return $logicalPointBefore(parent, child, collapsesSpaceRuns);
