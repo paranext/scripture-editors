@@ -247,10 +247,11 @@ export declare interface MarkerObject {
  * if there are symbols other than underscore in the property name
  *
  * The catch-all template-literal member that matches anything starting `$.` subsumes every depth
- * member below it — a bracket-notation path still starts `$.` — so any such path type-checks, and
- * the per-depth members document the shapes this type is expected to carry rather than enforcing
- * a bound. Eight depths covers every shape the editors render (table cell → char → nested char →
- * text is seven).
+ * member below it — a depth path starts `$.content[` in both notations — so any such path
+ * type-checks, and the per-depth members document the shapes this type is expected to carry rather
+ * than enforcing a bound. (`$['property']`, a property directly on the document root, and the empty
+ * string `''` are the two members the catch-all does not cover, because neither starts `$.`.) Eight
+ * depths cover every shape the editors render (table cell → char → nested char → text is seven).
  *
  * @public
  */
