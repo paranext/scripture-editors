@@ -25,11 +25,13 @@ import { MarkerContent } from "@eten-tech-foundation/scripture-utilities";
 import { $dfs } from "@lexical/utils";
 import { act } from "@testing-library/react";
 import {
+  $createRangeSelection,
   $createTextNode,
   $getRoot,
   $getSelection,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   $setState,
   ElementNode,
   KEY_ENTER_COMMAND,
@@ -1198,6 +1200,41 @@ describe("multi-line plain-text paste inside note content", () => {
       expect(chars.map((c) => c.getMarker())).toEqual(["ft", "fp"]);
       expect(chars[0].getTextContent()).toContain("first");
       expect(chars[1].getTextContent()).toContain("second");
+    });
+  });
+
+  it("leaves a protected document alone when the selection reaches out of the note across a verse marker", async () => {
+    // The claim's replace-selection phase removes the range before it decides how to replay the
+    // lines, and it runs at CRITICAL — above StructureKeyboardPlugin's own paste refusal at
+    // HIGH. A range spanning a verse marker or a paragraph boundary is that plugin's to refuse, so
+    // this claim has to ask the same predicate first or it destroys the structure protection
+    // exists to keep, before the refusal ever runs.
+    const { editor } = await baseTestEnvironment(
+      serializedState(noteUsx(`closed="false"`)),
+      <>
+        <MarkerEditPlugin viewOptions={viewOptions} structureProtectionMode="protected" />
+        <StructureKeyboardPlugin structureProtectionMode="protected" />
+      </>,
+    );
+    let textBefore = "";
+    editor.getEditorState().read(() => (textBefore = $getRoot().getTextContent()));
+
+    await pasteEventAt(editor, pasteEventWith({ "text/plain": "first\nsecond" }), () => {
+      // Anchor at the paragraph's very start (ahead of `\v 1`), focus inside the expanded note's
+      // `\ft` content: one endpoint in the note, one outside, with the verse marker in between.
+      const { ftText } = $noteFtTextAndTrailingBodyText();
+      const para = requireDefined($getRoot().getFirstChild(), "paragraph not found");
+      const selection = $createRangeSelection();
+      selection.anchor.set(para.getKey(), 0, "element");
+      selection.focus.set(ftText.getKey(), ftText.getTextContentSize(), "text");
+      $setSelection(selection);
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toBe(textBefore);
+      expect($countNoteNodes()).toBe(1);
+      expect($countNoteOpenerGlyphs()).toBe(1);
+      expect(countParagraphs($getRoot())).toBe(1);
     });
   });
 

@@ -101,7 +101,10 @@ import {
 import {
   $selectionReachesIntoOpaqueBlock,
   $shouldBlockSelectionReplacement,
+  $shouldBlockStructuralEdit,
+  EditIntent,
   hasStandardViewWhitespace,
+  keyDownToIntent,
   StructureProtectionMode,
   ViewOptions,
 } from "shared-react";
@@ -310,6 +313,31 @@ function registerDestroyedOwnerPend(editor: LexicalEditor, context: MarkerEditCo
 }
 
 /**
+ * Whether structure protection would refuse this gesture outright — the same predicates
+ * `StructureKeyboardPlugin` decides with, asked before a handler that runs AHEAD of it commits to
+ * anything.
+ *
+ * Two handlers here need the answer early. One arms the paragraph reap from the pre-gesture
+ * selection; the other removes a selected range before it decides how to replay a paste. A refusal
+ * mutates nothing, so nothing commits and the update listener that resets the arms never runs — an
+ * arm left behind reads as fresh provenance on the next unrelated commit, and a range removed ahead
+ * of the refusal is the very content protection exists to keep.
+ *
+ * `intent` names the keystroke's structural effect for the collapsed-caret rules; without it the
+ * question is only whether the selection may be REPLACED (cut, paste, drop).
+ *
+ * Read-only: call inside an update or read.
+ */
+function $isRefusedByStructureProtection(context: MarkerEditContext, intent?: EditIntent): boolean {
+  if (context.structureProtectionMode !== "protected") return false;
+  const selection = $getSelection();
+  if (!selection) return false;
+  return intent
+    ? $shouldBlockStructuralEdit(selection, intent)
+    : $isRangeSelection(selection) && $shouldBlockSelectionReplacement(selection);
+}
+
+/**
  * The engine's three `PASTE_COMMAND` claims — the in-note `\fp` break at CRITICAL, the
  * character-stack line replay at HIGH, and the paragraph-split arm at LOW. Kept together because
  * they race on one command and their priorities are what keeps them apart; composed into the
@@ -359,8 +387,18 @@ function registerPasteNormalization(
         // destroyed content of a read-only block. Consulting the guard's own predicate first
         // makes either registration order refuse.
         if ($selectionReachesIntoOpaqueBlock()) return false;
+        // Same reason, one rank up: this claim REMOVES the selected range (the replace-selection
+        // phase `$handlePasteLinesInNote` shares with Enter) before it decides anything, and it
+        // outranks `StructureKeyboardPlugin`'s own paste refusal at HIGH. A selection reaching out
+        // of the note across a paragraph boundary or a verse marker is that plugin's to refuse, so
+        // ask its predicate here rather than destroying the range ahead of it.
+        if ($isRefusedByStructureProtection(context)) return false;
         const payload = getPastePayload(event, editor._config.namespace);
         if (!payload) return false;
+        // Cheap gate for the common single-line paste: neither the strip nor the NBSP mapping
+        // below can introduce a line break, so a payload with none stays single-line through both
+        // and the claim declines either way.
+        if (!payload.text.includes("\n")) return false;
         // Standard view: every pasted NBSP is normalized POSITIONALLY here, via the same
         // `normalizePastedNbsp` the Standard-view external-paste handler uses
         // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`,
@@ -374,10 +412,11 @@ function registerPasteNormalization(
         // pasted `\c`/`\id` landing here is just as reachable (and just as save-poisoning) as one
         // landing in body text.
         //
-        // Both run BEFORE the line-break test, because the claim below removes the selected range
-        // before it inserts anything: a payload the strip reduces to one line, or to nothing, is
-        // not a multi-line paste, and is left to the Standard-view claim exactly as that line
-        // pasted on its own would be — which, for nothing at all, keeps the selection.
+        // Both run before the line-break test BELOW (the raw gate above only rules out text that
+        // never had a break), because the claim below removes the selected range before it inserts
+        // anything: a payload the strip reduces to one line, or to nothing, is not a multi-line
+        // paste, and is left to the Standard-view claim exactly as that line pasted on its own
+        // would be — which, for nothing at all, keeps the selection.
         const noteText = isStandardView
           ? normalizePastedNbsp(stripPastedChapterAndBookId(payload.text))
           : payload.text;
@@ -896,29 +935,16 @@ export function MarkerEditPlugin({
             ),
             editor.registerCommand(
               CUT_COMMAND,
-              (event) => {
+              (event) =>
                 // A structure-protected document's cut of a selection `StructureKeyboardPlugin`
-                // refuses to replace is that plugin's to refuse, for the reason the paste claim
-                // below declines the same selection: both register at HIGH and this plugin mounts
-                // first, so claiming it here removed the range before the refusal ever ran.
-                const selection = $getSelection();
-                if (
-                  context.structureProtectionMode === "protected" &&
-                  $isRangeSelection(selection) &&
-                  $shouldBlockSelectionReplacement(selection)
-                ) {
-                  // The CRITICAL cut arm below has already armed the whole-paragraph reap for this
-                  // selection. A refused cut changes nothing, so no commit runs the update listener
-                  // that resets it, and the next commit's transforms would read it as fresh.
-                  context.wholeParaDeleteExpected?.clear();
-                  return false;
-                }
-                return $handleCopyForStandardView(
+                // refuses to replace is that plugin's to refuse: it registers CUT at CRITICAL for
+                // exactly that reason, so it has already had its turn by the time this claim runs
+                // and a selection reaching here is one it allowed.
+                $handleCopyForStandardView(
                   event && typeof event === "object" && "clipboardData" in event ? event : null,
                   editor,
                   true,
-                );
-              },
+                ),
               COMMAND_PRIORITY_HIGH,
             ),
             editor.registerCommand(
@@ -949,7 +975,9 @@ export function MarkerEditPlugin({
           // keys — arm the paragraph reap from the pre-cut selection. CRITICAL so it runs ahead
           // of whichever handler performs the removal (the standard-view CUT claim at HIGH, or
           // Lexical's own at EDITOR); never claims the event.
-          $armWholeParaDeletion(context);
+          //
+          // A cut structure protection will refuse deletes nothing, so it must arm nothing.
+          if (!$isRefusedByStructureProtection(context)) $armWholeParaDeletion(context);
           return false;
         },
         COMMAND_PRIORITY_CRITICAL,
@@ -999,7 +1027,13 @@ export function MarkerEditPlugin({
           // gesture covers whole (selection arm), or which paragraph the collapsed caret sits
           // in (collapsed arm: a backspace chain that empties it dissolves it), so the
           // paragraph transform can reap them by provenance. Never claims the key.
-          if (event.key === "Backspace" || event.key === "Delete") {
+          //
+          // Not for a keystroke structure protection will refuse: it deletes nothing, so an arm
+          // left for it would be read as this gesture's provenance by an unrelated later commit.
+          if (
+            (event.key === "Backspace" || event.key === "Delete") &&
+            !$isRefusedByStructureProtection(context, keyDownToIntent(event))
+          ) {
             $armWholeParaDeletion(context);
             $armCollapsedParaDeletion(context);
           }

@@ -26,6 +26,11 @@ import {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
+import { MarkerEditPlugin } from "./MarkerEditPlugin";
+// Reaching inside only for tests (same pattern as markerEdit.test-helpers).
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
+import { StructureKeyboardPlugin } from "shared-react";
 import { act } from "@testing-library/react";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import {
@@ -146,6 +151,75 @@ describe("transient emptiness (the guard this work must not break)", () => {
       expect(second.isAttached()).toBe(true);
       expect(second.getMarker()).toBe("q1");
       expect(second.getTextContent()).toContain("rebuilt");
+    });
+  });
+});
+
+describe("a delete gesture structure protection refuses arms nothing", () => {
+  /** A protected-mode editor: `MarkerEditPlugin` plus the plugin that refuses structural edits. */
+  async function protectedEnvironment($initialEditorState: () => void) {
+    return baseTestEnvironment(
+      $initialEditorState,
+      <>
+        <MarkerEditPlugin viewOptions={viewOptions} structureProtectionMode="protected" />
+        <StructureKeyboardPlugin structureProtectionMode="protected" />
+      </>,
+    );
+  }
+
+  it("leaves a later transient emptying alone after a refused Delete across a paragraph boundary", async () => {
+    // A refused keystroke mutates nothing, so nothing commits and the update listener that resets
+    // the arms never runs. An arm left behind by the refusal survives into the next, unrelated
+    // commit — and the transient emptiness a rebuild produces there reads as this gesture's
+    // provenance, reaping a paragraph the user never deleted.
+    let first!: ParaNode;
+    let second!: ParaNode;
+    const { editor } = await protectedEnvironment(() => {
+      ({ first, second } = $appendTwoParas());
+    });
+
+    // Mid-`\p one` to the end of `\q1 two`: spans the paragraph boundary, so protection refuses
+    // it, and it covers the second paragraph's whole visible representation, so the reap arms.
+    await act(async () =>
+      editor.update(
+        () => {
+          const firstLast = requireDefined(first.getLastChild(), "first paragraph content");
+          const secondLast = requireDefined(second.getLastChild(), "second paragraph content");
+          const selection = $createRangeSelection();
+          selection.anchor.set(firstLast.getKey(), 1, "text");
+          selection.focus.set(secondLast.getKey(), secondLast.getTextContentSize(), "text");
+          $setSelection(selection);
+        },
+        { discrete: true },
+      ),
+    );
+    // The keystroke is its OWN dispatch, as it is in the app: placing the selection in the same
+    // update would commit it, and that commit's update listener resets the arms — hiding the very
+    // window this test exists to cover.
+    await act(async () =>
+      editor.dispatchCommand(
+        KEY_DOWN_COMMAND,
+        new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }),
+      ),
+    );
+
+    // Refused: both paragraphs are still whole.
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(2);
+      expect(second.getTextContent()).toContain("two");
+    });
+
+    // The unrelated later commit — the same programmatic emptying the transient-emptiness
+    // contract above pins as never reapable.
+    await act(async () =>
+      editor.update(() => {
+        second.getChildren().forEach((child) => child.remove());
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      expect(second.isAttached()).toBe(true);
+      expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(2);
     });
   });
 });
