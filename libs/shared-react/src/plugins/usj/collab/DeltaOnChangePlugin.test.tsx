@@ -1,22 +1,29 @@
+import { act } from "@testing-library/react";
 import {
   $createImmutableVerseNode,
   $isImmutableVerseNode,
   ImmutableVerseNode,
 } from "../../../nodes/usj/ImmutableVerseNode";
+import { EmptyVerseCaretGuardPlugin } from "../EmptyVerseCaretGuardPlugin";
+import { TextSpacingPlugin } from "../TextSpacingPlugin";
 import {
   $typeTextAtSelection,
   baseTestEnvironment,
   sutUpdate,
   typeTextAtSelection,
+  updateSelection,
 } from "../react-test.utils";
 import { DeltaOp } from "./delta-common.utils";
 import { DeltaOnChangePlugin } from "./DeltaOnChangePlugin";
 import {
   $createTextNode,
   $getRoot,
+  $getSelection,
+  $isRangeSelection,
   $isTextNode,
   EditorState,
   LexicalEditor,
+  SELECTION_CHANGE_COMMAND,
   TextNode,
   $setState,
   $getState,
@@ -32,6 +39,8 @@ import {
   blackListedChangeTags,
   charIdState,
   CURSOR_CHANGE_TAG,
+  $createParaNode,
+  $isParaNode,
   EXTERNAL_USJ_MUTATION_TAG,
   ImmutableChapterNode,
   ImpliedParaNode,
@@ -407,6 +416,65 @@ describe("OnChangePlugin", () => {
       await sutUpdate(editor, $makeMultiNodeChange, { tag: CURSOR_CHANGE_TAG });
       expect(calls).toHaveLength(0);
     });
+  });
+});
+
+describe("typing into a transient caret host", () => {
+  // The host's OWN mutations are tagged and never reach this handler. The keystroke that follows is
+  // the user's own edit, untagged, and it goes through the single-changed-node fast path — whose
+  // insert is raw bytes while its retain is counted in delta-doc coordinates, which exclude a bare
+  // host. The two currencies disagree by the host's one character, and the diff pays for it with a
+  // delete the document never earned.
+  async function setup() {
+    const calls: DeltaOp[][] = [];
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createImmutableVerseNode("2"),
+            $createTextNode("And the earth. "),
+            $createImmutableVerseNode("3"),
+            $createImmutableVerseNode("4"),
+            $createTextNode("Light."),
+          ),
+        );
+      },
+      <>
+        <EmptyVerseCaretGuardPlugin />
+        <TextSpacingPlugin />
+        <DeltaOnChangePlugin
+          onChange={(_editorState, _editor, _tags, ops) => calls.push(ops)}
+          ignoreSelectionChange
+          ignoreHistoryMergeTagChange
+          ignoreTags={blackListedChangeTags}
+        />
+      </>,
+    );
+    // Arrive in the empty verse the way an arrow press does: the element point past its marker.
+    const para = editor.getEditorState().read(() => {
+      const first = $getRoot().getFirstChild();
+      if (!$isParaNode(first)) throw new Error("expected a paragraph");
+      return first;
+    });
+    updateSelection(editor, para, 3);
+    await act(async () => {
+      editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+    calls.length = 0;
+    return { editor, calls };
+  }
+
+  it("emits no delete for a keystroke that only inserts", async () => {
+    const { editor, calls } = await setup();
+
+    await sutUpdate(editor, () => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) selection.insertText("X");
+    });
+
+    expect(calls).toHaveLength(1);
+    // Nothing was removed, so no op may claim otherwise: a delete here lands on verse 4's marker.
+    expect(calls[0].some((op) => "delete" in op)).toBe(false);
   });
 });
 

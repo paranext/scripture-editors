@@ -9,7 +9,11 @@ import type { EditorState, LexicalEditor, UpdateListenerPayload } from "lexical"
 import { $getNodeByKey, $isTextNode, HISTORY_MERGE_TAG } from "lexical";
 import Delta from "quill-delta";
 import { useLayoutEffect } from "react";
-import { $findFirstAncestorNoteNode, MARKER_SETTLE_TAG } from "shared";
+import {
+  $findFirstAncestorNoteNode,
+  $isCursorPlaceholderOnlyText,
+  MARKER_SETTLE_TAG,
+} from "shared";
 
 /** Stable default for {@link DeltaOnChangePlugin}'s `ignoreTags` so the effect deps stay stable. */
 const EMPTY_TAGS: readonly string[] = [];
@@ -93,10 +97,20 @@ function $getUpdateOps(
     // Scripture and every later offset would shift. $isFastPathContentText derives eligibility
     // from the same delta-doc counting instead of re-listing the exclusions; anything ineligible
     // falls to the full diff, whose $handleTextNodes applies the one authoritative list.
+    // The PREVIOUS state has to clear the same bar. The fast path's insert is raw bytes while its
+    // retain is counted in delta-doc coordinates, which give a bare caret host zero length — so a
+    // node that WAS a host makes the two currencies disagree by that one character, and the diff
+    // settles the difference with a delete the document never earned. Emitted after typing into an
+    // emptied verse, that delete lands on the next verse's marker at the peer. The full diff counts
+    // both sides the same way.
+    const wasCaretHost = prevEditorState.read(() =>
+      $isCursorPlaceholderOnlyText($getNodeByKey(nodeKey)),
+    );
     if (
       dirtyLeaves.size === 1 &&
       $isTextNode(dirtyNode) &&
       !isInsideNote &&
+      !wasCaretHost &&
       $isFastPathContentText(dirtyNode)
     ) {
       // Handle the most common case of text changing in a single text node.
