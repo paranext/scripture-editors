@@ -357,6 +357,8 @@ function $navigateToNode(jsonPath: string): LexicalNode | undefined {
  * - For MarkerNode with "opening" syntax at offset 0: UsjMarkerLocation
  * - For MarkerNode with "opening" syntax at offset > 0: UsjPropertyValueLocation (within marker name)
  * - For MarkerNode with "closing" syntax: UsjClosingMarkerLocation
+ * - For an element point before a read-only marker glyph: UsjMarkerLocation for the opening glyph,
+ *   UsjClosingMarkerLocation for the closing one
  * - For regular TextNode: UsjTextContentLocation
  *
  * @param node - The Lexical node.
@@ -436,9 +438,16 @@ function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLoc
   if ($isElementNode(node)) {
     const childAtOffset = node.getChildAtIndex(offset);
     if ($isVisibleMarkerNode(childAtOffset)) {
-      return {
-        jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)),
-      } satisfies UsjMarkerLocation;
+      // Which glyph the point sits before decides which location this is, by the same
+      // trailing-`*` test `$findMarkerNode` resolves them back with. Keyed only on the parent, an
+      // element point before the CLOSING glyph resolved to the same location as one before the
+      // opening glyph, so a range framing a whole char span (or note) mapped to a collapsed one.
+      const isClosingGlyph = childAtOffset.getTextContent().endsWith("*");
+      const jsonPath = usjJsonPathFromIndexes($getJsonPathIndexes(node));
+      // Offset 0: the point is before the closing glyph's first byte, not inside it.
+      return isClosingGlyph
+        ? ({ jsonPath, closingMarkerOffset: 0 } satisfies UsjClosingMarkerLocation)
+        : ({ jsonPath } satisfies UsjMarkerLocation);
     }
 
     const logicalPoint = $getLogicalPointFromElementPoint(node, offset);

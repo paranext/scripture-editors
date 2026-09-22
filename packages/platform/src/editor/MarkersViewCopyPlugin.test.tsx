@@ -11,12 +11,10 @@ import { MarkersViewCopyPlugin } from "./MarkersViewCopyPlugin";
 import { baseTestEnvironment } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 import { usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $dfs } from "@lexical/utils";
 import {
   $createPoint,
   $createRangeSelection,
   $getRoot,
-  $isTextNode,
   $setSelection,
   COPY_COMMAND,
   CUT_COMMAND,
@@ -71,9 +69,7 @@ async function renderEditor(viewOptions: ViewOptions, isStandardView = false) {
 }
 
 function $textNodes(): TextNode[] {
-  return $dfs($getRoot())
-    .map(({ node }) => node)
-    .filter($isTextNode);
+  return $getRoot().getAllTextNodes();
 }
 
 /** Selects from `anchorOffset` in the first text node containing `anchorText` to `focusOffset` in
@@ -123,6 +119,28 @@ describe("MarkersViewCopyPlugin", () => {
     const standardData = await copy(standard);
 
     expect(standardData("text/plain")).toBe(WHOLE_USFM);
+  });
+
+  it("copies a char span framed by its own read-only glyphs", async () => {
+    // Both ends are ELEMENT points on the `\nd` span — before its opening glyph and before its
+    // closing one — the shape a click on one glyph followed by a shift-click on the other leaves.
+    // Mapped to the same USJ location, the range rebuilt collapsed and the copy silently wrote
+    // nothing while still claiming the event: a copy that looked like it worked.
+    const { editor } = await renderEditor(markersViewOptions);
+    await act(async () =>
+      editor.update(() => {
+        const spanText = $textNodes().find((node) => node.getTextContent() === "Lord");
+        if (!spanText) throw new Error("fixture is missing the char span's content");
+        const span = spanText.getParentOrThrow();
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(span.getKey(), 0, "element");
+        selection.focus = $createPoint(span.getKey(), span.getChildrenSize() - 1, "element");
+        $setSelection(selection);
+      }),
+    );
+    const getData = await copy(editor);
+
+    expect(getData("text/plain")).toBe("\\nd Lord");
   });
 
   it("copies a partial range across a note as exactly the USFM between its ends", async () => {
