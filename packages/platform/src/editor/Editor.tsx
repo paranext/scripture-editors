@@ -501,34 +501,46 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   const readSettledUsj = useCallback((): Usj | undefined => {
     const editor = editorRef.current;
     if (!editor) return editedUsjRef.current;
+    /**
+     * Re-serialize the cache when a commit carrying a blacklisted tag moved the tree without
+     * going through `handleChange`. Every path that can HAND BACK the cache calls this first.
+     * The flag is cleared only on success: a tree the adaptor cannot express (the block-verse
+     * layout) would otherwise leave the stale document in place with nothing left to mark it, so
+     * no later read would ever try again.
+     */
+    const refreshEditedUsjIfStale = () => {
+      if (!isEditedUsjStaleRef.current) return;
+      const fresh = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions);
+      if (!fresh) return;
+      editedUsjRef.current = fresh;
+      isEditedUsjStaleRef.current = false;
+    };
     // Nothing pending and nothing declared: the cached serialization IS the settled document, and
     // skipping the recompute keeps the common read as cheap as it has always been.
     const pendedKeys = getPendedDisplayOwners(editor);
     const transientInput = transientInputRef.current;
     if ((!pendedKeys || pendedKeys.size === 0) && !transientInput) {
-      if (isEditedUsjStaleRef.current) {
-        isEditedUsjStaleRef.current = false;
-        editedUsjRef.current =
-          editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions) ??
-          editedUsjRef.current;
-      }
+      refreshEditedUsjIfStale();
       return editedUsjRef.current;
     }
     // `getEditorState().read`, NOT `editor.read` - the latter force-flushes any in-flight update
     // mid-dispatch, and this is called from host save paths that can run during one.
     const editorState = editor.getEditorState();
     const serializedState = editorState.toJSON();
-    return (
-      editorState.read(() =>
-        $settledUsj(
-          serializedState,
-          pendedKeys ?? new Set<string>(),
-          { viewOptions, getMarker: markerLookup, logger: stableLogger },
-          transientInput,
-          lastKnownCaretRef.current,
-        ),
-      ) ?? editedUsjRef.current
+    const settled = editorState.read(() =>
+      $settledUsj(
+        serializedState,
+        pendedKeys ?? new Set<string>(),
+        { viewOptions, getMarker: markerLookup, logger: stableLogger },
+        transientInput,
+        lastKnownCaretRef.current,
+      ),
     );
+    if (settled) return settled;
+    // The settle rebuilt nothing — every pended key names a node that is no longer attached — so
+    // the cache stands in for it, and it has to be a current one.
+    refreshEditedUsjIfStale();
+    return editedUsjRef.current;
   }, [viewOptions, markerLookup, stableLogger]);
 
   /**
