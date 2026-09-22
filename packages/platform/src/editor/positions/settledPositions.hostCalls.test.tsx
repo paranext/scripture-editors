@@ -273,3 +273,34 @@ describe("typing over a selection that ends where a footnote's text ends", () =>
     });
   });
 });
+
+describe("getUsj after an annotation settles a pending paragraph", () => {
+  it("returns the settled paragraphs, not the literal the paragraph held before", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(twoParaUsj(["plain body"]));
+    await typeOver(lexical, "plain body", "plain \\q1 body");
+    expect(getPendedDisplayOwners(lexical)?.size).toBeGreaterThan(0);
+    const settled = ref.current?.getUsj()?.content?.slice(2);
+    expect(settled).toEqual([
+      { type: "para", marker: "p", content: ["plain "] },
+      { type: "para", marker: "q1", content: ["body"] },
+      { type: "para", marker: "p", content: ["depart here"] },
+    ]);
+
+    // Wrapping the pending text splits it, and the marker-edit engine settles the paragraph inside
+    // the annotation's own update, which never reaches the editor's change handler.
+    await act(async () => {
+      ref.current?.setAnnotation(
+        {
+          start: { jsonPath: contentPath([3, 0]), offset: 0 },
+          end: { jsonPath: contentPath([3, 0]), offset: 2 },
+        },
+        "test",
+        "1",
+      );
+      await Promise.resolve();
+    });
+    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBe(0);
+
+    expect(ref.current?.getUsj()?.content?.slice(2)).toEqual(settled);
+  });
+});

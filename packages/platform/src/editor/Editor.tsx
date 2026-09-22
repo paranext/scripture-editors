@@ -92,6 +92,7 @@ import {
   createMarkerLookup,
   defaultStyleInfo,
   DELTA_CHANGE_TAG,
+  EXTERNAL_USJ_MUTATION_TAG,
   externalTypedMarkType,
   getPendedDisplayOwners,
   LoggerBasic,
@@ -209,6 +210,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   const annotationRef = useRef<AnnotationRef | null>(null);
   const toolbarEndRef = useRef<HTMLDivElement>(null);
   const editedUsjRef = useRef(defaultUsj);
+  // Set when a commit may have moved the tree without `handleChange` seeing it (see the listener
+  // that sets it); the next settled read re-serializes instead of trusting `editedUsjRef`.
+  const isEditedUsjStaleRef = useRef(false);
   const expandedNoteKeyRef = useRef<string>(undefined);
   // In-progress input an in-editor command surface has claimed (see `EditorRef.setTransientInput`),
   // anchored to the text node the caret sat in when it was declared (see AnchoredTransientInput).
@@ -501,7 +505,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     // skipping the recompute keeps the common read as cheap as it has always been.
     const pendedKeys = getPendedDisplayOwners(editor);
     const transientInput = transientInputRef.current;
-    if ((!pendedKeys || pendedKeys.size === 0) && !transientInput) return editedUsjRef.current;
+    if ((!pendedKeys || pendedKeys.size === 0) && !transientInput) {
+      if (isEditedUsjStaleRef.current) {
+        isEditedUsjStaleRef.current = false;
+        editedUsjRef.current =
+          editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions) ??
+          editedUsjRef.current;
+      }
+      return editedUsjRef.current;
+    }
     // `getEditorState().read`, NOT `editor.read` - the latter force-flushes any in-flight update
     // mid-dispatch, and this is called from host save paths that can run during one.
     const editorState = editor.getEditorState();
@@ -1184,6 +1196,22 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         if ($isTextNode(node))
           lastKnownCaretRef.current = { key: node.getKey(), offset: selection.focus.offset };
       });
+    });
+  }, []);
+
+  // `editedUsjRef` is refreshed by `handleChange`, which `DeltaOnChangePlugin` never calls for a
+  // commit carrying a `blackListedChangeTags` tag. Such a commit can still move the tree: an
+  // annotation over a pending paragraph settles it inside the annotation's own update, and once
+  // nothing is pending `readSettledUsj` hands out the cache as the settled document — the typed
+  // literal, not the paragraph it settled into. Mark the cache stale so the next read re-serializes.
+  // A load (`setUsj`) and a remote apply (`applyUpdate`) set the cache themselves.
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return undefined;
+    return editor.registerUpdateListener(({ tags, dirtyElements, dirtyLeaves }) => {
+      if (dirtyElements.size === 0 && dirtyLeaves.size === 0) return;
+      if (tags.has(EXTERNAL_USJ_MUTATION_TAG) || tags.has(DELTA_CHANGE_TAG)) return;
+      if (blackListedChangeTags.some((tag) => tags.has(tag))) isEditedUsjStaleRef.current = true;
     });
   }, []);
 
