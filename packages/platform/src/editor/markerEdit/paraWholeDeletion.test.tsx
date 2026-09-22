@@ -26,11 +26,20 @@ import {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
+import {
+  initialize as initializeSerialize,
+  reset as resetSerialize,
+} from "../adaptors/usj-editor.adaptor";
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
 // Reaching inside only for tests (same pattern as markerEdit.test-helpers).
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
-import { StructureKeyboardPlugin } from "shared-react";
+import {
+  getViewOptions,
+  OpaqueBlockGuardPlugin,
+  StructureKeyboardPlugin,
+  UNFORMATTED_VIEW_MODE,
+} from "shared-react";
 import { act } from "@testing-library/react";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import {
@@ -48,12 +57,14 @@ import {
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   LexicalEditor,
+  TextNode,
 } from "lexical";
 import {
   $createCharNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createParaNode,
+  $createUnknownNode,
   $isMarkerNode,
   $isParaNode,
   NBSP,
@@ -227,6 +238,138 @@ describe("a delete gesture structure protection refuses arms nothing", () => {
       expect(second.isAttached()).toBe(true);
       expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(2);
     });
+  });
+});
+
+describe("a gesture any other handler refuses arms nothing either", () => {
+  /**
+   * `\p one`, `\q1 two`, then a paragraph opening with a figure whose caption is token-mode text —
+   * the opaque construct `OpaqueBlockGuardPlugin` refuses edits reaching into.
+   */
+  function $appendTwoParasAndFigure(): { second: ParaNode; caption: TextNode } {
+    const { second } = $appendTwoParas();
+    const caption = $createTextNode("caption").setMode("token");
+    $getRoot().append(
+      $createParaNode("p").append(
+        $createMarkerNode("p"),
+        $createTextNode(NBSP),
+        $createUnknownNode("fig").append(caption),
+        $createTextNode(" after"),
+      ),
+    );
+    return { second, caption };
+  }
+
+  /**
+   * Selects from `para`'s glyph start to `focusText` at `focusOffset` (the end of its text when
+   * omitted), committed on its own so the gesture that follows is a separate dispatch.
+   */
+  async function selectFromParaStart(
+    editor: LexicalEditor,
+    para: ParaNode,
+    $focusText: () => TextNode,
+    focusOffset?: number,
+  ): Promise<void> {
+    await act(async () =>
+      editor.update(
+        () => {
+          const glyph = para.getFirstChild();
+          if (!$isMarkerNode(glyph)) throw new Error("expected the paragraph's marker glyph");
+          const selection = $createRangeSelection();
+          selection.anchor.set(glyph.getKey(), 0, "text");
+          const focusText = $focusText();
+          selection.focus.set(
+            focusText.getKey(),
+            focusOffset ?? focusText.getTextContentSize(),
+            "text",
+          );
+          $setSelection(selection);
+        },
+        { discrete: true },
+      ),
+    );
+  }
+
+  /** The unrelated later commit: the programmatic emptying the transient contract never reaps. */
+  async function emptyLater(editor: LexicalEditor, para: ParaNode): Promise<void> {
+    await act(async () =>
+      editor.update(() => {
+        para.getChildren().forEach((child) => child.remove());
+      }),
+    );
+  }
+
+  const pressDelete = (editor: LexicalEditor) =>
+    act(async () =>
+      editor.dispatchCommand(
+        KEY_DOWN_COMMAND,
+        new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }),
+      ),
+    );
+
+  it("after a Delete the opaque-block guard refuses", async () => {
+    // Covers `\q1 two` whole and ends inside the figure caption: the guard claims the keystroke
+    // after the engine's KEY_DOWN handler has already armed, and with no structure protection.
+    let second!: ParaNode, caption!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => ({ second, caption } = $appendTwoParasAndFigure()),
+      <>
+        <MarkerEditPlugin viewOptions={viewOptions} />
+        <OpaqueBlockGuardPlugin />
+      </>,
+    );
+    await selectFromParaStart(editor, second, () => caption, 2);
+    await pressDelete(editor);
+    editor.getEditorState().read(() => expect(second.getTextContent()).toContain("two"));
+
+    await emptyLater(editor, second);
+
+    editor.getEditorState().read(() => expect(second.isAttached()).toBe(true));
+  });
+
+  it("after the first press of a guarded-mode two-step delete", async () => {
+    // A range holding a verse marker only ARMS guarded mode's two-step delete: React state
+    // changes, the Lexical document does not, so nothing commits.
+    let versePara!: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $appendTwoParas();
+        const { verse } = $appendVersePara();
+        versePara = requireDefined(verse.getParent<ParaNode>() ?? undefined, "verse paragraph");
+      },
+      <>
+        <MarkerEditPlugin viewOptions={viewOptions} structureProtectionMode="guarded" />
+        <StructureKeyboardPlugin structureProtectionMode="guarded" />
+      </>,
+    );
+    await selectFromParaStart(editor, versePara, () =>
+      requireDefined(versePara.getLastChild<TextNode>() ?? undefined, "verse paragraph content"),
+    );
+    await pressDelete(editor);
+    editor.getEditorState().read(() => expect(versePara.getTextContent()).toContain("beginning"));
+
+    await emptyLater(editor, versePara);
+
+    editor.getEditorState().read(() => expect(versePara.isAttached()).toBe(true));
+  });
+
+  it("after a cut the opaque-block guard refuses", async () => {
+    let second!: ParaNode, caption!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => ({ second, caption } = $appendTwoParasAndFigure()),
+      <>
+        <MarkerEditPlugin viewOptions={viewOptions} />
+        <OpaqueBlockGuardPlugin />
+      </>,
+    );
+    await selectFromParaStart(editor, second, () => caption, 2);
+    // Null payload: the ClipboardPlugin / context-menu / EditorRef dispatch shape.
+    await act(async () => editor.dispatchCommand(CUT_COMMAND, null));
+    editor.getEditorState().read(() => expect(second.getTextContent()).toContain("two"));
+
+    await emptyLater(editor, second);
+
+    editor.getEditorState().read(() => expect(second.isAttached()).toBe(true));
   });
 });
 
@@ -735,6 +878,56 @@ describe("user deletes a paragraph's entire visible representation", () => {
     });
     expect(paraMarkersOf(usjOf(editor))).toEqual(["p"]);
     expect(written.get("text/plain")).toContain("two"); // the cut content reached the clipboard
+  });
+
+  it("removes the paragraph when Lexical's own cut removes it after an await (Unformatted view)", async () => {
+    // Unformatted view is editable-marker but not Standard view, so no engine CUT claim runs:
+    // Lexical's rich-text handler performs the cut, and it removes the range only after
+    // `await copyToClipboard(...)` — a later microtask than the CUT dispatch that armed. The arm
+    // must survive that await, so it cannot expire itself on a microtask the way the delete-key
+    // arms do.
+    //
+    // jsdom has no ClipboardEvent, and Lexical names the class to recognise a native event.
+    class ClipboardEventStub extends Event {
+      clipboardData = { setData: () => undefined, getData: () => "", types: [], files: [] };
+    }
+    vi.stubGlobal("ClipboardEvent", ClipboardEventStub);
+    try {
+      let second!: ParaNode;
+      initializeSerialize(undefined, undefined);
+      resetSerialize();
+      const { editor } = await baseTestEnvironment(
+        () => ({ second } = $appendTwoParas()),
+        <MarkerEditPlugin viewOptions={getViewOptions(UNFORMATTED_VIEW_MODE)} />,
+      );
+      await act(async () =>
+        editor.update(
+          () => {
+            const glyph = second.getFirstChild();
+            if (!$isMarkerNode(glyph)) throw new Error("expected the paragraph's marker glyph");
+            const last = requireDefined(second.getLastChild() ?? undefined, "paragraph content");
+            const selection = $createRangeSelection();
+            selection.anchor.set(glyph.getKey(), 0, "text");
+            selection.focus.set(last.getKey(), last.getTextContentSize(), "text");
+            $setSelection(selection);
+          },
+          { discrete: true },
+        ),
+      );
+      await act(async () =>
+        editor.dispatchCommand(
+          CUT_COMMAND,
+          new ClipboardEventStub("cut") as unknown as ClipboardEvent,
+        ),
+      );
+
+      editor.getEditorState().read(() => {
+        expect(second.isAttached()).toBe(false);
+        expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(1);
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("lands the caret at the JUNCTION when deleting only the visible prefix merges the para", async () => {

@@ -976,8 +976,13 @@ export function MarkerEditPlugin({
           // of whichever handler performs the removal (the standard-view CUT claim at HIGH, or
           // Lexical's own at EDITOR); never claims the event.
           //
-          // A cut structure protection will refuse deletes nothing, so it must arm nothing.
-          if (!$isRefusedByStructureProtection(context)) $armWholeParaDeletion(context);
+          // A refused cut deletes nothing, so it must arm nothing: nothing commits, the update
+          // listener never resets the arm, and an unrelated later commit would read it as this
+          // gesture's provenance. So ask each refusal that outranks or ties with this handler.
+          // Unlike the delete keys below, this arm cannot expire on a microtask: Lexical's own
+          // cut (the one Unformatted view uses) removes the range only after an `await`.
+          if (!$isRefusedByStructureProtection(context) && !$selectionReachesIntoOpaqueBlock())
+            $armWholeParaDeletion(context);
           return false;
         },
         COMMAND_PRIORITY_CRITICAL,
@@ -1028,14 +1033,23 @@ export function MarkerEditPlugin({
           // in (collapsed arm: a backspace chain that empties it dissolves it), so the
           // paragraph transform can reap them by provenance. Never claims the key.
           //
-          // Not for a keystroke structure protection will refuse: it deletes nothing, so an arm
-          // left for it would be read as this gesture's provenance by an unrelated later commit.
+          // A refused keystroke deletes nothing, so an arm left for it would be read as this
+          // gesture's provenance by an unrelated later commit. Structure protection's refusal is
+          // asked up front; every other refusal (the opaque-block guard, guarded mode's first
+          // press, any added later) is covered by expiring the arms on a microtask. That is safe
+          // because the rich-text delete keys run to completion inside this same KEY_DOWN
+          // dispatch — Lexical's default KEY_DOWN handler dispatches the delete command
+          // synchronously, and the paragraph transform consumes the arm in that update.
           if (
             (event.key === "Backspace" || event.key === "Delete") &&
             !$isRefusedByStructureProtection(context, keyDownToIntent(event))
           ) {
             $armWholeParaDeletion(context);
             $armCollapsedParaDeletion(context);
+            queueMicrotask(() => {
+              context.wholeParaDeleteExpected?.clear();
+              context.collapsedDeleteCaretParas?.clear();
+            });
           }
           // Ctrl+Space collides with the composition trigger of several IMEs (Chinese/Japanese
           // input methods bind it to switch or commit), so mid-composition the keystroke belongs
