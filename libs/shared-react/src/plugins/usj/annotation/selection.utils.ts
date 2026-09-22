@@ -109,6 +109,17 @@ export function $getRangeFromUsjSelection(
 
   [startNode, startOffset] = $normalizeDecoratorPoint(startNode, startOffset);
   [endNode, endOffset] = $normalizeDecoratorPoint(endNode, endOffset);
+  // A range that ends where a closing marker begins ends with the content before it. Standard view
+  // can show presentation-only text between the two (the space before a note's `\f*` when its last
+  // char span has no closer of its own), and a range reaching over that text would let typing over
+  // the selection delete it — which the marker-edit engine settles by losing the text after the
+  // note. A caret there is left alone: it names the closer, and nothing is replaced.
+  if (end !== start && isUsjClosingMarkerLocation(end) && end.closingMarkerOffset === 0)
+    [endNode, endOffset] = $pointBeforePresentationText(
+      endNode,
+      endOffset,
+      hasStandardViewWhitespace(viewOptions),
+    );
 
   // Create selection range.
   const editorSelection = $createRangeSelection();
@@ -954,6 +965,35 @@ function $normalizeDecoratorPoint(node: LexicalNode, offset: number): [LexicalNo
 
   const isPastEnd = offset >= node.getTextContentSize() && offset > 0;
   return [parent, isPastEnd ? indexWithinParent + 1 : indexWithinParent];
+}
+
+/**
+ * `[node, offset]` moved back over any presentation-only text directly in front of it — text that
+ * is neither USJ content nor display bytes of its own — to the end of whatever precedes that text.
+ * Unchanged when there is none, or when the point is not at the front of its node.
+ */
+function $pointBeforePresentationText(
+  node: LexicalNode,
+  offset: number,
+  collapsesSpaceRuns: boolean,
+): [LexicalNode, number] {
+  let previous: LexicalNode | null;
+  if ($isElementNode(node)) previous = offset > 0 ? node.getChildAtIndex(offset - 1) : null;
+  else if (offset === 0) previous = node.getPreviousSibling();
+  else return [node, offset];
+
+  let skipped = false;
+  while (
+    $isTextNode(previous) &&
+    !$displayBytesOf(previous) &&
+    !$getLogicalTextLocation(previous, 0, collapsesSpaceRuns)
+  ) {
+    previous = previous.getPreviousSibling();
+    skipped = true;
+  }
+  if (!skipped) return [node, offset];
+  const last = $isElementNode(previous) ? previous.getLastDescendant() : previous;
+  return $isTextNode(last) ? [last, last.getTextContentSize()] : [node, offset];
 }
 
 function $getPointType(node: LexicalNode | undefined): "text" | "element" {

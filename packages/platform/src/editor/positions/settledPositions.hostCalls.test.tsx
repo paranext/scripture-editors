@@ -1,8 +1,9 @@
 /**
  * The position API as a host drives it through `EditorRef`, around the edges of an update: what a
  * user edit right after `setSelection` reports, what a read-only editor reports for a placement, a
- * stylesheet that arrives while a scope is pending, `getSelection` in the same tick as an undo, and a
- * caret at a paragraph's content start (which sits at the end of the space after the `\p` glyph).
+ * stylesheet that arrives while a scope is pending, `getSelection` in the same tick as an undo, a
+ * caret at a paragraph's content start (which sits at the end of the space after the `\p` glyph),
+ * and typing over a selection that ends where a footnote's text does.
  */
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $textContaining, contentPath, twoParaUsj, typeOver } from "./positions.test-helpers";
@@ -217,5 +218,58 @@ describe("a caret at a paragraph's content start", () => {
     expect(
       mounted.lexical.getEditorState().read(() => $marks().map((mark) => mark.getTextContent())),
     ).toEqual(["p"]);
+  });
+});
+
+describe("typing over a selection that ends where a footnote's text ends", () => {
+  // `\p text \f + \ft note text.\f* after`: a host's USFM range over `text.` ends at `\f*`, the
+  // note's closing marker, when `\ft` has no closer of its own — the usual footnote shape.
+  it.each([
+    [
+      "the note's closer, after an unclosed last char span",
+      { closed: "false" },
+      { jsonPath: contentPath([2, 1]), closingMarkerOffset: 0 },
+    ],
+    [
+      "the char span's own closer",
+      {},
+      { jsonPath: contentPath([2, 1, 0]), closingMarkerOffset: 0 },
+    ],
+  ])("at %s replaces only that text", async (_label, closedAttribute, end) => {
+    const ft = { type: "char", marker: "ft", content: ["note text."], ...closedAttribute };
+    const { ref, lexical } = await mountStandardViewEditor(
+      twoParaUsj(["text ", { type: "note", marker: "f", caller: "+", content: [ft] }, " after"]),
+    );
+    await act(async () => {
+      ref.current?.setSelection({
+        start: { jsonPath: contentPath([2, 1, 0, 0]), offset: "note ".length },
+        end,
+      });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      lexical.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        selection.insertText("words.");
+      });
+      await Promise.resolve();
+    });
+    act(() => ref.current?.commitPendingMarkerEdits());
+
+    expect(ref.current?.getUsj()?.content?.[2]).toEqual({
+      type: "para",
+      marker: "p",
+      content: [
+        "text ",
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ ...ft, content: ["note words."] }],
+        },
+        " after",
+      ],
+    });
   });
 });
