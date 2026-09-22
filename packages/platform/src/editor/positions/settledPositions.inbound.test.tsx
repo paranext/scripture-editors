@@ -120,6 +120,17 @@ describe("failure mode 1 — a pending literal re-tokenizes into structure", () 
     expect(point).toEqual({ key, offset: live.indexOf("LORD") + 2, type: "text" });
   });
 
+  it("maps the boundary at the start of the settled span onto the live bytes in front of it", async () => {
+    const { lexical, key, para, context } = await pendingSpan();
+    const charIndex = settledCharIndex(para);
+
+    // A content path naming the span itself addresses a child boundary of it — offset 0 is in
+    // front of everything the span holds, NOT the start of the paragraph around it.
+    const point = livePoint(lexical, context, { jsonPath: contentPath([2, charIndex]), offset: 0 });
+
+    expect(point).toEqual({ key, offset: live.indexOf("\\nd"), type: "text" });
+  });
+
   it("maps the settled span's marker location onto the live `\\` that spells it", async () => {
     const { lexical, key, para, context } = await pendingSpan();
     const charIndex = settledCharIndex(para);
@@ -220,6 +231,20 @@ describe("top-level index shifts", () => {
 
     const departKey = lexical.getEditorState().read(() => $textContaining("depart here").getKey());
     expect(point).toEqual({ key: departKey, offset: 0, type: "text" });
+  });
+
+  it("maps the start of the paragraph a split creates onto the live literal that spells it", async () => {
+    const live = "plain \\q1 body";
+    const { lexical, ref } = await mountStandardViewEditor(twoParaUsj(["plain body"]));
+    const key = await typeOver(lexical, "plain body", live);
+    const context = settledPositionContext(lexical);
+    expect(settledPara(ref.current?.getUsj(), 3).marker).toBe("q1");
+
+    // The second of the two settled paragraphs the one live paragraph becomes — its start is the
+    // live `\q1`, not the start of the live paragraph the pair is rebuilt from.
+    const point = livePoint(lexical, context, { jsonPath: contentPath([3]), offset: 0 });
+
+    expect(point).toEqual({ key, offset: live.indexOf("\\q1"), type: "text" });
   });
 
   it("follows a rejoin — everything after the merged pair moves up one", async () => {
