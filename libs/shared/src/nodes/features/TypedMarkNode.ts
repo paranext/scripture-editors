@@ -4,6 +4,7 @@
  * a selection.
  */
 
+import { $isMarkerNode } from "./MarkerNode.js";
 import { assertSafeKey } from "@eten-tech-foundation/scripture-utilities";
 import { addClassNamesToElement, removeClassNamesFromElement } from "@lexical/utils";
 import type {
@@ -1378,6 +1379,17 @@ export function $wrapSelectionInTypedMarkNode(
     const node = nodes[i];
     if ($isElementNode(lastCreatedMarkNode) && lastCreatedMarkNode.isParentOf(node)) {
       // If the current node is a child of the last created mark node, there is nothing to do here
+      continue;
+    }
+    if ($isMarkerNode(node)) {
+      // A marker glyph is display bytes its construct owns, never annotated content: moving one
+      // into a mark takes it out of the construct's own children, which the marker-edit engine
+      // reads as the marker having been deleted (a char span or note loses its closer, a note its
+      // opener) and settles by dissolving or deleting the construct. So end the current mark at
+      // the glyph, and start any later content in a new one. Remember the glyph's parent, though:
+      // it is the element the selection is inside, which must not then be wrapped whole.
+      currentNodeParent = node.getParent();
+      lastCreatedMarkNode = undefined;
       continue;
     }
     const isFirstNode = i === 0;
