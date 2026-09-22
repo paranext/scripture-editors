@@ -46,9 +46,15 @@ export type CaretHostAnchor = () => LexicalNode | undefined;
  * {@link useTransientCaretHost} returns this so a guard can drive the same repair from an arrival
  * the caret cannot report itself — a click Lexical resolved to no caret at all.
  *
+ * Returns whether it changed any node — adopting a host that is already there and moving the caret
+ * into it changes none. A caller tags its commit only when it did: Lexical clears an update's tags
+ * only when the commit dirties a node, so a tag on a selection-only commit rides along on the
+ * user's NEXT update, and `CURSOR_CHANGE_TAG` is in `blackListedChangeTags` — which would keep
+ * that edit from ever reaching the host's USJ-change handler.
+ *
  * Mutating: call inside `editor.update()`.
  */
-export type CaretHostRepair = (target: LexicalNode | undefined) => void;
+export type CaretHostRepair = (target: LexicalNode | undefined) => boolean;
 
 /** Whether `key` currently resolves to a bare cursor-host text node (only placeholder chars). */
 function $isPlaceholderHost(key: NodeKey | undefined): boolean {
@@ -98,6 +104,7 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
   // See CaretHostRepair. Deliberately free of `editor`: everything it touches is resolved from the
   // active editor state, so it is safe to hand to a caller that is already inside an update.
   const $repairCaret = useCallback<CaretHostRepair>((target) => {
+    let mutated = false;
     const selection = $getSelection();
     const anchorKey =
       $isRangeSelection(selection) && selection.isCollapsed() ? selection.anchor.key : undefined;
@@ -128,6 +135,7 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
         target.insertAfter(host);
         hostKeyRef.current = host.getKey();
         occupiedKey = host.getKey();
+        mutated = true;
       }
       $placeCaretAtBoundary(parent, boundary);
     }
@@ -135,9 +143,13 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
     // A tracked host the caret has left, and has not just been put back into, should go.
     if (staleKey && staleIsBareHost && staleKey !== anchorKey && staleKey !== occupiedKey) {
       const stale = $getNodeByKey(staleKey);
-      if ($isTextNode(stale)) stale.remove();
+      if ($isTextNode(stale)) {
+        stale.remove();
+        mutated = true;
+      }
       if (hostKeyRef.current === staleKey) hostKeyRef.current = undefined;
     }
+    return mutated;
   }, []);
 
   useEffect(() => {
@@ -161,8 +173,9 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       // Either a position to repair, or a tracked host the caret is no longer resting in.
       const hasWork = !!target || (!!staleKey && staleKey !== anchorKey);
       if (!hasWork) return;
-      $addUpdateTag(CURSOR_CHANGE_TAG);
-      $repairCaret(target);
+      // Tagged only for a commit that really moves a node (see CaretHostRepair): a tag on a
+      // selection-only commit would ride along on the user's next edit and hide it from the host.
+      if ($repairCaret(target)) $addUpdateTag(CURSOR_CHANGE_TAG);
     };
 
     /**

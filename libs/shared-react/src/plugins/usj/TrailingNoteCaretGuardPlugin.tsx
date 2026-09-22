@@ -182,10 +182,11 @@ export function TrailingNoteCaretGuardPlugin(): null {
   useEffect(() => {
     // Command handlers already run inside an update, so the tag has to be added to that one rather
     // than opened around a new one. Neither arrival changes content, so tagging the whole commit
-    // costs nothing that is not already excluded.
+    // costs nothing that is not already excluded — but only a commit the repair actually moved a
+    // node in is tagged, since Lexical carries a tag on a selection-only commit over to the user's
+    // next edit (see CaretHostRepair).
     const $repairPast = (note: NoteNode): void => {
-      $addUpdateTag(CURSOR_CHANGE_TAG);
-      $repairCaret(note);
+      if ($repairCaret(note)) $addUpdateTag(CURSOR_CHANGE_TAG);
     };
 
     return mergeRegister(
