@@ -2492,11 +2492,12 @@ export function $buildChapterFragment(
  * pending literal rather than restructuring the document from a chapter-scoped settle. Deleting
  * a chapter outright is `$chapterNodeTransform`'s existing empty-children path, not this one.
  *
- * Carries no annotation marks across, unlike its paragraph and note-content siblings, because none
- * can be in the region to carry: an annotation range names document CONTENT, and a chapter marker
- * has no content children for a `UsjDocumentLocation` to land in. The signature reads a mark
- * transparently either way, so a region whose only difference is a mark reports a fixed point and
- * is left exactly as it stands.
+ * Carries no annotation marks across, unlike its paragraph and note-content siblings. The chapter
+ * marker itself has no content children for a `UsjDocumentLocation` to land in, so nothing can
+ * annotate it. The adjacent `\ca`/`\cp` spans and `\cp` paragraph in the region DO hold
+ * addressable content, and a mark over them is lost when the region is spliced — a known gap, not
+ * an invariant to rely on. The signature reads a mark transparently either way, so a region whose
+ * only difference is a mark reports a fixed point and is left exactly as it stands.
  */
 export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): boolean {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
