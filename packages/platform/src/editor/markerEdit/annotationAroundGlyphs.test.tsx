@@ -17,7 +17,7 @@ import {
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
-import { $isMarkerNode, $isTypedMarkNode, TypedMarkNode } from "shared";
+import { $isMarkerNode, $isTypedMarkNode, NBSP, TypedMarkNode } from "shared";
 import { AnnotationRange } from "shared-react";
 import { vi } from "vitest";
 
@@ -141,13 +141,19 @@ const noteUsj: Usj = twoParaUsj([
 ]);
 const notePath = [2, 1];
 
-describe.each<[string, AnnotationRange]>([
+/**
+ * Each row names the text the mark must end up holding, so a regression that refuses the range
+ * outright cannot pass: with no mark at all `markHoldsGlyph` is `false` and the note's USJ is
+ * untouched, which is exactly what the two assertions below would otherwise check.
+ */
+describe.each<[string, AnnotationRange, string[]]>([
   [
     "starts at the note's opening marker",
     {
       start: { jsonPath: contentPath(notePath) },
       end: { jsonPath: contentPath([2, 2]), offset: 3 },
     },
+    [`${NBSP}\\ft${NBSP}note body\\ft*${NBSP}`, " af"],
   ],
   [
     "starts at the note's caller",
@@ -155,6 +161,7 @@ describe.each<[string, AnnotationRange]>([
       start: { jsonPath: propertyPath(notePath, "caller"), propertyOffset: 0 },
       end: { jsonPath: contentPath([2, 2]), offset: 3 },
     },
+    [`${NBSP}\\ft${NBSP}note body\\ft*${NBSP}`, " af"],
   ],
   [
     "spans the note's caller value",
@@ -162,6 +169,8 @@ describe.each<[string, AnnotationRange]>([
       start: { jsonPath: propertyPath(notePath, "caller"), propertyOffset: 0 },
       end: { jsonPath: propertyPath(notePath, "caller"), propertyOffset: 1 },
     },
+    // Standard view renders the caller as a DECORATOR, so the range covers no text node to mark.
+    [],
   ],
   [
     "ends at the note's closing marker",
@@ -169,13 +178,15 @@ describe.each<[string, AnnotationRange]>([
       start: { jsonPath: contentPath([2, 1, 0, 0]), offset: 5 },
       end: { jsonPath: contentPath(notePath), closingMarkerOffset: 0 },
     },
+    ["body"],
   ],
-])("an annotation that %s", (_label, range) => {
+])("an annotation that %s", (_label, range, expectedAnnotated) => {
   it("keeps the footnote", async () => {
     const mounted = await mountStandardViewEditor(noteUsj);
     await annotate(mounted, range);
     await editSecondParagraph(mounted);
 
+    expect(annotatedText(mounted.lexical)).toEqual(expectedAnnotated);
     expect(markHoldsGlyph(mounted.lexical)).toBe(false);
     expect(mounted.ref.current?.getUsj()?.content?.[2]).toEqual(
       (noteUsj.content as Usj["content"])[2],

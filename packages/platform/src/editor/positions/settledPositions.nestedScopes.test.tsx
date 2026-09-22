@@ -10,7 +10,7 @@
  * path must refuse (`undefined`), never answer approximately. A wrong position annotates or
  * selects the wrong text with no signal; a refusal is one tick of a feature not firing.
  */
-import { mountExpandedNoteEditor } from "../settledGetUsj.test-helpers";
+import { mountExpandedNoteEditor, requireStandardViewOptions } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes } from "./settledScopes.utils";
 import {
   $livePointFromSettledLocation,
@@ -28,7 +28,8 @@ import {
 } from "./positions.test-helpers";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import { $getNodeByKey, $getRoot } from "lexical";
-import { $isNoteNode, $isParaNode } from "shared";
+import { $getLogicalContentItems, $isNoteNode, $isParaNode } from "shared";
+import { hasStandardViewWhitespace } from "shared-react";
 
 /** The paragraph's own top-level content index — the same in both documents (nothing above it
  * settles, so no top-level index moves). Named rather than inlined so the rows read as
@@ -47,10 +48,18 @@ async function nested({ pendParaGlyph = true }: { pendParaGlyph?: boolean } = {}
   return { ...mounted, context, para, noteIndex, note };
 }
 
-/** The live content index of the paragraph's note — what the settled index is compared against. */
+/**
+ * The live LOGICAL content index of the paragraph's note — the coordinate space the settled index
+ * is also in, so the premise assertion below compares like with like. The RAW child index is not:
+ * it counts the paragraph's `\p` marker glyph, which carries no content, so it differs from the
+ * settled index for every fixture and would make that assertion hold whatever the husk did.
+ */
 function $liveNoteIndexWithinPara(): number {
   const para = $getRoot().getChildren().filter($isParaNode)[0];
-  const index = para.getChildren().findIndex($isNoteNode);
+  const index = $getLogicalContentItems(
+    para,
+    hasStandardViewWhitespace(requireStandardViewOptions()),
+  ).findIndex((item) => item.type === "element" && $isNoteNode(item.node));
   if (index < 0) throw new Error("no live note");
   return index;
 }
