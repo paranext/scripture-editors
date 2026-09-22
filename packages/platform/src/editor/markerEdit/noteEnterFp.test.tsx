@@ -1223,7 +1223,7 @@ describe("multi-line plain-text paste inside note content", () => {
       // Anchor at the paragraph's very start (ahead of `\v 1`), focus inside the expanded note's
       // `\ft` content: one endpoint in the note, one outside, with the verse marker in between.
       const { ftText } = $noteFtTextAndTrailingBodyText();
-      const para = requireDefined($getRoot().getFirstChild(), "paragraph not found");
+      const para = requireDefined($getRoot().getFirstChild() ?? undefined, "paragraph not found");
       const selection = $createRangeSelection();
       selection.anchor.set(para.getKey(), 0, "element");
       selection.focus.set(ftText.getKey(), ftText.getTextContentSize(), "text");

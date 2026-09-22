@@ -183,8 +183,14 @@ describe("a delete gesture structure protection refuses arms nothing", () => {
     await act(async () =>
       editor.update(
         () => {
-          const firstLast = requireDefined(first.getLastChild(), "first paragraph content");
-          const secondLast = requireDefined(second.getLastChild(), "second paragraph content");
+          const firstLast = requireDefined(
+            first.getLastChild() ?? undefined,
+            "first paragraph content",
+          );
+          const secondLast = requireDefined(
+            second.getLastChild() ?? undefined,
+            "second paragraph content",
+          );
           const selection = $createRangeSelection();
           selection.anchor.set(firstLast.getKey(), 1, "text");
           selection.focus.set(secondLast.getKey(), secondLast.getTextContentSize(), "text");
