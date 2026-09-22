@@ -506,4 +506,52 @@ describe("an annotation that begins on a preserved node", () => {
     expect(annotatedText(mounted.lexical)).toEqual(before);
     expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
   });
+
+  it("still wraps a note it holds alone once the paragraph settles", async () => {
+    const onRemove = vi.fn();
+    const mounted = await mountStandardViewEditor(markOverNoteUsj);
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: contentPath([2, 2]), offset: 0 },
+        end: { jsonPath: contentPath([2, 2]), offset: "bravo".length },
+      },
+      "1",
+      onRemove,
+    );
+    // The shape a comment on nothing but a footnote leaves: move the note into the mark, then the
+    // mark's own text back out of it.
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const para = $getRoot().getChildren().find($isParaNode);
+        const note = para?.getChildren().find($isNoteNode);
+        const mark = para?.getChildren().find($isTypedMarkNode);
+        const text = mark?.getFirstChild();
+        if (!note || !mark || !text) throw new Error("expected a note and a mark in the paragraph");
+        text.insertBefore(note);
+        mark.insertAfter(text);
+      });
+      await Promise.resolve();
+    });
+    const before = annotatedText(mounted.lexical);
+    expect(before).toHaveLength(1);
+    expect(before[0]).toContain("note body");
+    expect(before[0]).not.toContain("bravo");
+
+    await typeOver(mounted.lexical, literalHost, `bravo${withLiteral}`);
+    settle(mounted);
+
+    expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
+    // Both ends of a mark over nothing but a preserved node anchor just past it, so there is no
+    // byte range to re-wrap; the node itself, which the splice carries across whole, is the range.
+    expect(annotatedText(mounted.lexical)).toEqual(before);
+    expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
+    expect(
+      treeHas(
+        mounted.lexical,
+        (node) => $isTypedMarkNode(node) && $isNoteNode(node.getFirstChild()),
+      ),
+    ).toBe(true);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
 });

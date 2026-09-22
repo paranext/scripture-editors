@@ -58,6 +58,7 @@ import {
   $isTypedMarkNode,
   $milestoneAttributeRunPieces,
   $verseAttributeRunPieces,
+  $createTypedMarkNode,
   $wrapSelectionInTypedMarkNode,
   closingMarkerText,
   getEditableCallerText,
@@ -1678,23 +1679,53 @@ function $captureMarkByteRanges(
  * Mutating: call inside `editor.update()`, straight after the wrap.
  */
 function $extendMarkOverPreservedRun(key: NodeKey, type: string, id: string): void {
+  const run = $preservedRunAt(key);
+  if (!run) return;
+  const mark = run[run.length - 1].getNextSibling();
+  if (!$isTypedMarkNode(mark) || !mark.hasID(type, id)) return;
+  const target = mark.getFirstChild();
+  if (!target) return;
+  run.forEach((node) => target.insertBefore(node));
+}
+
+/**
+ * Wrap the preserved node run beginning at `key` in a fresh mark carrying `annotation` — how a mark
+ * over nothing BUT that run is restored. Both of such a mark's anchors land just past the run (see
+ * {@link MarkStart}), so they bracket no bytes at all; the run itself, carried across the splice as
+ * the same nodes, is the whole range.
+ *
+ * Mutating: call inside `editor.update()`, after the splice.
+ */
+function $wrapPreservedRun(key: NodeKey, annotation: CarriedAnnotation): void {
+  const run = $preservedRunAt(key);
+  if (!run) return;
+  const mark = $createTypedMarkNode();
+  mark.addID(
+    annotation.type,
+    annotation.id,
+    annotation.onClick,
+    annotation.onRemove,
+    annotation.onMouseEnter,
+    annotation.onMouseLeave,
+  );
+  run[0].insertBefore(mark);
+  mark.append(...run);
+}
+
+/** The preserved node run beginning at `key`: the node, plus the display run a verse or milestone
+ * rides together with (the same run definition {@link $pointAfterSentinelRun} uses). */
+function $preservedRunAt(key: NodeKey): LexicalNode[] | undefined {
   const first = $getNodeByKey(key);
-  const parent = first?.getParent();
-  const siblings = parent?.getChildren();
-  if (!first || !siblings) return;
+  const siblings = first?.getParent()?.getChildren();
+  if (!first || !siblings) return undefined;
   const index = siblings.findIndex((sibling) => sibling.is(first));
-  if (index < 0) return;
+  if (index < 0) return undefined;
   const run = $isVerseNode(first)
     ? $verseAttributeRun(siblings, index)
     : $isMilestoneNode(first)
       ? $milestoneDisplayRun(siblings, index)
       : [];
-  const last = run[run.length - 1] ?? first;
-  const mark = last.getNextSibling();
-  if (!$isTypedMarkNode(mark) || !mark.hasID(type, id)) return;
-  const target = mark.getFirstChild();
-  if (!target) return;
-  [first, ...run].forEach((node) => target.insertBefore(node));
+  return [first, ...run];
 }
 
 /**
@@ -1764,8 +1795,12 @@ function $restoreMarkByteRanges(
       if ($isGlyphPoint(start) || $isGlyphPoint(end)) continue;
       // A collapsed range covers no bytes, and wrapping one splits a text node at the same offset
       // twice, which marks everything IN FRONT of it: a mark over the wrong bytes is worse than a
-      // dropped mark, so refuse. (Offset 0 collapses to a no-op inside the wrap itself.)
-      if (start.key === end.key && start.offset === end.offset && start.type === end.type) continue;
+      // dropped mark, so refuse. (Offset 0 collapses to a no-op inside the wrap itself.) The one
+      // collapsed range that still names something is a mark over nothing but a preserved run.
+      if (start.key === end.key && start.offset === end.offset && start.type === end.type) {
+        if (range.start.kind === "preserved") $wrapPreservedRun(range.start.key, annotation);
+        continue;
+      }
       const selection = $createRangeSelection();
       selection.anchor.set(start.key, start.offset, start.type);
       selection.focus.set(end.key, end.offset, end.type);
