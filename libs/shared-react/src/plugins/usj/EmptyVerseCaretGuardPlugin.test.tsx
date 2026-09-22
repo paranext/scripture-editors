@@ -2,7 +2,8 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
 import { $createImmutableVerseNode, ImmutableVerseNode } from "../../nodes/usj";
-import { EmptyVerseCaretGuardPlugin } from "./EmptyVerseCaretGuardPlugin";
+import { $emptyVerseNeedingHost, EmptyVerseCaretGuardPlugin } from "./EmptyVerseCaretGuardPlugin";
+import { TextSpacingPlugin } from "./TextSpacingPlugin";
 import { baseTestEnvironment, deleteTextAtSelection } from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
@@ -17,7 +18,14 @@ import {
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
-import { $createParaNode, CURSOR_PLACEHOLDER_CHAR, ParaNode } from "shared";
+import {
+  $createImpliedParaNode,
+  $createParaNode,
+  CURSOR_CHANGE_TAG,
+  CURSOR_PLACEHOLDER_CHAR,
+  ImpliedParaNode,
+  ParaNode,
+} from "shared";
 
 async function guardedEnvironment($initialEditorState?: () => void) {
   return baseTestEnvironment($initialEditorState, <EmptyVerseCaretGuardPlugin />);
@@ -201,6 +209,105 @@ describe("EmptyVerseCaretGuardPlugin", () => {
       expect($isRangeSelection(selection) ? selection.getTextContent() : "").not.toContain(
         CURSOR_PLACEHOLDER_CHAR,
       );
+    });
+  });
+});
+
+describe("EmptyVerseCaretGuardPlugin alongside the editor's other plugins", () => {
+  /**
+   * The guard does not run alone in the editor. `TextSpacingPlugin` owns the structural space
+   * before a verse marker and transforms every `TextNode`, so a caret host that lands where it is
+   * looking has to survive it. Mounting the guard by itself cannot show that.
+   *
+   * These fail until the trailing-space exemption lands on main: without it that transform pads
+   * the host, and the repair below re-inserts it, which Lexical stops as an endless transform
+   * cycle. The exemption is PT-4537's, not this branch's.
+   */
+  async function sharedEnvironment($initialEditorState?: () => void) {
+    return baseTestEnvironment(
+      $initialEditorState,
+      <>
+        <EmptyVerseCaretGuardPlugin />
+        <TextSpacingPlugin />
+      </>,
+    );
+  }
+
+  /** `[v2, "...", v3, v4, "..."]` — an empty verse 3 between two verses in one paragraph. */
+  it("never commits a state with the caret stranded at a hostless verse boundary", async () => {
+    // An edit that empties the verse the caret is in strands it on an element point that renders no
+    // caret. Chromium sends no selection change for that arrival — the DOM selection already matches
+    // the one the edit applied — so a repair driven only by selection changes never runs there and
+    // the stranding is permanent. Asserting on the COMMITS rather than the end state holds in both
+    // environments: it fails on the one-commit window jsdom leaves, and on the window that never
+    // closes in the browser.
+    let v3Content: TextNode;
+    const { editor } = await sharedEnvironment(() => {
+      v3Content = $createTextNode("light");
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createImmutableVerseNode("2"),
+          $createTextNode("And the earth was without form. "),
+          $createImmutableVerseNode("3"),
+          v3Content,
+        ),
+      );
+    });
+
+    const strandedCommits: string[] = [];
+    const hostingCommitTags: string[][] = [];
+    let wasHosted = false;
+    editor.registerUpdateListener(({ tags }) => {
+      editor.getEditorState().read(() => {
+        // The rule names a boundary only when it needs a host and has none — exactly "stranded".
+        if ($emptyVerseNeedingHost()) strandedCommits.push(`[${[...tags].join(",")}]`);
+        const isHosted = $getRoot()
+          .getAllTextNodes()
+          .some((node) => node.getTextContent() === CURSOR_PLACEHOLDER_CHAR);
+        if (isHosted && !wasHosted) hostingCommitTags.push([...tags]);
+        wasHosted = isHosted;
+      });
+    });
+
+    await deleteTextAtSelection(editor, v3Content!, 0, v3Content!, "light".length);
+
+    expect(strandedCommits).toEqual([]);
+    // The commit that produces the host is the user's edit, so it must stay legible to USJ-change
+    // consumers. CURSOR_CHANGE_TAG is blacklisted for them: tagging here would silently drop the
+    // edit itself, not just the host.
+    expect(hostingCommitTags).toHaveLength(1);
+    expect(hostingCommitTags[0]).not.toContain(CURSOR_CHANGE_TAG);
+  });
+
+  it("hosts the caret in an implied paragraph too", async () => {
+    // A verse's content can sit directly in an ImpliedParaNode, which is a sibling of ParaNode
+    // rather than a subclass, so it needs its own transform registration to get the same repair.
+    let v3Content: TextNode;
+    const { editor } = await sharedEnvironment(() => {
+      v3Content = $createTextNode("light");
+      $getRoot().append(
+        $createImpliedParaNode().append(
+          $createImmutableVerseNode("2"),
+          $createTextNode("And the earth was without form. "),
+          $createImmutableVerseNode("3"),
+          v3Content,
+        ),
+      );
+    });
+
+    const strandedCommits: string[] = [];
+    editor.registerUpdateListener(() => {
+      editor.getEditorState().read(() => {
+        if ($emptyVerseNeedingHost()) strandedCommits.push("stranded");
+      });
+    });
+
+    await deleteTextAtSelection(editor, v3Content!, 0, v3Content!, "light".length);
+
+    expect(strandedCommits).toEqual([]);
+    editor.getEditorState().read(() => {
+      const children = ($getRoot().getFirstChild() as ImpliedParaNode).getChildren();
+      expect(children[3].getTextContent()).toBe(CURSOR_PLACEHOLDER_CHAR);
     });
   });
 });
