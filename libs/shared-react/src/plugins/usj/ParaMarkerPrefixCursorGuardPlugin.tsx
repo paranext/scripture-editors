@@ -1,4 +1,5 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { mergeRegister } from "@lexical/utils";
 import {
   $getNearestNodeFromDOMNode,
   $getNodeByKey,
@@ -7,17 +8,21 @@ import {
   $isTextNode,
   CLICK_COMMAND,
   COMMAND_PRIORITY_EDITOR,
+  COMMAND_PRIORITY_LOW,
   isDOMNode,
+  LexicalEditor,
   LexicalNode,
   RangeSelection,
 } from "lexical";
 import { useEffect } from "react";
 import {
+  $getSelectedParaMarker,
   $isGutterMarkerNode,
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
   $isVisibleMarkerNode,
   $placeCaretAtBoundary,
+  $selectParaMarker,
   NBSP,
   SomeParaNode,
 } from "shared";
@@ -25,106 +30,174 @@ import { $isImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
 
 /**
  * Keeps the cursor out of the places a paragraph's structural prefix occupies but no caret may
- * rest in, correcting a click to the first content position in the same update cycle.
+ * rest in, and turns a click on a paragraph's gutter marker into a selection of that marker.
  *
- * WHICH marker is caret territory is decided one NODE at a time, never per view: a marker rendered
- * in the gutter is an aid to reading, so it is never a caret position, while a marker rendered as
- * editable text in the flow IS content the user clicks into on purpose. A document can carry both
- * at once, so the two questions this asks — "did the click land on a gutter marker?" and "does the
- * prefix at this paragraph's start host a caret at all?" — are asked of the nodes in the tree.
+ * WHICH marker is caret territory is decided one NODE at a time, never per view. A marker glyph has
+ * three states: a marker rendered as editable text in the flow IS content the user clicks into on
+ * purpose; a marker rendered in the gutter is an aid to reading and never a caret position; and a
+ * gutter marker whose parent is a paragraph is a selection target — clicking it selects the marker
+ * itself (a `NodeSelection`, see `$getSelectedParaMarker` in shared), so the user can retag that
+ * paragraph. A document can carry all three at once, so every question here is asked of the nodes
+ * in the tree.
  *
- * Using `CLICK_COMMAND` instead of `registerUpdateListener` + `editor.update` ensures the
- * correction is committed in a single cycle — other listeners (e.g. `OnSelectionChangePlugin`)
- * see only the corrected cursor, never the intermediate prefix position.
+ * Two registrations, because the two corrections need different places in the click chain — see
+ * {@link registerParaMarkerPrefixCursorGuard}.
  */
 export function ParaMarkerPrefixCursorGuardPlugin(): null {
   const [editor] = useLexicalComposerContext();
 
-  useEffect(() => {
-    return editor.registerCommand<MouseEvent>(
+  useEffect(() => registerParaMarkerPrefixCursorGuard(editor), [editor]);
+
+  return null;
+}
+
+/**
+ * Registers the click policy on `editor`. Exported so tests register exactly what the plugin does.
+ *
+ * - A click ON a gutter glyph is answered at `COMMAND_PRIORITY_LOW` by
+ *   {@link $guardGutterMarkerClick}, which CLAIMS the click when it selected a paragraph marker.
+ *   Rich-text clears every `NodeSelection` on `CLICK_COMMAND` at EDITOR priority; claiming first is
+ *   what keeps the marker selected. LOW listeners registered earlier still run first — the
+ *   marker-edit engine's click bookkeeping is one — and it never shares a document with a gutter
+ *   glyph anyway (it runs only in editable marker mode, where no glyph is built in the gutter).
+ * - Everything else is judged at EDITOR priority from where the selection came to rest
+ *   ({@link $guardCursorOnClick}). Using `CLICK_COMMAND` instead of `registerUpdateListener` +
+ *   `editor.update` commits the correction in the click's own update, so other listeners (e.g.
+ *   `OnSelectionChangePlugin`) never see the intermediate prefix position.
+ *
+ * @param editor - The editor to guard.
+ * @returns a function that unregisters both listeners.
+ */
+export function registerParaMarkerPrefixCursorGuard(editor: LexicalEditor): () => void {
+  return mergeRegister(
+    editor.registerCommand<MouseEvent>(
+      CLICK_COMMAND,
+      $guardGutterMarkerClick,
+      COMMAND_PRIORITY_LOW,
+    ),
+    editor.registerCommand<MouseEvent>(
       CLICK_COMMAND,
       (event) => {
         $guardCursorOnClick(event);
         return false;
       },
       COMMAND_PRIORITY_EDITOR,
-    );
-  }, [editor]);
-
-  return null;
+    ),
+  );
 }
 
 /**
- * The whole click policy, in the order the two corrections must be tried: a click that landed ON a
- * gutter marker is answered from the click's target, because such a click leaves NO selection to
- * inspect; everything else is judged from where the selection came to rest.
+ * The LOW-priority half of the click policy: a click that landed ON a gutter marker glyph.
  *
- * Exported so the registration above is the only thing a test has to duplicate.
+ * Mutating: runs inside the click's update; registered by
+ * {@link registerParaMarkerPrefixCursorGuard}.
+ *
+ * @param event - The click that Lexical dispatched through `CLICK_COMMAND`.
+ * @returns `true` — claiming the click — only when it selected a paragraph's marker; a caret
+ *   placed past a book or table glyph leaves the rest of the click chain to run as before.
+ */
+export function $guardGutterMarkerClick(event: MouseEvent): boolean {
+  if (!$guardCursorAtGutterMarker(event.target)) return false;
+  return $getSelectedParaMarker($getSelection()) !== undefined;
+}
+
+/**
+ * The EDITOR-priority half of the click policy: everything that did not land on a gutter glyph,
+ * judged from where the selection came to rest. A click ON a gutter glyph was already answered at
+ * LOW by {@link $guardGutterMarkerClick} — either claimed (a paragraph's marker is now selected)
+ * or corrected to a caret past the glyph — so it is left alone here.
+ *
+ * Mutating: runs inside the click's update; registered by
+ * {@link registerParaMarkerPrefixCursorGuard}.
  *
  * @param event - The click that Lexical dispatched through `CLICK_COMMAND`.
  */
 export function $guardCursorOnClick(event: MouseEvent): void {
-  if ($guardCursorAtGutterMarker(event.target)) return;
+  const target = event.target;
+  if (isDOMNode(target) && $isGutterMarkerNode($getNearestNodeFromDOMNode(target))) return;
 
   const selection = $getSelection();
   if ($isRangeSelection(selection)) $guardCursorAtParaStart(selection);
 }
 
 /**
- * Advances the cursor past all structural prefix nodes at the start of `para`:
- * - Para-marker prefix (`MarkerNode` or `ImmutableTypedTextNode`) and its trailing NBSP.
- * - Leading verse nodes (`VerseNode` or `ImmutableVerseNode`).
+ * The boundary index of `para`'s first content position: how many structural prefix children
+ * lead it — the para-marker prefix (`MarkerNode` or `ImmutableTypedTextNode`) with its trailing
+ * NBSP, then any leading verse nodes (`VerseNode` or `ImmutableVerseNode`). `0` when nothing
+ * leads the content.
  *
- * Places the cursor at the content boundary just past them, under the shared convention for what a
- * boundary's caret position is (`$placeCaretAtBoundary`): the start of the first content `TextNode`
- * that follows, or an element point at that boundary when no `TextNode` hosts it yet.
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
  *
- * Also called directly when programmatically navigating to a verse whose paragraph has a
- * non-text first child (e.g. in `ScriptureReferencePlugin`).
+ * @param para - The paragraph to measure.
  */
-export function $advancePastParaPrefixes(para: SomeParaNode): boolean {
+export function $paraContentStartIndex(para: SomeParaNode): number {
   let child: LexicalNode | null = para.getFirstChild();
-  let skipCount = 0;
+  let index = 0;
 
   while (child !== null) {
     if ($isSynthesizedMarkerNode(child)) {
-      skipCount++;
+      index++;
       child = child.getNextSibling();
       // In editable mode the para-marker prefix is followed by a NBSP TextNode (marker-trailing-space).
       if ($isTextNode(child) && child.getTextContent() === NBSP) {
-        skipCount++;
+        index++;
         child = child.getNextSibling();
       }
     } else if ($isSomeVerseNode(child)) {
-      skipCount++;
+      index++;
       child = child.getNextSibling();
     } else {
       break;
     }
   }
 
-  if (skipCount === 0) return false;
+  return index;
+}
 
-  $placeCaretAtBoundary(para, skipCount);
+/**
+ * Advances the cursor past all structural prefix nodes at the start of `para` (see
+ * {@link $paraContentStartIndex}), placing it at the content boundary just past them under the
+ * shared convention for a boundary's caret position (`$placeCaretAtBoundary`): the start of the
+ * first content `TextNode` that follows, or an element point at that boundary when no `TextNode`
+ * hosts it yet.
+ *
+ * Also called directly when programmatically navigating to a verse whose paragraph has a
+ * non-text first child (e.g. in `ScriptureReferencePlugin`), and to leave a selected paragraph
+ * marker for its content.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns `false` (and moves nothing) when `para` has no structural prefix.
+ */
+export function $advancePastParaPrefixes(para: SomeParaNode): boolean {
+  const index = $paraContentStartIndex(para);
+  if (index === 0) return false;
+
+  $placeCaretAtBoundary(para, index);
   return true;
 }
 
 /**
- * Corrects a click that landed ON a gutter marker glyph, moving the cursor to the next visible text
- * position — normally the first content text of the paragraph the glyph belongs to.
+ * Answers a click that landed ON a gutter marker glyph. A paragraph's glyph is SELECTED (see
+ * `$getSelectedParaMarker`, shared) — re-clicking the selected glyph keeps it selected. Any other
+ * owner (a book's `\id` line, a table cell) moves the cursor to the boundary just past the glyph.
  *
  * Takes the click's DOM TARGET rather than the selection because a click on a gutter marker leaves
- * no selection at all to correct: the glyph is a decorator, which Lexical renders
- * `contenteditable="false"`, so the browser's caret lands inside a node Lexical cannot resolve to
- * any point in its tree and the editor's selection is left null. (Measured in Chrome: the DOM
- * selection anchors in the glyph's own text with a drawn caret, while `$getSelection()` is null.)
+ * no selection to inspect: the glyph is a decorator, which Lexical renders `contenteditable="false"`,
+ * so the browser's caret lands inside a node Lexical cannot resolve and the editor's selection is
+ * left null. (Measured in Chrome: the DOM selection anchors in the glyph's own text with a drawn
+ * caret, while `$getSelection()` is null.) `ParaMarkerSelectionPlugin` removes that stray caret.
  *
  * Scoped to the GUTTER flavor by {@link $isGutterMarkerNode}, not to the node class: markerMode
- * "visible" renders the same class of node INLINE among the words, and where that glyph is part of
- * the text this rule has no opinion about it.
+ * "visible" renders the same class of node INLINE among the words, and this rule has no opinion
+ * about that glyph.
+ *
+ * Mutating: call inside `editor.update()` (the click's update, via {@link $guardGutterMarkerClick}).
  *
  * @param target - The click's `event.target`.
- * @returns `true` if the cursor was moved, `false` if the click was not on a gutter marker.
+ * @returns `true` if the click was handled — a marker selected or the cursor moved — and `false`
+ *   if it was not on a gutter marker.
  */
 export function $guardCursorAtGutterMarker(target: EventTarget | null): boolean {
   if (!isDOMNode(target)) return false;
@@ -134,10 +207,10 @@ export function $guardCursorAtGutterMarker(target: EventTarget | null): boolean 
 
   const owner = glyph.getParent();
   if (!owner) return false;
-  // A paragraph can carry further structure after its marker (a leading verse number), and its own
-  // rule already knows how much of that to skip. Anywhere else a gutter marker appears — a book's
-  // `\id` line, a table cell — the boundary just past the glyph is the next content position.
-  if ($isSomeParaNode(owner)) return $advancePastParaPrefixes(owner);
+  if ($isSomeParaNode(owner)) {
+    $selectParaMarker(glyph);
+    return true;
+  }
   $placeCaretAtBoundary(owner, glyph.getIndexWithinParent() + 1);
   return true;
 }
