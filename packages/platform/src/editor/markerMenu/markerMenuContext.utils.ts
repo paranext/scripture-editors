@@ -67,7 +67,17 @@ function $collectPreviousParaMarkers(node: LexicalNode): string[] {
   const topLevel = node.getTopLevelElement();
   const markers: string[] = [];
   for (const child of $getRoot().getChildren()) {
-    if (topLevel && child.is(topLevel)) break;
+    if (topLevel && child.is(topLevel)) {
+      // A paragraph's own marker isn't "before itself", so the general break below is right for
+      // it — but the `\id` line's caret has the BookNode as its own top-level element, and the
+      // book's marker still belongs in the stack the caret's own block validates against
+      // (mirroring `$validateDocument`, which always joins the book's tag into an empty stack
+      // before checking what follows it). Otherwise a caret in the line reports an empty stack,
+      // and the Enter palette offers every paragraph marker, including ones invalid straight
+      // after `\id`.
+      if ($isBookNode(child)) markers.push(child.getMarker());
+      break;
+    }
     if ($isBookNode(child) || $isSomeChapterNode(child) || $isParaNode(child)) {
       markers.push(child.getMarker());
     }
