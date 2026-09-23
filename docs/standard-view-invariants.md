@@ -53,6 +53,9 @@ arm. **Do not add a third private exclusion; extend the shared one** — the rea
 written down is that every display-byte class which got its own exclusion had to be found and fixed
 separately, once per consumer, each after a bug.
 
+A selected paragraph marker adds no exclusion at all — see
+[A paragraph marker is selected, never addressed](#a-paragraph-marker-is-selected-never-addressed).
+
 ### III. One lifecycle for engine-owned display things
 
 Every kind the engine owns — attribute runs, milestone runs, verse `\va`/`\vp` runs, opener glyphs,
@@ -205,6 +208,32 @@ The map models the SERIALIZER (USJ to USFM, spec-declarative). This table models
 USJ, deliberately matching ParatextData rather than the spec). **Derive the shared facts from the
 map; keep the parser-behavior deltas local, explicit, and named.** Do not collapse one into the
 other.
+
+### A paragraph marker is selected, never addressed
+
+In the paragraph-structure view a paragraph's gutter marker glyph can be SELECTED — clicked, or
+reached with the arrow keys — so the user can pick the paragraph whose marker they are about to
+change. The selection is a Lexical `NodeSelection` of the glyph alone; `$getSelectedParaMarker`
+(`libs/shared/src/nodes/usj/node.utils.ts`) is its single definition. It carries no offsets, so no
+glyph byte becomes a document position, and it adds no exclusion predicate to Invariant II.
+
+The only operation it admits is retagging the owning paragraph (`formatPara` → `$applyParaMarker`).
+Everything else is decided before it can reach the glyph, by `ParaMarkerSelectionPlugin`
+(shared-react) at CRITICAL priority:
+
+- typing — including an IME's first composition keystroke and a dead key — collapses the selection
+  to the paragraph's first content position, and the keystroke proceeds there;
+- Backspace and Delete are refused visibly — a transient `psc-para-marker-refused` root signal the
+  host renders a hint from (Invariant I: no silent no-ops);
+- cut, copy, paste, drag and drop are refused. Copy too: rich-text would export the glyph node, and
+  pasting it would put a glyph into content.
+
+The rule holds whatever the view. It arises in the paragraph-structure view, not Standard view —
+gutter glyphs exist only where markers are not editable text — but it is keyed on the node (a gutter
+glyph whose parent is a paragraph), never on the view. Two alternatives were rejected and should not
+come back as "simplifications": an armed flag beside a content caret (two sources of truth; typing
+lands in the text while the marker looks selected) and preserving the browser's DOM range inside the
+glyph (Lexical cannot read it).
 
 ### The Paratext 9 parse rules the tokenizer reproduces (USFM ≤ 3.0)
 
