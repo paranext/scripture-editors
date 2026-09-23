@@ -29,6 +29,15 @@ refused. The public surface grew substantially; nothing was removed.
 - **Ctrl+Space removes character formatting from the selection.** On macOS this is ⌃Space rather than
   ⌘Space, which is Spotlight. It can collide with the macOS input-source switcher and with some IME
   on/off toggles; the handler declines while a composition is active.
+- **A paragraph's marker can be selected** in the paragraph-structure view (`hasGutterParaMarkers`):
+  click it in the gutter, or reach it with ←/→ at a paragraph boundary and walk the marker column
+  with ↑/↓. The row is highlighted (`psc-para-marker-selected`, with `aria-selected` on the
+  paragraph), typing returns to the paragraph's text, and Backspace/Delete are refused with a
+  `psc-para-marker-refused` / `data-para-marker-refused-intent` root signal for the host to render a
+  hint from.
+- `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
+- `EditorProps.onParaMarkerMenuRequest` — fired on Enter or Alt+↓ while a paragraph marker is
+  selected, so the host can open its paragraph dropdown.
 
 ### Changed
 
@@ -42,6 +51,10 @@ refused. The public surface grew substantially; nothing was removed.
 - `getUsj()` returns the settled document in editable marker modes. When nothing is pending and no
   transient input is declared it short-circuits to the previous behavior, so the other view modes are
   unaffected.
+- A click on a paragraph's gutter marker selects the marker instead of moving the caret to the
+  paragraph's text. Book (`\id`) and table markers still move the caret.
+- `EditorRef.formatPara` accepts a selected paragraph marker: it retags that paragraph and keeps
+  the marker selected.
 
 ### Fixed
 

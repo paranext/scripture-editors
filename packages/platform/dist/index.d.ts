@@ -321,6 +321,13 @@ export declare interface EditorProps<TLogger extends LoggerBasic> {
   onUsjChange?: (usj: Usj, ops?: DeltaOp[], source?: DeltaSource, insertedNodeKey?: string) => void;
   /** Callback function when state changes. */
   onStateChange?: ({ canUndo, canRedo, blockMarker, contextMarker }: StateChangeSnapshot) => void;
+  /**
+   * Callback function when the user asks, by keyboard, to change the selected paragraph marker
+   * (Enter or Alt+ArrowDown while a paragraph marker is selected — see
+   * {@link EditorRef.getSelectedParaMarker}). The marker stays selected; apply the choice with
+   * {@link EditorRef.formatPara}. Not called in a read-only editor.
+   */
+  onParaMarkerMenuRequest?: () => void;
   /** Options to configure the editor. */
   options?: EditorOptions;
   /** Logger instance. */
@@ -458,6 +465,21 @@ export declare interface EditorRef {
    */
   getSelection(): SelectionRange | undefined;
   /**
+   * Get the marker of the paragraph whose marker is selected, if a paragraph marker is the
+   * selection.
+   *
+   * @remarks
+   * In the paragraph-structure view (`ViewOptions.hasGutterParaMarkers`) the user can select a
+   * paragraph's marker itself — by clicking it in the gutter, or with the arrow keys — rather than
+   * placing a caret in its text. That selection names a paragraph, not a text range, so
+   * {@link EditorRef.getSelection} reports `undefined` for it; this method reports it instead.
+   * {@link EditorRef.formatPara} retags that paragraph. Always returns `undefined` in the block
+   * verse layout, which renders no gutter markers.
+   *
+   * @returns the selected paragraph marker's name (e.g. `"li2"`), or `undefined`.
+   */
+  getSelectedParaMarker(): string | undefined;
+  /**
    * Set the selection location or range.
    *
    * @remarks
@@ -520,7 +542,9 @@ export declare interface EditorRef {
    */
   removeAnnotation(type: string, id: string): void;
   /**
-   * Format the paragraph at the current cursor position with the given block marker.
+   * Format the paragraph at the current cursor position — or the paragraph whose marker is
+   * selected (see {@link EditorRef.getSelectedParaMarker}) — with the given block marker. A
+   * selected marker stays selected on the retagged paragraph.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
    */
