@@ -20,6 +20,7 @@ import {
   cutFragment,
   FragmentAccumulator,
   Tier2Context,
+  withoutDroppedSentinels,
 } from "../markerEdit/tier2Rebuild.utils";
 import {
   $applySettledNoteGlyphRename,
@@ -200,34 +201,6 @@ function $notesWithin(nodes: readonly LexicalNode[], out: NoteNode[] = []): Note
   return out;
 }
 
-/**
- * `fragment` with the placeholder byte of every run the settled side carries nothing of removed.
- *
- * A dropped run still spells a U+FFFC in the live fragment's text, and the byte anchor the two
- * sides are otherwise paired through counts a placeholder as an ordinary document byte — it is
- * deliberately NOT whitespace (`$resolveFragmentByteAnchor`, tier2Rebuild.utils.ts). Left in, every
- * live position past it answers a settled position one byte away, silently. Cut, the two fragments
- * spell the same document bytes again, which is the property the anchor relies on.
- *
- * The run's own span stays in the list, emptied, so the dropped node is still findable by key and
- * a position INSIDE it still resolves to the run it belongs to — which reports it at the boundary
- * where the run stood, the settled document having no node for it.
- */
-function withoutDroppedSentinels(
-  fragment: FragmentAccumulator,
-  carried: CarriedPreservedRuns,
-): FragmentAccumulator {
-  const droppedKeys = fragment.sentinels
-    .filter((run, index) => run.length > 0 && (carried.live[index]?.length ?? 0) === 0)
-    .map((run) => run[0].getKey());
-  // Later runs first: a cut only restates the positions after it, so each span's start is still
-  // the one this loop looked it up by.
-  return droppedKeys.reverse().reduce((cut, key) => {
-    const span = cut.spans.find((candidate) => candidate.isSentinel && candidate.key === key);
-    return span ? cutFragment(cut, span.start, span.end) : cut;
-  }, fragment);
-}
-
 /** Build the plan for one scope from its settled serialized nodes, or `undefined` when they will
  * not materialize. `carried` is the rebuild's own account of which preserved-run members reached
  * its output, which is what pairs the two sides' run lists up. */
@@ -257,7 +230,7 @@ function $planFrom(
   // Nothing preserved on either side: the correspondence is vacuous, not unknown.
   if ((liveFragment?.sentinels.length ?? 0) === 0 && (settledSide?.runs.length ?? 0) === 0)
     return { ...base, liveFragment, sentinelMap: [], settledOnlyRuns: [] };
-  const paired = liveFragment && carried && withoutDroppedSentinels(liveFragment, carried);
+  const paired = liveFragment && carried && withoutDroppedSentinels(liveFragment, carried.live);
   const pairing =
     paired && pairRuns($liveRunSide(paired, carried.live), settledSide ?? { runs: [], bytes: "" });
   if (!pairing) return { ...base, liveFragment, sentinelMap: undefined, settledOnlyRuns: [] };

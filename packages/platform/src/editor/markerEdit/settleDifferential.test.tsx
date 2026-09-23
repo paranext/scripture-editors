@@ -37,6 +37,7 @@ import {
   $isMarkerNode,
   $isNoteNode,
   $isParaNode,
+  $isUnknownNode,
   $wrapSelectionInTypedMarkNode,
   COMMENT_MARK_TYPE,
   getMarker as bundledGetMarker,
@@ -597,4 +598,83 @@ describe("differential settle — a comment inside a typed footnote literal", ()
       expect(bytes(live)).not.toContain('"c1"');
     },
   );
+});
+
+describe("differential settle — an emptied optbreak settling beside a typed literal", () => {
+  /**
+   * Empty the first paragraph's optbreak and type `literal` over ` bravo `, with comments over
+   * `head`, `alpha` and `charlie`, then settle both ways.
+   *
+   * The read-only settle splices the husk out of its output and rebuilds the paragraph without
+   * it, while the live fragment it captured the comments over still spells the husk's placeholder.
+   * The engine removes an emptied husk as soon as the caret leaves it and settles a typed literal
+   * as soon as the caret leaves THAT, so a running editor holds only one of the two pending at a
+   * time; with no engine mounted both stay pending, and the mutating half is the engine's own
+   * order — the husk removed, then the paragraph rebuilt.
+   */
+  async function settleBothWays(literal: string) {
+    const viewOptions = VIEWS.standard;
+    const context: Tier2Context = { viewOptions, getMarker: bundledGetMarker };
+    initializeSerialize(undefined, undefined);
+    reset();
+    const state = serializeEditorState(
+      twoParaUsj(["head ", { type: "optbreak" }, " alpha bravo charlie"]),
+      viewOptions,
+    );
+    const { editor } = await baseTestEnvironment(JSON.stringify({ root: state.root }));
+    const pended = new Set<string>();
+    editor.update(
+      () => {
+        $commentOver("head", "c0");
+        $commentOver("alpha", "c1");
+        $commentOver("charlie", "c2");
+        const husk = $getRoot().getChildren().find($isParaNode)?.getChildren().find($isUnknownNode);
+        if (!husk) throw new Error("expected the optbreak");
+        husk.getChildren().forEach((child) => child.remove());
+        pended.add(husk.getKey());
+        const text = $textContaining(" bravo ");
+        text.setTextContent(literal);
+        pended.add(text.getKey());
+      },
+      { discrete: true },
+    );
+
+    const serialized = editor.getEditorState().toJSON();
+    const mirror = editor.getEditorState().read(() => $settledUsj(serialized, pended, context));
+    editor.update(
+      () => {
+        $getRoot().getChildren().find($isParaNode)?.getChildren().find($isUnknownNode)?.remove();
+        const para = $getRoot().getChildren().find($isParaNode);
+        if (!para) throw new Error("expected a ParaNode");
+        expect($rebuildParas([para], context)).toBe(true);
+      },
+      { discrete: true },
+    );
+    return { mirror, live: usjOf(editor, viewOptions) };
+  }
+
+  /** Each comment's start milestone sits right in front of its word. */
+  function expectCommentsOnTheirWords(settled: Usj | undefined): void {
+    const para = bytes(settled?.content?.[2]);
+    expect(para).not.toContain('"optbreak"');
+    expect(para).toContain('{"type":"ms","marker":"zmsc-s","sid":"c0"},"head"');
+    expect(para).toContain('{"type":"ms","marker":"zmsc-s","sid":"c1"},"alpha"');
+    expect(para).toContain('{"type":"ms","marker":"zmsc-s","sid":"c2"},"charlie"');
+  }
+
+  it("carries comments before and after a typed footnote literal", async () => {
+    const { mirror, live } = await settleBothWays(" bravo \\f + \\ft note text\\f* ");
+
+    expect(bytes(live)).toContain('"marker":"f"');
+    expectCommentsOnTheirWords(live);
+    expect(JSON.stringify(mirror)).toBe(JSON.stringify(live));
+  });
+
+  it("carries comments before and after a typed char literal", async () => {
+    const { mirror, live } = await settleBothWays(" bravo \\nd x\\nd* ");
+
+    expect(bytes(live)).toContain('"marker":"nd"');
+    expectCommentsOnTheirWords(live);
+    expect(JSON.stringify(mirror)).toBe(JSON.stringify(live));
+  });
 });
