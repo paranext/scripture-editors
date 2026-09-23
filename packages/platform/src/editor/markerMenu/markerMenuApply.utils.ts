@@ -23,6 +23,7 @@ import { LITERAL_TRIGGER_PREFIX_REGEX } from "../markerEdit/markerName.pattern";
 import {
   $breakAndLiftCharStack,
   $splitParagraphAtCharStack,
+  $stepCaretPastClosingGlyphSpan,
 } from "../markerEdit/charFormatting.utils";
 import { $handleEnterInNote } from "../markerEdit/markerEditNote.utils";
 import {
@@ -182,11 +183,12 @@ function $moveEndpointPastPrefixGlyph(
  * the book, and the view renders its prefix as one immutable `\id GEN ` decorator the caret cannot
  * enter.
  *
- * The cut is made the way `$splitParagraphAtCharStack` makes it — {@link $breakAndLiftCharStack}
- * parks an empty break point at the caret and lifts it out of the open character-style stack — so
- * a caret inside a span in the line (`\id GE \nd N gen` is legal USFM) closes that span on the
- * left and reopens it in the new paragraph, instead of stranding the tail under a span left behind
- * in the book.
+ * The cut is made the way `$splitParagraphAtCharStack` makes it — a caret at a closing glyph's
+ * trailing edge is first stepped past its whole enclosing span ({@link $stepCaretPastClosingGlyphSpan}),
+ * then {@link $breakAndLiftCharStack} parks an empty break point at the caret and lifts it out of
+ * the open character-style stack — so a caret inside a span in the line (`\id GE \nd N gen` is
+ * legal USFM) closes that span on the left and reopens it in the new paragraph, instead of
+ * stranding the tail under a span left behind in the book.
  *
  * Judged from the selection's START point (`isBackward() ? focus : anchor`), not either endpoint
  * unconditionally: the removal below reaches from the start toward the other end regardless of
@@ -220,8 +222,13 @@ function $splitBookWithMarker(book: BookNode, marker: string, viewOptions?: View
   // A pick over a SELECTION replaces it first — the same delete-then-split
   // `RangeSelection.insertParagraph` performs on the paragraph path.
   if (!selection.isCollapsed()) selection.removeText();
-  const caret = $getSelection();
-  if (!$isRangeSelection(caret) || !caret.isCollapsed()) return false;
+  const rawCaret = $getSelection();
+  if (!$isRangeSelection(rawCaret) || !rawCaret.isCollapsed()) return false;
+  // A caret at the TRAILING EDGE of a canonical closing glyph is genuinely AFTER the span, so the
+  // cut belongs past the WHOLE enclosing char — the same step `$splitParagraphAtCharStack` takes
+  // before its own break-and-lift.
+  const caret = $stepCaretPastClosingGlyphSpan(rawCaret);
+  if (!caret) return false;
 
   const { parent, moving: liftedMoving } = $breakAndLiftCharStack(caret.anchor);
   // `$canSplitBookAt` ruled out a start point the lift cannot bring back to the book, but only for
