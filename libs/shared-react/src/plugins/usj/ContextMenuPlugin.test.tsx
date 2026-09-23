@@ -437,7 +437,7 @@ describe("ContextMenuPlugin scrolling", () => {
 
     // A synthetic scroll can be dispatched directly on `window`, whose `event.target` is `window`
     // itself rather than a Node — `Node.prototype.contains` throws on a non-Node argument, which
-    // (uncaught, inside an event listener) used to leave the menu open and stale.
+    // (uncaught, inside an event listener) would leave the menu open and stale.
     await act(async () => {
       expect(() => {
         globalThis.dispatchEvent(new Event("scroll"));
