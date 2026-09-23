@@ -814,7 +814,7 @@ const pendingShapes: PendingShape[] = [
   {
     // The line also carries a note (PT9 accepts one in `\id` text): the pend sits ELSEWHERE in the
     // line's content, so the rebuild must preserve the note as a sentinel run rather than folding
-    // its bytes into the retokenization (SE#1's own regression shape).
+    // its bytes into the retokenization or leaving its placeholder character behind.
     name: "byte typed in the \\id line while it also carries a note",
     usj: {
       type: "USJ",

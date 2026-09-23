@@ -1660,7 +1660,7 @@ describe("formatPara (standard view)", () => {
   });
 
   // `$setBlocksType` treats `BookNode` as an ordinary convertible block (nothing about it opts
-  // out), so a paragraph-style pick with the caret in the `\id` line used to convert the book
+  // out), so a bare `$setBlocksType` with the caret in the `\id` line would convert the book
   // itself into a `ParaNode` — dropping the book object and its code from the saved USJ while the
   // stale `\id GEN` glyph stayed on screen inside the new paragraph. A book is never retagged: the
   // pick can only SPLIT the line, starting a new paragraph after the book
