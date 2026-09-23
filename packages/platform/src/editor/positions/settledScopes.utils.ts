@@ -17,7 +17,9 @@ import {
   $buildParaScopeFragment,
   $chapterAdjacentAttributeNodes,
   $exportSubtree,
+  $isAttributeRunSpan,
   cutFragment,
+  FRAGMENT_WS,
   FragmentAccumulator,
   Tier2Context,
 } from "../markerEdit/tier2Rebuild.utils";
@@ -38,6 +40,8 @@ import {
   spliceHusk,
 } from "../markerEdit/virtualSettle.utils";
 import {
+  NonWsCounts,
+  SettledOnlyRun,
   SettledPositionContext,
   SettledRunMember,
   SettleScopePlan,
@@ -46,6 +50,7 @@ import {
 import {
   $getRoot,
   $isElementNode,
+  $isTextNode,
   $parseSerializedNode,
   createEditor,
   Klass,
@@ -67,7 +72,7 @@ import {
   NoteNode,
   ParaNode,
 } from "shared";
-import { hasStandardViewWhitespace, ViewOptions } from "shared-react";
+import { $isImmutableNoteCallerNode, hasStandardViewWhitespace, ViewOptions } from "shared-react";
 
 /** The settled document's top-level content indexes, expressed against the live tree's. */
 export interface PreparedScopes {
@@ -205,38 +210,6 @@ function $notesWithin(nodes: readonly LexicalNode[], out: NoteNode[] = []): Note
 }
 
 /**
- * Where each live preserved-run member sits in the settled fragment's own run list, in
- * {@link SettleScopePlan.sentinelMap}'s shape — or `undefined` when the two sides' runs cannot be
- * put in correspondence at all.
- *
- * A rebuild splices the members it carries back into its output in fragment order, so the settled
- * fragment lists those same nodes in that same order with the dropped ones missing — which pairs
- * the two sides off member for member. A settled list of a DIFFERENT length is a shape that
- * pairing cannot describe (a run whose sentinel condition the rebuild resolved, or a preserved
- * node the rebuild introduced), and the scope answers nothing rather than answer a construct the
- * two sides disagree about.
- */
-function sentinelMapOf(
-  liveSentinels: readonly (readonly LexicalNode[])[],
-  carried: readonly (readonly LexicalNode[])[] | undefined,
-  scratchSentinels: readonly (readonly LexicalNode[])[],
-): (SettledRunMember | undefined)[][] | undefined {
-  // Nothing preserved on either side: the correspondence is vacuous, not unknown.
-  if (liveSentinels.length === 0 && scratchSentinels.length === 0) return [];
-  if (!carried) return undefined;
-  const settled: SettledRunMember[] = [];
-  scratchSentinels.forEach((run, sentinelIndex) => {
-    for (let memberIndex = 0; memberIndex < run.length; memberIndex += 1)
-      settled.push({ sentinelIndex, memberIndex });
-  });
-  const carriedNodes = carried.flat();
-  if (carriedNodes.length !== settled.length) return undefined;
-  const byKey = new Map<NodeKey, SettledRunMember>();
-  carriedNodes.forEach((node, index) => byKey.set(node.getKey(), settled[index]));
-  return liveSentinels.map((run) => run.map((node) => byKey.get(node.getKey())));
-}
-
-/**
  * `fragment` with the placeholder byte of every run the settled side carries nothing of removed.
  *
  * A dropped run still spells a U+FFFC in the live fragment's text, and the byte anchor the two
@@ -251,12 +224,10 @@ function sentinelMapOf(
  */
 function withoutDroppedSentinels(
   fragment: FragmentAccumulator,
-  sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[],
+  carried: CarriedPreservedRuns,
 ): FragmentAccumulator {
   const droppedKeys = fragment.sentinels
-    .filter(
-      (run, index) => run.length > 0 && !sentinelMap[index]?.some((member) => member !== undefined),
-    )
+    .filter((run, index) => run.length > 0 && (carried.live[index]?.length ?? 0) === 0)
     .map((run) => run[0].getKey());
   // Later runs first: a cut only restates the positions after it, so each span's start is still
   // the one this loop looked it up by.
@@ -264,6 +235,240 @@ function withoutDroppedSentinels(
     const span = cut.spans.find((candidate) => candidate.isSentinel && candidate.key === key);
     return span ? cutFragment(cut, span.start, span.end) : cut;
   }, fragment);
+}
+
+/** Non-whitespace bytes of `fragment` before `position`, counted over its spans exactly as a byte
+ * anchor counts them. Read-only: call inside a read of the tree the fragment was built over. */
+function $nonWsBefore(fragment: FragmentAccumulator, position: number): NonWsCounts {
+  let full = 0;
+  let document = 0;
+  for (const span of fragment.spans) {
+    const end = Math.min(span.end, position);
+    let count = 0;
+    for (let index = span.start; index < end; index += 1)
+      if (!FRAGMENT_WS.test(fragment.text[index])) count += 1;
+    full += count;
+    if (!$isAttributeRunSpan(span)) document += count;
+  }
+  return { full, document };
+}
+
+/** How many whitespace bytes of `fragment`'s spans sit directly in front of `position`, back to
+ * the last non-whitespace byte — the `wsRun` a byte anchor at `position` carries. */
+function wsRunBefore(fragment: FragmentAccumulator, position: number): number {
+  let run = 0;
+  for (const span of fragment.spans)
+    for (let index = span.start; index < Math.min(span.end, position); index += 1)
+      run = FRAGMENT_WS.test(fragment.text[index]) ? run + 1 : 0;
+  return run;
+}
+
+/** Every non-whitespace byte of `fragment`'s spans, in order, with where it sits in the text —
+ * the bytes a byte anchor's `nonWsBefore` counts, in every-byte coordinates. */
+function nonWsBytes(fragment: FragmentAccumulator): { byte: string; position: number }[] {
+  const bytes: { byte: string; position: number }[] = [];
+  for (const span of fragment.spans)
+    for (let position = span.start; position < span.end; position += 1) {
+      const byte = fragment.text[position];
+      if (!FRAGMENT_WS.test(byte)) bytes.push({ byte, position });
+    }
+  return bytes;
+}
+
+/**
+ * How many leading bytes two strings share, and how many trailing ones. Where the two overlap — a
+ * byte the front can claim and the back can too, which happens when the bytes one side re-spelled
+ * begin with the byte that follows them on the other — neither is sure which byte it is, so
+ * neither claims it.
+ */
+function sharedEnds(first: string, second: string): { prefix: number; suffix: number } {
+  if (first === second) return { prefix: first.length, suffix: 0 };
+  const limit = Math.min(first.length, second.length);
+  let prefix = 0;
+  while (prefix < limit && first[prefix] === second[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < limit && first[first.length - 1 - suffix] === second[second.length - 1 - suffix])
+    suffix += 1;
+  return prefix + suffix > limit
+    ? { prefix: limit - suffix, suffix: limit - prefix }
+    : { prefix, suffix };
+}
+
+/**
+ * A preserved run's own bytes as its nodes spell them: every text node in order, marker glyphs
+ * included, and a collapsed note's caller — a decorator with no text of its own — as the caller
+ * value it stands for, which is what a typed literal spells in that slot. Read-only.
+ */
+function $runSpelling(members: readonly LexicalNode[]): FragmentAccumulator {
+  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  const push = (node: LexicalNode, text: string): void => {
+    out.spans.push({
+      key: node.getKey(),
+      start: out.text.length,
+      end: out.text.length + text.length,
+      isSentinel: false,
+    });
+    out.text += text;
+  };
+  const visit = (node: LexicalNode): void => {
+    if ($isImmutableNoteCallerNode(node)) {
+      const note = node.getParent();
+      push(node, $isNoteNode(note) ? note.getCaller() : "");
+    } else if ($isTextNode(node)) push(node, node.getTextContent());
+    else if ($isElementNode(node)) node.getChildren().forEach(visit);
+  };
+  members.forEach(visit);
+  return out;
+}
+
+/** What the pairing needs to know about one of the scratch fragment's preserved runs, gathered
+ * inside a read of the scratch tree. */
+interface ScratchRunFacts {
+  memberCount: number;
+  /** Non-whitespace bytes of the scratch fragment before the run's placeholder. */
+  before: NonWsCounts;
+  spelling: FragmentAccumulator;
+  /** `spelling`'s non-whitespace bytes, in order. */
+  spelled: string;
+}
+
+/** Every preserved run of the scratch fragment, described. Read-only: call inside a read of the
+ * scratch tree. */
+function $scratchRunFacts(fragment: FragmentAccumulator): ScratchRunFacts[] {
+  // `pushSentinel` records a run and its placeholder span together, so the n-th sentinel span is
+  // the n-th run's placeholder.
+  const placeholders = fragment.spans.filter((span) => span.isSentinel);
+  return fragment.sentinels.map((run, index) => {
+    const spelling = $runSpelling(run);
+    return {
+      memberCount: run.length,
+      before: $nonWsBefore(fragment, placeholders[index]?.start ?? fragment.text.length),
+      spelling,
+      spelled: nonWsBytes(spelling)
+        .map(({ byte }) => byte)
+        .join(""),
+    };
+  });
+}
+
+/** How one scope's two run lists correspond. */
+interface RunPairing {
+  sentinelMap: (SettledRunMember | undefined)[][];
+  settledOnlyRuns: SettledOnlyRun[];
+}
+
+/**
+ * Where each live preserved-run member sits in the settled fragment's own run list, in
+ * {@link SettleScopePlan.sentinelMap}'s shape, plus the settled runs no live run became — or
+ * `undefined` when the two sides' runs cannot be put in correspondence at all.
+ *
+ * A rebuild splices the members it carries back into its output in fragment order, so the settled
+ * fragment lists those same nodes in that same order with the dropped ones missing — which pairs
+ * the two sides off member for member.
+ *
+ * A settled list LONGER than that has runs the rebuild made from literal bytes: a typed
+ * `\f + \ft note\f*` tokenizes into a note, which the settled fragment spells as a placeholder.
+ * Those are found by walking both fragments' runs in order: a carried run's placeholder sits at
+ * the same non-whitespace byte count on both sides (less what the literals before it spelled
+ * beyond their one placeholder byte), and a settled run with no live placeholder there must be
+ * spelled out, byte for byte, by the live bytes at that count. A run neither accounts for is a
+ * shape the pairing cannot describe, and the scope answers nothing rather than answer a construct
+ * the two sides disagree about.
+ *
+ * `liveFragment` is already without the placeholders of the runs the settle dropped. Read-only:
+ * call inside a read of the LIVE tree.
+ */
+function $pairRuns(
+  liveFragment: FragmentAccumulator,
+  carried: CarriedPreservedRuns,
+  scratchRuns: readonly ScratchRunFacts[],
+  scratchBytes: string,
+): RunPairing | undefined {
+  const sentinelMap: (SettledRunMember | undefined)[][] = liveFragment.sentinels.map((run) =>
+    run.map(() => undefined),
+  );
+  /** Pair one live run's carried members with one settled run's members, in order. */
+  const pairRun = (liveIndex: number, sentinelIndex: number): void => {
+    const carriedKeys = new Set(carried.live[liveIndex]?.map((node) => node.getKey()));
+    let memberIndex = 0;
+    liveFragment.sentinels[liveIndex].forEach((node, liveMember) => {
+      if (!carriedKeys.has(node.getKey())) return;
+      sentinelMap[liveIndex][liveMember] = { sentinelIndex, memberIndex };
+      memberIndex += 1;
+    });
+  };
+
+  const carriedCount = carried.live.reduce((count, run) => count + run.length, 0);
+  const settledCount = scratchRuns.reduce((count, run) => count + run.memberCount, 0);
+  if (carriedCount > settledCount) return undefined;
+  if (carriedCount === settledCount) {
+    // Every settled member is a carried one: pair the two flattened lists off in order.
+    const settled = scratchRuns.flatMap((run, sentinelIndex) =>
+      Array.from({ length: run.memberCount }, (_, memberIndex) => ({ sentinelIndex, memberIndex })),
+    );
+    let next = 0;
+    liveFragment.sentinels.forEach((run, liveIndex) => {
+      const carriedKeys = new Set(carried.live[liveIndex]?.map((node) => node.getKey()));
+      run.forEach((node, liveMember) => {
+        if (carriedKeys.has(node.getKey())) sentinelMap[liveIndex][liveMember] = settled[next++];
+      });
+    });
+    return { sentinelMap, settledOnlyRuns: [] };
+  }
+
+  // The live runs that reach the settled side, in order, with where their placeholders sit.
+  const placeholders = liveFragment.spans.filter((span) => span.isSentinel);
+  const liveRuns = liveFragment.sentinels
+    .map((_, index) => ({
+      index,
+      before: $nonWsBefore(liveFragment, placeholders[index]?.start ?? 0),
+    }))
+    .filter(({ index }) => (carried.live[index]?.length ?? 0) > 0);
+  const liveBytes = nonWsBytes(liveFragment);
+  const liveText = liveBytes.map(({ byte }) => byte).join("");
+  const settledOnlyRuns: SettledOnlyRun[] = [];
+  let shift = 0;
+  let nextLive = 0;
+  for (let sentinelIndex = 0; sentinelIndex < scratchRuns.length; sentinelIndex += 1) {
+    const facts = scratchRuns[sentinelIndex];
+    const live = liveRuns[nextLive];
+    if (live?.before.full === facts.before.full + shift) {
+      if (carried.live[live.index].length !== facts.memberCount) return undefined;
+      pairRun(live.index, sentinelIndex);
+      nextLive += 1;
+      continue;
+    }
+    const start = facts.before.full + shift;
+    let end = start + facts.spelled.length;
+    if (liveText.slice(start, end) !== facts.spelled) {
+      // The settled node does not spell the typed bytes back (a `\cat` folded into the note's
+      // category, an attribute list re-spelled in its short form), so the literal's extent comes
+      // from the other side of it: everything after it is the same bytes on both sides.
+      const settledAfter = scratchBytes.slice(facts.before.full + 1);
+      end = liveText.length - settledAfter.length;
+      if (end <= start || liveText.slice(end) !== settledAfter) return undefined;
+    }
+    const literal = { start: liveBytes[start].position, end: liveBytes[end - 1].position + 1 };
+    const liveBefore = $nonWsBefore(liveFragment, literal.start);
+    const liveAfter = $nonWsBefore(liveFragment, literal.end);
+    const shared = sharedEnds(liveText.slice(start, end), facts.spelled);
+    settledOnlyRuns.push({
+      sentinelIndex,
+      liveBefore,
+      liveLength: {
+        full: liveAfter.full - liveBefore.full,
+        document: liveAfter.document - liveBefore.document,
+      },
+      liveWsBefore: wsRunBefore(liveFragment, literal.start),
+      settledBefore: facts.before,
+      spelling: facts.spelling,
+      spelledLength: facts.spelled.length,
+      sharedPrefix: shared.prefix,
+      sharedSuffix: shared.suffix,
+    });
+    shift += end - start - 1;
+  }
+  return nextLive === liveRuns.length ? { sentinelMap, settledOnlyRuns } : undefined;
 }
 
 /** Build the plan for one scope from its settled serialized nodes, or `undefined` when they will
@@ -280,31 +485,30 @@ function $planFrom(
 ): SettleScopePlan | undefined {
   const scratch = materializeScratch(context.nodes, rebuilt);
   if (!scratch) return undefined;
-  const { settledCount, scratchFragment } = scratch.getEditorState().read(() => ({
-    settledCount: $getLogicalContentItems(
-      $getRoot(),
-      hasStandardViewWhitespace(context.tier2.viewOptions),
-    ).length,
-    scratchFragment: $buildScopeFragment(kind, $getRoot().getChildren(), context.tier2),
-  }));
-  const sentinelMap = sentinelMapOf(
-    liveFragment?.sentinels ?? [],
-    carried?.live,
-    scratchFragment?.sentinels ?? [],
-  );
-  return {
-    kind,
-    liveNodes,
-    liveFragment:
-      liveFragment && sentinelMap
-        ? withoutDroppedSentinels(liveFragment, sentinelMap)
-        : liveFragment,
-    liveCut,
-    scratch,
-    scratchFragment,
-    settledCount,
-    sentinelMap,
-  };
+  const { settledCount, scratchFragment, scratchRuns } = scratch.getEditorState().read(() => {
+    const fragment = $buildScopeFragment(kind, $getRoot().getChildren(), context.tier2);
+    return {
+      settledCount: $getLogicalContentItems(
+        $getRoot(),
+        hasStandardViewWhitespace(context.tier2.viewOptions),
+      ).length,
+      scratchFragment: fragment,
+      scratchRuns: fragment ? $scratchRunFacts(fragment) : [],
+    };
+  });
+  const scratchBytes = scratchFragment
+    ? nonWsBytes(scratchFragment)
+        .map(({ byte }) => byte)
+        .join("")
+    : "";
+  const base = { kind, liveNodes, liveCut, scratch, scratchFragment, settledCount };
+  // Nothing preserved on either side: the correspondence is vacuous, not unknown.
+  if ((liveFragment?.sentinels.length ?? 0) === 0 && scratchRuns.length === 0)
+    return { ...base, liveFragment, sentinelMap: [], settledOnlyRuns: [] };
+  const paired = liveFragment && carried && withoutDroppedSentinels(liveFragment, carried);
+  const pairing = paired && $pairRuns(paired, carried, scratchRuns, scratchBytes);
+  if (!pairing) return { ...base, liveFragment, sentinelMap: undefined, settledOnlyRuns: [] };
+  return { ...base, liveFragment: paired, ...pairing };
 }
 
 /** The live fragment for a scope with the declared bytes cut out of it, plus where that cut was. */

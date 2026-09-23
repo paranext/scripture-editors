@@ -28,6 +28,7 @@ import {
   Tier2Context,
 } from "../markerEdit/tier2Rebuild.utils";
 import {
+  SettledOnlyRun,
   SettledPositionContext,
   SettledRunMember,
   SettleScopePlan,
@@ -36,6 +37,9 @@ import { PreparedScopes } from "./settledScopes.utils";
 import {
   UsjDocumentLocation,
   indexesFromUsjJsonPath,
+  isUsjClosingMarkerLocation,
+  isUsjMarkerLocation,
+  isUsjPropertyValueLocation,
   isUsjTextContentLocation,
   usjJsonPathFromIndexes,
 } from "@eten-tech-foundation/scripture-utilities";
@@ -53,6 +57,7 @@ import {
   $getLogicalContentItems,
   $getLogicalPointFromElementPoint,
   $isImpliedParaNode,
+  $isMarkerNode,
   $isNoteNode,
 } from "shared";
 import {
@@ -78,6 +83,142 @@ function contentPathOf(jsonPath: string): string {
 function withContentIndexes<T extends UsjDocumentLocation>(location: T, indexes: number[]): T {
   const suffix = location.jsonPath.slice(contentPathOf(location.jsonPath).length);
   return { ...location, jsonPath: `${usjJsonPathFromIndexes(indexes)}${suffix}` } as T;
+}
+
+/** Whether two index paths name the same node. */
+function isSamePath(first: readonly number[], second: readonly number[]): boolean {
+  return first.length === second.length && first.every((index, depth) => index === second[depth]);
+}
+
+/**
+ * Whether `location` names bytes a note carries itself rather than through its content: its
+ * marker, its caller, or its closing marker. A settle that rebuilds a note's CONTENT hands those
+ * through unchanged, so a location on them means the same bytes on both sides.
+ */
+function isNoteOwnBytesLocation(location: UsjDocumentLocation): boolean {
+  if (isUsjMarkerLocation(location) || isUsjClosingMarkerLocation(location)) return true;
+  if (!isUsjPropertyValueLocation(location)) return false;
+  const property = location.jsonPath.slice(contentPathOf(location.jsonPath).length);
+  return property === "['marker']" || property === "['caller']";
+}
+
+/** Whether `location` names `note`'s own marker, caller or closing marker. */
+function $isOwnBytesLocationOf(location: UsjDocumentLocation, note: LexicalNode): boolean {
+  return (
+    isNoteOwnBytesLocation(location) &&
+    isSamePath(indexesFromUsjJsonPath(contentPathOf(location.jsonPath)), $getJsonPathIndexes(note))
+  );
+}
+
+/** The live point a location on a note's own bytes names, resolved against the LIVE note. */
+function $livePointOnNoteOwnBytes(
+  note: LexicalNode,
+  location: UsjDocumentLocation,
+  viewOptions: ViewOptions,
+): FragmentPoint | undefined {
+  // A memoized plan holds live node references the tree may have moved on from.
+  if (!note.isAttached()) return undefined;
+  const [node, offset] = $getNodeFromLocation(
+    withContentIndexes(location, $getJsonPathIndexes(note)),
+    viewOptions,
+  );
+  if (!node || offset === undefined) return undefined;
+  return { key: node.getKey(), offset, type: $isElementNode(node) ? "element" : "text" };
+}
+
+/**
+ * `anchor` over one side's fragment restated over the other's, across every settled-only run it
+ * lies past: the live fragment spells each such run's literal where the settled fragment spells one
+ * placeholder byte. Each coordinate system is restated in its own counts.
+ */
+function anchorAcrossLiterals(
+  runs: readonly SettledOnlyRun[],
+  anchor: CaretByteAnchor,
+  direction: "toSettled" | "toLive",
+): CaretByteAnchor {
+  if (runs.length === 0) return anchor;
+  const restate = (count: number, coordinates: "full" | "document"): number => {
+    let shift = 0;
+    for (const run of runs) {
+      const extra = run.liveLength[coordinates] - 1;
+      const isPast =
+        direction === "toSettled"
+          ? count >= run.liveBefore[coordinates] + run.liveLength[coordinates]
+          : count >= run.settledBefore[coordinates] + 1;
+      if (isPast) shift += extra;
+    }
+    return direction === "toSettled" ? count - shift : count + shift;
+  };
+  return {
+    ...anchor,
+    nonWsBefore: restate(anchor.nonWsBefore, "full"),
+    documentCoords: anchor.documentCoords && {
+      ...anchor.documentCoords,
+      nonWsBefore: restate(anchor.documentCoords.nonWsBefore, "document"),
+    },
+  };
+}
+
+/**
+ * A count of non-whitespace bytes into one side of a settled-only run — the live literal, or the
+ * run's spelling — restated as a count into the other, or `undefined` for a byte the settle
+ * re-spelled, which the other side has no counterpart for. Bytes up to the shared prefix line up
+ * from the front, and bytes from the shared suffix on line up from the back.
+ */
+function acrossLiteral(
+  run: SettledOnlyRun,
+  count: number,
+  direction: "toSpelling" | "toLiteral",
+): number | undefined {
+  const [fromLength, toLength] =
+    direction === "toSpelling"
+      ? [run.liveLength.full, run.spelledLength]
+      : [run.spelledLength, run.liveLength.full];
+  if (count <= run.sharedPrefix) return count;
+  if (count >= fromLength - run.sharedSuffix) return toLength - (fromLength - count);
+  return undefined;
+}
+
+/**
+ * The settled-only run whose live literal a live anchor lies strictly inside, and the anchor
+ * restated over that run's own spelling — `within` is `undefined` for a byte the settle re-spelled.
+ * Full bytes only: the literal is plain text, and the spelling counts every byte it has.
+ */
+function literalContaining(
+  runs: readonly SettledOnlyRun[],
+  anchor: CaretByteAnchor,
+): { run: SettledOnlyRun; within: CaretByteAnchor | undefined } | undefined {
+  for (const run of runs) {
+    const count = anchor.nonWsBefore - run.liveBefore.full;
+    if (count <= 0 || count >= run.liveLength.full) continue;
+    const within = acrossLiteral(run, count, "toSpelling");
+    return {
+      run,
+      within:
+        within === undefined
+          ? undefined
+          : { nonWsBefore: within, wsRun: anchor.wsRun, attributeRunSpans: 0 },
+    };
+  }
+  return undefined;
+}
+
+/**
+ * The scratch point a position inside a settled-only run's literal names in that run's spelling.
+ * The literal is plain text the caret can rest anywhere in, including between the bytes of a
+ * closing marker, which caret addressing would move past; so a byte that lands inside a closing
+ * glyph keeps that byte, and every other position keeps the caret's own addressing. Call inside a
+ * read of the scratch tree.
+ */
+function $pointInSpelling(
+  spelling: FragmentAccumulator,
+  within: CaretByteAnchor,
+): FragmentPoint | undefined {
+  const byte = $resolveFragmentByteAnchor(spelling, within, { addressDisplayBytes: true });
+  const glyph = byte && $getNodeByKey(byte.key);
+  if (byte && byte.offset > 0 && $isMarkerNode(glyph) && glyph.getMarkerSyntax() !== "opening")
+    return byte;
+  return $resolveFragmentByteAnchor(spelling, within);
 }
 
 /** Where a settled location has to be resolved: against the live tree at a restated path, or
@@ -264,6 +405,17 @@ type ScratchResolution =
       /** The same point as a byte anchor over the member note's content, for the case where the
        * live note is settling too and its content is therefore NOT the same subtree. */
       noteAnchor: { anchor: CaretByteAnchor; atWordByte: boolean } | undefined;
+      /** Whether the location names the member note's own marker, caller or closing marker,
+       * which a settle of the note's content hands through unchanged. */
+      isNoteOwnBytes: boolean;
+    }
+  | {
+      kind: "literal";
+      /** The settled-only run the point landed in. */
+      run: SettledOnlyRun;
+      /** The point as a byte anchor over the run's spelling. */
+      anchor: CaretByteAnchor;
+      atWordByte: boolean;
     };
 
 /** The preserved run member whose subtree holds `node`, if any. */
@@ -300,12 +452,27 @@ function $childPath(ancestor: LexicalNode, node: LexicalNode): number[] | undefi
 /** Resolve a settled location inside `plan`'s scratch tree. Call inside a read of that tree. */
 function $resolveInScratch(
   fragment: FragmentAccumulator,
+  settledOnlyRuns: readonly SettledOnlyRun[],
   location: UsjDocumentLocation,
   tier2: Tier2Context,
 ): ScratchResolution | undefined {
   const [node, offset] = $getNodeFromLocation(location, tier2.viewOptions);
   if (!node || offset === undefined) return undefined;
   const preserved = $preservedRunMember(fragment, node);
+  const literal =
+    preserved && settledOnlyRuns.find((run) => run.sentinelIndex === preserved.sentinelIndex);
+  if (literal) {
+    // The live side spells this run as literal bytes, so the point crosses by its byte in them.
+    const anchored = $anchorForPoint(literal.spelling, node, offset);
+    return (
+      anchored && {
+        kind: "literal",
+        run: literal,
+        anchor: anchored.anchor,
+        atWordByte: isWordByte(literal.spelling, anchored.position),
+      }
+    );
+  }
   if (!preserved) {
     const anchored = $anchorForPoint(fragment, node, offset);
     if (!anchored) return undefined;
@@ -332,6 +499,8 @@ function $resolveInScratch(
       anchor: noteAnchored.anchor,
       atWordByte: isWordByte(noteContent, noteAnchored.position),
     },
+    isNoteOwnBytes:
+      $isNoteNode(preserved.member) && $isOwnBytesLocationOf(location, preserved.member),
   };
 }
 
@@ -409,7 +578,8 @@ function $livePointFromAnchor(
 ): FragmentPoint | undefined {
   const { liveFragment, scratchFragment, sentinelMap } = plan;
   if (!liveFragment || !scratchFragment || !sentinelMap) return undefined;
-  const point = $resolveFragmentByteAnchor(liveFragment, anchor, {
+  const liveAnchor = anchorAcrossLiterals(plan.settledOnlyRuns, anchor, "toLive");
+  const point = $resolveFragmentByteAnchor(liveFragment, liveAnchor, {
     addressDisplayBytes: !isUsjTextContentLocation(location),
   });
   if (!point) return undefined;
@@ -436,6 +606,10 @@ function $livePointInPreservedRun(
   // a SETTLED child path against LIVE children, which resolves to whatever node happens to sit at
   // that index.
   const notePlan = prepared.byFirstLiveKey.get(member.getKey());
+  // The note's own marker, caller and closing glyph are outside its content, and a content settle
+  // hands them through unchanged: resolve them against the live note itself.
+  if (notePlan?.kind === "note" && resolved.isNoteOwnBytes)
+    return $livePointOnNoteOwnBytes(member, location, prepared.viewOptions);
   if (notePlan?.kind === "note")
     return resolved.noteAnchor
       ? $livePointFromAnchor(
@@ -485,6 +659,14 @@ function $livePointInScope(
 ): FragmentPoint | undefined {
   const { plan } = target;
   const { liveFragment, scratchFragment, sentinelMap } = plan;
+  // A location on the note's own bytes names the note itself, not a byte of its content fragment,
+  // so it needs no byte correspondence at all.
+  if (
+    plan.kind === "note" &&
+    target.scratchIndexes.length === 1 &&
+    isNoteOwnBytesLocation(target.location)
+  )
+    return $livePointOnNoteOwnBytes(plan.liveNodes[0], target.location, prepared.viewOptions);
   // No correspondence between the two sides' preserved runs means no shared byte coordinates
   // either: refuse the whole scope rather than answer a position the two documents disagree about.
   if (!liveFragment || !scratchFragment || !sentinelMap) return undefined;
@@ -493,10 +675,33 @@ function $livePointInScope(
   if (pastScope) return pastScope;
   const resolved = plan.scratch
     .getEditorState()
-    .read(() => $resolveInScratch(scratchFragment, scratchLocation, context.tier2));
+    .read(() =>
+      $resolveInScratch(scratchFragment, plan.settledOnlyRuns, scratchLocation, context.tier2),
+    );
   if (!resolved) return undefined;
   if (resolved.kind === "preserved")
     return $livePointInPreservedRun(prepared, plan, sentinelMap, resolved, target.location);
+  if (resolved.kind === "literal") {
+    const { run, anchor } = resolved;
+    // Over the literal's bytes in the live fragment. A point in front of the run's first byte
+    // stands in front of the literal, past any whitespace the live bytes put before it; a byte
+    // the settle spelled differently from what was typed has no live byte to land on.
+    const count = acrossLiteral(run, anchor.nonWsBefore, "toLiteral");
+    if (count === undefined) return undefined;
+    const liveAnchor: CaretByteAnchor = {
+      nonWsBefore: run.liveBefore.full + count,
+      wsRun: anchor.nonWsBefore === 0 ? run.liveWsBefore + anchor.wsRun : anchor.wsRun,
+      attributeRunSpans: 0,
+    };
+    const point = $resolveFragmentByteAnchor(liveFragment, liveAnchor, {
+      addressDisplayBytes: !isUsjTextContentLocation(target.location),
+    });
+    if (!point) return undefined;
+    return cutCorrected(
+      plan,
+      resolved.atWordByte ? advancePastWhitespace(liveFragment, point) : point,
+    );
+  }
   return $livePointFromAnchor(plan, resolved.anchor, resolved.atWordByte, target.location);
 }
 
@@ -720,7 +925,20 @@ function $scratchLocationFromLivePoint(
   }
   const anchored = $anchorForPoint(liveFragment, node, cutFragmentOffset(plan, node, offset));
   if (!anchored) return undefined;
-  const { anchor } = anchored;
+  const literal = literalContaining(plan.settledOnlyRuns, anchored.anchor);
+  if (literal) {
+    // Inside a literal the settle turned into a preserved node: the literal's bytes are that
+    // node's own bytes, so the point lands on the same byte of the settled node — and a byte the
+    // settle spelled differently has no settled byte to land on.
+    const { within } = literal;
+    if (!within) return undefined;
+    return plan.scratch.getEditorState().read(() => {
+      const point = $pointInSpelling(literal.run.spelling, within);
+      const settledNode = point && $getNodeByKey(point.key);
+      return settledNode ? $getLocationFromNode(settledNode, point.offset, viewOptions) : undefined;
+    });
+  }
+  const anchor = anchorAcrossLiterals(plan.settledOnlyRuns, anchored.anchor, "toSettled");
   // The mirror of the inbound addressing choice, decided the same way: a live position that names
   // USFM bytes wants the settled spelling of those bytes, including the ones no caret can rest
   // in; a position in ordinary content is a caret, and keeps the caret's own addressing — which
@@ -744,6 +962,15 @@ function $settledLocationInScope(
   offset: number,
 ): UsjDocumentLocation | undefined {
   const { liveFragment, scratchFragment, sentinelMap } = plan;
+  if (plan.kind === "note") {
+    // The note's own marker, caller and closing glyph are outside the content fragment, and a
+    // content settle hands them through unchanged: the same location, at the note's settled path.
+    const location = $getLocationFromNode(node, offset, prepared.viewOptions);
+    if ($isOwnBytesLocationOf(location, plan.liveNodes[0])) {
+      const settledPath = $settledScopePath(prepared, plan);
+      return settledPath && withContentIndexes(location, settledPath);
+    }
+  }
   // Same refusal as the inbound side, for the same reason: without a run correspondence the two
   // sides share no byte coordinates to report a position in.
   if (!liveFragment || !scratchFragment || !sentinelMap) return undefined;

@@ -7,6 +7,10 @@
  * Each row names the reason the position has no answer, reaches it from a real pending state
  * where one exists, and asserts the refusal for the translation direction that reason belongs to.
  * The one nested-scope refusal lives with its fixture in settledPositions.nestedScopes.test.tsx.
+ *
+ * A position a real caret occupies always has an answer, so none is a row here: the shapes that
+ * look like they might not — a typed note literal, a note's own glyphs beside pending content — are
+ * asserted as positions in settledPositions.noteBytes.test.tsx.
  */
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes } from "./settledScopes.utils";
@@ -20,16 +24,14 @@ import {
   contentPath,
   emptyOptbreakHusk,
   optbreakAndTwoNotesUsj,
-  propertyPath,
   settledNoteIndexes,
   settledPara,
-  settledParaIndex,
   settledPositionContext,
   settledTextIndex,
   twoParaUsj,
+  $textContaining,
   typeChapterCaValue,
   typeOver,
-  $textContaining,
 } from "./positions.test-helpers";
 import { $pendGlyphEdit } from "../markerEdit/markerEdit.test-helpers";
 import { MarkerObject, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
@@ -44,7 +46,6 @@ import {
 } from "lexical";
 import {
   $getLogicalContentItems,
-  $isCharNode,
   $isMarkerNode,
   $isNoteNode,
   $isParaNode,
@@ -161,145 +162,38 @@ describe("a settled location the settled document does not have", () => {
   });
 });
 
-describe("a scope whose two documents cannot be paired", () => {
-  /**
-   * A typed note literal settles into a NOTE, which the settled scope spells as one preserved-run
-   * placeholder byte while the live scope still spells every byte of the literal. The two sides'
-   * bytes no longer line up and their preserved runs cannot be paired member for member, so there
-   * is no shared coordinate to carry ANY position in the scope by — even one before the literal.
-   */
-  async function pendingNoteLiteral() {
+describe("a typed byte the settle spells differently", () => {
+  it("refuses a live caret in bytes a folded category left with no settled counterpart", async () => {
+    // `\\cat x\\cat*` settles into the note's `category`, which the settled note does not spell
+    // as bytes at all — while the bytes on either side of it still cross (noteBytes suite).
+    const literal = "\\f + \\cat x\\cat*\\ft note\\f*";
+    const live = `In the beginning ${literal} made`;
     const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]));
-    await typeOver(
-      mounted.lexical,
-      "In the beginning made",
-      "In the beginning \\f + \\ft note\\f* made",
-    );
-    const usj = mounted.ref.current?.getUsj();
-    const para = settledPara(usj, PARA_TOP_INDEX);
-    expect(settledNoteIndexes(para)).toHaveLength(1);
-    return { ...mounted, usj, para, context: settledPositionContext(mounted.lexical) };
-  }
+    await typeOver(mounted.lexical, "In the beginning made", live);
+    const context = settledPositionContext(mounted.lexical);
+    expect(
+      settledNoteIndexes(settledPara(mounted.ref.current?.getUsj(), PARA_TOP_INDEX)),
+    ).toHaveLength(1);
 
-  it("refuses a settled position inside the scope", async () => {
-    const { lexical, para, context } = await pendingNoteLiteral();
-
-    const [sentinelMap, point] = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      const [plan] = prepared.byFirstLiveKey.values();
-      return [
-        plan?.sentinelMap,
-        $livePointFromSettledLocation(context, prepared, {
-          jsonPath: contentPath([PARA_TOP_INDEX, settledTextIndex(para, "In the beginning ")]),
-          offset: 3,
-        }),
-      ] as const;
-    });
-
-    // The premise: the scope was planned, and it is its run pairing that failed.
-    expect(sentinelMap).toBeUndefined();
-    expect(point).toBeUndefined();
-  });
-
-  it("refuses a live caret inside the scope", async () => {
-    const { lexical, context } = await pendingNoteLiteral();
-
-    const location = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      return $settledLocationFromLivePoint(prepared, $textContaining("In the beginning"), 3);
-    });
-
-    expect(location).toBeUndefined();
-  });
-
-  it("still carries a position OUTSIDE the scope across", async () => {
-    // The refusal is the scope's, not the document's: the top-level index shift the scope causes
-    // is still known, so the paragraph after it resolves.
-    const { lexical, usj, context } = await pendingNoteLiteral();
-    const next = settledParaIndex(usj, "depart here");
-
-    const [point, departKey] = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      return [
-        $livePointFromSettledLocation(context, prepared, {
-          jsonPath: contentPath([next, 0]),
-          offset: 2,
-        }),
-        $textContaining("depart here").getKey(),
-      ] as const;
-    });
-
-    expect(point).toEqual({ key: departKey, offset: 2, type: "text" });
-  });
-});
-
-describe("a caret on a settling note's own glyph", () => {
-  /** A note whose CONTENT is pending: its reference span's glyphs are retyped. The note scope's
-   * fragment spells the note's content only — the note's own opening glyph and caller are outside
-   * it — so a position on the glyph has no byte to anchor on in either document. */
-  async function noteContentPending() {
-    const mounted = await mountExpandedNoteEditor(
-      twoParaUsj([
-        "before ",
-        {
-          type: "note",
-          marker: "f",
-          caller: "+",
-          content: [{ type: "char", marker: "fr", content: ["1.1"] }, "note body"],
-        },
-        " after",
-      ]),
-    );
-    await act(async () => {
-      mounted.lexical.update(() => {
-        const note = $getRoot()
-          .getChildren()
-          .filter($isParaNode)[0]
-          .getChildren()
-          .find($isNoteNode);
-        const reference = note?.getChildren().find($isCharNode);
-        const glyphs = reference?.getChildren().filter($isMarkerNode) ?? [];
-        if (glyphs.length < 2) throw new Error("expected the reference span's glyph pair");
-        $pendGlyphEdit(glyphs[0], "\\fq");
-        $pendGlyphEdit(glyphs[glyphs.length - 1], "\\fq*");
+    const [afterBackslash, inCategory, beforeLiteral] = mounted.lexical
+      .getEditorState()
+      .read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const node = $textContaining(live);
+        return [
+          // Just past the `\\` of `\\cat`: the settled note's next byte is the `\\` of `\\ft`, which
+          // matches it only by coincidence.
+          $settledLocationFromLivePoint(prepared, node, live.indexOf("\\cat x") + 1),
+          // On the `a` of `\\cat`.
+          $settledLocationFromLivePoint(prepared, node, live.indexOf("\\cat x") + 2),
+          $settledLocationFromLivePoint(prepared, node, 3),
+        ] as const;
       });
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    const para = settledPara(mounted.ref.current?.getUsj(), PARA_TOP_INDEX);
-    return { ...mounted, para, context: settledPositionContext(mounted.lexical) };
-  }
 
-  it("refuses the live caret", async () => {
-    const { lexical, context } = await noteContentPending();
-
-    const [kinds, location] = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      const note = $getRoot().getChildren().filter($isParaNode)[0].getChildren().find($isNoteNode);
-      const glyph = note?.getFirstChild();
-      if (!$isMarkerNode(glyph)) throw new Error("expected the note's opening glyph");
-      return [
-        [...prepared.byFirstLiveKey.values()].map((plan) => plan.kind),
-        $settledLocationFromLivePoint(prepared, glyph, 1),
-      ] as const;
-    });
-
-    expect(kinds).toEqual(["note"]);
-    expect(location).toBeUndefined();
-  });
-
-  it("refuses the settled note's marker location", async () => {
-    const { lexical, para, context } = await noteContentPending();
-    const [noteIndex] = settledNoteIndexes(para);
-
-    const point = lexical.getEditorState().read(() =>
-      $livePointFromSettledLocation(context, $prepareSettleScopes(context), {
-        jsonPath: propertyPath([PARA_TOP_INDEX, noteIndex], "marker"),
-        propertyOffset: 0,
-      }),
-    );
-
-    expect(point).toBeUndefined();
+    expect(afterBackslash).toBeUndefined();
+    expect(inCategory).toBeUndefined();
+    // The refusal is the re-spelled bytes', not the scope's.
+    expect(beforeLiteral).toBeDefined();
   });
 });
 
@@ -514,23 +408,5 @@ describe("the public methods, when the translation refuses", () => {
 
     expect(lexical.getEditorState().read($noteCount)).toBe(before);
     expect(warnings).toContainEqual(expect.stringContaining("insertNote refused for \\f"));
-  });
-
-  it("getSelection logs the refusal and reports nothing", async () => {
-    // The caret is left in a paragraph pending on a typed note literal, which cannot be paired.
-    const { logger, warnings } = warningLogger();
-    const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]), {
-      logger,
-    });
-    await typeOver(
-      mounted.lexical,
-      "In the beginning made",
-      "In the beginning \\f + \\ft note\\f* made",
-    );
-
-    const selection = mounted.ref.current?.getSelection();
-
-    expect(selection).toBeUndefined();
-    expect(warnings).toContainEqual(expect.stringContaining("getSelection refused"));
   });
 });

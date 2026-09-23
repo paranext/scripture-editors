@@ -227,6 +227,118 @@ function settledCharacterAt(usj: Usj | undefined, location: SelectionRange["star
   return item[offset];
 }
 
+describe("the public methods while a typed note literal is pending", () => {
+  // The literal settles into a note the live paragraph has no node for: the settled paragraph
+  // spells it as one preserved node, the live one as every byte typed.
+  const live = "In the beginning \\f + \\ft note\\f* made";
+
+  async function pendingNoteLiteral(onSelectionChange?: (s: SelectionRange | undefined) => void) {
+    const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]), {
+      onSelectionChange,
+    });
+    await typeOver(mounted.lexical, "In the beginning made", live);
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    const para = settledPara(mounted.ref.current?.getUsj(), 2);
+    const noteIndex = para.content?.findIndex(
+      (item) => typeof item !== "string" && item.type === "note",
+    );
+    const note = noteIndex === undefined ? undefined : para.content?.[noteIndex];
+    const charIndex =
+      typeof note === "object"
+        ? note.content?.findIndex((item) => typeof item !== "string" && item.type === "char")
+        : undefined;
+    if (noteIndex === undefined || noteIndex < 0 || charIndex === undefined || charIndex < 0)
+      throw new Error(`no settled note body in ${JSON.stringify(para)}`);
+    return {
+      ...mounted,
+      bodyPath: contentPath([2, noteIndex, charIndex, 0]),
+      headPath: contentPath([2, para.content?.indexOf("In the beginning ") ?? -1]),
+    };
+  }
+
+  /** Move the caret to `offset` in the live paragraph, as the browser's selectionchange does. */
+  async function moveCaret(lexical: LexicalEditor, offset: number) {
+    await act(async () => {
+      lexical.update(() => {
+        $textContaining(live).select(offset, offset);
+        lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("getSelection reports a caret inside the literal at the settled note's byte", async () => {
+    const { ref, lexical } = await pendingNoteLiteral();
+    // On the `t` of the literal's `note`.
+    await moveCaret(lexical, live.indexOf("note\\f*") + 2);
+
+    const selection = ref.current?.getSelection();
+
+    if (!selection?.start) throw new Error("no selection reported");
+    expect(settledCharacterAt(ref.current?.getUsj(), selection.start)).toBe("t");
+  });
+
+  it("getSelection reports a caret past the literal at the settled byte after the note", async () => {
+    const { ref, lexical } = await pendingNoteLiteral();
+    await moveCaret(lexical, live.indexOf(" made") + 1);
+
+    const selection = ref.current?.getSelection();
+
+    if (!selection?.start) throw new Error("no selection reported");
+    expect(settledCharacterAt(ref.current?.getUsj(), selection.start)).toBe("m");
+  });
+
+  it("onSelectionChange reports a caret inside the literal as getSelection does", async () => {
+    const onSelectionChange = vi.fn();
+    const { ref, lexical } = await pendingNoteLiteral(onSelectionChange);
+    onSelectionChange.mockClear();
+
+    await moveCaret(lexical, live.indexOf("note\\f*") + 2);
+
+    expect(onSelectionChange).toHaveBeenCalled();
+    const reported = onSelectionChange.mock.calls[onSelectionChange.mock.calls.length - 1][0];
+    expect(reported).toBeDefined();
+    expect(reported).toEqual(ref.current?.getSelection());
+    expect(settledCharacterAt(ref.current?.getUsj(), reported.start)).toBe("t");
+  });
+
+  it("setSelection places a settled location in the note onto the literal's byte", async () => {
+    const { ref, lexical, bodyPath } = await pendingNoteLiteral();
+
+    await act(async () => {
+      ref.current?.setSelection({ start: { jsonPath: bodyPath, offset: 2 } });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const caret = lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) return undefined;
+      return [selection.anchor.getNode().getTextContent(), selection.anchor.offset];
+    });
+    expect(caret).toEqual([live, live.indexOf("note\\f*") + 2]);
+  });
+
+  it("setAnnotation annotates the live text a settled range before the note names", async () => {
+    // Annotating settles the paragraph in the same update, and that rebuild carries marks across
+    // by byte anchor; a range before the literal is one whose bytes the rebuild leaves in place,
+    // so what ends up annotated is exactly what the translation handed the annotation plugin.
+    const { ref, lexical, headPath } = await pendingNoteLiteral();
+
+    await act(async () => {
+      ref.current?.setAnnotation(
+        { start: { jsonPath: headPath, offset: 7 }, end: { jsonPath: headPath, offset: 16 } },
+        "test",
+        "1",
+      );
+      await Promise.resolve();
+    });
+
+    expect(annotatedText(lexical)).toEqual(["beginning"]);
+  });
+});
+
 describe("reporting the selection while a literal is pending", () => {
   const live = "In the beginning \\nd LORD\\nd* made";
 

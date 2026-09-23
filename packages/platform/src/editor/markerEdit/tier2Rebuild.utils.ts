@@ -1306,8 +1306,11 @@ function $countAttributeRunSpans(spans: FragmentSpan[]): number {
  * predicate exists to prevent (Invariant II: display bytes are excluded from document positions).
  *
  * Read-only: resolves the span's node key, so call inside `editor.update()` or an editor-state read.
+ *
+ * Exported for the settled-position translation (positions/settledScopes.utils.ts), which counts
+ * bytes in the same two coordinate systems a byte anchor does.
  */
-function $isAttributeRunSpan(span: FragmentSpan): boolean {
+export function $isAttributeRunSpan(span: FragmentSpan): boolean {
   if (span.isSentinel) return false;
   const node = $getNodeByKey(span.key);
   return (
