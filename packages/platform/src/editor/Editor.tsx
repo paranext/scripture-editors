@@ -615,9 +615,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
    * The pending state is read INSIDE the flush rather than before it, because the commit this
    * forces can settle the very pend that made a translation necessary in the first place.
    *
-   * `undefined` is two different answers: there is nothing to report (no range selection, or a
-   * layout with no USJ locations at all), and the position could not be expressed against the
-   * settled document. Only the second loses the host something, so only it is logged.
+   * `undefined` means there is nothing to report: no range selection, or a layout with no USJ
+   * locations at all. A position whose own bytes have no settled counterpart reports the nearest
+   * one before it instead, so the one other way to get `undefined` is a basis the tree has moved on
+   * under — a backstop no read that prepares its own basis reaches, logged if it ever is.
    */
   const readSettledSelection = useCallback(
     (editor: LexicalEditor, caller: string): SelectionRange | undefined =>

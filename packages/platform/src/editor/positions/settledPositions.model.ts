@@ -112,6 +112,14 @@ export interface SettleScopePlan {
    * {@link SettleScopePlan.sentinelMap}.
    */
   readonly settledOnlyRuns: readonly SettledOnlyRun[];
+  /**
+   * How many of the live fragment's non-whitespace bytes the run pairing holds for, when it holds
+   * only for the front of the scope — `undefined` when it holds for all of it. Past that byte the
+   * two sides' runs could not be put in correspondence (two literals the settle spells differently
+   * from how they were typed), so a live position there has no settled counterpart and reports the
+   * nearest one in front of it, while a settled location anywhere in the scope is refused.
+   */
+  readonly pairedBefore: number | undefined;
 }
 
 /**

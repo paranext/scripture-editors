@@ -1,16 +1,17 @@
 /**
- * What the settled-position translation does when it CANNOT carry a position across: it refuses
- * (`undefined`), and never answers approximately. A wrong position annotates or selects the wrong
- * text with no signal anywhere; a refusal is one tick of a feature not firing, and the editor's
- * public methods log it (Editor.tsx).
+ * What the settled-position translation does when it CANNOT carry a HOST location across: it
+ * refuses (`undefined`), and never answers approximately. A wrong position annotates or selects the
+ * wrong text with no signal anywhere; a refusal is one tick of a feature not firing, and the
+ * editor's public methods log it (Editor.tsx).
  *
  * Each row names the reason the position has no answer, reaches it from a real pending state
- * where one exists, and asserts the refusal for the translation direction that reason belongs to.
- * The one nested-scope refusal lives with its fixture in settledPositions.nestedScopes.test.tsx.
+ * where one exists, and asserts the refusal. The one nested-scope refusal lives with its fixture in
+ * settledPositions.nestedScopes.test.tsx.
  *
- * A position a real caret occupies always has an answer, so none is a row here: the shapes that
- * look like they might not — a typed note literal, a note's own glyphs beside pending content — are
- * asserted as positions in settledPositions.noteBytes.test.tsx.
+ * The other direction has no refusals a real caret can reach: a live position always reports a
+ * settled location — its own (settledPositions.noteBytes.test.tsx), or the nearest one at or before
+ * it when its bytes have none (settledPositions.snapLeft.test.tsx). Its one refusal is the
+ * stale-basis backstop below.
  */
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes } from "./settledScopes.utils";
@@ -29,7 +30,6 @@ import {
   settledPositionContext,
   settledTextIndex,
   twoParaUsj,
-  $textContaining,
   typeChapterCaValue,
   typeOver,
 } from "./positions.test-helpers";
@@ -159,41 +159,6 @@ describe("a settled location the settled document does not have", () => {
     expect(badStart).toBeUndefined();
     // The good endpoint is carried on its own, so the refusals above are the bad endpoint's.
     expect(control?.start).toBeDefined();
-  });
-});
-
-describe("a typed byte the settle spells differently", () => {
-  it("refuses a live caret in bytes a folded category left with no settled counterpart", async () => {
-    // `\\cat x\\cat*` settles into the note's `category`, which the settled note does not spell
-    // as bytes at all — while the bytes on either side of it still cross (noteBytes suite).
-    const literal = "\\f + \\cat x\\cat*\\ft note\\f*";
-    const live = `In the beginning ${literal} made`;
-    const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]));
-    await typeOver(mounted.lexical, "In the beginning made", live);
-    const context = settledPositionContext(mounted.lexical);
-    expect(
-      settledNoteIndexes(settledPara(mounted.ref.current?.getUsj(), PARA_TOP_INDEX)),
-    ).toHaveLength(1);
-
-    const [afterBackslash, inCategory, beforeLiteral] = mounted.lexical
-      .getEditorState()
-      .read(() => {
-        const prepared = $prepareSettleScopes(context);
-        const node = $textContaining(live);
-        return [
-          // Just past the `\\` of `\\cat`: the settled note's next byte is the `\\` of `\\ft`, which
-          // matches it only by coincidence.
-          $settledLocationFromLivePoint(prepared, node, live.indexOf("\\cat x") + 1),
-          // On the `a` of `\\cat`.
-          $settledLocationFromLivePoint(prepared, node, live.indexOf("\\cat x") + 2),
-          $settledLocationFromLivePoint(prepared, node, 3),
-        ] as const;
-      });
-
-    expect(afterBackslash).toBeUndefined();
-    expect(inCategory).toBeUndefined();
-    // The refusal is the re-spelled bytes', not the scope's.
-    expect(beforeLiteral).toBeDefined();
   });
 });
 

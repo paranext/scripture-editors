@@ -14,8 +14,23 @@
  */
 
 import type { CaretByteAnchor, FragmentAccumulator, FragmentSpan } from "./tier2Rebuild.utils";
-import { $getNodeByKey, $getState, $isElementNode, $isTextNode, LexicalNode } from "lexical";
-import { $isMarkerNode, $isNoteNode, textTypeState } from "shared";
+import {
+  $getNodeByKey,
+  $getState,
+  $isElementNode,
+  $isTextNode,
+  LexicalNode,
+  NodeKey,
+} from "lexical";
+import {
+  $isImmutableTypedTextNode,
+  $isMarkerNode,
+  $isNoteNode,
+  $noteCategoryRunPieces,
+  $noteEditableCallerNode,
+  NoteNode,
+  textTypeState,
+} from "shared";
 import { $isImmutableNoteCallerNode } from "shared-react";
 
 /** Whitespace for caret byte-anchoring: everything the fragment/display layer may add, move, or
@@ -80,11 +95,39 @@ export interface SettledOnlyRun {
    * How many of the literal's leading non-whitespace bytes `spelling` spells identically, and how
    * many trailing ones besides — the bytes a position inside the literal crosses by. Together they
    * cover the whole literal when the settled node spells the typed bytes back one for one; a
-   * settle that re-spells part of it (a `\cat` folded into the note's category, an attribute list
-   * shortened) leaves the bytes between them with no settled counterpart.
+   * settle that re-spells part of it (a figure's typed `file="…"`, which the settled figure spells
+   * `src="…"`) leaves the bytes between them with no settled counterpart.
    */
   readonly sharedPrefix: number;
   readonly sharedSuffix: number;
+  /** The attributes `spelling` spells as bytes the settled tree does not display — see
+   * {@link FoldedAttribute}. */
+  readonly foldedAttributes: readonly FoldedAttribute[];
+}
+
+/**
+ * An attribute a run's spelling spells as USFM bytes the settled tree does not display: a note's
+ * `category`, which USFM writes as an attribute marker (`\cat x\cat*`) and a note shows as a display
+ * run only in the expanded editable shape. A typed literal spells those bytes, so the spelling has
+ * to as well, or a caret on them has nothing to cross to.
+ *
+ * The bytes are one span of the spelling recorded under the OWNER's key — a node that spells no
+ * bytes of its own there, so the span is recognizable by its key alone.
+ */
+export interface FoldedAttribute {
+  /** The node the attribute belongs to, whose key the span is recorded under. */
+  readonly ownerKey: NodeKey;
+  /** The attribute marker's name in USFM (`cat`). */
+  readonly markerName: string;
+  /** The attribute's name in USJ (`category`). */
+  readonly keyName: string;
+  /** How many bytes the attribute's value spells. */
+  readonly valueLength: number;
+}
+
+/** The USFM bytes of an attribute marker run: `\cat x\cat*`. */
+function foldedAttributeText(markerName: string, value: string): string {
+  return `\\${markerName} ${value}\\${markerName}*`;
 }
 
 /** One preserved-node run member, named by its run's index in a fragment's run list and its own
@@ -101,6 +144,12 @@ export interface RunPairing {
   sentinelMap: (SettledRunMember | undefined)[][];
   /** The settled runs no live run became, in settled fragment order. */
   settledOnlyRuns: SettledOnlyRun[];
+  /**
+   * For a pairing asked for `partial`ly: how many of the live fragment's non-whitespace bytes it
+   * holds for, when the runs past them could not be put in correspondence. `undefined` when it
+   * holds for every byte.
+   */
+  pairedBefore?: number;
 }
 
 /** One byte of a fragment's spans, as plain data — readable after the nodes it came from are
@@ -180,13 +229,34 @@ function sharedEnds(first: string, second: string): { prefix: number; suffix: nu
     : { prefix, suffix };
 }
 
+/** The USFM attribute marker a note's `category` is written as. */
+const CATEGORY_MARKER = "cat";
+const CATEGORY_KEY = "category";
+
+/** Whether `node` spells no bytes but whitespace — the separator a note shows after its caller. */
+function $isWhitespaceText(node: LexicalNode): boolean {
+  return $isTextNode(node) && node.getTextContent().trim() === "";
+}
+
 /**
- * A preserved run's own bytes as its nodes spell them: every text node in order, marker glyphs
- * included, and a collapsed note's caller — a decorator with no text of its own — as the caller
- * value it stands for, which is what a typed literal spells in that slot. Read-only.
+ * A preserved run's own bytes, spelled the way USFM writes them — which is what a typed literal
+ * spells, byte for byte, when the settle hands it back unchanged:
+ *
+ * - every text node in order, marker glyphs included;
+ * - every read-only display byte a decorator renders (a figure's `\fig `, `|src="…"`, `\fig*`);
+ * - a collapsed note's caller — a decorator with no text of its own — as the caller value it
+ *   stands for;
+ * - a note's `category` where USFM writes it, after the caller and the separator that follows
+ *   it, when the tree does not display it ({@link FoldedAttribute}).
+ *
+ * Read-only.
  */
-function $runSpelling(members: readonly LexicalNode[]): FragmentAccumulator {
+function $runSpelling(members: readonly LexicalNode[]): {
+  spelling: FragmentAccumulator;
+  foldedAttributes: FoldedAttribute[];
+} {
   const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  const foldedAttributes: FoldedAttribute[] = [];
   const push = (node: LexicalNode, text: string): void => {
     out.spans.push({
       key: node.getKey(),
@@ -196,15 +266,47 @@ function $runSpelling(members: readonly LexicalNode[]): FragmentAccumulator {
     });
     out.text += text;
   };
+  const pushCategory = (note: NoteNode, category: string): void => {
+    push(note, foldedAttributeText(CATEGORY_MARKER, category));
+    foldedAttributes.push({
+      ownerKey: note.getKey(),
+      markerName: CATEGORY_MARKER,
+      keyName: CATEGORY_KEY,
+      valueLength: category.length,
+    });
+  };
+  const visitNote = (note: NoteNode): void => {
+    const pieces = $noteCategoryRunPieces(note);
+    const displayed = pieces.opener ?? pieces.value ?? pieces.closer;
+    let category = displayed ? undefined : note.getCategory();
+    const editableCaller = $noteEditableCallerNode(note);
+    let isPastCaller = false;
+    for (const child of note.getChildren()) {
+      if (category !== undefined && isPastCaller && !$isWhitespaceText(child)) {
+        pushCategory(note, category);
+        category = undefined;
+      }
+      visit(child);
+      // The editable caller can sit inside an annotation mark.
+      if (
+        $isImmutableNoteCallerNode(child) ||
+        (editableCaller && (editableCaller.is(child) || child.isParentOf(editableCaller)))
+      )
+        isPastCaller = true;
+    }
+    if (category !== undefined) pushCategory(note, category);
+  };
   const visit = (node: LexicalNode): void => {
     if ($isImmutableNoteCallerNode(node)) {
       const note = node.getParent();
       push(node, $isNoteNode(note) ? note.getCaller() : "");
     } else if ($isTextNode(node)) push(node, node.getTextContent());
+    else if ($isImmutableTypedTextNode(node)) push(node, node.getTextContent());
+    else if ($isNoteNode(node)) visitNote(node);
     else if ($isElementNode(node)) node.getChildren().forEach(visit);
   };
   members.forEach(visit);
-  return out;
+  return { spelling: out, foldedAttributes };
 }
 
 /** What the pairing needs to know about one of the settled fragment's preserved runs. */
@@ -213,6 +315,7 @@ interface SettledRunFacts {
   /** Non-whitespace bytes of the settled fragment before the run's placeholder. */
   before: NonWsCounts;
   spelling: FragmentAccumulator;
+  foldedAttributes: FoldedAttribute[];
   /** `spelling`'s non-whitespace bytes, in order. */
   spelled: string;
 }
@@ -229,11 +332,12 @@ export function $settledRunSide(fragment: FragmentAccumulator): SettledRunSide {
   const facts = $fragmentBytes(fragment);
   return {
     runs: fragment.sentinels.map((run, index) => {
-      const spelling = $runSpelling(run);
+      const { spelling, foldedAttributes } = $runSpelling(run);
       return {
         memberCount: run.length,
         before: nonWsBefore(facts, facts.placeholders[index] ?? fragment.text.length),
         spelling,
+        foldedAttributes,
         spelled: nonWsBytes($fragmentBytes(spelling))
           .map(({ byte }) => byte)
           .join(""),
@@ -289,14 +393,42 @@ export function $liveRunSide(
  * beyond their one placeholder byte), and a settled run with no live placeholder there must be
  * spelled out, byte for byte, by the live bytes at that count. A run neither accounts for is a
  * shape the pairing cannot describe, and the answer is nothing rather than a construct the two
- * sides disagree about.
+ * sides disagree about — or, asked for `partial`ly, the pairing in front of that run, where the two
+ * sides still agree ({@link RunPairing.pairedBefore}).
  *
  * The live fragment must already be without the placeholders of the runs the settle dropped.
  */
-export function pairRuns(live: LiveRunSide, settled: SettledRunSide): RunPairing | undefined {
+export function pairRuns(
+  live: LiveRunSide,
+  settled: SettledRunSide,
+  { partial = false }: { partial?: boolean } = {},
+): RunPairing | undefined {
   const sentinelMap: (SettledRunMember | undefined)[][] = live.carried.map((run) =>
     run.map(() => undefined),
   );
+  const settledOnlyRuns: SettledOnlyRun[] = [];
+  /**
+   * The pairing as far as it holds: in front of the live byte count `before`, less any literal
+   * that reaches past it. Nothing from there on is paired — every run there is left without a
+   * counterpart, and every literal there without a spelling — so nothing there can be carried
+   * across by a pairing the two sides do not agree on.
+   */
+  const pairedUpTo = (before: number): RunPairing | undefined => {
+    if (!partial) return undefined;
+    const kept = settledOnlyRuns.filter(
+      (run) => run.liveBefore.full + run.liveLength.full <= before,
+    );
+    const pairedBefore = Math.min(
+      before,
+      ...settledOnlyRuns.filter((run) => !kept.includes(run)).map((run) => run.liveBefore.full),
+    );
+    live.carried.forEach((run, liveIndex) => {
+      const placeholder = live.facts.placeholders[liveIndex];
+      if (placeholder === undefined || nonWsBefore(live.facts, placeholder).full >= pairedBefore)
+        sentinelMap[liveIndex] = run.map(() => undefined);
+    });
+    return { sentinelMap, settledOnlyRuns: kept, pairedBefore };
+  };
   /** Pair one live run's carried members with one settled run's members, in order. */
   const pairRun = (liveIndex: number, sentinelIndex: number): void => {
     let memberIndex = 0;
@@ -310,7 +442,7 @@ export function pairRuns(live: LiveRunSide, settled: SettledRunSide): RunPairing
 
   const carriedCount = live.carried.reduce((count, run) => count + carriedIn(run), 0);
   const settledCount = settled.runs.reduce((count, run) => count + run.memberCount, 0);
-  if (carriedCount > settledCount) return undefined;
+  if (carriedCount > settledCount) return pairedUpTo(0);
   if (carriedCount === settledCount) {
     // Every settled member is a carried one: pair the two flattened lists off in order.
     const members = settled.runs.flatMap((run, sentinelIndex) =>
@@ -334,14 +466,14 @@ export function pairRuns(live: LiveRunSide, settled: SettledRunSide): RunPairing
     .filter(({ index }) => carriedIn(live.carried[index]) > 0);
   const liveBytes = nonWsBytes(live.facts);
   const liveText = liveBytes.map(({ byte }) => byte).join("");
-  const settledOnlyRuns: SettledOnlyRun[] = [];
   let shift = 0;
   let nextLive = 0;
   for (let sentinelIndex = 0; sentinelIndex < settled.runs.length; sentinelIndex += 1) {
     const facts = settled.runs[sentinelIndex];
     const liveRun = liveRuns[nextLive];
     if (liveRun?.before.full === facts.before.full + shift) {
-      if (carriedIn(live.carried[liveRun.index]) !== facts.memberCount) return undefined;
+      if (carriedIn(live.carried[liveRun.index]) !== facts.memberCount)
+        return pairedUpTo(liveRun.before.full);
       pairRun(liveRun.index, sentinelIndex);
       nextLive += 1;
       continue;
@@ -349,12 +481,12 @@ export function pairRuns(live: LiveRunSide, settled: SettledRunSide): RunPairing
     const start = facts.before.full + shift;
     let end = start + facts.spelled.length;
     if (liveText.slice(start, end) !== facts.spelled) {
-      // The settled node does not spell the typed bytes back (a `\cat` folded into the note's
-      // category, an attribute list re-spelled in its short form), so the literal's extent comes
-      // from the other side of it: everything after it is the same bytes on both sides.
+      // The settled node does not spell the typed bytes back (a figure's typed `file="…"`, which
+      // it spells `src="…"`), so the literal's extent comes from the other side of it: everything
+      // after it is the same bytes on both sides.
       const settledAfter = settled.bytes.slice(facts.before.full + 1);
       end = liveText.length - settledAfter.length;
-      if (end <= start || liveText.slice(end) !== settledAfter) return undefined;
+      if (end <= start || liveText.slice(end) !== settledAfter) return pairedUpTo(start);
     }
     const literal = { start: liveBytes[start].position, end: liveBytes[end - 1].position + 1 };
     const liveBefore = nonWsBefore(live.facts, literal.start);
@@ -373,10 +505,12 @@ export function pairRuns(live: LiveRunSide, settled: SettledRunSide): RunPairing
       spelledLength: facts.spelled.length,
       sharedPrefix: shared.prefix,
       sharedSuffix: shared.suffix,
+      foldedAttributes: facts.foldedAttributes,
     });
     shift += end - start - 1;
   }
-  return nextLive === liveRuns.length ? { sentinelMap, settledOnlyRuns } : undefined;
+  if (nextLive < liveRuns.length) return pairedUpTo(liveRuns[nextLive].before.full);
+  return { sentinelMap, settledOnlyRuns };
 }
 
 /**

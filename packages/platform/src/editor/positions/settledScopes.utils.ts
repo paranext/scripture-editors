@@ -229,12 +229,22 @@ function $planFrom(
   const base = { kind, liveNodes, liveCut, scratch, scratchFragment, settledCount };
   // Nothing preserved on either side: the correspondence is vacuous, not unknown.
   if ((liveFragment?.sentinels.length ?? 0) === 0 && (settledSide?.runs.length ?? 0) === 0)
-    return { ...base, liveFragment, sentinelMap: [], settledOnlyRuns: [] };
+    return { ...base, liveFragment, sentinelMap: [], settledOnlyRuns: [], pairedBefore: undefined };
   const paired = liveFragment && carried && withoutDroppedSentinels(liveFragment, carried.live);
   const pairing =
-    paired && pairRuns($liveRunSide(paired, carried.live), settledSide ?? { runs: [], bytes: "" });
-  if (!pairing) return { ...base, liveFragment, sentinelMap: undefined, settledOnlyRuns: [] };
-  return { ...base, liveFragment: paired, ...pairing };
+    paired &&
+    pairRuns($liveRunSide(paired, carried.live), settledSide ?? { runs: [], bytes: "" }, {
+      partial: true,
+    });
+  if (!pairing)
+    return {
+      ...base,
+      liveFragment,
+      sentinelMap: undefined,
+      settledOnlyRuns: [],
+      pairedBefore: undefined,
+    };
+  return { ...base, liveFragment: paired, pairedBefore: undefined, ...pairing };
 }
 
 /** The live fragment for a scope with the declared bytes cut out of it, plus where that cut was. */

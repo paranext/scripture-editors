@@ -210,4 +210,27 @@ describe("refusing rather than answering approximately", () => {
 
     expect(point).toBeUndefined();
   });
+
+  it("refuses a settled point in a co-settling note whose preserved runs pair only in part", async () => {
+    // A pairing that holds only in front of some byte carries a live position there to the
+    // nearest settled one before it, but a host location is carried exactly or not at all — even
+    // one in front of that byte.
+    const { lexical, context, note, noteIndex } = await nested();
+    const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
+
+    const point = lexical.getEditorState().read(() => {
+      const prepared = $prepareSettleScopes(context);
+      const notePlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "note");
+      if (!notePlan) throw new Error("expected a note plan");
+      // A note's content cannot hold the typed literals that leave a pairing partial (a figure
+      // typed there is a char span), so the plan field is written directly, as above.
+      (notePlan as { pairedBefore?: number }).pairedBefore = 0;
+      return $livePointFromSettledLocation(context, prepared, {
+        jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
+        offset: 5,
+      });
+    });
+
+    expect(point).toBeUndefined();
+  });
 });

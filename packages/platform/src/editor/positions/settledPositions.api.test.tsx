@@ -339,6 +339,80 @@ describe("the public methods while a typed note literal is pending", () => {
   });
 });
 
+describe("the public methods with the caret on a typed literal's attribute bytes", () => {
+  // Each literal settles into a node that carries some of the typed bytes as attributes; the
+  // settled paragraph is `["In the beginning ", node, " made"]`, as core's `UsjReaderWriter` reads
+  // the same USFM, and each expected location is that oracle's for the byte.
+  const node = contentPath([2, 1]);
+
+  async function pendingLiteral(
+    literal: string,
+    onSelectionChange?: (s: SelectionRange | undefined) => void,
+  ) {
+    const live = `In the beginning ${literal} made`;
+    const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]), {
+      onSelectionChange,
+    });
+    await typeOver(mounted.lexical, "In the beginning made", live);
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    /** Move the caret `offset` bytes into the literal, as the browser's selectionchange does. */
+    const moveCaret = async (offset: number) => {
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const at = live.indexOf(literal) + offset;
+          $textContaining(live).select(at, at);
+          mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+    return { ...mounted, moveCaret };
+  }
+
+  it.each([
+    [
+      "the `a` of a typed `\\cat`",
+      "\\f + \\cat x\\cat*\\ft note\\f*",
+      7,
+      { jsonPath: node, keyName: "category", keyOffset: 1 },
+    ],
+    [
+      "the `r` of a typed figure's `src`",
+      '\\fig cap|src="a.jpg"\\fig*',
+      10,
+      { jsonPath: node, keyName: "file", keyOffset: 1 },
+    ],
+    [
+      "a key the settled figure spells differently, at the nearest byte before it",
+      '\\fig cap|file="a.jpg"\\fig*',
+      11,
+      { jsonPath: node, keyName: "file", keyOffset: 0 },
+    ],
+  ])("getSelection reports a caret on %s", async (_, literal, offset, location) => {
+    const { ref, moveCaret } = await pendingLiteral(literal);
+    await moveCaret(offset);
+
+    expect(ref.current?.getSelection()).toEqual({ start: location });
+  });
+
+  it("onSelectionChange reports a caret on a typed `\\cat` as getSelection does", async () => {
+    const onSelectionChange = vi.fn();
+    const { ref, moveCaret } = await pendingLiteral(
+      "\\f + \\cat x\\cat*\\ft note\\f*",
+      onSelectionChange,
+    );
+    onSelectionChange.mockClear();
+
+    await moveCaret(7);
+
+    expect(onSelectionChange).toHaveBeenCalled();
+    const reported = onSelectionChange.mock.calls[onSelectionChange.mock.calls.length - 1][0];
+    expect(reported).toEqual({ start: { jsonPath: node, keyName: "category", keyOffset: 1 } });
+    expect(reported).toEqual(ref.current?.getSelection());
+  });
+});
+
 describe("reporting the selection while a literal is pending", () => {
   const live = "In the beginning \\nd LORD\\nd* made";
 

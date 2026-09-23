@@ -314,70 +314,151 @@ describe("a paragraph pending on a typed note literal", () => {
   });
 });
 
-describe("a typed literal whose settled node does not spell the typed bytes back", () => {
-  /** Type `literal` into the paragraph and read the settled paragraph back. */
-  async function pendingLiteral(literal: string) {
+/**
+ * A typed literal whose settled node carries some of the typed bytes as ATTRIBUTES rather than as
+ * content: `\cat x\cat*` settles into the note's `category`, and a figure's `|src="…" …` into its
+ * `file`/`size`/`ref`. Those bytes are still USJ positions — an attribute marker, an attribute key,
+ * a property value, a closing attribute marker — so a caret on any of them has one exact location.
+ *
+ * Every expected location is what core's `UsjReaderWriter` maps the byte's USFM index to
+ * (`usfmVerseLocationToUsjDocumentLocation`, USJ 3.0) in the paragraph `getUsj()` returns — the
+ * oracle for the one canonical location of each USFM position. The oracle lives in core, so the
+ * values are hard-coded; in both settled paragraphs the literal becomes content item 1
+ * (`["In the beginning ", node, " made"]`).
+ */
+describe("a typed literal the settle folds into attributes", () => {
+  const CATEGORY_LITERAL = "\\f + \\cat x\\cat*\\ft note\\f*";
+  const FIGURE_LITERAL = '\\fig cap|src="a.jpg" size="col" ref="1.1"\\fig*';
+  const NODE_PATH = [PARA_TOP_INDEX, 1];
+  const NODE = contentPath(NODE_PATH);
+
+  /** Type `literal` into the paragraph, and check the settled paragraph has the literal's node at
+   * {@link NODE_PATH} as the oracle's document does. */
+  async function pendingLiteral(literal: string, type: string) {
     const live = `In the beginning ${literal} made`;
     const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]));
     const key = await typeOver(mounted.lexical, "In the beginning made", live);
     expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
     const para = settledPara(mounted.ref.current?.getUsj(), PARA_TOP_INDEX);
+    expect(para.content?.[0]).toBe("In the beginning ");
+    expect((para.content?.[1] as MarkerObject | undefined)?.type).toBe(type);
     return {
       ...mounted,
       key,
       live,
-      para,
+      literalStart: live.indexOf(literal),
       context: settledPositionContext(mounted.lexical),
-      tail: settledTextIndex(para, " made"),
-      $live: (offset: number): [LexicalNode, number] => [$textContaining(live), offset],
     };
   }
 
-  // Each literal settles to something the scope's fragment spells shorter than it was typed:
-  // `\cat x\cat*` folds into the note's category, and a figure shows its attributes as read-only
-  // bytes that its settled fragment does not spell — only its caption.
-  const literals = [
-    ["a folded category", "\\f + \\cat x\\cat*\\ft note\\f*"],
-    ["a figure", '\\fig cap|src="a.jpg" size="col"\\fig*'],
-  ] as const;
+  /** `[what the caret sits in front of, offset into the literal, the byte's settled location]`. */
+  type ByteRow = readonly [string, number, UsjDocumentLocation];
 
-  it.each(literals)(
-    "reports a caret after %s against the settled text after it",
-    async (_, literal) => {
-      const { lexical, context, live, tail, $live } = await pendingLiteral(literal);
+  const categoryRows: readonly ByteRow[] = [
+    ["the `\\` of `\\cat`", 5, { jsonPath: NODE, keyName: "category" }],
+    ["the `c` of `\\cat`", 6, { jsonPath: NODE, keyName: "category", keyOffset: 0 }],
+    ["the `t` of `\\cat`", 8, { jsonPath: NODE, keyName: "category", keyOffset: 2 }],
+    ["the space after `\\cat`", 9, { jsonPath: NODE, keyName: "category", keyOffset: 3 }],
+    [
+      "the category value",
+      10,
+      { jsonPath: propertyPath(NODE_PATH, "category"), propertyOffset: 0 },
+    ],
+    [
+      "the `\\` of `\\cat*`",
+      11,
+      { jsonPath: NODE, keyName: "category", keyClosingMarkerOffset: 0 },
+    ],
+    ["the `a` of `\\cat*`", 13, { jsonPath: NODE, keyName: "category", keyClosingMarkerOffset: 2 }],
+    ["the `*` of `\\cat*`", 15, { jsonPath: NODE, keyName: "category", keyClosingMarkerOffset: 4 }],
+    ["the `\\ft` after `\\cat*`", 16, { jsonPath: contentPath([...NODE_PATH, 0]) }],
+  ];
 
-      expect(settledLocationOf(lexical, context, () => $live(live.indexOf(" made") + 2))).toEqual({
-        jsonPath: contentPath([PARA_TOP_INDEX, tail]),
-        offset: 2,
-      });
-    },
-  );
+  const figureRows: readonly ByteRow[] = [
+    ["the `f` of `\\fig`", 1, { jsonPath: propertyPath(NODE_PATH, "marker"), propertyOffset: 0 }],
+    [
+      "the space after `\\fig`",
+      4,
+      { jsonPath: propertyPath(NODE_PATH, "marker"), propertyOffset: 3 },
+    ],
+    ["the caption", 5, { jsonPath: contentPath([...NODE_PATH, 0]), offset: 0 }],
+    ["the `|`", 8, { jsonPath: contentPath([...NODE_PATH, 0]), offset: 3 }],
+    ["the `s` of `src`", 9, { jsonPath: NODE, keyName: "file", keyOffset: 0 }],
+    ["the `=` after `src`", 12, { jsonPath: NODE, keyName: "file", keyOffset: 3 }],
+    ["the opening quote of the file value", 13, { jsonPath: NODE, keyName: "file", keyOffset: 4 }],
+    ["the file value", 14, { jsonPath: propertyPath(NODE_PATH, "file"), propertyOffset: 0 }],
+    [
+      "the closing quote of the file value",
+      19,
+      { jsonPath: propertyPath(NODE_PATH, "file"), propertyOffset: 5 },
+    ],
+    [
+      "the space between two attributes",
+      20,
+      { jsonPath: propertyPath(NODE_PATH, "file"), propertyOffset: 6 },
+    ],
+    ["the `s` of `size`", 21, { jsonPath: NODE, keyName: "size", keyOffset: 0 }],
+    ["the size value", 27, { jsonPath: propertyPath(NODE_PATH, "size"), propertyOffset: 0 }],
+    ["the `r` of `ref`", 32, { jsonPath: NODE, keyName: "ref", keyOffset: 0 }],
+    [
+      "the closing quote of the ref value",
+      40,
+      { jsonPath: propertyPath(NODE_PATH, "ref"), propertyOffset: 3 },
+    ],
+    ["the `\\` of `\\fig*`", 41, { jsonPath: NODE, closingMarkerOffset: 0 }],
+    ["the `*` of `\\fig*`", 45, { jsonPath: NODE, closingMarkerOffset: 4 }],
+  ];
 
-  it.each(literals)(
-    "resolves a settled position after %s onto the live text after the literal",
-    async (_, literal) => {
-      const { lexical, context, key, live, tail } = await pendingLiteral(literal);
+  describe.each([
+    ["a typed `\\cat` in a footnote literal", CATEGORY_LITERAL, "note", categoryRows],
+    ["a typed figure's attribute list", FIGURE_LITERAL, "figure", figureRows],
+  ] as const)("%s", (_, literal, type, rows) => {
+    it.each(rows)(
+      "reports a caret in front of %s at its settled location",
+      async (__, at, location) => {
+        const { lexical, context, literalStart } = await pendingLiteral(literal, type);
 
-      expect(
-        livePointOf(lexical, context, { jsonPath: contentPath([PARA_TOP_INDEX, tail]), offset: 2 }),
-      ).toEqual({ key, offset: live.indexOf(" made") + 2, type: "text" });
-    },
-  );
-
-  it("carries a position in the bytes the settle spells back across in both directions", async () => {
-    // Past the folded category, the note's body is the typed bytes one for one.
-    const literal = "\\f + \\cat x\\cat*\\ft note\\f*";
-    const { lexical, context, key, live, para } = await pendingLiteral(literal);
-    const noteIndex = settledNoteIndex(para);
-    const note = para.content?.[noteIndex] as MarkerObject;
-    const charIndex = note.content?.findIndex(
-      (item) => typeof item !== "string" && item.type === "char",
+        expect(
+          settledLocationOf(lexical, context, () => [$textContaining(literal), literalStart + at]),
+        ).toEqual(location);
+      },
     );
-    if (charIndex === undefined || charIndex < 0) throw new Error("no settled char in the note");
-    const body = {
-      jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, charIndex, 0]),
-      offset: 2,
-    };
+
+    it.each(rows)(
+      "resolves the settled location of %s onto that live byte",
+      async (__, at, location) => {
+        const { lexical, context, key, literalStart } = await pendingLiteral(literal, type);
+
+        expect(livePointOf(lexical, context, location)).toEqual({
+          key,
+          offset: literalStart + at,
+          type: "text",
+        });
+      },
+    );
+  });
+
+  it.each([
+    ["a typed `\\cat`", CATEGORY_LITERAL, "note"],
+    ["a figure", FIGURE_LITERAL, "figure"],
+  ] as const)("carries a position after %s across in both directions", async (_, literal, type) => {
+    const { lexical, context, key, live, ref } = await pendingLiteral(literal, type);
+    const tail = settledTextIndex(settledPara(ref.current?.getUsj(), PARA_TOP_INDEX), " made");
+    const settled = { jsonPath: contentPath([PARA_TOP_INDEX, tail]), offset: 2 };
+
+    expect(
+      settledLocationOf(lexical, context, () => [$textContaining(live), live.indexOf(" made") + 2]),
+    ).toEqual(settled);
+    expect(livePointOf(lexical, context, settled)).toEqual({
+      key,
+      offset: live.indexOf(" made") + 2,
+      type: "text",
+    });
+  });
+
+  it("carries a position in the note's body past a typed `\\cat` across in both directions", async () => {
+    const { lexical, context, key, live } = await pendingLiteral(CATEGORY_LITERAL, "note");
+    const body = { jsonPath: contentPath([...NODE_PATH, 0, 0]), offset: 2 };
     const liveOffset = live.indexOf("note\\f*") + 2;
 
     expect(settledLocationOf(lexical, context, () => [$textContaining(live), liveOffset])).toEqual(
