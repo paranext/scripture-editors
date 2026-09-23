@@ -1508,7 +1508,14 @@ describe("$insertNote()", () => {
     });
   });
 
-  it("classifies 'ex' as a cross-reference when resolving the project default caller", () => {
+  it("gives 'f' and 'x' the project's own default caller, and every other marker Paratext 9's fallback", () => {
+    // Paratext 9's DefaultCallerMapper has a project-level default caller for exactly four
+    // markers - f, x, ef, ex - each under its OWN settings field. This editor exposes only two of
+    // those settings (defaultFootnoteCaller for "f", defaultCrossRefCaller for "x"), so every
+    // other marker - "fe", "ef", "efe", "ex" included - falls back to Paratext 9's hardcoded
+    // per-marker default instead of borrowing a different marker's project setting: "+" for a
+    // marker starting with "f", "-" for everything else
+    // (Paratext ParatextBase/ScriptureEditor/UsfmSnippetInserter.cs GetFallbackCaller).
     const { editor } = createBasicTestEnvironment(requiredNodes);
     editor.update(
       () => {
@@ -1524,29 +1531,65 @@ describe("$insertNote()", () => {
         defaultCrossRefCaller: "†",
         defaultFootnoteCaller: "‡",
       };
-      const extendedCrossRef = $insertNote(
-        "ex",
-        undefined,
-        undefined,
-        { book: "GEN", chapterNum: 1, verseNum: 1 },
-        viewOptions,
-        projectCallers,
-        undefined,
-      );
-      expect(extendedCrossRef?.getCaller()).toBe("†");
+      const insert = (marker: string) =>
+        $insertNote(
+          marker,
+          undefined,
+          undefined,
+          { book: "GEN", chapterNum: 1, verseNum: 1 },
+          viewOptions,
+          projectCallers,
+          undefined,
+        );
 
-      // Positive control: "ef" also starts with "e" but is a footnote — it must take the
-      // footnote default, proving the cross-reference classification matches "ex" exactly.
-      const studyNote = $insertNote(
-        "ef",
+      expect(insert("f")?.getCaller()).toBe("‡");
+      expect(insert("x")?.getCaller()).toBe("†");
+      // The bug this pins: "fe" has no project-level default in Paratext 9 at all, so it must NOT
+      // take the "f" marker's defaultFootnoteCaller - it always gets Paratext 9's own "+"
+      // fallback, regardless of what the project configured for plain footnotes.
+      expect(insert("fe")?.getCaller()).toBe("+");
+      // "ef" and "ex" have their OWN Paratext 9 project settings (DefaultExFootnoteCaller /
+      // DefaultExCrossRefCaller), which this editor does not model — so they fall back too,
+      // rather than incorrectly reusing "f"/"x"'s settings.
+      expect(insert("ef")?.getCaller()).toBe("-");
+      expect(insert("ex")?.getCaller()).toBe("-");
+      expect(insert("efe")?.getCaller()).toBe("-");
+    });
+  });
+
+  it("gives 'fe' Paratext 9's '+' fallback even when the project has customized the footnote default", () => {
+    const { editor } = createBasicTestEnvironment(requiredNodes);
+    editor.update(
+      () => {
+        const t1 = $createTextNode("text");
+        $getRoot().append($createParaNode().append(t1));
+        t1.select(2, 2);
+      },
+      { discrete: true },
+    );
+
+    editor.update(() => {
+      const endnote = $insertNote(
+        "fe",
         undefined,
         undefined,
         { book: "GEN", chapterNum: 1, verseNum: 1 },
         viewOptions,
-        projectCallers,
+        { defaultFootnoteCaller: "-" },
         undefined,
       );
-      expect(studyNote?.getCaller()).toBe("‡");
+      expect(endnote?.getCaller()).toBe("+");
+
+      const footnote = $insertNote(
+        "f",
+        undefined,
+        undefined,
+        { book: "GEN", chapterNum: 1, verseNum: 1 },
+        viewOptions,
+        { defaultFootnoteCaller: "-" },
+        undefined,
+      );
+      expect(footnote?.getCaller()).toBe("-");
     });
   });
 
