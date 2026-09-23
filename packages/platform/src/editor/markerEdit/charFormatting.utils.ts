@@ -21,6 +21,7 @@ import {
   $isRangeSelection,
   $isTextNode,
   LexicalNode,
+  PointType,
   RangeSelection,
   TextNode,
 } from "lexical";
@@ -211,6 +212,67 @@ export function $isSelectionInParagraphCharStack(): boolean {
   return $isSomeParaNode($charStackContainer(node));
 }
 
+/** What a break-and-lift left behind: where it came to rest, and what ended up after it. */
+export interface CharStackBreak {
+  /** The break point's resting parent after the lift — `null` only when no break point could be
+   * created at all (a point with neither a text nor an element shape to cut). */
+  parent: LexicalNode | null;
+  /** The nodes originally after the break point, now siblings ready to move into a new container. */
+  moving: LexicalNode[];
+}
+
+/**
+ * Creates an empty break point at `point`, lifts it out of any open character-style stack
+ * (`$liftOutOfCharStack` — each level closes before it and reopens after it), and reports where it
+ * came to rest and what ended up after it — still attached, ready to move into whatever new
+ * container the caller is building. `point` must already be normalized out of glyph text (see
+ * `$normalizeSelectionOutOfGlyphText` in `shared`) — ANY text node it names, including a marker
+ * glyph or an unmatched-closer glyph, is treated as an atomic leaf that only ever gets a sibling
+ * inserted before or after it, never split through its own bytes.
+ *
+ * Shared by {@link $splitParagraphAtCharStack} and the `\id`-line split
+ * (`$splitBookWithMarker`, markerMenu/markerMenuApply.utils.ts) — the two places PT9's
+ * paragraph-marker split makes this same cut. The ELEMENT-point branch exists for the book split's
+ * caller, which can arrive with a caret parked before/after a non-text child (or at a container's
+ * end); the paragraph split always arrives with a TEXT point, so that branch never runs for it. The
+ * reported resting `parent` is likewise only meaningful to the book split's caller, which — unlike
+ * the paragraph split — cannot assume ahead of time that the lift reaches the container it wants.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+export function $breakAndLiftCharStack(point: PointType): CharStackBreak {
+  const breakPoint = $createTextNode("");
+  const node = point.getNode();
+  const offset = point.offset;
+  if ($isTextNode(node)) {
+    if (offset <= 0) node.insertBefore(breakPoint);
+    else if (offset >= node.getTextContentSize()) node.insertAfter(breakPoint);
+    else {
+      const [, tail] = node.splitText(offset) as [TextNode, TextNode];
+      tail.insertBefore(breakPoint);
+    }
+  } else {
+    // An ELEMENT point's offset is a CHILD INDEX, and a caret parked on a glyph belongs outside
+    // it: both cut before the node the point names, or at the container's end when it names none.
+    // A fresh, unnarrowed read: TypeScript's control-flow narrowing on `node` from the `if` above
+    // (excluding `TextNode`) collapses the class hierarchy to `never` once `$isElementNode` narrows
+    // it again below, even though a non-text, non-element node (a decorator) is a real case here.
+    const elementOrLeaf: LexicalNode = point.getNode();
+    const container = $isElementNode(elementOrLeaf) ? elementOrLeaf : elementOrLeaf.getParent();
+    const nextNode = $isElementNode(elementOrLeaf)
+      ? elementOrLeaf.getChildAtIndex(offset)
+      : elementOrLeaf;
+    if (nextNode) nextNode.insertBefore(breakPoint);
+    else if (container) container.append(breakPoint);
+    else return { parent: null, moving: [] };
+  }
+  if ($innermostCharAncestor(breakPoint)) $liftOutOfCharStack(breakPoint, { renderGlyphs: true });
+  const moving = breakPoint.getNextSiblings();
+  const parent = breakPoint.getParent();
+  breakPoint.remove();
+  return { parent, moving };
+}
+
 /**
  * Splits the paragraph at a caret sitting inside character-styled text, closing the whole open
  * character-style stack on the left and reopening it in the new paragraph — the tail keeps its
@@ -262,20 +324,7 @@ export function $splitParagraphAtCharStack(): boolean {
   const para = $charStackContainer(anchorNode);
   if (!$isSomeParaNode(para)) return false;
 
-  // An empty text node, so it contributes no bytes to either half and nothing has to be cleaned up
-  // beyond removing it. It never survives this function, so no transform ever sees it.
-  const breakPoint = $createTextNode("");
-  const offset = selection.anchor.offset;
-  if (offset <= 0) anchorNode.insertBefore(breakPoint);
-  else if (offset >= anchorNode.getTextContentSize()) anchorNode.insertAfter(breakPoint);
-  else {
-    const [, tail] = anchorNode.splitText(offset) as [TextNode, TextNode];
-    tail.insertBefore(breakPoint);
-  }
-  $liftOutOfCharStack(breakPoint, { renderGlyphs: true });
-
-  const moving = breakPoint.getNextSiblings();
-  breakPoint.remove();
+  const { moving } = $breakAndLiftCharStack(selection.anchor);
   const newPara = para.insertNewAfter(selection, false);
   newPara.append(...moving);
   const [firstMoved] = moving;
