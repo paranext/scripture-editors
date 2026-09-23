@@ -16,6 +16,7 @@ import {
   $createMarkerNode,
   $createParaNode,
   $createVerseNode,
+  $isBookNode,
   BookNode,
   ImmutableTypedTextNode,
   MarkerNode,
@@ -37,7 +38,10 @@ import {
   $guardCursorAtGutterMarker,
   $guardCursorAtParaStart,
   $guardCursorOnClick,
+  $shouldRefuseBookPrefixDeletion,
+  ParaMarkerPrefixCursorGuardPlugin,
 } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { baseTestEnvironment, pressKey } from "./react-test.utils";
 
 const nodes = [
   BookNode,
@@ -571,6 +575,175 @@ describe("$advancePastParaPrefixes", () => {
     editor.getEditorState().read(() => {
       $expectSelectionToBe(para, 3);
     });
+  });
+});
+
+// Backspace/Delete's default handling removes an adjacent DecoratorNode outright regardless of
+// `isKeyboardSelectable()` (see ImmutableTypedTextNode.ts), so a keystroke at the boundary of the
+// `\id` line's own immutable prefix deletes the glyph from the screen while the file — which never
+// stored the glyph as its own node — is unchanged. Refusing the underlying DELETE_CHARACTER_COMMAND
+// (which both Backspace and Delete fall through to) keeps the keystroke a visible refusal instead
+// of a silent, invisible loss.
+//
+// The integration tests below assert against the TREE, never `event.defaultPrevented`: Lexical's
+// own KEY_BACKSPACE_COMMAND/KEY_DELETE_COMMAND handlers call `event.preventDefault()`
+// unconditionally before ever dispatching DELETE_CHARACTER_COMMAND, so that flag is `true` for
+// every Backspace/Delete press regardless of what this guard decides — it says nothing about
+// refusal on its own. A press this guard does NOT refuse reaches Lexical's own
+// `RangeSelection.deleteCharacter`, which this environment cannot run at all (jsdom has no
+// `Selection.modify`) — so the "not refused" half is pinned directly against
+// `$shouldRefuseBookPrefixDeletion`, the same exported-for-testing convention
+// `$guardCursorAtParaStart` already uses, rather than through a real keypress.
+describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", () => {
+  it("refuses Backspace at the start of the line's content", async () => {
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        content = $createTextNode("Genesis");
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", "\\id GEN "),
+            content,
+          ),
+        );
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, content, 0);
+
+    await pressKey(editor, "Backspace");
+
+    editor.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected a BookNode");
+      expect(book.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(book.getTextContent()).toBe("\\id GEN Genesis");
+    });
+  });
+
+  it("refuses Delete when the caret sits right before the prefix (defense in depth)", async () => {
+    let book!: BookNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        book = $createBookNode("GEN");
+        $getRoot().append(
+          book.append(
+            $createImmutableTypedTextNode("marker", "\\id GEN "),
+            $createTextNode("Genesis"),
+          ),
+        );
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, book, 0);
+
+    await pressKey(editor, "Delete");
+
+    editor.getEditorState().read(() => {
+      expect(book.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+    });
+  });
+
+  it("refuses a selection reaching from the prefix into the content", async () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        book = $createBookNode("GEN");
+        content = $createTextNode("Genesis");
+        $getRoot().append(
+          book.append($createImmutableTypedTextNode("marker", "\\id GEN "), content),
+        );
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    // An element point at (book, 0) — the caret resting right before the prefix, an ordinary
+    // position `\` context/Home/click already resolve to — extended into the content.
+    updateSelection(editor, book, 0, content, 3);
+
+    await pressKey(editor, "Backspace");
+
+    editor.getEditorState().read(() => {
+      const rootBook = $getRoot().getFirstChild();
+      if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
+      expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(rootBook.getTextContent()).toBe("\\id GEN Genesis");
+    });
+  });
+
+  // A paragraph's own visible marker prefix takes the OPPOSITE, intentional path — deleting it is
+  // a real marker-deletion gesture ($paraMarkerDeletionTransform), not something to refuse — so
+  // this guard must not overreach onto it.
+  it("does not refuse backward deletion at the start of an ORDINARY paragraph's content", () => {
+    let content!: TextNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      $getRoot().append(
+        $createParaNode("q1").append(
+          $createImmutableTypedTextNode("marker", "\\q1 "),
+          (content = $createTextNode("Blessed")),
+        ),
+      );
+    });
+    updateSelection(editor, content, 0);
+
+    let refused = true;
+    editor.update(
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) refused = $shouldRefuseBookPrefixDeletion(true);
+      },
+      { discrete: true },
+    );
+
+    expect(refused).toBe(false);
+  });
+
+  it("does not refuse backward deletion inside plain content, away from any boundary", () => {
+    let content!: TextNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      $getRoot().append(
+        $createBookNode("GEN").append(
+          $createImmutableTypedTextNode("marker", "\\id GEN "),
+          (content = $createTextNode("Genesis")),
+        ),
+      );
+    });
+    updateSelection(editor, content, 3);
+
+    let refused = true;
+    editor.update(
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) refused = $shouldRefuseBookPrefixDeletion(true);
+      },
+      { discrete: true },
+    );
+
+    expect(refused).toBe(false);
+  });
+
+  it("does not refuse forward deletion (Delete) from inside the content, away from any boundary", () => {
+    let content!: TextNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      $getRoot().append(
+        $createBookNode("GEN").append(
+          $createImmutableTypedTextNode("marker", "\\id GEN "),
+          (content = $createTextNode("Genesis")),
+        ),
+      );
+    });
+    updateSelection(editor, content, 3);
+
+    let refused = true;
+    editor.update(
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) refused = $shouldRefuseBookPrefixDeletion(false);
+      },
+      { discrete: true },
+    );
+
+    expect(refused).toBe(false);
   });
 });
 
