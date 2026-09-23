@@ -11,7 +11,13 @@ import {
   LexicalNode,
   NodeKey,
 } from "lexical";
-import { $isSomeChapterNode, $isSomeParaNode, SomeParaNode } from "shared";
+import {
+  $isMarkerTrailingSeparator,
+  $isParaLikeNode,
+  $isSomeChapterNode,
+  $isSomeParaNode,
+  SomeParaNode,
+} from "shared";
 
 /** Editing operations that can alter block structure. */
 export type EditIntent = "insertParagraph" | "deleteBackward" | "deleteForward" | "insertText";
@@ -53,11 +59,16 @@ export function keyDownToIntent(event: KeyboardEvent): EditIntent | undefined {
   return undefined;
 }
 
-/** Returns the paragraph (ParaNode or ImpliedParaNode) that contains `node`, if any. */
+/**
+ * Returns the block (ParaNode, ImpliedParaNode, or the `\id` line's BookNode) that contains
+ * `node`, if any. `ParaLike`, not `SomePara`: the `\id` line is content like any paragraph's —
+ * protected mode must recognize it as a block boundary too, or a Delete at the line's own end,
+ * or a selection spanning from it into the next real paragraph, merges right through it.
+ */
 function $getParaAncestor(node: LexicalNode | null | undefined): LexicalNode | undefined {
   if (!node) return undefined;
-  if ($isSomeParaNode(node)) return node;
-  const para = $findMatchingParent(node, (n: LexicalNode) => $isSomeParaNode(n));
+  if ($isParaLikeNode(node)) return node;
+  const para = $findMatchingParent(node, (n: LexicalNode) => $isParaLikeNode(n));
   return para ?? undefined;
 }
 
@@ -307,18 +318,26 @@ export function $placeCaretAtEnd(node: LexicalNode): void {
 
 /**
  * Merge-into-previous semantics for a paragraph delete: move `para`'s children into its
- * previous paragraph sibling (which keeps ITS marker), remove `para` (dropping its marker),
- * and place the caret at the junction. Text is never lost. Only paragraphs merge into
- * paragraphs (ParaNode/ImpliedParaNode either way); any other previous sibling is a no-op.
+ * previous sibling (which keeps ITS marker), remove `para` (dropping its marker), and place the
+ * caret at the junction. Text is never lost. A paragraph merges into a paragraph
+ * (ParaNode/ImpliedParaNode either way) or into the `\id` line's BookNode — mirroring
+ * markerEditDeletion.utils.ts's marker-deletion merge, which already treats the two the same
+ * way, since the line is content like any paragraph's; any other previous sibling is a no-op.
  * Caller guarantees a previous element sibling exists (checked via `$hasNeighborBlock`).
+ *
+ * Mutating: call inside `editor.update()` (dispatched from StructureKeyboardPlugin.tsx).
  *
  * @param para - The paragraph whose marker is being removed by merging it into its predecessor.
  */
 export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   const prev = para.getPreviousSibling();
-  if (!$isSomeParaNode(prev)) return;
+  if (!$isParaLikeNode(prev)) return;
   const junction = prev.getLastChild();
-  const moved = para.getChildren();
+  // A trailing marker separator has no meaning once it is no longer the last thing before a
+  // dissolving paragraph's own (now-removed) marker — markerEditDeletion.utils.ts drops the same
+  // orphaned separator for the identical reason, never a marker prefix, since none remains in
+  // the paragraph's children by the point either merge runs.
+  const moved = para.getChildren().filter((child) => !$isMarkerTrailingSeparator(child));
   prev.append(...moved);
   para.remove();
   // When `prev` had content, the junction is the end of its last child; when it was empty the
