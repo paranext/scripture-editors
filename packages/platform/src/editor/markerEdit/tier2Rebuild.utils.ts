@@ -1262,21 +1262,66 @@ function $walkToCaret(
   return undefined;
 }
 
+/**
+ * Translate an ELEMENT-point anchor sitting ON one of `scopes` itself — `key` names the scope
+ * element, `offset` is a CHILD INDEX between two of its children (ArrowLeft past a collapsed
+ * atomic child, e.g. a note, parks the caret exactly there) — to the END of the PRECEDING child's
+ * own fragment span. `$walkToCaret` only recognizes anchors expressed against the individual leaf
+ * spans it visits; an anchor still naming the scope element never matches one, and the walk
+ * silently returns undefined, which surfaces as the caret jumping to the rebuild's first element
+ * instead of holding position.
+ *
+ * The preceding child's OWN key may not appear in `fragment.spans` at all — a composite child (a
+ * note, a char span) has no single span of its own, so this walks the fragment for the LAST span
+ * whose node lies inside that child's subtree, the same span the walk would have reached had the
+ * caret simply landed inside the child instead of stopping in front of the next one.
+ *
+ * A no-op — returns `{ key, offset }` unchanged — for any anchor that does not name one of
+ * `scopes`, and for offset 0 (nothing precedes it; `$walkToCaret`'s own start-of-fragment handling
+ * is already correct there).
+ *
+ * Read-only: resolves node keys, so call inside `editor.update()` or an editor-state read.
+ */
+function $resolveScopeElementPointAnchor(
+  scopes: LexicalNode[],
+  fragment: { spans: FragmentSpan[] },
+  key: string,
+  offset: number,
+): { key: string; offset: number } {
+  const scope = scopes.find((candidate) => candidate.getKey() === key);
+  if (!scope || offset <= 0 || !$isElementNode(scope)) return { key, offset };
+  const preceding = scope.getChildAtIndex(offset - 1);
+  if (!preceding) return { key, offset };
+  let lastSpan: FragmentSpan | undefined;
+  for (const span of fragment.spans) {
+    const node = $getNodeByKey(span.key);
+    if (node && (preceding.is(node) || preceding.isParentOf(node))) lastSpan = span;
+  }
+  return lastSpan ? { key: lastSpan.key, offset: lastSpan.end - lastSpan.start } : { key, offset };
+}
+
 function $caretSpanByteAnchor(
+  scopes: LexicalNode[],
   fragment: { text: string; spans: FragmentSpan[] },
   anchorKey: string,
   anchorOffset: number,
 ): CaretByteAnchor | undefined {
-  const full = $walkToCaret(fragment, anchorKey, anchorOffset, false);
+  const { key, offset } = $resolveScopeElementPointAnchor(
+    scopes,
+    fragment,
+    anchorKey,
+    anchorOffset,
+  );
+  const full = $walkToCaret(fragment, key, offset, false);
   if (!full) return undefined;
   // A caret inside a display-run piece has to be anchored in every byte — that is the mid-edit
   // case the byte anchor was built for (a typed `|x="y"` keeps the caret on the byte the user just
   // typed, even as that byte migrates from the glyph into a new attribute run). Only a caret in
   // ordinary document content gets a document-coordinate twin.
-  const anchorSpan = fragment.spans.find((span) => span.key === anchorKey);
+  const anchorSpan = fragment.spans.find((span) => span.key === key);
   const documentCoords =
     anchorSpan && !$isDisplayRunPieceSpan(anchorSpan)
-      ? $walkToCaret(fragment, anchorKey, anchorOffset, true)
+      ? $walkToCaret(fragment, key, offset, true)
       : undefined;
   return { ...full, documentCoords, attributeRunSpans: $countAttributeRunSpans(fragment.spans) };
 }
@@ -1545,7 +1590,12 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
         break;
       }
     if (selection.isCollapsed())
-      caretAnchor = $caretSpanByteAnchor(combined, selection.anchor.key, selection.anchor.offset);
+      caretAnchor = $caretSpanByteAnchor(
+        paras,
+        combined,
+        selection.anchor.key,
+        selection.anchor.offset,
+      );
   }
 
   const content: MarkerContent[] = usfmFragmentToUsjContent(combined.text, {
@@ -1759,7 +1809,12 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
         break;
       }
     if (selection.isCollapsed())
-      caretAnchor = $caretSpanByteAnchor(out, selection.anchor.key, selection.anchor.offset);
+      caretAnchor = $caretSpanByteAnchor(
+        [note],
+        out,
+        selection.anchor.key,
+        selection.anchor.offset,
+      );
   }
 
   const content: MarkerContent[] = usfmFragmentToUsjContent(out.text, {
@@ -2003,7 +2058,12 @@ export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
         break;
       }
     if (selection.isCollapsed())
-      caretAnchor = $caretSpanByteAnchor(out, selection.anchor.key, selection.anchor.offset);
+      caretAnchor = $caretSpanByteAnchor(
+        [book],
+        out,
+        selection.anchor.key,
+        selection.anchor.offset,
+      );
   }
 
   const tokenized = tokenizedBookLine(out.text, getMarkerFn);
@@ -2307,7 +2367,12 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
         break;
       }
     if (selection.isCollapsed())
-      caretAnchor = $caretSpanByteAnchor(out, selection.anchor.key, selection.anchor.offset);
+      caretAnchor = $caretSpanByteAnchor(
+        region,
+        out,
+        selection.anchor.key,
+        selection.anchor.offset,
+      );
   }
 
   const content: MarkerContent[] = usfmFragmentToUsjContent(out.text, { getMarker: getMarkerFn });
