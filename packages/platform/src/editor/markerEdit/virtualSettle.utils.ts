@@ -1182,18 +1182,19 @@ export function $settledUsj(
     site.siblings.splice(index, regionSize, ...rebuilt);
   }
 
-  // Husks LAST, deliberately AFTER the notes/para passes above, not before: a husk pended ALONE
-  // (its own paragraph/note never lands in paraScopes/noteScopes at all, since
-  // $settleScopeForNode always refuses an UnknownNode) is untouched by anything else, so this
-  // splice is the ONLY thing that removes it from the output, and running it here still finds it
-  // exactly where it started.
+  // Husks LAST, deliberately AFTER the notes/para/book passes above, not before: a husk pended
+  // ALONE (its own paragraph/note/book line never lands in paraScopes/noteScopes/bookScopes at
+  // all, since $settleScopeForNode always refuses an UnknownNode) is untouched by anything else,
+  // so this splice is the ONLY thing that removes it from the output, and running it here still
+  // finds it exactly where it started.
   //
-  // A husk whose own paragraph/note is ALSO settling for an unrelated pend was already resolved
-  // above, but the two scopes get there by DIFFERENT mechanisms — this loop below is a genuine
-  // no-op for both, just not for the identical reason:
-  //  - NOTE: the notes pass's splice (`noteChildren.splice(start, ..., ...built.rebuilt)`)
-  //    mutates `noteChildren` IN PLACE — the SAME array object this loop's own `site.siblings`
-  //    points to for the husk (both were recorded from the SAME note-children array by
+  // A husk whose own paragraph/note/book line is ALSO settling for an unrelated pend was already
+  // resolved above, but the three scopes get there by DIFFERENT mechanisms — this loop below is a
+  // genuine no-op for all three, just not for the identical reason:
+  //  - NOTE and BOOK: the notes pass's splice (`noteChildren.splice(start, ..., ...built.rebuilt)`)
+  //    and the book pass's splice (`bookChildren.splice(start, ..., ...built.rebuilt)`) both
+  //    mutate their children array IN PLACE — the SAME array object this loop's own
+  //    `site.siblings` points to for the husk (both were recorded from that same children array by
   //    `$mapSerializedSites`). `built.rebuilt` already excludes the husk (via `huskKeys`), so by
   //    the time this loop runs, the husk's own JSON node genuinely no longer exists anywhere in
   //    that array; `indexOf` returns -1 and `continue` is a real no-op.
@@ -1207,11 +1208,12 @@ export function $settledUsj(
   //    has no observable effect on the final output either way.
   //
   // Running this pass FIRST (as an earlier version of this settle did) breaks a different way: the
-  // notes pass anchors its splice on `built.contentNodes[0]`'s serialized site — if a husk is a
-  // note's (or paragraph's) OWN first content node, an earlier husk-first splice has already
-  // spliced that exact JSON node out of `noteChildren`, so `noteChildren.indexOf(firstSite.node)`
-  // can no longer find it, `start < 0` fires, and the ENTIRE co-settling rebuild for that scope is
-  // silently skipped — not just the husk, but the unrelated pend riding alongside it too.
+  // notes pass (and, identically, the book pass) anchors its splice on `built.contentNodes[0]`'s
+  // serialized site — if a husk is a note's, paragraph's, or the book line's OWN first content
+  // node, an earlier husk-first splice has already spliced that exact JSON node out of the
+  // relevant children array, so `indexOf(firstSite.node)` can no longer find it, `start < 0`
+  // fires, and the ENTIRE co-settling rebuild for that scope is silently skipped — not just the
+  // husk, but the unrelated pend riding alongside it too.
   for (const husk of husks) {
     const site = sites.get(husk.getKey());
     if (!site) continue;
