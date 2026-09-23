@@ -32,10 +32,12 @@ import {
   $isMarkerNode,
   $isPointInMarkerGlyphText,
   $isSomeParaNode,
+  $isTypedMarkNode,
   $liftOutOfCharStack,
   $selectCharContentStart,
   NBSP,
   textTypeState,
+  TypedMarkNode,
 } from "shared";
 
 /**
@@ -223,9 +225,10 @@ export interface CharStackBreak {
 
 /**
  * Creates an empty break point at `point`, lifts it out of any open character-style stack
- * (`$liftOutOfCharStack` — each level closes before it and reopens after it), and reports where it
- * came to rest and what ended up after it — still attached, ready to move into whatever new
- * container the caller is building. `point` must already be normalized out of glyph text (see
+ * (`$liftOutOfCharStack` — each level closes before it and reopens after it) and out of any
+ * annotation mark wrapper interleaved with that stack ({@link $liftOutOfTypedMark}), and reports
+ * where it came to rest and what ended up after it — still attached, ready to move into whatever
+ * new container the caller is building. `point` must already be normalized out of glyph text (see
  * `$normalizeSelectionOutOfGlyphText` in `shared`) — ANY text node it names, including a marker
  * glyph or an unmatched-closer glyph, is treated as an atomic leaf that only ever gets a sibling
  * inserted before or after it, never split through its own bytes.
@@ -237,6 +240,9 @@ export interface CharStackBreak {
  * end); the paragraph split always arrives with a TEXT point, so that branch never runs for it. The
  * reported resting `parent` is likewise only meaningful to the book split's caller, which — unlike
  * the paragraph split — cannot assume ahead of time that the lift reaches the container it wants.
+ * The mark-wrapper lift is likewise the book split's: the paragraph split only runs when nothing but
+ * char spans stands between the caret and the paragraph, and leaves a caret inside a mark wrapper
+ * to `RangeSelection.insertParagraph`, which splits through the wrapper the same way.
  *
  * Mutating: call inside `editor.update()`.
  */
@@ -266,11 +272,45 @@ export function $breakAndLiftCharStack(point: PointType): CharStackBreak {
     else if (container) container.append(breakPoint);
     else return { parent: null, moving: [] };
   }
-  if ($innermostCharAncestor(breakPoint)) $liftOutOfCharStack(breakPoint, { renderGlyphs: true });
+  for (let parent = breakPoint.getParent(); ; parent = breakPoint.getParent()) {
+    if ($isCharNode(parent)) $liftOutOfCharStack(breakPoint, { renderGlyphs: true });
+    else if (!$isTypedMarkNode(parent) || !$liftOutOfTypedMark(breakPoint, parent)) break;
+  }
   const moving = breakPoint.getNextSiblings();
   const parent = breakPoint.getParent();
   breakPoint.remove();
   return { parent, moving };
+}
+
+/**
+ * Lifts `node` out of the annotation mark wrapper `mark` to `mark`'s parent, splitting the wrapper
+ * around it the way `RangeSelection.insertParagraph` splits one: the content after `node` moves
+ * into the continuation `TypedMarkNode.insertNewAfter` builds, which carries the same typed ids, so
+ * the annotation covers both halves. When `node` is at either edge of the wrapper it simply steps
+ * out on that side, so no half is ever left empty — removing an emptied `TypedMarkNode` would
+ * dispatch its "destroyed" remove callbacks, telling the host the annotation itself is gone.
+ *
+ * Returns `false`, mutating nothing, when there is no range selection to hand `insertNewAfter`.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $liftOutOfTypedMark(node: LexicalNode, mark: TypedMarkNode): boolean {
+  const after = node.getNextSiblings();
+  if (!node.getPreviousSibling()) {
+    mark.insertBefore(node);
+    return true;
+  }
+  if (after.length === 0) {
+    mark.insertAfter(node);
+    return true;
+  }
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return false;
+  const continuation = mark.insertNewAfter(selection, false);
+  if (!continuation) return false;
+  continuation.append(...after);
+  mark.insertAfter(node);
+  return true;
 }
 
 /**
