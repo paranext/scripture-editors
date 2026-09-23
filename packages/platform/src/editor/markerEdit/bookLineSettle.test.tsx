@@ -438,6 +438,81 @@ describe("the `\\id` line's settle scope", () => {
       expect(verseEntry.sid).toBe("GEN 1:1");
     }
   });
+
+  it("does not lose the selection typing a terminated char marker right BEFORE a note in the line", async () => {
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createBookNode("GEN").append(
+          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createTextNode("Genesis "),
+          $createNoteNode("f", "+"),
+          $createTextNode(" tail"),
+        ),
+      );
+    });
+
+    await act(async () =>
+      editor.update(() => {
+        const text = $bookLine().getChildren().find($isTextNode) as TextNode | undefined;
+        if (!text) throw new Error("expected the line's leading text node");
+        text.setTextContent("Genesis \\nd x\\nd* ");
+        text.select(text.getTextContentSize(), text.getTextContentSize());
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const spans = $bookLine().getChildren().filter($isCharNode);
+      expect(spans).toHaveLength(1);
+      expect(spans[0].getMarker()).toBe("nd");
+      expect($bookLine().getChildren().filter($isNoteNode)).toHaveLength(1);
+      expect($bookLine().getTextContent()).toContain("tail");
+    });
+  });
+
+  it("does not lose the selection typing a terminated char marker right AFTER a note in the line", async () => {
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createBookNode("GEN").append(
+          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createTextNode("Genesis "),
+          $createNoteNode("f", "+"),
+          $createTextNode(" tail more"),
+        ),
+      );
+    });
+
+    // Insert the terminated marker into the middle of the existing trailing text, leaving " more"
+    // PRE-EXISTING after the caret — the shape that needs a live (post-splice) byte walk to land
+    // the caret right after the typed closer instead of running on past the untouched tail.
+    const prefix = " tail ";
+    const markerLiteral = "\\nd x\\nd*";
+    const suffix = " more";
+    const caretOffset = (prefix + markerLiteral).length;
+    await act(async () =>
+      editor.update(() => {
+        const tail = $bookLine().getLastChild();
+        if (!$isTextNode(tail)) throw new Error("expected the line's trailing text node");
+        tail.setTextContent(prefix + markerLiteral + suffix);
+        tail.select(caretOffset, caretOffset);
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const spans = $bookLine().getChildren().filter($isCharNode);
+      expect(spans).toHaveLength(1);
+      expect(spans[0].getMarker()).toBe("nd");
+      expect($bookLine().getChildren().filter($isNoteNode)).toHaveLength(1);
+      expect($bookLine().getTextContent()).toContain("more");
+      // The caret must land right after the typed closer, not run on past "more".
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !selection.isCollapsed())
+        throw new Error("expected a collapsed caret");
+      const node = selection.anchor.getNode();
+      if (!$isTextNode(node)) throw new Error("expected the caret on text");
+      const textUpToCaret = node.getTextContent().slice(0, selection.anchor.offset);
+      expect(textUpToCaret.endsWith("more")).toBe(false);
+    });
+  });
 });
 
 describe("where the `\\id` line's bytes end the line", () => {
