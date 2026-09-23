@@ -174,6 +174,27 @@ describe("$getMarkerMenuContext", () => {
     expect(context?.paraMarker).toBe("id");
   });
 
+  it("includes the book's own 'id' marker in previousParaMarkers for a caret in the book region", async () => {
+    // $collectPreviousParaMarkers walks root children collecting the markers that come BEFORE the
+    // caret's own top-level element, then stops at that element without recording it — correct
+    // when the caret's block is a paragraph (its own marker isn't "before itself" either), but for
+    // the \id line the caret's own top-level element IS the book, so the loop must record the
+    // book's marker before breaking or the line's own "id" context is missing from the stack,
+    // exactly the gap $validateDocument's stack build does not have (it always joins the book's
+    // tag into an empty stack before checking what follows it).
+    let idText: TextNode;
+    const { editor } = await testEnvironment(() => {
+      const book = $createBookNode("RUT");
+      idText = $createTextNode("Ruth");
+      $getRoot().append(book.append(idText));
+    });
+
+    await act(async () => editor.update(() => idText.select(2, 2)));
+
+    const context = editor.getEditorState().read(() => $getMarkerMenuContext());
+    expect(context?.previousParaMarkers).toEqual(["id"]);
+  });
+
   it("keeps character source for a text SELECTION in the book region (wrapping is a char action)", async () => {
     let idText: TextNode;
     const { editor } = await testEnvironment(() => {
