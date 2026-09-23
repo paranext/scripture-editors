@@ -14,7 +14,7 @@
  * paragraph is asserted in settledPositions.inbound.test.tsx, against the same
  * `$liveSelectionFromSettled` output these methods consume.
  */
-import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { mountStandardViewEditor, requireStandardViewOptions } from "../settledGetUsj.test-helpers";
 import {
   contentPath,
   settledPara,
@@ -36,10 +36,11 @@ import {
   $isTextNode,
   LexicalEditor,
   LexicalNode,
+  $setSelection,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { $isParaNode, $isTypedMarkNode, getPendedDisplayOwners, NBSP, TypedMarkNode } from "shared";
-import { SelectionRange } from "shared-react";
+import { $getUsjSelectionFromEditor, SelectionRange } from "shared-react";
 
 /** Every `TypedMarkNode` in the tree, depth-first. */
 function $marks(nodes: LexicalNode[] = $getRoot().getChildren()): TypedMarkNode[] {
@@ -306,6 +307,84 @@ describe("reporting the selection while a literal is pending", () => {
     expect(onSelectionChange).toHaveBeenCalledTimes(1);
     const reported = onSelectionChange.mock.calls[0][0];
     expect(settledCharacterAt(ref.current?.getUsj(), reported.start)).toBe("m");
+  });
+
+  it("drops a queued report that a later synchronous one superseded", async () => {
+    const onSelectionChange = vi.fn();
+    const { ref, lexical } = await pendingSpanWithCaret(onSelectionChange);
+
+    // Pending, so this report is deferred to a microtask. Hold on to what gets queued, so the
+    // deferred report can be run by hand once the synchronous one below has gone out.
+    const queued: (() => void)[] = [];
+    const queueSpy = vi.spyOn(globalThis, "queueMicrotask").mockImplementation((callback) => {
+      queued.push(callback);
+    });
+    try {
+      lexical.update(() => {
+        const node = $textContaining(live);
+        if (!$isTextNode(node)) throw new Error("expected a text node");
+        node.select(live.indexOf(" made") + 1, live.indexOf(" made") + 1);
+        lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      });
+    } finally {
+      queueSpy.mockRestore();
+    }
+    expect(queued.length).toBeGreaterThan(0);
+
+    // In the same tick nothing is left pending, so the next report goes out synchronously — and it
+    // is the newest one.
+    await act(async () => {
+      ref.current?.commitPendingMarkerEdits();
+      expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBe(0);
+      lexical.update(
+        () => {
+          $textContaining("depart here").select(2, 2);
+          lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        },
+        { discrete: true },
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onSelectionChange).toHaveBeenLastCalledWith({
+      start: { jsonPath: contentPath([3, 0]), offset: 2 },
+    });
+    onSelectionChange.mockClear();
+
+    // The queued report was superseded: running it now reports nothing.
+    act(() => queued.forEach((callback) => callback()));
+    expect(onSelectionChange).not.toHaveBeenCalled();
+  });
+
+  it("setSelection reports back the settled location it was given, not the live one", async () => {
+    // With the paragraph pending, the settled and live coordinates of the same caret differ, so a
+    // report that merely echoed the live placement would not equal what the host asked for.
+    const onSelectionChange = vi.fn();
+    const { ref, lexical } = await pendingSpanWithCaret(onSelectionChange);
+    await moveCaretToMade(lexical);
+    const settledMade = ref.current?.getSelection();
+    if (!settledMade?.start) throw new Error("no settled selection");
+    const liveMade = lexical
+      .getEditorState()
+      .read(() => $getUsjSelectionFromEditor(requireStandardViewOptions()));
+    expect(liveMade?.start).not.toEqual(settledMade.start);
+    // Elsewhere in the SAME paragraph: leaving it would settle it.
+    await act(async () => {
+      lexical.update(() => $textContaining(live).select(1, 1));
+      await Promise.resolve();
+    });
+    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
+    onSelectionChange.mockClear();
+
+    await act(async () => {
+      ref.current?.setSelection(settledMade);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
+    expect(onSelectionChange).toHaveBeenLastCalledWith(settledMade);
+    expect(settledCharacterAt(ref.current?.getUsj(), settledMade.start)).toBe("m");
   });
 
   it("does not report once the editor has unmounted", async () => {
@@ -579,5 +658,48 @@ describe("positions after content before the first paragraph", () => {
     });
 
     expect(annotatedText(lexical)).toEqual(["depart"]);
+  });
+});
+
+/**
+ * A host surface such as the marker palette declares the literal the user typed to open it as
+ * transient input, and the settled document leaves those bytes out. While the surface has focus the
+ * editor can have no live selection at all, so the declaration is verified against the caret the
+ * editor last saw instead — and positions have to be translated against that same settled document.
+ */
+describe("a declared transient literal while the editor has no selection", () => {
+  it("setAnnotation resolves against the document getUsj() reports", async () => {
+    const live = "In the beginning \\nd made";
+    const { ref, lexical } = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]));
+    act(() => ref.current?.setTransientInput({ kind: "marker-literal", run: "\\nd" }));
+    await typeOver(lexical, "In the beginning made", live, live.indexOf(" made"));
+    // The palette takes focus, and the editor's live selection goes with it.
+    await act(async () => {
+      lexical.update(() => $setSelection(null));
+      await Promise.resolve();
+    });
+    expect(lexical.getEditorState().read(() => $getSelection())).toBeNull();
+
+    const settledText = settledPara(ref.current?.getUsj(), 2).content?.[0];
+    if (typeof settledText !== "string") throw new Error("expected settled paragraph text");
+    // The premise: the declaration still holds, so the settled document lacks the literal.
+    expect(settledText).not.toContain("\\nd");
+    const made = settledText.indexOf("made");
+
+    await act(async () => {
+      ref.current?.setAnnotation(
+        {
+          start: { jsonPath: contentPath([2, 0]), offset: made },
+          end: { jsonPath: contentPath([2, 0]), offset: made + "made".length },
+        },
+        "test",
+        "1",
+      );
+      await Promise.resolve();
+    });
+
+    expect(
+      lexical.getEditorState().read(() => $marks().map((mark) => mark.getTextContent())),
+    ).toEqual(["made"]);
   });
 });

@@ -18,9 +18,16 @@ import {
   $isRangeSelection,
   $isTextNode,
   LexicalEditor,
+  SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
-import { $createParaNode, $isParaNode, CURSOR_PLACEHOLDER_CHAR, ParaNode } from "shared";
+import {
+  $createParaNode,
+  $isParaNode,
+  CURSOR_CHANGE_TAG,
+  CURSOR_PLACEHOLDER_CHAR,
+  ParaNode,
+} from "shared";
 import { useEffect } from "react";
 
 // jsdom implements no layout: Lexical reads a Range rect when it writes the DOM selection.
@@ -172,5 +179,52 @@ describe("the transient caret host's repair", () => {
 
     expect(moved).toBe(true);
     expect(hostCount(editor)).toBe(0);
+  });
+
+  it("leaves the user's next edit untagged after a caret move that changed no node", async () => {
+    const { editor, para, repair } = await mountRepair();
+    // A host is already at the boundary past the verse.
+    await act(async () => {
+      editor.update(
+        () => {
+          const anchor = para.getFirstChild();
+          if (!anchor) throw new Error("expected an anchor");
+          repair(anchor);
+        },
+        { discrete: true },
+      );
+    });
+    const tagsPerCommit: Set<string>[] = [];
+    const unregister = editor.registerUpdateListener(({ tags }) => {
+      tagsPerCommit.push(tags);
+    });
+
+    // The caret comes back to the same boundary, and the guard adopts the host already there —
+    // a commit that moves the caret and nothing else.
+    await act(async () => {
+      editor.update(
+        () => {
+          para.select(1, 1);
+          editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        },
+        { discrete: true },
+      );
+    });
+    // The user's next edit.
+    await act(async () => {
+      editor.update(
+        () => {
+          const elsewhere = $getRoot().getLastChild();
+          const text = $isParaNode(elsewhere) ? elsewhere.getFirstChild() : undefined;
+          if (!$isTextNode(text)) throw new Error("expected text to edit");
+          text.setTextContent("elsewhere, edited");
+        },
+        { discrete: true },
+      );
+    });
+    unregister();
+
+    expect(hostCount(editor)).toBe(1);
+    expect(tagsPerCommit.at(-1)?.has(CURSOR_CHANGE_TAG)).toBe(false);
   });
 });
