@@ -17,7 +17,7 @@
  */
 import { $pendGlyphEdit } from "./markerEdit.test-helpers";
 import { COMMIT_PENDING_MARKERS_COMMAND, MarkerEditPlugin } from "./MarkerEditPlugin";
-import { Tier2Context } from "./tier2Rebuild.utils";
+import { $rebuildParas, Tier2Context } from "./tier2Rebuild.utils";
 import { $settledUsj } from "./virtualSettle.utils";
 import editorUsjAdaptor, {
   initialize as initializeDeserialize,
@@ -414,6 +414,66 @@ const differentialShapes: DifferentialShape[] = [
       $typeLiteralPending(" charlie", " charlie \\nd LORD\\nd*");
     },
   },
+  {
+    // A comment past a footnote typed as plain text: live, the literal spells every one of its
+    // bytes, while the settled note is one preserved node — so each half has to line the two up to
+    // carry the comment onto the same word rather than drop it.
+    name: "comment mark after a typed footnote literal",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"f"');
+      expect(bytes(settled)).toContain('{"type":"ms","marker":"zmsc-s","sid":"c1"},"charlie"');
+    },
+    view: "standard",
+    usj: twoParaUsj(["alpha bravo charlie"]),
+    $edit: () => {
+      $commentOver("charlie", "c1");
+      $typeLiteralPending("alpha bravo ", "alpha \\f + \\ft note text\\f* bravo ");
+    },
+  },
+  {
+    name: "comment mark after a typed footnote literal, notes expanded",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"f"');
+      expect(bytes(settled)).toContain('{"type":"ms","marker":"zmsc-s","sid":"c1"},"charlie"');
+    },
+    view: "standard-expanded",
+    usj: twoParaUsj(["alpha bravo charlie"]),
+    $edit: () => {
+      $commentOver("charlie", "c1");
+      $typeLiteralPending("alpha bravo ", "alpha \\f + \\ft note text\\f* bravo ");
+    },
+  },
+  {
+    // The comment's two ends sit on either side of the literal, so the settled note lands between
+    // its milestones.
+    name: "comment mark spanning a typed footnote literal",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toMatch(
+        /"zmsc-s","sid":"c1"\},"bravo ",\{"type":"note".*\}," charlie",\{"type":"ms","marker":"zmsc-e"/,
+      );
+    },
+    view: "standard",
+    usj: twoParaUsj(["alpha bravo charlie delta"]),
+    $edit: () => {
+      $commentOver("bravo charlie", "c1");
+      $typeLiteralPending("bravo charlie", "bravo \\f + \\ft note text\\f* charlie");
+    },
+  },
+  {
+    // A note-content scope's own typed literal that settles into a preserved node: an endnote
+    // typed inside a footnote's content tokenizes into a note nested in the note.
+    name: "comment mark after a typed note literal in an expanded note's content",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"fe"');
+      expect(bytes(settled)).toContain('{"type":"ms","marker":"zmsc-s","sid":"c1"},"charlie"');
+    },
+    view: "standard-expanded",
+    usj: noteUsj([{ type: "char", marker: "fr", content: ["1.1"] }, "alpha bravo charlie"]),
+    $edit: () => {
+      $commentOver("charlie", "c1");
+      $typeLiteralPending("alpha bravo ", "alpha \\fe + \\ft x\\fe* bravo ");
+    },
+  },
 ];
 
 /**
@@ -471,4 +531,70 @@ describe("differential settle — virtual mirror equals commit-then-read", () =>
       expectSettled(live);
     });
   }
+});
+
+describe("differential settle — a comment inside a typed footnote literal", () => {
+  /**
+   * Type a footnote literal over the first paragraph's text with a comment over `word` inside
+   * it, then settle the paragraph both ways.
+   *
+   * A comment inside a literal splits the literal's text, and the engine settles a split literal
+   * the moment it sees it, so this shape never sits pending in a running editor. With no engine
+   * mounted it stays put, and both settles can be handed the same tree directly.
+   */
+  async function settleBothWays(view: keyof typeof VIEWS, word: string) {
+    const viewOptions = VIEWS[view];
+    const context: Tier2Context = { viewOptions, getMarker: bundledGetMarker };
+    initializeSerialize(undefined, undefined);
+    reset();
+    const state = serializeEditorState(twoParaUsj(["alpha bravo charlie"]), viewOptions);
+    const { editor } = await baseTestEnvironment(JSON.stringify({ root: state.root }));
+    let pendedKey = "";
+    editor.update(
+      () => {
+        const text = $textContaining("alpha bravo charlie");
+        text.setTextContent("alpha \\f + \\ft note text\\f* charlie");
+        pendedKey = text.getKey();
+        $commentOver(word, "c1");
+      },
+      { discrete: true },
+    );
+
+    const serialized = editor.getEditorState().toJSON();
+    const mirror = editor
+      .getEditorState()
+      .read(() => $settledUsj(serialized, new Set([pendedKey]), context));
+    editor.update(
+      () => {
+        const para = $getRoot().getChildren().find($isParaNode);
+        if (!para) throw new Error("expected a ParaNode");
+        expect($rebuildParas([para], context)).toBe(true);
+      },
+      { discrete: true },
+    );
+    return { mirror, live: usjOf(editor, viewOptions) };
+  }
+
+  it.each(["standard", "standard-expanded"] as const)(
+    "lands a comment on the literal's note content on the same content in the new note [%s]",
+    async (view) => {
+      const { mirror, live } = await settleBothWays(view, "note");
+
+      expect(JSON.stringify(mirror)).toBe(JSON.stringify(live));
+      expect(bytes(live)).toContain(
+        '"content":[{"type":"ms","marker":"zmsc-s","sid":"c1"},"note",{"type":"ms","marker":"zmsc-e","eid":"c1"}," text"]',
+      );
+    },
+  );
+
+  it.each(["standard", "standard-expanded"] as const)(
+    "drops a comment on the literal's caller rather than wrap the note's own bytes [%s]",
+    async (view) => {
+      const { mirror, live } = await settleBothWays(view, "+");
+
+      expect(JSON.stringify(mirror)).toBe(JSON.stringify(live));
+      expect(bytes(live)).toContain('"type":"note","marker":"f","caller":"+"');
+      expect(bytes(live)).not.toContain('"c1"');
+    },
+  );
 });

@@ -9,6 +9,7 @@
  * difference before it can be resolved.
  */
 
+import { SettledOnlyRun, SettledRunMember } from "../markerEdit/settledOnlyRuns.utils";
 import { FragmentAccumulator, Tier2Context } from "../markerEdit/tier2Rebuild.utils";
 import { AnchoredTransientInput, LastKnownCaret } from "../markerEdit/virtualSettle.utils";
 import { Klass, LexicalEditor, LexicalNode, LexicalNodeReplacement, NodeKey } from "lexical";
@@ -111,55 +112,6 @@ export interface SettleScopePlan {
    * {@link SettleScopePlan.sentinelMap}.
    */
   readonly settledOnlyRuns: readonly SettledOnlyRun[];
-}
-
-/**
- * How many non-whitespace bytes of a fragment precede a position, in both coordinate systems a
- * byte anchor can be read in (`CaretByteAnchor`, tier2Rebuild.utils.ts): every byte (`full`), and
- * attribute display runs stepped over (`document`).
- */
-export interface NonWsCounts {
-  readonly full: number;
-  readonly document: number;
-}
-
-/**
- * A preserved run the settle introduced from literal bytes: the settled fragment spells it as one
- * placeholder byte, and the live fragment spells the literal it came from. Outside it the two
- * fragments spell the same bytes, the live one `liveLength - 1` bytes longer past it; inside it
- * the literal's bytes are the settled run's own bytes, wherever the settle spells them back.
- */
-export interface SettledOnlyRun {
-  /** The run's index in the scratch fragment's run list. */
-  readonly sentinelIndex: number;
-  /** Non-whitespace bytes of the live fragment before the literal's first byte. */
-  readonly liveBefore: NonWsCounts;
-  /** Non-whitespace bytes the literal itself spans in the live fragment. */
-  readonly liveLength: NonWsCounts;
-  /** Whitespace bytes of the live fragment directly in front of the literal. */
-  readonly liveWsBefore: number;
-  /** Non-whitespace bytes of the scratch fragment before the run's placeholder. */
-  readonly settledBefore: NonWsCounts;
-  /** The run's own bytes as the scratch tree spells them (spans keyed by SCRATCH keys). */
-  readonly spelling: FragmentAccumulator;
-  /** How many non-whitespace bytes `spelling` has. */
-  readonly spelledLength: number;
-  /**
-   * How many of the literal's leading non-whitespace bytes `spelling` spells identically, and how
-   * many trailing ones besides — the bytes a position inside the literal crosses by. Together they
-   * cover the whole literal when the settled node spells the typed bytes back one for one; a
-   * settle that re-spells part of it (a `\cat` folded into the note's category, an attribute list
-   * shortened) leaves the bytes between them with no settled counterpart.
-   */
-  readonly sharedPrefix: number;
-  readonly sharedSuffix: number;
-}
-
-/** One preserved-node run member, named by its run's index in a fragment's run list and its own
- * index within that run. */
-export interface SettledRunMember {
-  readonly sentinelIndex: number;
-  readonly memberIndex: number;
 }
 
 /**

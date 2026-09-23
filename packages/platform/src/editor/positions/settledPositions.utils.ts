@@ -21,18 +21,20 @@ import {
   $caretSpanByteAnchor,
   $resolveFragmentByteAnchor,
   CaretByteAnchor,
-  FRAGMENT_WS,
   FragmentAccumulator,
   FragmentPoint,
   FragmentSpan,
   Tier2Context,
 } from "../markerEdit/tier2Rebuild.utils";
 import {
+  acrossLiteral,
+  anchorAcrossLiterals,
+  FRAGMENT_WS,
+  literalContaining,
   SettledOnlyRun,
-  SettledPositionContext,
   SettledRunMember,
-  SettleScopePlan,
-} from "./settledPositions.model";
+} from "../markerEdit/settledOnlyRuns.utils";
+import { SettledPositionContext, SettleScopePlan } from "./settledPositions.model";
 import { PreparedScopes } from "./settledScopes.utils";
 import {
   UsjDocumentLocation,
@@ -124,83 +126,6 @@ function $livePointOnNoteOwnBytes(
   );
   if (!node || offset === undefined) return undefined;
   return { key: node.getKey(), offset, type: $isElementNode(node) ? "element" : "text" };
-}
-
-/**
- * `anchor` over one side's fragment restated over the other's, across every settled-only run it
- * lies past: the live fragment spells each such run's literal where the settled fragment spells one
- * placeholder byte. Each coordinate system is restated in its own counts.
- */
-function anchorAcrossLiterals(
-  runs: readonly SettledOnlyRun[],
-  anchor: CaretByteAnchor,
-  direction: "toSettled" | "toLive",
-): CaretByteAnchor {
-  if (runs.length === 0) return anchor;
-  const restate = (count: number, coordinates: "full" | "document"): number => {
-    let shift = 0;
-    for (const run of runs) {
-      const extra = run.liveLength[coordinates] - 1;
-      const isPast =
-        direction === "toSettled"
-          ? count >= run.liveBefore[coordinates] + run.liveLength[coordinates]
-          : count >= run.settledBefore[coordinates] + 1;
-      if (isPast) shift += extra;
-    }
-    return direction === "toSettled" ? count - shift : count + shift;
-  };
-  return {
-    ...anchor,
-    nonWsBefore: restate(anchor.nonWsBefore, "full"),
-    documentCoords: anchor.documentCoords && {
-      ...anchor.documentCoords,
-      nonWsBefore: restate(anchor.documentCoords.nonWsBefore, "document"),
-    },
-  };
-}
-
-/**
- * A count of non-whitespace bytes into one side of a settled-only run — the live literal, or the
- * run's spelling — restated as a count into the other, or `undefined` for a byte the settle
- * re-spelled, which the other side has no counterpart for. Bytes up to the shared prefix line up
- * from the front, and bytes from the shared suffix on line up from the back.
- */
-function acrossLiteral(
-  run: SettledOnlyRun,
-  count: number,
-  direction: "toSpelling" | "toLiteral",
-): number | undefined {
-  const [fromLength, toLength] =
-    direction === "toSpelling"
-      ? [run.liveLength.full, run.spelledLength]
-      : [run.spelledLength, run.liveLength.full];
-  if (count <= run.sharedPrefix) return count;
-  if (count >= fromLength - run.sharedSuffix) return toLength - (fromLength - count);
-  return undefined;
-}
-
-/**
- * The settled-only run whose live literal a live anchor lies strictly inside, and the anchor
- * restated over that run's own spelling — `within` is `undefined` for a byte the settle re-spelled.
- * Full bytes only: the literal is plain text, and the spelling counts every byte it has.
- */
-function literalContaining(
-  runs: readonly SettledOnlyRun[],
-  anchor: CaretByteAnchor,
-): { run: SettledOnlyRun; within: CaretByteAnchor | undefined } | undefined {
-  for (const run of runs) {
-    const count = anchor.nonWsBefore - run.liveBefore.full;
-    if (count <= 0 || count >= run.liveLength.full) continue;
-    const within = acrossLiteral(run, count, "toSpelling");
-    return {
-      run,
-      within:
-        within === undefined
-          ? undefined
-          : { nonWsBefore: within, wsRun: anchor.wsRun, attributeRunSpans: 0 },
-    };
-  }
-  return undefined;
 }
 
 /**

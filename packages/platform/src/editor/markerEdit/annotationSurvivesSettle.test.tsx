@@ -820,3 +820,196 @@ describe("a comment mark after a declared transient literal", () => {
     });
   });
 });
+
+/**
+ * A footnote typed as plain text settles into a real note. Live, the literal spells every one of
+ * its bytes; settled, the new note is one preserved node — so a byte past the literal sits a
+ * literal's length further along live than settled, and a byte inside it is a byte of the new
+ * note. The carry has to line the two up rather than count bytes straight across.
+ */
+describe("annotations around a typed footnote literal", () => {
+  const footnote = "\\f + \\ft note text\\f*";
+  const fourWords = "alpha bravo charlie delta";
+
+  /** Each mark's children, a note shown as `<note>` — so a note carried INSIDE a mark shows. */
+  function markShapes(lexical: LexicalEditor): string[] {
+    return lexical.getEditorState().read(() =>
+      $marks().map((mark) =>
+        mark
+          .getChildren()
+          .map((child) => ($isNoteNode(child) ? "<note>" : child.getTextContent()))
+          .join(""),
+      ),
+    );
+  }
+
+  /** Whether the tree holds a note — every fixture here starts without one, so the literal
+   * really settled. */
+  function hasSettledNote(lexical: LexicalEditor): boolean {
+    return treeHas(lexical, $isNoteNode);
+  }
+
+  /** Whether every mark in the tree sits inside a note. */
+  function marksAreInNotes(lexical: LexicalEditor): boolean {
+    return lexical
+      .getEditorState()
+      .read(() => $marks().every((mark) => mark.getParents().some($isNoteNode)));
+  }
+
+  /** Wrap `type`/`id` over `needle`, which must sit in one text node. */
+  function $wrapLive(needle: string, type: string, id: string): void {
+    const text = $textContaining(needle);
+    const start = text.getTextContent().indexOf(needle);
+    const selection = $createRangeSelection();
+    selection.anchor.set(text.getKey(), start, "text");
+    selection.focus.set(text.getKey(), start + needle.length, "text");
+    $wrapSelectionInTypedMarkNode(selection, type, id);
+  }
+
+  describe("host annotations", () => {
+    it("carries a mark after the literal onto the same text, and one before it unchanged", async () => {
+      const mounted = await mountStandardViewEditor(twoParaUsj([body]));
+      await annotate(mounted, atOffsets(0, "alpha".length), "before");
+      await annotate(mounted, atOffsets(body.indexOf("charlie"), body.length), "after");
+
+      await typeOver(mounted.lexical, " bravo ", ` bravo ${footnote} `);
+      expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+      settle(mounted);
+
+      expect(hasSettledNote(mounted.lexical)).toBe(true);
+      expect(markShapes(mounted.lexical)).toEqual(["alpha", "charlie"]);
+      expect(annotatedIDs(mounted.lexical)).toEqual([
+        { [markType("test")]: ["before"] },
+        { [markType("test")]: ["after"] },
+      ]);
+    });
+
+    it("carries a mark spanning the literal with both ends in place and the new note inside it", async () => {
+      const mounted = await mountStandardViewEditor(twoParaUsj([fourWords]));
+      await annotate(
+        mounted,
+        atOffsets(fourWords.indexOf("bravo"), fourWords.indexOf(" delta")),
+        "1",
+      );
+      expect(annotatedText(mounted.lexical)).toEqual(["bravo charlie"]);
+
+      await typeOver(mounted.lexical, "bravo charlie", `bravo ${footnote} charlie`);
+      expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+      settle(mounted);
+
+      expect(markShapes(mounted.lexical)).toEqual(["bravo <note> charlie"]);
+      expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
+    });
+
+    it("lands a mark set on the pending note's content on that content once it settles", async () => {
+      // The host addresses the SETTLED note, so the mark lands on the literal's own bytes — and
+      // splitting the literal around it settles the paragraph there and then.
+      const mounted = await mountStandardViewEditor(twoParaUsj([fourWords]));
+      await typeOver(mounted.lexical, fourWords, `alpha ${footnote} delta`);
+      const pending = mounted.ref.current?.getUsj();
+      expect(JSON.stringify(pending?.content[2])).toContain('"note text"');
+      const notePath = [2, 1, 0, 0];
+
+      await annotate(
+        mounted,
+        {
+          start: { jsonPath: contentPath(notePath), offset: 0 },
+          end: { jsonPath: contentPath(notePath), offset: "note".length },
+        },
+        "1",
+      );
+      settle(mounted);
+
+      expect(hasSettledNote(mounted.lexical)).toBe(true);
+      expect(annotatedText(mounted.lexical)).toEqual(["note"]);
+      expect(marksAreInNotes(mounted.lexical)).toBe(true);
+      expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
+    });
+    it("carries a mark in a note's content past a note literal typed there", async () => {
+      // The note's content is its own settle scope, and a note typed inside it settles into a
+      // note nested in the note — a preserved node the scope's live bytes spell as a literal.
+      const mounted = await mountExpandedNoteEditor(expandedNoteUsj);
+      await annotate(
+        mounted,
+        {
+          start: { jsonPath: contentPath([2, 1, 1]), offset: body.indexOf("charlie") },
+          end: { jsonPath: contentPath([2, 1, 1]), offset: body.length },
+        },
+        "1",
+      );
+      expect(annotatedText(mounted.lexical)).toEqual(["charlie"]);
+
+      await typeOver(mounted.lexical, "alpha bravo ", "alpha \\fe + \\ft x\\fe* bravo ");
+      expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+      settle(mounted);
+
+      expect(
+        treeHas(
+          mounted.lexical,
+          (node) => $isNoteNode(node) && node.getParents().some($isNoteNode),
+        ),
+      ).toBe(true);
+      expect(markShapes(mounted.lexical)).toEqual(["charlie"]);
+      expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
+    });
+  });
+
+  describe("comment marks", () => {
+    /** Settle, and hand back `getUsj()` read while still pending and read after the settle. */
+    function pendingAndSettledUsj(mounted: Mounted) {
+      expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+      const pending = mounted.ref.current?.getUsj();
+      settle(mounted);
+      return { pending, settled: mounted.ref.current?.getUsj() };
+    }
+
+    /** `fourWords` with a comment over `words`. */
+    async function mountWithComment(words: string): Promise<Mounted> {
+      const mounted = await mountStandardViewEditor(twoParaUsj([fourWords]));
+      await act(async () => {
+        mounted.lexical.update(() => $wrapLive(words, COMMENT_MARK_TYPE, "c1"));
+        await Promise.resolve();
+      });
+      expect(annotatedText(mounted.lexical)).toEqual([words]);
+      return mounted;
+    }
+
+    it("carries a comment after the literal, and getUsj() while pending agrees", async () => {
+      const mounted = await mountWithComment("charlie");
+      await typeOver(mounted.lexical, " bravo ", ` bravo ${footnote} `);
+
+      const { pending, settled } = pendingAndSettledUsj(mounted);
+
+      expect(hasSettledNote(mounted.lexical)).toBe(true);
+      expect(markShapes(mounted.lexical)).toEqual(["charlie"]);
+      expect(annotatedIDs(mounted.lexical)).toEqual([{ [COMMENT_MARK_TYPE]: ["c1"] }]);
+      expect(JSON.stringify(settled)).toContain('"sid":"c1"');
+      expect(pending).toEqual(settled);
+    });
+
+    it("carries a comment spanning the literal, and getUsj() while pending agrees", async () => {
+      const mounted = await mountWithComment("bravo charlie");
+      await typeOver(mounted.lexical, "bravo charlie", `bravo ${footnote} charlie`);
+
+      const { pending, settled } = pendingAndSettledUsj(mounted);
+
+      expect(markShapes(mounted.lexical)).toEqual(["bravo <note> charlie"]);
+      expect(JSON.stringify(settled)).toContain('"sid":"c1"');
+      expect(pending).toEqual(settled);
+    });
+
+    it("carries a comment on the literal's note content onto that content in the new note", async () => {
+      // A comment inside the literal splits it, so it cannot sit pending: the paragraph settles
+      // as the literal is typed around it.
+      const mounted = await mountWithComment("charlie");
+      await typeOver(mounted.lexical, "alpha bravo ", "alpha \\f + \\ft ");
+      await typeOver(mounted.lexical, " delta", " text\\f* delta");
+      settle(mounted);
+
+      expect(hasSettledNote(mounted.lexical)).toBe(true);
+      expect(annotatedText(mounted.lexical)).toEqual(["charlie"]);
+      expect(marksAreInNotes(mounted.lexical)).toBe(true);
+      expect(JSON.stringify(mounted.ref.current?.getUsj())).toContain('"sid":"c1"');
+    });
+  });
+});
