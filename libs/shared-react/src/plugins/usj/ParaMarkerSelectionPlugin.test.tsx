@@ -176,6 +176,55 @@ describe("ParaMarkerSelectionPlugin — highlight", () => {
   });
 });
 
+describe("ParaMarkerSelectionPlugin — scrolls the selected marker into view", () => {
+  // jsdom has no layout engine and so no `Element.scrollIntoView`; stub it so the plugin's
+  // feature-detected call is exercised and observable.
+  let scrollIntoView: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView =
+      scrollIntoView as typeof HTMLElement.prototype.scrollIntoView;
+  });
+
+  afterEach(() => {
+    delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it("scrolls the owning paragraph into view when a marker becomes selected", async () => {
+    const { editor, li2 } = await environment();
+
+    await selectMarkerOf(editor, li2);
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    expect(scrollIntoView.mock.instances[0]).toBe(editor.getElementByKey(li2.getKey()));
+  });
+
+  it("scrolls again when ↓ moves the selection to the next paragraph's marker", async () => {
+    const { editor, li2, q1 } = await environment();
+    await selectMarkerOf(editor, li2);
+    scrollIntoView.mockClear();
+
+    await pressKey(editor, "ArrowDown");
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView.mock.instances[0]).toBe(editor.getElementByKey(q1.getKey()));
+  });
+
+  it("does not scroll again on an unrelated update while the same marker stays selected", async () => {
+    const { editor, li2, firstText } = await environment();
+    await selectMarkerOf(editor, li2);
+    scrollIntoView.mockClear();
+
+    await sutUpdate(editor, () => {
+      firstText.setTextContent("changed");
+    });
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+});
+
 describe("ParaMarkerSelectionPlugin — browser caret", () => {
   // A click on the glyph leaves the browser's caret drawn inside it (a decorator Lexical cannot
   // address), and Lexical only removes DOM ranges for a non-range selection when the previous
@@ -448,7 +497,6 @@ describe("ParaMarkerSelectionPlugin — commands that would make the glyph an op
     ["COPY_COMMAND", COPY_COMMAND, preventable],
     ["PASTE_COMMAND", PASTE_COMMAND, preventable],
     ["DRAGSTART_COMMAND", DRAGSTART_COMMAND, preventable],
-    ["DROP_COMMAND", DROP_COMMAND, preventable],
     ["CONTROLLED_TEXT_INSERTION_COMMAND", CONTROLLED_TEXT_INSERTION_COMMAND, () => "x"],
   ] as [string, LexicalCommand<unknown>, () => unknown][])(
     "%s is refused before any lower-priority handler",
@@ -470,6 +518,52 @@ describe("ParaMarkerSelectionPlugin — commands that would make the glyph an op
       if (dispatched instanceof Event) expect(dispatched.defaultPrevented).toBe(true);
     },
   );
+});
+
+/** A cancelable DROP event whose `target` is `domNode` — the drop-target judging DROP_COMMAND reads. */
+function dropEventOn(domNode: Node): DragEvent {
+  const event = new Event("drop", { cancelable: true }) as unknown as DragEvent;
+  Object.defineProperty(event, "target", { value: domNode });
+  return event;
+}
+
+describe("ParaMarkerSelectionPlugin — drop is refused only onto the selected marker", () => {
+  it("refuses a drop targeting the selected glyph", async () => {
+    const { editor, li2 } = await environment();
+    await selectMarkerOf(editor, li2);
+    const before = documentJson(editor);
+    const glyphKey = editor.getEditorState().read(() => li2.getFirstChild()!.getKey());
+    const glyphElement = editor.getElementByKey(glyphKey)!;
+    const spy = vi.fn(() => false);
+    const unregister = editor.registerCommand(DROP_COMMAND, spy, COMMAND_PRIORITY_LOW);
+    const event = dropEventOn(glyphElement.firstChild ?? glyphElement);
+
+    await act(async () => {
+      editor.dispatchCommand(DROP_COMMAND, event);
+    });
+    unregister();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(spy).not.toHaveBeenCalled();
+    expect(documentJson(editor)).toBe(before);
+  });
+
+  it("does not claim a drop targeting another paragraph's text while a marker is selected", async () => {
+    const { editor, li2, secondText } = await environment();
+    await selectMarkerOf(editor, li2);
+    const targetElement = editor.getElementByKey(secondText.getKey())!;
+    const spy = vi.fn(() => false);
+    const unregister = editor.registerCommand(DROP_COMMAND, spy, COMMAND_PRIORITY_LOW);
+    const event = dropEventOn(targetElement.firstChild ?? targetElement);
+
+    await act(async () => {
+      editor.dispatchCommand(DROP_COMMAND, event);
+    });
+    unregister();
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe.each(["guarded", "protected"] as const)(

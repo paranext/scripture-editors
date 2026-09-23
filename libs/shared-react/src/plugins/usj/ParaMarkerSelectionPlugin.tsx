@@ -4,6 +4,7 @@ import { $advancePastParaPrefixes } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
+  $getNearestNodeFromDOMNode,
   $getSelection,
   $isTextNode,
   COMMAND_PRIORITY_CRITICAL,
@@ -76,7 +77,8 @@ const COMPOSITION_KEYS = new Set(["Process", "Dead", "Unidentified"]);
  * the host to render a hint from, cleared on the next selection change (the same pattern as
  * `StructureKeyboardPlugin`'s armed-delete signal). Cut, copy, paste, drag and drop are refused
  * too: rich-text would export the glyph node on copy, and pasting it would insert a glyph into
- * content.
+ * content. Drop is judged by the drop target rather than the live selection, so only a drop onto
+ * the selected glyph itself is refused — a drop elsewhere in the document goes through.
  *
  * @param onParaMarkerMenuRequest - Called when the user asks, by keyboard, to change the selected
  *   marker.
@@ -119,10 +121,27 @@ export function ParaMarkerSelectionPlugin({
     };
 
     // `unknown` because one guard serves commands with different payloads: an Event for cut,
-    // copy, paste, drag and drop (prevented here), a string for controlled text insertion.
+    // copy, paste and drag-start (prevented here), an `InputEvent | string` for controlled text
+    // insertion.
     const $refuseWhileSelected = (payload: unknown): boolean => {
       if (!$getSelectedParaMarker($getSelection())) return false;
       if (payload instanceof Event) payload.preventDefault();
+      return true;
+    };
+
+    // DROP is judged by the drop TARGET, not the live selection, mirroring
+    // `OpaqueBlockGuardPlugin`'s DROP_COMMAND handler: Lexical dispatches DROP_COMMAND straight
+    // from the DOM handler with no selection update, so at drop time `$getSelection()` still
+    // holds whatever was selected before the drag — not necessarily where this drop lands. A
+    // drop elsewhere in the document (e.g. into another paragraph's text) must go through; only a
+    // drop ONTO the selected glyph is refused.
+    const $refuseDropOnMarker = (event: unknown): boolean => {
+      if (!(event instanceof Event) || !(event.target instanceof Node)) return false;
+      const glyph = $getSelectedParaMarker($getSelection());
+      if (!glyph) return false;
+      const targetNode = $getNearestNodeFromDOMNode(event.target);
+      if (!targetNode || targetNode.getKey() !== glyph.getKey()) return false;
+      event.preventDefault();
       return true;
     };
 
@@ -192,7 +211,7 @@ export function ParaMarkerSelectionPlugin({
       editor.registerCommand(COPY_COMMAND, $refuseWhileSelected, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(PASTE_COMMAND, $refuseWhileSelected, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(DRAGSTART_COMMAND, $refuseWhileSelected, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(DROP_COMMAND, $refuseWhileSelected, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(DROP_COMMAND, $refuseDropOnMarker, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(
         CONTROLLED_TEXT_INSERTION_COMMAND,
         $refuseWhileSelected,
@@ -203,13 +222,20 @@ export function ParaMarkerSelectionPlugin({
           const glyph = $getSelectedParaMarker($getSelection());
           return { glyphKey: glyph?.getKey(), ownerKey: glyph?.getParent()?.getKey() };
         });
-        if (highlightedOwnerKey !== ownerKey) setOwnerHighlight(editor, highlightedOwnerKey, false);
+        const ownerChanged = highlightedOwnerKey !== ownerKey;
+        if (ownerChanged) setOwnerHighlight(editor, highlightedOwnerKey, false);
         highlightedOwnerKey = ownerKey;
         // Re-applied on every update, not only on change: an idempotent add keeps a re-created
         // element highlighted too.
         setOwnerHighlight(editor, ownerKey, true);
         if (refusedGlyphKey !== undefined && refusedGlyphKey !== glyphKey) clearRefusal();
         if (ownerKey !== undefined) removeDomRangesInside(editor.getRootElement());
+        // A selected marker walked off-screen gets no help from Lexical or the browser: Lexical's
+        // `updateDOMSelection` only scrolls for a RangeSelection, and the key handlers above
+        // `preventDefault` the arrow before it reaches the browser's own scroll. Scrolled only when
+        // the owner actually changes — a marker newly selected, or selection moving to another
+        // paragraph's marker — never on an unrelated update while the same marker stays selected.
+        if (ownerChanged && ownerKey !== undefined) scrollOwnerIntoView(editor, ownerKey);
       }),
     );
 
@@ -235,6 +261,17 @@ function setOwnerHighlight(
   element.classList.toggle(PARA_MARKER_SELECTED_CLASS_NAME, isSelected);
   if (isSelected) element.setAttribute("aria-selected", "true");
   else element.removeAttribute("aria-selected");
+}
+
+/**
+ * Scrolls the element of paragraph `key`, if rendered, minimally into view. DOM-only (no
+ * `editor.update()`), so it is safe to call from the update listener directly. `scrollIntoView`
+ * is feature-detected: jsdom's DOM has no layout engine and does not implement it.
+ */
+function scrollOwnerIntoView(editor: LexicalEditor, key: NodeKey): void {
+  const element = editor.getElementByKey(key);
+  if (element && typeof element.scrollIntoView === "function")
+    element.scrollIntoView({ block: "nearest" });
 }
 
 /**
