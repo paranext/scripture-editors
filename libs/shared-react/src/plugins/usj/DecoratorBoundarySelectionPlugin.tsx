@@ -261,9 +261,11 @@ export function DecoratorBoundarySelectionPlugin(): null {
     // which on Windows and Linux grabs the mouse so the page never sees the matching `pointerup`.
     // The flag would then stay set with no drag in flight, and every later arrival — a click, a
     // Shift+Arrow extend — would be treated as one, leaving the DOM selection stranded on points
-    // Lexical cannot resolve.
+    // Lexical cannot resolve. The button is duck-typed rather than read through `instanceof
+    // PointerEvent`: not every host defines that global (jsdom before 27 has none), and a press that
+    // carries no button at all still counts as a primary one.
     const markDown = (event: Event) => {
-      if (event instanceof PointerEvent && event.button !== 0) return;
+      if ("button" in event && event.button !== 0) return;
       isPointerDown.current = true;
     };
     // BOTH ends are listened for on the DOCUMENT in the capture phase, and the release on

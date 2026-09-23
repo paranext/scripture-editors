@@ -159,20 +159,24 @@ function selectionPoints(editor: LexicalEditor): {
 /**
  * Hold the pointer button down the way a drag does. `pointerdown` goes to the root element, which is
  * where a press inside the editor lands; the plugin leaves the browser's DOM selection alone only for
- * as long as this is held.
+ * as long as this is held. The default is a plain `Event`, which carries no `button` at all — the
+ * shape every host that implements no `PointerEvent` dispatches.
  */
-async function pressPointer(editor: LexicalEditor): Promise<void> {
+async function pressPointer(
+  editor: LexicalEditor,
+  event: Event = new Event("pointerdown", { bubbles: true }),
+): Promise<void> {
   const root = editor.getRootElement();
   if (!root) throw new Error("the editor rendered no root element");
   await act(async () => {
-    root.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    root.dispatchEvent(event);
   });
 }
 
 /**
  * Let the pointer button up. `pointerup` goes to the DOCUMENT, because a drag begun in the editor can
- * be released anywhere, and that is where the plugin listens for it. jsdom implements no
- * `PointerEvent`, so a plain `Event` carries the type — the plugin reads nothing else off it.
+ * be released anywhere, and that is where the plugin listens for it. A plain `Event` carries the
+ * type — the plugin reads nothing else off a release.
  */
 async function releasePointer(editor: LexicalEditor): Promise<void> {
   const root = editor.getRootElement();
@@ -380,6 +384,43 @@ describe("a selection landing inside a read-only construct's decorator glyphs", 
 
     expect(domSelectionPoints().anchorNode).toBe(dom.figure);
     expect(domSelectionPoints().anchorOffset).toBe(0);
+  });
+
+  it("writes the DOM straight away after a secondary-button press", async () => {
+    const { lexical } = await mountStandardViewEditor(figureUsj);
+    const dom = figureDom(lexical);
+
+    // A right-click can open the platform's native context menu, which swallows the matching
+    // `pointerup`; a press that counted as a drag would then hold the raw points indefinitely.
+    await pressPointer(lexical, new PointerEvent("pointerdown", { bubbles: true, button: 2 }));
+    await dragSelect(dom.opener, 2, dom.trailing, 3);
+
+    expect(domSelectionPoints().anchorNode).toBe(dom.figure);
+    expect(domSelectionPoints().anchorOffset).toBe(0);
+  });
+
+  it("treats a press as a drag in a host that defines no `PointerEvent`", async () => {
+    // jsdom before 27 — the version platform-bible-react's suite runs the editor under — has no
+    // `PointerEvent` global, so the press listener must not name one.
+    const host: { PointerEvent?: unknown } = globalThis;
+    const hostPointerEvent = host.PointerEvent;
+    delete host.PointerEvent;
+    try {
+      const { lexical } = await mountStandardViewEditor(figureUsj);
+      const dom = figureDom(lexical);
+      await pressPointer(lexical);
+
+      await dragSelect(dom.opener, 2, dom.trailing, 3);
+
+      expect(domSelectionPoints()).toEqual({
+        anchorNode: dom.opener,
+        anchorOffset: 2,
+        focusNode: dom.trailing,
+        focusOffset: 3,
+      });
+    } finally {
+      host.PointerEvent = hostPointerEvent;
+    }
   });
 
   it("survives an event-less update once the DOM holds the boundary form", async () => {
