@@ -1055,6 +1055,41 @@ export function $buildParaFragment(
   return out;
 }
 
+/**
+ * Append each of `paras`' fragments to `combined` as the next LINE of one joined scope: a single
+ * space stands in for the newline before each line that follows bytes, and every span shifts by
+ * where its line lands. This is how a multi-paragraph scope is handed to the tokenizer as the bytes
+ * the file would carry — and, since the unknown-split rejoin folds a paragraph back into the `\id`
+ * line too, how the line's content and that paragraph are joined.
+ *
+ * Exported for the read-only settle (virtualSettle.utils.ts), which must build the SAME joined
+ * bytes each mutating settle builds.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ *
+ * @returns `false` when a paragraph is excluded by {@link $buildParaFragment}'s guard rails —
+ *   `combined` is then partially filled and must be discarded.
+ */
+export function $appendParaFragments(
+  combined: FragmentAccumulator,
+  paras: ParaNode[],
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): boolean {
+  for (const para of paras) {
+    const fragment = $buildParaFragment(para, getMarkerFn, viewOptions);
+    if (!fragment) return false;
+    if (combined.text.length > 0) combined.text += " ";
+    const base = combined.text.length;
+    fragment.spans.forEach((span) =>
+      combined.spans.push({ ...span, start: span.start + base, end: span.end + base }),
+    );
+    combined.sentinels.push(...fragment.sentinels);
+    combined.text += fragment.text;
+  }
+  return true;
+}
+
 /** Replace each U+FFFC in the rebuilt tree with the next preserved node run. */
 function $replaceSentinels(roots: LexicalNode[], originals: LexicalNode[][]): void {
   let queueIndex = 0;
@@ -1563,19 +1598,9 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
 
   const combined: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
-  for (const para of paras) {
-    const fragment = $buildParaFragment(para, getMarkerFn, viewOptions);
-    if (!fragment) {
-      logger?.debug("[MarkerEdit] Tier 2 skipped: paragraph excluded by guard rails");
-      return false;
-    }
-    if (combined.text.length > 0) combined.text += " ";
-    const base = combined.text.length;
-    fragment.spans.forEach((span) =>
-      combined.spans.push({ ...span, start: span.start + base, end: span.end + base }),
-    );
-    combined.sentinels.push(...fragment.sentinels);
-    combined.text += fragment.text;
+  if (!$appendParaFragments(combined, paras, getMarkerFn, viewOptions)) {
+    logger?.debug("[MarkerEdit] Tier 2 skipped: paragraph excluded by guard rails");
+    return false;
   }
 
   // Capture the caret as a fragment byte anchor before mutating anything, and note whether
@@ -2039,27 +2064,43 @@ export function tokenizedBookLine(
  * the new block, inserted directly after the book, just as a paragraph split starts its new
  * paragraph after the old one.
  *
+ * `trailingParas` widens the scope past the line the way `$rebuildParas` widens a paragraph's: the
+ * paragraphs directly after the book are joined onto the line's bytes as following lines
+ * ({@link $appendParaFragments}) and replaced by whatever the joined bytes tokenize to. That is the
+ * unknown-split rejoin (`$unknownSplitRejoinScope`), which folds a paragraph the line's own bytes
+ * split off back into the line once its leading marker stops being block-shaped.
+ *
  * Mutating: call inside `editor.update()` (dispatched from the Tier-2 trigger transform, the
- * caret-departure and commit paths in MarkerEditPlugin.tsx, and `$requestTier2ForNode`).
+ * caret-departure and commit paths in MarkerEditPlugin.tsx, `$requestTier2ForNode`, and — with
+ * `trailingParas` — the unknown-split rejoin in markerEditTier1.utils.ts).
  */
-export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
+export function $rebuildBook(
+  book: BookNode,
+  context: Tier2Context,
+  trailingParas: ParaNode[] = [],
+): boolean {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
   const { out, contentNodes } = $buildBookFragment(book, getMarkerFn, viewOptions);
+  if (!$appendParaFragments(out, trailingParas, getMarkerFn, viewOptions)) {
+    logger?.debug("[MarkerEdit] Book Tier 2 skipped: paragraph excluded by guard rails");
+    return false;
+  }
+  const scopes: LexicalNode[] = [book, ...trailingParas];
 
   // Capture the caret as a fragment byte anchor before mutating, noting whether the anchor was
-  // actually inside this book (vs. parked elsewhere) — mirror `$rebuildNoteContent`.
+  // actually inside this scope (vs. parked elsewhere) — mirror `$rebuildNoteContent`.
   let caretAnchor: CaretByteAnchor | undefined;
-  let anchorInBook = false;
+  let anchorInScope = false;
   const selection = $getSelection();
   if ($isRangeSelection(selection)) {
     for (let node: LexicalNode | null = selection.anchor.getNode(); node; node = node.getParent())
-      if (book.is(node)) {
-        anchorInBook = true;
+      if (scopes.some((scope) => scope.is(node))) {
+        anchorInScope = true;
         break;
       }
     if (selection.isCollapsed())
       caretAnchor = $caretSpanByteAnchor(
-        [book],
+        scopes,
         out,
         selection.anchor.key,
         selection.anchor.offset,
@@ -2094,12 +2135,15 @@ export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
     return false;
   }
 
-  // Fixed-point refusal (preserve-or-refuse) on the CONTENT nodes only, compared on the SERIALIZED
-  // rebuild before any nodes are parsed, so a refusal materializes no live nodes — see
-  // `$rebuildParas`' fixed-point comment for why orphan-free refusal is load-bearing. A rebuild that
-  // starts a following block restructures the document, so it is never a fixed point.
+  // Fixed-point refusal (preserve-or-refuse) on the CONTENT nodes and the widened paragraphs,
+  // compared on the SERIALIZED rebuild before any nodes are parsed, so a refusal materializes no
+  // live nodes — see `$rebuildParas`' fixed-point comment for why orphan-free refusal is
+  // load-bearing. Without `trailingParas`, a rebuild that starts a following block restructures the
+  // document, so it is never a fixed point.
   if (
-    serialized.followingBlocks.length === 0 &&
+    serialized.followingBlocks.length === trailingParas.length &&
+    serializedSignatureOf(serialized.followingBlocks, getMarkerFn) ===
+      $signatureOf(trailingParas, getMarkerFn) &&
     serializedSignatureOf(serialized.children, getMarkerFn) ===
       $signatureOf(contentNodes, getMarkerFn)
   ) {
@@ -2120,7 +2164,7 @@ export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
   // the splice below moves or destroys the old content nodes (a removed node's fields are not safe
   // to read afterward). Sid carry-over (below) pairs this against the freshly re-tokenized line's
   // verses once the splice has settled — mirrors `$rebuildParas`.
-  const oldVerseSids = $collectVerseNodes(contentNodes).map((verse) => ({
+  const oldVerseSids = $collectVerseNodes([...contentNodes, ...trailingParas]).map((verse) => ({
     number: verse.getNumber(),
     sid: verse.getSid(),
   }));
@@ -2128,7 +2172,8 @@ export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
   // Splice: insert the new content before the first old content node (or at the line's end when it
   // had none) and the new blocks directly after the book, move preserved sentinel runs into place,
   // then remove the originals — skipping the preserved nodes themselves, which `$replaceSentinels`
-  // has just moved into their new home.
+  // has just moved into their new home. A widened paragraph goes whole, as `$rebuildParas` removes
+  // its own: its preserved runs have already moved out.
   const firstContent = contentNodes[0];
   if (firstContent) newContent.forEach((node) => firstContent.insertBefore(node));
   else newContent.forEach((node) => book.append(node));
@@ -2138,6 +2183,7 @@ export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
   contentNodes.forEach((node) => {
     if (!preservedKeys.has(node.getKey())) node.remove();
   });
+  trailingParas.forEach((para) => para.remove());
   // Sid carry-over — identical logic to `$rebuildParas`' own, see its comment for the rationale.
   const newVerses = $collectVerseNodes(newNodes);
   for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
@@ -2156,7 +2202,7 @@ export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
   $restoreSelectionInContentRegion(
     liveContentNodes,
     caretAnchor,
-    anchorInBook,
+    anchorInScope,
     getMarkerFn,
     viewOptions,
   );

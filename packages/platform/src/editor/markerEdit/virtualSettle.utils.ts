@@ -32,17 +32,17 @@ import { deserializeSerializedEditorState } from "../adaptors/editor-usj.adaptor
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
 import { TransientInput } from "../editor.model";
 import { BARE_OPENER_REGEX } from "./markerName.pattern";
-import { $unknownSplitRejoinScope } from "./markerEditTier1.utils";
+import { $unknownSplitRejoinScope, UnknownSplitRejoinScope } from "./markerEditTier1.utils";
 import {
   $serializeBookLine,
   $serializeExpandedNoteContent,
   ATOMIC_SENTINEL,
 } from "./settleShared.utils";
 import {
+  $appendParaFragments,
   $buildBookFragment,
   $buildChapterFragment,
   $buildNoteFragment,
-  $buildParaFragment,
   $chapterAdjacentAttributeNodes,
   $isRebuildSentinel,
   $settleScopeForNode,
@@ -492,22 +492,11 @@ function $settledParaNodes(
 ): SerializedLexicalNode[] | undefined {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
   if (paras.length === 0) return undefined;
-  // Mirrors `$rebuildParas`'s own fragment join byte for byte, including the single space that
-  // stands in for the newline between two paragraphs — a scope of more than one paragraph is the
+  // The same fragment join `$rebuildParas` makes — a scope of more than one paragraph is the
   // unknown-split rejoin (see `$unknownSplitRejoinScope`), and the settled output a consumer
   // reads must be what that same widened rebuild produces.
   const fragment: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
-  for (const para of paras) {
-    const built = $buildParaFragment(para, getMarkerFn, viewOptions);
-    if (!built) return undefined;
-    if (fragment.text.length > 0) fragment.text += " ";
-    const base = fragment.text.length;
-    built.spans.forEach((span) =>
-      fragment.spans.push({ ...span, start: span.start + base, end: span.end + base }),
-    );
-    fragment.sentinels.push(...built.sentinels);
-    fragment.text += built.text;
-  }
+  if (!$appendParaFragments(fragment, paras, getMarkerFn, viewOptions)) return undefined;
   const fragmentText = transient
     ? $fragmentTextWithoutTransient(fragment, transient)
     : fragment.text;
@@ -900,6 +889,9 @@ function $applySettledNoteGlyphRename(
  * and the same fixed-point refusal over the CONTENT nodes only — the book's own marker and code are
  * preserved verbatim across the rebuild and never re-derived from bytes.
  *
+ * `trailingParas` widens the scope exactly as it widens `$rebuildBook`'s — the unknown-split
+ * rejoin's artifact paragraph, joined onto the line's bytes and replaced by what they tokenize to.
+ *
  * `transient` is cut out of the line's fragment text the same way `$settledParaNodes` cuts it out
  * of a paragraph's — see {@link $fragmentTextWithoutTransient}'s doc comment.
  */
@@ -909,6 +901,7 @@ function $settledBookLine(
   context: Tier2Context,
   huskKeys: ReadonlySet<NodeKey>,
   transient: TransientLiteral | undefined,
+  trailingParas: ParaNode[],
 ):
   | {
       rebuilt: SerializedLexicalNode[];
@@ -918,7 +911,8 @@ function $settledBookLine(
   | undefined {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
   const { out, contentNodes } = $buildBookFragment(book, getMarkerFn, viewOptions);
-  if (contentNodes.length === 0) return undefined;
+  if (contentNodes.length === 0 && trailingParas.length === 0) return undefined;
+  if (!$appendParaFragments(out, trailingParas, getMarkerFn, viewOptions)) return undefined;
   const fragmentText = transient ? $fragmentTextWithoutTransient(out, transient) : out.text;
   const tokenized = tokenizedBookLine(fragmentText, getMarkerFn);
   if (countSentinels(tokenized.content) !== out.sentinels.length) {
@@ -951,10 +945,14 @@ function $settledBookLine(
   }
   // Fixed-point refusal, computed BEFORE `replaceSerializedSentinels` below while `rebuilt` still
   // carries the raw ATOMIC_SENTINEL characters — the same ordering (and the same
-  // `$structuralMarkersAgree` companion, blind spot and all) `$settledNoteContent` documents. A
-  // settle that starts a following block restructures the document, so it is never a fixed point.
+  // `$structuralMarkersAgree` companion, blind spot and all) `$settledNoteContent` documents, over
+  // the content nodes and the widened paragraphs alike. Without `trailingParas`, a settle that
+  // starts a following block restructures the document, so it is never a fixed point.
   if (
-    followingBlocks.length === 0 &&
+    followingBlocks.length === trailingParas.length &&
+    serializedSignatureOf(followingBlocks, getMarkerFn) ===
+      $signatureOf(trailingParas, getMarkerFn) &&
+    $structuralMarkersAgree(trailingParas, followingBlocks, getMarkerFn) &&
     serializedSignatureOf(rebuilt, getMarkerFn) === $signatureOf(contentNodes, getMarkerFn) &&
     $structuralMarkersAgree(contentNodes, rebuilt, getMarkerFn)
   ) {
@@ -970,8 +968,8 @@ function $settledBookLine(
   // Sid carry-over, mirroring `$rebuildBook`/`$settledParaNodes` — see the latter's own comment
   // for the rationale (the tokenizer never derives a sid from visible bytes, so without this a
   // `getUsj()` taken mid-pend disagrees with `commitPendingMarkerEdits()` then `getUsj()`).
-  const oldVerseSids = $collectLiveVerseSids(contentNodes);
-  const newVerses = collectSerializedVerses(rebuilt);
+  const oldVerseSids = $collectLiveVerseSids([...contentNodes, ...trailingParas]);
+  const newVerses = collectSerializedVerses([...rebuilt, ...followingBlocks]);
   for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
     if (oldVerseSids[i].sid !== undefined && newVerses[i].number === oldVerseSids[i].number)
       newVerses[i].sid = oldVerseSids[i].sid;
@@ -1063,10 +1061,12 @@ export function $settledUsj(
   // Each entry is one settle scope, keyed by its FIRST paragraph: `[para]` normally, and
   // `[previous, artifact]` for an unknown-split rejoin (see the widening pass below).
   const paraScopes = new Map<NodeKey, ParaNode[]>();
-  const rejoinScopes: ParaNode[][] = [];
+  const rejoinScopes: UnknownSplitRejoinScope[] = [];
   const noteScopes = new Map<NodeKey, NoteNode>();
   const chapterScopes = new Map<NodeKey, ChapterNode>();
   const bookScopes = new Map<NodeKey, BookNode>();
+  // A book's widened paragraphs — the artifact an unknown-split rejoin folds back into the line.
+  const bookTrailingParas = new Map<NodeKey, ParaNode[]>();
   const noteGlyphRenames = new Map<
     NodeKey,
     { glyph: MarkerNode; note: NoteNode; oldMarker: string; newMarker: string }
@@ -1096,15 +1096,20 @@ export function $settledUsj(
     }
   }
   // Apply the widened scopes last, replacing the single-paragraph entries they subsume, so a
-  // paragraph is rebuilt by exactly ONE scope and no two splices can target overlapping slots.
+  // paragraph is rebuilt by exactly ONE scope and no two splices can target overlapping slots. A
+  // book predecessor keeps its own book scope and takes the artifact as its trailing paragraph,
+  // the same scope `$rebuildBook` rebuilds on the mutating side.
   const claimed = new Set<NodeKey>();
-  for (const rejoin of rejoinScopes) {
-    if (rejoin.some((para) => claimed.has(para.getKey()))) continue;
-    rejoin.forEach((para) => {
-      claimed.add(para.getKey());
-      paraScopes.delete(para.getKey());
+  for (const [previous, artifact] of rejoinScopes) {
+    if (claimed.has(previous.getKey()) || claimed.has(artifact.getKey())) continue;
+    [previous, artifact].forEach((block) => {
+      claimed.add(block.getKey());
+      paraScopes.delete(block.getKey());
     });
-    paraScopes.set(rejoin[0].getKey(), rejoin);
+    if ($isBookNode(previous)) {
+      bookScopes.set(previous.getKey(), previous);
+      bookTrailingParas.set(previous.getKey(), [artifact]);
+    } else paraScopes.set(previous.getKey(), [previous, artifact]);
   }
   if (transient) {
     // No note-glyph-rename lookup for this scope: a transient declaration is plain typed text, not
@@ -1175,20 +1180,24 @@ export function $settledUsj(
   // note inside the line is preserved as a sentinel, and this pass substitutes the very serialized
   // subtree that pass has just rewritten. Its slots are the line's content children only — the
   // immutable `\id GEN ` prefix is never part of the rebuild — plus, for a typed block marker, the
-  // new blocks inserted right after the book in its own parent's children.
+  // new blocks inserted right after the book in its own parent's children, which replace a rejoin's
+  // widened paragraphs there (they sit directly after the book, as `$unknownSplitRejoinScope`
+  // requires). A line with no content yet takes its rebuilt content at its end, after the prefix.
   for (const book of bookScopes.values()) {
     const site = sites.get(book.getKey());
     const bookChildren = site ? serializedChildren(site.node) : undefined;
     if (!site || !bookChildren) continue;
-    const built = $settledBookLine(book, sites, context, huskKeys, transient);
+    const trailingParas = bookTrailingParas.get(book.getKey()) ?? [];
+    const built = $settledBookLine(book, sites, context, huskKeys, transient, trailingParas);
     if (!built) continue;
-    const firstSite = sites.get(built.contentNodes[0].getKey());
-    if (!firstSite) continue;
-    const start = bookChildren.indexOf(firstSite.node);
+    const firstContent = built.contentNodes.at(0);
+    const firstSite = firstContent ? sites.get(firstContent.getKey()) : undefined;
+    if (firstContent && !firstSite) continue;
+    const start = firstSite ? bookChildren.indexOf(firstSite.node) : bookChildren.length;
     const bookIndex = site.siblings.indexOf(site.node);
     if (start < 0 || bookIndex < 0) continue;
     bookChildren.splice(start, built.contentNodes.length, ...built.rebuilt);
-    site.siblings.splice(bookIndex + 1, 0, ...built.followingBlocks);
+    site.siblings.splice(bookIndex + 1, trailingParas.length, ...built.followingBlocks);
   }
 
   // Chapters are top-level and disjoint from all three passes above — a chapter is never inside a

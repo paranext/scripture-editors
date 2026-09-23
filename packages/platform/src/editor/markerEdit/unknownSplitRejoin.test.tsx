@@ -42,6 +42,7 @@ import {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
+import { IDLE_SETTLE_DELAY_MS } from "./MarkerEditPlugin";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { act } from "@testing-library/react";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -59,6 +60,7 @@ import {
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createParaNode,
+  $isBookNode,
   $isCharNode,
   $isMarkerNode,
   $isMilestoneNode,
@@ -899,5 +901,190 @@ describe("an unknown split whose glyph regains an INLINE marker that is not a ch
       expect(paras[0].getTextContent()).not.toContain("stuff");
       expect(paras[1].getMarker()).toBe("zzz");
     });
+  });
+});
+
+describe("an unknown split off the `\\id` line rejoins the line, not a fabricated paragraph", () => {
+  // The `\id` line ends where its bytes start a block, so an UNKNOWN marker typed there (block-
+  // shaped by the tokenizer's unknown-token default) splits off a paragraph after the book, exactly
+  // as it does after a paragraph. Its blockness is just as fabricated there: once the marker is
+  // corrected to an inline one, the bytes belong back in the line. Re-tokenizing the artifact alone
+  // instead wraps them in a default `\p` the user never typed — and saves it.
+
+  /** The `\id` line plus a chapter and a paragraph to park the caret in. */
+  const bookLineUsj: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["Genesis"] },
+      { type: "chapter", marker: "c", number: "1" },
+      { type: "para", marker: "p", content: ["park here"] },
+    ],
+  };
+
+  // Only the clocks the idle settle uses; `queueMicrotask` (the departure clock) stays real.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function mountFocused(usj: Usj = bookLineUsj) {
+    const mounted = await mountStandardViewEditor(usj);
+    act(() => {
+      mounted.lexical.getRootElement()?.focus();
+    });
+    return mounted;
+  }
+
+  /** Types `literal` one character at a time at the end of the `\id` line. */
+  async function typeAtLineEnd(lexical: LexicalEditor, literal: string): Promise<void> {
+    await act(async () => {
+      lexical.update(() => {
+        requireDefined(
+          $getRoot().getChildren().find($isBookNode),
+          "book line not found",
+        ).selectEnd();
+      });
+      await Promise.resolve();
+    });
+    for (const character of literal)
+      await act(async () => {
+        lexical.update(() => $typeAtCaret(character));
+        await Promise.resolve();
+      });
+  }
+
+  /** Lets the idle settle fire without moving the caret. */
+  async function idle(): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IDLE_SETTLE_DELAY_MS + 50);
+    });
+  }
+
+  /** Every root-level block's marker, in document order. */
+  function blockMarkers(usj: Usj | undefined): (string | undefined)[] {
+    return (usj?.content ?? []).map((block) => (typeof block === "string" ? block : block.marker));
+  }
+
+  /** Retypes the glyph starting with `prefix` and reads the save path INSIDE the same act(), while
+   * the edit is still pending. */
+  async function retypeGlyphAndReadPending(
+    lexical: LexicalEditor,
+    ref: Awaited<ReturnType<typeof mountFocused>>["ref"],
+    prefix: string,
+    text: string,
+  ): Promise<Usj | undefined> {
+    let pendedUsj: Usj | undefined;
+    await act(async () => {
+      lexical.update(() => {
+        const glyph = requireDefined(
+          $getRoot()
+            .getAllTextNodes()
+            .find((node) => $isMarkerNode(node) && node.getTextContent().startsWith(prefix)),
+          `glyph starting "${prefix}" not found`,
+        );
+        $retypeGlyph(glyph, text);
+      });
+      await Promise.resolve();
+      // Vacuity guard: with nothing pending, `getUsj()` takes its cached fast path.
+      expect(getPendedDisplayOwners(lexical)?.size).toBeGreaterThan(0);
+      pendedUsj = ref.current?.getUsj();
+    });
+    return pendedUsj;
+  }
+
+  /** Departs the caret to the parking paragraph and lets the deferred settle run. */
+  async function departAndSettle(lexical: LexicalEditor): Promise<void> {
+    await act(async () => {
+      lexical.update(() => {
+        const park = requireDefined(
+          $getRoot()
+            .getAllTextNodes()
+            .find((node) => !$isMarkerNode(node) && node.getTextContent().includes("park here")),
+          "parking paragraph text not found",
+        );
+        park.select(0, 0);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => Promise.resolve());
+  }
+
+  /** The `\id` line's char spans' markers in `usj`. */
+  function bookCharMarkers(usj: Usj | undefined): (string | undefined)[] {
+    const book = usj?.content[0];
+    if (!book || typeof book === "string") return [];
+    return (book.content ?? []).flatMap((item) =>
+      typeof item !== "string" && item.type === "char" ? [item.marker] : [],
+    );
+  }
+
+  it("idle split, then keep typing: `\\n`, a pause, then `d` settles to `\\nd` in the line", async () => {
+    const { ref, lexical } = await mountFocused();
+
+    // Type ` \n` and pause: the idle settle ends the line at the unknown, block-shaped `\n`.
+    await typeAtLineEnd(lexical, " \\n");
+    await idle();
+    expect(blockMarkers(usjOf(lexical))).toEqual(["id", "n", "c", "p"]);
+
+    // Keep typing: `\nd` is a char marker, so the split has no reason left to exist.
+    const pendedUsj = await retypeGlyphAndReadPending(lexical, ref, "\\n", "\\nd");
+    await idle();
+
+    const settled = usjOf(lexical);
+    expect(blockMarkers(settled)).toEqual(["id", "c", "p"]);
+    expect(bookCharMarkers(settled)).toEqual(["nd"]);
+    // The caret stays where the user is typing: right after `\nd`, now inside the line.
+    lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      const node = selection.anchor.getNode();
+      expect(node.getTextContent().slice(0, selection.anchor.offset)).toMatch(/\\nd$/);
+      expect(node.getParents().some($isBookNode)).toBe(true);
+    });
+    // Both settle legs agree, and the save path reported the rejoin while the edit was pending.
+    expect(ref.current?.getUsj()).toEqual(settled);
+    expect(pendedUsj).toEqual(settled);
+  });
+
+  it("typo, then fix: `\\ndd ` corrected to `\\nd` settles to `\\nd` in the line", async () => {
+    const { ref, lexical } = await mountFocused();
+
+    // The terminated typo is an unknown marker, which splits off its own paragraph at once.
+    await typeAtLineEnd(lexical, " \\ndd ");
+    await departAndSettle(lexical);
+    expect(blockMarkers(usjOf(lexical))).toEqual(["id", "ndd", "c", "p"]);
+
+    const pendedUsj = await retypeGlyphAndReadPending(lexical, ref, "\\ndd", "\\nd");
+    await departAndSettle(lexical);
+
+    const settled = usjOf(lexical);
+    expect(blockMarkers(settled)).toEqual(["id", "c", "p"]);
+    expect(bookCharMarkers(settled)).toEqual(["nd"]);
+    expect(ref.current?.getUsj()).toEqual(settled);
+    expect(pendedUsj).toEqual(settled);
+  });
+
+  it("rejoins a line with no content of its own: `\\ndd ` typed right after the prefix, fixed to `\\nd`", async () => {
+    const { ref, lexical } = await mountFocused({
+      ...bookLineUsj,
+      content: [{ type: "book", marker: "id", code: "GEN" }, ...bookLineUsj.content.slice(1)],
+    });
+
+    await typeAtLineEnd(lexical, "\\ndd ");
+    await departAndSettle(lexical);
+    expect(blockMarkers(usjOf(lexical))).toEqual(["id", "ndd", "c", "p"]);
+
+    const pendedUsj = await retypeGlyphAndReadPending(lexical, ref, "\\ndd", "\\nd");
+    await departAndSettle(lexical);
+
+    const settled = usjOf(lexical);
+    expect(blockMarkers(settled)).toEqual(["id", "c", "p"]);
+    expect(bookCharMarkers(settled)).toEqual(["nd"]);
+    expect(ref.current?.getUsj()).toEqual(settled);
+    expect(pendedUsj).toEqual(settled);
   });
 });
