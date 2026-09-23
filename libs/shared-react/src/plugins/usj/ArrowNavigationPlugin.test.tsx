@@ -2698,6 +2698,75 @@ describe("Backward navigation in the book line", () => {
   });
 });
 
+// The `\id` line's own forward-navigation half of "Backward navigation in the book line" above: a
+// collapsed note inside the line must be stepped OVER, the same as one inside a paragraph — the
+// checks this exercises used `$isSomeParaNode`, which is false for a `BookNode`, so the line fell
+// through to Lexical's default move and let the caret enter the note's hidden content.
+describe("Forward navigation past a collapsed note in the book line", () => {
+  function $buildBookLine(children: () => LexicalNode[]) {
+    const book = $createBookNode("GEN");
+    $getRoot().append(
+      book.append($createImmutableTypedTextNode("marker", "\\id GEN "), ...children()),
+    );
+    return book;
+  }
+
+  function $createCollapsedNoteNode() {
+    return $createNoteNode("f", "+").append(
+      $createImmutableNoteCallerNode("+", "note1 preview"),
+      $createCharNode("ft").append($createTextNode("note1 text")),
+    );
+  }
+
+  it("does not step into the note when crossing it from the element point before it", async () => {
+    let book: BookNode;
+    let note: NoteNode;
+    const { editor } = await testEnvironment(() => {
+      book = $buildBookLine(() => {
+        note = $createCollapsedNoteNode();
+        return [$createTextNode("description"), note];
+      });
+    });
+    // Element point right after the description text and before the note — exactly the shape the
+    // book line's own backward note-hop lands the caret on (`(book, i)`).
+    updateSelection(editor, book!, 2);
+
+    const event = await pressKey(editor, "ArrowRight");
+
+    // The note is both the book's last child AND the book has nothing after it, so there is
+    // nowhere further forward to land — but the press is still claimed, and the caret stays put
+    // rather than the default move dropping it inside the note's hidden content.
+    expect(event.defaultPrevented).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(book!, 2);
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection");
+      const focusNode = selection.focus.getNode();
+      expect(focusNode.is(note!) || focusNode.getParents().some((parent) => parent.is(note!))).toBe(
+        false,
+      );
+    });
+  });
+
+  it("moves past the note onto the text that follows it", async () => {
+    let book: BookNode;
+    let trailing: TextNode;
+    const { editor } = await testEnvironment(() => {
+      book = $buildBookLine(() => {
+        trailing = $createTextNode(" trailing desc");
+        return [$createTextNode("description"), $createCollapsedNoteNode(), trailing];
+      });
+    });
+    updateSelection(editor, book!, 2);
+
+    await pressKey(editor, "ArrowRight");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(trailing!, 0);
+    });
+  });
+});
+
 // A collapsed note ending a block is immediately followed by another block. Backward navigation
 // from the new block's content start must stop before the note rather than entering it — the same
 // rule for every kind of block that can end in a note, not just an ordinary paragraph.

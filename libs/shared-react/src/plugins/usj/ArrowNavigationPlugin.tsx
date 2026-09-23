@@ -892,7 +892,7 @@ function $handleForwardNavigation(selection: RangeSelection): boolean {
   const nextNode = $getNextNode(selection);
   if ($isNoteNode(nextNode) && !$isMarkerNode(nextNode.getFirstChild())) {
     // note is next and markers are not editable
-    if ($isSomeParaNode(node)) {
+    if ($isParaLikeNode(node)) {
       const isSelectionAtParaEnd = selection.anchor.offset === node.getChildrenSize();
       if (isSelectionAtParaEnd) return false;
     } else {
@@ -914,7 +914,7 @@ function $handleForwardNavigation(selection: RangeSelection): boolean {
     }
   }
 
-  if ($isSomeParaNode(node) && $isNoteNode(nextNode) && nextNode.getIsCollapsed()) {
+  if ($isParaLikeNode(node) && $isNoteNode(nextNode) && nextNode.getIsCollapsed()) {
     // caret between verse and collapsed note → move past note
     const nodeAfterNote = nextNode.getNextSibling();
     if (nodeAfterNote) nodeAfterNote.selectStart();
