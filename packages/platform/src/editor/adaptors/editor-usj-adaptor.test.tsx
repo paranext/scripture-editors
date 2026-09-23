@@ -73,6 +73,7 @@ import {
   $createMilestoneNode,
   $createNoteNode,
   $createParaNode,
+  $createTypedMarkNode,
   $createVerseNode,
   $isParaNode,
   CHAPTER_MARKER,
@@ -102,6 +103,7 @@ import {
   textTypeState,
   TypedMarkNode,
   VERSE_MARKER,
+  COMMENT_MARK_TYPE,
 } from "shared";
 
 const nodes = [TypedMarkNode, ...usjReactNodes];
@@ -1481,5 +1483,37 @@ describe("Note caller index vs the USJ note walk", () => {
         "in the days",
       ]);
     });
+  });
+});
+
+describe("Editor USJ Adaptor — comment milestones", () => {
+  it("ends each of two separate comments once", () => {
+    const { editor: markEditor } = createBasicTestEnvironment(nodes, () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] }).append($createTextNode("alpha")),
+          $createTextNode(" bravo "),
+          $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c2"] }).append($createTextNode("charlie")),
+        ),
+      );
+    });
+
+    const usj = editorUsjAdaptor.deserializeEditorState(markEditor.getEditorState());
+
+    expect(usj?.content).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "ms", marker: "zmsc-s", sid: "c1" },
+          "alpha",
+          { type: "ms", marker: "zmsc-e", eid: "c1" },
+          " bravo ",
+          { type: "ms", marker: "zmsc-s", sid: "c2" },
+          "charlie",
+          { type: "ms", marker: "zmsc-e", eid: "c2" },
+        ],
+      },
+    ]);
   });
 });

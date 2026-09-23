@@ -392,8 +392,11 @@ export function recurseNodes(
         if (childMarkers) {
           const commentIDs = serializedMarkNode.typedIDs[COMMENT_MARK_TYPE];
           if (commentIDs) {
-            replaceMarkWithMilestones(childMarkers, commentIDs, pids, nodes[index + 1], markers);
-            pids = commentIDs;
+            const nextNode = nodes[index + 1];
+            replaceMarkWithMilestones(childMarkers, commentIDs, pids, nextNode, markers);
+            // A mark with no mark after it has already ended every comment it carries, so none of
+            // them is open for the next comment mark to end.
+            pids = nextNode && isSerializedTypedMarkNode(nextNode) ? commentIDs : [];
           } else {
             // Strip the mark and insert its children.
             const firstChild = childMarkers.shift();
