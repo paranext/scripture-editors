@@ -3,9 +3,12 @@
 
 import { $createImmutableVerseNode } from "../../nodes/usj";
 import {
+  PARA_MARKER_REFUSED_CLASS_NAME,
+  PARA_MARKER_REFUSED_INTENT_ATTRIBUTE,
   PARA_MARKER_SELECTED_CLASS_NAME,
   ParaMarkerSelectionPlugin,
 } from "./ParaMarkerSelectionPlugin";
+import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
 import { baseTestEnvironment, pressKey, sutUpdate, updateSelection } from "./react-test.utils";
 import { act } from "@testing-library/react";
@@ -13,10 +16,17 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  COPY_COMMAND,
+  CUT_COMMAND,
+  DRAGSTART_COMMAND,
+  DROP_COMMAND,
   KEY_DOWN_COMMAND,
+  LexicalCommand,
   LexicalEditor,
   LexicalNode,
+  PASTE_COMMAND,
   TextNode,
 } from "lexical";
 import {
@@ -380,3 +390,136 @@ describe("ParaMarkerSelectionPlugin — typing collapses to the content, then pr
     expect(selectedMarkerOf(editor)).toBe("li2");
   });
 });
+
+/** The serialized document, to prove a refusal changed nothing at all. */
+function documentJson(editor: LexicalEditor): string {
+  return JSON.stringify(editor.getEditorState().toJSON().root);
+}
+
+describe("ParaMarkerSelectionPlugin — deletion is refused visibly", () => {
+  it.each([
+    ["Backspace", "deleteBackward"],
+    ["Delete", "deleteForward"],
+  ])("%s changes nothing and publishes the refusal signal", async (key, intent) => {
+    const { editor, li2 } = await environment();
+    await selectMarkerOf(editor, li2);
+    const before = documentJson(editor);
+
+    const event = await pressKey(editor, key);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(documentJson(editor)).toBe(before);
+    expect(selectedMarkerOf(editor)).toBe("li2");
+    const root = editor.getRootElement();
+    expect(root?.classList.contains(PARA_MARKER_REFUSED_CLASS_NAME)).toBe(true);
+    expect(root?.getAttribute(PARA_MARKER_REFUSED_INTENT_ATTRIBUTE)).toBe(intent);
+  });
+
+  it("clears the signal on the next selection change", async () => {
+    const { editor, li2 } = await environment();
+    await selectMarkerOf(editor, li2);
+    await pressKey(editor, "Backspace");
+
+    await pressKey(editor, "ArrowUp");
+
+    const root = editor.getRootElement();
+    expect(root?.classList.contains(PARA_MARKER_REFUSED_CLASS_NAME)).toBe(false);
+    expect(root?.hasAttribute(PARA_MARKER_REFUSED_INTENT_ATTRIBUTE)).toBe(false);
+  });
+
+  it("publishes no hint in a read-only editor, though the key is still refused", async () => {
+    const { editor, li2 } = await environment();
+    await selectMarkerOf(editor, li2);
+    act(() => editor.setEditable(false));
+    const before = documentJson(editor);
+
+    const event = await pressKey(editor, "Backspace");
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(documentJson(editor)).toBe(before);
+    expect(editor.getRootElement()?.classList.contains(PARA_MARKER_REFUSED_CLASS_NAME)).toBe(false);
+  });
+});
+
+describe("ParaMarkerSelectionPlugin — commands that would make the glyph an operand", () => {
+  const preventable = () => new Event("synthetic", { cancelable: true });
+  it.each([
+    ["CUT_COMMAND", CUT_COMMAND, preventable],
+    ["COPY_COMMAND", COPY_COMMAND, preventable],
+    ["PASTE_COMMAND", PASTE_COMMAND, preventable],
+    ["DRAGSTART_COMMAND", DRAGSTART_COMMAND, preventable],
+    ["DROP_COMMAND", DROP_COMMAND, preventable],
+    ["CONTROLLED_TEXT_INSERTION_COMMAND", CONTROLLED_TEXT_INSERTION_COMMAND, () => "x"],
+  ] as [string, LexicalCommand<unknown>, () => unknown][])(
+    "%s is refused before any lower-priority handler",
+    async (_name, command, payload) => {
+      const { editor, li2 } = await environment();
+      await selectMarkerOf(editor, li2);
+      const before = documentJson(editor);
+      const spy = vi.fn(() => false);
+      const unregister = editor.registerCommand(command, spy, COMMAND_PRIORITY_LOW);
+      const dispatched = payload();
+
+      await act(async () => {
+        editor.dispatchCommand(command, dispatched);
+      });
+      unregister();
+
+      expect(spy).not.toHaveBeenCalled();
+      expect(documentJson(editor)).toBe(before);
+      if (dispatched instanceof Event) expect(dispatched.defaultPrevented).toBe(true);
+    },
+  );
+});
+
+describe.each(["guarded", "protected"] as const)(
+  "ParaMarkerSelectionPlugin alongside StructureKeyboardPlugin (%s)",
+  (structureProtectionMode) => {
+    async function coexistingEnvironment() {
+      const doc = {} as Doc;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          doc.firstText = $createTextNode("first");
+          doc.secondText = $createTextNode("second");
+          doc.thirdText = $createTextNode("third");
+          doc.p = $createGutterParaNode("p", doc.firstText);
+          doc.li2 = $createGutterParaNode("li2", doc.secondText);
+          doc.q1 = $createGutterParaNode("q1", doc.thirdText);
+          $getRoot().append(doc.p, doc.li2, doc.q1);
+        },
+        <>
+          <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
+          <ParaMarkerSelectionPlugin />
+        </>,
+      );
+      return { editor, ...doc };
+    }
+
+    it("refuses Backspace twice without arming a paragraph merge", async () => {
+      const { editor, li2 } = await coexistingEnvironment();
+      await selectMarkerOf(editor, li2);
+      const before = documentJson(editor);
+
+      await pressKey(editor, "Backspace");
+      await pressKey(editor, "Backspace");
+
+      expect(documentJson(editor)).toBe(before);
+      expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
+      expect(editor.getRootElement()?.classList.contains(PARA_MARKER_REFUSED_CLASS_NAME)).toBe(
+        true,
+      );
+    });
+
+    it("lets a typed character through to the paragraph's text", async () => {
+      const { editor, li2, secondText } = await coexistingEnvironment();
+      await selectMarkerOf(editor, li2);
+
+      const event = await pressKey(editor, "a");
+
+      expect(event.defaultPrevented).toBe(false);
+      editor.getEditorState().read(() => {
+        $expectSelectionToBe(secondText, 0);
+      });
+    });
+  },
+);

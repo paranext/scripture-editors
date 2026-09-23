@@ -7,11 +7,17 @@ import {
   $getSelection,
   $isTextNode,
   COMMAND_PRIORITY_CRITICAL,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  COPY_COMMAND,
+  CUT_COMMAND,
+  DRAGSTART_COMMAND,
+  DROP_COMMAND,
   KEY_DOWN_COMMAND,
   KEY_ESCAPE_COMMAND,
   LexicalEditor,
   LexicalNode,
   NodeKey,
+  PASTE_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
 import {
@@ -27,6 +33,13 @@ import {
 
 /** The class the paragraph whose marker is selected carries (with `aria-selected="true"`). */
 export const PARA_MARKER_SELECTED_CLASS_NAME = "psc-para-marker-selected";
+
+/** The class the editor root carries while a refused keystroke's hint should show. */
+export const PARA_MARKER_REFUSED_CLASS_NAME = "psc-para-marker-refused";
+/** Root attribute naming which delete key was refused. */
+export const PARA_MARKER_REFUSED_INTENT_ATTRIBUTE = "data-para-marker-refused-intent";
+/** The refused delete direction published in {@link PARA_MARKER_REFUSED_INTENT_ATTRIBUTE}. */
+export type ParaMarkerRefusedIntent = "deleteBackward" | "deleteForward";
 
 /**
  * Keys that begin text input without announcing a character: an IME's first composition keystroke
@@ -57,6 +70,14 @@ const COMPOSITION_KEYS = new Set(["Process", "Dead", "Unidentified"]);
  * the marker menu, Escape returns the caret to the paragraph's content, and typing collapses to the
  * content and lets the keystroke proceed there.
  *
+ * Deleting the marker is refused, visibly: the editor ships no user-facing strings, so a refused
+ * Backspace/Delete publishes a transient signal on the editor root —
+ * {@link PARA_MARKER_REFUSED_CLASS_NAME} plus {@link PARA_MARKER_REFUSED_INTENT_ATTRIBUTE} — for
+ * the host to render a hint from, cleared on the next selection change (the same pattern as
+ * `StructureKeyboardPlugin`'s armed-delete signal). Cut, copy, paste, drag and drop are refused
+ * too: rich-text would export the glyph node on copy, and pasting it would insert a glyph into
+ * content.
+ *
  * @param onParaMarkerMenuRequest - Called when the user asks, by keyboard, to change the selected
  *   marker.
  * @returns Always `null`; the highlight and signals are published to the DOM.
@@ -74,12 +95,35 @@ export function ParaMarkerSelectionPlugin({
 
   useEffect(() => {
     let highlightedOwnerKey: NodeKey | undefined;
+    let refusedGlyphKey: NodeKey | undefined;
 
     /** Hands the request to the host outside this update, so its work never runs mid-commit. */
     const requestMenu = () => {
       // A read-only editor offers nothing to change the marker to.
       if (!editor.isEditable()) return;
       queueMicrotask(() => onMenuRequestRef.current?.());
+    };
+
+    const publishRefusal = (glyphKey: NodeKey, intent: ParaMarkerRefusedIntent) => {
+      refusedGlyphKey = glyphKey;
+      const root = editor.getRootElement();
+      root?.classList.add(PARA_MARKER_REFUSED_CLASS_NAME);
+      root?.setAttribute(PARA_MARKER_REFUSED_INTENT_ATTRIBUTE, intent);
+    };
+
+    const clearRefusal = () => {
+      refusedGlyphKey = undefined;
+      const root = editor.getRootElement();
+      root?.classList.remove(PARA_MARKER_REFUSED_CLASS_NAME);
+      root?.removeAttribute(PARA_MARKER_REFUSED_INTENT_ATTRIBUTE);
+    };
+
+    // `unknown` because one guard serves commands with different payloads: an Event for cut,
+    // copy, paste, drag and drop (prevented here), a string for controlled text insertion.
+    const $refuseWhileSelected = (payload: unknown): boolean => {
+      if (!$getSelectedParaMarker($getSelection())) return false;
+      if (payload instanceof Event) payload.preventDefault();
+      return true;
     };
 
     const $handleKeyDown = (event: KeyboardEvent): boolean => {
@@ -110,6 +154,17 @@ export function ParaMarkerSelectionPlugin({
           else $selectEndOfPreviousPara(para);
           return true;
         }
+        case "Backspace":
+        case "Delete":
+          event.preventDefault();
+          // Invariant I forbids a silent no-op, so the refusal is published for the host to show —
+          // except in a read-only editor, where the hint ("change it with Enter") would mislead.
+          if (editor.isEditable())
+            publishRefusal(
+              glyph.getKey(),
+              event.key === "Backspace" ? "deleteBackward" : "deleteForward",
+            );
+          return true;
         default:
           // Typing lands in the paragraph's text: collapse to its first content position and let
           // the keystroke proceed there (typing, IME composition) — never claimed.
@@ -133,15 +188,27 @@ export function ParaMarkerSelectionPlugin({
     const unregister = mergeRegister(
       editor.registerCommand(KEY_DOWN_COMMAND, $handleKeyDown, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(KEY_ESCAPE_COMMAND, $handleEscape, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(CUT_COMMAND, $refuseWhileSelected, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(COPY_COMMAND, $refuseWhileSelected, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(PASTE_COMMAND, $refuseWhileSelected, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(DRAGSTART_COMMAND, $refuseWhileSelected, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(DROP_COMMAND, $refuseWhileSelected, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        $refuseWhileSelected,
+        COMMAND_PRIORITY_CRITICAL,
+      ),
       editor.registerUpdateListener(({ editorState }) => {
-        const ownerKey = editorState.read(() =>
-          $getSelectedParaMarker($getSelection())?.getParent()?.getKey(),
-        );
+        const { glyphKey, ownerKey } = editorState.read(() => {
+          const glyph = $getSelectedParaMarker($getSelection());
+          return { glyphKey: glyph?.getKey(), ownerKey: glyph?.getParent()?.getKey() };
+        });
         if (highlightedOwnerKey !== ownerKey) setOwnerHighlight(editor, highlightedOwnerKey, false);
         highlightedOwnerKey = ownerKey;
         // Re-applied on every update, not only on change: an idempotent add keeps a re-created
         // element highlighted too.
         setOwnerHighlight(editor, ownerKey, true);
+        if (refusedGlyphKey !== undefined && refusedGlyphKey !== glyphKey) clearRefusal();
         if (ownerKey !== undefined) removeDomRangesInside(editor.getRootElement());
       }),
     );
@@ -149,6 +216,7 @@ export function ParaMarkerSelectionPlugin({
     return () => {
       unregister();
       setOwnerHighlight(editor, highlightedOwnerKey, false);
+      clearRefusal();
     };
   }, [editor]);
 
