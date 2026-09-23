@@ -274,6 +274,45 @@ export function $breakAndLiftCharStack(point: PointType): CharStackBreak {
 }
 
 /**
+ * Steps a collapsed selection off the trailing edge of a canonical closing glyph that ends its
+ * whole immediate char span, landing it just after the span instead of leaving it parked on the
+ * glyph itself. A caret there is genuinely PAST the span (see `$isPointInMarkerGlyphText`), not
+ * inside it, so a split at that position must cut outside the span rather than treat the glyph as
+ * its own break target. Deliberately only steps past ONE level: after a top-level span the caller's
+ * own char-stack guard then declines (nothing left to lift), and after a NESTED closer the caret
+ * lands in the outer span's content, where the close-and-reopen split proceeds from there.
+ *
+ * A no-op — returns `selection` unchanged — for any other caret position, including a caret already
+ * past every glyph or one that is not on a canonical closer's trailing edge at all.
+ *
+ * Shared by {@link $splitParagraphAtCharStack} and the `\id`-line split (`$splitBookWithMarker`,
+ * markerMenu/markerMenuApply.utils.ts) — the two places PT9's paragraph-marker split makes this
+ * same cut.
+ *
+ * Returns `undefined` when stepping left no collapsed range selection at all (`selectNext` found no
+ * position to land on) — the caller treats that the same as "nothing to split here".
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+export function $stepCaretPastClosingGlyphSpan(
+  selection: RangeSelection,
+): RangeSelection | undefined {
+  const anchorNode = selection.anchor.getNode();
+  if (
+    $isMarkerNode(anchorNode) &&
+    !$isPointInMarkerGlyphText(anchorNode, selection.anchor.offset)
+  ) {
+    const enclosing = anchorNode.getParent();
+    if ($isCharNode(enclosing) && anchorNode.is(enclosing.getLastChild())) {
+      enclosing.selectNext(0, 0);
+      const stepped = $getSelection();
+      return $isRangeSelection(stepped) && stepped.isCollapsed() ? stepped : undefined;
+    }
+  }
+  return selection;
+}
+
+/**
  * Splits the paragraph at a caret sitting inside character-styled text, closing the whole open
  * character-style stack on the left and reopening it in the new paragraph — the tail keeps its
  * markers, its attributes, and its nesting. Returns `false` (mutating nothing) when the caret is
@@ -296,27 +335,14 @@ export function $breakAndLiftCharStack(point: PointType): CharStackBreak {
  * INSERT_PARAGRAPH command handler, ahead of the generic rich-text split).
  */
 export function $splitParagraphAtCharStack(): boolean {
-  let selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  let anchorNode = selection.anchor.getNode();
-  // A caret at the TRAILING EDGE of a canonical closing glyph is genuinely AFTER the span (see
-  // $isPointInMarkerGlyphText), so the split belongs past the WHOLE enclosing char — never inside
-  // the glyph or the span. Normalize the caret out of the span before deciding: after a top-level
-  // span the stack guard below then declines and the split runs at the span boundary; after a
-  // NESTED closer the caret lands in the outer span's content and the close-and-reopen split
-  // proceeds from there.
-  if (
-    $isMarkerNode(anchorNode) &&
-    !$isPointInMarkerGlyphText(anchorNode, selection.anchor.offset)
-  ) {
-    const enclosing = anchorNode.getParent();
-    if ($isCharNode(enclosing) && anchorNode.is(enclosing.getLastChild())) {
-      enclosing.selectNext(0, 0);
-      selection = $getSelection();
-      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-      anchorNode = selection.anchor.getNode();
-    }
-  }
+  const rawSelection = $getSelection();
+  if (!$isRangeSelection(rawSelection) || !rawSelection.isCollapsed()) return false;
+  // A caret at the TRAILING EDGE of a canonical closing glyph is genuinely AFTER the span, so the
+  // split belongs past the WHOLE enclosing char — never inside the glyph or the span. Step the
+  // caret out of the span before deciding.
+  const selection = $stepCaretPastClosingGlyphSpan(rawSelection);
+  if (!selection) return false;
+  const anchorNode = selection.anchor.getNode();
   if (!$isTextNode(anchorNode) || $isMarkerNode(anchorNode)) return false;
   if (!$innermostCharAncestor(anchorNode)) return false;
   // Only paragraph-contained stacks. Inside a note the enclosing container is the NoteNode, and a

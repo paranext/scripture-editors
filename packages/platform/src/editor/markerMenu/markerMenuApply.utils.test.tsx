@@ -478,6 +478,58 @@ describe("$applyMarkerMenuSelection", () => {
       });
     });
 
+    it("splits past a closing glyph without reopening an empty span (caret genuinely after the span)", async () => {
+      // The caret sits at the trailing edge of the closing glyph (`\nd*`) — genuinely PAST the
+      // span, same as the position a paragraph split treats specially — so the split must not
+      // park a break point inside the span and lift-and-reopen it empty in the new paragraph.
+      let closingGlyph: MarkerNode;
+      const { editor } = await historyTestEnvironment(() => {
+        const nd = $createCharNode("nd");
+        closingGlyph = $createMarkerNode("nd", "closing");
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+            $createTextNode("Genesis "),
+            nd.append($createMarkerNode("nd"), $createTextNode(`${NBSP}holy name`), closingGlyph),
+          ),
+        );
+      });
+      await act(async () =>
+        editor.update(() => {
+          const size = closingGlyph.getTextContentSize();
+          closingGlyph.select(size, size);
+        }),
+      );
+
+      const item: MarkerMenuItem = { marker: "q1", kind: "paragraph", isBasic: true };
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            item,
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        const children = $getRoot().getChildren();
+        expect(children).toHaveLength(2);
+        const book = children[0];
+        if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+        // Left half keeps the whole closed \nd span — nothing moved out of it.
+        const leftSpans = book.getChildren().filter($isCharNode);
+        expect(leftSpans).toHaveLength(1);
+        expect(leftSpans[0].getTextContent()).toContain("holy name");
+        const para = children[1];
+        if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+        expect(para.getMarker()).toBe("q1");
+        // No empty reopened span in the new paragraph — the split landed genuinely past the span.
+        expect(para.getChildren().filter($isCharNode)).toHaveLength(0);
+      });
+    });
+
     it("does not double the opener when the selection starts just after a char span's opening glyph", async () => {
       // Left from the span's first letter lands the caret at the opening glyph's own trailing
       // edge (a TEXT point on the MarkerNode itself); Shift+Right from there extends the focus
