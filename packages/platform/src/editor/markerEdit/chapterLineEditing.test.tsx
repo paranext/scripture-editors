@@ -3,11 +3,11 @@
  * through `EditorRef.getUsj()` — the document a host saves.
  *
  * A chapter line serializes as its number alone, so anything a gesture leaves INSIDE it is on
- * screen but never saved. Deleting from the chapter line into the text used to merge the rest of
- * the paragraph into the chapter line that way — kept on screen, silently dropped on save — for
- * every gesture that deletes a selection: Delete, Backspace, typing over it, cut, Enter, and paste.
- * Such a deletion now deletes the chapter marker, as it does in the USFM text, and leaves the text
- * after the selection in its own paragraph. The other half pins editing on the chapter line itself:
+ * screen but never saved. A deletion from the chapter line into the text must therefore not merge
+ * the rest of the paragraph into the chapter line: for every gesture that deletes a selection —
+ * Delete, Backspace, typing over it, cut, Enter, and paste — it deletes the chapter marker, as it
+ * does in the USFM text, and leaves the text after the selection in its own paragraph. The other
+ * half pins editing on the chapter line itself:
  * it cannot be split, so Enter there starts a new paragraph after it, Shift+Enter does nothing, and
  * a paste or a drop goes in as one line.
  */
@@ -120,15 +120,15 @@ function plainTextPaste(text: string): ClipboardEvent {
 }
 
 /**
- * A duck-typed text drop, as Lexical hands it on from the browser's `insertFromDrop` input event
- * (jsdom has no DataTransfer).
+ * A duck-typed drop carrying only `type`, as Lexical hands it on from the browser's
+ * `insertFromDrop` input event (jsdom has no DataTransfer).
  */
-function plainTextDrop(text: string): InputEvent {
+function drop(type: "text/plain" | "text/html", data: string): InputEvent {
   return {
     dataTransfer: {
-      types: ["text/plain"],
+      types: [type],
       files: [],
-      getData: (type: string) => (type === "text/plain" ? text : ""),
+      getData: (requested: string) => (requested === type ? data : ""),
     },
     inputType: "insertFromDrop",
     preventDefault: () => undefined,
@@ -362,6 +362,40 @@ describe("a caret on the chapter line", () => {
     expect(ref.current?.getUsj()?.content).toEqual(chapterDoc.content);
   });
 
+  // The selection is not deleted either: the line break that would replace it is refused, so all a
+  // deletion could do is take the chapter's number out of its marker.
+  it("Shift+Enter over a selection on the chapter line does nothing", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await act(async () =>
+      lexical.update(() => {
+        const numberAt = CHAPTER_2_GLYPH.indexOf("2");
+        $glyph().select(numberAt, numberAt + 1);
+        lexical.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
+      }),
+    );
+    lexical.getEditorState().read(() => expect($glyph().getTextContent()).toBe(CHAPTER_2_GLYPH));
+    expect(ref.current?.getUsj()?.content).toEqual(chapterDoc.content);
+  });
+
+  // `\ca`/`\cp` right after a chapter belong to it; a paragraph put between them would part them.
+  it("Enter starts the paragraph after the chapter's \\cp", async () => {
+    const PUBLISHED_NUMBER: MarkerContent = { type: "para", marker: "cp", content: ["B"] };
+    const { ref, lexical } = await mountStandardViewEditor({
+      ...chapterDoc,
+      content: [CHAPTER_2, PUBLISHED_NUMBER, VERSE_1_PARA],
+    });
+    await onChapterLine(lexical, () =>
+      lexical.dispatchCommand(KEY_ENTER_COMMAND, keyDown("Enter")),
+    );
+    await typeText(lexical, "new");
+    expect(ref.current?.getUsj()?.content).toEqual([
+      CHAPTER_2,
+      PUBLISHED_NUMBER,
+      { type: "para", marker: "p", content: ["new"] },
+      VERSE_1_PARA,
+    ]);
+  });
+
   // A host's marker menus apply a paragraph pick through the `EditorRef`, which splits without
   // dispatching INSERT_PARAGRAPH_COMMAND, so it has to start the paragraph after the chapter line
   // itself.
@@ -413,7 +447,21 @@ describe("a caret on the chapter line", () => {
   it("takes a multi-line drop as one line of text", async () => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
     await onChapterLine(lexical, () =>
-      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, plainTextDrop("aa\r\nbb")),
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, drop("text/plain", "aa\r\nbb")),
+    );
+    lexical.getEditorState().read(() => expect($getRoot().getChildrenSize()).toBe(3));
+    expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, "aa bb", VERSE_1_PARA, POETRY_PARA]);
+  });
+
+  // Some drag sources carry html alone; a paste falls back to its text, and a drop must too, or it
+  // reaches Lexical's rich-text insertion with no block to insert into.
+  it("takes an html-only drop as one line of text", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await onChapterLine(lexical, () =>
+      lexical.dispatchCommand(
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        drop("text/html", "<p>aa</p><p>bb</p>"),
+      ),
     );
     lexical.getEditorState().read(() => expect($getRoot().getChildrenSize()).toBe(3));
     expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, "aa bb", VERSE_1_PARA, POETRY_PARA]);

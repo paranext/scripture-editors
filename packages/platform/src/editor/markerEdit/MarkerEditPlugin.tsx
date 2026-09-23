@@ -35,6 +35,7 @@ import {
   $displayWhitespaceTransform,
   $handleCopyForStandardView,
   $handlePasteForStandardView,
+  getDataTransferPayload,
   getPastePayload,
 } from "./whitespaceDisplay.plugin.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -1029,8 +1030,8 @@ export function MarkerEditPlugin({
       editor.registerCommand(
         CONTROLLED_TEXT_INSERTION_COMMAND,
         (payload) => {
-          if (typeof payload === "string") return false;
-          const text = payload.dataTransfer?.getData("text/plain").replace(/\r\n?/g, "\n");
+          if (typeof payload === "string" || !payload.dataTransfer) return false;
+          const { text } = getDataTransferPayload(payload.dataTransfer);
           return !!text && $pasteOnChapterLine(text);
         },
         COMMAND_PRIORITY_LOW,

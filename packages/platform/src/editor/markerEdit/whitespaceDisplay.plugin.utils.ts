@@ -137,16 +137,24 @@ export function getPastePayload(
       ? event.clipboardData
       : undefined;
   if (!clipboardData) return undefined;
+  return getDataTransferPayload(clipboardData);
+}
+
+/**
+ * Read a clipboard or a drop's data store the way {@link getPastePayload} reads a paste's, so a drop
+ * and a paste of the same content are the same text to every claim that handles both.
+ */
+export function getDataTransferPayload(dataTransfer: DataTransfer): PastePayload {
   const normalizeLineEndings = (text: string) => text.replace(/\r\n?/g, "\n");
-  const plainText = normalizeLineEndings(clipboardData.getData("text/plain"));
-  const html = clipboardData.getData("text/html");
+  const plainText = normalizeLineEndings(dataTransfer.getData("text/plain"));
+  const html = dataTransfer.getData("text/html");
   const htmlText = html ? normalizeLineEndings(htmlPasteText(html)) : "";
   return {
     plainText,
     html,
     htmlText,
     text: plainText || htmlText,
-    isInternal: !!clipboardData.getData("application/x-lexical-editor"),
+    isInternal: !!dataTransfer.getData("application/x-lexical-editor"),
   };
 }
 

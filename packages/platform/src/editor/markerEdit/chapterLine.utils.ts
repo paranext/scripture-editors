@@ -16,16 +16,15 @@
  */
 
 import { $setParaMarkerWithPrefix } from "./markerEditDeletion.utils";
+import { $chapterAdjacentAttributeNodes } from "./tier2Rebuild.utils";
+import { $findMatchingParent } from "@lexical/utils";
 import { $getSelection, $isRangeSelection, LexicalNode, RangeSelection } from "lexical";
 import { $createParaNode, $isChapterNode, ChapterNode } from "shared";
 import { showParaMarkerPrefix, ViewOptions } from "shared-react";
 
 /** The chapter line `node` is, or sits inside; `undefined` outside any chapter line. */
 function $chapterLineOf(node: LexicalNode): ChapterNode | undefined {
-  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
-    if ($isChapterNode(current)) return current;
-  }
-  return undefined;
+  return $findMatchingParent(node, $isChapterNode) ?? undefined;
 }
 
 /** Whether any part of `selection` lies on a chapter line. */
@@ -56,8 +55,9 @@ function $chapterLineAtCaret(): ChapterNode | undefined {
 
 /**
  * Handles a paragraph split requested at a chapter line: wherever the caret is on the line, a new
- * paragraph marked `marker` starts right after the chapter line, with the caret at its content
- * start. With paragraph marker prefixes shown, the paragraph gets its visible prefix in the same
+ * paragraph marked `marker` starts right after the chapter line — after any `\ca`/`\cp` that
+ * belong to it, which a paragraph between would part from their chapter — with the caret at its
+ * content start. With paragraph marker prefixes shown, the paragraph gets its visible prefix in the same
  * update, as a split paragraph does.
  *
  * Mutating: call from an `INSERT_PARAGRAPH_COMMAND` handler that runs before Lexical's own split,
@@ -71,7 +71,7 @@ export function $splitOnChapterLine(marker: string, viewOptions: ViewOptions | u
   const chapter = $chapterLineAtCaret();
   if (!chapter) return false;
   const para = $createParaNode(marker);
-  chapter.insertAfter(para);
+  ($chapterAdjacentAttributeNodes(chapter).at(-1) ?? chapter).insertAfter(para);
   if (showParaMarkerPrefix(viewOptions)) $setParaMarkerWithPrefix(para, marker);
   else para.selectStart();
   return true;
@@ -79,7 +79,9 @@ export function $splitOnChapterLine(marker: string, viewOptions: ViewOptions | u
 
 /**
  * Handles a line break requested at a chapter line, which is refused: a chapter line cannot hold
- * one, and a line break has no USFM representation of its own.
+ * one, and a line break has no USFM representation of its own. A selection lying wholly on one
+ * chapter line is left as it is — deleting it for a line break that is then refused would only take
+ * bytes out of the marker.
  *
  * Mutating: call from an `INSERT_LINE_BREAK_COMMAND` handler that runs before Lexical's own.
  *
@@ -87,6 +89,11 @@ export function $splitOnChapterLine(marker: string, viewOptions: ViewOptions | u
  *   claimed.
  */
 export function $refuseLineBreakOnChapterLine(): boolean {
+  const selection = $getSelection();
+  if ($isRangeSelection(selection) && !selection.isCollapsed()) {
+    const anchorLine = $chapterLineOf(selection.anchor.getNode());
+    if (anchorLine?.is($chapterLineOf(selection.focus.getNode()))) return true;
+  }
   return $chapterLineAtCaret() !== undefined;
 }
 
