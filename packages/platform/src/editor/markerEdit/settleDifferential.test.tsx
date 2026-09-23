@@ -29,7 +29,7 @@ import {
 } from "../adaptors/usj-editor.adaptor";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, $isTextNode, LexicalEditor, TextNode } from "lexical";
+import { $createRangeSelection, $getRoot, $isTextNode, LexicalEditor, TextNode } from "lexical";
 import {
   $chapterGlyphTextNode,
   $isChapterNode,
@@ -37,6 +37,8 @@ import {
   $isMarkerNode,
   $isNoteNode,
   $isParaNode,
+  $wrapSelectionInTypedMarkNode,
+  COMMENT_MARK_TYPE,
   getMarker as bundledGetMarker,
   getPendedDisplayOwners,
   NBSP,
@@ -145,6 +147,18 @@ function $typeLiteralPending(needle: string, literal: string): void {
   const text = $textContaining(needle);
   text.setTextContent(literal);
   text.select(0, 0);
+}
+
+/** Wrap a comment mark over `word`, which must sit in one text node — the shape `CommentPlugin`
+ * creates, and the one mark type the settled USJ carries (as a milestone pair), so a settle that
+ * drops or misplaces it shows up in the document both halves are compared on. */
+function $commentOver(word: string, id: string): void {
+  const text = $textContaining(word);
+  const start = text.getTextContent().indexOf(word);
+  const selection = $createRangeSelection();
+  selection.anchor.set(text.getKey(), start, "text");
+  selection.focus.set(text.getKey(), start + word.length, "text");
+  $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, id);
 }
 
 /** A doc with two `\p` paragraphs, the first carrying `first` (defaults to a verse + body). */
@@ -341,6 +355,63 @@ const differentialShapes: DifferentialShape[] = [
       if (!text) throw new Error("expected the span's content text");
       text.setTextContent(`${NBSP}li \\+nd g\\+nd*ht`);
       text.select(0, 0);
+    },
+  },
+  {
+    // A comment over a word in the paragraph a literal is pending in. The mark is transparent to
+    // re-tokenization, so each half has to carry it across its own rebuild explicitly.
+    name: "comment mark in a paragraph a typed literal settles",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"nd"');
+      expect(bytes(settled)).toContain('"c1"');
+    },
+    view: "standard",
+    usj: twoParaUsj(["alpha bravo charlie"]),
+    $edit: () => {
+      $commentOver("bravo", "c1");
+      $typeLiteralPending(" charlie", " charlie \\nd LORD\\nd*");
+    },
+  },
+  {
+    name: "comment mark in an expanded note's content a typed literal settles",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"bd"');
+      expect(bytes(settled)).toContain('"c1"');
+    },
+    view: "standard-expanded",
+    usj: noteUsj([{ type: "char", marker: "fr", content: ["1.1"] }, "alpha bravo charlie"]),
+    $edit: () => {
+      $commentOver("bravo", "c1");
+      $typeLiteralPending(" charlie", " charlie \\bd body\\bd*");
+    },
+  },
+  {
+    // A comment whose first covered byte is a preserved note: the note crosses the rebuild whole,
+    // so the mark is re-extended over it by node identity rather than by bytes.
+    name: "comment mark beginning on a note in a paragraph a typed literal settles",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"nd"');
+      expect(bytes(settled)).toContain('"c1"');
+    },
+    view: "standard",
+    usj: twoParaUsj([
+      "alpha ",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "fr", content: ["1.1"] }, "note body"],
+      },
+      "bravo charlie",
+    ]),
+    $edit: () => {
+      const alpha = $textContaining("alpha");
+      const bravo = $textContaining("bravo");
+      const selection = $createRangeSelection();
+      selection.anchor.set(alpha.getKey(), alpha.getTextContentSize(), "text");
+      selection.focus.set(bravo.getKey(), "bravo".length, "text");
+      $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+      $typeLiteralPending(" charlie", " charlie \\nd LORD\\nd*");
     },
   },
 ];

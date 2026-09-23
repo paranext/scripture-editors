@@ -16,6 +16,8 @@ import {
   $buildNoteFragment,
   $buildParaScopeFragment,
   $chapterAdjacentAttributeNodes,
+  $exportSubtree,
+  cutFragment,
   FragmentAccumulator,
   Tier2Context,
 } from "../markerEdit/tier2Rebuild.utils";
@@ -100,45 +102,6 @@ interface SettledTopIndex {
   indexWithinScope: number;
 }
 
-/**
- * `fragment` with the byte range `[start, end)` removed: the text cut, and every span's bounds
- * restated in the shortened text's coordinates.
- *
- * A span the cut falls INSIDE keeps its start (so its head still maps offset-for-offset onto its
- * node) and loses the cut's length from its end; its tail no longer maps offset-for-offset, which
- * is what {@link TransientCut} exists to restate. A span entirely past the cut shifts back
- * wholesale. Spans the cut swallows entirely collapse to zero length rather than disappearing, so
- * a key stays findable.
- *
- * The `sentinels` run list passes through BY REFERENCE, so a run keeps its index no matter how many
- * cuts a fragment goes through — which is what lets a run be paired with its settled counterpart
- * positionally (see {@link sentinelMapOf}). The SPANS are a different matter: a cut whose range
- * covers a sentinel span empties that span, which is exactly how a preserved node the settled side
- * carries nothing of gets its placeholder byte taken out of the text (see
- * {@link withoutDroppedSentinels}).
- */
-export function cutFragment(
-  fragment: FragmentAccumulator,
-  start: number,
-  end: number,
-): FragmentAccumulator {
-  if (end <= start) return fragment;
-  const removed = end - start;
-  const mapPosition = (position: number): number => {
-    if (position <= start) return position;
-    return position >= end ? position - removed : start;
-  };
-  return {
-    text: fragment.text.slice(0, start) + fragment.text.slice(end),
-    spans: fragment.spans.map((span) => ({
-      ...span,
-      start: mapPosition(span.start),
-      end: mapPosition(span.end),
-    })),
-    sentinels: fragment.sentinels,
-  };
-}
-
 /** The fragment over one scope's nodes, whichever kind of scope it is. The same builder runs over
  * the live nodes and over the scratch editor's root children, so the two sides' bytes are
  * comparable by construction. */
@@ -159,18 +122,6 @@ function $buildScopeFragment(
   }
   const note = nodes.find($isNoteNode);
   return note && $buildNoteFragment(note, tier2.getMarker, tier2.viewOptions)?.out;
-}
-
-/**
- * A node's serialized form including its whole subtree — the recursive walker `exportNodeToJSON`
- * is internally, for the one place a SUBTREE rather than a whole editor state has to be
- * serialized.
- */
-function $exportSubtree(node: LexicalNode): SerializedLexicalNode {
-  const json: SerializedLexicalNode & { children?: SerializedLexicalNode[] } = node.exportJSON();
-  if ($isElementNode(node) && Array.isArray(json.children))
-    node.getChildren().forEach((child) => json.children?.push($exportSubtree(child)));
-  return json;
 }
 
 /**

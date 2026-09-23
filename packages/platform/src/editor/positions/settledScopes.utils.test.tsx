@@ -6,8 +6,8 @@
  * settled fragment against the live one rather than against a transcribed string.
  */
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
-import { FragmentAccumulator } from "../markerEdit/tier2Rebuild.utils";
-import { $prepareSettleScopes, cutFragment } from "./settledScopes.utils";
+import { cutFragment, FragmentAccumulator } from "../markerEdit/tier2Rebuild.utils";
+import { $prepareSettleScopes } from "./settledScopes.utils";
 import {
   $livePointFromSettledLocation,
   $settledLocationFromLivePoint,

@@ -38,12 +38,14 @@ import {
   $buildChapterFragment,
   $buildNoteFragment,
   $buildParaScopeFragment,
+  $carryMarksIntoSerialized,
   $chapterAdjacentAttributeNodes,
   $isRebuildSentinel,
   $settleScopeForNode,
   $signatureOf,
   countSentinels,
   countSerializedSentinels,
+  cutFragment,
   extractLeadingCategoryFold,
   FragmentAccumulator,
   FragmentSpan,
@@ -405,16 +407,17 @@ export function $verifiedTransientLiteral(
 }
 
 /**
- * `fragment.text` with the declared bytes cut out, or the text UNTOUCHED when this fragment does
+ * `fragment` with the declared bytes cut out, or `fragment` UNTOUCHED when it does
  * not carry them (the declaration names a node in some other scope) or when the cut cannot be made
  * exactly. The cut is located through the fragment's own spans, so the shared fragment builder is
  * not forked and the real settle is unaffected; the span-length check rejects the one case where a
  * node's fragment contribution is not length-preserving (a whitespace-only para-prefix separator
  * substituted for a plain space), rather than cutting at a shifted offset.
  *
- * Spans go stale after the cut. Nothing downstream reads them — the sentinel substitution walks the
- * tokenized output's placeholders in ORDER, not by offset — and the cut can never remove a
- * placeholder, since the removed bytes were verified equal to `run`.
+ * The spans are restated in the cut text's coordinates ({@link cutFragment}), which is what the
+ * annotation carry anchors in. The sentinel substitution walks the tokenized output's placeholders
+ * in ORDER, not by offset, and the cut can never remove a placeholder, since the removed bytes were
+ * verified equal to `run`.
  *
  * A sentinel's own structural separator space (`pushSentinel`'s `UNTERMINATED_MARKER_TAIL`
  * insertion, tier2Rebuild.utils.ts) is not part of any span, so it can survive this cut even when it
@@ -422,13 +425,12 @@ export function $verifiedTransientLiteral(
  * normalizes away, never a dropped sentinel placeholder), and it disappears on its own the next time
  * the declaration clears and a real settle re-derives the fragment from scratch.
  */
-function $fragmentTextWithoutTransient(
+function $fragmentWithoutTransient(
   fragment: FragmentAccumulator,
-  transient: TransientLiteral,
-): string {
-  const range = $transientCutRange(fragment, transient);
-  if (!range) return fragment.text;
-  return fragment.text.slice(0, range.start) + fragment.text.slice(range.end);
+  transient: TransientLiteral | undefined,
+): FragmentAccumulator {
+  const range = transient && $transientCutRange(fragment, transient);
+  return range ? cutFragment(fragment, range.start, range.end) : fragment;
 }
 
 /**
@@ -480,7 +482,7 @@ export function $transientCutRange(
  * the display untouched) — see `serializedSignatureOf`'s own doc comment for the full mechanics.
  *
  * `transient`, when it resolves to bytes inside THIS scope's own fragment
- * ({@link $fragmentTextWithoutTransient}), is cut out before tokenizing — the declared bytes never
+ * ({@link $fragmentWithoutTransient}), is cut out before tokenizing — the declared bytes never
  * reach the tokenizer, so they can never turn into a phantom structural marker in the output. A
  * `transient` naming some other scope leaves the fragment text untouched, same as no declaration at
  * all.
@@ -505,10 +507,8 @@ export function $settledParaScope(
   // a consumer reads is built from the same bytes the mutating rebuild would tokenize.
   const fragment = $buildParaScopeFragment(paras, getMarkerFn, viewOptions);
   if (!fragment) return undefined;
-  const fragmentText = transient
-    ? $fragmentTextWithoutTransient(fragment, transient)
-    : fragment.text;
-  const content: MarkerContent[] = usfmFragmentToUsjContent(fragmentText, {
+  const tokenized = $fragmentWithoutTransient(fragment, transient);
+  const content: MarkerContent[] = usfmFragmentToUsjContent(tokenized.text, {
     getMarker: getMarkerFn,
   });
   if (content.length === 0) return undefined;
@@ -564,7 +564,16 @@ export function $settledParaScope(
     if (oldVerseSids[i].sid !== undefined && newVerses[i].number === oldVerseSids[i].number)
       newVerses[i].sid = oldVerseSids[i].sid;
   }
-  return rebuilt;
+  // Annotation marks, mirroring `$rebuildParas`' carry.
+  return $carryMarksIntoSerialized(
+    paras,
+    tokenized,
+    runs.live,
+    rebuilt,
+    "paras",
+    getMarkerFn,
+    viewOptions,
+  );
 }
 
 /**
@@ -601,7 +610,7 @@ function collectSerializedVerses(nodes: SerializedLexicalNode[]): SerializedVers
  * reasoning as `$settledParaScope`'s own check, see its doc comment.
  *
  * `transient` is cut out of the note's own fragment text the same way `$settledParaScope` cuts it
- * out of a paragraph's — see {@link $fragmentTextWithoutTransient}'s doc comment; a declaration
+ * out of a paragraph's — see {@link $fragmentWithoutTransient}'s doc comment; a declaration
  * naming a node outside this note's content leaves `out.text` untouched.
  */
 export function $settledNoteScope(
@@ -627,8 +636,8 @@ export function $settledNoteScope(
   if (!built) return undefined;
   const { out, contentNodes } = built;
   if (contentNodes.length === 0) return undefined;
-  const fragmentText = transient ? $fragmentTextWithoutTransient(out, transient) : out.text;
-  const content: MarkerContent[] = usfmFragmentToUsjContent(fragmentText, {
+  const tokenized = $fragmentWithoutTransient(out, transient);
+  const content: MarkerContent[] = usfmFragmentToUsjContent(tokenized.text, {
     getMarker: getMarkerFn,
     isNoteContext: true,
   });
@@ -716,7 +725,21 @@ export function $settledNoteScope(
     return undefined;
   }
   replaceSerializedSentinels(rebuilt, runs.serialized);
-  return { rebuilt, contentNodes, category: foldedCategory, categoryChanged };
+  return {
+    // Annotation marks, mirroring `$rebuildNoteContent`'s carry.
+    rebuilt: $carryMarksIntoSerialized(
+      contentNodes,
+      tokenized,
+      runs.live,
+      rebuilt,
+      "noteContent",
+      getMarkerFn,
+      viewOptions,
+    ),
+    contentNodes,
+    category: foldedCategory,
+    categoryChanged,
+  };
 }
 
 /** The custom node-state a serialized text node carries under Lexical's `$` state key, or
@@ -903,8 +926,8 @@ export function $settledChapterScope(
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
   const out = $buildChapterFragment(chapter, getMarkerFn, viewOptions);
   if (!out) return undefined;
-  const fragmentText = transient ? $fragmentTextWithoutTransient(out, transient) : out.text;
-  const content: MarkerContent[] = usfmFragmentToUsjContent(fragmentText, {
+  const tokenized = $fragmentWithoutTransient(out, transient);
+  const content: MarkerContent[] = usfmFragmentToUsjContent(tokenized.text, {
     getMarker: getMarkerFn,
   });
   const [freshChapter] = content;
@@ -941,7 +964,17 @@ export function $settledChapterScope(
     logger?.debug("[MarkerEdit] Settled chapter USJ skipped: rebuild is a no-op (fixed point)");
     return undefined;
   }
-  return rebuilt;
+  // Annotation marks, mirroring `$rebuildChapter`'s carry. The chapter region holds no preserved
+  // node (the placeholder guard above), so there are no runs to re-key.
+  return $carryMarksIntoSerialized(
+    region,
+    tokenized,
+    [],
+    rebuilt,
+    "chapter",
+    getMarkerFn,
+    viewOptions,
+  );
 }
 
 /** A note's own OPENING glyph retyped to a different marker name, and the note it renames. */

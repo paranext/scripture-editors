@@ -22,8 +22,9 @@ import {
   typeOver,
   $textContaining,
 } from "../positions/positions.test-helpers";
+import { $pendGlyphEdit } from "./markerEdit.test-helpers";
 import { $rebuildParas } from "./tier2Rebuild.utils";
-import { Usj } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
@@ -35,6 +36,8 @@ import {
   LexicalNode,
 } from "lexical";
 import {
+  $chapterGlyphTextNode,
+  $isChapterNode,
   $isCharNode,
   $isNoteNode,
   $isParaNode,
@@ -681,5 +684,103 @@ describe("an annotation that begins with a whole char span", () => {
     expect(annotatedIDs(mounted.lexical)).toEqual(
       annotatedText(mounted.lexical).map(() => ({ [markType("test")]: ["1"] })),
     );
+  });
+});
+
+describe("a comment mark in a chapter's settle region", () => {
+  /** A chapter beside an unclosed `\ca` span: unclosed, the span does not fold onto the chapter,
+   * so it stays content inside the region the chapter's rebuild replaces. */
+  const unfoldedCaUsj: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      { type: "char", marker: "ca", content: ["alt"], closed: "false" },
+      { type: "para", marker: "p", content: ["plain body"] },
+    ],
+  };
+
+  it("survives renumbering the chapter, and getUsj() while pending agrees", async () => {
+    const mounted = await mountStandardViewEditor(unfoldedCaUsj);
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const text = $textContaining("alt");
+        const start = text.getTextContent().indexOf("alt");
+        const selection = $createRangeSelection();
+        selection.anchor.set(text.getKey(), start, "text");
+        selection.focus.set(text.getKey(), start + "alt".length, "text");
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+        const chapter = $getRoot().getChildren().find($isChapterNode);
+        const glyph = chapter && $chapterGlyphTextNode(chapter);
+        if (!glyph) throw new Error("expected the chapter glyph text");
+        $pendGlyphEdit(glyph, "\\c 2");
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const pending = mounted.ref.current?.getUsj();
+
+    settle(mounted);
+    const settled = mounted.ref.current?.getUsj();
+
+    expect(annotatedText(mounted.lexical)).toEqual(["alt"]);
+    expect(annotatedIDs(mounted.lexical)).toEqual([{ [COMMENT_MARK_TYPE]: ["c1"] }]);
+    expect((settled?.content[1] as MarkerObject | undefined)?.number).toBe("2");
+    expect(settled?.content[2]).toEqual({
+      type: "char",
+      marker: "ca",
+      closed: "false",
+      content: [
+        { type: "ms", marker: "zmsc-s", sid: "c1" },
+        "alt",
+        { type: "ms", marker: "zmsc-e", eid: "c1" },
+      ],
+    });
+    expect(pending).toEqual(settled);
+  });
+});
+
+describe("a comment mark after a declared transient literal", () => {
+  it("stays on its word in getUsj() while the literal is cut out of the settled document", async () => {
+    const mounted = await mountStandardViewEditor(twoParaUsj([body]));
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const text = $textContaining(body);
+        const selection = $createRangeSelection();
+        selection.anchor.set(text.getKey(), body.indexOf("charlie"), "text");
+        selection.focus.set(text.getKey(), body.length, "text");
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+        // The wrap parks the caret on the comment; a declaration is anchored to the caret's node.
+        $textContaining("alpha").select("alpha".length, "alpha".length);
+      });
+      await Promise.resolve();
+    });
+    act(() => mounted.ref.current?.setTransientInput({ kind: "marker-literal", run: "\\q1" }));
+    // A palette's trigger typed after `alpha`, with the caret after it — the bytes the settled
+    // document leaves out, three characters IN FRONT of the mark.
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const lead = $textContaining("alpha");
+        const typed = lead.getTextContent().replace("alpha", "alpha\\q1");
+        lead.setTextContent(typed);
+        lead.select("alpha\\q1".length, "alpha\\q1".length);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const settled = mounted.ref.current?.getUsj();
+
+    expect(settled?.content[2]).toEqual({
+      type: "para",
+      marker: "p",
+      content: [
+        "alpha bravo ",
+        { type: "ms", marker: "zmsc-s", sid: "c1" },
+        "charlie",
+        { type: "ms", marker: "zmsc-e", eid: "c1" },
+      ],
+    });
   });
 });

@@ -23,9 +23,11 @@ import {
   USJ_TYPE,
   USJ_VERSION,
 } from "@eten-tech-foundation/scripture-utilities";
+import { registerNestedElementResolver } from "@lexical/utils";
 import {
   $createRangeSelection,
   $getNodeByKey,
+  $getRoot,
   $getSelection,
   $getState,
   $isElementNode,
@@ -35,6 +37,7 @@ import {
   $isTextNode,
   $parseSerializedNode,
   $setSelection,
+  createEditor,
   ElementNode,
   LexicalNode,
   NodeKey,
@@ -58,6 +61,7 @@ import {
   $isTypedMarkNode,
   $milestoneAttributeRunPieces,
   $verseAttributeRunPieces,
+  $createImpliedParaNode,
   $createTypedMarkNode,
   $wrapSelectionInTypedMarkNode,
   closingMarkerText,
@@ -84,7 +88,12 @@ import {
   usfmFragmentToUsjContent,
   VerseNode,
 } from "shared";
-import { $isImmutableNoteCallerNode, hasStandardViewWhitespace, ViewOptions } from "shared-react";
+import {
+  $isImmutableNoteCallerNode,
+  hasStandardViewWhitespace,
+  usjReactNodes,
+  ViewOptions,
+} from "shared-react";
 
 /**
  * Everything a Tier-2 rebuild needs that is not the nodes themselves: the active view options
@@ -1781,13 +1790,13 @@ function $isGlyphPoint(point: FragmentPoint): boolean {
  *
  * An anchor that no longer resolves is skipped, in the rebuild's own preserve-or-refuse spirit: a
  * dropped annotation is recoverable by the host re-applying it, one re-wrapped over the wrong
- * bytes is not.
+ * bytes is not. So is every wrap when `$freshFragment` cannot describe the rebuilt nodes at all.
  *
  * Mutating: call inside `editor.update()`, after the splice.
  */
 function $restoreMarkByteRanges(
   ranges: MarkByteRange[],
-  $freshFragment: () => { text: string; spans: FragmentSpan[] },
+  $freshFragment: () => { text: string; spans: FragmentSpan[] } | undefined,
 ): void {
   if (ranges.length === 0) return;
   // Carrying a mark must leave the document selection exactly as it found it — the caller owns the
@@ -1801,6 +1810,7 @@ function $restoreMarkByteRanges(
   for (const range of ranges) {
     for (const annotation of range.annotations) {
       const fragment = $freshFragment();
+      if (!fragment) continue;
       // A mark's START names the first BYTE it covers, so it belongs at the front edge of the span
       // holding that byte — caret addressing (`addressDisplayBytes: false`) would instead park it
       // at the END of the preceding span, a caret's own preference, and the wrap would swallow
@@ -1838,6 +1848,156 @@ function $restoreMarkByteRanges(
     }
   }
   $setSelection(selectionBefore);
+}
+
+/**
+ * `fragment` with the byte range `[start, end)` removed: the text cut, and every span's bounds
+ * restated in the shortened text's coordinates.
+ *
+ * A span the cut falls INSIDE keeps its start (so its head still maps offset-for-offset onto its
+ * node) and loses the cut's length from its end; its tail no longer maps offset-for-offset, which a
+ * caller that needs node offsets has to restate itself. A span entirely past the cut shifts back
+ * wholesale. Spans the cut swallows entirely collapse to zero length rather than disappearing, so
+ * a key stays findable.
+ *
+ * The `sentinels` run list passes through BY REFERENCE, so a run keeps its index no matter how many
+ * cuts a fragment goes through — which is what lets a run be paired with its settled counterpart
+ * positionally. The SPANS are a different matter: a cut whose range covers a sentinel span empties
+ * that span, which is how a preserved node the settled side carries nothing of gets its
+ * placeholder byte taken out of the text.
+ */
+export function cutFragment(
+  fragment: FragmentAccumulator,
+  start: number,
+  end: number,
+): FragmentAccumulator {
+  if (end <= start) return fragment;
+  const removed = end - start;
+  const mapPosition = (position: number): number => {
+    if (position <= start) return position;
+    return position >= end ? position - removed : start;
+  };
+  return {
+    text: fragment.text.slice(0, start) + fragment.text.slice(end),
+    spans: fragment.spans.map((span) => ({
+      ...span,
+      start: mapPosition(span.start),
+      end: mapPosition(span.end),
+    })),
+    sentinels: fragment.sentinels,
+  };
+}
+
+/**
+ * A node's serialized form including its whole subtree — the recursive walker `exportNodeToJSON`
+ * is internally, for the places a SUBTREE rather than a whole editor state has to be serialized.
+ */
+export function $exportSubtree(node: LexicalNode): SerializedLexicalNode {
+  const json: SerializedLexicalNode & { children?: SerializedLexicalNode[] } = node.exportJSON();
+  if ($isElementNode(node) && Array.isArray(json.children))
+    node.getChildren().forEach((child) => json.children?.push($exportSubtree(child)));
+  return json;
+}
+
+/** What a read-only settle's rebuilt nodes stand in for: whole paragraphs, a chapter and its
+ * adjacent region, or a note's content — which decides how their bytes are read back. */
+export type SettledScopeKind = "paras" | "chapter" | "noteContent";
+
+/**
+ * `rebuilt` — the serialized nodes a read-only settle turns `scope` into — with the annotation
+ * marks `scope` holds wrapped back over the same bytes, so a settled read taken while an edit is
+ * pending carries exactly the marks the real settle will leave.
+ *
+ * It runs the mutating rebuilds' own capture ({@link $captureMarkByteRanges}) and restore
+ * ({@link $restoreMarkByteRanges}), the restore over `rebuilt` materialized in a scratch editor,
+ * so the two settles agree by construction rather than by a second implementation. The scratch
+ * editor un-nests overlapping marks the way the live editor's `AnnotationPlugin` does. A mark
+ * that begins on a preserved node names that node by its LIVE key, which the scratch copy does not
+ * share, so it is re-keyed to the scratch copy of the same run first: the preserved runs
+ * `carriedRuns` lists (the live members `rebuilt` carries, per run of `fragment.sentinels`) stand
+ * in the scratch tree in the same order.
+ *
+ * `fragment` is the one the rebuild tokenized — with any transient bytes already cut out — so the
+ * marks anchor in the coordinates `rebuilt` was built in. `rebuilt` comes back untouched, and no
+ * scratch editor is made, when the scope holds no mark.
+ *
+ * Read-only on the live tree: call inside a read of it.
+ */
+export function $carryMarksIntoSerialized(
+  scope: LexicalNode[],
+  fragment: FragmentAccumulator,
+  carriedRuns: readonly (readonly LexicalNode[])[],
+  rebuilt: SerializedLexicalNode[],
+  kind: SettledScopeKind,
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): SerializedLexicalNode[] {
+  const ranges = $captureMarkByteRanges(scope, fragment);
+  if (ranges.length === 0) return rebuilt;
+  const scratch = createEditor({
+    nodes: [TypedMarkNode, ...usjReactNodes],
+    onError: (error) => {
+      throw error;
+    },
+  });
+  registerNestedElementResolver<TypedMarkNode>(
+    scratch,
+    TypedMarkNode,
+    (from) => $createTypedMarkNode(from.getTypedIDs()),
+    (from, to) =>
+      Object.entries(from.getTypedIDs()).forEach(([type, ids]) =>
+        ids.forEach((id) => to.addID(type, id)),
+      ),
+  );
+  const liveRunKeys = fragment.spans
+    .filter((span) => span.isSentinel)
+    .map((span) => span.key)
+    .filter((_key, index) => (carriedRuns[index]?.length ?? 0) > 0);
+  let holderKey: NodeKey | undefined;
+  scratch.update(
+    () => {
+      const root = $getRoot();
+      // Note content is inline, and the root holds only blocks.
+      const holder = kind === "noteContent" ? $createImpliedParaNode() : root;
+      if (holder !== root) root.append(holder);
+      holderKey = holder.getKey();
+      rebuilt.forEach((child) => holder.append($parseSerializedNode(child)));
+      const $fresh = () => {
+        const nodes = holder.getChildren();
+        if (kind === "paras") return $spansForNodes(nodes, getMarkerFn, viewOptions);
+        if (kind === "chapter")
+          return $isChapterNode(nodes[0])
+            ? $buildChapterFragment(nodes[0], getMarkerFn, viewOptions)
+            : undefined;
+        const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+        $appendNodesFragment(nodes, out, getMarkerFn, viewOptions);
+        return out;
+      };
+      const scratchRunKeys =
+        $fresh()
+          ?.spans.filter((span) => span.isSentinel)
+          .map((span) => span.key) ?? [];
+      const rekey = new Map<NodeKey, NodeKey>();
+      if (scratchRunKeys.length === liveRunKeys.length)
+        liveRunKeys.forEach((key, index) => rekey.set(key, scratchRunKeys[index]));
+      $restoreMarkByteRanges(
+        ranges.map((range) =>
+          range.start.kind === "preserved"
+            ? {
+                ...range,
+                start: { ...range.start, key: rekey.get(range.start.key) ?? range.start.key },
+              }
+            : range,
+        ),
+        $fresh,
+      );
+    },
+    { discrete: true },
+  );
+  return scratch.getEditorState().read(() => {
+    const holder = holderKey === undefined ? undefined : $getNodeByKey(holderKey);
+    return $isElementNode(holder) ? holder.getChildren().map($exportSubtree) : rebuilt;
+  });
 }
 
 /** Place the collapsed caret at the position `anchor` describes (see `$caretSpanByteAnchor`)
@@ -2316,10 +2476,7 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   // the note, which `newNodes` then no longer lists. The same walk the capture above used, so the
   // bytes line up.
   const $settledNoteContent = () => $buildNoteFragment(note, getMarkerFn, viewOptions);
-  $restoreMarkByteRanges(
-    markRanges,
-    () => $settledNoteContent()?.out ?? { text: "", spans: [], sentinels: [] },
-  );
+  $restoreMarkByteRanges(markRanges, () => $settledNoteContent()?.out);
   $restoreSelectionInNoteContent(
     $settledNoteContent()?.contentNodes ?? newNodes,
     caretAnchor,
@@ -2508,12 +2665,13 @@ export function $buildChapterFragment(
  * pending literal rather than restructuring the document from a chapter-scoped settle. Deleting
  * a chapter outright is `$chapterNodeTransform`'s existing empty-children path, not this one.
  *
- * Carries no annotation marks across, unlike its paragraph and note-content siblings. The chapter
- * marker itself has no content children for a `UsjDocumentLocation` to land in, so nothing can
- * annotate it. The adjacent `\ca`/`\cp` spans and `\cp` paragraph in the region DO hold
- * addressable content, and a mark over them is lost when the region is spliced — a known gap, not
- * an invariant to rely on. The signature reads a mark transparently either way, so a region whose
- * only difference is a mark reports a fixed point and is left exactly as it stands.
+ * Carries annotation marks across like its paragraph and note-content siblings. The chapter marker
+ * itself has no content children for a `UsjDocumentLocation` to land in, but the adjacent
+ * `\ca`/`\cp` spans and `\cp` paragraph in the region do, and a span that does not fold keeps its
+ * content. A mark whose bytes DO fold onto the chapter lands in its attribute run's glyph bytes and
+ * is dropped, as a mark over bytes that became a marker is anywhere. The signature reads a mark
+ * transparently, so a region whose only difference is a mark reports a fixed point and is left
+ * exactly as it stands.
  */
 export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): boolean {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
@@ -2543,6 +2701,10 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
     if (selection.isCollapsed())
       caretAnchor = $caretSpanByteAnchor(out, selection.anchor.key, selection.anchor.offset);
   }
+
+  // The adjacent spans and `\cp` paragraph hold content a mark can cover, and the splice below
+  // destroys them — carried the way `$rebuildParas` carries a paragraph's.
+  const markRanges = $captureMarkByteRanges(region, out);
 
   const content: MarkerContent[] = usfmFragmentToUsjContent(out.text, { getMarker: getMarkerFn });
   const [freshChapter] = content;
@@ -2603,8 +2765,14 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
     return false;
   }
 
+  const newChapter = newNodes[0];
   newNodes.forEach((node) => chapter.insertBefore(node));
   region.forEach((node) => node.remove());
+  // Before the caret restore, so the caret resolves against the final tree — mirror
+  // `$rebuildParas`.
+  $restoreMarkByteRanges(markRanges, () =>
+    $buildChapterFragment(newChapter, getMarkerFn, viewOptions),
+  );
   $restoreSelectionAtOffset(newNodes, caretAnchor, anchorInRegion, getMarkerFn, viewOptions);
   return true;
 }
