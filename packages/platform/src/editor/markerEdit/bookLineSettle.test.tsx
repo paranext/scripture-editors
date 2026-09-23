@@ -18,9 +18,11 @@ import {
   viewOptions,
 } from "./markerEdit.test-helpers";
 import { Tier2Context, tokenizedBookLine } from "./tier2Rebuild.utils";
+import { $settledUsj } from "./virtualSettle.utils";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
+  $createTextNode,
   $getRoot,
   $getSelection,
   $isRangeSelection,
@@ -30,6 +32,9 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $createBookNode,
+  $createImmutableTypedTextNode,
+  $createNoteNode,
   $isBookNode,
   $isChapterNode,
   $isCharNode,
@@ -38,6 +43,7 @@ import {
   BookNode,
   getMarker as bundledGetMarker,
   NBSP,
+  NoteNode,
 } from "shared";
 
 // jsdom implements no layout, so `Range.prototype.getBoundingClientRect` is absent and Lexical's
@@ -285,6 +291,82 @@ describe("the `\\id` line's settle scope", () => {
     expect(bookUsj(settledUsjOf(editor, context)) ?? bookUsj(unsettledUsjOf(editor))).toEqual(
       bookUsj(unsettledUsjOf(editor)),
     );
+  });
+
+  it("keeps a note in the line while an UNRELATED edit elsewhere in it is pending", async () => {
+    let note: NoteNode;
+    let tail: TextNode;
+    const { editor } = await testEnvironment(() => {
+      note = $createNoteNode("f", "+");
+      tail = $createTextNode(" tail");
+      $getRoot().append(
+        $createBookNode("RUT").append(
+          $createImmutableTypedTextNode("marker", `\\id RUT${NBSP}`),
+          $createTextNode("Corpus fixture "),
+          note,
+          tail,
+        ),
+      );
+    });
+
+    // An unterminated char marker at the tail, AFTER the note: pends until departure/Enter, the
+    // same trigger the "leaves an UNTERMINATED backslash run pending" test above uses.
+    await act(async () =>
+      editor.update(() => {
+        tail.setTextContent(" tail \\nd");
+        tail.select(tail.getTextContentSize(), tail.getTextContentSize());
+      }),
+    );
+    expect(JSON.stringify(editor.getEditorState().toJSON())).toContain("\\\\nd");
+
+    const settledBook = bookUsj(settledUsjOf(editor, context));
+    const noteEntry = settledBook?.content?.find(
+      (item) => typeof item !== "string" && item.type === "note",
+    );
+    expect(noteEntry).toBeDefined();
+    expect(JSON.stringify(settledBook)).not.toContain("￼");
+  });
+
+  it("keeps a note in the line while an UNRELATED run elsewhere in it is a TRANSIENT declaration (no pend at all)", async () => {
+    let note: NoteNode;
+    let tail: TextNode;
+    const { editor } = await testEnvironment(() => {
+      note = $createNoteNode("f", "+");
+      tail = $createTextNode(" tail");
+      $getRoot().append(
+        $createBookNode("RUT").append(
+          $createImmutableTypedTextNode("marker", `\\id RUT${NBSP}`),
+          $createTextNode("Corpus fixture "),
+          note,
+          tail,
+        ),
+      );
+    });
+
+    // A palette-owned transient declaration, verified against the live caret — see
+    // `EditorRef.setTransientInput` — reaches $settledBookLine with NOTHING in `pendedKeys` at
+    // all: `$verifiedTransientLiteral` forces the book scope in on its own.
+    await act(async () =>
+      editor.update(() => {
+        tail.select(tail.getTextContentSize(), tail.getTextContentSize());
+      }),
+    );
+
+    const editorState = editor.getEditorState();
+    const serializedState = editorState.toJSON();
+    const settled = editorState.read(() =>
+      $settledUsj(serializedState, new Set(), context, {
+        input: { kind: "marker-literal", run: "tail" },
+        nodeKey: tail.getKey(),
+      }),
+    );
+
+    const settledBook = bookUsj(settled);
+    const noteEntry = settledBook?.content?.find(
+      (item) => typeof item !== "string" && item.type === "note",
+    );
+    expect(noteEntry).toBeDefined();
+    expect(JSON.stringify(settledBook)).not.toContain("￼");
   });
 });
 
