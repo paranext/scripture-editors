@@ -49,17 +49,20 @@ function contextMenuItemId(index: number) {
   return `${CONTEXT_MENU_LIST_ID}-item-${index}`;
 }
 
+/** A keydown for one of these alone (no other key) is not a keystroke the modal menu claims. */
+const MODIFIER_ONLY_KEYS = new Set(["Shift", "Control", "Alt", "Meta"]);
+
 function ContextMenuItem({
   index,
   isSelected,
   onClick,
-  onMouseEnter,
+  onMouseMove,
   option,
 }: {
   index: number;
   isSelected: boolean;
   onClick: () => void;
-  onMouseEnter: () => void;
+  onMouseMove: () => void;
   option: ContextMenuOption;
 }) {
   let className = "item";
@@ -77,7 +80,7 @@ function ContextMenuItem({
       aria-selected={isSelected}
       aria-disabled={option.isDisabled}
       id={contextMenuItemId(index)}
-      onMouseEnter={onMouseEnter}
+      onMouseMove={onMouseMove}
       onClick={option.isDisabled ? undefined : onClick}
     >
       <span className="text">{option.title}</span>
@@ -89,11 +92,11 @@ function ContextMenu({
   options,
   selectedItemIndex,
   onOptionClick,
-  onOptionMouseEnter,
+  onOptionMouseMove,
 }: {
   selectedItemIndex: number | undefined;
   onOptionClick: (option: ContextMenuOption, index: number) => void;
-  onOptionMouseEnter: (index: number) => void;
+  onOptionMouseMove: (index: number) => void;
   options: ContextMenuOption[];
 }) {
   return (
@@ -106,8 +109,8 @@ function ContextMenu({
             index={i}
             isSelected={selectedItemIndex === i}
             onClick={() => onOptionClick(option, i)}
-            onMouseEnter={() => onOptionMouseEnter(i)}
-            key={option.key}
+            onMouseMove={() => onOptionMouseMove(i)}
+            key={`${i}-${option.title}`}
             option={option}
           />
         ))}
@@ -239,8 +242,11 @@ export function ContextMenuPlugin({
       // its own `max-height` impossible to scroll at all. Only a scroll of something else leaves
       // the menu stale — it is positioned in fixed viewport coordinates, so the content it was
       // opened over has moved out from under it.
-      const target = event.target as Node | null;
-      if (target && menuRef.current?.contains(target)) return;
+      // `event.target` is `window` itself for a scroll dispatched directly on `window` (rather
+      // than on the document or an element), and `Node.prototype.contains` throws on a non-Node
+      // argument.
+      const target = event.target;
+      if (target instanceof Node && menuRef.current?.contains(target)) return;
       closeMenu();
     };
     globalThis.addEventListener("scroll", handleScroll, true);
@@ -261,25 +267,33 @@ export function ContextMenuPlugin({
   useEffect(() => {
     if (!menuState.isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
+      // An IME owns a composing keystroke (including Enter, which often confirms a candidate);
+      // `keyCode === 229` is the same signal for browsers that don't yet set `isComposing` on
+      // every event in a composition. Let it through untouched either way.
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "Escape") {
         closeMenu();
         return;
       }
-      // The menu drives the keyboard only while focus is still where it was when the menu opened.
-      // Nothing closes the menu when focus moves on (Tab), and this listener hears the whole
-      // document, so once focus has MOVED to a control outside the editor root, that control's
-      // keys are its own — claiming Enter there would stop a focused button from ever activating.
-      // Focus-at-open still counts as "the editor's own" even when it sits outside the root: a
-      // READ-ONLY editor's root (`contentEditable=false`, no tabIndex) can never take focus, so a
-      // right-click there leaves focus wherever the mousedown happened to land — `body`, or a
-      // mouse-focusable ancestor such as a scroll container — and that pre-existing focus target
-      // has not "moved on" from anywhere; it was never inside the root to begin with.
+      // The menu drives the keyboard only while focus is still where it was when the menu opened,
+      // or has moved to the menu's own DOM (a mousedown on a disabled, `tabIndex=-1` item focuses
+      // it without invoking anything, and that is still the menu holding the keyboard, not focus
+      // moving away). Nothing closes the menu when focus moves on (Tab), and this listener hears
+      // the whole document, so once focus has MOVED to a control outside the editor root and
+      // outside the menu, that control's keys are its own — claiming Enter there would stop a
+      // focused button from ever activating. Focus-at-open still counts as "the editor's own" even
+      // when it sits outside the root: a READ-ONLY editor's root (`contentEditable=false`, no
+      // tabIndex) can never take focus, so a right-click there leaves focus wherever the mousedown
+      // happened to land — `body`, or a mouse-focusable ancestor such as a scroll container — and
+      // that pre-existing focus target has not "moved on" from anywhere; it was never inside the
+      // root to begin with.
       const focused = document.activeElement;
       if (
         focused &&
         focused !== document.body &&
         focused !== focusAtOpenRef.current &&
-        !editor.getRootElement()?.contains(focused)
+        !editor.getRootElement()?.contains(focused) &&
+        !menuRef.current?.contains(focused)
       )
         return;
       if (event.key === "ArrowDown") {
@@ -308,6 +322,16 @@ export function ContextMenuPlugin({
           });
           closeMenu();
         }
+      } else if (MODIFIER_ONLY_KEYS.has(event.key)) {
+        // A bare modifier held down (e.g. Shift on its way to a Shift+ArrowDown chord elsewhere)
+        // is not itself a keystroke to claim.
+        return;
+      } else {
+        // The menu is modal for every other key while it is open: like a native context menu, it
+        // holds the keyboard so nothing — a typed character, Backspace, Delete, Tab — reaches the
+        // editor behind it. Escape closes it first, if that is what the user wants instead.
+        event.preventDefault();
+        event.stopPropagation();
       }
     };
     // Use capture phase so this fires before Lexical's own keydown handler,
@@ -336,8 +360,24 @@ export function ContextMenuPlugin({
     if (!menuState.isOpen) return;
     const rootElement = editor.getRootElement();
     if (!rootElement) return;
-    if (selectedIndex === undefined) rootElement.removeAttribute("aria-activedescendant");
-    else rootElement.setAttribute("aria-activedescendant", contextMenuItemId(selectedIndex));
+    if (selectedIndex === undefined) {
+      rootElement.removeAttribute("aria-activedescendant");
+      return;
+    }
+    rootElement.setAttribute("aria-activedescendant", contextMenuItemId(selectedIndex));
+    // Arrow-key navigation can move the highlight past what a panel-clamped, scrollable list
+    // shows, so keyboard and mouse use have to agree on what "highlighted" means: bring the item
+    // into view within its own `ul`, not the page — `Element.scrollIntoView` would try to scroll
+    // an ancestor of the fixed-position popover too, and this environment's DOM (like jsdom, which
+    // has no `scrollIntoView` at all) doesn't need to support it for this to work.
+    const list = document.getElementById(CONTEXT_MENU_LIST_ID);
+    const item = document.getElementById(contextMenuItemId(selectedIndex));
+    if (!list || !item) return;
+    if (item.offsetTop < list.scrollTop) {
+      list.scrollTop = item.offsetTop;
+    } else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
+    }
   }, [editor, menuState.isOpen, selectedIndex]);
 
   useEffect(
@@ -388,8 +428,12 @@ export function ContextMenuPlugin({
             closeMenu();
           }
         }}
-        onOptionMouseEnter={(index: number) => {
-          setSelectedIndex(index);
+        onOptionMouseMove={(index: number) => {
+          // `mousemove`, not `mouseenter`/`mouseover`: a menu clamped into the viewport can open
+          // with the (stationary) pointer already over an item, and a browser's post-layout hover
+          // recompute fires `mouseover`/`mouseenter` for that with no real pointer motion — the
+          // user never chose that item. Only an actual move highlights one.
+          setSelectedIndex((prev) => (prev === index ? prev : index));
         }}
       />
     </div>,

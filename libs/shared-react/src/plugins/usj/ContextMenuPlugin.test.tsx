@@ -10,17 +10,26 @@
 import { ClipboardPlugin } from "./ClipboardPlugin";
 import { ContextMenuPlugin } from "./ContextMenuPlugin";
 import { baseTestEnvironment, pressKeyThroughDom } from "./react-test.utils";
-import { act } from "@testing-library/react";
+import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { ContentEditable } from "@lexical/react/LexicalContentEditable";
+import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
+import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
+import { act, render } from "@testing-library/react";
 import {
   $createTextNode,
   $getRoot,
+  COMMAND_PRIORITY_LOW,
   COMMAND_PRIORITY_NORMAL,
   COPY_COMMAND,
+  KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   LexicalEditor,
   TextNode,
 } from "lexical";
-import { $createParaNode } from "shared";
+import { ReactElement, useEffect } from "react";
+import { $createParaNode, TypedMarkNode } from "shared";
+import { usjReactNodes } from "../../nodes/usj";
 
 /** Opens the context menu the way a right-click does: a `contextmenu` event on a DESCENDANT of the
  * root element. The plugin deliberately ignores the root element itself, so targeting the root
@@ -282,6 +291,118 @@ describe("ContextMenuPlugin accessibility", () => {
   });
 });
 
+describe("ContextMenuPlugin holds the keyboard modally while open", () => {
+  it("claims a printable key and Backspace, leaving the document and the menu untouched, then releases the keyboard after Escape", async () => {
+    const lexicalSawKeyDown = vi.fn();
+    const { editor } = await openMenu(vi.fn());
+    editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      () => {
+        lexicalSawKeyDown();
+        return false;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+
+    await pressKeyThroughDom(editor, "a");
+    await pressKeyThroughDom(editor, "Backspace");
+
+    expect(lexicalSawKeyDown).not.toHaveBeenCalled();
+    expect(menuList()).not.toBeNull();
+
+    await pressKeyOnDocument("Escape");
+    expect(menuList()).toBeNull();
+
+    await pressKeyThroughDom(editor, "a");
+    expect(lexicalSawKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not claim a bare modifier key by itself", async () => {
+    const { rootElement } = await openMenu(vi.fn());
+    const press = new KeyboardEvent("keydown", {
+      key: "Shift",
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      rootElement.dispatchEvent(press);
+    });
+
+    expect(press.defaultPrevented).toBe(false);
+    expect(menuList()).not.toBeNull();
+  });
+
+  it("does not claim a composing Enter, leaving it to the IME", async () => {
+    const onSelect = vi.fn();
+    const { rootElement } = await openMenuWithEndNoteHighlighted(onSelect);
+    const press = new KeyboardEvent("keydown", {
+      key: "Enter",
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      rootElement.dispatchEvent(press);
+    });
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(press.defaultPrevented).toBe(false);
+    expect(menuList()).not.toBeNull();
+  });
+
+  it("still drives Enter and closes on a plain Enter with keyCode 229 unset", async () => {
+    // Control for the composing test above: an ordinary Enter (not composing) still works.
+    const onSelect = vi.fn();
+    const { editor } = await openMenuWithEndNoteHighlighted(onSelect);
+
+    await pressKeyThroughDom(editor, "Enter");
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(menuList()).toBeNull();
+  });
+
+  it("still drives arrow keys and Enter after a mousedown lands focus on a disabled item", async () => {
+    const { editor, rootElement } = await openMenuWithEndNoteHighlighted(vi.fn(), true);
+    const disabledItem = document.querySelector<HTMLLIElement>(".typeahead-popover li.selected");
+    if (!disabledItem) throw new Error("disabled item did not render");
+    const initialTitle = selectedMenuItemTitle();
+    // jsdom does not implement the browser's default mousedown-focuses-target action, so this
+    // simulates it directly, the way a real mousedown on a `tabIndex=-1` element would.
+    await act(async () => {
+      disabledItem.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      disabledItem.focus();
+    });
+    expect(document.activeElement).toBe(disabledItem);
+    expect(rootElement.contains(document.activeElement)).toBe(false);
+
+    await pressKeyOnDocument("ArrowDown");
+    expect(selectedMenuItemTitle()).not.toBe(initialTitle);
+
+    // Walk onto "Copy", an enabled built-in item, and confirm Enter still runs it.
+    const copySeen = vi.fn();
+    editor.registerCommand(
+      COPY_COMMAND,
+      () => {
+        copySeen();
+        return true;
+      },
+      COMMAND_PRIORITY_NORMAL,
+    );
+    const titles = menuItemTitles();
+    const indexOfCopy = titles.indexOf("Copy");
+    let remainingPresses = titles.length;
+    while (selectedMenuItemTitle() !== "Copy" && remainingPresses > 0) {
+      await pressKeyOnDocument("ArrowDown");
+      remainingPresses -= 1;
+    }
+    expect(indexOfCopy).toBeGreaterThanOrEqual(0);
+    expect(selectedMenuItemTitle()).toBe("Copy");
+    await pressKeyOnDocument("Enter");
+    expect(copySeen).toHaveBeenCalledTimes(1);
+    expect(menuList()).toBeNull();
+  });
+});
+
 describe("ContextMenuPlugin scrolling", () => {
   it("stays open when the scroll happens INSIDE the menu", async () => {
     await openMenuWithEndNoteHighlighted(vi.fn());
@@ -309,6 +430,143 @@ describe("ContextMenuPlugin scrolling", () => {
     });
 
     expect(menuList()).toBeNull();
+  });
+
+  it("closes without throwing when a scroll event targets window itself", async () => {
+    await openMenuWithEndNoteHighlighted(vi.fn());
+
+    // A synthetic scroll can be dispatched directly on `window`, whose `event.target` is `window`
+    // itself rather than a Node — `Node.prototype.contains` throws on a non-Node argument, which
+    // (uncaught, inside an event listener) used to leave the menu open and stale.
+    await act(async () => {
+      expect(() => {
+        globalThis.dispatchEvent(new Event("scroll"));
+      }).not.toThrow();
+    });
+
+    expect(menuList()).toBeNull();
+  });
+
+  it("scrolls the highlighted item into view within the list when navigation moves it out of view", async () => {
+    await openMenu(vi.fn());
+    const list = menuList();
+    if (!list || !(list instanceof HTMLUListElement)) throw new Error("menu list did not render");
+    const items = Array.from(list.querySelectorAll("li"));
+    expect(items.length).toBeGreaterThan(1);
+    // jsdom lays out everything at zero size, so give the list a short viewport (room for one item)
+    // and stack the items below it, the shape a panel-clamped menu takes in a real browser.
+    Object.defineProperty(list, "clientHeight", { value: 30, configurable: true });
+    let scrollTop = 0;
+    Object.defineProperty(list, "scrollTop", {
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+      configurable: true,
+    });
+    items.forEach((item, i) => {
+      Object.defineProperty(item, "offsetTop", { value: i * 30, configurable: true });
+      Object.defineProperty(item, "offsetHeight", { value: 30, configurable: true });
+    });
+
+    // The first ArrowDown highlights index 0, so reaching the last item takes `items.length` presses.
+    let remainingPresses = items.length;
+    while (remainingPresses > 0) {
+      await pressKeyOnDocument("ArrowDown");
+      remainingPresses -= 1;
+    }
+
+    expect(selectedMenuItemTitle()).toBe(
+      items[items.length - 1].querySelector(".text")?.textContent,
+    );
+    expect(list.scrollTop).toBeGreaterThan(0);
+    expect(list.scrollTop).toBe((items.length - 1) * 30);
+  });
+});
+
+describe("ContextMenuPlugin highlight follows the mouse, not a stationary pointer", () => {
+  it("does not highlight an item the pointer merely ends up over without moving", async () => {
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append($createParaNode().append($createTextNode("In the beginning")));
+      },
+      <ContextMenuPlugin options={[{ title: "Insert end note", onSelect: vi.fn() }]} />,
+    );
+    const rootElement = editor.getRootElement();
+    if (!rootElement) throw new Error("editor has no root element");
+    await rightClick(rootElement);
+    const item = document.querySelectorAll(".typeahead-popover li")[1];
+
+    // A clamped menu can open with the (stationary) pointer already over an item: the browser's
+    // post-layout hover recompute fires `mouseover`/`mouseenter` with no real pointer motion.
+    await act(async () => {
+      item.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      item.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+    });
+    expect(selectedMenuItemTitle()).toBeUndefined();
+
+    await act(async () => {
+      item.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    expect(selectedMenuItemTitle()).toBe(item.querySelector(".text")?.textContent);
+  });
+});
+
+describe("ContextMenuPlugin item identity", () => {
+  it("keeps the same DOM li elements across a rebuild with equal options", async () => {
+    const onSelect = vi.fn();
+    let rootElement: HTMLElement | null = null;
+
+    function Host({ label }: { label: string }) {
+      const [composerEditor] = useLexicalComposerContext();
+      useEffect(() => {
+        rootElement = composerEditor.getRootElement();
+      }, [composerEditor]);
+      // A NEW array/object every render, the shape a host rebuild (e.g. a caret move recomputing
+      // its extra options) produces even when the option's own content hasn't changed.
+      return <ContextMenuPlugin options={[{ title: label, onSelect }]} />;
+    }
+
+    function App({ label }: { label: string }) {
+      return (
+        <LexicalComposer
+          initialConfig={{
+            namespace: "TestEditor",
+            nodes: [TypedMarkNode, ...usjReactNodes],
+            onError: (error) => {
+              throw error;
+            },
+            theme: {},
+            editorState: () => {
+              $getRoot().append($createParaNode().append($createTextNode("In the beginning")));
+            },
+          }}
+        >
+          <RichTextPlugin
+            contentEditable={<ContentEditable />}
+            placeholder={null}
+            ErrorBoundary={LexicalErrorBoundary}
+          />
+          <Host label={label} />
+        </LexicalComposer>
+      );
+    }
+
+    let rerender: (ui: ReactElement) => void;
+    await act(async () => {
+      ({ rerender } = render(<App label="Insert end note" />));
+    });
+    if (!rootElement) throw new Error("editor has no root element");
+    await rightClick(rootElement);
+    const before = Array.from(document.querySelectorAll(".typeahead-popover li"));
+    expect(before.length).toBeGreaterThan(0);
+
+    await act(async () => {
+      rerender(<App label="Insert end note" />);
+    });
+
+    const after = Array.from(document.querySelectorAll(".typeahead-popover li"));
+    expect(after).toEqual(before);
   });
 });
 

@@ -2612,7 +2612,7 @@ describe("Backward navigation in the book line", () => {
     return book;
   }
 
-  function $collapsedNote() {
+  function $createCollapsedNoteNode() {
     return $createNoteNode("f", "+").append(
       $createImmutableNoteCallerNode("+", "note1 preview"),
       $createCharNode("ft").append($createTextNode("note1 text")),
@@ -2625,7 +2625,7 @@ describe("Backward navigation in the book line", () => {
     const { editor } = await testEnvironment(() => {
       book = $buildBookLine(() => {
         trailing = $createTextNode(" trailing desc");
-        return [$collapsedNote(), trailing];
+        return [$createCollapsedNoteNode(), trailing];
       });
     });
     updateSelection(editor, trailing!, 0);
@@ -2643,7 +2643,7 @@ describe("Backward navigation in the book line", () => {
     const { editor } = await testEnvironment(() => {
       book = $buildBookLine(() => {
         trailing = $createTextNode(" trailing desc");
-        return [$createTextNode("description"), $collapsedNote(), trailing];
+        return [$createTextNode("description"), $createCollapsedNoteNode(), trailing];
       });
     });
     updateSelection(editor, trailing!, 0);
