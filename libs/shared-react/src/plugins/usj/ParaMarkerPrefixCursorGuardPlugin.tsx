@@ -14,12 +14,13 @@ import {
 import { useEffect } from "react";
 import {
   $isGutterMarkerNode,
+  $isParaLikeNode,
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
   $isVisibleMarkerNode,
   $placeCaretAtBoundary,
   NBSP,
-  SomeParaNode,
+  ParaLikeNode,
 } from "shared";
 import { $isImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
 
@@ -81,8 +82,11 @@ export function $guardCursorOnClick(event: MouseEvent): void {
  *
  * Also called directly when programmatically navigating to a verse whose paragraph has a
  * non-text first child (e.g. in `ScriptureReferencePlugin`).
+ *
+ * Accepts a `BookNode` too: the `\id` line's own immutable `\id GEN ` prefix is the same shape as
+ * a paragraph's marker prefix, just with no leading verse ever preceding it.
  */
-export function $advancePastParaPrefixes(para: SomeParaNode): boolean {
+export function $advancePastParaPrefixes(para: ParaLikeNode): boolean {
   let child: LexicalNode | null = para.getFirstChild();
   let skipCount = 0;
 
@@ -160,6 +164,9 @@ export function $guardCursorAtGutterMarker(target: EventTarget | null): boolean 
  * can reach unreachable by mouse. So the question this asks is about the NODE at the paragraph's
  * start — can it hold the caret? — never about which view is on screen.
  *
+ * Also corrects a `BookNode`'s `\id` line the same way: its immutable `\id GEN ` prefix hosts no
+ * caret either, and the line has no paragraph arm to fall back on.
+ *
  * Returns `true` if the selection was corrected, `false` if no correction was needed.
  *
  * Exported only for direct unit testing; production callers reach it through
@@ -172,7 +179,7 @@ export function $guardCursorAtParaStart(selection: RangeSelection): boolean {
   if (anchor.type !== "element" || anchor.offset !== 0) return false;
 
   const para = $getNodeByKey(anchor.key);
-  if (!$isSomeParaNode(para)) return false;
+  if (!$isParaLikeNode(para)) return false;
   const first = para.getFirstChild();
   if (!$isVisibleMarkerNode(first) && !$isImmutableVerseNode(first)) return false;
   return $advancePastParaPrefixes(para);

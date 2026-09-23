@@ -520,6 +520,32 @@ describe("$guardCursorAtParaStart", () => {
       });
     });
   });
+
+  // The `\id` line's own immutable `\id GEN ` decorator is the same shape as a paragraph's visible
+  // marker prefix, but the line has no paragraph arm to fall back on — a click at (book, 0) (the
+  // hanging edge of the line, or `Home`) must be corrected the same way.
+  describe("book line: ImmutableTypedTextNode as the `\\id` prefix", () => {
+    it("moves element-0 cursor past the prefix glyph to the line's content", () => {
+      let book!: BookNode;
+      let content!: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        content = $createTextNode("Genesis");
+        book = $createBookNode("GEN");
+        $getRoot().append(
+          book.append($createImmutableTypedTextNode("marker", "\\id GEN "), content),
+        );
+      });
+
+      updateSelection(editor, book, 0);
+
+      // SUT
+      expect(runGuard(editor)).toBe(true);
+
+      editor.getEditorState().read(() => {
+        $expectSelectionToBe(content, 0);
+      });
+    });
+  });
 });
 
 describe("$advancePastParaPrefixes", () => {

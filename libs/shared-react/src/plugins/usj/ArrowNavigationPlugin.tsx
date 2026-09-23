@@ -949,6 +949,22 @@ function $handleBackwardNavigation(
   // If a chapter node is the only thing at the beginning → don't move.
   if ($isImmutableChapterNode(prevNode) && !prevNode.getPreviousSibling()) return true;
 
+  // The `\id` line's own immutable `\id GEN ` prefix is the one glyph in the line the caret can
+  // never enter. Checked directly off `prevNode`'s identity, ahead of the offset gate below and
+  // before `node.getParent()` is even read, because `$getPreviousNode` resolves to the SAME prefix
+  // node from two different selection shapes this early: an ELEMENT point at `(book, 1)` (what the
+  // note-hop below creates, so a second press here has offset 1, not 0, and would otherwise skip
+  // past this whole function at the gate below), and a TEXT point at offset 0 of a leading
+  // character span's OPENING glyph (whose own parent is the CharNode, not the book, so a check
+  // keyed on the anchor's parent misses it). Both land here as `prevNode` before either the offset
+  // or the anchor's own container is inspected.
+  if (
+    $isImmutableTypedTextNode(prevNode) &&
+    $isBookNode(prevNode.getParent()) &&
+    prevNode.is(prevNode.getParent()?.getFirstChild())
+  )
+    return true;
+
   // If not at the beginning of node text → skip.
   const isSelectionAtNodeStart = selection.anchor.offset === 0;
   if (!isSelectionAtNodeStart) return false;
