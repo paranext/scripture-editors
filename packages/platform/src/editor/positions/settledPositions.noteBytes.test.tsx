@@ -333,8 +333,9 @@ describe("a typed literal whose settled node does not spell the typed bytes back
     };
   }
 
-  // Each literal settles to something shorter than it was typed: `\cat x\cat*` folds into the
-  // note's category, and a figure's attributes are not displayed at all.
+  // Each literal settles to something the scope's fragment spells shorter than it was typed:
+  // `\cat x\cat*` folds into the note's category, and a figure shows its attributes as read-only
+  // bytes that its settled fragment does not spell — only its caption.
   const literals = [
     ["a folded category", "\\f + \\cat x\\cat*\\ft note\\f*"],
     ["a figure", '\\fig cap|src="a.jpg" size="col"\\fig*'],
