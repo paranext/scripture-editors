@@ -11,7 +11,12 @@ import {
 } from "./adaptors/usj-editor.adaptor";
 import Editor from "./Editor";
 import { EditorProps, EditorRef } from "./editor.model";
-import { $rebuildNoteContent, $rebuildParas, Tier2Context } from "./markerEdit/tier2Rebuild.utils";
+import {
+  $rebuildBook,
+  $rebuildNoteContent,
+  $rebuildParas,
+  Tier2Context,
+} from "./markerEdit/tier2Rebuild.utils";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
@@ -19,6 +24,7 @@ import { act, render } from "@testing-library/react";
 import { $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
 import { createRef, ReactElement, RefObject } from "react";
 import {
+  $isBookNode,
   $isNoteNode,
   $isParaNode,
   getMarker as bundledGetMarker,
@@ -217,7 +223,8 @@ function $collectNotes(nodes: LexicalNode[], out: NoteNode[] = []): NoteNode[] {
  * (mirroring `$rebuildParas`'s own refusal expectation) to close that gap. A COLLAPSED note is
  * skipped, not asserted on: `$buildNoteFragment` always refuses a collapsed note regardless of
  * content, so calling `$rebuildNoteContent` on one would only prove that guard rail exists, not
- * anything about settled output.
+ * anything about settled output. Every root `BookNode` (the `\id` line) is likewise driven through
+ * `$rebuildBook`, the fourth settle scope.
  *
  * `expandedNotes` must match how `usj` would actually be displayed for any note it carries — the
  * same flag `PendingShape.expandedNotes` (settledGetUsj.test.tsx) already threads into
@@ -238,6 +245,13 @@ export function expectTier2FixedPoint(usj: Usj, expandedNotes = false): void {
         .forEach((para, index) => {
           rebuildScopes += 1;
           if ($rebuildParas([para], context)) changed.push(`#${index} \\${para.getMarker()}`);
+        });
+      $getRoot()
+        .getChildren()
+        .filter($isBookNode)
+        .forEach((book, index) => {
+          rebuildScopes += 1;
+          if ($rebuildBook(book, context)) changed.push(`book#${index} \\${book.getMarker()}`);
         });
       $collectNotes($getRoot().getChildren())
         .filter((note) => note.getIsCollapsed() === false)
