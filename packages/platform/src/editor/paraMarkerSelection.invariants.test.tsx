@@ -114,6 +114,37 @@ it("selecting and leaving a marker changes no USJ, emits no ops, and never passe
 
   expect(ref.current?.getUsj()).toEqual(before);
   expect(onUsjChange).not.toHaveBeenCalled();
+
+  // Positive control: prove the spies actually intercept calls the editor makes through the
+  // real `shared` module entry — otherwise the assertion below (no recorded call named the
+  // glyph) would pass vacuously, either because selecting/leaving the marker never calls these
+  // helpers at all, or because the mock failed to wire up. `$getMarkerMenuContext`
+  // (markerMenuContext.utils.ts) unconditionally calls `$isPointInMarkerGlyphText` for any live
+  // range selection, and bails out with no call at all for a node selection — so first
+  // re-selecting the marker (a definite node selection) and confirming a still-selected read
+  // makes zero recorded calls, then moving an ordinary caret into the paragraph's own text and
+  // reading `EditorRef.getMarkerMenuContext()` again — a routed public-API path, not a direct
+  // call into the mocked module — is a call the editor is guaranteed to make through the
+  // intercepted binding. Checkpointed (not cleared) so the calls recorded above, from selecting
+  // and leaving the marker the first time, are still covered by the "never named the glyph"
+  // check below.
+  await act(async () => {
+    glyphElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  expect(ref.current?.getSelectedParaMarker()).toBe("li2");
+  const callsWithMarkerSelected = glyphHelperCalls.length;
+  expect(ref.current?.getMarkerMenuContext()).toBeUndefined();
+  expect(glyphHelperCalls.length).toBe(callsWithMarkerSelected);
+
+  await act(async () => {
+    lexical.update(() => {
+      $getRoot().getChildren().find($isParaNode)?.selectEnd();
+    });
+  });
+  const context = ref.current?.getMarkerMenuContext();
+  expect(context).toBeDefined();
+  expect(glyphHelperCalls.length).toBeGreaterThan(callsWithMarkerSelected);
+
   lexical.getEditorState().read(() => {
     for (const rawArg of glyphHelperCalls.flat()) {
       // `rawArg` is `unknown` (the recorded call args cover every helper's own param type);
