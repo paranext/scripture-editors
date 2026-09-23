@@ -24,8 +24,8 @@ import { SerializedLexicalNode } from "lexical";
 import {
   getEditableCallerText,
   isSerializedBookNode,
-  isSerializedImmutableTypedTextNode,
   isSerializedMarkerNode,
+  isSerializedSynthesizedMarkerNode,
   BookNode,
   MarkerSyntax,
   NBSP,
@@ -202,18 +202,6 @@ export function $serializeExpandedNoteContent(
 }
 
 /**
- * The serialized twin of `$isSynthesizedMarkerNode` (shared's node.utils.ts): either flavor of
- * visible marker glyph — a `MarkerNode` (markerMode "editable") or a marker-typed
- * `ImmutableTypedTextNode` (markerMode "visible" and gutter views).
- */
-function isSerializedSynthesizedMarker(node: SerializedLexicalNode | undefined): boolean {
-  return (
-    isSerializedMarkerNode(node) ||
-    (isSerializedImmutableTypedTextNode(node) && node.textType === "marker")
-  );
-}
-
-/**
  * Why {@link $serializeBookLine} has nothing to hand back:
  *
  * - `"shape"` — the serialization did not open with a book element carrying children.
@@ -275,7 +263,7 @@ export function $serializeBookLine(
   ).root.children;
   if (!isSerializedBookNode(wrapper)) return { failure: "shape" };
 
-  const children = isSerializedSynthesizedMarker(wrapper.children[0])
+  const children = isSerializedSynthesizedMarkerNode(wrapper.children[0])
     ? wrapper.children.slice(1)
     : wrapper.children;
   if (children.length === 0 && following.length === 0) return { failure: "empty" };
