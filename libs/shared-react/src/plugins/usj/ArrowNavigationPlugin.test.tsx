@@ -2637,6 +2637,57 @@ describe("Backward navigation in the book line", () => {
     });
   });
 
+  // The one caret position the immutable `\id GEN ` prefix must never surrender: a second press
+  // from the note-hop's own landing must not cross the prefix onto (book, 0), where the caret would
+  // sit ahead of the glyph on screen but land after it in the file (invariant I).
+  it("does not cross the prefix on a second backward press from the note-hop landing", async () => {
+    let book: BookNode;
+    let trailing: TextNode;
+    const { editor } = await testEnvironment(() => {
+      book = $buildBookLine(() => {
+        trailing = $createTextNode(" trailing desc");
+        return [$createCollapsedNoteNode(), trailing];
+      });
+    });
+    updateSelection(editor, trailing!, 0);
+
+    await pressKey(editor, "ArrowLeft");
+    const event = await pressKey(editor, "ArrowLeft");
+
+    expect(event.defaultPrevented).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(book!, 1);
+    });
+  });
+
+  // The same prefix guard reached from a different selection shape: a TEXT point at offset 0 of a
+  // leading character span's OPENING glyph. Its own parent is the CharNode, not the book, so a
+  // check keyed on `node.getParent()` misses this; `$getPreviousNode` still resolves to the
+  // prefix, which is what the fix keys on instead.
+  it("does not cross the prefix from a leading character span's opening glyph", async () => {
+    let openingGlyph: MarkerNode;
+    const { editor } = await testEnvironment(() => {
+      $buildBookLine(() => {
+        openingGlyph = $createMarkerNode("nd");
+        return [
+          $createCharNode("nd").append(
+            openingGlyph,
+            $createTextNode("LORD"),
+            $createMarkerNode("nd", "closing"),
+          ),
+        ];
+      });
+    });
+    updateSelection(editor, openingGlyph!, 0);
+
+    const event = await pressKey(editor, "ArrowLeft");
+
+    expect(event.defaultPrevented).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(openingGlyph!, 0);
+    });
+  });
+
   it("moves to the point before a note that follows the line's own description text", async () => {
     let book: BookNode;
     let trailing: TextNode;
