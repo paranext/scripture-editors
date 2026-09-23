@@ -4,6 +4,7 @@ import {
   MarkerEditContext,
 } from "./markerEditTier1.utils";
 import {
+  $announceAppPlacedCaret,
   $appendCharPara,
   $appendVersePara,
   $pendGlyphEdit,
@@ -48,7 +49,6 @@ import {
   AttributeRunNode,
   ChapterNode,
   CharNode,
-  CURSOR_CHANGE_TAG,
   getEditableCallerText,
   getMarker as bundledGetMarker,
   getVisibleOpenMarkerText,
@@ -732,13 +732,13 @@ function $appendBodyPara(): { para: ParaNode; body: TextNode } {
  *
  *  1. ScriptureReferencePlugin's async scrRef echo. Typing `\` fires SELECTION_CHANGE, which pushes
  *     a new scrRef up through papi; the returning setting echo (~90-190ms later) re-enters
- *     `$moveCursorToVerseStart`, which yanks the caret to the para/verse start via
- *     `editor.update(..., { tag: CURSOR_CHANGE_TAG })`. Pre-fix the marker engine treated that
+ *     `$moveCursorToVerseStart`, which yanks the caret to the para/verse start in an update that
+ *     dispatches `APP_PLACED_CARET_COMMAND`. Pre-fix the marker engine treated that
  *     programmatic move as a user caret departure and force-settled the just-typed literal —
  *     instant paragraph split, `\p \` autosaved to disk. This falsifies the
  *     original "blur nulls the selection" hypothesis for the TYPING path: focus never
  *     leaves the editor, and the popover — which has no ScriptureReferencePlugin — never
- *     races. Fix: the update listener ignores CURSOR_CHANGE-tagged commits.
+ *     races. Fix: the update listener ignores app-placed commits.
  *
  *  2. Cross-frame blur on palette-item CLICK. Clicking a renderer-overlay palette item blurs the
  *     editor iframe; a real cross-frame blur can null Lexical's live selection, so the BLUR handler
@@ -758,10 +758,13 @@ describe("async scrRef caret-yank and cross-frame blur", () => {
       }),
     );
     editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1")); // pending
-    // The scrRef echo yanks the caret to the para start under a CURSOR_CHANGE tag — NOT a user
-    // departure. (The untagged control is "completes a pending marker when the caret leaves it".)
+    // The scrRef echo yanks the caret to the para start as an app-placed move — NOT a user
+    // departure. (The user-move control is "completes a pending marker when the caret leaves it".)
     await act(async () =>
-      editor.update(() => para.getLastChild()?.selectStart(), { tag: CURSOR_CHANGE_TAG }),
+      editor.update(() => {
+        para.getLastChild()?.selectStart();
+        $announceAppPlacedCaret();
+      }),
     );
     editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1")); // STILL pending
   });
@@ -785,7 +788,12 @@ describe("async scrRef caret-yank and cross-frame blur", () => {
       }),
     );
     // commit 2: programmatic scrRef yank off the pending marker (to the heading text start).
-    await act(async () => editor.update(() => $selectHeadingText(0), { tag: CURSOR_CHANGE_TAG }));
+    await act(async () =>
+      editor.update(() => {
+        $selectHeadingText(0);
+        $announceAppPlacedCaret();
+      }),
+    );
     // commit 3: an untagged follow-on that leaves the caret off the pending marker (genuine move).
     await act(async () => editor.update(() => $selectHeadingText(1)));
     editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1")); // STILL pending, not split
@@ -812,10 +820,13 @@ describe("async scrRef caret-yank and cross-frame blur", () => {
     editor
       .getEditorState()
       .read(() => expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(1));
-    // scrRef echo yanks the caret to the para marker glyph (offset 0) under a CURSOR_CHANGE tag.
+    // scrRef echo yanks the caret to the para marker glyph (offset 0) as an app-placed move.
     // Pre-fix this resolved the pending literal → Tier 2 rebuild → paragraph split (`\p \` on disk).
     await act(async () =>
-      editor.update(() => para.getFirstChild()?.selectStart(), { tag: CURSOR_CHANGE_TAG }),
+      editor.update(() => {
+        para.getFirstChild()?.selectStart();
+        $announceAppPlacedCaret();
+      }),
     );
     editor.getEditorState().read(() => {
       expect($getRoot().getChildren().filter($isParaNode)).toHaveLength(1); // NOT split
@@ -863,8 +874,13 @@ describe("async scrRef caret-yank and cross-frame blur", () => {
         marker.select(3, 3);
       }),
     );
-    // A REAL yank (tagged commit that moves the anchor) arms the window...
-    await act(async () => editor.update(() => $selectHeading(0), { tag: CURSOR_CHANGE_TAG }));
+    // A REAL yank (an app-placed commit that moves the anchor) arms the window...
+    await act(async () =>
+      editor.update(() => {
+        $selectHeading(0);
+        $announceAppPlacedCaret();
+      }),
+    );
     // ...so an untagged follow-on move does not settle (round-2 behavior, still intact):
     await act(async () => editor.update(() => $selectHeading(1)));
     editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1"));

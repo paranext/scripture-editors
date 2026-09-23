@@ -15,6 +15,7 @@ import {
 } from "@eten-tech-foundation/scripture-utilities";
 import {
   $createTextNode,
+  $getEditor,
   $getRoot,
   $isElementNode,
   $isTextNode,
@@ -25,6 +26,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  APP_PLACED_CARET_COMMAND,
   $createAttributeRunNode,
   $createCharNode,
   $createMarkerNode,
@@ -507,4 +509,10 @@ export function usjNoteOf(editor: LexicalEditor): MarkerObject {
  */
 export function usjNoteFromUsfm(usfm: string): MarkerObject {
   return findUsjNote(usfmFragmentToUsjContent(usfm));
+}
+
+/** Announce the current update's caret move as the editor's own, the way ScriptureReferencePlugin's
+ * verse navigation does. Call inside `editor.update()`, after moving the caret. */
+export function $announceAppPlacedCaret(): void {
+  $getEditor().dispatchCommand(APP_PLACED_CARET_COMMAND, undefined);
 }

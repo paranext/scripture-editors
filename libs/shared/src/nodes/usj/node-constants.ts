@@ -1,5 +1,7 @@
 /** This file avoids a circular dependency between `CharNode.ts` and `node.utils.ts`. */
 
+import { createCommand, LexicalCommand } from "lexical";
+
 export interface UnknownAttributes {
   [name: string]: string | undefined;
 }
@@ -44,7 +46,23 @@ export const MARKER_MODE_CLASS_NAME_PREFIX = "marker-";
 
 export const EXTERNAL_USJ_MUTATION_TAG = "external-usj-mutation";
 export const SELECTION_CHANGE_TAG = "selection-change";
+/**
+ * Tags a commit that moves the caret AND changes a node on the editor's own initiative (a transient
+ * caret host created or dropped), keeping it out of the host's USJ-change handling. Never put it on
+ * an update that only moves the caret: Lexical clears an update's tags only when its commit changes
+ * a node, so the tag would ride along on the user's next edit and hide that edit from the host. Use
+ * {@link APP_PLACED_CARET_COMMAND} for a caret-only move.
+ */
 export const CURSOR_CHANGE_TAG = "cursor-change";
+/**
+ * Dispatched inside an update that moves ONLY the caret on the editor's own initiative — following
+ * a scripture-reference navigation, or steering the caret off something it cannot rest on — so a
+ * listener can tell that move from the user's own. A command rather than {@link CURSOR_CHANGE_TAG}
+ * because a tag on a caret-only update outlives it (see the tag's own comment).
+ */
+export const APP_PLACED_CARET_COMMAND: LexicalCommand<void> = createCommand(
+  "APP_PLACED_CARET_COMMAND",
+);
 export const ANNOTATION_CHANGE_TAG = "annotation-change";
 export const DELTA_CHANGE_TAG = "delta-change";
 /**

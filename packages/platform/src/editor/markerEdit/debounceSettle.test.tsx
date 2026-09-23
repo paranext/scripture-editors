@@ -11,7 +11,7 @@
  * every non-historic, non-cursor-tagged, non-suppressed commit (the update listener, where
  * `lastAnchorKey` is maintained) and on the same gestures that reset `settleCascadeDepth` — the
  * KEY_DOWN and CLICK handlers, which also release the app-placed-caret suppression window. The
- * suppressed paths (a historic restore, a `CURSOR_CHANGE_TAG` yank, and any commit inside the
+ * suppressed paths (a historic restore, an app-placed yank, and any commit inside the
  * app-placed window) never arm it — and a timer armed BEFORE the window opened must hold its fire
  * while the window is up, exactly as the departure and forced-commit clocks do: an idle expiry
  * carries no user intent over restored/yanked content.
@@ -20,6 +20,7 @@
 import Editor from "../Editor";
 import { IDLE_SETTLE_DELAY_MS } from "./MarkerEditPlugin";
 import {
+  $announceAppPlacedCaret,
   $appendCharPara,
   $appendVerseAttributeRun,
   historyTestEnvironment,
@@ -58,7 +59,6 @@ import {
   $isParaNode,
   $isVerseNode,
   $verseAttributeRunPieces,
-  CURSOR_CHANGE_TAG,
   getVisibleOpenMarkerText,
   MarkerNode,
   NBSP,
@@ -208,25 +208,23 @@ describe("idle debounce settle (the second settle clock)", () => {
     });
     await $retypeOpenerBare(editor, parts);
 
-    // A scrRef-sync yank: a CURSOR_CHANGE-tagged commit moves the caret to a different node with
+    // A scrRef-sync yank: an app-placed commit moves the caret to a different node with
     // no user input. The timer armed by the edit is still live; the window this yank opens must
     // keep it from settling the literal the suppression machinery exists to protect.
     await act(async () =>
-      editor.update(
-        () => {
-          const lord = requireDefined(
-            $getRoot()
-              .getAllTextNodes()
-              .find(
-                (node): node is TextNode =>
-                  node.getType() === TextNode.getType() && node.getTextContent().includes("Lord"),
-              ),
-            "span content text not found",
-          );
-          lord.select(2, 2);
-        },
-        { tag: CURSOR_CHANGE_TAG },
-      ),
+      editor.update(() => {
+        const lord = requireDefined(
+          $getRoot()
+            .getAllTextNodes()
+            .find(
+              (node): node is TextNode =>
+                node.getType() === TextNode.getType() && node.getTextContent().includes("Lord"),
+            ),
+          "span content text not found",
+        );
+        lord.select(2, 2);
+        $announceAppPlacedCaret();
+      }),
     );
     await advance(IDLE_SETTLE_DELAY_MS + 200);
     expectPendingLiteral(editor, parts);

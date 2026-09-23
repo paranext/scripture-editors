@@ -11,7 +11,7 @@
  */
 
 import { COMMIT_PENDING_MARKERS_COMMAND } from "./MarkerEditPlugin";
-import { testEnvironment } from "./markerEdit.test-helpers";
+import { $announceAppPlacedCaret, testEnvironment } from "./markerEdit.test-helpers";
 import { act } from "@testing-library/react";
 import {
   $createTextNode,
@@ -35,7 +35,6 @@ import {
   $isMarkerNode,
   $isParaNode,
   CharNode,
-  CURSOR_CHANGE_TAG,
   MarkerNode,
   NBSP,
   textTypeState,
@@ -176,10 +175,15 @@ describe("COMMIT_PENDING_MARKERS_COMMAND (abandonment window)", () => {
         sectionMarker.select(3, 3);
       }),
     );
-    // A programmatic scrRef sync yanks the caret elsewhere (CURSOR_CHANGE-tagged commit
-    // that moves the anchor) - NOT a user departure, so the rename must stay pending
-    // even though the current anchor is no longer in the marker node.
-    await act(async () => editor.update(() => bodyText.select(0, 0), { tag: CURSOR_CHANGE_TAG }));
+    // A programmatic scrRef sync yanks the caret elsewhere (an app-placed commit that moves the
+    // anchor) - NOT a user departure, so the rename must stay pending even though the current
+    // anchor is no longer in the marker node.
+    await act(async () =>
+      editor.update(() => {
+        bodyText.select(0, 0);
+        $announceAppPlacedCaret();
+      }),
+    );
     await act(async () => {
       editor.getRootElement()?.focus();
       editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);

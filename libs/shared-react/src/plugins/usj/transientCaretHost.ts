@@ -223,13 +223,13 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
             isBareHost = $isPlaceholderHost(key);
           });
           if (isBareHost) {
-            editor.update(
-              () => {
-                const host = $getNodeByKey(key);
-                if ($isTextNode(host)) host.remove();
-              },
-              { tag: CURSOR_CHANGE_TAG },
-            );
+            editor.update(() => {
+              const host = $getNodeByKey(key);
+              // Tagged only when the host is still there to remove (see CaretHostRepair).
+              if (!$isTextNode(host)) return;
+              host.remove();
+              $addUpdateTag(CURSOR_CHANGE_TAG);
+            });
           }
           hostKeyRef.current = undefined;
           return false;

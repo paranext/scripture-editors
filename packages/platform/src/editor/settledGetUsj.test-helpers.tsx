@@ -84,6 +84,7 @@ interface MountOptions {
   onUsjChange?: OnUsjChange;
   onSelectionChange?: EditorProps<LoggerBasic>["onSelectionChange"];
   scrRef?: SerializedVerseRef;
+  onScrRefChange?: (scrRef: SerializedVerseRef) => void;
   logger?: LoggerBasic;
   isReadonly?: boolean;
   styleInfo?: StyleInfo;
@@ -130,21 +131,33 @@ interface MountedEditor {
   /** Re-render the same editor with a different project stylesheet, the way a host passes one in
    * once it has loaded. */
   rerenderWithStyleInfo: (styleInfo: StyleInfo | undefined) => Promise<void>;
+  /** Re-render the same editor at a different scripture reference, the way a host navigates it. */
+  rerenderWithScrRef: (scrRef: SerializedVerseRef) => Promise<void>;
 }
 
 async function mountEditor(
   usj: Usj,
   view: ViewOptions,
-  { onUsjChange, onSelectionChange, scrRef, logger, isReadonly, styleInfo }: MountOptions = {},
+  {
+    onUsjChange,
+    onSelectionChange,
+    scrRef,
+    onScrRefChange,
+    logger,
+    isReadonly,
+    styleInfo,
+  }: MountOptions = {},
 ): Promise<MountedEditor> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
   const capture: ReactElement = <EditorRefPlugin editorRef={lexicalRef} />;
+  let currentScrRef = scrRef;
   const editorWith = (currentStyleInfo: StyleInfo | undefined): ReactElement => (
     <Editor
       ref={ref}
       defaultUsj={usj}
-      scrRef={scrRef}
+      scrRef={currentScrRef}
+      onScrRefChange={onScrRefChange}
       options={{ view, isReadonly, styleInfo: currentStyleInfo }}
       onUsjChange={onUsjChange}
       onSelectionChange={onSelectionChange}
@@ -161,13 +174,23 @@ async function mountEditor(
   if (!lexicalRef.current) throw new Error("lexical editor was not captured");
   if (!unmount || !rerender) throw new Error("render did not return a teardown");
   const rerenderEditor = rerender;
+  let currentStyleInfo = styleInfo;
   return {
     ref,
     lexical: lexicalRef.current,
     unmount,
     rerenderWithStyleInfo: async (nextStyleInfo) => {
+      currentStyleInfo = nextStyleInfo;
       await act(async () => {
         rerenderEditor(editorWith(nextStyleInfo));
+        await Promise.resolve();
+      });
+    },
+    rerenderWithScrRef: async (nextScrRef) => {
+      currentScrRef = nextScrRef;
+      await act(async () => {
+        rerenderEditor(editorWith(currentStyleInfo));
+        await Promise.resolve();
         await Promise.resolve();
       });
     },

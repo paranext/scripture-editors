@@ -115,8 +115,8 @@ import {
   $isSomeChapterNode,
   $placeCaretAtBoundary,
   BookNode,
+  APP_PLACED_CARET_COMMAND,
   ChapterNode,
-  CURSOR_CHANGE_TAG,
   ImmutableChapterNode,
   getSelectionStartNode,
   isVerseInRange,
@@ -370,9 +370,7 @@ function onPropChanged(machine: Machine, editor: LexicalEditor, newRef: Serializ
   // Prop-driven placement gate: never move the caret inside a different book's (stale) document.
   const bookCode = getCommittedBookCode(editor);
   if (!bookCode || bookCode === newRef.book) {
-    editor.update(() => $moveCaretToVerseStart(newRef.chapterNum, newRef.verseNum), {
-      tag: CURSOR_CHANGE_TAG,
-    });
+    editor.update(() => $placeCaretAtVerseStart(editor, newRef.chapterNum, newRef.verseNum));
   }
 }
 
@@ -481,15 +479,28 @@ function onDocumentChanged(
  * would skip the placement that makes the caret match the just-emitted correction. */
 function schedulePlacingCaretAtVerseStart(machine: Machine, editor: LexicalEditor) {
   queueMicrotask(() => {
-    editor.update(
-      () => $moveCaretToVerseStart(machine.scrRef.chapterNum, machine.scrRef.verseNum),
-      { tag: CURSOR_CHANGE_TAG },
+    editor.update(() =>
+      $placeCaretAtVerseStart(editor, machine.scrRef.chapterNum, machine.scrRef.verseNum),
     );
   });
 }
 
 /** Moves the caret to the start of `verseNum` in `chapterNum`. No-op when the caret is already
  * inside a verse range containing `verseNum` (a range is one location), or the target is absent. */
+/**
+ * {@link $moveCaretToVerseStart}, announced as the editor's own placement when it moved the caret
+ * (see `APP_PLACED_CARET_COMMAND`) — the move follows a navigation, not the user. The update is
+ * deliberately untagged: it moves only the caret, and a tag on a caret-only update would ride along
+ * on the user's next edit.
+ */
+function $placeCaretAtVerseStart(editor: LexicalEditor, chapterNum: number, verseNum: number) {
+  const before = $getSelection()?.clone();
+  $moveCaretToVerseStart(chapterNum, verseNum);
+  const after = $getSelection();
+  if (after && !(before && after.is(before)))
+    editor.dispatchCommand(APP_PLACED_CARET_COMMAND, undefined);
+}
+
 function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
   const startNode = getSelectionStartNode($getSelection());
   const selectedVerse = $findThisVerse(startNode)?.getNumber();

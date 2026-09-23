@@ -1,6 +1,5 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
-  $addUpdateTag,
   $getPreviousSelection,
   $getSelection,
   $isRangeSelection,
@@ -16,7 +15,7 @@ import {
   $isNoteNode,
   $noteEditableCallerNode,
   $placeCaretAtBoundary,
-  CURSOR_CHANGE_TAG,
+  APP_PLACED_CARET_COMMAND,
   NoteNode,
 } from "shared";
 
@@ -255,10 +254,11 @@ export function NoteShellCaretGuardPlugin(): null {
     return editor.registerCommand(
       SELECTION_CHANGE_COMMAND,
       () => {
-        // Command handlers already run inside an update, so the tag joins that commit rather than
-        // opening a new one. Nothing here changes content, so tagging it costs nothing already
-        // excluded from saved Scripture and collaborative traffic.
-        if ($guardCaretOutOfNoteShell(isPointerDown.current)) $addUpdateTag(CURSOR_CHANGE_TAG);
+        // Command handlers already run inside an update, so the announcement joins that commit.
+        // Announced rather than tagged: the guard moves only the caret, and a tag on a caret-only
+        // commit would ride along on the user's next edit and hide it from the host.
+        if ($guardCaretOutOfNoteShell(isPointerDown.current))
+          editor.dispatchCommand(APP_PLACED_CARET_COMMAND, undefined);
         return false;
       },
       COMMAND_PRIORITY_EDITOR,

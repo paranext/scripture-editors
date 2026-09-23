@@ -78,6 +78,7 @@ import {
   AttributeRunNode,
   ChapterNode,
   CharNode,
+  APP_PLACED_CARET_COMMAND,
   CURSOR_CHANGE_TAG,
   DELTA_CHANGE_TAG,
   displayRunDescriptor,
@@ -558,7 +559,11 @@ export function MarkerEditPlugin({
     // (a mouse click is user intent just like a keystroke — a keydown-only clear would leave the
     // window open across mouse-only interaction).
     let appPlacedCaret = false;
-    // Anchor of the most recent commit (tagged or not) — the tagged-branch "did this commit move
+    // Set by APP_PLACED_CARET_COMMAND inside the update that moved the caret, and consumed by the
+    // update listener for that update's commit — the caret-only counterpart of CURSOR_CHANGE_TAG,
+    // which cannot mark a caret-only commit without also marking the user's next one.
+    let caretPlacedByApp = false;
+    // Anchor of the most recent commit (app-placed or not) — the app-placed branch "did this commit move
     // the caret" comparison. Distinct from lastAnchorKey, which deliberately ignores tagged/
     // app-placed moves (it feeds the BLUR except-the-user's-node fallback).
     let lastCommitAnchorKey: NodeKey | undefined;
@@ -1038,6 +1043,14 @@ export function MarkerEditPlugin({
         COMMAND_PRIORITY_LOW,
       ),
       editor.registerCommand(
+        APP_PLACED_CARET_COMMAND,
+        () => {
+          caretPlacedByApp = true;
+          return false;
+        },
+        COMMAND_PRIORITY_LOW,
+      ),
+      editor.registerCommand(
         BLUR_COMMAND,
         () => {
           // While the app-placed-caret window is armed (a scrRef-sync yank or an undo/redo
@@ -1070,13 +1083,15 @@ export function MarkerEditPlugin({
         COMMAND_PRIORITY_LOW,
       ),
       editor.registerUpdateListener(({ editorState, tags }) => {
+        const isAppPlacedMove = caretPlacedByApp || tags.has(CURSOR_CHANGE_TAG);
+        caretPlacedByApp = false;
         context.splitExpected.current = false;
         context.wholeParaDeleteExpected?.clear();
         context.collapsedDeleteCaretParas?.clear();
         context.rebuildAttempted.clear();
         // Typing path: ScriptureReferencePlugin's async scrRef echo re-enters
-        // `$moveCursorToVerseStart` and yanks the caret to the para/verse start via
-        // `editor.update(..., { tag: CURSOR_CHANGE_TAG })` ~90-190ms after a keystroke (timeline:
+        // `$moveCursorToVerseStart` and yanks the caret to the para/verse start in an update that
+        // dispatches APP_PLACED_CARET_COMMAND ~90-190ms after a keystroke (timeline:
         // `\` lands, caret sits in the pending literal, then the caret is pulled
         // to the `\s1` glyph start). That is a PROGRAMMATIC cursor move, NOT a user caret departure,
         // so it must not update the tracked anchor nor queue resolution — otherwise the just-typed
@@ -1086,7 +1101,7 @@ export function MarkerEditPlugin({
         // never leaves the editor there; the cross-frame-blur null path is a separate, click-only
         // actor handled by the BLUR handler's lastAnchorKey fallback above.
         //
-        // The tag only rides on the yank commit itself; the runtime smoke proved a FOLLOW-ON untagged
+        // The signal marks only the yank commit itself; the runtime smoke proved a FOLLOW-ON unmarked
         // commit then resolves the pending. So mark the caret app-placed here and keep suppressing
         // resolution (below) until the user's next keystroke or mouse click clears the flag — not
         // just for this one commit.
@@ -1094,8 +1109,8 @@ export function MarkerEditPlugin({
           const selection = $getSelection();
           return $isRangeSelection(selection) ? selection.focus.key : undefined;
         });
-        // "Did THIS commit move the caret to a different node" — tracked per commit (tagged or
-        // not) so the tagged-branch comparison below is never stale. NOT read from
+        // "Did THIS commit move the caret to a different node" — tracked per commit (app-placed or
+        // not) so the app-placed branch comparison below is never stale. NOT read from
         // prevEditorState inside this listener: entering another state's read() here taints
         // Lexical's active-state bookkeeping mid-commit and stalls the deferred resolution's
         // microtask (observed as departure settles never firing in jsdom — same frozen-state
@@ -1134,9 +1149,9 @@ export function MarkerEditPlugin({
           if (anchorKey !== undefined) lastAnchorKey = anchorKey;
           return;
         }
-        if (tags.has(CURSOR_CHANGE_TAG)) {
-          // Narrowing: arm the suppression window only when the tagged commit
-          // actually MOVED the caret to a different node — an app-placed yank. Tagged commits
+        if (isAppPlacedMove) {
+          // Narrowing: arm the suppression window only when the app-placed commit
+          // actually MOVED the caret to a different node — an app-placed yank. App-placed commits
           // that leave the anchor where it was (or carry no selection) are bookkeeping, not
           // yanks; arming on them re-opened the window after every echo cycle and, combined with
           // the mouse-only-clear residual, could freeze departure settling indefinitely.
