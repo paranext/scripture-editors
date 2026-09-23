@@ -121,8 +121,25 @@ function $settledTarget(
   location: UsjDocumentLocation,
 ): SettledTarget | undefined {
   const indexes = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
-  // The document root addresses itself: no top-level index to restate.
-  if (indexes.length === 0) return { kind: "live", location };
+  if (indexes.length === 0) {
+    // The document root addresses itself: no top-level index to restate — except in the older
+    // root-and-index spelling of a gap between blocks, whose index is a top-level index like any
+    // other.
+    if (!isUsjTextContentLocation(location)) return { kind: "live", location };
+    const next = prepared.settledToLiveTopIndex(location.offset);
+    // Past the settled document's last block is the end of the document, live as well.
+    if (!next) {
+      const liveCount = $getLogicalContentItems(
+        $getRoot(),
+        hasStandardViewWhitespace(prepared.viewOptions),
+      ).length;
+      return { kind: "live", location: { ...location, offset: liveCount } };
+    }
+    // In front of a block a settle rebuilt is in front of whatever that block's settled start is.
+    if (next.plan && next.indexWithinScope > 0)
+      return $settledTarget(prepared, { jsonPath: usjJsonPathFromIndexes([location.offset]) });
+    return { kind: "live", location: { ...location, offset: next.liveIndex } };
+  }
   const top = prepared.settledToLiveTopIndex(indexes[0]);
   if (!top) return undefined;
   if (top.plan)
@@ -438,6 +455,28 @@ function $livePointInPreservedRun(
   return { key: node.getKey(), offset: resolved.offset, type: resolved.type };
 }
 
+/**
+ * The live point past a top-level scope's last node, when `scratchLocation` is the end of the
+ * scope's settled tree — one past its last token, which is how the end of the document is spelled
+ * when the scope is the document's last. No byte anchor can spell it: it lies past every byte the
+ * scope has.
+ */
+function $livePointPastScope(
+  plan: SettleScopePlan,
+  scratchLocation: UsjDocumentLocation,
+  viewOptions: ViewOptions,
+): FragmentPoint | undefined {
+  const isScratchEnd = plan.scratch.getEditorState().read(() => {
+    const [node, offset] = $getNodeFromLocation(scratchLocation, viewOptions);
+    return $isRootNode(node) && offset !== undefined && offset >= node.getChildrenSize();
+  });
+  if (!isScratchEnd) return undefined;
+  const last = plan.liveNodes[plan.liveNodes.length - 1];
+  const parent = last.getParent();
+  if (!$isRootNode(parent)) return undefined;
+  return { key: parent.getKey(), offset: last.getIndexWithinParent() + 1, type: "element" };
+}
+
 /** The live point for a settled location inside a rebuilt scope. */
 function $livePointInScope(
   context: SettledPositionContext,
@@ -450,6 +489,8 @@ function $livePointInScope(
   // either: refuse the whole scope rather than answer a position the two documents disagree about.
   if (!liveFragment || !scratchFragment || !sentinelMap) return undefined;
   const scratchLocation = withContentIndexes(target.location, target.scratchIndexes);
+  const pastScope = $livePointPastScope(plan, scratchLocation, context.tier2.viewOptions);
+  if (pastScope) return pastScope;
   const resolved = plan.scratch
     .getEditorState()
     .read(() => $resolveInScratch(scratchFragment, scratchLocation, context.tier2));
@@ -738,7 +779,32 @@ export function $settledLocationFromLivePoint(
 ): UsjDocumentLocation | undefined {
   const plan = prepared.planContaining(node);
   if (plan) return $settledLocationInScope(prepared, plan, node, offset);
+  // The document end is spelled on the document's last token, which a pending last block settles
+  // into a different one.
+  const lastBlock = $isRootNode(node) && offset >= node.getChildrenSize() && node.getLastChild();
+  const endPlan = lastBlock ? prepared.planContaining(lastBlock) : undefined;
+  if (endPlan) return $settledDocumentEnd(prepared, endPlan);
   return settledTopTranslated(prepared, $getLocationFromNode(node, offset, prepared.viewOptions));
+}
+
+/**
+ * The end of the SETTLED document when its last block is in `plan`'s scope: spelled on the last
+ * token, which is the scope's settled last token rather than the live one.
+ */
+function $settledDocumentEnd(
+  prepared: PreparedScopes,
+  plan: SettleScopePlan,
+): UsjDocumentLocation | undefined {
+  const scratchEnd = plan.scratch.getEditorState().read(() => {
+    const root = $getRoot();
+    return $getLocationFromNode(root, root.getChildrenSize(), prepared.viewOptions);
+  });
+  const indexes = settledPathFromScratch(
+    plan,
+    $settledScopePath(prepared, plan),
+    indexesFromUsjJsonPath(contentPathOf(scratchEnd.jsonPath)),
+  );
+  return indexes && withContentIndexes(scratchEnd, indexes);
 }
 
 /**

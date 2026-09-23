@@ -25,10 +25,18 @@ import {
   serializeEditorState,
 } from "../adaptors/usj-editor.adaptor";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { settledPositionContext, twoParaUsj, typeOver } from "./positions.test-helpers";
+import {
+  $livePointFromSettledLocation,
+  $liveSelectionFromSettled,
+  $settledLocationFromLivePoint,
+} from "./settledPositions.utils";
+import { $prepareSettleScopes } from "./settledScopes.utils";
 import { MarkerContent, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
+  $getNodeByKey,
   $getRoot,
   $isElementNode,
   $setSelection,
@@ -41,6 +49,7 @@ import {
   $getLogicalContentItems,
   $isMarkerNode,
   $isVisibleMarkerNode,
+  getPendedDisplayOwners,
   TypedMarkNode,
 } from "shared";
 import {
@@ -537,4 +546,116 @@ describe("the editor API", () => {
     const reported = lexical.getEditorState().read(() => $getUsjSelectionFromEditor(view));
     expect(reported).toEqual({ start: { jsonPath: "$.content[3]['marker']", propertyOffset: 2 } });
   });
+});
+
+describe("a caret with no text beside it while a paragraph is pending", () => {
+  /** `plain body` retyped as `plain \q1 body`: settled, the one live paragraph is two, so every
+   * top-level index after it is one higher settled than live. */
+  async function splitPending() {
+    const mounted = await mountStandardViewEditor(twoParaUsj(["plain body"]));
+    await typeOver(mounted.lexical, "plain body", "plain \\q1 body");
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    const settled = mounted.ref.current?.getUsj()?.content ?? [];
+    expect(settled.map((item) => (typeof item === "string" ? item : item.marker))).toEqual([
+      "id",
+      "c",
+      "p",
+      "q1",
+      "p",
+    ]);
+    return { ...mounted, context: settledPositionContext(mounted.lexical) };
+  }
+
+  /** The LAST paragraph retyped as `depart \q1 here`, so the document's last token is in the
+   * pending scope and is a different token settled (`here`) than live (`depart \q1 here`). */
+  async function lastParagraphPending() {
+    const mounted = await mountStandardViewEditor(twoParaUsj(["first"]));
+    await typeOver(mounted.lexical, "depart here", "depart \\q1 here");
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    const settled = mounted.ref.current?.getUsj()?.content ?? [];
+    expect(settled[settled.length - 1]).toMatchObject({ marker: "q1", content: ["here"] });
+    return { ...mounted, context: settledPositionContext(mounted.lexical) };
+  }
+
+  it("reports a root caret in front of a block after the pending one at the block's settled index", async () => {
+    const { lexical } = await splitPending();
+
+    const location = lexical
+      .getEditorState()
+      .read(() =>
+        $settledLocationFromLivePoint(
+          $prepareSettleScopes(settledPositionContext(lexical)),
+          $getRoot(),
+          3,
+        ),
+      );
+
+    expect(location).toEqual({ jsonPath: "$.content[4]" });
+  });
+
+  it("reports the document end on the SETTLED last token when the last paragraph is pending", async () => {
+    const { lexical, context } = await lastParagraphPending();
+
+    const location = lexical.getEditorState().read(() => {
+      const root = $getRoot();
+      return $settledLocationFromLivePoint(
+        $prepareSettleScopes(context),
+        root,
+        root.getChildrenSize(),
+      );
+    });
+
+    // Rule 3 on the settled document's last token: `here`, one past its newline.
+    expect(location).toEqual({ jsonPath: "$.content[4].content[0]", offset: "here".length + 1 });
+  });
+
+  it("resolves the SETTLED document end to the live document end when the last paragraph is pending", async () => {
+    const { lexical, context } = await lastParagraphPending();
+
+    const [point, rootKey, rootSize] = lexical.getEditorState().read(() => {
+      const root = $getRoot();
+      return [
+        $livePointFromSettledLocation(context, $prepareSettleScopes(context), {
+          jsonPath: "$.content[4].content[0]",
+          offset: "here".length + 1,
+        }),
+        root.getKey(),
+        root.getChildrenSize(),
+      ] as const;
+    });
+
+    expect(point).toEqual({ key: rootKey, offset: rootSize, type: "element" });
+  });
+
+  it.each<[string, UsjDocumentLocation, UsjDocumentLocation]>([
+    // Settled 4 is the paragraph after the split, which is live 3.
+    ["a block after the pending one", { jsonPath: "$", offset: 4 }, { jsonPath: "$.content[3]" }],
+    // Settled 5 is the settled item count: the document end.
+    [
+      "the document end",
+      { jsonPath: "$", offset: 5 },
+      { jsonPath: "$.content[3].content[0]", offset: "depart here".length + 1 },
+    ],
+  ])(
+    "translates the older root-and-index spelling of %s like any top-level index",
+    async (_name, settled, live) => {
+      const { lexical, context } = await splitPending();
+
+      const reported = lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const point = $livePointFromSettledLocation(context, prepared, settled);
+        const node = point && $getNodeByKey(point.key);
+        // What setSelection and setAnnotation resolve: the translated location, in the live tree.
+        const translated = $liveSelectionFromSettled(context, prepared, { start: settled });
+        const range = translated && $getRangeFromUsjSelection(translated, prepared.viewOptions);
+        return [
+          node && $getLocationFromNode(node, point.offset, prepared.viewOptions),
+          range &&
+            $getLocationFromNode(range.anchor.getNode(), range.anchor.offset, prepared.viewOptions),
+        ];
+      });
+
+      expect(reported).toEqual([live, live]);
+    },
+  );
 });
