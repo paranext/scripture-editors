@@ -23,6 +23,7 @@ import {
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { act } from "@testing-library/react";
 import {
+  $createPoint,
   $createRangeSelection,
   $createTextNode,
   $getRoot,
@@ -43,6 +44,7 @@ import {
   $createBookNode,
   $createCharNode,
   $createImmutableTypedTextNode,
+  $createImmutableUnmatchedNode,
   $createMarkerNode,
   $createNoteNode,
   $createParaNode,
@@ -473,6 +475,168 @@ describe("$applyMarkerMenuSelection", () => {
         expect(rightSpans).toHaveLength(1);
         expect(rightSpans[0].getMarker()).toBe("nd");
         expect(rightSpans[0].getTextContent()).toContain("name");
+      });
+    });
+
+    it("does not double the opener when the selection starts just after a char span's opening glyph", async () => {
+      // Left from the span's first letter lands the caret at the opening glyph's own trailing
+      // edge (a TEXT point on the MarkerNode itself); Shift+Right from there extends the focus
+      // onto the structural NBSP separator, not into the glyph. The cut must land on the correct
+      // side of the glyph rather than inside the glyph node itself, or the opener doubles across
+      // the split.
+      let openingGlyph: MarkerNode;
+      let ndText: TextNode;
+      const { editor } = await historyTestEnvironment(() => {
+        const nd = $createCharNode("nd");
+        openingGlyph = $createMarkerNode("nd");
+        ndText = $createTextNode(`${NBSP}Lord`);
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+            $createTextNode("Genesis "),
+            nd.append(openingGlyph, ndText, $createMarkerNode("nd", "closing")),
+          ),
+        );
+      });
+      await act(async () =>
+        editor.update(() => {
+          const range = $createRangeSelection();
+          range.anchor = $createPoint(
+            openingGlyph.getKey(),
+            openingGlyph.getTextContentSize(),
+            "text",
+          );
+          range.focus = $createPoint(ndText.getKey(), 1, "text");
+          $setSelection(range);
+        }),
+      );
+
+      const item: MarkerMenuItem = { marker: "q1", kind: "paragraph", isBasic: true };
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            item,
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        // Exactly one opening "nd" glyph exists across the whole document, wherever it landed.
+        const openers = $getRoot()
+          .getAllTextNodes()
+          .filter(
+            (node): node is MarkerNode =>
+              $isMarkerNode(node) &&
+              node.getMarker() === "nd" &&
+              node.getMarkerSyntax() !== "closing",
+          );
+        expect(openers).toHaveLength(1);
+        // The word survives whole, never absorbed into a marker name.
+        expect($getRoot().getTextContent()).toContain("Lord");
+      });
+    });
+
+    it("does not cut through an unmatched closing glyph when the caret sits inside it", async () => {
+      // A caret inside "\nd*" (an ImmutableUnmatchedNode's own glyph bytes) must never be split
+      // through — that would cut the closer into "\n" + "d*". Mode "normal": the mode Standard
+      // view's real deserializer gives it (usj-editor.adaptor.ts), not the constructor's own
+      // "token" default, which would make it caret-atomic instead.
+      const { editor } = await historyTestEnvironment(() => {
+        const unmatched = $createImmutableUnmatchedNode("nd*");
+        unmatched.setMode("normal");
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+            $createTextNode("Genesis "),
+            unmatched,
+          ),
+        );
+      });
+      await act(async () =>
+        editor.update(() => {
+          const unmatched = $getRoot()
+            .getAllTextNodes()
+            .find((node) => node.getTextContent() === "\\nd*");
+          if (!unmatched) throw new Error("expected the unmatched closer");
+          unmatched.select(2, 2);
+        }),
+      );
+
+      const item: MarkerMenuItem = { marker: "q1", kind: "paragraph", isBasic: true };
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            item,
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        // The unmatched closer's own bytes were never cut in two: no synthesized "\n" paragraph,
+        // and the glyph's full text survives somewhere in the document.
+        const markers = $getRoot()
+          .getChildren()
+          .filter($isParaNode)
+          .map((node) => node.getMarker());
+        expect(markers).not.toContain("n");
+        expect($getRoot().getTextContent()).toContain("\\nd*");
+      });
+    });
+
+    it("does not double the opener when a collapsed caret sits on a char span's opening glyph", async () => {
+      // The same corrupting shape as the selection case above, reached by a bare caret instead
+      // of a range: one Left-arrow from the span's first letter lands exactly here with nothing
+      // selected.
+      let openingGlyph: MarkerNode;
+      let ndText: TextNode;
+      const { editor } = await historyTestEnvironment(() => {
+        const nd = $createCharNode("nd");
+        openingGlyph = $createMarkerNode("nd");
+        ndText = $createTextNode(`${NBSP}Lord`);
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+            $createTextNode("Genesis "),
+            nd.append(openingGlyph, ndText, $createMarkerNode("nd", "closing")),
+          ),
+        );
+      });
+      await act(async () =>
+        editor.update(() => {
+          const size = openingGlyph.getTextContentSize();
+          openingGlyph.select(size, size);
+        }),
+      );
+
+      const item: MarkerMenuItem = { marker: "q1", kind: "paragraph", isBasic: true };
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            item,
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        const openers = $getRoot()
+          .getAllTextNodes()
+          .filter(
+            (node): node is MarkerNode =>
+              $isMarkerNode(node) &&
+              node.getMarker() === "nd" &&
+              node.getMarkerSyntax() !== "closing",
+          );
+        expect(openers).toHaveLength(1);
+        expect($getRoot().getTextContent()).toContain("Lord");
       });
     });
 
@@ -2611,6 +2775,160 @@ describe("$splitParagraphWithMarker — the `\\id` line", () => {
       expect(para.getMarker()).toBe("p");
       expect($isMarkerNode(para.getFirstChild())).toBe(true);
       expect(para.getTextContent()).toContain(" description");
+    });
+  });
+});
+
+describe("$splitParagraphWithMarker — the `\\id` line's own prefix glyph", () => {
+  it("keeps the prefix glyph when a paragraph pick's collapsed caret sits at (book, 0)", async () => {
+    // (book, 0) is an ELEMENT point BEFORE the prefix glyph — where Home, a click at the line's
+    // hanging edge, or `$getRoot().selectStart()` lands. The prefix glyph must stay in the book
+    // rather than moving into the new paragraph with the rest of the line's content.
+    const { editor } = await historyTestEnvironment(() => {
+      $buildBookLine("Genesis description");
+    });
+    await act(async () =>
+      editor.update(() => {
+        const [book] = $getRoot().getChildren();
+        if (!$isBookNode(book)) throw new Error("expected a BookNode");
+        book.select(0, 0);
+      }),
+    );
+
+    await act(async () =>
+      editor.update(() => {
+        $splitParagraphWithMarker("p", viewOptions);
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const children = $getRoot().getChildren();
+      expect(children).toHaveLength(2);
+      const [book, para] = children;
+      if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+      expect(book.getTextContent()).toBe(`\\id GEN${NBSP}`);
+      if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+      expect(para.getTextContent()).toContain("Genesis description");
+    });
+  });
+
+  it("keeps the prefix glyph when a paragraph pick's selection starts at (book, 0)", async () => {
+    // The same element point, this time as one end of a non-collapsed selection, where
+    // `removeText()` runs before the split logic ever sees the caret — the glyph must survive
+    // that removal too, not just a collapsed caret's insertion.
+    let idText: TextNode;
+    const { editor } = await historyTestEnvironment(() => {
+      idText = $buildBookLine("Genesis description");
+    });
+    await act(async () =>
+      editor.update(() => {
+        const [book] = $getRoot().getChildren();
+        if (!$isBookNode(book)) throw new Error("expected a BookNode");
+        const range = $createRangeSelection();
+        range.anchor = $createPoint(book.getKey(), 0, "element");
+        range.focus = $createPoint(idText.getKey(), 7, "text");
+        $setSelection(range);
+      }),
+    );
+
+    await act(async () =>
+      editor.update(() => {
+        $splitParagraphWithMarker("p", viewOptions);
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const children = $getRoot().getChildren();
+      expect(children).toHaveLength(2);
+      const [book, para] = children;
+      if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+      expect(book.getTextContent()).toBe(`\\id GEN${NBSP}`);
+      if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+      expect(para.getTextContent()).toContain(" description");
+    });
+  });
+});
+
+describe("$splitParagraphWithMarker — a selection spanning the `\\id` line into the next paragraph", () => {
+  async function bookThenHeading() {
+    let idText: TextNode | undefined;
+    let headingText: TextNode | undefined;
+    const environment = await historyTestEnvironment(() => {
+      idText = $buildBookLine("Genesis");
+      headingText = $createTextNode("heading");
+      $getRoot().append(
+        $createParaNode("h").append(
+          $createMarkerNode("h"),
+          $createTrailingSpaceNode(),
+          headingText,
+        ),
+      );
+    });
+    return {
+      editor: environment.editor,
+      idText: requireDefined(idText, "book line text"),
+      headingText: requireDefined(headingText, "heading paragraph text"),
+    };
+  }
+
+  it("splits when the selection runs FORWARD from the `\\id` line into the next paragraph", async () => {
+    const { editor, idText, headingText } = await bookThenHeading();
+    await act(async () =>
+      editor.update(() => {
+        const range = $createRangeSelection();
+        range.anchor = $createPoint(idText.getKey(), 3, "text");
+        range.focus = $createPoint(headingText.getKey(), 3, "text");
+        $setSelection(range);
+      }),
+    );
+
+    await act(async () =>
+      editor.update(() => {
+        $splitParagraphWithMarker("q1", viewOptions);
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const children = $getRoot().getChildren();
+      expect($isBookNode(children[0])).toBe(true);
+      // No text was silently lost: every byte outside the removed selection survives somewhere.
+      const text = $getRoot().getTextContent();
+      expect(text).toContain("Gen");
+      expect(text).toContain("ding");
+      // A paragraph pick must mutate the tree — never accept the pick and change nothing, nor
+      // merge the tail into the book without ever creating the new paragraph.
+      const newParas = children.filter($isParaNode).filter((node) => node.getMarker() === "q1");
+      expect(newParas).toHaveLength(1);
+    });
+  });
+
+  it("splits when the selection runs BACKWARD from the next paragraph into the `\\id` line", async () => {
+    const { editor, idText, headingText } = await bookThenHeading();
+    await act(async () =>
+      editor.update(() => {
+        const range = $createRangeSelection();
+        range.anchor = $createPoint(headingText.getKey(), 3, "text");
+        range.focus = $createPoint(idText.getKey(), 3, "text");
+        $setSelection(range);
+      }),
+    );
+
+    await act(async () =>
+      editor.update(() => {
+        $splitParagraphWithMarker("q1", viewOptions);
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const children = $getRoot().getChildren();
+      expect($isBookNode(children[0])).toBe(true);
+      const text = $getRoot().getTextContent();
+      expect(text).toContain("Gen");
+      expect(text).toContain("ding");
+      // A pick must mutate the tree — never accept the pick and decline outright, leaving the
+      // original `\h` paragraph in place with nothing picked at all.
+      const newParas = children.filter($isParaNode).filter((node) => node.getMarker() === "q1");
+      expect(newParas).toHaveLength(1);
     });
   });
 });
