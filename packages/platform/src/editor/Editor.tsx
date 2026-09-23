@@ -46,6 +46,7 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { $setBlocksType } from "@lexical/selection";
+import { $findMatchingParent } from "@lexical/utils";
 import { deepEqual } from "fast-equals";
 import {
   $addUpdateTag,
@@ -73,6 +74,7 @@ import {
 } from "react";
 import {
   $createParaNode,
+  $isBookNode,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
@@ -706,6 +708,20 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               `formatPara refused: no range selection to retag with "${blockMarker}" ` +
                 "(restore the caret before applying, as the marker palettes do)",
             );
+            return;
+          }
+          // A book is never retagged: `\id` names the book, so a paragraph pick with the caret in
+          // the line can only SPLIT it, the tail after the caret becoming a new paragraph inserted
+          // directly after the book (docs/standard-view-invariants.md). `$setBlocksType` has no such
+          // rule — it would happily convert the BookNode itself into a `ParaNode`, dropping the book
+          // object (and its code) from the file while the stale `\id GEN` glyph stayed on screen
+          // inside the new paragraph.
+          if ($findMatchingParent(selection.focus.getNode(), $isBookNode)) {
+            if (!$splitParagraphWithMarker(blockMarker, viewOptions)) {
+              logger?.warn(
+                `formatPara refused: could not split the \\id line at the caret to retag with "${blockMarker}"`,
+              );
+            }
             return;
           }
           $setBlocksType(selection, () => $createParaNode(blockMarker));

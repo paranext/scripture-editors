@@ -33,6 +33,7 @@ import {
 } from "lexical";
 import { createRef, PropsWithChildren, ReactElement, RefObject, useEffect, useState } from "react";
 import {
+  $isBookNode,
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
@@ -1655,6 +1656,57 @@ describe("formatPara (standard view)", () => {
       expect(glyph.getTextContent()).toBe("\\m");
       // Content survived the block conversion.
       expect(para.getTextContent()).toContain("first verse text");
+    });
+  });
+
+  // `$setBlocksType` treats `BookNode` as an ordinary convertible block (nothing about it opts
+  // out), so a paragraph-style pick with the caret in the `\id` line used to convert the book
+  // itself into a `ParaNode` — dropping the book object and its code from the saved USJ while the
+  // stale `\id GEN` glyph stayed on screen inside the new paragraph. A book is never retagged: the
+  // pick can only SPLIT the line, starting a new paragraph after the book
+  // (docs/standard-view-invariants.md).
+  it("splits the \\id line instead of retagging the BookNode", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+
+    // Park the caret in the book's own text.
+    act(() => {
+      lexical.update(() => {
+        const textNode = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("Test Book"));
+        if (!textNode || !$isTextNode(textNode)) throw new Error("seed text node not found");
+        textNode.select(4, 4);
+      });
+    });
+    await act(async () => {
+      ref.current?.formatPara("p");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    lexical.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected the BookNode to remain at the root");
+      expect(book.getCode()).toBe("GEN");
+      // The tail after the caret became a new paragraph, inserted directly after the book.
+      const newPara = book.getNextSibling();
+      if (!$isParaNode(newPara)) throw new Error("expected a new ParaNode after the book");
+      expect(newPara.getMarker()).toBe("p");
+      expect(newPara.getTextContent()).toContain("Book");
+      expect(book.getTextContent()).not.toContain("Book");
     });
   });
 
