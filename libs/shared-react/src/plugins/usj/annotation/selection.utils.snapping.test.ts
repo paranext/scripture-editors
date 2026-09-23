@@ -943,3 +943,67 @@ describe("an opaque sidebar block's read-only bytes", () => {
     ],
   );
 });
+
+describe("an opaque figure's read-only attribute bytes", () => {
+  // \p See \fig cap|src="a.jpg" size="col"\fig*
+  // USFM spells the figure's file attribute `src`; USJ names it `file` (the tokenizer renames it on
+  // the way in), so every location on those bytes names `file`. Expected values are core's
+  // `UsjReaderWriter` mapping of each byte's USFM index.
+  let editor: LexicalEditor;
+  let attributes: LexicalNode;
+  const figurePath = "$.content[0].content[1]";
+
+  beforeAll(() => {
+    editor = createBasicTestEnvironment(NODES, () => {
+      attributes = $createImmutableTypedTextNode("attribute", '|src="a.jpg" size="col"');
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createMarkerNode("p", "opening"),
+          $createTextNode("See "),
+          $createUnknownNode("figure", "fig", { file: "a.jpg", size: "col" }).append(
+            $createImmutableTypedTextNode("marker", "\\fig "),
+            $createTextNode("cap"),
+            attributes,
+            $createImmutableTypedTextNode("marker", "\\fig*"),
+          ),
+        ),
+      );
+    }).editor;
+  });
+
+  runSnapRows(
+    () => editor,
+    [
+      {
+        name: "`s` of `src` is the file attribute's key",
+        point: () => [attributes, 1],
+        location: { jsonPath: figurePath, keyName: "file", keyOffset: 0 },
+      },
+      {
+        name: "`=` after `src` runs one past the key",
+        point: () => [attributes, 4],
+        location: { jsonPath: figurePath, keyName: "file", keyOffset: 3 },
+      },
+      {
+        name: "the file value starts past its opening quote",
+        point: () => [attributes, 6],
+        location: { jsonPath: `${figurePath}['file']`, propertyOffset: 0 },
+      },
+      {
+        name: "the space after the closing quote runs two past the file value",
+        point: () => [attributes, 12],
+        location: { jsonPath: `${figurePath}['file']`, propertyOffset: 6 },
+      },
+      {
+        name: "`s` of `size` is the size attribute's key",
+        point: () => [attributes, 13],
+        location: { jsonPath: figurePath, keyName: "size", keyOffset: 0 },
+      },
+      {
+        name: "the size value",
+        point: () => [attributes, 19],
+        location: { jsonPath: `${figurePath}['size']`, propertyOffset: 0 },
+      },
+    ],
+  );
+});

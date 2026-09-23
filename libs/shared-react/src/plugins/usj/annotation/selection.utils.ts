@@ -74,6 +74,7 @@ import {
   openingMarkerText,
   textTypeState,
   unknownDisplayParts,
+  unknownUsjAttributeName,
 } from "shared";
 
 /**
@@ -339,27 +340,31 @@ function $runPieceOf(
  * run one and two past the key), and a value's span reaches through its closing quote and the
  * space before the next key (so those run one and two past the value). A list with no
  * `name="value"` pair at all is the bare form a marker's default attribute collapses to.
+ * `usjAttributeName` names each key as USJ does, for bytes that spell it under its USFM name (a
+ * figure's `src` is its USJ `file`).
  */
 function pipeAttributeSpans(
   text: string,
   contentStart: number,
   defaultAttributeName: string | undefined,
+  usjAttributeName: (usfmName: string) => string = (usfmName) => usfmName,
 ): DisplayByteSpan[] {
   const spans: DisplayByteSpan[] = [];
   // `matchAll` rather than repeated `exec`: it iterates a clone, so the shared regex's `lastIndex`
   // stays 0 and a second call cannot start mid-string.
   for (const pair of text.slice(contentStart).matchAll(ATTRIBUTE_PAIR_REGEX)) {
     const name = pair[1];
+    const keyName = usjAttributeName(name);
     spans.push({
       start: contentStart + pair.index,
       base: 0,
-      bytes: { kind: "attributeKey", keyName: name },
+      bytes: { kind: "attributeKey", keyName },
     });
     spans.push({
       // Past the key, its `=`, and its opening quote.
       start: contentStart + pair.index + name.length + 2,
       base: 0,
-      bytes: { kind: "property", property: name },
+      bytes: { kind: "property", property: keyName },
     });
   }
   if (spans.length > 0) return spans;
@@ -579,7 +584,10 @@ function $opaqueAttributeBytes(node: ImmutableTypedTextNode): DisplayBytes | und
     length,
     spans: [
       { start: 0, base: 0, bytes: { kind: "precedingText" } },
-      ...pipeAttributeSpans(text, 1, undefined),
+      // The bytes spell an attribute the way USFM names it, which is not always USJ's name for it.
+      ...pipeAttributeSpans(text, 1, undefined, (usfmName) =>
+        unknownUsjAttributeName(owner.getTag(), usfmName),
+      ),
     ],
   };
 }
