@@ -286,8 +286,8 @@ function useArrowKeys(editor: LexicalEditor, viewOptions: ViewOptions | undefine
 
 /**
  * The direction the editor's content reads in, from its root element — what "forward" means for a
- * horizontal arrow key. It lives here because arrow navigation is the only caller; it is exported
- * only so the unit test can reach it, as `hasVisualLineBeyondCaret` above is.
+ * horizontal arrow key. It lives here because arrow navigation is the only caller; exported for the
+ * unit test and for `ParaMarkerSelectionPlugin`, which mirrors RTL the same way.
  *
  * KNOWN GAP: a project configured for "auto" direction reads as `"ltr"` here. `TextDirectionPlugin`
  * returns early without setting `dir` on the root when the configured direction is `"auto"`, and
@@ -302,13 +302,19 @@ export function getEditorTextDirection(rootElement: HTMLElement): string {
   return rootElement.dir || "ltr";
 }
 
-function isMovingForward(direction: string, key: string): boolean {
+/**
+ * Whether `key` moves forward in reading order for content that reads in `direction` (as
+ * {@link getEditorTextDirection} reports it): ArrowRight in LTR, ArrowLeft in RTL. Exported so
+ * every plugin that maps a physical arrow to a logical direction mirrors RTL the same way.
+ */
+export function isMovingForward(direction: string, key: string): boolean {
   return (
     (direction === "ltr" && key === "ArrowRight") || (direction === "rtl" && key === "ArrowLeft")
   );
 }
 
-function isMovingBackward(direction: string, key: string): boolean {
+/** The backward counterpart of {@link isMovingForward}: ArrowLeft in LTR, ArrowRight in RTL. */
+export function isMovingBackward(direction: string, key: string): boolean {
   return (
     (direction === "ltr" && key === "ArrowLeft") || (direction === "rtl" && key === "ArrowRight")
   );

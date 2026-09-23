@@ -7,11 +7,14 @@ import {
   ParaMarkerSelectionPlugin,
 } from "./ParaMarkerSelectionPlugin";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
-import { baseTestEnvironment, sutUpdate, updateSelection } from "./react-test.utils";
+import { baseTestEnvironment, pressKey, sutUpdate, updateSelection } from "./react-test.utils";
+import { act } from "@testing-library/react";
 import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  KEY_DOWN_COMMAND,
   LexicalEditor,
   LexicalNode,
   TextNode,
@@ -26,6 +29,8 @@ import {
   NBSP,
   ParaNode,
 } from "shared";
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import { $expectSelectionToBe } from "../../../../shared/src/nodes/usj/test.utils";
 
 /** A paragraph as the paragraph-structure view builds it: its gutter marker glyph, then content. */
 function $createGutterParaNode(marker: string, ...content: LexicalNode[]): ParaNode {
@@ -182,5 +187,196 @@ describe("ParaMarkerSelectionPlugin — browser caret", () => {
     const isCaretInGlyph =
       !!after && after.rangeCount > 0 && glyphElement.contains(after.getRangeAt(0).startContainer);
     expect(isCaretInGlyph).toBe(false);
+  });
+});
+
+/** Presses a key with modifiers through `KEY_DOWN_COMMAND`, returning the event to inspect. */
+async function pressKeyWith(
+  editor: LexicalEditor,
+  init: KeyboardEventInit & { key: string },
+): Promise<KeyboardEvent> {
+  const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+  await act(async () => {
+    editor.dispatchCommand(KEY_DOWN_COMMAND, event);
+  });
+  return event;
+}
+
+describe.each([
+  ["ltr", "ArrowRight", "ArrowLeft"],
+  ["rtl", "ArrowLeft", "ArrowRight"],
+] as const)("ParaMarkerSelectionPlugin — horizontal keys (%s)", (direction, forward, backward) => {
+  it(`${forward} puts the caret at the paragraph's first content position`, async () => {
+    const { editor, li2, secondText } = await environment(direction);
+    await selectMarkerOf(editor, li2);
+
+    const event = await pressKey(editor, forward);
+
+    expect(event.defaultPrevented).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(secondText, 0);
+    });
+  });
+
+  it(`${backward} puts the caret at the end of the previous paragraph`, async () => {
+    const { editor, li2, firstText } = await environment(direction);
+    await selectMarkerOf(editor, li2);
+
+    const event = await pressKey(editor, backward);
+
+    expect(event.defaultPrevented).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(firstText);
+    });
+  });
+
+  it(`${backward} with no previous paragraph keeps the marker selected`, async () => {
+    const { editor, p } = await environment(direction);
+    await selectMarkerOf(editor, p);
+
+    const event = await pressKey(editor, backward);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(selectedMarkerOf(editor)).toBe("p");
+  });
+
+  it(`Shift+${forward} behaves like ${forward}`, async () => {
+    const { editor, li2, secondText } = await environment(direction);
+    await selectMarkerOf(editor, li2);
+
+    await pressKeyWith(editor, { key: forward, shiftKey: true });
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(secondText, 0);
+    });
+  });
+});
+
+describe("ParaMarkerSelectionPlugin — vertical keys walk the marker column", () => {
+  it("ArrowUp selects the previous paragraph's marker, ArrowDown the next one's", async () => {
+    const { editor, li2 } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    await pressKey(editor, "ArrowUp");
+    expect(selectedMarkerOf(editor)).toBe("p");
+
+    await pressKey(editor, "ArrowDown");
+    await pressKey(editor, "ArrowDown");
+    expect(selectedMarkerOf(editor)).toBe("q1");
+  });
+
+  it("stays selected at either end of the column, still claiming the key", async () => {
+    const { editor, p, q1 } = await environment();
+    await selectMarkerOf(editor, p);
+    const up = await pressKey(editor, "ArrowUp");
+    expect(up.defaultPrevented).toBe(true);
+    expect(selectedMarkerOf(editor)).toBe("p");
+
+    await selectMarkerOf(editor, q1);
+    const down = await pressKey(editor, "ArrowDown");
+    expect(down.defaultPrevented).toBe(true);
+    expect(selectedMarkerOf(editor)).toBe("q1");
+  });
+
+  it("Shift+ArrowUp behaves like ArrowUp", async () => {
+    const { editor, li2 } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    await pressKeyWith(editor, { key: "ArrowUp", shiftKey: true });
+
+    expect(selectedMarkerOf(editor)).toBe("p");
+  });
+});
+
+describe("ParaMarkerSelectionPlugin — asking to change the marker", () => {
+  it.each([[{ key: "Enter" }], [{ key: "ArrowDown", altKey: true }]])(
+    "%o requests the marker menu and keeps the selection",
+    async (init) => {
+      const onMenuRequest = vi.fn();
+      const { editor, li2 } = await environment("ltr", onMenuRequest);
+      await selectMarkerOf(editor, li2);
+
+      const event = await pressKeyWith(editor, init);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(onMenuRequest).toHaveBeenCalledTimes(1);
+      expect(selectedMarkerOf(editor)).toBe("li2");
+    },
+  );
+
+  it("does not request the menu in a read-only editor, where nothing can be changed", async () => {
+    const onMenuRequest = vi.fn();
+    const { editor, li2 } = await environment("ltr", onMenuRequest);
+    await selectMarkerOf(editor, li2);
+    act(() => editor.setEditable(false));
+
+    const event = await pressKey(editor, "Enter");
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onMenuRequest).not.toHaveBeenCalled();
+    expect(selectedMarkerOf(editor)).toBe("li2");
+  });
+});
+
+describe("ParaMarkerSelectionPlugin — Escape", () => {
+  it("returns the caret to the paragraph's first content position without stopping the event", async () => {
+    const { editor, li2, secondText } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    const event = await pressKey(editor, "Escape");
+
+    expect(event.defaultPrevented).toBe(false);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(secondText, 0);
+    });
+  });
+});
+
+describe("ParaMarkerSelectionPlugin — typing collapses to the content, then proceeds", () => {
+  it("a printable key moves to content start without claiming, so the character lands there", async () => {
+    const { editor, li2, secondText } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    const event = await pressKey(editor, "a");
+    expect(event.defaultPrevented).toBe(false);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(secondText, 0);
+    });
+    await act(async () => {
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "a");
+    });
+
+    editor.getEditorState().read(() => {
+      expect(li2.getTextContent()).toContain("asecond");
+    });
+  });
+
+  it.each(["Process", "Dead", "Unidentified"])(
+    "a %s keydown (IME composition or dead key) collapses before composing",
+    async (key) => {
+      const { editor, li2, secondText } = await environment();
+      await selectMarkerOf(editor, li2);
+
+      const event = await pressKey(editor, key);
+
+      expect(event.defaultPrevented).toBe(false);
+      editor.getEditorState().read(() => {
+        $expectSelectionToBe(secondText, 0);
+      });
+    },
+  );
+
+  it.each([
+    [{ key: "z", ctrlKey: true }],
+    [{ key: "Tab" }],
+    [{ key: "Home" }],
+    [{ key: "Shift", shiftKey: true }],
+  ])("%o leaves the marker selected", async (init) => {
+    const { editor, li2 } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    await pressKeyWith(editor, init);
+
+    expect(selectedMarkerOf(editor)).toBe("li2");
   });
 });
