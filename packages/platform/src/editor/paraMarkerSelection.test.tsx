@@ -201,8 +201,14 @@ describe("consumers of a selected paragraph marker", () => {
 
   it("does not move the scripture reference on select, and reports the content verse on the way out", async () => {
     const onScrRefChange = vi.fn();
+    // Start settled in verse 2's own content, inside the paragraph whose marker gets selected. The
+    // \li2 gutter glyph precedes \v 2, so without the $resolvePosition guard, selecting it would
+    // resolve to verse 1 — a real, detectable move away from where the caret already is. (Starting
+    // at verse 1, as an earlier version of this test did, could not distinguish the guard being
+    // present from it being absent: resolving the glyph to verse 1 is a no-op when verse 1 is
+    // already the reported reference.)
     const { lexical } = await mountParagraphStructure({
-      scrRef: { book: "GEN", chapterNum: 1, verseNum: 1 },
+      scrRef: { book: "GEN", chapterNum: 1, verseNum: 2 },
       onScrRefChange,
     });
     // Real input ends the plugin's settling window; what follows is the user's.
@@ -216,10 +222,13 @@ describe("consumers of a selected paragraph marker", () => {
     expect(selectedMarker(lexical)).toBe("li2");
     expect(onScrRefChange).not.toHaveBeenCalled();
 
-    await pressKeyOn(lexical, { key: "ArrowRight" });
+    // Exit backward into the previous paragraph's content (verse 1) rather than forward — forward
+    // from \li2's marker lands back in verse 2, the same verse the caret already settled in, so it
+    // would report nothing either way and not exercise the "reports on the way out" half.
+    await pressKeyOn(lexical, { key: "ArrowLeft" });
     await flushQueuedEvents();
     expect(onScrRefChange).toHaveBeenCalledWith(
-      expect.objectContaining({ book: "GEN", chapterNum: 1, verseNum: 2 }),
+      expect.objectContaining({ book: "GEN", chapterNum: 1, verseNum: 1 }),
     );
   });
 });
