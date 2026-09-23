@@ -189,4 +189,25 @@ describe("refusing rather than answering approximately", () => {
 
     expect(point).toBeUndefined();
   });
+  it("refuses a settled point in a co-settling note whose preserved runs cannot be paired", async () => {
+    // The same refusal a scope entered directly makes: with no run correspondence the note's two
+    // byte sequences do not line up past the first unpaired placeholder, so a byte anchor would
+    // resolve one byte off per placeholder instead of failing.
+    const { lexical, context, note, noteIndex } = await nested();
+    const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
+
+    const point = lexical.getEditorState().read(() => {
+      const prepared = $prepareSettleScopes(context);
+      const notePlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "note");
+      if (!notePlan) throw new Error("expected a note plan");
+      // As above: no natural path reaches a note plan without a pairing but with a live fragment.
+      (notePlan as { sentinelMap?: unknown }).sentinelMap = undefined;
+      return $livePointFromSettledLocation(context, prepared, {
+        jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
+        offset: 5,
+      });
+    });
+
+    expect(point).toBeUndefined();
+  });
 });

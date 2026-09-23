@@ -246,7 +246,7 @@ type ScratchResolution =
       type: "text" | "element";
       /** The same point as a byte anchor over the member note's content, for the case where the
        * live note is settling too and its content is therefore NOT the same subtree. */
-      noteAnchor: CaretByteAnchor | undefined;
+      noteAnchor: { anchor: CaretByteAnchor; atWordByte: boolean } | undefined;
     };
 
 /** The preserved run member whose subtree holds `node`, if any. */
@@ -292,11 +292,10 @@ function $resolveInScratch(
   if (!preserved) {
     const anchored = $anchorForPoint(fragment, node, offset);
     if (!anchored) return undefined;
-    const byte = fragment.text[anchored.position];
     return {
       kind: "anchor",
       anchor: anchored.anchor,
-      atWordByte: byte !== undefined && !FRAGMENT_WS.test(byte),
+      atWordByte: isWordByte(fragment, anchored.position),
     };
   }
   const path = $childPath(preserved.member, node);
@@ -304,6 +303,7 @@ function $resolveInScratch(
   const noteContent = $isNoteNode(preserved.member)
     ? $buildNoteFragment(preserved.member, tier2.getMarker, tier2.viewOptions)?.out
     : undefined;
+  const noteAnchored = noteContent && $anchorForPoint(noteContent, node, offset);
   return {
     kind: "preserved",
     sentinelIndex: preserved.sentinelIndex,
@@ -311,8 +311,17 @@ function $resolveInScratch(
     path,
     offset,
     type: $isElementNode(node) ? "element" : "text",
-    noteAnchor: noteContent && $anchorForPoint(noteContent, node, offset)?.anchor,
+    noteAnchor: noteAnchored && {
+      anchor: noteAnchored.anchor,
+      atWordByte: isWordByte(noteContent, noteAnchored.position),
+    },
   };
+}
+
+/** Whether the byte at `position` is part of a word rather than whitespace. */
+function isWordByte(fragment: FragmentAccumulator, position: number): boolean {
+  const byte = fragment.text[position];
+  return byte !== undefined && !FRAGMENT_WS.test(byte);
 }
 
 /**
@@ -368,12 +377,35 @@ function liveRunMember(
   return undefined;
 }
 
+/**
+ * The live point a byte anchor over `plan`'s SETTLED fragment names — or `undefined` when the plan
+ * pairs no preserved runs across (so the two sides share no byte coordinates), or the anchor names
+ * no live byte. `location` is the settled location the anchor came from: one that names USFM bytes
+ * rather than USJ content wants those bytes back, including the ones no caret can rest in, and a
+ * text location wants the caret's own addressing.
+ */
+function $livePointFromAnchor(
+  plan: SettleScopePlan,
+  anchor: CaretByteAnchor,
+  atWordByte: boolean,
+  location: UsjDocumentLocation,
+): FragmentPoint | undefined {
+  const { liveFragment, scratchFragment, sentinelMap } = plan;
+  if (!liveFragment || !scratchFragment || !sentinelMap) return undefined;
+  const point = $resolveFragmentByteAnchor(liveFragment, anchor, {
+    addressDisplayBytes: !isUsjTextContentLocation(location),
+  });
+  if (!point) return undefined;
+  return cutCorrected(plan, atWordByte ? advancePastWhitespace(liveFragment, point) : point);
+}
+
 /** The live point for a settled point that landed inside a preserved node run. */
 function $livePointInPreservedRun(
   prepared: PreparedScopes,
   plan: SettleScopePlan,
   sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[],
   resolved: Extract<ScratchResolution, { kind: "preserved" }>,
+  location: UsjDocumentLocation,
 ): FragmentPoint | undefined {
   const live = liveRunMember(sentinelMap, resolved);
   const member = live && plan.liveFragment?.sentinels[live.sentinelIndex]?.[live.memberIndex];
@@ -388,10 +420,12 @@ function $livePointInPreservedRun(
   // that index.
   const notePlan = prepared.byFirstLiveKey.get(member.getKey());
   if (notePlan?.kind === "note")
-    return resolved.noteAnchor && notePlan.liveFragment
-      ? cutCorrected(
+    return resolved.noteAnchor
+      ? $livePointFromAnchor(
           notePlan,
-          $resolveFragmentByteAnchor(notePlan.liveFragment, resolved.noteAnchor),
+          resolved.noteAnchor.anchor,
+          resolved.noteAnchor.atWordByte,
+          location,
         )
       : undefined;
   let node: LexicalNode = member;
@@ -421,17 +455,8 @@ function $livePointInScope(
     .read(() => $resolveInScratch(scratchFragment, scratchLocation, context.tier2));
   if (!resolved) return undefined;
   if (resolved.kind === "preserved")
-    return $livePointInPreservedRun(prepared, plan, sentinelMap, resolved);
-  // A location that names USFM bytes rather than USJ content wants those bytes back, including
-  // the ones no caret can rest in; a text location wants the caret's own addressing.
-  const point = $resolveFragmentByteAnchor(liveFragment, resolved.anchor, {
-    addressDisplayBytes: !isUsjTextContentLocation(target.location),
-  });
-  if (!point) return undefined;
-  return cutCorrected(
-    plan,
-    resolved.atWordByte ? advancePastWhitespace(liveFragment, point) : point,
-  );
+    return $livePointInPreservedRun(prepared, plan, sentinelMap, resolved, target.location);
+  return $livePointFromAnchor(plan, resolved.anchor, resolved.atWordByte, target.location);
 }
 
 /**

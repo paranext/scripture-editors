@@ -510,6 +510,42 @@ describe("an annotation that begins on a preserved node", () => {
     expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
   });
 
+  it("carries two annotations that begin on the same note", async () => {
+    // Each annotation re-wraps against the tree the one before it already changed: the first pulls
+    // the note into its mark, so the second's start has to find the note there.
+    const mounted = await mountStandardViewEditor(markOverNoteUsj);
+    for (const id of ["1", "2"])
+      await annotate(
+        mounted,
+        {
+          start: { jsonPath: contentPath([2, 2]), offset: 0 },
+          end: { jsonPath: contentPath([2, 2]), offset: "bravo".length },
+        },
+        id,
+      );
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const para = $getRoot().getChildren().find($isParaNode);
+        const note = para?.getChildren().find($isNoteNode);
+        const target = para?.getChildren().find($isTypedMarkNode)?.getFirstChild();
+        if (!note || !target) throw new Error("expected a note and a mark in the paragraph");
+        target.insertBefore(note);
+      });
+      await Promise.resolve();
+    });
+    const before = annotatedText(mounted.lexical);
+    expect(before).toHaveLength(1);
+    expect(before[0]).toContain("note body");
+    expect(annotatedIDSets(mounted.lexical)).toEqual([{ [markType("test")]: ["1", "2"] }]);
+
+    await typeOver(mounted.lexical, literalHost, withLiteral);
+    settle(mounted);
+
+    expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
+    expect(annotatedText(mounted.lexical)).toEqual(before);
+    expect(annotatedIDSets(mounted.lexical)).toEqual([{ [markType("test")]: ["1", "2"] }]);
+  });
+
   it("still wraps a note it holds alone once the paragraph settles", async () => {
     const onRemove = vi.fn();
     const mounted = await mountStandardViewEditor(markOverNoteUsj);
