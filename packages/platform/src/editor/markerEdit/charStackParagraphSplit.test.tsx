@@ -13,12 +13,17 @@ import {
   testEnvironment,
   testEnvironmentWithDisplaySyncs,
 } from "./markerEdit.test-helpers";
+import {
+  $isSelectionInParagraphCharStack,
+  $splitParagraphAtCharStack,
+} from "./charFormatting.utils";
 import { $splitParagraphWithMarker } from "../markerMenu/markerMenuApply.utils";
 import { act } from "@testing-library/react";
 import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $setState,
   ElementNode,
@@ -26,17 +31,25 @@ import {
   KEY_ENTER_COMMAND,
   PASTE_COMMAND,
   LexicalEditor,
+  LexicalNode,
   TextNode,
 } from "lexical";
 import {
   $createCharNode,
   $createMarkerNode,
+  $createNoteNode,
   $createParaNode,
+  $createTypedMarkNode,
   $isCharNode,
+  $isMarkerNode,
   $isParaNode,
+  $isTypedMarkNode,
+  CharNode,
+  getEditableCallerText,
   NBSP,
   ParaNode,
   textTypeState,
+  TypedMarkNode,
 } from "shared";
 
 /**
@@ -405,4 +418,164 @@ describe("Enter inside a character style", () => {
       ).toBe(true);
     });
   });
+});
+
+/** `\p \nd thing\nd*` with a translator comment's mark wrapping the whole span. */
+function $appendMarkAroundCharPara(): TextNode {
+  const para = $createParaNode("p");
+  const content = $createTextNode(`${NBSP}thing`);
+  $getRoot().append(
+    para.append(
+      $createMarkerNode("p"),
+      $createTextNode(NBSP),
+      $createTypedMarkNode({ comment: ["c1"] }).append(
+        $createCharNode("nd").append(
+          $createMarkerNode("nd"),
+          content,
+          $createMarkerNode("nd", "closing"),
+        ),
+      ),
+    ),
+  );
+  return content;
+}
+
+/** `\p \nd thing\nd*` with a translator comment's mark wrapping the span's text. */
+function $appendMarkInsideCharPara(): TextNode {
+  const para = $createParaNode("p");
+  const content = $createTextNode("thing");
+  $getRoot().append(
+    para.append(
+      $createMarkerNode("p"),
+      $createTextNode(NBSP),
+      $createCharNode("nd").append(
+        $createMarkerNode("nd"),
+        $createTextNode(NBSP),
+        $createTypedMarkNode({ comment: ["c1"] }).append(content),
+        $createMarkerNode("nd", "closing"),
+      ),
+    ),
+  );
+  return content;
+}
+
+/** Every node of `node`'s subtree, in document order, that `predicate` accepts. */
+function $descendantsWhere<T extends LexicalNode>(
+  node: ElementNode,
+  predicate: (candidate: LexicalNode) => candidate is T,
+): T[] {
+  return node
+    .getChildren()
+    .flatMap((child) => [
+      ...(predicate(child) ? [child] : []),
+      ...($isElementNode(child) ? $descendantsWhere(child, predicate) : []),
+    ]);
+}
+
+/**
+ * The split of `\p \nd thi|ng\nd*` with the comment mark `c1` somewhere in the stack: each half
+ * is the span with its real opening and closing glyphs, still under the comment.
+ */
+function $expectSplitKeepsStyleAndMark(newParaMarker: string): void {
+  const paras = $paras();
+  expect(paras).toHaveLength(2);
+  expect($usfmBytes(paras[0])).toBe("\\p \\nd thi\\nd*");
+  expect($usfmBytes(paras[1])).toBe(`\\${newParaMarker} \\nd ng\\nd*`);
+  paras.forEach((para) => {
+    const spans = $descendantsWhere(para, $isCharNode);
+    expect(spans).toHaveLength(1);
+    const span: CharNode = spans[0];
+    expect(span.getMarker()).toBe("nd");
+    const first = span.getFirstChild();
+    const last = span.getLastChild();
+    expect($isMarkerNode(first) && first.getTextContent()).toBe("\\nd");
+    expect($isMarkerNode(last) && last.getTextContent()).toBe("\\nd*");
+    const marks: TypedMarkNode[] = $descendantsWhere(para, $isTypedMarkNode);
+    expect(marks).toHaveLength(1);
+    expect(marks[0].getTypedIDs()).toEqual({ comment: ["c1"] });
+  });
+}
+
+describe.each([
+  { shape: "a comment mark wrapping the span", $build: $appendMarkAroundCharPara, caret: 4 },
+  { shape: "a comment mark inside the span", $build: $appendMarkInsideCharPara, caret: 3 },
+])("splitting a character style with $shape", ({ $build, caret }) => {
+  it("Enter reopens the style in the new paragraph, under the same comment", async () => {
+    let content: TextNode;
+    const { editor } = await testEnvironmentWithDisplaySyncs(() => (content = $build()));
+    await act(async () => editor.update(() => content.select(caret, caret))); // "thi|ng"
+
+    await pressEnter(editor);
+
+    editor.getEditorState().read(() => $expectSplitKeepsStyleAndMark("p"));
+  });
+
+  it("Enter lands the caret inside the reopened style, so typing continues in it", async () => {
+    let content: TextNode;
+    const { editor } = await testEnvironmentWithDisplaySyncs(() => (content = $build()));
+    await act(async () => editor.update(() => content.select(caret, caret)));
+
+    await pressEnter(editor);
+    await act(async () =>
+      editor.update(() => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertText("X");
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      expect($usfmBytes($paras()[1])).toBe("\\p \\nd Xng\\nd*");
+    });
+  });
+
+  it("a paragraph pick from the marker menu takes the same split", async () => {
+    let content: TextNode;
+    const { editor } = await testEnvironmentWithDisplaySyncs(() => (content = $build()));
+    await act(async () =>
+      editor.update(() => {
+        content.select(caret, caret);
+        $splitParagraphWithMarker("q2");
+      }),
+    );
+
+    editor.getEditorState().read(() => $expectSplitKeepsStyleAndMark("q2"));
+  });
+});
+
+it("leaves a comment-wrapped span inside a NOTE to the note's own break, never a paragraph split", async () => {
+  let content: TextNode;
+  const { editor } = await testEnvironment(() => {
+    const ft = $createCharNode("ft");
+    ft.setUnknownAttributes({ closed: "false" });
+    content = $createTextNode(`${NBSP}AB`);
+    $getRoot().append(
+      $createParaNode("p").append(
+        $createMarkerNode("p"),
+        $createTextNode(NBSP),
+        $createTextNode("text "),
+        $createNoteNode("f", "+", false).append(
+          $createMarkerNode("f"),
+          $createTextNode(getEditableCallerText("+")),
+          $createTypedMarkNode({ comment: ["c1"] }).append(
+            ft.append($createMarkerNode("ft"), content),
+          ),
+          $createMarkerNode("f", "closing"),
+        ),
+      ),
+    );
+  });
+
+  let gated = true;
+  let split = true;
+  await act(async () =>
+    editor.update(() => {
+      content.select(2, 2); // "A|B"
+      gated = $isSelectionInParagraphCharStack();
+      split = $splitParagraphAtCharStack();
+    }),
+  );
+
+  expect(gated).toBe(false);
+  expect(split).toBe(false);
+  editor.getEditorState().read(() => expect($paras()).toHaveLength(1));
 });
