@@ -35,13 +35,16 @@ import {
   $createBookNode,
   $createImmutableTypedTextNode,
   $createNoteNode,
+  $createVerseNode,
   $isBookNode,
   $isChapterNode,
   $isCharNode,
   $isNoteNode,
   $isParaNode,
+  $isVerseNode,
   BookNode,
   getMarker as bundledGetMarker,
+  getVisibleOpenMarkerText,
   NBSP,
   NoteNode,
 } from "shared";
@@ -367,6 +370,73 @@ describe("the `\\id` line's settle scope", () => {
     );
     expect(noteEntry).toBeDefined();
     expect(JSON.stringify(settledBook)).not.toContain("￼");
+  });
+
+  it("carries a verse's sid over across a live rebuild of the line, like $rebuildParas does", async () => {
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createBookNode("GEN").append(
+          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createTextNode("Genesis "),
+          $createVerseNode("1", getVisibleOpenMarkerText("v", "1"), "GEN 1:1"),
+          $createTextNode(" tail"),
+        ),
+      );
+    });
+
+    // A TERMINATED char marker re-tokenizes immediately (no pend) — see the "re-tokenizes a
+    // TERMINATED typed char marker" test above — driving $rebuildBook directly. Re-fetched live
+    // rather than closed over from construction: the initial mount's own transforms may have
+    // already touched the tree by the time this update runs.
+    await act(async () =>
+      editor.update(() => {
+        const tail = $bookLine().getLastChild();
+        if (!$isTextNode(tail)) throw new Error("expected the line's trailing text node");
+        tail.setTextContent(" tail \\nd Lord\\nd* more");
+        tail.select(tail.getTextContentSize(), tail.getTextContentSize());
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const verses = $bookLine().getChildren().filter($isVerseNode);
+      expect(verses).toHaveLength(1);
+      expect(verses[0].getNumber()).toBe("1");
+      expect(verses[0].getSid()).toBe("GEN 1:1");
+    });
+  });
+
+  it("carries a verse's sid over in the READ-ONLY settled output too", async () => {
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createBookNode("GEN").append(
+          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createTextNode("Genesis "),
+          $createVerseNode("1", getVisibleOpenMarkerText("v", "1"), "GEN 1:1"),
+          $createTextNode(" tail"),
+        ),
+      );
+    });
+
+    // Unterminated: pends, so the mutating side never runs and this exercises $settledBookLine
+    // in isolation.
+    await act(async () =>
+      editor.update(() => {
+        const tail = $bookLine().getLastChild();
+        if (!$isTextNode(tail)) throw new Error("expected the line's trailing text node");
+        tail.setTextContent(" tail \\nd");
+        tail.select(tail.getTextContentSize(), tail.getTextContentSize());
+      }),
+    );
+
+    const settledBook = bookUsj(settledUsjOf(editor, context));
+    const verseEntry = settledBook?.content?.find(
+      (item) => typeof item !== "string" && item.type === "verse",
+    );
+    expect(verseEntry).toBeDefined();
+    if (verseEntry && typeof verseEntry !== "string") {
+      expect(verseEntry.number).toBe("1");
+      expect(verseEntry.sid).toBe("GEN 1:1");
+    }
   });
 });
 

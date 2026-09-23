@@ -967,6 +967,15 @@ function $settledBookLine(
   // caller (and this function's own return value) hands back.
   const queueIndexAfterContent = replaceSerializedSentinels(rebuilt, runs);
   replaceSerializedSentinels(followingBlocks, runs, queueIndexAfterContent);
+  // Sid carry-over, mirroring `$rebuildBook`/`$settledParaNodes` — see the latter's own comment
+  // for the rationale (the tokenizer never derives a sid from visible bytes, so without this a
+  // `getUsj()` taken mid-pend disagrees with `commitPendingMarkerEdits()` then `getUsj()`).
+  const oldVerseSids = $collectLiveVerseSids(contentNodes);
+  const newVerses = collectSerializedVerses(rebuilt);
+  for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
+    if (oldVerseSids[i].sid !== undefined && newVerses[i].number === oldVerseSids[i].number)
+      newVerses[i].sid = oldVerseSids[i].sid;
+  }
   return { rebuilt, contentNodes, followingBlocks };
 }
 

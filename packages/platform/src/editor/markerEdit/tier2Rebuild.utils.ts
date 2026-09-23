@@ -2034,6 +2034,15 @@ export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
     return false;
   }
 
+  // Snapshot the old content's verse number/sid pairs, in document order, as plain data — BEFORE
+  // the splice below moves or destroys the old content nodes (a removed node's fields are not safe
+  // to read afterward). Sid carry-over (below) pairs this against the freshly re-tokenized line's
+  // verses once the splice has settled — mirrors `$rebuildParas`.
+  const oldVerseSids = $collectVerseNodes(contentNodes).map((verse) => ({
+    number: verse.getNumber(),
+    sid: verse.getSid(),
+  }));
+
   // Splice: insert the new content before the first old content node (or at the line's end when it
   // had none) and the new blocks directly after the book, move preserved sentinel runs into place,
   // then remove the originals — skipping the preserved nodes themselves, which `$replaceSentinels`
@@ -2047,6 +2056,12 @@ export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
   contentNodes.forEach((node) => {
     if (!preservedKeys.has(node.getKey())) node.remove();
   });
+  // Sid carry-over — identical logic to `$rebuildParas`' own, see its comment for the rationale.
+  const newVerses = $collectVerseNodes(newNodes);
+  for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
+    if (newVerses[i].getNumber() === oldVerseSids[i].number)
+      newVerses[i].setSid(oldVerseSids[i].sid);
+  }
   $restoreSelectionInContentRegion(newNodes, caretAnchor, anchorInBook, getMarkerFn, viewOptions);
   return true;
 }
