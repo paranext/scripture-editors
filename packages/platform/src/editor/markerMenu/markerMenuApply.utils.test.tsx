@@ -54,6 +54,7 @@ import {
   $isMarkerNode,
   $isNoteNode,
   $isParaNode,
+  $isTypedMarkNode,
   CharNode,
   defaultStyleInfo,
   getEditableCallerText,
@@ -117,6 +118,21 @@ function makeDeps(styleInfo?: StyleInfo): ApplyMarkerMenuSelectionDeps {
     logger: undefined,
     styleInfo,
   };
+}
+
+/** Commits a `\`-menu paragraph pick of `marker` at the editor's current selection. */
+async function applyParagraphPick(editor: LexicalEditor, marker: string): Promise<void> {
+  const item: MarkerMenuItem = { marker, kind: "paragraph", isBasic: true };
+  await act(async () =>
+    editor.update(() => {
+      $applyMarkerMenuSelection(
+        item,
+        { trigger: "backslash", literalPrefixLanded: false },
+        reference,
+        makeDeps(),
+      );
+    }),
+  );
 }
 
 /**
@@ -692,9 +708,48 @@ describe("$applyMarkerMenuSelection", () => {
       });
     });
 
-    it("leaves the line untouched when the split cannot reach the book from inside an annotation", async () => {
-      // An annotation's mark wrapper sits between the caret and the book, and only a char stack
-      // can be lifted out of. A pick that cannot split must not have deleted the selection first.
+    it("splits through an annotation's mark wrapper at a collapsed caret, keeping the mark's ids on both halves", async () => {
+      // A translator comment anchored on `\id` text wraps it in a TypedMarkNode. The same pick in
+      // an ordinary paragraph splits through the wrapper, leaving the annotation on both halves.
+      let markedText: TextNode;
+      const { editor } = await historyTestEnvironment(() => {
+        markedText = $createTextNode("esis");
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+            $createTextNode("Gen"),
+            $createTypedMarkNode({ comment: ["c1"] }).append(markedText),
+            $createTextNode(" tail"),
+          ),
+        );
+      });
+      await act(async () => editor.update(() => markedText.select(2, 2)));
+
+      await applyParagraphPick(editor, "p");
+
+      editor.getEditorState().read(() => {
+        const children = $getRoot().getChildren();
+        expect(children).toHaveLength(2);
+        const [book, para] = children;
+        if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+        expect(book.getTextContent()).toBe(`\\id GEN${NBSP}Genes`);
+        const bookMarks = book.getChildren().filter($isTypedMarkNode);
+        expect(bookMarks).toHaveLength(1);
+        expect(bookMarks[0].getTextContent()).toBe("es");
+        expect(bookMarks[0].getTypedIDs()).toEqual({ comment: ["c1"] });
+        if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+        expect(para.getMarker()).toBe("p");
+        const paraMarks = para.getChildren().filter($isTypedMarkNode);
+        expect(paraMarks).toHaveLength(1);
+        expect(paraMarks[0].getTextContent()).toBe("is");
+        expect(paraMarks[0].getTypedIDs()).toEqual({ comment: ["c1"] });
+        expect(para.getTextContent()).toContain("is tail");
+      });
+    });
+
+    it("replaces a selection inside an annotation's mark wrapper, then splits there", async () => {
+      // Removing the selected "holy" leaves the caret at the wrapper's start, so the whole
+      // remaining annotation moves into the new paragraph rather than leaving an empty half.
       let markedText: TextNode;
       const { editor } = await historyTestEnvironment(() => {
         markedText = $createTextNode("holy name");
@@ -709,22 +764,114 @@ describe("$applyMarkerMenuSelection", () => {
       });
       await act(async () => editor.update(() => markedText.select(0, 4)));
 
-      const item: MarkerMenuItem = { marker: "p", kind: "paragraph", isBasic: true };
-      await act(async () =>
-        editor.update(() => {
-          $applyMarkerMenuSelection(
-            item,
-            { trigger: "backslash", literalPrefixLanded: false },
-            reference,
-            makeDeps(),
-          );
-        }),
-      );
+      await applyParagraphPick(editor, "p");
 
       editor.getEditorState().read(() => {
         const children = $getRoot().getChildren();
-        expect(children).toHaveLength(1);
-        expect(children[0].getTextContent()).toBe(`\\id GEN${NBSP}Genesis holy name end`);
+        expect(children).toHaveLength(2);
+        const [book, para] = children;
+        if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+        expect(book.getTextContent()).toBe(`\\id GEN${NBSP}Genesis `);
+        expect(book.getChildren().filter($isTypedMarkNode)).toHaveLength(0);
+        if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+        const paraMarks = para.getChildren().filter($isTypedMarkNode);
+        expect(paraMarks).toHaveLength(1);
+        expect(paraMarks[0].getTextContent()).toBe(" name");
+        expect(paraMarks[0].getTypedIDs()).toEqual({ comment: ["c1"] });
+        expect(para.getTextContent()).toContain(" name end");
+      });
+    });
+
+    it("splits through a mark wrapper INSIDE a char span, reopening the span around the tail's mark", async () => {
+      // A comment anchored on part of a span's text wraps the text inside the span.
+      let markedText: TextNode;
+      const { editor } = await historyTestEnvironment(() => {
+        markedText = $createTextNode("holy name");
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+            $createTextNode("Genesis "),
+            $createCharNode("nd").append(
+              $createMarkerNode("nd"),
+              $createTextNode(NBSP),
+              $createTypedMarkNode({ comment: ["c1"] }).append(markedText),
+              $createMarkerNode("nd", "closing"),
+            ),
+          ),
+        );
+      });
+      await act(async () => editor.update(() => markedText.select(4, 4)));
+
+      await applyParagraphPick(editor, "q1");
+
+      editor.getEditorState().read(() => {
+        const children = $getRoot().getChildren();
+        expect(children).toHaveLength(2);
+        const [book, para] = children;
+        if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+        expect(book.getFirstChild()?.getTextContent()).toBe(`\\id GEN${NBSP}`);
+        const leftSpans = book.getChildren().filter($isCharNode);
+        expect(leftSpans).toHaveLength(1);
+        const leftMarks = leftSpans[0].getChildren().filter($isTypedMarkNode);
+        expect(leftMarks).toHaveLength(1);
+        expect(leftMarks[0].getTextContent()).toBe("holy");
+        expect(leftMarks[0].getTypedIDs()).toEqual({ comment: ["c1"] });
+        if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+        expect(para.getMarker()).toBe("q1");
+        const rightSpans = para.getChildren().filter($isCharNode);
+        expect(rightSpans).toHaveLength(1);
+        expect(rightSpans[0].getMarker()).toBe("nd");
+        const rightMarks = rightSpans[0].getChildren().filter($isTypedMarkNode);
+        expect(rightMarks).toHaveLength(1);
+        expect(rightMarks[0].getTextContent()).toBe(" name");
+        expect(rightMarks[0].getTypedIDs()).toEqual({ comment: ["c1"] });
+      });
+    });
+
+    it("splits through a mark wrapper AROUND a char span, keeping the span on both sides of the cut", async () => {
+      // A comment anchored across a whole span wraps the span itself.
+      let ndText: TextNode;
+      const { editor } = await historyTestEnvironment(() => {
+        ndText = $createTextNode(`${NBSP}holy name`);
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+            $createTextNode("Genesis "),
+            $createTypedMarkNode({ comment: ["c1"] }).append(
+              $createCharNode("nd").append(
+                $createMarkerNode("nd"),
+                ndText,
+                $createMarkerNode("nd", "closing"),
+              ),
+            ),
+          ),
+        );
+      });
+      await act(async () => editor.update(() => ndText.select(5, 5)));
+
+      await applyParagraphPick(editor, "q1");
+
+      editor.getEditorState().read(() => {
+        const children = $getRoot().getChildren();
+        expect(children).toHaveLength(2);
+        const [book, para] = children;
+        if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+        expect(book.getFirstChild()?.getTextContent()).toBe(`\\id GEN${NBSP}`);
+        const leftMarks = book.getChildren().filter($isTypedMarkNode);
+        expect(leftMarks).toHaveLength(1);
+        expect(leftMarks[0].getTypedIDs()).toEqual({ comment: ["c1"] });
+        const leftSpans = leftMarks[0].getChildren().filter($isCharNode);
+        expect(leftSpans).toHaveLength(1);
+        expect(leftSpans[0].getTextContent()).toContain("holy");
+        expect(leftSpans[0].getTextContent()).not.toContain("name");
+        if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+        const rightMarks = para.getChildren().filter($isTypedMarkNode);
+        expect(rightMarks).toHaveLength(1);
+        expect(rightMarks[0].getTypedIDs()).toEqual({ comment: ["c1"] });
+        const rightSpans = rightMarks[0].getChildren().filter($isCharNode);
+        expect(rightSpans).toHaveLength(1);
+        expect(rightSpans[0].getMarker()).toBe("nd");
+        expect(rightSpans[0].getTextContent()).toContain("name");
       });
     });
   });

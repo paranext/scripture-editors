@@ -51,6 +51,7 @@ import {
   $isMarkerNode,
   $isParaNode,
   $isSynthesizedMarkerNode,
+  $isTypedMarkNode,
   $normalizeSelectionOutOfGlyphText,
   $selectCharContentStart,
   BookNode,
@@ -147,14 +148,15 @@ function $applyParagraphSelection(
 
 /**
  * Whether {@link $splitBookWithMarker} can cut the `\id` line at `point`. The break point lands in
- * the point's container, and the only thing the split can lift it out of is a stack of char spans
- * (`$liftOutOfCharStack`, `shared`); anything else between it and the book (an annotation's mark
- * wrapper, a note) leaves it short of the line, where the split cannot reason about it.
+ * the point's container, and the only things the split can lift it out of are char spans and
+ * annotation mark wrappers, in any interleaving ({@link $breakAndLiftCharStack}); anything else
+ * between it and the book (a note) leaves it short of the line, where the split cannot reason
+ * about it.
  */
 function $canSplitBookAt(point: PointType, book: BookNode): boolean {
   const node = point.getNode();
   let container: LexicalNode | null = $isElementNode(node) ? node : node.getParent();
-  while ($isCharNode(container)) container = container.getParent();
+  while ($isCharNode(container) || $isTypedMarkNode(container)) container = container.getParent();
   return book.is(container);
 }
 
@@ -188,7 +190,9 @@ function $moveEndpointPastPrefixGlyph(
  * then {@link $breakAndLiftCharStack} parks an empty break point at the caret and lifts it out of
  * the open character-style stack — so a caret inside a span in the line (`\id GE \nd N gen` is
  * legal USFM) closes that span on the left and reopens it in the new paragraph, instead of
- * stranding the tail under a span left behind in the book.
+ * stranding the tail under a span left behind in the book. A caret inside an annotation's mark
+ * wrapper (a translator comment anchored on `\id` text) splits through the wrapper the same way an
+ * ordinary paragraph split does, leaving the annotation, with its ids, on both halves.
  *
  * Judged from the selection's START point (`isBackward() ? focus : anchor`), not either endpoint
  * unconditionally: the removal below reaches from the start toward the other end regardless of
