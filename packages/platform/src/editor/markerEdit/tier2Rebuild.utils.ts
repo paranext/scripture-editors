@@ -1092,6 +1092,22 @@ export function $buildParaFragment(
 }
 
 /**
+ * The root's implied paragraph's fragment: its children's bytes, since it has no marker of its
+ * own. Only the settled-position basis builds one — for a scope that removes an emptied optbreak
+ * husk from it, which nothing re-tokenizes — so its bytes serve to pair the two sides up and are
+ * never tokenized.
+ */
+export function $buildImpliedParaFragment(
+  para: ImpliedParaNode,
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): FragmentAccumulator {
+  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  $appendChildrenFragment(para, out, getMarkerFn, viewOptions);
+  return out;
+}
+
+/**
  * One paragraph SCOPE's fragment: each paragraph's own fragment ({@link $buildParaFragment})
  * concatenated, with a single space standing in for the newline between two of them and every
  * span rebased onto the joined text. `undefined` when the scope is empty or any paragraph in it

@@ -8,12 +8,17 @@
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { FragmentAccumulator } from "../markerEdit/tier2Rebuild.utils";
 import { $prepareSettleScopes, cutFragment } from "./settledScopes.utils";
-import { $livePointFromSettledLocation } from "./settledPositions.utils";
+import {
+  $livePointFromSettledLocation,
+  $settledLocationFromLivePoint,
+} from "./settledPositions.utils";
 import { SettleScopePlan } from "./settledPositions.model";
 import {
   emptyOptbreakHusk,
   optbreakAndTwoNotesUsj,
   settledPara,
+  settledParaIndex,
+  $liveTopIndexContaining,
   settledPositionContext,
   settledTextSite,
   twoParaUsj,
@@ -23,10 +28,12 @@ import { act } from "@testing-library/react";
 import { $getRoot, LexicalEditor } from "lexical";
 import {
   $isCharNode,
+  $isImpliedParaNode,
   $isMarkerNode,
   $isNoteNode,
   $isParaNode,
   $isTypedMarkNode,
+  $isUnknownNode,
   getPendedDisplayOwners,
 } from "shared";
 import { $pendGlyphEdit } from "../markerEdit/markerEdit.test-helpers";
@@ -134,6 +141,103 @@ describe("$prepareSettleScopes", () => {
     expect(prepared.liveToSettledTopIndex(3)).toBe(4);
     expect(prepared.settledToLiveTopIndex(4)).toEqual({ liveIndex: 3, indexWithinScope: 0 });
     expect(prepared.settledToLiveTopIndex(3)).toMatchObject({ liveIndex: 2, indexWithinScope: 1 });
+  });
+
+  it("maps past a chapter region whose \\ca literal sits in an implied paragraph", async () => {
+    // The typed `\ca` literal rides in a root-level implied paragraph, which USJ splices away:
+    // its TEXT is the top-level item, not the paragraph. The chapter region still owns it, so the
+    // text folds into the settled chapter and must not count as a top-level item of its own.
+    const mounted = await mountStandardViewEditor({
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        "\\ca 3",
+        { type: "para", marker: "p", content: ["body text"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    });
+    await typeLiteral(mounted.lexical, "\\ca 3", "\\ca 4");
+    const settledBody = settledParaIndex(mounted.ref.current?.getUsj(), "body text");
+    const context = settledPositionContext(mounted.lexical);
+
+    const [regionHoldsImpliedPara, liveBody, mapped, back] = mounted.lexical
+      .getEditorState()
+      .read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const plan = onlyPlan(prepared.byFirstLiveKey);
+        const live = $liveTopIndexContaining("body text");
+        return [
+          plan.kind === "chapter" && plan.liveNodes.some($isImpliedParaNode),
+          live,
+          prepared.liveToSettledTopIndex(live),
+          prepared.settledToLiveTopIndex(settledBody),
+        ] as const;
+      });
+
+    expect(regionHoldsImpliedPara).toBe(true);
+    expect(mapped).toBe(settledBody);
+    expect(back).toEqual({ liveIndex: liveBody, indexWithinScope: 0 });
+  });
+
+  it("plans an emptied optbreak in the root's implied paragraph, and shifts what follows", async () => {
+    // Content before the first paragraph loads into the root's implied paragraph, whose children
+    // are top-level items in USJ. Splicing the husk out rejoins the text on either side of it, so
+    // three live top-level items settle to one.
+    const mounted = await mountStandardViewEditor({
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        "head ",
+        { type: "optbreak" },
+        " tail",
+        { type: "para", marker: "p", content: ["body text"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    });
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const impliedPara = $getRoot().getChildren().find($isImpliedParaNode);
+        const husk = impliedPara?.getChildren().find($isUnknownNode);
+        if (!husk) throw new Error("no optbreak in the implied paragraph");
+        husk.getChildren().forEach((child) => child.remove());
+        husk.select(0, 0);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const settled = mounted.ref.current?.getUsj();
+    const settledBody = settledParaIndex(settled, "body text");
+    const settledTail = settled?.content.findIndex(
+      (item) => typeof item === "string" && item.includes("tail"),
+    );
+    const settledTailText = settled?.content[settledTail ?? -1];
+    if (settledTail === undefined || typeof settledTailText !== "string")
+      throw new Error("no settled top-level text holding the tail");
+    const context = settledPositionContext(mounted.lexical);
+
+    const [liveBody, mapped, back, tailLocation] = mounted.lexical.getEditorState().read(() => {
+      const prepared = $prepareSettleScopes(context);
+      const live = $liveTopIndexContaining("body text");
+      return [
+        live,
+        prepared.liveToSettledTopIndex(live),
+        prepared.settledToLiveTopIndex(settledBody),
+        $settledLocationFromLivePoint(prepared, $textContaining("tail"), " ".length),
+      ] as const;
+    });
+
+    expect(liveBody).toBeGreaterThan(settledBody);
+    expect(mapped).toBe(settledBody);
+    expect(back).toEqual({ liveIndex: liveBody, indexWithinScope: 0 });
+    // A caret inside the scope lands on the same byte of the rejoined text.
+    expect(tailLocation).toEqual({
+      jsonPath: usjJsonPathFromIndexes([settledTail]),
+      offset: settledTailText.indexOf("tail"),
+    });
   });
 
   it("answers which scope a node is in, and nothing for one outside every scope", async () => {

@@ -45,10 +45,16 @@ import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $isRootNode,
   LexicalNode,
   NodeKey,
 } from "lexical";
-import { $getLogicalContentItems, $isNoteNode } from "shared";
+import {
+  $getLogicalContentItems,
+  $getLogicalPointFromElementPoint,
+  $isImpliedParaNode,
+  $isNoteNode,
+} from "shared";
 import {
   $getJsonPathIndexes,
   $getLocationFromNode,
@@ -537,9 +543,17 @@ function $settledScopePath(prepared: PreparedScopes, plan: SettleScopePlan): num
     const located = $settledLocationInScope(prepared, enclosing, node, 0);
     return located && indexesFromUsjJsonPath(contentPathOf(located.jsonPath));
   }
-  const indexes = $getJsonPathIndexes(node);
+  const indexes = $scopeStartIndexes(node, prepared.viewOptions);
   if (indexes.length === 0) return indexes;
   return [prepared.liveToSettledTopIndex(indexes[0]), ...indexes.slice(1)];
+}
+
+/** The live path to where a scope's first node starts. The root's implied paragraph has no path
+ * of its own — USJ splices it away, and its children are the root's items — so its scope starts at
+ * the root index of its first item. */
+function $scopeStartIndexes(node: LexicalNode, viewOptions: ViewOptions): number[] {
+  if (!$isImpliedParaNode(node) || !$isRootNode(node.getParent())) return $getJsonPathIndexes(node);
+  return [$getLogicalPointFromElementPoint(node, 0, hasStandardViewWhitespace(viewOptions)).index];
 }
 
 /**

@@ -12,6 +12,7 @@
 
 import {
   $buildChapterFragment,
+  $buildImpliedParaFragment,
   $buildNoteFragment,
   $buildParaScopeFragment,
   $chapterAdjacentAttributeNodes,
@@ -55,9 +56,12 @@ import {
 import {
   $getLogicalContentItems,
   $isChapterNode,
+  $isImpliedParaNode,
   $isNoteNode,
   $isParaNode,
   ChapterNode,
+  ImpliedParaNode,
+  LogicalContentItem,
   NoteNode,
   ParaNode,
 } from "shared";
@@ -143,7 +147,12 @@ function $buildScopeFragment(
   nodes: readonly LexicalNode[],
   tier2: Tier2Context,
 ): FragmentAccumulator | undefined {
-  if (kind === "para") return $buildParaScopeFragment(nodes, tier2.getMarker, tier2.viewOptions);
+  if (kind === "para") {
+    const [first] = nodes;
+    return nodes.length === 1 && $isImpliedParaNode(first)
+      ? $buildImpliedParaFragment(first, tier2.getMarker, tier2.viewOptions)
+      : $buildParaScopeFragment(nodes, tier2.getMarker, tier2.viewOptions);
+  }
   if (kind === "chapter") {
     const chapter = nodes.find($isChapterNode);
     return chapter && $buildChapterFragment(chapter, tier2.getMarker, tier2.viewOptions);
@@ -447,7 +456,7 @@ function $planForChapter(
  * a paragraph carrying the pending note resolves the note's settled content indexes against the
  * wrong children. */
 function $planForHuskOnlyPara(
-  para: ParaNode,
+  para: ParaNode | ImpliedParaNode,
   liveFragment: FragmentAccumulator | undefined,
   husks: readonly LexicalNode[],
   scopes: SettleScopes,
@@ -495,11 +504,23 @@ function identityPrepared(viewOptions: ViewOptions): PreparedScopes {
   };
 }
 
+/** The root child an item of the root's logical content sits in. That is the item's own node,
+ * except inside the root's implied paragraph, which USJ splices away: its CHILDREN are the root's
+ * items, and the paragraph is the root child they belong to. */
+function $rootChildOf(item: LogicalContentItem): LexicalNode | null {
+  const node = item.type === "element" ? item.node : item.segments[0]?.node;
+  return node?.getTopLevelElement() ?? null;
+}
+
 /**
  * Pair the live top-level content indexes with the settled ones by walking the root's logical
- * items once: an item a plan replaces contributes that plan's settled item count, everything else
+ * items once: the items a plan replaces contribute that plan's settled item count, everything else
  * contributes itself. A paragraph that splits therefore pushes everything after it DOWN, and a
  * rejoin pulls everything after it UP, by exactly what the settled output does.
+ *
+ * A scope is a run of ROOT CHILDREN, and an item belongs to the scope whose root child holds it —
+ * not the scope whose node it is — because a scope can include the root's implied paragraph, which
+ * has no item of its own.
  */
 function $mapTopIndexes(
   topPlans: ReadonlyMap<NodeKey, SettleScopePlan>,
@@ -513,10 +534,9 @@ function $mapTopIndexes(
   const settledToLive: SettledTopIndex[] = [];
   let settledIndex = 0;
   for (let index = 0; index < liveItems.length; ) {
-    const item = liveItems[index];
-    const node = item.type === "element" ? item.node : undefined;
-    const plan = node && topPlans.get(node.getKey());
-    if (!plan || !plan.liveNodes[0].is(node)) {
+    const rootChild = $rootChildOf(liveItems[index]);
+    const plan = rootChild && topPlans.get(rootChild.getKey());
+    if (!plan) {
       liveToSettled[index] = settledIndex;
       settledToLive.push({ liveIndex: index, indexWithinScope: 0 });
       settledIndex += 1;
@@ -526,8 +546,8 @@ function $mapTopIndexes(
     const scopeKeys = new Set(plan.liveNodes.map((scopeNode) => scopeNode.getKey()));
     let consumed = 0;
     while (index + consumed < liveItems.length) {
-      const candidate = liveItems[index + consumed];
-      if (candidate.type !== "element" || !scopeKeys.has(candidate.node.getKey())) break;
+      const candidate = $rootChildOf(liveItems[index + consumed]);
+      if (!candidate || !scopeKeys.has(candidate.getKey())) break;
       consumed += 1;
     }
     for (let offset = 0; offset < consumed; offset += 1)
@@ -627,10 +647,12 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
     );
   // A husk whose own paragraph settles for some other reason is already gone from that
   // paragraph's rebuild; only a husk removed on its own needs a plan of its own.
-  const huskParas = new Map<NodeKey, { para: ParaNode; husks: LexicalNode[] }>();
+  // The root's implied paragraph is a paragraph for this purpose too: `$settledUsj` splices a husk
+  // out of it like any other, so its top-level items shift just the same.
+  const huskParas = new Map<NodeKey, { para: ParaNode | ImpliedParaNode; husks: LexicalNode[] }>();
   for (const husk of scopes.husks) {
     const para = husk.getTopLevelElement();
-    if (!$isParaNode(para) || $isPlanned(husk, byLiveKey)) continue;
+    if (!($isParaNode(para) || $isImpliedParaNode(para)) || $isPlanned(husk, byLiveKey)) continue;
     const entry = huskParas.get(para.getKey()) ?? { para, husks: [] };
     entry.husks.push(husk);
     huskParas.set(para.getKey(), entry);
