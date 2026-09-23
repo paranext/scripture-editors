@@ -248,6 +248,39 @@ implementation:
 - **Typing the named form of a default attribute settles to the collapsed form in the editor**, with
   no file round-trip: `\w thing|lemma="gloss"\w*` settles to `\w thing|gloss\w*`.
 
+### A position has one spelling
+
+Every USFM position has exactly ONE `UsjDocumentLocation`, and the editor emits only that one —
+`getSelection`, `onSelectionChange`, and anything else built on `$getLocationFromNode`. USJ gives
+`offset` a meaning only on text, so a caret with no text beside it is never a container plus a
+content index (`{ jsonPath: "$.content[2]", offset: 0 }`) and never the root plus one
+(`{ jsonPath: "$", offset: 3 }`). The host's `UsjReaderWriter`
+(`usfmVerseLocationToUsjDocumentLocation`) is the oracle:
+
+1. A gap in front of a marker object is that marker's location, `{ jsonPath: <item> }` — at its
+   backslash.
+2. The character after a token that has no other home — the space after a marker name, a line's
+   newline — is addressed on that token at its length: text `offset: length`, `['marker']`
+   `propertyOffset: marker.length` (the caret inside an empty `\b`), `closingMarkerOffset` at the
+   closer's length (a paragraph ending in a note is `\f*` at 3). A verse or chapter ending a line is
+   its `['number']` at the number's length, or its last attribute marker (`\va*`, `\vp*`, `\ca*`,
+   `\cp`).
+3. The end of the document is one past the final newline, on the last token: rule 2's form plus one
+   (`['marker']` `propertyOffset: 2` after a final empty `\b`; text `offset: length + 1`).
+4. A root point between two blocks is the start of the next block.
+
+The end of a span's content is where its closer starts (`closingMarkerOffset: 0`); a span with no
+closer (`closed="false"` note content, a table cell) ends where whatever follows it starts. One
+shape has no distinct answer: an `optbreak` ending a line, where `UsjReaderWriter` gives every byte
+after it — the newline and the document end included — the optbreak's own marker location.
+
+The editor keeps ACCEPTING the older spellings a host may still hand it: a container and an index is
+resolved as the location of that gap, and the settled-position layer restates a root index like any
+other top-level index. The rules live in `$boundaryLocation` and its helpers in
+`libs/shared-react/src/plugins/usj/annotation/selection.utils.ts`; while a block is pending, the
+document end is spelled on the SETTLED last token (`$settledDocumentEnd` in
+`packages/platform/src/editor/positions/settledPositions.utils.ts`).
+
 ---
 
 ## 3. What applying a marker DOES to the document

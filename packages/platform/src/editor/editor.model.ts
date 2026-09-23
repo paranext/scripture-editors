@@ -179,7 +179,10 @@ export interface EditorRef {
    * nothing is pending the two are identical. A USFM byte with no USJ representation (the `+` of a
    * nested marker, the second `/` of `//`, an attribute's `|`, `=`, `"`, or the space between
    * attributes) snaps LEFT to the nearest representable location, so a selection captured at such
-   * a byte and set back lands on that representative, not on the byte itself.
+   * a byte and set back lands on that representative, not on the byte itself. A caret with no text
+   * beside it — in front of a marker, in an empty paragraph, at the end of the document — is
+   * reported as the one location its USFM position has (see `UsjDocumentLocation`), never as a
+   * container plus a content index; {@link EditorRef.setSelection} still accepts that older shape.
    *
    * Always returns `undefined` in the block verse layout (`ViewOptions.verseLayout: "block"`):
    * it splits a paragraph spanning verses across their blocks, so the editor's content indexes no
