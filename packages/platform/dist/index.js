@@ -18290,7 +18290,7 @@ function IC() {
   const [e] = ce(), t = Z(!1), r = Z(!1);
   return z(() => {
     const n = (s) => {
-      s instanceof PointerEvent && s.button !== 0 || (t.current = !0);
+      "button" in s && s.button !== 0 || (t.current = !0);
     }, i = () => {
       t.current = !1, r.current && (r.current = !1, e.update(() => {
         const s = w();
