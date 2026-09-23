@@ -189,7 +189,7 @@ describe("$getRangeFromUsjSelection", () => {
   });
 
   describe("UsjMarkerLocation", () => {
-    it("should return undefined when element has no children", () => {
+    it("should position in front of an element that has no glyph and no children", () => {
       const { editor } = createBasicTestEnvironment([ParaNode], () => {
         $getRoot().append($createParaNode());
       });
@@ -198,7 +198,10 @@ describe("$getRangeFromUsjSelection", () => {
         const usjSelection: SelectionRange = { start: { jsonPath: "$.content[0]" } };
         const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
-        expect(editorSelection).toBeUndefined();
+        if (!editorSelection) throw new Error("Expected editorSelection to be defined");
+        expect(editorSelection.anchor.key).toBe($getRoot().getKey());
+        expect(editorSelection.anchor.offset).toBe(0);
+        expect(editorSelection.isCollapsed()).toBe(true);
       });
     });
 
@@ -783,7 +786,7 @@ describe("$getRangeFromUsjSelection", () => {
       });
     });
 
-    it("should handle selection from inside the marker to text (visible markers)", () => {
+    it("should resolve the older container-and-index start past the marker glyph (visible markers)", () => {
       let t1: TextNode;
       const { editor } = createBasicTestEnvironment([ParaNode, ImmutableTypedTextNode], () => {
         t1 = $createTextNode("nor sit in the seat");
@@ -796,8 +799,8 @@ describe("$getRangeFromUsjSelection", () => {
       });
 
       editor.getEditorState().read(() => {
-        // Location with jsonPath pointing to para but with offset (from editor selection)
-        // This is what you get when selecting "\q2 " in the editor
+        // The older container-and-index spelling of a gap: index 0 is the gap in front of the
+        // paragraph's first content item, which is past the "\q2 " glyph.
         const usjSelection: SelectionRange = {
           start: { jsonPath: "$.content[0]", offset: 0 },
           end: { jsonPath: "$.content[0].content[0]", offset: 0 },
@@ -805,9 +808,7 @@ describe("$getRangeFromUsjSelection", () => {
         const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
-        // Start with element jsonPath + offset should position at beginning of paragraph
-        const para = t1.getParent();
-        expect(editorSelection.anchor.key).toBe(para?.getKey());
+        expect(editorSelection.anchor.key).toBe(t1.getKey());
         expect(editorSelection.anchor.offset).toBe(0);
         expect(editorSelection.focus.key).toBe(t1.getKey());
         expect(editorSelection.focus.offset).toBe(0);
@@ -1194,11 +1195,8 @@ describe("$getUsjSelectionFromEditor", () => {
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         // USJ content: [0]="ab", [1]=char, [2]="cd" — the boundary before the mark's content is
-        // logical index 1 (after "ab", before the char).
-        expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0]",
-          offset: 1,
-        });
+        // the gap in front of the char, which is the char's own location.
+        expect(usjSelection.start).toEqual({ jsonPath: "$.content[0].content[1]" });
         expect(usjSelection.end).toBeUndefined();
       });
     });
@@ -1221,11 +1219,8 @@ describe("$getUsjSelectionFromEditor", () => {
         const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
-        // The boundary after the mark's content is logical index 2 (before "cd").
-        expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0]",
-          offset: 2,
-        });
+        // The boundary after the mark's content is the start of "cd".
+        expect(usjSelection.start).toEqual({ jsonPath: "$.content[0].content[2]", offset: 0 });
         expect(usjSelection.end).toBeUndefined();
       });
     });
@@ -1248,10 +1243,8 @@ describe("$getUsjSelectionFromEditor", () => {
         const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
-        expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0]",
-          offset: 0,
-        });
+        // The gap in front of the verse is the verse's own location.
+        expect(usjSelection.start).toEqual({ jsonPath: "$.content[0].content[0]" });
         expect(usjSelection.end).toEqual({
           jsonPath: "$.content[0].content[1]",
           offset: 0,
@@ -1286,10 +1279,8 @@ describe("$getUsjSelectionFromEditor", () => {
         const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
-        expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0]",
-          offset: 0,
-        });
+        // The gap in front of the verse is the verse's own location.
+        expect(usjSelection.start).toEqual({ jsonPath: "$.content[0].content[0]" });
         expect(usjSelection.end).toEqual({
           jsonPath: "$.content[0].content[1]",
           offset: 0,
@@ -1834,23 +1825,24 @@ describe("positions around a root-level implied paragraph", () => {
     });
   });
 
-  it("reports an element point on it as a root boundary, and resolves that boundary inside it", () => {
-    const { editor, implied, mark } = build();
+  it("reports an element point on it among the root's items, and still resolves a root boundary inside it", () => {
+    const { editor, implied, orphan, mark } = build();
     editor.getEditorState().read(() => {
-      // In front of the orphan text, and in front of the mark wrapping the char.
+      // In front of the orphan text (its first character), and in front of the mark wrapping the
+      // char (the char's own location).
       expect($getLocationFromNode(implied, 1, unformattedViewOptions)).toEqual({
-        jsonPath: "$",
-        offset: 1,
+        jsonPath: "$.content[1]",
+        offset: 0,
       });
       expect($getLocationFromNode(mark, 0, unformattedViewOptions)).toEqual({
-        jsonPath: "$",
-        offset: 2,
+        jsonPath: "$.content[2]",
       });
+      // The older root-and-index spelling of that first gap resolves to the same caret.
       const [node, offset] = $getNodeFromLocation(
         { jsonPath: "$", offset: 1 },
         unformattedViewOptions,
       );
-      expect([node?.getKey(), offset]).toEqual([implied.getKey(), 1]);
+      expect([node?.getKey(), offset]).toEqual([orphan.getKey(), 0]);
     });
   });
 });

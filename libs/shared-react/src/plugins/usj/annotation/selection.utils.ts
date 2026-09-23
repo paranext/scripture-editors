@@ -1,3 +1,4 @@
+import { $isSomeVerseNode } from "../../../nodes/usj/node-react.utils";
 import { hasStandardViewWhitespace, ViewOptions } from "../../../views/view-options.utils";
 import { AnnotationRange, SelectionRange } from "./selection.model";
 import {
@@ -25,14 +26,15 @@ import {
   $getState,
   $isElementNode,
   $isRangeSelection,
+  $isRootNode,
   $isTextNode,
+  ElementNode,
   LexicalNode,
   RangeSelection,
   TextNode,
 } from "lexical";
 import {
   $chapterGlyphTextNode,
-  $getElementPointFromLogicalIndex,
   $getLogicalContentItems,
   $getLogicalIndexOfChild,
   $getLogicalParent,
@@ -42,10 +44,16 @@ import {
   $isBookNode,
   $isChapterNode,
   $isCharNode,
+  $isImmutableTableCellNode,
+  $isImmutableTableRowNode,
   $isImmutableTypedTextNode,
+  $isImpliedParaNode,
   $isMarkerNode,
   $isMilestoneNode,
+  $isNestedCharNode,
   $isNoteNode,
+  $isParaNode,
+  $isSomeChapterNode,
   $isTypedMarkNode,
   $isUnknownNode,
   $isVerseBlockNode,
@@ -54,6 +62,7 @@ import {
   $noteEditableCallerNode,
   $ownerOfRunPiece,
   $shouldIgnoreNodeForContentIndexes,
+  closingMarkerText,
   defaultMarkerAttribute,
   displayRunDescriptor,
   type DisplayRunKind,
@@ -854,17 +863,35 @@ export function $getNodeFromLocation(
       if (item.type === "text") {
         // Text items are terminal — the path must end here.
         if (i !== jsonPathIndexes.length - 1) return [undefined, undefined];
-        return $getTextNodeAtLogicalOffset(item, location.offset) ?? [undefined, undefined];
+        return (
+          $getTextNodeAtLogicalOffset(item, location.offset) ??
+          $documentEndPoint(location, collapsesSpaceRuns) ?? [undefined, undefined]
+        );
       }
       currentNode = item.node;
     }
 
-    // The jsonPath resolved to an ElementNode (e.g. "$.content[0]"): interpret offset as a
-    // logical child boundary offset and return an element point.
+    // The jsonPath resolved to an ElementNode (e.g. "$.content[0]", or "$" for the root): the
+    // older spelling of the gap in front of that container's content item `offset`. Resolve the
+    // location that gap has.
     if (currentNode && $isElementNode(currentNode)) {
-      return $getElementPointFromLogicalIndex(currentNode, location.offset);
+      return $getNodeFromLocation(
+        $boundaryLocation(currentNode, jsonPathIndexes, location.offset, collapsesSpaceRuns),
+        viewOptions,
+      );
     }
     return [undefined, undefined];
+  }
+
+  // The document end is spelled one past the last token's own bytes, which a glyph that carries
+  // its trailing separator would otherwise take for a byte of its own.
+  if (
+    isUsjPropertyValueLocation(location) ||
+    isUsjClosingMarkerLocation(location) ||
+    isUsjClosingAttributeMarkerLocation(location)
+  ) {
+    const documentEnd = $documentEndPoint(location, collapsesSpaceRuns);
+    if (documentEnd) return documentEnd;
   }
 
   // Handle UsjAttributeKeyLocation and UsjAttributeMarkerLocation BEFORE UsjMarkerLocation
@@ -906,12 +933,11 @@ export function $getNodeFromLocation(
     const point = $pointFromDisplayBytes(node, { kind: "marker" }, 0);
     if (point) return point;
 
-    if (!$isElementNode(node)) return [undefined, undefined];
-    // Fallback: no glyph bytes at all (markerMode "hidden"), so position at the element's start.
-    const firstChild = node.getFirstChild();
+    // Fallback: no glyph bytes at all (markerMode "hidden"), so position at the element's start —
+    // or, with no text there to stand in front of, in front of the node itself.
+    const firstChild = $isElementNode(node) ? node.getFirstChild() : null;
     if (firstChild && $isTextNode(firstChild)) return [firstChild, 0];
-
-    return [undefined, undefined];
+    return $pointBeside(node, false);
   }
 
   // Handle UsjClosingMarkerLocation - position within the closing marker
@@ -926,12 +952,15 @@ export function $getNodeFromLocation(
     );
     if (point) return point;
 
+    // Fallback: no closing glyph. The character after the closer is past the node; anything
+    // before it is the end of the node's content.
+    const closingLength = $closingMarkerLength(node);
+    if (closingLength !== undefined && location.closingMarkerOffset >= closingLength)
+      return $pointBeside(node, true);
     if (!$isElementNode(node)) return [undefined, undefined];
-    // Fallback: no closing glyph, so position at the end of the element's last text child.
     const lastChild = node.getLastChild();
     if (lastChild && $isTextNode(lastChild)) return [lastChild, lastChild.getTextContent().length];
-
-    return [undefined, undefined];
+    return [node, node.getChildrenSize()];
   }
 
   // Handle UsjPropertyValueLocation - position within a property value (e.g., marker name)
@@ -950,12 +979,16 @@ export function $getNodeFromLocation(
     );
     if (point) return point;
 
-    if (!$isElementNode(node)) return [undefined, undefined];
     // Fallback: the property has no bytes on screen, so position at the element's start.
-    const firstChild = node.getFirstChild();
-    if (firstChild && $isTextNode(firstChild)) return [firstChild, 0];
-
-    return [undefined, undefined];
+    if ($isElementNode(node)) {
+      const firstChild = node.getFirstChild();
+      if (firstChild && $isTextNode(firstChild)) return [firstChild, 0];
+      return [node, 0];
+    }
+    // A leaf marker's property (a verse's number): in front of the marker, or past it from the
+    // character after the value on.
+    const value = $leafPropertyValue(node, propertyName);
+    return $pointBeside(node, value !== undefined && location.propertyOffset >= value.length);
   }
 
   // All UsjDocumentLocation subtypes should be handled above
@@ -977,6 +1010,8 @@ export function $getNodeFromLocation(
  * Interior bytes therefore collapse onto the boundary in front of the node: a read-only glyph is
  * addressable as a whole, never byte by byte. {@link $getLocationFromNode} reports what those
  * boundaries stand for, so the surviving positions still name the bytes rather than the element.
+ * The one exception is the separator an opening glyph ends in (`\b `): it is the character after
+ * the marker name, where the marker's content starts, so it is the boundary after the glyph.
  */
 function $normalizeDecoratorPoint(node: LexicalNode, offset: number): [LexicalNode, number] {
   if (!$isDisplayByteDecorator(node)) return [node, offset];
@@ -987,9 +1022,15 @@ function $normalizeDecoratorPoint(node: LexicalNode, offset: number): [LexicalNo
   const indexWithinParent = node.getIndexWithinParent();
   if (indexWithinParent < 0) return [node, offset];
 
-  const isPastEnd = offset >= node.getTextContentSize() && offset > 0;
+  const size = node.getTextContentSize();
+  const isPastEnd =
+    (offset >= size && offset > 0) ||
+    (offset === size - 1 && TRAILING_SEPARATOR_REGEX.test(node.getTextContent()));
   return [parent, isPastEnd ? indexWithinParent + 1 : indexWithinParent];
 }
+
+/** A glyph's trailing separator: the space (or NBSP) after its marker name. */
+const TRAILING_SEPARATOR_REGEX = /[ \u00A0]$/;
 
 /**
  * `[node, offset]` moved back over any presentation-only text directly in front of it — text that
@@ -1118,28 +1159,42 @@ function $locationFromNode(
   // Element selection - offset is a child index, convert to a logical point.
   if ($isElementNode(node)) {
     const childAtOffset = node.getChildAtIndex(offset);
-    // A boundary in front of read-only display bytes is the only point that addresses them, so it
-    // reports what those bytes are rather than a content boundary.
-    if (childAtOffset && $isDisplayByteDecorator(childAtOffset)) {
+    // A boundary in front of displayed USFM bytes is at their first byte, so it reports what those
+    // bytes are rather than a content boundary. For read-only bytes it is the only point that
+    // addresses them at all.
+    if (childAtOffset && $displayBytesOf(childAtOffset)) {
       const byteLocation = $locationFromDisplayBytes(childAtOffset, 0, collapsesSpaceRuns);
       if (byteLocation) return byteLocation;
+    }
+    if (childAtOffset && $isDisplayByteDecorator(childAtOffset))
       return {
         jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)),
       } satisfies UsjMarkerLocation;
-    }
 
+    // Past the container's own closing glyph is past the container.
+    const previous = offset > 0 ? node.getChildAtIndex(offset - 1) : null;
+    if (!childAtOffset && previous && $isClosingGlyphOf(previous, node))
+      return $locationBeside(node, true, collapsesSpaceRuns);
+
+    // An element that holds only display — a chapter's glyph and runs, an attribute display run —
+    // has no content gaps of its own: a point in it is beside the element itself.
+    if ($isSomeChapterNode(node) || $shouldIgnoreNodeForContentIndexes(node))
+      return $locationBeside(node, offset > 0, collapsesSpaceRuns);
+
+    // The root's implied paragraph is spliced into the root, so a point in it is among the root's
+    // items.
+    const container =
+      $isImpliedParaNode(node) && $isRootNode(node.getParent()) ? node.getParentOrThrow() : node;
+    const containerIndexes = $getJsonPathIndexes(container);
     const logicalPoint = $getLogicalPointFromElementPoint(node, offset, collapsesSpaceRuns);
     if (logicalPoint.type === "text") {
       // The boundary falls inside a coalesced USJ text item (e.g. at an annotation edge).
       return {
-        jsonPath: usjJsonPathFromIndexes([...$getJsonPathIndexes(node), logicalPoint.index]),
+        jsonPath: usjJsonPathFromIndexes([...containerIndexes, logicalPoint.index]),
         offset: logicalPoint.offset,
       };
     }
-    return {
-      jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)),
-      offset: logicalPoint.index,
-    };
+    return $boundaryLocation(container, containerIndexes, logicalPoint.index, collapsesSpaceRuns);
   }
 
   // Regular text node - UsjTextContentLocation in coalesced-USJ coordinates.
@@ -1170,8 +1225,217 @@ function $locationFromNode(
       );
   }
 
-  // Fallback for nodes outside the logical content model.
-  return { jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)), offset };
+  // Anything else — presentation text with nothing beside it to defer to, a decorator the model
+  // counts as one item — is the gap in front of it, or after it for a point past its start.
+  return $locationBeside(node, offset > 0, collapsesSpaceRuns);
+}
+
+/** Whether `glyph` is `owner`'s own closing marker glyph. */
+function $isClosingGlyphOf(glyph: LexicalNode, owner: LexicalNode): boolean {
+  const bytes = $displayBytesOf(glyph);
+  return !!bytes && bytes.owner.is(owner) && bytes.spans[0]?.bytes.kind === "closingMarker";
+}
+
+/** The location of the gap in front of `node` in its parent, or after it when `after`. */
+function $locationBeside(
+  node: LexicalNode,
+  after: boolean,
+  collapsesSpaceRuns: boolean,
+): UsjDocumentLocation {
+  const parent = node.getParent();
+  if (!parent) return { jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)) };
+  return $locationFromNode(
+    parent,
+    node.getIndexWithinParent() + (after ? 1 : 0),
+    collapsesSpaceRuns,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Content gaps
+// ---------------------------------------------------------------------------
+
+/**
+ * The location of the gap in front of `container`'s logical content item `index`, or of the end of
+ * its content when `index` is past its last item.
+ *
+ * USJ gives `offset` a meaning only on text, so a gap is never a container plus an index: every
+ * USFM position has exactly one location, and a gap is the USFM position right after it. In front
+ * of a marker object that is the marker's own location (at its backslash); in front of text, the
+ * text's first character; at the end of a container, see {@link $contentEndLocation}.
+ *
+ * @param container - The logical parent the index counts in (the root for the root's implied
+ *   paragraph).
+ * @param containerIndexes - `container`'s own content path.
+ */
+function $boundaryLocation(
+  container: ElementNode,
+  containerIndexes: number[],
+  index: number,
+  collapsesSpaceRuns: boolean,
+): UsjDocumentLocation {
+  const items = $getLogicalContentItems(container, collapsesSpaceRuns);
+  const item = items[index];
+  if (!item) return $contentEndLocation(container, containerIndexes, items, collapsesSpaceRuns);
+  const jsonPath = usjJsonPathFromIndexes([...containerIndexes, index]);
+  return item.type === "text"
+    ? { jsonPath, offset: 0 }
+    : ({ jsonPath } satisfies UsjMarkerLocation);
+}
+
+/**
+ * The location of the end of `container`'s content — the USFM position after its last item:
+ *
+ * - The root's is the end of the document, one past the final newline, spelled on the last token
+ *   ({@link $afterLastTokenLocation} plus one).
+ * - A span with a closing marker ends where that closer starts (`closingMarkerOffset: 0`), unless
+ *   it ends in text, whose end names the same position.
+ * - A paragraph-like line ends at its newline, which has no location of its own and so is the
+ *   character after the line's last token.
+ * - A span with no closer (note content that ParatextData leaves unclosed, a table cell) ends
+ *   where whatever follows it in its parent starts.
+ */
+function $contentEndLocation(
+  container: ElementNode,
+  containerIndexes: number[],
+  items: LogicalContentItem[],
+  collapsesSpaceRuns: boolean,
+): UsjDocumentLocation {
+  if ($isRootNode(container))
+    return $afterLastTokenLocation(container, containerIndexes, 1, collapsesSpaceRuns);
+  if ($closingMarkerLength(container) !== undefined) {
+    const lastIndex = items.length - 1;
+    const last = items[lastIndex];
+    if (last?.type === "text")
+      return {
+        jsonPath: usjJsonPathFromIndexes([...containerIndexes, lastIndex]),
+        offset: last.length,
+      };
+    return {
+      jsonPath: usjJsonPathFromIndexes(containerIndexes),
+      closingMarkerOffset: 0,
+    } satisfies UsjClosingMarkerLocation;
+  }
+  const parent = $getLogicalParent(container);
+  const indexInParent = containerIndexes[containerIndexes.length - 1];
+  if ($endsLine(container) || !parent || indexInParent === undefined)
+    return $afterLastTokenLocation(container, containerIndexes, 0, collapsesSpaceRuns);
+  return $boundaryLocation(
+    parent,
+    containerIndexes.slice(0, -1),
+    indexInParent + 1,
+    collapsesSpaceRuns,
+  );
+}
+
+/**
+ * The character after `node`'s last token, addressed on that token at its length, plus `extra`:
+ * text `offset: length`, a closing marker's `closingMarkerOffset: <closer length>`, and for a
+ * marker with no content the last of its opening's own tokens — `['marker']` at the marker
+ * name's length for an empty paragraph, a verse's or chapter's number, or its last attribute
+ * marker. `extra` is 1 for the end of the document, which is one past the final newline.
+ */
+function $afterLastTokenLocation(
+  node: LexicalNode,
+  indexes: number[],
+  extra: number,
+  collapsesSpaceRuns: boolean,
+): UsjDocumentLocation {
+  const jsonPath = usjJsonPathFromIndexes(indexes);
+  const closingLength = $closingMarkerLength(node);
+  if (closingLength !== undefined)
+    return {
+      jsonPath,
+      closingMarkerOffset: closingLength + extra,
+    } satisfies UsjClosingMarkerLocation;
+
+  if ($isElementNode(node)) {
+    const items = $getLogicalContentItems(node, collapsesSpaceRuns);
+    const lastIndex = items.length - 1;
+    const last = items[lastIndex];
+    const lastPath = [...indexes, lastIndex];
+    if (last?.type === "text")
+      return { jsonPath: usjJsonPathFromIndexes(lastPath), offset: last.length + extra };
+    if (last) return $afterLastTokenLocation(last.node, lastPath, extra, collapsesSpaceRuns);
+  }
+
+  const property = (name: string, value: string): UsjPropertyValueLocation => ({
+    jsonPath: propertyJsonPath(jsonPath, name),
+    propertyOffset: value.length + extra,
+  });
+  // A number's attribute markers follow it, `\va`…`\va*` before `\vp`…`\vp*`, and a chapter's
+  // `\cp` line has no closer.
+  const closingAttribute = (keyName: string, markerName: string) => ({
+    jsonPath,
+    keyName,
+    keyClosingMarkerOffset: closingMarkerText(markerName).length + extra,
+  });
+  if ($isSomeVerseNode(node)) {
+    if (node.getPubnumber() !== undefined) return closingAttribute("pubnumber", "vp");
+    if (node.getAltnumber() !== undefined) return closingAttribute("altnumber", "va");
+    return property("number", node.getNumber());
+  }
+  if ($isSomeChapterNode(node)) {
+    const pubnumber = node.getPubnumber();
+    if (pubnumber !== undefined) return property("pubnumber", pubnumber);
+    if (node.getAltnumber() !== undefined) return closingAttribute("altnumber", "ca");
+    return property("number", node.getNumber());
+  }
+  if ($isBookNode(node)) return property("code", node.getCode());
+  if ($isNoteNode(node)) return property("caller", node.getCaller());
+  const marker = $isUnknownNode(node) ? node.getMarker() : $markerOf(node);
+  // A marker-less object (the document root, a table, an optbreak) has no token to count past,
+  // so the character after it can only be named as the object itself.
+  if (!marker) return { jsonPath } satisfies UsjMarkerLocation;
+  return property("marker", marker);
+}
+
+/** The length of `node`'s USFM closing marker, or `undefined` when it has none: a span
+ * ParatextData left unclosed (`closed="false"`) and a paragraph-like marker do not. */
+function $closingMarkerLength(node: LexicalNode): number | undefined {
+  if ($isCharNode(node))
+    return node.getUnknownAttributes()?.closed === "false"
+      ? undefined
+      : closingMarkerText(node.getMarker(), $isNestedCharNode(node)).length;
+  if ($isNoteNode(node))
+    return node.getUnknownAttributes()?.closed === "false"
+      ? undefined
+      : closingMarkerText(node.getMarker()).length;
+  if ($isMilestoneNode(node)) return closingMarkerText("").length;
+  if ($isUnknownNode(node)) {
+    const { closing } = unknownDisplayParts(
+      node.getTag(),
+      node.getMarker(),
+      node.getUnknownAttributes(),
+    );
+    return closing === "" ? undefined : closing.length;
+  }
+  return undefined;
+}
+
+/** Whether `node`'s content runs to the end of a USFM line, so a newline follows it. */
+function $endsLine(node: LexicalNode): boolean {
+  return (
+    $isParaNode(node) ||
+    $isImpliedParaNode(node) ||
+    $isBookNode(node) ||
+    $isImmutableTableRowNode(node) ||
+    ($isUnknownNode(node) && node.getTag() === "table:row") ||
+    $isRootNode($getLogicalParent(node))
+  );
+}
+
+/** `node`'s marker, when it has one. */
+function $markerOf(node: LexicalNode): string | undefined {
+  if (
+    $isParaNode(node) ||
+    $isCharNode(node) ||
+    $isMilestoneNode(node) ||
+    $isImmutableTableRowNode(node) ||
+    $isImmutableTableCellNode(node)
+  )
+    return node.getMarker();
+  return undefined;
 }
 
 /**
@@ -1192,7 +1456,47 @@ function $nearestPointAfterContent(
   const nextSibling = node.getNextSibling();
   if (nextSibling && $isElementNode(nextSibling)) return [nextSibling, 0];
 
-  return [undefined, undefined];
+  return $pointBeside(node, true);
+}
+
+/** The element point in front of `node` in its parent, or after it when `after`. */
+function $pointBeside(
+  node: LexicalNode,
+  after: boolean,
+): [LexicalNode | undefined, number | undefined] {
+  const parent = node.getParent();
+  if (!parent) return [undefined, undefined];
+  return [parent, node.getIndexWithinParent() + (after ? 1 : 0)];
+}
+
+/** The value of a leaf marker's property, for the leaves that carry one on screen. */
+function $leafPropertyValue(node: LexicalNode, property: string): string | undefined {
+  if ($isSomeVerseNode(node) || $isSomeChapterNode(node)) {
+    if (property === "number") return node.getNumber();
+    if (property === "altnumber") return node.getAltnumber();
+    if (property === "pubnumber") return node.getPubnumber();
+    if (property === "marker") return node.getMarker();
+  }
+  if ($isMilestoneNode(node) && property === "marker") return node.getMarker();
+  return undefined;
+}
+
+/**
+ * The document-end point when `location` is the end of the document — one past the final newline,
+ * spelled on the last token (see {@link $contentEndLocation}) — and `undefined` otherwise.
+ */
+function $documentEndPoint(
+  location: UsjDocumentLocation,
+  collapsesSpaceRuns: boolean,
+): [LexicalNode, number] | undefined {
+  const root = $getRoot();
+  const end = $afterLastTokenLocation(root, [], 1, collapsesSpaceRuns);
+  return locationKey(end) === locationKey(location) ? [root, root.getChildrenSize()] : undefined;
+}
+
+/** A location's fields in a fixed order, so two spellings of one location compare equal. */
+function locationKey(location: UsjDocumentLocation): string {
+  return JSON.stringify(Object.entries(location).sort(([a], [b]) => a.localeCompare(b)));
 }
 
 function $getPreviousContentSibling(child: LexicalNode): LexicalNode | undefined {

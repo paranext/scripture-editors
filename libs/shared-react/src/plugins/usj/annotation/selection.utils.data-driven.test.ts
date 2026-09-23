@@ -77,102 +77,12 @@ const EDITABLE_ONLY_ROUND_TRIP_TYPES: LocationType[] = [
  * `"<modeName>:<description>"`. When an entry starts resolving, remove the key — the test switches
  * from `expect(…).toThrow()` to running the body directly, and vitest then enforces that it holds.
  *
- * Every entry is in markerMode "visible" or "hidden", where the addressed bytes have no node at
- * all: those modes render marker glyphs as read-only text with no attribute markers, keep chapters
- * and verses as decorators with no glyph text of their own, and build no display runs — so there is
- * nothing in the tree for an attribute key, an attribute marker, a property value, or a marker
- * location on a node the mode renders no glyph for. Standard view (markerMode "editable") renders
- * all of those bytes and has no resolution gaps.
+ * Empty: markerMode "visible" and "hidden" render no node for many bytes (attribute markers, a
+ * chapter's or verse's own glyph, display runs), and a location naming such bytes resolves to the
+ * caret nearest them — in front of the node that carries them, or after it for a position past the
+ * node's own bytes — so every entry resolves in every mode.
  */
-const KNOWN_RESOLUTION_GAPS = new Set<string>([
-  // ── visible (48) ──
-  "visible:attributeKey at $.content[20].content[1] key 'strong' offset 0",
-  "visible:attributeKey at $.content[20].content[1] key 'strong' offset 1",
-  "visible:attributeKey at $.content[20].content[1] key 'strong' offset 2",
-  "visible:attributeKey at $.content[20].content[1] key 'strong' offset 3",
-  "visible:attributeKey at $.content[20].content[1] key 'strong' offset 4",
-  "visible:attributeKey at $.content[20].content[1] key 'strong' offset 5",
-  "visible:attributeKey at $.content[20].content[1] key 'strong' offset 6",
-  "visible:attributeKey at $.content[20].content[1] key 'strong' offset 7",
-  "visible:attributeKey at $.content[65].content[1] key 'x-custom-attribute-1' offset 0",
-  "visible:attributeMarker at $.content[10].content[1] key 'category'",
-  "visible:closingMarker at $.content[140] offset 0",
-  "visible:closingMarker at $.content[140] offset 1",
-  "visible:closingMarker at $.content[140] offset 2",
-  "visible:closingMarker at $.content[140] offset 3",
-  "visible:closingMarker at $.content[140] offset 4",
-  "visible:closingMarker at $.content[140] offset 5",
-  "visible:marker at $.content[140]",
-  "visible:marker at $.content[142]",
-  "visible:marker at $.content[4]",
-  "visible:marker at $.content[6].content[0]",
-  "visible:marker at $.content[85].content[1]",
-  "visible:propertyValue at $.content[140]['marker'] offset 0",
-  "visible:propertyValue at $.content[140]['marker'] offset 1",
-  "visible:propertyValue at $.content[140]['marker'] offset 2",
-  "visible:propertyValue at $.content[140]['marker'] offset 3",
-  "visible:propertyValue at $.content[18].content[1]['lemma'] offset 0",
-  "visible:propertyValue at $.content[18].content[1]['lemma'] offset 1",
-  "visible:propertyValue at $.content[18].content[1]['lemma'] offset 2",
-  "visible:propertyValue at $.content[20].content[1]['strong'] offset 0",
-  "visible:propertyValue at $.content[20].content[1]['strong'] offset 1",
-  "visible:propertyValue at $.content[4]['altnumber'] offset 0",
-  "visible:propertyValue at $.content[4]['altnumber'] offset 1",
-  "visible:propertyValue at $.content[4]['altnumber'] offset 2",
-  "visible:propertyValue at $.content[4]['altnumber'] offset 3",
-  "visible:propertyValue at $.content[4]['marker'] offset 0",
-  "visible:propertyValue at $.content[4]['marker'] offset 1",
-  "visible:propertyValue at $.content[4]['number'] offset 0",
-  "visible:propertyValue at $.content[4]['number'] offset 1",
-  "visible:propertyValue at $.content[4]['number'] offset 2",
-  "visible:propertyValue at $.content[4]['pubnumber'] offset 0",
-  "visible:propertyValue at $.content[4]['pubnumber'] offset 1",
-  "visible:propertyValue at $.content[4]['pubnumber'] offset 2",
-  "visible:propertyValue at $.content[4]['pubnumber'] offset 3",
-  "visible:propertyValue at $.content[4]['pubnumber'] offset 4",
-  "visible:propertyValue at $.content[6].content[0]['marker'] offset 0",
-  "visible:propertyValue at $.content[6].content[0]['marker'] offset 1",
-  "visible:propertyValue at $.content[6].content[0]['number'] offset 0",
-  "visible:propertyValue at $.content[6].content[0]['number'] offset 1",
-  // ── hidden (37) ──
-  "hidden:closingMarker at $.content[140] offset 0",
-  "hidden:closingMarker at $.content[140] offset 1",
-  "hidden:closingMarker at $.content[140] offset 2",
-  "hidden:closingMarker at $.content[140] offset 3",
-  "hidden:closingMarker at $.content[140] offset 4",
-  "hidden:closingMarker at $.content[140] offset 5",
-  "hidden:marker at $.content[10].content[1]",
-  "hidden:marker at $.content[140]",
-  "hidden:marker at $.content[142]",
-  "hidden:marker at $.content[4]",
-  "hidden:marker at $.content[6].content[0]",
-  "hidden:marker at $.content[85].content[1]",
-  "hidden:propertyValue at $.content[10].content[1]['marker'] offset 0",
-  "hidden:propertyValue at $.content[10].content[1]['marker'] offset 1",
-  "hidden:propertyValue at $.content[140]['marker'] offset 0",
-  "hidden:propertyValue at $.content[140]['marker'] offset 1",
-  "hidden:propertyValue at $.content[140]['marker'] offset 2",
-  "hidden:propertyValue at $.content[140]['marker'] offset 3",
-  "hidden:propertyValue at $.content[4]['altnumber'] offset 0",
-  "hidden:propertyValue at $.content[4]['altnumber'] offset 1",
-  "hidden:propertyValue at $.content[4]['altnumber'] offset 2",
-  "hidden:propertyValue at $.content[4]['altnumber'] offset 3",
-  "hidden:propertyValue at $.content[4]['marker'] offset 0",
-  "hidden:propertyValue at $.content[4]['marker'] offset 1",
-  "hidden:propertyValue at $.content[4]['number'] offset 0",
-  "hidden:propertyValue at $.content[4]['number'] offset 1",
-  "hidden:propertyValue at $.content[4]['number'] offset 2",
-  "hidden:propertyValue at $.content[4]['pubnumber'] offset 0",
-  "hidden:propertyValue at $.content[4]['pubnumber'] offset 1",
-  "hidden:propertyValue at $.content[4]['pubnumber'] offset 2",
-  "hidden:propertyValue at $.content[4]['pubnumber'] offset 3",
-  "hidden:propertyValue at $.content[4]['pubnumber'] offset 4",
-  "hidden:propertyValue at $.content[6].content[0]['marker'] offset 0",
-  "hidden:propertyValue at $.content[6].content[0]['marker'] offset 1",
-  "hidden:propertyValue at $.content[6].content[0]['number'] offset 0",
-  "hidden:propertyValue at $.content[6].content[0]['number'] offset 1",
-  "hidden:propertyValue at $.content[6]['marker'] offset 1",
-]);
+const KNOWN_RESOLUTION_GAPS = new Set<string>([]);
 
 /**
  * Round-trip entries that do not survive the trip unchanged. Key format is
