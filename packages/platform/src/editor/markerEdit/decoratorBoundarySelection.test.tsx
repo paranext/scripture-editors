@@ -400,10 +400,10 @@ describe("a selection landing inside a read-only construct's decorator glyphs", 
   });
 
   it("treats a press as a drag in a host that defines no `PointerEvent`", async () => {
-    // jsdom before 27 — the version platform-bible-react's suite runs the editor under — has no
-    // `PointerEvent` global, so the press listener must not name one.
+    // Hosts such as jsdom before 27 have no `PointerEvent` global, so the press listener must not
+    // name one. Deleting the global raises the same `ReferenceError` such a host does.
     const host: { PointerEvent?: unknown } = globalThis;
-    const hostPointerEvent = host.PointerEvent;
+    const hostPointerEvent = Object.getOwnPropertyDescriptor(host, "PointerEvent");
     delete host.PointerEvent;
     try {
       const { lexical } = await mountStandardViewEditor(figureUsj);
@@ -419,7 +419,7 @@ describe("a selection landing inside a read-only construct's decorator glyphs", 
         focusOffset: 3,
       });
     } finally {
-      host.PointerEvent = hostPointerEvent;
+      if (hostPointerEvent) Object.defineProperty(host, "PointerEvent", hostPointerEvent);
     }
   });
 
