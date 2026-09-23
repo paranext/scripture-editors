@@ -513,6 +513,52 @@ describe("the `\\id` line's settle scope", () => {
       expect(textUpToCaret.endsWith("more")).toBe(false);
     });
   });
+
+  it("keeps a caret parked at an ELEMENT point before a note through a rebuild elsewhere in the line", async () => {
+    // ArrowLeft past a collapsed note leaves the caret at an ELEMENT point ON THE BOOK ITSELF
+    // (offset = the note's own index) rather than a text point. An unrelated edit later in the
+    // line still drives a mutating rebuild, and the caret must hold its place past "Genesis"
+    // rather than jumping to the rebuild's first element.
+    let note: NoteNode;
+    let tail: TextNode;
+    const { editor } = await testEnvironment(() => {
+      note = $createNoteNode("f", "+");
+      tail = $createTextNode(" tail");
+      $getRoot().append(
+        $createBookNode("GEN").append(
+          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createTextNode("Genesis"),
+          note,
+          tail,
+        ),
+      );
+    });
+
+    await act(async () =>
+      editor.update(() => {
+        tail.setTextContent(" tail \\nd x\\nd* ");
+        const noteIndex = note.getIndexWithinParent();
+        $bookLine().select(noteIndex, noteIndex);
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const spans = $bookLine().getChildren().filter($isCharNode);
+      expect(spans).toHaveLength(1);
+      expect($bookLine().getChildren().filter($isNoteNode)).toHaveLength(1);
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !selection.isCollapsed())
+        throw new Error("expected a collapsed caret");
+      const genesisText = $bookLine()
+        .getChildren()
+        .find((child) => $isTextNode(child) && child.getTextContent() === "Genesis");
+      if (!genesisText) throw new Error("expected the rebuilt 'Genesis' text node");
+      // The bug parks the caret at the START of the rebuild's first element — inside or before
+      // "Genesis" — instead of holding its place past it.
+      expect(selection.anchor.key).toBe(genesisText.getKey());
+      expect(selection.anchor.offset).toBe(genesisText.getTextContentSize());
+    });
+  });
 });
 
 describe("where the `\\id` line's bytes end the line", () => {
