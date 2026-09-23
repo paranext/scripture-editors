@@ -123,6 +123,7 @@ import {
   OnSelectionChangePlugin,
   OpaqueBlockGuardPlugin,
   ParaMarkerPrefixCursorGuardPlugin,
+  ParaMarkerSelectionPlugin,
   ParaNodePlugin,
   pasteSelection,
   pasteSelectionAsPlainText,
@@ -1148,6 +1149,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <OpaqueBlockGuardPlugin />
           <ParaMarkerPrefixCursorGuardPlugin />
           <ParaMarkerPrefixGuardPlugin viewOptions={viewOptions} logger={stableLogger} />
+          <ParaMarkerSelectionPlugin />
           <ParaNodePlugin />
           <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
           <TextDirectionPlugin textDirection={textDirection} />
