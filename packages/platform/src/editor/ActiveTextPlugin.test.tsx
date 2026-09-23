@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { $getRoot, $createTextNode, $getSelection, LexicalNode } from "lexical";
 import {
+  $createGutterMarkerNode,
   $createImmutableTypedTextNode,
   $createMarkerNode,
   $createParaNode,
   $createVerseNode,
+  $selectParaMarker,
   CharNode,
   ImmutableTypedTextNode,
   MarkerNode,
@@ -378,6 +380,40 @@ describe("$getParaFromSelection", () => {
       const result = $getParaFromSelection($getSelection() ?? undefined);
 
       expect(result?.getKey()).toBe(para.getKey());
+    });
+  });
+});
+
+describe("a selected paragraph marker", () => {
+  it("keeps its paragraph the active one", () => {
+    let para!: ParaNode;
+    let glyph!: ImmutableTypedTextNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      glyph = $createGutterMarkerNode(`\\li2${NBSP}`);
+      para = $createParaNode("li2");
+      $getRoot().append(para.append(glyph, $createImmutableVerseNode("2"), $createTextNode("two")));
+    });
+
+    editor.update(() => $selectParaMarker(glyph), { discrete: true });
+
+    editor.getEditorState().read(() => {
+      expect($getParaFromSelection($getSelection() ?? undefined)?.getKey()).toBe(para.getKey());
+    });
+  });
+
+  it("treats the verse its content starts in as the active verse", () => {
+    let glyph!: ImmutableTypedTextNode;
+    let v2!: SomeVerseNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      glyph = $createGutterMarkerNode(`\\li2${NBSP}`);
+      v2 = $createImmutableVerseNode("2");
+      $getRoot().append($createParaNode("li2").append(glyph, v2));
+    });
+
+    editor.update(() => $selectParaMarker(glyph), { discrete: true });
+
+    editor.getEditorState().read(() => {
+      expect($getActiveVerseKey()).toBe(v2.getKey());
     });
   });
 });

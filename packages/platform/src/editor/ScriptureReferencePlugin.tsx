@@ -109,6 +109,7 @@ import {
   $findChapter,
   $findNextChapter,
   $findThisChapter,
+  $getSelectedParaMarker,
   $isBookNode,
   $isNoteNode,
   $isParaNode,
@@ -391,6 +392,10 @@ function consumePendingEcho(machine: Machine, ref: SerializedVerseRef): boolean 
  * chapter 1 per USFM convention (its verse resolves to 0). */
 function $resolvePosition(): ResolvedPosition | undefined {
   const selection = $getSelection();
+  // A selected paragraph marker is not a place in the text: it names a paragraph, not a verse.
+  // Resolving it would read a reference off the glyph and move the host's reference for a
+  // selection that has not moved the caret.
+  if ($getSelectedParaMarker(selection)) return undefined;
   const startNode = getSelectionStartNode(selection);
   if (!startNode) return undefined;
 

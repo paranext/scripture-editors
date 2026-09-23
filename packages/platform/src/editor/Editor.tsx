@@ -74,6 +74,7 @@ import {
 } from "react";
 import {
   $createParaNode,
+  $getSelectedParaMarker,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
@@ -678,14 +679,25 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       assertEditable("format a paragraph");
       editorRef.current?.update(() => {
         const selection = $getSelection();
+        // A selected paragraph marker names the paragraph outright. `$setBlocksType` takes its
+        // ancestor-block path for a node selection and moves the children (the glyph keeps its
+        // key, so the selection stays on it); the range-only post-step below would bail, so the
+        // marker is re-applied here on the glyph's new parent.
+        const selectedMarker = $getSelectedParaMarker(selection);
+        if (selectedMarker) {
+          $setBlocksType(selection, () => $createParaNode(blockMarker));
+          const owner = selectedMarker.getParent();
+          if ($isParaNode(owner)) $applyParaMarker(owner, blockMarker, viewOptions);
+          return;
+        }
         // A caller with no live selection has nothing to retag. Say so rather than returning
         // quietly: this is the toolbar's paragraph-marker path, and the popover that drives it
         // takes focus off the editor — whose blur processing can null the editor-state selection
         // — so an unheard refusal here looks exactly like a dropdown that does not work.
         if (!$isRangeSelection(selection)) {
           logger?.warn(
-            `formatPara refused: no range selection to retag with "${blockMarker}" ` +
-              "(restore the caret before applying, as the marker palettes do)",
+            `formatPara refused: no range selection or selected paragraph marker to retag with ` +
+              `"${blockMarker}" (restore the caret before applying, as the marker palettes do)`,
           );
           return;
         }

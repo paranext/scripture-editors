@@ -1,15 +1,19 @@
 import { $createImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
 import { usjBlockVerseNodes } from "../../nodes/usj";
-import { baseTestEnvironment, updateSelection } from "./react-test.utils";
+import { baseTestEnvironment, sutUpdate, updateSelection } from "./react-test.utils";
 import { StateChangePlugin, StateChangeSnapshot } from "./StateChangePlugin";
 import { $createTextNode, $getRoot, LexicalEditor, LexicalNode } from "lexical";
 import { describe, expect, it, vi } from "vitest";
 import {
+  $createGutterMarkerNode,
   $createImmutableChapterNode,
   $createParaNode,
   $createVerseBlockNode,
   $isParaNode,
   $isVerseBlockNode,
+  $selectParaMarker,
+  ImmutableTypedTextNode,
+  NBSP,
 } from "shared";
 
 /** The paragraph marker the plugin most recently reported, or `undefined` if it never fired. */
@@ -120,5 +124,32 @@ describe("StateChangePlugin block marker", () => {
     });
 
     expect(blockMarker).toBe("p");
+  });
+});
+
+describe("StateChangePlugin with a selected paragraph marker", () => {
+  it("reports the owning paragraph's marker", async () => {
+    const onStateChange = vi.fn();
+    let glyph!: ImmutableTypedTextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        glyph = $createGutterMarkerNode(`\\li2${NBSP}`);
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createGutterMarkerNode(`\\p${NBSP}`),
+            $createTextNode("one"),
+          ),
+          $createParaNode("li2").append(glyph, $createTextNode("two")),
+        );
+      },
+      <StateChangePlugin onStateChange={onStateChange} />,
+    );
+    onStateChange.mockClear();
+
+    await sutUpdate(editor, () => $selectParaMarker(glyph));
+
+    expect(lastBlockMarker(onStateChange)).toBe("li2");
+    const { calls } = onStateChange.mock;
+    expect((calls[calls.length - 1][0] as StateChangeSnapshot).contextMarker).toBe("li2");
   });
 });

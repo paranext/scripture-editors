@@ -15,7 +15,7 @@ import {
   LexicalNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $isImmutableTypedTextNode, $isMarkerNode, ZWSP } from "shared";
+import { $getSelectedParaMarker, $isImmutableTypedTextNode, $isMarkerNode, ZWSP } from "shared";
 import { $isSomeVerseNode, ViewOptions } from "shared-react";
 
 const ACTIVE_CLASS = "psc-active-text";
@@ -136,11 +136,25 @@ function $getActiveParaKey(): string | undefined {
 /**
  * Returns the key of the verse whose section currently contains the cursor — that is, the most
  * recent verse marker at or before the cursor's position within its paragraph. Returns undefined
- * when there is no range selection, the cursor sits in a non-verse paragraph, or the cursor is
- * before the first verse marker. Must run inside an editor read.
+ * when there is no range selection (a selected paragraph marker counts as the start of its
+ * paragraph's content), the cursor sits in a non-verse paragraph, or the cursor is before the
+ * first verse marker. Must run inside an editor read.
  */
 export function $getActiveVerseKey(): string | undefined {
   const selection = $getSelection();
+  // A selected paragraph marker: the verse its content starts in — the verse a keystroke would
+  // type into — is the active one, so its ellipsis stays hidden like a caret's would.
+  const selectedMarker = $getSelectedParaMarker(selection);
+  if (selectedMarker) {
+    const para = selectedMarker.getParent();
+    if (!$isElementNode(para)) return undefined;
+    let leadingVerseKey: string | undefined;
+    for (const child of para.getChildren()) {
+      if ($isSomeVerseNode(child)) leadingVerseKey = child.getKey();
+      else if (!$isImmutableTypedTextNode(child) && !$isMarkerNode(child)) break;
+    }
+    return leadingVerseKey;
+  }
   if (!$isRangeSelection(selection)) return undefined;
 
   const anchor = selection.anchor;
@@ -175,13 +189,22 @@ export function $getActiveVerseKey(): string | undefined {
 }
 
 /**
- * Returns the top-level paragraph for the cursor, or undefined if no range selection. This is any
- * paragraph the cursor lands in — verse-bearing paragraphs, section headings, book code paragraph,
- * empty paragraphs, etc.
+ * Returns the top-level paragraph for the cursor, or undefined if there is no range selection.
+ * This is any paragraph the cursor lands in — verse-bearing paragraphs, section headings, book
+ * code paragraph, empty paragraphs, etc. — or, while a paragraph's marker is selected, that
+ * paragraph.
  */
 export function $getParaFromSelection(
   selection: BaseSelection | undefined,
 ): ElementNode | undefined {
+  const selectedMarker = $getSelectedParaMarker(selection ?? null);
+  if (selectedMarker) {
+    // `DecoratorNode.getTopLevelElement()` types as `ElementNode | this | null` — the glyph
+    // itself only when it has no element ancestor, which never happens for a selectable marker
+    // (its parent is always a paragraph per `$getSelectedParaMarker`).
+    const top = selectedMarker.getTopLevelElement();
+    return $isElementNode(top) ? top : undefined;
+  }
   if (!$isRangeSelection(selection)) return undefined;
   return selection.anchor.getNode().getTopLevelElement() ?? undefined;
 }
