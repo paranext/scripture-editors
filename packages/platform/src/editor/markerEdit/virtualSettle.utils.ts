@@ -134,12 +134,25 @@ function $mapSerializedSites(
  * preserved node run it stands for, in fragment order — the JSON analogue of `$replaceSentinels`.
  * A placeholder's own text node is split around it, so a preserved node lands exactly where its
  * placeholder stood and never migrates to a block boundary.
+ *
+ * Mutates `roots` IN PLACE (top-level splices as well as nested ones) rather than returning a new
+ * array, so a caller that needs the result must pass the array it will go on to read — never a
+ * throwaway `[...a, ...b]` spread, whose splices land on the spread copy and leave `a`/`b`
+ * unmutated.
+ *
+ * `startIndex`/the return value let two SEPARATE arrays (e.g. a settled region's own content and
+ * the blocks that follow it) share ONE run queue across two calls, consuming it in document order,
+ * without needing to concatenate them into one throwaway array first.
+ *
+ * @returns The queue index just past the last run this call consumed — pass it as the next
+ *   call's `startIndex` to continue the same queue over a second array.
  */
 function replaceSerializedSentinels(
   roots: SerializedLexicalNode[],
   runs: SerializedLexicalNode[][],
-): void {
-  let queueIndex = 0;
+  startIndex = 0,
+): number {
+  let queueIndex = startIndex;
   const visitList = (list: SerializedLexicalNode[]): void => {
     for (let index = 0; index < list.length; index++) {
       const node = list[index];
@@ -179,6 +192,7 @@ function replaceSerializedSentinels(
     }
   };
   visitList(roots);
+  return queueIndex;
 }
 
 /** The serialized counterparts of one fragment's preserved runs, or `undefined` when any
@@ -947,9 +961,12 @@ function $settledBookLine(
     logger?.debug("[MarkerEdit] Settled book USJ skipped: rebuild is a no-op (fixed point)");
     return undefined;
   }
-  // One pass over the whole region, in document order: the line's content comes first, so its
-  // placeholders consume the preserved runs ahead of the following blocks' own.
-  replaceSerializedSentinels([...rebuilt, ...followingBlocks], runs);
+  // Two calls sharing ONE run queue, in document order: the line's content comes first, so its
+  // placeholders consume the preserved runs ahead of the following blocks' own. Each call mutates
+  // its OWN array in place — `rebuilt` and `followingBlocks` keep their identity, which is what the
+  // caller (and this function's own return value) hands back.
+  const queueIndexAfterContent = replaceSerializedSentinels(rebuilt, runs);
+  replaceSerializedSentinels(followingBlocks, runs, queueIndexAfterContent);
   return { rebuilt, contentNodes, followingBlocks };
 }
 
