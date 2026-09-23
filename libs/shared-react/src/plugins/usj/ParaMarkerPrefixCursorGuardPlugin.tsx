@@ -7,22 +7,81 @@ import {
   $isTextNode,
   CLICK_COMMAND,
   COMMAND_PRIORITY_EDITOR,
+  COMMAND_PRIORITY_HIGH,
+  DELETE_CHARACTER_COMMAND,
   isDOMNode,
   LexicalNode,
   RangeSelection,
 } from "lexical";
 import { useEffect } from "react";
 import {
+  $getNextNode,
+  $getPreviousNode,
+  $isBookNode,
   $isGutterMarkerNode,
+  $isImmutableTypedTextNode,
   $isParaLikeNode,
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
   $isVisibleMarkerNode,
   $placeCaretAtBoundary,
+  ImmutableTypedTextNode,
   NBSP,
   ParaLikeNode,
 } from "shared";
 import { $isImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
+
+/**
+ * Whether `node` is the `\id` line's own immutable `\id GEN ` prefix — the book's first child,
+ * and (per docs/standard-view-invariants.md) the one glyph in the line the caret can never enter.
+ * Identity-based (the book's actual first child), not just "any visible marker glyph": a
+ * paragraph's own marker prefix is the SAME node shape but takes the opposite, intentional path —
+ * deleting it is a real marker-deletion gesture (`$paraMarkerDeletionTransform`,
+ * markerEditDeletion.utils.ts), never something to refuse.
+ */
+export function $isBookPrefixNode(
+  node: LexicalNode | null | undefined,
+): node is ImmutableTypedTextNode {
+  return (
+    $isImmutableTypedTextNode(node) &&
+    $isBookNode(node.getParent()) &&
+    node.is(node.getParent()?.getFirstChild())
+  );
+}
+
+/**
+ * Whether the current selection's `DELETE_CHARACTER_COMMAND` (the command both Backspace and
+ * Delete fall through to) would remove the book's own prefix glyph.
+ *
+ * `$getPreviousNode`/`$getNextNode` resolve a TEXT point's neighbor from its containing node's
+ * sibling alone, ignoring the offset within it — meaningful only once the caret is actually AT
+ * that text's boundary (offset 0 backward, or its own length forward). An ELEMENT point is
+ * already offset-correct inside both helpers, so only the TEXT case needs the extra check.
+ *
+ * A non-collapsed delete removes every node the selection SPANS, not only the two it is anchored
+ * on — a range starting at an element point before the prefix (e.g. `(book, 0)`) and ending in the
+ * content consumes the prefix along the way despite neither endpoint resolving to it directly.
+ *
+ * Exported for direct unit testing, the same convention {@link $guardCursorAtParaStart} follows —
+ * production callers reach it through {@link ParaMarkerPrefixCursorGuardPlugin}'s own registration.
+ */
+export function $shouldRefuseBookPrefixDeletion(isBackward: boolean): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return false;
+  if (selection.isCollapsed()) {
+    const { anchor } = selection;
+    if (anchor.type === "text") {
+      const node = anchor.getNode();
+      const atBoundary = isBackward
+        ? anchor.offset === 0
+        : $isTextNode(node) && anchor.offset === node.getTextContentSize();
+      if (!atBoundary) return false;
+    }
+    const target = isBackward ? $getPreviousNode(selection) : $getNextNode(selection);
+    return $isBookPrefixNode(target);
+  }
+  return selection.getNodes().some($isBookPrefixNode);
+}
 
 /**
  * Keeps the cursor out of the places a paragraph's structural prefix occupies but no caret may
@@ -37,6 +96,13 @@ import { $isImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
  * Using `CLICK_COMMAND` instead of `registerUpdateListener` + `editor.update` ensures the
  * correction is committed in a single cycle — other listeners (e.g. `OnSelectionChangePlugin`)
  * see only the corrected cursor, never the intermediate prefix position.
+ *
+ * Also refuses `DELETE_CHARACTER_COMMAND` (the command both Backspace and Delete fall through to)
+ * whenever it would remove the book's own prefix glyph. Lexical's default `deleteCharacter`
+ * removes an adjacent `DecoratorNode` outright regardless of `isKeyboardSelectable()`
+ * (ImmutableTypedTextNode.ts), so without this a Backspace at the very start of the line's content
+ * deletes the `\id GEN ` glyph from the screen while the file — which never stored the glyph as
+ * its own node — is left unchanged, until the next reload silently brings it back.
  */
 export function ParaMarkerPrefixCursorGuardPlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -49,6 +115,14 @@ export function ParaMarkerPrefixCursorGuardPlugin(): null {
         return false;
       },
       COMMAND_PRIORITY_EDITOR,
+    );
+  }, [editor]);
+
+  useEffect(() => {
+    return editor.registerCommand<boolean>(
+      DELETE_CHARACTER_COMMAND,
+      $shouldRefuseBookPrefixDeletion,
+      COMMAND_PRIORITY_HIGH,
     );
   }, [editor]);
 
