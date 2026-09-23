@@ -160,6 +160,8 @@ function Placeholder(): ReactElement {
  *   changes in the editor as the cursor moves.
  * @param onSelectionChange - Callback function when the cursor selection changes.
  * @param onUsjChange - Callback function when USJ Scripture data has changed.
+ * @param onParaMarkerMenuRequest - Callback function when the user asks, by keyboard, to change
+ *   the selected paragraph marker.
  * @param options - Options to configure the editor.
  * @param logger - Logger instance.
  * @returns the editor element.
@@ -172,6 +174,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     onSelectionChange,
     onUsjChange,
     onStateChange,
+    onParaMarkerMenuRequest,
     options,
     logger,
     children,
@@ -612,6 +615,14 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         return undefined;
       }
       return editorRef.current?.read($getUsjSelectionFromEditor);
+    },
+    getSelectedParaMarker() {
+      // `getEditorState().read`, NOT `editor.read` — a host reads this from its own selection
+      // handlers, which can run mid-dispatch.
+      return editorRef.current?.getEditorState().read(() => {
+        const owner = $getSelectedParaMarker($getSelection())?.getParent();
+        return $isParaNode(owner) ? owner.getMarker() : undefined;
+      });
     },
     setSelection(selection) {
       if (isBlockVerse) {
@@ -1161,7 +1172,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <OpaqueBlockGuardPlugin />
           <ParaMarkerPrefixCursorGuardPlugin />
           <ParaMarkerPrefixGuardPlugin viewOptions={viewOptions} logger={stableLogger} />
-          <ParaMarkerSelectionPlugin />
+          <ParaMarkerSelectionPlugin onParaMarkerMenuRequest={onParaMarkerMenuRequest} />
           <ParaNodePlugin />
           <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
           <TextDirectionPlugin textDirection={textDirection} />

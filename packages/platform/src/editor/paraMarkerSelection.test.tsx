@@ -232,3 +232,139 @@ describe("consumers of a selected paragraph marker", () => {
     );
   });
 });
+
+/** Where the document's DOM caret is, if it is inside `element`. */
+function isDomCaretInside(element: HTMLElement): boolean {
+  const domSelection = document.getSelection();
+  return (
+    !!domSelection &&
+    domSelection.rangeCount > 0 &&
+    element.contains(domSelection.getRangeAt(0).startContainer)
+  );
+}
+
+/** Stands in for the browser drawing its caret inside the glyph on mousedown. */
+function placeDomCaretIn(element: HTMLElement): void {
+  const text = element.firstChild;
+  if (!text) throw new Error("glyph has no text");
+  const range = document.createRange();
+  range.setStart(text, 1);
+  range.collapse(true);
+  const domSelection = document.getSelection();
+  domSelection?.removeAllRanges();
+  domSelection?.addRange(range);
+}
+
+describe("clicking gutter markers on the real editor", () => {
+  it("selects A, then B, keeps B through a double-click and a re-click, and leaves no DOM caret", async () => {
+    const { ref, lexical } = await mountParagraphStructure();
+
+    const glyphP = glyphElementOf(lexical, "p");
+    placeDomCaretIn(glyphP);
+    await clickElement(glyphP);
+    expect(ref.current?.getSelectedParaMarker()).toBe("p");
+    expect(isDomCaretInside(glyphP)).toBe(false);
+
+    const glyphLi2 = glyphElementOf(lexical, "li2");
+    placeDomCaretIn(glyphLi2);
+    await clickElement(glyphLi2);
+    expect(ref.current?.getSelectedParaMarker()).toBe("li2");
+    expect(isDomCaretInside(glyphLi2)).toBe(false);
+
+    await clickElement(glyphLi2, 1);
+    await clickElement(glyphLi2, 2);
+    await act(async () => {
+      glyphLi2.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+    });
+    expect(ref.current?.getSelectedParaMarker()).toBe("li2");
+
+    await clickElement(glyphLi2);
+    expect(ref.current?.getSelectedParaMarker()).toBe("li2");
+    expect(paraElementOf(lexical, "li2").getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+describe("EditorRef.getSelectedParaMarker", () => {
+  it("is undefined for a caret and names the marker for a marker selection", async () => {
+    const { ref, lexical } = await mountParagraphStructure();
+    await act(async () => {
+      lexical.update(() => $paraOf("li2").selectEnd());
+    });
+    expect(ref.current?.getSelectedParaMarker()).toBeUndefined();
+
+    await selectMarker(lexical, "li2");
+
+    expect(ref.current?.getSelectedParaMarker()).toBe("li2");
+    // The USJ selection API cannot express a node selection, and says so.
+    expect(ref.current?.getSelection()).toBeUndefined();
+  });
+
+  it("is undefined in the block verse layout, which renders no gutter markers", async () => {
+    const { ref } = await mountParagraphStructure({
+      options: { isReadonly: true, view: getViewOptions(BLOCK_VERSE_VIEW_MODE) },
+    });
+
+    expect(ref.current?.getSelectedParaMarker()).toBeUndefined();
+  });
+
+  it("survives focus leaving for a host popover and coming back through focus()", async () => {
+    const { ref, lexical } = await mountParagraphStructure();
+    await act(async () => {
+      ref.current?.focus();
+    });
+    await selectMarker(lexical, "li2");
+
+    await act(async () => {
+      lexical.getRootElement()?.blur();
+    });
+    await act(async () => {
+      ref.current?.focus();
+    });
+    await flushQueuedEvents();
+
+    expect(ref.current?.getSelectedParaMarker()).toBe("li2");
+    expect(paraElementOf(lexical, "li2").classList.contains("psc-para-marker-selected")).toBe(true);
+  });
+
+  it("comes back with the marker still selected when a retag is undone", async () => {
+    const { ref, lexical } = await mountParagraphStructure();
+    await selectMarker(lexical, "li2");
+    await act(async () => {
+      ref.current?.formatPara("q1");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(ref.current?.getSelectedParaMarker()).toBe("q1");
+
+    await act(async () => {
+      ref.current?.undo();
+    });
+    await flushQueuedEvents();
+
+    expect(ref.current?.getSelectedParaMarker()).toBe("li2");
+    lexical.getEditorState().read(() => {
+      expect(
+        $getRoot()
+          .getChildren()
+          .filter($isParaNode)
+          .map((para) => para.getMarker()),
+      ).toEqual(["p", "li2"]);
+    });
+  });
+});
+
+describe("EditorProps.onParaMarkerMenuRequest", () => {
+  it.each([[{ key: "Enter" }], [{ key: "ArrowDown", altKey: true }]])(
+    "fires on %o with a marker selected, keeping the selection",
+    async (init) => {
+      const onParaMarkerMenuRequest = vi.fn();
+      const { ref, lexical } = await mountParagraphStructure({ onParaMarkerMenuRequest });
+      await clickElement(glyphElementOf(lexical, "li2"));
+
+      await pressKeyOn(lexical, init);
+
+      expect(onParaMarkerMenuRequest).toHaveBeenCalledTimes(1);
+      expect(ref.current?.getSelectedParaMarker()).toBe("li2");
+    },
+  );
+});
