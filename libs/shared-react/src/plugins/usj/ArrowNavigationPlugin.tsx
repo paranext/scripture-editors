@@ -6,7 +6,10 @@ import {
   $selectPreviousVerse,
   ImmutableVerseNode,
 } from "../../nodes/usj";
-import { $advancePastParaPrefixes } from "./ParaMarkerPrefixCursorGuardPlugin";
+import {
+  $advancePastParaPrefixes,
+  $paraContentStartIndex,
+} from "./ParaMarkerPrefixCursorGuardPlugin";
 import { $opaqueBlockAncestor } from "./OpaqueBlockGuardPlugin";
 import { ViewOptions } from "../../views/view-options.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -33,6 +36,7 @@ import {
   $findFirstAncestorNoteNode,
   $getNextNode,
   $getPreviousNode,
+  $getSelectableParaMarker,
   $isBookNode,
   $isCharNode,
   $isImmutableChapterNode,
@@ -42,9 +46,11 @@ import {
   $isNoteNode,
   $isSomeParaNode,
   $placeCaretAtBoundary,
+  $selectParaMarker,
   CharNode,
   ImmutableChapterNode,
   NoteNode,
+  SomeParaNode,
 } from "shared";
 
 /** A minimal rectangle shape ({@link DOMRect}-compatible) for visual-line comparisons. */
@@ -178,7 +184,8 @@ function $navigateVerseVertically(
  * Registers arrow-key handling for USJ scripture: verse-to-verse vertical movement when needed,
  * and horizontal movement around notes and chapter boundaries. In editable-marker mode it also
  * normalizes horizontal traversal — plain arrows and shift-extensions alike — so every press
- * crosses exactly one piece of rendered content.
+ * crosses exactly one piece of rendered content. In the paragraph-structure view it also stops
+ * once on each paragraph's gutter marker at a paragraph boundary.
  *
  * TODO: When the caret is before an empty verse number in an otherwise empty para, pressing up or
  * down moves the caret to after the verse number in the para above/below rather than staying
@@ -262,12 +269,14 @@ function useArrowKeys(editor: LexicalEditor, viewOptions: ViewOptions | undefine
       let isHandled = false;
       if (isMovingForward(direction, event.key)) {
         isHandled =
+          (!hasModifier && $stopAtNextParaMarker(selection)) ||
           (!hasModifier && $crossOpaqueConstruct(selection, "next")) ||
           (!hasModifier && $handleForwardFpNavigation(selection)) ||
-          $handleForwardNavigation(selection) ||
+          $handleForwardNavigation(selection, !hasModifier) ||
           (!hasModifier && normalizesStops && $moveOneVisibleStop(selection, "next"));
       } else if (isMovingBackward(direction, event.key)) {
         isHandled =
+          (!hasModifier && $stopAtOwnParaMarker(selection)) ||
           (!hasModifier && $crossOpaqueConstruct(selection, "previous")) ||
           (!hasModifier && $handleBackwardFpNavigation(selection)) ||
           $handleBackwardNavigation(selection, viewOptions) ||
@@ -754,6 +763,75 @@ function $extendOneVisibleStop(selection: RangeSelection, direction: TraversalDi
   return $applyOneVisibleStop(selection, direction, "extend");
 }
 
+// --- Stopping on a paragraph's marker ---
+//
+// In the paragraph-structure view a paragraph's gutter marker is a selection target (see
+// `$getSelectedParaMarker`, shared), and the keyboard reaches it the way a caret reaches anything
+// else: an unmodified ←/→ across a paragraph boundary stops on the marker once. The marker's own
+// keys (leave, walk the marker column, open the menu) belong to `ParaMarkerSelectionPlugin`.
+//
+// Both rules run FIRST in their chains, ahead of the collapsed-note hops, so a hop cannot skip the
+// stop. The forward rule claims only when the next paragraph is the immediately following
+// root-level block — a table or chapter in between keeps its existing crossing.
+
+/** The paragraph a caret sits in, unless it sits inside a note (whose content is not a paragraph). */
+function $caretParagraph(node: LexicalNode): SomeParaNode | undefined {
+  if ($findFirstAncestorNoteNode(node)) return undefined;
+  const block = $blockOf(node);
+  return $isSomeParaNode(block) ? block : undefined;
+}
+
+/** Whether `node` is one of `para`'s own leading prefix children (its marker glyph, a verse). */
+function $isParaPrefixChild(node: LexicalNode, para: SomeParaNode): boolean {
+  return (
+    node.getParent()?.is(para) === true &&
+    node.getIndexWithinParent() < $paraContentStartIndex(para)
+  );
+}
+
+/**
+ * Whether `point` is at `para`'s first content position: walking backward from it, nothing
+ * rendered comes before `para`'s own prefix. Asked in the visible-stop vocabulary, so an element
+ * point and the text point at the same screen location answer alike.
+ */
+function $isAtParaContentStart(point: PointType, para: SomeParaNode): boolean {
+  const node = point.getNode();
+  if (point.type === "text" && $isTraversableText(node) && point.offset > 0) return false;
+  const seed = $scanSeed(node, point.offset, point.type, "previous", para);
+  const rendered = $scanForRendered(seed, "previous", para);
+  return rendered === undefined || $isParaPrefixChild(rendered, para);
+}
+
+/**
+ * ← (RTL →) at a paragraph's first content position selects that paragraph's marker.
+ *
+ * Mutating: call inside `editor.update()`; dispatched from the arrow handling above.
+ */
+function $stopAtOwnParaMarker(selection: RangeSelection): boolean {
+  const point = selection.focus;
+  const para = $caretParagraph(point.getNode());
+  const glyph = $getSelectableParaMarker(para);
+  if (!para || !glyph || !$isAtParaContentStart(point, para)) return false;
+  $selectParaMarker(glyph);
+  return true;
+}
+
+/**
+ * → (RTL ←) at the end of a paragraph selects the next paragraph's marker, when that paragraph is
+ * the immediately following root-level block and its marker can be selected.
+ *
+ * Mutating: call inside `editor.update()`; dispatched from the arrow handling above.
+ */
+function $stopAtNextParaMarker(selection: RangeSelection): boolean {
+  const point = selection.focus;
+  const para = $caretParagraph(point.getNode());
+  if (!para || !$isAtEdgeOf(point, "next", para)) return false;
+  const glyph = $getSelectableParaMarker(para.getNextSibling());
+  if (!glyph) return false;
+  $selectParaMarker(glyph);
+  return true;
+}
+
 // --- Crossing a read-only construct whole ---
 //
 // A read-only construct is not a place a caret can BE. `ImmutableTableNode` (and `UnknownNode`)
@@ -891,8 +969,16 @@ function $selectPastTrailingNote(note: NoteNode): void {
   parent.select(indexPastNote, indexPastNote);
 }
 
-/** Helper to handle forward arrow key navigation logic */
-function $handleForwardNavigation(selection: RangeSelection): boolean {
+/**
+ * Helper to handle forward arrow key navigation logic.
+ *
+ * @param canStopAtParaMarker - Whether a hop into the next paragraph may land on its marker (an
+ *   unmodified press); modified presses keep landing on its content.
+ */
+function $handleForwardNavigation(
+  selection: RangeSelection,
+  canStopAtParaMarker: boolean,
+): boolean {
   const node = selection.anchor.getNode();
   const nextNode = $getNextNode(selection);
   if ($isNoteNode(nextNode) && !$isMarkerNode(nextNode.getFirstChild())) {
@@ -911,9 +997,12 @@ function $handleForwardNavigation(selection: RangeSelection): boolean {
       else nextNode.select(1, 1);
       return true;
     } else if (nextNode.is(nextNode.getParent()?.getLastChild())) {
-      // caret at end of node before collapsed note at end of para → move past note
+      // caret at end of node before collapsed note at end of para → move past note. When the next
+      // paragraph's marker is a stop, land on it: hopping straight to its content skips the stop.
       const nextPara = nextNode.getParent()?.getNextSibling();
-      if (nextPara && !($isSomeParaNode(nextPara) && $advancePastParaPrefixes(nextPara)))
+      const nextMarker = canStopAtParaMarker ? $getSelectableParaMarker(nextPara) : undefined;
+      if (nextMarker) $selectParaMarker(nextMarker);
+      else if (nextPara && !($isSomeParaNode(nextPara) && $advancePastParaPrefixes(nextPara)))
         nextPara.selectStart();
       return true;
     }
