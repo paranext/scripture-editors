@@ -1463,9 +1463,21 @@ function $restoreSelectionAtOffset(
  * `$restoreSelectionAtOffset`, those nodes form one contiguous region, so spans are computed with
  * `$appendNodesFragment` (no inter-node separators) to match the offset captured over
  * `$buildNoteFragment`/`$buildBookFragment`'s text.
+ *
+ * `liveContentNodes` must be re-fetched from the shell's OWN children AFTER `$replaceSentinels` has
+ * run — never the flat `newNodes` array the caller parsed the fresh tokenizer output into. When a
+ * preserved run (e.g. a co-resident note) sits between two pieces of a top-level TEXT node,
+ * `$replaceSentinels` calls `splitText`, which truncates that array slot's node OBJECT IN PLACE and
+ * creates the split-off tail as a NEW SIBLING, then `insertAfter`s the preserved run between them —
+ * three tree children where the array still lists one. Walking the stale array under-counts bytes
+ * (a caret meant to land after the split loses the selection entirely, since Lexical detects it was
+ * never re-anchored) or over/under-shoots one meant to land past an EARLIER split (the caret lands
+ * inside content that hasn't been typed yet). `$buildBookFragment`/`$buildNoteFragment`, called
+ * again post-splice, hand back exactly this shell's current children with no more re-derivation
+ * needed than the callers already trust for the first, pre-splice call.
  */
 function $restoreSelectionInContentRegion(
-  newNodes: LexicalNode[],
+  liveContentNodes: LexicalNode[],
   anchor: CaretByteAnchor | undefined,
   anchorInShell: boolean,
   getMarkerFn: MarkerLookup,
@@ -1473,12 +1485,12 @@ function $restoreSelectionInContentRegion(
 ): void {
   if (!anchorInShell) return;
   if (anchor === undefined) {
-    newNodes.find($isElementNode)?.selectStart();
+    liveContentNodes.find($isElementNode)?.selectStart();
     return;
   }
   const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
-  $appendNodesFragment(newNodes, out, getMarkerFn, viewOptions);
-  $selectAtFragmentByteAnchor({ text: out.text, spans: out.spans }, anchor, newNodes);
+  $appendNodesFragment(liveContentNodes, out, getMarkerFn, viewOptions);
+  $selectAtFragmentByteAnchor({ text: out.text, spans: out.spans }, anchor, liveContentNodes);
 }
 
 /**
@@ -1872,7 +1884,17 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   contentNodes.forEach((node) => {
     if (!preservedKeys.has(node.getKey())) node.remove();
   });
-  $restoreSelectionInContentRegion(newNodes, caretAnchor, anchorInNote, getMarkerFn, viewOptions);
+  // Re-derived from the note's OWN children now that the splice has settled — see
+  // $restoreSelectionInContentRegion's doc comment for why the flat `newNodes` array is stale here.
+  const liveContentNodes =
+    $buildNoteFragment(note, getMarkerFn, viewOptions)?.contentNodes ?? newNodes;
+  $restoreSelectionInContentRegion(
+    liveContentNodes,
+    caretAnchor,
+    anchorInNote,
+    getMarkerFn,
+    viewOptions,
+  );
   return true;
 }
 
@@ -2062,7 +2084,22 @@ export function $rebuildBook(book: BookNode, context: Tier2Context): boolean {
     if (newVerses[i].getNumber() === oldVerseSids[i].number)
       newVerses[i].setSid(oldVerseSids[i].sid);
   }
-  $restoreSelectionInContentRegion(newNodes, caretAnchor, anchorInBook, getMarkerFn, viewOptions);
+  // Re-derived from the book's OWN children now that the splice has settled, PLUS the freshly
+  // inserted following blocks (untouched by the splice above — a sentinel run never lands inside
+  // one) — see $restoreSelectionInContentRegion's doc comment for why the flat `newNodes` array is
+  // stale for the book's own content, and $rebuildBook's own splice comment for why a typed block
+  // marker's caret can resolve past the line's content into the new block after it.
+  const liveContentNodes = [
+    ...$buildBookFragment(book, getMarkerFn, viewOptions).contentNodes,
+    ...newBlocks,
+  ];
+  $restoreSelectionInContentRegion(
+    liveContentNodes,
+    caretAnchor,
+    anchorInBook,
+    getMarkerFn,
+    viewOptions,
+  );
   return true;
 }
 
