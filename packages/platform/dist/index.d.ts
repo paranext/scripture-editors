@@ -317,7 +317,8 @@ export declare interface EditorProps<TLogger extends LoggerBasic> {
   onScrRefChange?: (scrRef: SerializedVerseRef) => void;
   /**
    * Callback function when the cursor selection changes. The `selection` passed is expressed
-   * against the SETTLED document — see {@link EditorRef.getSelection} for the contract.
+   * against the SETTLED document — see {@link EditorRef.getSelection} for the contract. It is
+   * `undefined` only when there is no selection, as it is for `getSelection`.
    */
   onSelectionChange?: (selection: SelectionRange | undefined) => void;
   /** Callback function when USJ Scripture data has changed. */
@@ -459,12 +460,20 @@ export declare interface EditorRef {
    * reported as the one location its USFM position has (see `UsjDocumentLocation`), never as a
    * container plus a content index; {@link EditorRef.setSelection} still accepts that older shape.
    *
+   * Every caret has a location. Typed bytes a pending edit holds that the settled document carries
+   * as an attribute — a typed `\cat …\cat*` becomes a note's `category`, a typed figure's
+   * `|src="…"` its `file` — are reported as that attribute's location. Bytes it has no counterpart for at all (a
+   * typed literal the settle spells differently from how it was typed) snap LEFT like any other
+   * byte with no representation, to the nearest location at or before them; each end of a range
+   * snaps on its own.
+   *
    * Always returns `undefined` in the block verse layout (`ViewOptions.verseLayout: "block"`):
    * it splits a paragraph spanning verses across their blocks, so the editor's content indexes no
    * longer match the source USJ's and no location can be expressed. The editor reports this once
    * through its logger.
    *
-   * @returns the selection location or range, or `undefined` if there is no selection. The
+   * @returns the selection location or range, or `undefined` only when there is no selection (or
+   *   in the block verse layout) — never because a position could not be expressed. The
    *   json-path in the selection assumes no comment Milestone nodes are present in the USJ.
    */
   getSelection(): SelectionRange | undefined;
