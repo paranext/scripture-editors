@@ -281,6 +281,25 @@ other top-level index. The rules live in `$boundaryLocation` and its helpers in
 document end is spelled on the SETTLED last token (`$settledDocumentEnd` in
 `packages/platform/src/editor/positions/settledPositions.utils.ts`).
 
+**Every caret has a location, pending edit or not.** The two directions of the settled-position
+layer (`packages/platform/src/editor/positions/`) are deliberately asymmetric:
+
+- **Outbound** (`getSelection`, `onSelectionChange`) never answers `undefined` for a real caret —
+  `undefined` means there is no selection (or the layout has no USJ locations at all). Typed bytes the settle carries as an attribute
+  map exactly (a typed `\cat x\cat*` is the note's `category`, a figure's `|src="…"` its `file`), by
+  `UsjReaderWriter`'s locations. Bytes with no settled counterpart at all — a typed literal the
+  settle spells differently from how it was typed, or anything past where a scope's run pairing
+  stops holding — snap LEFT to the nearest translatable position at or before them, the same rule a
+  USFM byte with no USJ representation follows, each end of a range on its own.
+- **Inbound** (`setSelection`, `setAnnotation`, `insertNote`) still refuses a host location that
+  names nothing in the settled document, or one in a scope whose pairing holds only in part: a host
+  location is carried across exactly or not at all, never approximated. The editor logs the
+  refusal.
+
+The one outbound refusal left is a backstop: a memoized plan whose live nodes the tree has moved on
+from. Snapping left there would answer from nodes that no longer mean what the plan paired them
+with.
+
 ---
 
 ## 3. What applying a marker DOES to the document
