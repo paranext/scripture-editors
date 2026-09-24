@@ -269,6 +269,48 @@ describe("$prepareSettleScopes", () => {
     expect(onlyPlan(second.byFirstLiveKey)).toBe(onlyPlan(first.byFirstLiveKey));
   });
 
+  it("rebuilds a cached plan whose live fragment no longer resolves, instead of reusing it", async () => {
+    // A plan the cache hands back on a signature match is trusted to still describe the live tree —
+    // reproduce the one shape that trust doesn't hold for (a live-fragment span naming a node the
+    // tree no longer has) directly on the cached entry, since no real edit leaves the signature
+    // unchanged while a plan's own basis goes stale (every mutation that detaches or moves a scope
+    // node already changes its text or its subtree-key list, which the signature alone catches).
+    const { lexical } = await mountStandardViewEditor(twoParaUsj(["plain body"]));
+    await typeLiteral(lexical, "plain body", "plain \\nd body\\nd* tail");
+    const cache = { entries: new Map() };
+    const context = settledPositionContext(lexical, { cache });
+    const before = lexical.getEditorState().read(() => $prepareSettleScopes(context));
+    const beforePlan = onlyPlan(before.byFirstLiveKey);
+    const [[key, entry]] = [...cache.entries.entries()];
+    expect(entry.plan).toBe(beforePlan);
+
+    const corruptedPlan: SettleScopePlan = {
+      ...beforePlan,
+      liveFragment: beforePlan.liveFragment && {
+        ...beforePlan.liveFragment,
+        spans: [
+          ...beforePlan.liveFragment.spans,
+          { key: "does-not-exist", start: 0, end: 0, isSentinel: false },
+        ],
+      },
+    };
+    // The signature is left exactly as the real plan computed it, so the cache lookup's signature
+    // match still succeeds — only the freshness check stands between this and being handed back.
+    cache.entries.set(key, { signature: entry.signature, plan: corruptedPlan });
+
+    const after = lexical.getEditorState().read(() => $prepareSettleScopes(context));
+    const afterPlan = onlyPlan(after.byFirstLiveKey);
+
+    expect(afterPlan).not.toBe(corruptedPlan);
+    expect(cache.entries.get(key)?.plan).toBe(afterPlan);
+    expect(afterPlan.liveFragment?.spans).not.toContainEqual({
+      key: "does-not-exist",
+      start: 0,
+      end: 0,
+      isSentinel: false,
+    });
+  });
+
   it("rebuilds the plan once the scope's bytes change", async () => {
     const { lexical } = await mountStandardViewEditor(twoParaUsj(["plain body"]));
     await typeLiteral(lexical, "plain body", "plain \\nd body\\nd* tail");
