@@ -278,15 +278,16 @@ export function ContextMenuPlugin({
       // The menu drives the keyboard only while focus is still where it was when the menu opened,
       // or has moved to the menu's own DOM (a mousedown on a disabled, `tabIndex=-1` item focuses
       // it without invoking anything, and that is still the menu holding the keyboard, not focus
-      // moving away). Nothing closes the menu when focus moves on (Tab), and this listener hears
-      // the whole document, so once focus has MOVED to a control outside the editor root and
-      // outside the menu, that control's keys are its own — claiming Enter there would stop a
-      // focused button from ever activating. Focus-at-open still counts as "the editor's own" even
-      // when it sits outside the root: a READ-ONLY editor's root (`contentEditable=false`, no
-      // tabIndex) can never take focus, so a right-click there leaves focus wherever the mousedown
-      // happened to land — `body`, or a mouse-focusable ancestor such as a scroll container — and
-      // that pre-existing focus target has not "moved on" from anywhere; it was never inside the
-      // root to begin with.
+      // moving away). Nothing closes the menu when focus moves on — a host calling `.focus()` on
+      // another control while the menu is open, since Tab itself is swallowed like any other key
+      // now that the menu is modal — and this listener hears the whole document, so once focus has
+      // MOVED to a control outside the editor root and outside the menu, that control's keys are
+      // its own — claiming Enter there would stop a focused button from ever activating.
+      // Focus-at-open still counts as "the editor's own" even when it sits outside the root: a
+      // READ-ONLY editor's root (`contentEditable=false`, no tabIndex) can never take focus, so a
+      // right-click there leaves focus wherever the mousedown happened to land — `body`, or a
+      // mouse-focusable ancestor such as a scroll container — and that pre-existing focus target
+      // has not "moved on" from anywhere; it was never inside the root to begin with.
       const focused = document.activeElement;
       if (
         focused &&
