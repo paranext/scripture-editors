@@ -19,7 +19,7 @@ import { $setParaMarkerWithPrefix } from "./markerEditDeletion.utils";
 import { $insertPastedText } from "./whitespaceDisplay.plugin.utils";
 import { $findMatchingParent } from "@lexical/utils";
 import { $getSelection, $isRangeSelection, LexicalNode, RangeSelection } from "lexical";
-import { $createParaNode, $isChapterNode, ChapterNode } from "shared";
+import { $chapterGlyphTextNode, $createParaNode, $isChapterNode, ChapterNode } from "shared";
 import { showParaMarkerPrefix, ViewOptions } from "shared-react";
 
 /** The chapter line `node` is, or sits inside; `undefined` outside any chapter line. */
@@ -98,6 +98,21 @@ export function $refuseLineBreakOnChapterLine(): boolean {
 }
 
 /**
+ * Whether a structure-protected document must refuse a paste or drop at the selection because it
+ * would rewrite a chapter's marker: a range touching a chapter line, or a caret anywhere on the
+ * line but just past its end. Just past the end is where typing adds text after the marker without
+ * touching it, so a paste there goes in as typing would.
+ */
+function $wouldRewriteChapterMarker(selection: RangeSelection): boolean {
+  if (!$selectionTouchesChapterLine(selection)) return false;
+  if (!selection.isCollapsed()) return true;
+  const caretNode = selection.focus.getNode();
+  const chapter = $chapterLineOf(caretNode);
+  const glyph = chapter && $chapterGlyphTextNode(chapter);
+  return !(glyph?.is(caretNode) && selection.focus.offset === glyph.getTextContentSize());
+}
+
+/**
  * Handles a paste or a drop at a chapter line: a selected range touching the chapter line is
  * deleted first, and text whose caret is still on the chapter line goes in exactly as an external
  * paste does anywhere in Standard view ({@link $insertPastedText}) — `\c`/`\id` dropped, NBSPs
@@ -107,6 +122,9 @@ export function $refuseLineBreakOnChapterLine(): boolean {
  * Claimed for every paste and drop that reaches a chapter line, internal ones included: Lexical's
  * own insertion of a rich payload, and structure protection's html sanitizer, both insert nodes
  * where the caret is, and with the caret in a chapter line there is no block to insert them into.
+ * In a structure-protected document the chapter's marker is structure, so a paste that would
+ * rewrite it — anywhere but just past the end of the line — is claimed and refused, changing
+ * nothing, as pasting over a verse number is.
  *
  * Mutating: call from a `PASTE_COMMAND` handler that runs before Lexical's own paste and before
  * structure protection's, or from a `CONTROLLED_TEXT_INSERTION_COMMAND` handler (which is how a
@@ -122,6 +140,9 @@ export function $pasteOnChapterLine(
   isStructureProtected: boolean,
   armSplitExpected: () => void,
 ): boolean {
+  const selection = $getSelection();
+  if (isStructureProtected && $isRangeSelection(selection) && $wouldRewriteChapterMarker(selection))
+    return true;
   if (!$chapterLineAtCaret()) return false;
   const caret = $getSelection();
   if (text && $isRangeSelection(caret))

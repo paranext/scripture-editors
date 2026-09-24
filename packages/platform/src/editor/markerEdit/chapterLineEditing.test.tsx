@@ -510,4 +510,43 @@ describe("a caret on the chapter line", () => {
     await onChapterLine(lexical, () => lexical.dispatchCommand(PASTE_COMMAND, internalPaste));
     expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, "aa bb", VERSE_1_PARA, POETRY_PARA]);
   });
+
+  // In a structure-protected document a chapter's marker is structure, as a verse number is, so a
+  // paste that would rewrite it changes nothing. Only just past the end of the line — where typing
+  // adds text after the marker — does a paste go in.
+  describe("in a structure-protected document", () => {
+    const numberAt = CHAPTER_2_GLYPH.indexOf("2");
+
+    it.each([
+      ["over the chapter number", numberAt, numberAt + 1],
+      ["with the caret inside the marker", numberAt, numberAt],
+      ["over the whole chapter line", 0, CHAPTER_2_GLYPH.length],
+    ])("refuses a paste %s", async (_label, anchor, focus) => {
+      const { ref, lexical } = await mountStandardViewEditor(chapterDoc, {
+        structureProtectionMode: "protected",
+      });
+      await act(async () =>
+        lexical.update(() => {
+          $glyph().select(anchor, focus);
+          lexical.dispatchCommand(PASTE_COMMAND, plainTextPaste("5"));
+        }),
+      );
+      expect(ref.current?.getUsj()?.content).toEqual(chapterDoc.content);
+    });
+
+    it("takes a paste just past the end of the line, as typing there would", async () => {
+      const { ref, lexical } = await mountStandardViewEditor(chapterDoc, {
+        structureProtectionMode: "protected",
+      });
+      await onChapterLine(lexical, () =>
+        lexical.dispatchCommand(PASTE_COMMAND, plainTextPaste("aa\nbb")),
+      );
+      expect(ref.current?.getUsj()?.content).toEqual([
+        CHAPTER_2,
+        "aa bb",
+        VERSE_1_PARA,
+        POETRY_PARA,
+      ]);
+    });
+  });
 });
