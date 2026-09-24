@@ -555,14 +555,17 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       });
       transientInputRef.current = { input, nodeKey: liveKey ?? lastKnownCaretRef.current?.key };
     },
-    setUsj(incomingUsj) {
-      // Compared against the SETTLED document - what is on screen - not `editedUsjRef`. While a
-      // marker edit is pending, `editedUsjRef` still holds the node state from before it: backspace
-      // a chapter's number out of its glyph and `editedUsjRef` still says `\c 2`. A host putting
-      // that number back would then match it and be skipped, leaving the numberless glyph on
-      // screen. Handed the settled document itself there is nothing to load, and reloading would
-      // only take the caret and the undo history away from the edit in progress.
-      if (!deepEqual(readSettledUsj(), incomingUsj)) {
+    setUsj(incomingUsj, options) {
+      // While a marker edit is pending the editor holds two documents: the SETTLED one on screen,
+      // and `editedUsjRef`, the node state from before the edit. Either one means there is nothing
+      // to load: the settled one is already on screen, and a host re-sending the pre-edit one must
+      // not throw the edit in progress away (with the caret and the undo history). A host that
+      // means to correct the screen forces the load, because its correction can equal the pre-edit
+      // document: backspace a chapter's number out of its glyph and `editedUsjRef` still says
+      // `\c 2`, the very document a host putting that number back sends.
+      const isAlreadyHeld =
+        deepEqual(editedUsjRef.current, incomingUsj) || deepEqual(readSettledUsj(), incomingUsj);
+      if (options?.force || !isAlreadyHeld) {
         editedUsjRef.current = incomingUsj;
         // A replaced document invalidates any in-progress declaration: its anchor node key
         // belongs to the outgoing tree, and the surface that declared it is now stale too.

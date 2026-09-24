@@ -424,11 +424,15 @@ export declare interface EditorRef {
    */
   setTransientInput(input: TransientInput | undefined): void;
   /**
-   * Set the USJ Scripture data. Does nothing when `usj` is the document {@link EditorRef.getUsj}
-   * returns now, so the caret and the undo history survive; any other document replaces the
-   * editor's content, including one that differs only in a marker edit still in progress.
+   * Set the USJ Scripture data, replacing the editor's content.
+   *
+   * Does nothing when `usj` is a document the editor already holds, so the caret and the undo
+   * history survive: the document {@link EditorRef.getUsj} returns now (what is on screen), or,
+   * while a marker edit is in progress, the editor's own record from before that edit — so a host
+   * re-sending the text as it was does not throw the edit away. Pass `options.force` to load it
+   * regardless (see {@link SetUsjOptions.force}).
    */
-  setUsj(usj: Usj): void;
+  setUsj(usj: Usj, options?: SetUsjOptions): void;
   /**
    * EXPERIMENTAL: Apply Operational Transform delta update.
    *
@@ -1476,6 +1480,27 @@ export declare interface SelectionRange {
   start: UsjDocumentLocation;
   /** Optional ending location of the selection range. */
   end?: UsjDocumentLocation;
+}
+
+/**
+ * Options for {@link EditorRef.setUsj}.
+ *
+ * @public
+ */
+export declare interface SetUsjOptions {
+  /**
+   * Load the document even when the editor already holds it. Defaults to `false`.
+   *
+   * Pass `true` to correct what is on screen while a marker edit may be in progress. The editor
+   * keeps two versions of its document while such an edit is in progress: what is on screen, and
+   * its own record from before the edit. A document equal to that record is skipped by default,
+   * which keeps the edit from being thrown away by a host that re-sends the text as it was. The
+   * same test skips a correction that happens to put back what the edit removed, such as a chapter
+   * number the user backspaced away, so a host making that correction forces it. A forced load
+   * replaces the edit in progress, and, like any load, takes the caret and the undo history with
+   * it.
+   */
+  force?: boolean;
 }
 
 /**
