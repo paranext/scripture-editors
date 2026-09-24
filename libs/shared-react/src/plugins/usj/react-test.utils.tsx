@@ -14,6 +14,7 @@ import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { act, render } from "@testing-library/react";
+import { BookCode } from "@eten-tech-foundation/scripture-utilities";
 import {
   $createPoint,
   $createRangeSelection,
@@ -32,7 +33,16 @@ import {
   SerializedEditorState,
 } from "lexical";
 import { ReactNode, useEffect } from "react";
-import { segmentState, SerializedNoteNode, SerializedParaNode, TypedMarkNode } from "shared";
+import {
+  $createBookNode,
+  $createImmutableTypedTextNode,
+  BookNode,
+  NBSP,
+  segmentState,
+  SerializedNoteNode,
+  SerializedParaNode,
+  TypedMarkNode,
+} from "shared";
 
 export async function baseTestEnvironment(
   $initialEditorState?: InitialEditorStateType,
@@ -90,6 +100,23 @@ export async function baseTestEnvironment(
   // `editor` is defined on React render.
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   return { editor: editor! };
+}
+
+/**
+ * Builds the `\id` line the way `createBook` shapes it in markerMode "editable": one immutable
+ * `\id <code> ` glyph decorator, then `children` as the line's own content, in order. Returns the
+ * `BookNode` itself — unlike the line's real deserialization path, this does not append it
+ * anywhere — so a test composes it into `$getRoot().append(...)` alongside whatever else it
+ * builds, the same way any other node constructor here does.
+ *
+ * @param code - The book code the line's `\id` marker names.
+ * @param children - The line's own content, after the immutable prefix.
+ */
+export function $createBookLine(code: BookCode, ...children: LexicalNode[]): BookNode {
+  return $createBookNode(code).append(
+    $createImmutableTypedTextNode("marker", `\\id ${code}${NBSP}`),
+    ...children,
+  );
 }
 
 /**

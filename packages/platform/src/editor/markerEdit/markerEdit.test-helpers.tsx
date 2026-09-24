@@ -30,9 +30,7 @@ import {
 } from "lexical";
 import {
   $createAttributeRunNode,
-  $createBookNode,
   $createCharNode,
-  $createImmutableTypedTextNode,
   $createMarkerNode,
   $createParaNode,
   $createVerseNode,
@@ -57,7 +55,10 @@ import {
 } from "shared";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
-import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
+import {
+  $createBookLine,
+  baseTestEnvironment,
+} from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 import {
   CharNodePlugin,
   getViewOptions,
@@ -337,9 +338,7 @@ export async function historyTestEnvironment($initialEditorState: () => void) {
  */
 export function $buildBookLine(content: string): TextNode {
   const text = $createTextNode(content);
-  $getRoot().append(
-    $createBookNode("GEN").append($createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`), text),
-  );
+  $getRoot().append($createBookLine("GEN", text));
   return text;
 }
 

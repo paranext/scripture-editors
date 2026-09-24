@@ -43,7 +43,7 @@ import {
   $shouldRefuseBookPrefixDeletion,
   ParaMarkerPrefixCursorGuardPlugin,
 } from "./ParaMarkerPrefixCursorGuardPlugin";
-import { baseTestEnvironment, pressKey } from "./react-test.utils";
+import { $createBookLine, baseTestEnvironment, pressKey } from "./react-test.utils";
 
 const nodes = [
   BookNode,
@@ -536,10 +536,8 @@ describe("$guardCursorAtParaStart", () => {
       let content!: TextNode;
       const { editor } = createBasicTestEnvironment(nodes, () => {
         content = $createTextNode("Genesis");
-        book = $createBookNode("GEN");
-        $getRoot().append(
-          book.append($createImmutableTypedTextNode("marker", "\\id GEN "), content),
-        );
+        book = $createBookLine("GEN", content);
+        $getRoot().append(book);
       });
 
       updateSelection(editor, book, 0);
@@ -602,12 +600,7 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("Genesis");
-        $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", "\\id GEN "),
-            content,
-          ),
-        );
+        $getRoot().append($createBookLine("GEN", content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -619,7 +612,7 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
       const book = $getRoot().getFirstChild();
       if (!$isBookNode(book)) throw new Error("expected a BookNode");
       expect(book.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
-      expect(book.getTextContent()).toBe("\\id GEN Genesis");
+      expect(book.getTextContent()).toBe(`\\id GEN${NBSP}Genesis`);
     });
   });
 
@@ -627,13 +620,8 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
     let book!: BookNode;
     const { editor } = await baseTestEnvironment(
       () => {
-        book = $createBookNode("GEN");
-        $getRoot().append(
-          book.append(
-            $createImmutableTypedTextNode("marker", "\\id GEN "),
-            $createTextNode("Genesis"),
-          ),
-        );
+        book = $createBookLine("GEN", $createTextNode("Genesis"));
+        $getRoot().append(book);
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -651,11 +639,9 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
     let content!: TextNode;
     const { editor } = await baseTestEnvironment(
       () => {
-        book = $createBookNode("GEN");
         content = $createTextNode("Genesis");
-        $getRoot().append(
-          book.append($createImmutableTypedTextNode("marker", "\\id GEN "), content),
-        );
+        book = $createBookLine("GEN", content);
+        $getRoot().append(book);
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -669,7 +655,7 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
       const rootBook = $getRoot().getFirstChild();
       if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
       expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
-      expect(rootBook.getTextContent()).toBe("\\id GEN Genesis");
+      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}Genesis`);
     });
   });
 
@@ -703,12 +689,7 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
   it("does not refuse backward deletion inside plain content, away from any boundary", () => {
     let content!: TextNode;
     const { editor } = createBasicTestEnvironment(nodes, () => {
-      $getRoot().append(
-        $createBookNode("GEN").append(
-          $createImmutableTypedTextNode("marker", "\\id GEN "),
-          (content = $createTextNode("Genesis")),
-        ),
-      );
+      $getRoot().append($createBookLine("GEN", (content = $createTextNode("Genesis"))));
     });
     updateSelection(editor, content, 3);
 
@@ -727,12 +708,7 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
   it("does not refuse forward deletion (Delete) from inside the content, away from any boundary", () => {
     let content!: TextNode;
     const { editor } = createBasicTestEnvironment(nodes, () => {
-      $getRoot().append(
-        $createBookNode("GEN").append(
-          $createImmutableTypedTextNode("marker", "\\id GEN "),
-          (content = $createTextNode("Genesis")),
-        ),
-      );
+      $getRoot().append($createBookLine("GEN", (content = $createTextNode("Genesis"))));
     });
     updateSelection(editor, content, 3);
 
@@ -762,12 +738,7 @@ describe("DELETE_WORD_COMMAND and DELETE_LINE_COMMAND refuse to remove the book'
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("Genesis");
-        $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", "\\id GEN "),
-            content,
-          ),
-        );
+        $getRoot().append($createBookLine("GEN", content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -784,7 +755,7 @@ describe("DELETE_WORD_COMMAND and DELETE_LINE_COMMAND refuse to remove the book'
       const book = $getRoot().getFirstChild();
       if (!$isBookNode(book)) throw new Error("expected a BookNode");
       expect(book.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
-      expect(book.getTextContent()).toBe("\\id GEN Genesis");
+      expect(book.getTextContent()).toBe(`\\id GEN${NBSP}Genesis`);
     });
   });
 
@@ -800,12 +771,7 @@ describe("DELETE_WORD_COMMAND and DELETE_LINE_COMMAND refuse to remove the book'
       const { editor } = await baseTestEnvironment(
         () => {
           content = $createTextNode("Genesis");
-          $getRoot().append(
-            $createBookNode("GEN").append(
-              $createImmutableTypedTextNode("marker", "\\id GEN "),
-              content,
-            ),
-          );
+          $getRoot().append($createBookLine("GEN", content));
         },
         <ParaMarkerPrefixCursorGuardPlugin />,
       );
@@ -822,7 +788,7 @@ describe("DELETE_WORD_COMMAND and DELETE_LINE_COMMAND refuse to remove the book'
         const book = $getRoot().getFirstChild();
         if (!$isBookNode(book)) throw new Error("expected a BookNode");
         expect(book.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
-        expect(book.getTextContent()).toBe("\\id GEN Genesis");
+        expect(book.getTextContent()).toBe(`\\id GEN${NBSP}Genesis`);
       });
     } finally {
       delete (Selection.prototype as { modify?: () => void }).modify;

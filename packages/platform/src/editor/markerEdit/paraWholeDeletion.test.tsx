@@ -33,7 +33,10 @@ import {
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
 // Reaching inside only for tests (same pattern as markerEdit.test-helpers).
 // eslint-disable-next-line @nx/enforce-module-boundaries
-import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
+import {
+  $createBookLine,
+  baseTestEnvironment,
+} from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 import {
   getViewOptions,
   OpaqueBlockGuardPlugin,
@@ -60,9 +63,7 @@ import {
   TextNode,
 } from "lexical";
 import {
-  $createBookNode,
   $createCharNode,
-  $createImmutableTypedTextNode,
   $createImpliedParaNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
@@ -705,14 +706,11 @@ describe("backspacing an Enter-Enter split back together (content bytes survive 
     // Backspace deletes and re-creates the same marker forever.
     let book!: BookNode, next!: ParaNode, after!: ParaNode;
     const { editor } = await testEnvironmentWithDisplaySyncs(() => {
-      book = $createBookNode("GEN");
+      book = $createBookLine("GEN", $createTextNode("gen"));
       next = $createParaNode("ip");
       after = $createParaNode("p");
       $getRoot().append(
-        book.append(
-          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
-          $createTextNode("gen"),
-        ),
+        book,
         next.append(
           $createMarkerNode("ip"),
           $createMarkerTrailingSeparator(),
@@ -849,13 +847,10 @@ describe("backspacing a fresh paragraph below the `\\id` line away (collapsed-ca
     // backspacing its prefix away must dissolve it back into nothing, exactly as below a paragraph.
     let book!: BookNode, fresh!: ParaNode;
     const { editor } = await testEnvironment(() => {
-      book = $createBookNode("GEN");
+      book = $createBookLine("GEN", $createTextNode("gen"));
       fresh = $createParaNode("ip");
       $getRoot().append(
-        book.append(
-          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
-          $createTextNode("gen"),
-        ),
+        book,
         fresh.append($createMarkerNode("ip"), $createTextNode(NBSP)),
         $createParaNode("p").append(
           $createMarkerNode("p"),
