@@ -6,7 +6,7 @@
  * suite that needs it does not re-register the other suites' tests by importing it.
  */
 import Editorial from "../Editorial";
-import { EditorOptions, EditorRef } from "./editor.model";
+import { EditorOptions, EditorProps, EditorRef } from "./editor.model";
 import { flushQueuedEvents } from "./editor-test.utils";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act, render } from "@testing-library/react";
@@ -16,7 +16,7 @@ import { $dfs } from "@lexical/utils";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { getEmbeddedLexicalEditor } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
-import { $isNoteNode, NoteNode } from "shared";
+import { $isNoteNode, LoggerBasic, NoteNode } from "shared";
 import { getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
 
 export function requireDefined<T>(value: T | undefined | null, message: string): T {
@@ -57,6 +57,7 @@ export function note(text: string): MarkerObject {
 export async function renderEditor(
   defaultUsj: Usj,
   editorOptions: EditorOptions = options,
+  onSelectionChange?: EditorProps<LoggerBasic>["onSelectionChange"],
 ): Promise<{ editorRef: EditorRef; lexical: LexicalEditor; container: HTMLElement }> {
   const ref = createRef<EditorRef>();
   let container: HTMLElement | undefined;
@@ -67,6 +68,7 @@ export async function renderEditor(
         defaultUsj={defaultUsj}
         scrRef={scrRef}
         onScrRefChange={() => undefined}
+        onSelectionChange={onSelectionChange}
         options={editorOptions}
       />,
     );

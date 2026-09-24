@@ -537,15 +537,24 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       return readSettledUsj();
     },
     commitPendingMarkerEdits() {
+      const editor = editorRef.current;
+      if (!editor) return;
+      // A host settles this editor on the user's way OUT of it (into a note editor elsewhere, say),
+      // so the settle follows the same focus rule as `applyUpdate`: it must not write the DOM
+      // selection, and with it focus, back into this editor.
+      const skipDomSelection = !holdsDomFocus();
+      if (skipDomSelection) releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG);
       // Discrete so the settle commits synchronously: `DeltaOnChangePlugin` then refreshes
       // `editedUsjRef` before this method returns, letting callers read fresh USJ via
       // `getUsj()` immediately (the host save path depends on this ordering).
-      editorRef.current?.update(
+      editor.update(
         () => {
-          editorRef.current?.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
+          if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+          editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
         },
         { discrete: true },
       );
+      if (skipDomSelection) clearStaleDomSelection(editor);
     },
     setTransientInput(input) {
       if (!input) {
@@ -955,7 +964,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         },
         { discrete: true },
       );
-      if (skipDomSelection) clearStaleDomSelection(editor);
+      if (skipDomSelection) {
+        clearStaleDomSelection(editor);
+        // `onSelectionChange` is driven by the DOM selection changing, and this move wrote none.
+        // The host still has to learn where the caret now is: what it does "at the selection"
+        // (inserting a comment, say) can be asked for while focus is in the other editor.
+        onSelectionChange?.(editor.getEditorState().read(() => $getUsjSelectionFromEditor()));
+      }
     },
     selectNoteTextOffset(noteKeyOrIndex, utf16Offset) {
       editorRef.current?.update(() => {

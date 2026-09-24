@@ -1773,6 +1773,61 @@ describe("commitPendingMarkerEdits (abandonment window)", () => {
   });
 });
 
+describe("commitPendingMarkerEdits after the user has moved to another editor", () => {
+  // A host settles this editor as the user leaves it for a note editor in the same document; the
+  // settle must not write the DOM selection, and with it focus, back here.
+  it("settles without taking the caret from where the user went", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+    await act(async () => {
+      lexical.update(() => {
+        const glyph = $getRoot()
+          .getAllTextNodes()
+          .find((node): node is MarkerNode => $isMarkerNode(node) && node.getMarker() === "p");
+        if (!glyph) throw new Error("para marker glyph not found");
+        glyph.setTextContent("\\q1");
+        glyph.select(3, 3);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const otherEditor = document.body.appendChild(document.createElement("div"));
+    otherEditor.contentEditable = "true";
+    otherEditor.tabIndex = -1;
+    otherEditor.textContent = "note text";
+    otherEditor.focus();
+    const domSelection = document.getSelection();
+    if (!domSelection || !otherEditor.firstChild) throw new Error("no DOM selection");
+    domSelection.collapse(otherEditor.firstChild, 4);
+
+    try {
+      act(() => {
+        ref.current?.commitPendingMarkerEdits();
+      });
+
+      lexical.getEditorState().read(() => {
+        expect($getRoot().getChildren().find($isParaNode)?.getMarker()).toBe("q1");
+      });
+      expect(document.activeElement).toBe(otherEditor);
+      expect(otherEditor.contains(domSelection.anchorNode)).toBe(true);
+    } finally {
+      otherEditor.remove();
+    }
+  });
+});
+
 describe("options.styleInfo threading (marker validation)", () => {
   /** `sampleUsj` with the verse text wrapped in a `\wj` char span — the marker whose presence
    * in (or absence from) the effective stylesheet the tests below observe. */

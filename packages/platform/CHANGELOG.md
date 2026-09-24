@@ -81,6 +81,11 @@ refused. The public surface grew substantially; nothing was removed.
   lands. The parking commit's skip-DOM-selection tag no longer outlives it (Lexical keeps a
   selection-only commit's tags for the next commit, so `focus()` focused nothing), and the stale
   DOM selection it left inside the editor is cleared rather than read back over the parked caret.
+- `commitPendingMarkerEdits` follows `applyUpdate`'s focus rule: called while another element holds
+  focus (a host settling this editor as the user leaves it), it no longer writes the DOM selection,
+  and with it focus, back into this editor.
+- `selectAfterNote` reports the parked caret through `onSelectionChange` when it writes no DOM
+  selection, so a host acting "at the selection" (inserting a comment) uses where the caret now is.
 - A caret before a verse number reports the verse the chapter actually has before it: `\v 1-2`
   before `\v 3`, `\v 2a` before `\v 2b`, `\v 20` before `\v 22`, rather than the number minus
   one. A scroll-reference navigation to the verse the caret already reports - including verse 0 for

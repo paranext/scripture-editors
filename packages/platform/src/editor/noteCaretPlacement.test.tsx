@@ -25,7 +25,7 @@ import {
 } from "./noteEditorRef.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { afterAll, beforeAll } from "vitest";
+import { afterAll, beforeAll, vi } from "vitest";
 import {
   $getRoot,
   $getSelection,
@@ -256,6 +256,21 @@ describe("EditorRef.selectAfterNote", () => {
     expect(domSelection.anchorNode?.textContent).toBe("after");
     expect(domSelection.anchorOffset).toBe(0);
     button.remove();
+  });
+
+  // The move writes no DOM selection, which is what `onSelectionChange` normally follows, and the
+  // host acts "at the selection" (inserting a comment) from wherever the user is.
+  it("reports the parked caret to the host while unfocused", async () => {
+    const onSelectionChange = vi.fn();
+    const { editorRef } = await renderEditor(usj, options, onSelectionChange);
+    onSelectionChange.mockClear();
+
+    await act(async () => {
+      editorRef.selectAfterNote(0);
+    });
+
+    expect(onSelectionChange).toHaveBeenCalledTimes(1);
+    expect(onSelectionChange.mock.calls[0][0]).toEqual(editorRef.getSelection());
   });
 
   it("reconciles the DOM selection when the editor does hold focus", async () => {
