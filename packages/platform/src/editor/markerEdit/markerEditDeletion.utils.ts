@@ -6,6 +6,8 @@
 
 import { $requestTier2ForNode } from "./tier2Rebuild.utils";
 import { MarkerEditContext } from "./markerEditTier1.utils";
+import { isParaKindMarker } from "./markerKind.utils";
+import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
 import { $dfs } from "@lexical/utils";
 import {
   $createTextNode,
@@ -36,6 +38,7 @@ import {
   NBSP,
   NoteNode,
   PARA_MARKER_DEFAULT,
+  MarkerLookup,
   ParaNode,
   textTypeState,
 } from "shared";
@@ -316,6 +319,29 @@ export function $prepareReplaceSelection(context: MarkerEditContext): void {
 }
 
 /**
+ * A paragraph-marker OPENER literal at the very start of a text run: a backslash, an optional `+`,
+ * a marker name, and then either the marker's own separator or the end of the run. End-of-run is
+ * what makes `\b` — a blank-line marker, which carries no content at all — count, and the reason a
+ * CLOSER cannot: `\zbold*` has a `*` where a separator or the run's end would have to be.
+ */
+const LEADING_PARA_MARKER_LITERAL = new RegExp(
+  String.raw`^\\\+?([${ENGINE_MARKER_NAME_BYTES}]+)(?:[ \u00A0]|$)`,
+);
+
+/**
+ * Whether `para`'s own text already opens with the paragraph marker it wants — the shape every
+ * line of a multi-line paste has, since a whole-paragraph copy carries its paragraph's own marker
+ * literal (`$selectionToUsfmText`, whitespaceDisplay.plugin.utils.ts).
+ *
+ * Unknown markers count as paragraph-kind, the same classification the rest of the engine applies
+ * ({@link isParaKindMarker}), so a custom.sty `\zmyPara` is recognized as readily as `\q1`.
+ */
+function $suppliesOwnParaMarker(para: ParaNode, getMarkerFn: MarkerLookup): boolean {
+  const match = LEADING_PARA_MARKER_LITERAL.exec(para.getTextContent());
+  return !!match && isParaKindMarker(match[1], getMarkerFn);
+}
+
+/**
  * The engine's `ParaNode` transform, policing what deleting paragraph-prefix bytes MEANS: heal a
  * partially-damaged prefix back to canonical, merge a paragraph whose whole prefix was deleted
  * into the previous paragraph (deleting the marker joins the paragraphs — the PT9 outcome), or
@@ -347,6 +373,14 @@ export function $paraMarkerDeletionTransform(para: ParaNode, context: MarkerEdit
   }
 
   if (context.splitExpected.current) {
+    // …unless the new paragraph's own text ALREADY opens with a paragraph marker. A multi-line
+    // paste replays each line break as a split and then inserts the line, and a whole-paragraph
+    // copy's lines each carry their paragraph's own marker literal — so injecting here would put a
+    // `\p ` glyph in front of a marker the user actually pasted, and the line would settle as a
+    // stray empty `\p` ahead of the real paragraph. Leave the literal alone and let the Tier-2
+    // settle make it the paragraph's marker, which is the one the bytes name. Pressing Enter
+    // directly in front of a marker literal is the same shape and wants the same answer.
+    if ($suppliesOwnParaMarker(para, context.getMarker)) return;
     // Fresh paragraph from an expected split (Enter, or a multi-line paste — both arm the
     // flag): insertNewAfter cloned the marker; make it visible. This runs
     // ahead of the isEmpty guard because an Enter split at a paragraph's content edge leaves a

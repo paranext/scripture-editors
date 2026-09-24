@@ -1,0 +1,769 @@
+/**
+ * Copy-fidelity pins for Standard-view `text/plain`: note callers render in the copied text,
+ * source-faithful NBSP handling around a collapsed note's internal markers (a blanket NBSP→space
+ * mapping would produce phantom spaces the source USFM never had), multi-paragraph joining, and
+ * the copy→paste USJ round trip. Kept separate from `whitespaceDisplay.plugin.utils.test.tsx`
+ * (which already covers the NBSP display-run invariant and the plain payload-builder contract) so
+ * this file can stay focused on `$selectionToUsfmText`'s USFM-shape behavior.
+ */
+import { MarkerEditPlugin } from "./MarkerEditPlugin";
+import {
+  $appendVerseAttributeRun,
+  copyEvent,
+  findOnlyNote,
+  pasteEvent,
+  plainTextPasteEvent,
+  serializedState,
+  testEnvironment,
+  viewOptions,
+} from "./markerEdit.test-helpers";
+import { htmlPasteText } from "./whitespaceDisplay.plugin.utils";
+import {
+  deserializeSerializedEditorState,
+  initialize as initializeDeserialize,
+} from "../adaptors/editor-usj.adaptor";
+import { act } from "@testing-library/react";
+import { $dfs } from "@lexical/utils";
+import {
+  $createPoint,
+  $createRangeSelection,
+  $createTextNode,
+  $getRoot,
+  $isTextNode,
+  $setSelection,
+  $setState,
+  COPY_COMMAND,
+  CUT_COMMAND,
+  LexicalEditor,
+  PASTE_COMMAND,
+  TextNode,
+} from "lexical";
+import {
+  $createMarkerNode,
+  $createParaNode,
+  $createVerseNode,
+  $isChapterNode,
+  $isNoteNode,
+  $isParaNode,
+  getVisibleOpenMarkerText,
+  NBSP,
+  NoteNode,
+  textTypeState,
+} from "shared";
+// Reaching inside only for tests.
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
+import { Usj, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
+
+// jsdom implements neither `ClipboardEvent` nor `DragEvent`, but Lexical's default (non-Standard-
+// view-specific) paste path — reached once our copied text carries no NBSP for
+// `$handlePasteForStandardView` to claim — checks `instanceof`/class-name against both to decide
+// whether a paste carries files. Same stub as `markerEditDeletion.utils.test.tsx`'s round-trip
+// paste test; only defined if not already present (a shared jsdom global, not per-file).
+const globalStubs: { DragEvent?: unknown; ClipboardEvent?: unknown } = globalThis;
+if (typeof globalStubs.DragEvent === "undefined")
+  globalStubs.DragEvent = class DragEvent extends Event {};
+if (typeof globalStubs.ClipboardEvent === "undefined")
+  globalStubs.ClipboardEvent = class ClipboardEvent extends Event {};
+
+/** A source-faithful (real space after the marker glyph) `marker-trailing-space` separator, the
+ * shape `usj-editor.adaptor.ts`'s `createPara` builds after a paragraph's own opening marker. */
+function $trailingSpaceNode(): TextNode {
+  const spaceNode = $createTextNode(NBSP);
+  $setState(spaceNode, textTypeState, "marker-trailing-space");
+  return spaceNode;
+}
+
+/** Selects an entire (inline) node — its first descendant's start through its last descendant's
+ * end — the shape needed to select a whole `NoteNode` regardless of collapsed/expanded layout. */
+function $selectWholeNode(node: NoteNode): void {
+  const first = node.getFirstDescendant();
+  const last = node.getLastDescendant();
+  if (!first || !last) throw new Error("node has no descendants to select");
+  const selection = $createRangeSelection();
+  selection.anchor = $createPoint(first.getKey(), 0, "text");
+  selection.focus = $createPoint(last.getKey(), last.getTextContentSize(), "text");
+  $setSelection(selection);
+}
+
+/** Selects the whole document (every top-level block) — used for whole-paragraph-selection pins
+ * against a single-paragraph fixture. */
+function $selectWholeDocument(): void {
+  const root = $getRoot();
+  root.select(0, root.getChildrenSize());
+}
+
+/** Number of `NoteNode`s currently in the tree — used to pin cut's removal without asserting on
+ * node-tree shape. */
+function $countNotes(): number {
+  return $dfs($getRoot()).filter(({ node }) => $isNoteNode(node)).length;
+}
+
+/** A `\p` paragraph: `\v 1 In the beginning` + a collapsed note with `caller` + ` God created.`,
+ * parameterized on the note's USJ caller. */
+function noteUsj(caller: string): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "verse", marker: "v", number: "1" },
+          "In the beginning",
+          {
+            type: "note",
+            marker: "f",
+            caller,
+            content: [
+              { type: "char", marker: "fr", content: ["1.1 "] },
+              { type: "char", marker: "ft", content: ["A note."] },
+            ],
+          },
+          " God created.",
+        ],
+      },
+    ],
+  } as unknown as Usj;
+}
+
+/**
+ * A footnote shaped like real ParatextData output: `\f - \fr 1:1 \ft Caller test.\f*` — content
+ * chars carry `closed: "false"` (ParatextData's real shape for footnote content — `\fr`/`\ft`
+ * never get their own closer).
+ */
+function footnoteReproUsj(): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          {
+            type: "note",
+            marker: "f",
+            caller: "-",
+            content: [
+              { type: "char", marker: "fr", content: ["1:1 "], closed: "false" },
+              { type: "char", marker: "ft", content: ["Caller test."], closed: "false" },
+            ],
+          },
+        ],
+      },
+    ],
+  } as unknown as Usj;
+}
+
+/**
+ * A cross-reference shaped like real ParatextData output: `\x - \xo 1:3: \xo*\xt 2Cor 4:6\xt*\x*`
+ * — content chars carry no `closed` flag (explicitly closed, real cross-reference shape).
+ */
+function xrefReproUsj(): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          {
+            type: "note",
+            marker: "x",
+            caller: "-",
+            content: [
+              { type: "char", marker: "xo", content: ["1:3: "] },
+              { type: "char", marker: "xt", content: ["2Cor 4:6"] },
+            ],
+          },
+        ],
+      },
+    ],
+  } as unknown as Usj;
+}
+
+/** Mounts a headless Standard-view editor (`MarkerEditPlugin`) with `usj` loaded. */
+async function renderUsjEditor(usj: Usj): Promise<{ editor: LexicalEditor }> {
+  return baseTestEnvironment(serializedState(usj), <MarkerEditPlugin viewOptions={viewOptions} />);
+}
+
+describe("note caller fidelity", () => {
+  it.each([
+    ["+", "\\f + "],
+    ["a", "\\f a "],
+    ["-", "\\f - "],
+  ])(
+    "copies a collapsed note's %s caller into text/plain, correctly placed",
+    async (caller, expectedOpen) => {
+      const { editor } = await renderUsjEditor(noteUsj(caller));
+      await act(async () => editor.update($selectWholeDocument));
+      const { event, getData } = copyEvent();
+      await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+      const textPlain = getData("text/plain");
+      expect(textPlain).toContain(expectedOpen);
+      expect(textPlain).toContain("\\f*");
+    },
+  );
+
+  it("places the caller correctly relative to the surrounding verse text and the note's own closer", async () => {
+    const { editor } = await renderUsjEditor(noteUsj("+"));
+    await act(async () => editor.update($selectWholeDocument));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).toMatch(/^\\p \\v 1 In the beginning\\f \+ /);
+  });
+});
+
+describe("phantom-space live-repro pins (2026-08-07) — collapsed note, byte-identical to source", () => {
+  it("copies an unclosed footnote's internal markers with no phantom spaces (caller included)", async () => {
+    const { editor } = await renderUsjEditor(footnoteReproUsj());
+    let note!: NoteNode;
+    editor.getEditorState().read(() => {
+      note = findOnlyNote($getRoot());
+    });
+    await act(async () => editor.update(() => $selectWholeNode(note)));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    // "What you copy" > "what you see": a COLLAPSED note's full hidden bytes are the payload.
+    expect(getData("text/plain")).toBe("\\f - \\fr 1:1 \\ft Caller test.\\f*");
+  });
+
+  it("copies a closed cross-reference's internal markers with no phantom spaces after each closer", async () => {
+    const { editor } = await renderUsjEditor(xrefReproUsj());
+    let note!: NoteNode;
+    editor.getEditorState().read(() => {
+      note = findOnlyNote($getRoot());
+    });
+    await act(async () => editor.update(() => $selectWholeNode(note)));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).toBe("\\x - \\xo 1:3: \\xo*\\xt 2Cor 4:6\\xt*\\x*");
+  });
+
+  it("copies a selection starting AT a collapsed note's caller with no separator ahead of it", async () => {
+    // The space the caller contributes stands for the separator after the `\f` opener, so it
+    // belongs to the copy only when that opener is in it. A click at the left edge of the caller's
+    // glyph anchors exactly here: every other node inside a collapsed note is hidden.
+    const { editor } = await renderUsjEditor(footnoteReproUsj());
+    await act(async () =>
+      editor.update(() => {
+        const note = findOnlyNote($getRoot());
+        const last = note.getLastDescendant();
+        if (!last) throw new Error("note has no descendants to select");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(note.getKey(), 1, "element"); // opening glyph, caller, …
+        selection.focus = $createPoint(last.getKey(), last.getTextContentSize(), "text");
+        $setSelection(selection);
+      }),
+    );
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).toBe("- \\fr 1:1 \\ft Caller test.\\f*");
+  });
+});
+
+describe("a book or chapter line in the selection", () => {
+  const bookChapterUsx =
+    `<usx version="3.0"><book code="RUT" style="id">Ruth</book>` +
+    `<chapter number="1" style="c" /><para style="p">text</para></usx>`;
+
+  it("copies the `\\id` line's separator as a plain space, not the NBSP the display carries", async () => {
+    const { editor } = await renderUsjEditor(usxStringToUsj(bookChapterUsx));
+    await act(async () => editor.update($selectWholeDocument));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    const plain = getData("text/plain");
+    expect(plain).not.toContain(NBSP);
+    expect(plain.split("\n")[0]).toBe("\\id RUT Ruth");
+  });
+
+  it("ships no internal flavor for a selection covering a chapter or book node", async () => {
+    // That flavor would rebuild both verbatim on a native paste, past the `\c`/`\id` strip — a
+    // second chapter node every later save of the chapter is rejected for. The two text flavors
+    // carry the same bytes, which the strip does see.
+    const { editor } = await renderUsjEditor(usxStringToUsj(bookChapterUsx));
+    await act(async () => editor.update($selectWholeDocument));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).toContain("\\c 1");
+    expect(getData("application/x-lexical-editor")).toBe("");
+  });
+
+  it("ships no internal flavor for a selection starting inside the chapter line", async () => {
+    // Starting inside the line leaves the `ChapterNode` itself out of `getNodes()`, but its glyph
+    // text is in it, and a pasted `\c 1` literal re-tokenizes into a chapter node just the same.
+    const { editor } = await renderUsjEditor(usxStringToUsj(bookChapterUsx));
+    await act(async () =>
+      editor.update(() => {
+        const chapter = $getRoot().getChildren().find($isChapterNode);
+        const first = chapter?.getFirstDescendant();
+        const para = $getRoot().getLastChild();
+        if (!$isTextNode(first) || !para) throw new Error("fixture is missing its chapter glyph");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(first.getKey(), 1, "text");
+        selection.focus = $createPoint(para.getKey(), 1, "element");
+        $setSelection(selection);
+      }),
+    );
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).not.toBe("");
+    expect(getData("application/x-lexical-editor")).toBe("");
+  });
+
+  it("still ships the internal flavor for a selection inside ordinary paragraph text", async () => {
+    const { editor } = await renderUsjEditor(usxStringToUsj(bookChapterUsx));
+    await act(async () =>
+      editor.update(() => {
+        const para = $getRoot().getLastChild();
+        if (!$isParaNode(para)) throw new Error("fixture is missing its paragraph");
+        para.select(0, para.getChildrenSize());
+      }),
+    );
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("application/x-lexical-editor")).not.toBe("");
+  });
+});
+
+describe("attributes a construct carries in bytes the display had to reconstruct", () => {
+  /** A collapsed footnote carrying a `category`. In the file the category is a `\cat` span on the
+   * note's own marker line, directly after the caller (`\f + \cat People\cat*\fr …`); a COLLAPSED
+   * note deliberately does not DISPLAY it (`createNote`, usj-editor.adaptor.ts), which is a view
+   * decision, not a licence for the copy to drop the attribute. */
+  function categorizedNoteUsj(): Usj {
+    return {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            {
+              type: "note",
+              marker: "f",
+              caller: "-",
+              category: "People",
+              content: [
+                { type: "char", marker: "fr", content: ["1:1 "], closed: "false" },
+                { type: "char", marker: "ft", content: ["Caller test."], closed: "false" },
+              ],
+            },
+          ],
+        },
+      ],
+    } as unknown as Usj;
+  }
+
+  /** A one-row table whose first cell spans two columns. USFM tables have no attribute syntax at
+   * all: a cell's width lives in its MARKER NAME (`\thc3-4`), which the tokenizer splits into
+   * marker `thc3` + `colspan` "2" on the way in. */
+  function spanningCellTableUsj(): Usj {
+    return {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "table",
+          content: [
+            {
+              type: "table:row",
+              marker: "tr",
+              content: [
+                {
+                  type: "table:cell",
+                  marker: "thc3",
+                  align: "center",
+                  colspan: "2",
+                  content: ["wide"],
+                },
+                { type: "table:cell", marker: "th5", align: "start", content: ["last"] },
+              ],
+            },
+          ],
+        },
+      ],
+    } as unknown as Usj;
+  }
+
+  it("copies a collapsed note's category as the `\\cat` span the file carries", async () => {
+    // Same rule as the note caller above: what you copy > what you see. The category has no bytes
+    // on screen in a collapsed note, so the walker contributes them, exactly as it contributes the
+    // caller a collapsed note renders as an empty glyph.
+    const { editor } = await renderUsjEditor(categorizedNoteUsj());
+    await act(async () => editor.update($selectWholeDocument));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).toBe(
+      "\\p \\f - \\cat People\\cat*\\fr 1:1 \\ft Caller test.\\f*",
+    );
+  });
+
+  it("emits no category bytes for a selection that stops before the note's content", async () => {
+    // The category bytes belong to the region AFTER the caller separator, so a selection ending at
+    // that separator must not pull them in: it would put `\\cat People\\cat*` on the clipboard for a
+    // range the user never covered, with no `\\f` opener in front of the run that follows.
+    const { editor } = await renderUsjEditor(categorizedNoteUsj());
+    await act(async () =>
+      editor.update(() => {
+        const note = findOnlyNote($getRoot());
+        const separator = note.getChildren()[2]; // opening glyph, caller, separator
+        const first = note.getFirstDescendant();
+        if (!separator || !first) throw new Error("note is missing its caller separator");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(first.getKey(), 0, "text");
+        selection.focus = $createPoint(separator.getKey(), 0, "text");
+        $setSelection(selection);
+      }),
+    );
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).toBe("\\f -");
+  });
+
+  it("copies a spanning cell's width as the span suffix its marker name carries", async () => {
+    const { editor } = await renderUsjEditor(spanningCellTableUsj());
+    await act(async () => editor.update($selectWholeDocument));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).toBe("\\tr \\thc3-4 wide\\th5 last");
+  });
+});
+
+describe("multi-paragraph selections", () => {
+  it("joins a full multi-paragraph selection with a single \\n, each paragraph keeping its own \\marker", async () => {
+    let secondText: TextNode;
+    const { editor } = await testEnvironment(() => {
+      const firstText = $createTextNode("one");
+      secondText = $createTextNode("two");
+      $getRoot().append(
+        $createParaNode("p").append($createMarkerNode("p"), $trailingSpaceNode(), firstText),
+        $createParaNode("q1").append($createMarkerNode("q1"), $trailingSpaceNode(), secondText),
+      );
+    });
+    await act(async () =>
+      editor.update(() => {
+        // A "full paragraph" selection anchors at the PARAGRAPH's own element start (before its
+        // \marker glyph), not at the first content TextNode — anchoring directly on the text
+        // node would exclude the marker/trailing-space siblings that precede it, exactly like
+        // the "starts mid-paragraph" test below (deliberately) does.
+        const firstPara = $getRoot().getFirstChildOrThrow();
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(firstPara.getKey(), 0, "element");
+        selection.focus = $createPoint(
+          secondText.getKey(),
+          secondText.getTextContentSize(),
+          "text",
+        );
+        $setSelection(selection);
+      }),
+    );
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).toBe("\\p one\n\\q1 two");
+  });
+
+  it("omits the first paragraph's own \\marker glyph when the selection starts mid-paragraph", async () => {
+    let firstText: TextNode;
+    let secondText: TextNode;
+    const { editor } = await testEnvironment(() => {
+      firstText = $createTextNode("before tail");
+      secondText = $createTextNode("two");
+      $getRoot().append(
+        $createParaNode("p").append($createMarkerNode("p"), $trailingSpaceNode(), firstText),
+        $createParaNode("q1").append($createMarkerNode("q1"), $trailingSpaceNode(), secondText),
+      );
+    });
+    await act(async () =>
+      editor.update(() => {
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(firstText.getKey(), "before ".length, "text");
+        selection.focus = $createPoint(
+          secondText.getKey(),
+          secondText.getTextContentSize(),
+          "text",
+        );
+        $setSelection(selection);
+      }),
+    );
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    expect(getData("text/plain")).toBe("tail\n\\q1 two");
+  });
+});
+
+describe("AttributeRunNode traversal", () => {
+  // The wrapper contributes no bytes of its own (`usj-editor.adaptor.ts`'s `addVerseAttributeRun`
+  // wraps a verse's `\va`/`\vp` triplet in one `AttributeRunNode`, the same "run lives inside a
+  // container" shape a milestone's attribute run gets) — a selection spanning it must still carry
+  // the wrapped opening marker, NBSP-prefixed value, and closing marker, with no extra separator
+  // contributed by the wrapper itself, and the plain text on either side must not be disturbed.
+  it("copies a selection spanning a wrapped verse \\va attribute run transparently, byte-exact", async () => {
+    const { editor } = await testEnvironment(() => {
+      // The verse's own `altnumber` must match the manually-built display run below (mirroring
+      // `attributeClass.utils.test.tsx`'s working pattern for this same helper): without it, the
+      // marker-edit engine's pend/settle machinery (active even in plain `testEnvironment`,
+      // registered on every `AttributeRunNode` mutation) treats the just-built wrapper as an
+      // unbacked run and clears its children, since nothing here re-derives them from `altnumber`
+      // the way `TextSpacingPlugin`'s self-healing sync would.
+      const verse = $createVerseNode("1", getVisibleOpenMarkerText("v", "1"), undefined, "2");
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $createTextNode(NBSP),
+          verse,
+          $createTextNode("In the beginning"),
+        ),
+      );
+      $appendVerseAttributeRun(verse, "va", "2");
+    });
+    await act(async () => editor.update($selectWholeDocument));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    // "\p " + "\v 1 " (the verse's own baked-in glyph+number+space) + the wrapped "\va 2\va*" run
+    // (opening glyph, NBSP-prefixed value inverted to a plain space, closing glyph — no bytes from
+    // the AttributeRunNode wrapper itself) + the surrounding "In the beginning" text, undisturbed.
+    expect(getData("text/plain")).toBe("\\p \\v 1 \\va 2\\va*In the beginning");
+  });
+});
+
+describe("cut = copy + removeText", () => {
+  // Two independent editors (rather than one editor dispatching COPY then CUT in sequence): a
+  // second command dispatch on the same editor lets Lexical's own DOM-selection reconciliation
+  // (unrelated to this plugin) collapse the just-set programmatic selection under jsdom before the
+  // handler runs, which would make this a test of that reconciliation quirk instead of cut/copy
+  // parity. Each editor here does exactly one selection-set + one dispatch, matching every other
+  // test in this file.
+  it("cuts a collapsed note: clipboard matches copy's bytes, and the note is removed from the tree", async () => {
+    const usj = noteUsj("+");
+
+    const { editor: copyEditor } = await renderUsjEditor(usj);
+    let copyNote!: NoteNode;
+    copyEditor.getEditorState().read(() => {
+      copyNote = findOnlyNote($getRoot());
+    });
+    await act(async () => copyEditor.update(() => $selectWholeNode(copyNote)));
+    const copyStub = copyEvent();
+    await act(async () => copyEditor.dispatchCommand(COPY_COMMAND, copyStub.event));
+    const copiedText = copyStub.getData("text/plain");
+    expect(copiedText).toContain("\\f + ");
+
+    const { editor: cutEditor } = await renderUsjEditor(usj);
+    let cutNote!: NoteNode;
+    cutEditor.getEditorState().read(() => {
+      cutNote = findOnlyNote($getRoot());
+    });
+    await act(async () => cutEditor.update(() => $selectWholeNode(cutNote)));
+    const cutStub = copyEvent();
+    await act(async () => cutEditor.dispatchCommand(CUT_COMMAND, cutStub.event));
+    expect(cutStub.getData("text/plain")).toBe(copiedText);
+
+    let notesRemaining = -1;
+    cutEditor.getEditorState().read(() => {
+      notesRemaining = $countNotes();
+    });
+    expect(notesRemaining).toBe(0);
+  });
+});
+
+/**
+ * Drop the empty `\p` paragraph these round trips seed as the paste's insertion host.
+ *
+ * A paste needs somewhere for the caret to be, and a whole-paragraph copy carries its paragraph's
+ * own `\p ` marker literal — so the pasted line supplies its own marker and the host is left behind
+ * as an empty paragraph ahead of it. Paratext 9 reads the same bytes the same way. The host belongs
+ * to the harness, not to the document, so it is asserted and removed here rather than expected to
+ * be swallowed; anything other than an empty `\p` in that position fails loudly.
+ */
+function withoutPasteHost(pasted: Usj | undefined): Usj | undefined {
+  if (!pasted) return pasted;
+  const [host, ...rest] = pasted.content;
+  if (
+    typeof host === "string" ||
+    host?.type !== "para" ||
+    host.marker !== "p" ||
+    (host.content?.length ?? 0) > 0
+  )
+    throw new Error(`expected an empty \\p paste host first, found ${JSON.stringify(host)}`);
+  return { ...pasted, content: rest };
+}
+
+describe("copy → paste USJ round trip", () => {
+  // A whole-paragraph copy starts with its own "\p " literal (the paragraph's own marker rides
+  // along with a whole-block selection). Pasted at an existing "\p" host's content start, the
+  // fragment Tier 2 rebuilds from would otherwise carry BOTH the host's own glyph and the pasted
+  // literal's — two paragraph-marker occurrences with nothing between them, tokenizing into a
+  // stray empty leading paragraph (the host's, now with nothing to show for it) ahead of the real
+  // one — the harness's own host, which {@link withoutPasteHost} strips before comparing. The
+  // paste itself leaves the host's marker alone: it inserts what was pasted and nothing else.
+  it("re-tokenizes a whole-paragraph copy back to the source USJ when pasted into a fresh editor", async () => {
+    initializeDeserialize(undefined);
+    const usj = noteUsj("+");
+    const { editor: sourceEditor } = await renderUsjEditor(usj);
+    await act(async () => sourceEditor.update($selectWholeDocument));
+    const { event, getData } = copyEvent();
+    await act(async () => sourceEditor.dispatchCommand(COPY_COMMAND, event));
+    const copiedText = getData("text/plain");
+
+    let trailing: TextNode;
+    const { editor: targetEditor } = await testEnvironment(() => {
+      trailing = $trailingSpaceNode();
+      $getRoot().append($createParaNode("p").append($createMarkerNode("p"), trailing));
+    });
+    await act(async () =>
+      targetEditor.update(() => {
+        trailing.select(trailing.getTextContentSize(), trailing.getTextContentSize());
+        targetEditor.dispatchCommand(PASTE_COMMAND, plainTextPasteEvent(copiedText));
+      }),
+    );
+    // Settle: flush any reconciliation the paste-triggered Tier 2 re-tokenization schedules
+    // beyond the synchronous update above.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const pastedUsj = deserializeSerializedEditorState(
+      targetEditor.getEditorState().toJSON(),
+      viewOptions,
+    );
+    expect(withoutPasteHost(pastedUsj)).toEqual(usj);
+  });
+});
+
+describe("text/html carries the same USFM bytes as text/plain", () => {
+  // Standard view's fidelity carrier is USFM text, so the two flavors a consumer can read must
+  // decode to ONE document — otherwise which flavor the target happens to prefer changes what the
+  // user pasted. Paratext 9 is that target in practice: its paste reads an incoming fragment's TEXT
+  // as USFM, and a DOM-export-derived html reached it with a collapsed note's caller missing (the
+  // caller rides `ImmutableNoteCallerNode.exportDOM` as a `data-caller` attribute, never as text)
+  // and with every opaque construct absent (`UnknownNode.exportDOM` returns a null element, which
+  // stops Lexical's html walk before the construct's own display children). Each pin below decodes
+  // the html the way such a consumer does and compares it to the plain carrier byte-for-byte.
+
+  /** Copies `usj`'s whole document through the real `COPY_COMMAND` path and hands back both readable
+   * flavors, plus the text an html consumer decodes out of the html one. */
+  async function copiedFlavors(
+    usj: Usj,
+  ): Promise<{ plain: string; html: string; htmlText: string }> {
+    const { editor } = await renderUsjEditor(usj);
+    await act(async () => editor.update($selectWholeDocument));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    const html = getData("text/html");
+    return { plain: getData("text/plain"), html, htmlText: htmlPasteText(html) };
+  }
+
+  it.each(["+", "-", "b"])(
+    "a collapsed note with a %s caller decodes identically from either flavor",
+    async (caller) => {
+      const { plain, html, htmlText } = await copiedFlavors(noteUsj(caller));
+      expect(plain).toContain(`\\f ${caller} `);
+      expect(html).toContain(`\\f ${caller} `);
+      expect(htmlText).toBe(plain);
+    },
+  );
+
+  it("keeps a cross-reference's `-` caller in the html, where the DOM export carried no caller at all", async () => {
+    const { plain, html, htmlText } = await copiedFlavors(xrefReproUsj());
+    expect(html).toContain("\\x - ");
+    expect(htmlText).toBe(plain);
+  });
+
+  it("carries no DOM-export residue: no `data-caller` attribute and no node class names", async () => {
+    const { html } = await copiedFlavors(noteUsj("+"));
+    expect(html).not.toContain("data-caller");
+    expect(html).not.toContain("immutable-note-caller");
+  });
+
+  it("keeps a two-paragraph selection's line break, each paragraph with its own marker", async () => {
+    let secondText: TextNode;
+    const { editor } = await testEnvironment(() => {
+      const firstText = $createTextNode("one");
+      secondText = $createTextNode("two");
+      $getRoot().append(
+        $createParaNode("p").append($createMarkerNode("p"), $trailingSpaceNode(), firstText),
+        $createParaNode("q1").append($createMarkerNode("q1"), $trailingSpaceNode(), secondText),
+      );
+    });
+    await act(async () =>
+      editor.update(() => {
+        const firstPara = $getRoot().getFirstChildOrThrow();
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(firstPara.getKey(), 0, "element");
+        selection.focus = $createPoint(
+          secondText.getKey(),
+          secondText.getTextContentSize(),
+          "text",
+        );
+        $setSelection(selection);
+      }),
+    );
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    const plain = getData("text/plain");
+    expect(plain).toBe("\\p one\n\\q1 two");
+    // One block per line, so an html consumer reading the fragment back gets the same two lines
+    // rather than "one\q1 two" run together.
+    expect(htmlPasteText(getData("text/html"))).toBe(plain);
+  });
+
+  it("escapes `<`, `>` and `&` in content and decodes them back unchanged", async () => {
+    let text: TextNode;
+    const { editor } = await testEnvironment(() => {
+      text = $createTextNode("a < b & c > d");
+      $getRoot().append(
+        $createParaNode("p").append($createMarkerNode("p"), $trailingSpaceNode(), text),
+      );
+    });
+    await act(async () => editor.update(() => text.select(0, text.getTextContentSize())));
+    const { event, getData } = copyEvent();
+    await act(async () => editor.dispatchCommand(COPY_COMMAND, event));
+    const html = getData("text/html");
+    // Escaped as entities in the markup — unescaped they would parse as tags and the bytes between
+    // them would vanish from the decoded text.
+    expect(html).toContain("a &lt; b &amp; c &gt; d");
+    expect(htmlPasteText(html)).toBe(getData("text/plain"));
+  });
+
+  it("round-trips a note caller through an html-ONLY paste of this editor's own copy", async () => {
+    // The gap this closes: a real Ctrl+V always carries `text/plain`, but a clipboard intermediary
+    // that keeps only `text/html` used to strip a collapsed note's caller (the export carried it as
+    // an attribute, so the decoded text had `\f \fr …` with nothing where the caller belonged, and
+    // the paste rewrote it to the generated `+`). Dropping `text/plain` AND the lexical flavor from
+    // the payload is what forces the html carrier to answer on its own.
+    initializeDeserialize(undefined);
+    const usj = noteUsj("-");
+    const { editor: sourceEditor } = await renderUsjEditor(usj);
+    await act(async () => sourceEditor.update($selectWholeDocument));
+    const { event: copyStubEvent, getData } = copyEvent();
+    await act(async () => sourceEditor.dispatchCommand(COPY_COMMAND, copyStubEvent));
+    const html = getData("text/html");
+
+    let trailing: TextNode;
+    const { editor: targetEditor } = await testEnvironment(() => {
+      trailing = $trailingSpaceNode();
+      $getRoot().append($createParaNode("p").append($createMarkerNode("p"), trailing));
+    });
+    await act(async () =>
+      targetEditor.update(() => {
+        trailing.select(trailing.getTextContentSize(), trailing.getTextContentSize());
+        targetEditor.dispatchCommand(PASTE_COMMAND, pasteEvent({ "text/html": html }).event);
+      }),
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const pastedUsj = deserializeSerializedEditorState(
+      targetEditor.getEditorState().toJSON(),
+      viewOptions,
+    );
+    expect(withoutPasteHost(pastedUsj)).toEqual(usj);
+  });
+});

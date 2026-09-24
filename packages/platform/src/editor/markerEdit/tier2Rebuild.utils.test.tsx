@@ -81,6 +81,16 @@ function usjFromUsx(paraContent: string) {
   );
 }
 
+/** Like `usjFromUsx`, but for a paragraph marker OTHER than `\p` — needed for the
+ * marker-literal-at-content-start pins below, which must start from a NON-`\p` host to show
+ * the host's marker surviving untouched (a `\p`-into-`\p` case can't distinguish "kept" from
+ * "retagged to the same thing"). */
+function usjFromUsxPara(marker: string, paraContent: string) {
+  return usxStringToUsj(
+    `<usx version="3.0"><book code="RUT" style="id">T</book><chapter number="1" style="c" /><para style="${marker}">${paraContent}</para></usx>`,
+  );
+}
+
 /** Load `usj` into a fresh headless editor in standard view; returns the editor. */
 function loadEditor(usj: ReturnType<typeof usjFromUsx>) {
   initializeSerialize(undefined, undefined);
@@ -816,6 +826,67 @@ describe("$rebuildParas", () => {
         expect(selection.anchor.offset).toBe(2); // END of the glyph, not inside it
       }
     });
+  });
+});
+
+describe("a paragraph-marker literal at a paragraph's content start splits, never retags", () => {
+  // A marker literal landing at an existing paragraph's content start splits the paragraph in two,
+  // leaving an EMPTY predecessor carrying the host's own marker — and that holds however the bytes
+  // arrived, typed or pasted. Paratext 9 reads the same line the same way: `NormalizeTokenUsfm`
+  // (ParatextData/UsfmToken.cs) emits a line break before every Paragraph token, so `\p \q1 x` is
+  // an empty `\p` followed by `\q1 x` there too.
+  //
+  // The rebuild deliberately has no way to tell typing from pasting, and must not: deleting the
+  // host paragraph's marker is destroying a byte the user never selected.
+  it('typing "\\q1 " at the content start of an "\\s1" paragraph splits with an empty predecessor — the marker is NOT silently retagged/deleted', () => {
+    const editor = loadEditor(usjFromUsxPara("s1", "God Make Da World"));
+    editor.update(
+      () => {
+        const para = $lastPara();
+        const text = requireDefined(
+          para
+            .getChildren()
+            .filter($isTextNode)
+            .find((node) => node.getTextContent().includes("God")),
+          "text node containing 'God' not found",
+        );
+        // simulate the user having typed "\q1 " at content start
+        text.setTextContent("\\q1 God Make Da World");
+        expect($rebuildParas([para], context)).toBe(true);
+      },
+      { discrete: true },
+    );
+    const usj = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
+    const paras = (usj?.content ?? []).filter((c) => typeof c !== "string" && c.type === "para");
+    expect(paras).toEqual([
+      { type: "para", marker: "s1" },
+      { type: "para", marker: "q1", content: ["God Make Da World"] },
+    ]);
+  });
+
+  it('typing "\\p " at the content start of a "\\p" paragraph splits with an empty predecessor — not an invisible no-op', () => {
+    const editor = loadEditor(usjFromUsxPara("p", "Alpha"));
+    editor.update(
+      () => {
+        const para = $lastPara();
+        const text = requireDefined(
+          para
+            .getChildren()
+            .filter($isTextNode)
+            .find((node) => node.getTextContent().includes("Alpha")),
+          "text node containing 'Alpha' not found",
+        );
+        text.setTextContent("\\p Alpha");
+        expect($rebuildParas([para], context)).toBe(true);
+      },
+      { discrete: true },
+    );
+    const usj = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
+    const paras = (usj?.content ?? []).filter((c) => typeof c !== "string" && c.type === "para");
+    expect(paras).toEqual([
+      { type: "para", marker: "p" },
+      { type: "para", marker: "p", content: ["Alpha"] },
+    ]);
   });
 });
 
