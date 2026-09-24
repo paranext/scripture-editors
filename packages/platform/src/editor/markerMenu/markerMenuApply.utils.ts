@@ -36,6 +36,7 @@ import { $isAtParagraphContentStart } from "./markerMenuContext.utils";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import { $findMatchingParent } from "@lexical/utils";
 import {
+  $createPoint,
   $getEditor,
   $getSelection,
   $isElementNode,
@@ -180,6 +181,32 @@ function $moveEndpointPastPrefixGlyph(
 }
 
 /**
+ * Resolves a caret at offset 0 of an OPENING glyph to an element point just before the glyph's
+ * whole enclosing char span, rather than leaving it there for {@link $breakAndLiftCharStack} to
+ * treat as a point INSIDE the span's own content. `$normalizeSelectionOutOfGlyphText` leaves a
+ * glyph's own ends alone by design — both are legal document positions — so this shape reaches
+ * `$breakAndLiftCharStack` unnormalized: its text-point branch inserts the break point BEFORE the
+ * opener but still inside the char node, so the lift closes an empty left half and
+ * `$buildContinuationCharSpan` prepends a SECOND opener onto the continuation, which already has
+ * its own. `$splitParagraphAtCharStack` never reaches this shape at all — it bails outright
+ * whenever the anchor is a `MarkerNode`, leaving Lexical's generic split to handle it cleanly —
+ * but the book split has no such fallback to bail into, so it resolves the point itself instead.
+ *
+ * A no-op for any other point, including a closing glyph or an opening glyph's TRAILING edge
+ * (genuinely inside the span's content, where a normal close-and-reopen split is correct).
+ */
+function $resolvePointBeforeOpeningGlyph(point: PointType): PointType {
+  if (point.type !== "text" || point.offset !== 0) return point;
+  const node = point.getNode();
+  if (!$isMarkerNode(node) || node.getMarkerSyntax() !== "opening") return point;
+  const span = node.getParent();
+  if (!$isCharNode(span)) return point;
+  const container = span.getParent();
+  if (!container) return point;
+  return $createPoint(container.getKey(), span.getIndexWithinParent(), "element");
+}
+
+/**
  * Splits the `\id` line at the caret and gives the tail a NEW paragraph marked `marker`, inserted
  * directly after the book — the only outcome a paragraph pick can have there. PT9 starts a new
  * paragraph wherever a paragraph marker is written, and a book can never be RETAGGED: `\id` names
@@ -235,7 +262,9 @@ function $splitBookWithMarker(book: BookNode, marker: string, viewOptions?: View
   const caret = $stepCaretPastClosingGlyphSpan(rawCaret);
   if (!caret) return false;
 
-  const { parent, moving: liftedMoving } = $breakAndLiftCharStack(caret.anchor);
+  const { parent, moving: liftedMoving } = $breakAndLiftCharStack(
+    $resolvePointBeforeOpeningGlyph(caret.anchor),
+  );
   // `$canSplitBookAt` ruled out a start point the lift cannot bring back to the book, but only for
   // the point the pick started from; this covers wherever removing a selection left it. Bail
   // rather than move a partial subtree out of the line.
