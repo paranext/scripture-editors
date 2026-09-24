@@ -37,6 +37,7 @@ import {
   $handlePasteForStandardView,
   getDataTransferPayload,
   normalizePastedNbsp,
+  stripPastedBlockMarkers,
   stripPastedChapterAndBookId,
   getPastePayload,
 } from "./whitespaceDisplay.plugin.utils";
@@ -425,9 +426,16 @@ function registerPasteNormalization(
         // anything: a payload the strip reduces to one line, or to nothing, is not a multi-line
         // paste, and is left to the Standard-view claim exactly as that line pasted on its own
         // would be — which, for nothing at all, keeps the selection.
-        const noteText = isStandardView
-          ? normalizePastedNbsp(stripPastedChapterAndBookId(payload.text))
+        const withoutChapterOrBookId = isStandardView
+          ? stripPastedChapterAndBookId(payload.text)
           : payload.text;
+        // Under structure protection a note, like anywhere else, gains no structure marker from a
+        // paste that it could not gain from typing.
+        const withoutStructure =
+          isStandardView && context.structureProtectionMode === "protected"
+            ? stripPastedBlockMarkers(withoutChapterOrBookId, context.getMarker)
+            : withoutChapterOrBookId;
+        const noteText = isStandardView ? normalizePastedNbsp(withoutStructure) : withoutStructure;
         if (noteText.includes("\n")) {
           const lines = noteText.split("\n");
           let outcome = $handlePasteLinesInNote(lines, context.getMarker);
@@ -474,6 +482,7 @@ function registerPasteNormalization(
           () => {
             context.splitExpected.current = true;
           },
+          context.getMarker,
         );
         if (isClaimed) event?.preventDefault();
         return isClaimed;
@@ -997,6 +1006,7 @@ export function MarkerEditPlugin({
                   () => {
                     context.splitExpected.current = true;
                   },
+                  context.getMarker,
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -1164,9 +1174,14 @@ export function MarkerEditPlugin({
           const { text } = getDataTransferPayload(payload.dataTransfer, editor._config.namespace);
           return (
             !!text &&
-            $pasteOnChapterLine(text, context.structureProtectionMode === "protected", () => {
-              context.splitExpected.current = true;
-            })
+            $pasteOnChapterLine(
+              text,
+              context.structureProtectionMode === "protected",
+              () => {
+                context.splitExpected.current = true;
+              },
+              context.getMarker,
+            )
           );
         },
         COMMAND_PRIORITY_LOW,

@@ -19,7 +19,13 @@ import { $setParaMarkerWithPrefix } from "./markerEditDeletion.utils";
 import { $insertPastedText } from "./whitespaceDisplay.plugin.utils";
 import { $findMatchingParent } from "@lexical/utils";
 import { $getSelection, $isRangeSelection, LexicalNode, RangeSelection } from "lexical";
-import { $chapterGlyphTextNode, $createParaNode, $isChapterNode, ChapterNode } from "shared";
+import {
+  $chapterGlyphTextNode,
+  $createParaNode,
+  $isChapterNode,
+  ChapterNode,
+  MarkerLookup,
+} from "shared";
 import { showParaMarkerPrefix, ViewOptions } from "shared-react";
 
 /** The chapter line `node` is, or sits inside; `undefined` outside any chapter line. */
@@ -133,12 +139,14 @@ function $wouldRewriteChapterMarker(selection: RangeSelection): boolean {
  * @param text The pasted or dropped text, resolved as `getPastePayload` resolves it.
  * @param isStructureProtected Whether the document is structure-protected.
  * @param armSplitExpected Arms the engine's `splitExpected` flag for a multi-line replay.
+ * @param getMarker The editor's stylesheet lookup, which says which pasted markers are structure.
  * @returns Whether the paste is claimed.
  */
 export function $pasteOnChapterLine(
   text: string,
   isStructureProtected: boolean,
   armSplitExpected: () => void,
+  getMarker: MarkerLookup,
 ): boolean {
   const selection = $getSelection();
   if (isStructureProtected && $isRangeSelection(selection) && $wouldRewriteChapterMarker(selection))
@@ -146,6 +154,6 @@ export function $pasteOnChapterLine(
   if (!$chapterLineAtCaret()) return false;
   const caret = $getSelection();
   if (text && $isRangeSelection(caret))
-    $insertPastedText(caret, text, isStructureProtected, armSplitExpected);
+    $insertPastedText(caret, text, isStructureProtected, armSplitExpected, getMarker);
   return true;
 }

@@ -5,10 +5,11 @@
  * DOM export cannot express at all, so it is where a carrier mismatch shows up first.
  *
  * The rule these pins state: `$handlePasteForStandardView`
- * (`whitespaceDisplay.plugin.utils.ts`) handles a protected paste with the SAME bytes an
- * unprotected one gets, and protection changes only two things — a selection
- * `StructureKeyboardPlugin` refuses to replace is declined here so that refusal keeps one owner,
- * and a multi-line payload's newlines become single spaces instead of paragraph splits.
+ * (`whitespaceDisplay.plugin.utils.ts`) handles a protected paste with the byte rules an
+ * unprotected one gets, and protection changes three things — a selection
+ * `StructureKeyboardPlugin` refuses to replace is declined here so that refusal keeps one owner, a
+ * multi-line payload's newlines become single spaces instead of paragraph splits, and pasted
+ * structure markers (paragraph markers and `\v`) are dropped, as the keyboard cannot type them.
  *
  * Why the bytes cannot be left to the html sanitizer: declining the whole paste under protection
  * handed it to `StructureKeyboardPlugin.$sanitizeAndInsert`, which reads `text/html` and nothing
@@ -17,11 +18,9 @@
  * — and routing around it cost the protected mode three guarantees the unprotected mode has: the
  * `\c`/`\id` strip (a pasted chapter marker creates a SECOND chapter node, after which every save
  * fails with the data provider's "Multiple chapter markers present" — an error that surfaces only in
- * the renderer log), the positional NBSP rule, and the Paratext 9 `usfm:`-comment decode. The
- * sanitizer was never protecting this view from marker BYTES in the first place: the marker engine
- * has no protection gate, so a pasted or typed `\v`/`\p` literal tokenizes into a real marker in
- * both modes, and `$sanitizeNodesForProtectedStructure` only strips verse/para NODES out of an html
- * DOM import.
+ * the renderer log), the positional NBSP rule, and the Paratext 9 `usfm:`-comment decode. Nor did
+ * the sanitizer keep structure out: `$sanitizeNodesForProtectedStructure` only strips verse/para
+ * NODES out of an html DOM import, and pasted marker bytes re-tokenize into real markers.
  */
 
 import { pasteEvent } from "./markerEdit.test-helpers";
@@ -414,5 +413,74 @@ describe("the byte rules a structure-protected paste keeps", () => {
     );
     expect(note).toBeDefined();
     expect(display).toContain(CAPTION);
+  });
+});
+
+// Structure protection keeps a user from typing a structure marker (the marker menu disables every
+// paragraph marker and `\v` under it), and pasted text re-tokenizes into markers exactly as typed
+// text does, so a protected paste drops those markers and keeps the text around them.
+describe("structure markers in a structure-protected paste", () => {
+  const STRUCTURE_PASTE = "aa \\v 9 bb \\p cc";
+
+  /** Every verse number the first paragraph exports. */
+  function verseNumbers(usj: Usj | undefined): string[] {
+    return firstParaContent(usj)
+      .filter((item): item is MarkerObject => typeof item !== "string" && item.type === "verse")
+      .map((verse) => (verse as unknown as { number: string }).number);
+  }
+
+  it("drops a pasted verse and paragraph marker, keeping the text", async () => {
+    const { usj } = await pasteInto("protected", { "text/plain": STRUCTURE_PASTE });
+    expect(firstParaContent(usj)).toEqual([hostContent[0], "Before aa bb ccafter"]);
+    expect($paraCount(usj)).toBe(2);
+  });
+
+  it("keeps them when protection is off", async () => {
+    const { usj } = await pasteInto("off", { "text/plain": STRUCTURE_PASTE });
+    expect(verseNumbers(usj)).toEqual(["18", "9"]);
+    expect($paraCount(usj)).toBe(3);
+  });
+
+  it("drops the paragraph markers of a multi-line paste, joining its lines", async () => {
+    const { usj } = await pasteInto("protected", { "text/plain": "\\p aa\n\\q1 bb" });
+    expect(firstParaContent(usj)).toEqual([hostContent[0], "Before aa bbafter"]);
+    expect($paraCount(usj)).toBe(2);
+  });
+
+  it("keeps a character marker, which is content rather than structure", async () => {
+    const { usj } = await pasteInto("protected", { "text/plain": "\\nd Lord\\nd* " });
+    expect(firstParaContent(usj)).toEqual([
+      hostContent[0],
+      "Before ",
+      { type: "char", marker: "nd", content: ["Lord"] },
+      " after",
+    ]);
+  });
+
+  // A copy made in this editor carries its own rich payload, which under protection would otherwise
+  // reach the html sanitizer — and it inserts the copy's USFM bytes as text, which then re-tokenize
+  // into a verse and a paragraph.
+  it("drops them from a copy made in this editor too", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(figureUsj(hostContent), {
+      structureProtectionMode: "protected",
+    });
+    const { event } = pasteEvent({
+      "text/plain": STRUCTURE_PASTE,
+      "text/html": usfmToClipboardHtml(STRUCTURE_PASTE),
+      "application/x-lexical-editor": JSON.stringify({
+        namespace: lexical._config.namespace,
+        nodes: [],
+      }),
+    });
+    await act(async () =>
+      lexical.update(() => {
+        $placeMidProse();
+        lexical.dispatchCommand(PASTE_COMMAND, event);
+      }),
+    );
+    await settle();
+    const usj = ref.current?.getUsj();
+    expect(firstParaContent(usj)).toEqual([hostContent[0], "Before aa bb ccafter"]);
+    expect($paraCount(usj)).toBe(2);
   });
 });
