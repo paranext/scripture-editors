@@ -418,7 +418,7 @@ function $normalizeSelectionPastBookPrefix(selection: RangeSelection): void {
   const book = $findMatchingParent(selection.anchor.getNode(), $isBookNode);
   if (!book) return;
   const prefixGlyph = book.getFirstChild();
-  if (!$isSynthesizedMarkerNode(prefixGlyph)) return;
+  if (!prefixGlyph || !$isSynthesizedMarkerNode(prefixGlyph)) return;
   $moveEndpointPastPrefixGlyph(selection.anchor, book, prefixGlyph);
   $moveEndpointPastPrefixGlyph(selection.focus, book, prefixGlyph);
 }
