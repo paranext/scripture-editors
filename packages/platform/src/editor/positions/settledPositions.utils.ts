@@ -171,17 +171,24 @@ function $closingGlyphByte(
 }
 
 /**
- * The point just past a closing glyph that DIRECTLY precedes `anchor`'s target byte, for a byte
- * that lands at the very FRONT of a span with no closer of its own to report ({@link
- * $closingGlyphByte} answers only `offset > 0`) — the boundary between two closers with nothing
- * between them, such as a char span's `\w*` immediately followed by its note's own `\f*`. Caret
- * addressing skips both closers, and `$resolveFragmentByteAnchor`'s own "ran past every
- * addressable span" fallback only ever tries the FRAGMENT's last span for a point past it
- * ({@link $pointAfterClosingSpan}) — which fails here, since a note's own closer has no enclosing
- * char span to report a point past — so the closer immediately before it never gets asked. A
- * position just past a construct's bytes is exact, so the answer is that PRECEDING closer's own
- * "just past" point. `undefined` when the byte does not land at such a front, or the preceding
- * span is not a closer with one.
+ * The point just past a closing glyph that DIRECTLY precedes ANOTHER closing glyph `anchor`'s
+ * target byte lands at the front of — offset 0 of a closer with no closer of its own to report
+ * ({@link $closingGlyphByte} answers only `offset > 0`), such as a char span's `\w*` immediately
+ * followed by its note's own `\f*`. Caret addressing skips both closers, and
+ * `$resolveFragmentByteAnchor`'s own "ran past every addressable span" fallback only ever tries
+ * the FRAGMENT's last span for a point past it ({@link $pointAfterClosingSpan}) — which fails
+ * here, since a note's own closer has no enclosing char span to report a point past — so the
+ * closer immediately before it never gets asked. A position just past a construct's bytes is
+ * exact, so the answer is that PRECEDING closer's own "just past" point.
+ *
+ * Deliberately narrow: only when the byte's OWN target span is ALSO a closer. Offset 0 of an
+ * ordinary span (plain content, or an opener) directly after a closer is already answered
+ * correctly by the caret-addressed resolve — landing on that span's own front is exactly right
+ * there, and routing it through the preceding closer's "just past" point instead would change a
+ * working case's reported shape for no reason.
+ *
+ * `undefined` when the byte does not land at such a front, or the preceding span is not a closer
+ * with one.
  */
 function $afterPrecedingClosingGlyph(
   fragment: { text: string; spans: FragmentSpan[] },
@@ -190,8 +197,15 @@ function $afterPrecedingClosingGlyph(
   const byte = $resolveFragmentByteAnchor(fragment, anchor, { addressDisplayBytes: true });
   if (!byte || byte.offset !== 0) return undefined;
   const index = fragment.spans.findIndex((span) => span.key === byte.key);
+  const target = fragment.spans[index];
   const previous = index > 0 ? fragment.spans[index - 1] : undefined;
-  if (!previous || previous.end !== fragment.spans[index].start || !$isClosingMarkerSpan(previous))
+  if (
+    !target ||
+    !$isClosingMarkerSpan(target) ||
+    !previous ||
+    previous.end !== target.start ||
+    !$isClosingMarkerSpan(previous)
+  )
     return undefined;
   return $pointAfterClosingSpan(previous);
 }
@@ -1310,6 +1324,13 @@ function $scratchLocationFromLivePoint(
     const glyph = $closingGlyphByte(scratchFragment, crossed);
     const glyphNode = glyph && $getNodeByKey(glyph.key);
     if (glyphNode) return $getLocationFromNode(glyphNode, glyph.offset, viewOptions);
+    // A byte directly between two closers with nothing between them reports the position just
+    // past the FIRST one, ahead of the caret addressing below, which would otherwise skip past
+    // BOTH to land on whatever addressable content follows the second.
+    const afterPrevious = $afterPrecedingClosingGlyph(scratchFragment, crossed);
+    const afterPreviousNode = afterPrevious && $getNodeByKey(afterPrevious.key);
+    if (afterPreviousNode)
+      return $getLocationFromNode(afterPreviousNode, afterPrevious.offset, viewOptions);
     const anchor = $withWsRunIn(scratchFragment, crossed, addressDisplayBytes);
     const point = $resolveFragmentByteAnchor(scratchFragment, anchor, { addressDisplayBytes });
     const settledNode = point && $getNodeByKey(point.key);

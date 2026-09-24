@@ -158,6 +158,31 @@ function typedMilestone(
   };
 }
 
+/**
+ * An ALREADY-SETTLED milestone whose attribute run is retyped as `|name="value"`, which settles to
+ * the bare default `|value`. The milestone starts with a different attribute (`start`), so it has
+ * a run to retype. Milestones ride as ordinary paragraph siblings with no enclosing CharNode
+ * (`$milestoneDisplayRun`), so re-spelling an existing one's attribute run exercises a different
+ * rebuild path than a char span's ({@link namedDefault}, `row5-collapse`) — distinct coverage from
+ * {@link typedMilestone}'s fresh-typed shape, which never revisits already-settled bytes.
+ */
+function namedMilestone(
+  name: string,
+  marker: string,
+  start: { [name: string]: string },
+  attribute: string,
+  value: string,
+): PositionScenario {
+  return {
+    name,
+    usj: twoParaUsj(["In the ", { type: "ms", marker, ...start }, " made"]),
+    pend: retypedAttributeRun(`|${attribute}="${value}"`),
+    liveNeedle: "made",
+    settledNeedle: "made",
+    alignment: collapsedDefault(`\\p In the \\${marker} |`, attribute, value, "\\* made"),
+  };
+}
+
 /** The paragraph's attribute display run. */
 function $attributeRun(): TextNode {
   const run = $getRoot()
@@ -186,9 +211,12 @@ const RESPELLINGS: PositionScenario[] = [
   namedDefault("rb-gloss-named", "rb", "grace", "gloss", "x"),
   namedDefault("xt-link-href-named", "xt", "grace", "link-href", "GEN 1:1"),
   namedDefault("jmp-link-href-named", "jmp", "grace", "link-href", "GEN 1:1"),
-  typedMilestone("qt-s-who-named", "qt-s", "who", "Pilate"),
-  typedMilestone("ts-s-sid-named", "ts-s", "sid", "a"),
-  typedMilestone("qt-e-eid-named", "qt-e", "eid", "a"),
+  typedMilestone("qt-s-who-typed", "qt-s", "who", "Pilate"),
+  namedMilestone("qt-s-who-retyped", "qt-s", { sid: "q1" }, "who", "Pilate"),
+  typedMilestone("ts-s-sid-typed", "ts-s", "sid", "a"),
+  namedMilestone("ts-s-sid-retyped", "ts-s", { eid: "z" }, "sid", "a"),
+  typedMilestone("qt-e-eid-typed", "qt-e", "eid", "a"),
+  namedMilestone("qt-e-eid-retyped", "qt-e", { sid: "z" }, "eid", "a"),
   {
     name: "w-duplicate-name",
     usj: spanUsj("w", "grace"),

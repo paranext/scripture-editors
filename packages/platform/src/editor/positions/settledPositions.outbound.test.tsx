@@ -932,3 +932,27 @@ it("reports the byte between `\\` and `+` of a nested opener as the marker locat
     jsonPath: contentPath([2, ndIndex, childIndex(nd.content, (item) => item.marker === "add")]),
   });
 });
+
+describe("the boundary between two touching closers", () => {
+  it("reports the position just past the first closer, not past both", async () => {
+    // `\+add*` and `\nd*` are directly adjacent, with nothing between them: the boundary right
+    // after the first is a byte earlier than the boundary right after the second (in front of
+    // " made"), and the two must not collapse onto the same reported location.
+    const live = "In the \\nd LORD \\+add God\\+add*\\nd* made";
+    const { location, usj } = await reportedAt(live, live.indexOf("\\nd*"));
+    const para = settledPara(usj, 2);
+    const ndIndex = settledCharIndex(para);
+    expect(location).toEqual({ jsonPath: contentPath([2, ndIndex]), closingMarkerOffset: 0 });
+  });
+
+  it("reports a milestone directly after a char closer at the milestone's own location", async () => {
+    // Unlike the row above, `\qt-e` is an OPENING glyph, not a closer: the ordinary
+    // caret-addressed resolve already lands on it correctly without any special handling for
+    // adjacent closers, so this pins that it keeps doing so.
+    const live = "In the \\nd LORD\\nd*\\qt-e\\* made";
+    const { location, usj } = await reportedAt(live, live.indexOf("\\qt-e"));
+    const para = settledPara(usj, 2);
+    const index = childIndex(para.content, (item) => item.type === "ms");
+    expect(location).toEqual({ jsonPath: contentPath([2, index]) });
+  });
+});
