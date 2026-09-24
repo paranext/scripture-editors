@@ -19,6 +19,8 @@
 import {
   $buildNoteFragment,
   $caretSpanByteAnchor,
+  $isClosingMarkerSpan,
+  $pointAfterClosingSpan,
   $resolveFragmentByteAnchor,
   CaretByteAnchor,
   FragmentAccumulator,
@@ -149,6 +151,52 @@ function $livePointOnNoteOwnBytes(
 }
 
 /**
+ * The byte `anchor` names when it lands INSIDE a closing (or self-closing) marker glyph's own
+ * bytes — `offset > 0` in a `MarkerNode` whose syntax is not `"opening"`. A caret there rests on
+ * that closer itself: caret addressing moves such a position past the glyph to the content after
+ * it, which is right for continued typing but wrong for reporting where the caret actually is.
+ * `undefined` for every other position, including offset 0 of a closer (the front of its own
+ * glyph, indistinguishable from the position in front of it). Call inside a read of the tree
+ * `fragment` was built over.
+ */
+function $closingGlyphByte(
+  fragment: { text: string; spans: FragmentSpan[] },
+  anchor: CaretByteAnchor,
+): FragmentPoint | undefined {
+  const byte = $resolveFragmentByteAnchor(fragment, anchor, { addressDisplayBytes: true });
+  const glyph = byte && $getNodeByKey(byte.key);
+  return byte && byte.offset > 0 && $isMarkerNode(glyph) && glyph.getMarkerSyntax() !== "opening"
+    ? byte
+    : undefined;
+}
+
+/**
+ * The point just past a closing glyph that DIRECTLY precedes `anchor`'s target byte, for a byte
+ * that lands at the very FRONT of a span with no closer of its own to report ({@link
+ * $closingGlyphByte} answers only `offset > 0`) — the boundary between two closers with nothing
+ * between them, such as a char span's `\w*` immediately followed by its note's own `\f*`. Caret
+ * addressing skips both closers, and `$resolveFragmentByteAnchor`'s own "ran past every
+ * addressable span" fallback only ever tries the FRAGMENT's last span for a point past it
+ * ({@link $pointAfterClosingSpan}) — which fails here, since a note's own closer has no enclosing
+ * char span to report a point past — so the closer immediately before it never gets asked. A
+ * position just past a construct's bytes is exact, so the answer is that PRECEDING closer's own
+ * "just past" point. `undefined` when the byte does not land at such a front, or the preceding
+ * span is not a closer with one.
+ */
+function $afterPrecedingClosingGlyph(
+  fragment: { text: string; spans: FragmentSpan[] },
+  anchor: CaretByteAnchor,
+): FragmentPoint | undefined {
+  const byte = $resolveFragmentByteAnchor(fragment, anchor, { addressDisplayBytes: true });
+  if (!byte || byte.offset !== 0) return undefined;
+  const index = fragment.spans.findIndex((span) => span.key === byte.key);
+  const previous = index > 0 ? fragment.spans[index - 1] : undefined;
+  if (!previous || previous.end !== fragment.spans[index].start || !$isClosingMarkerSpan(previous))
+    return undefined;
+  return $pointAfterClosingSpan(previous);
+}
+
+/**
  * The scratch point a position inside a settled-only run's literal names in that run's spelling.
  * The literal is plain text the caret can rest anywhere in, including between the bytes of a
  * closing marker, which caret addressing would move past; so a byte that lands inside a closing
@@ -159,10 +207,10 @@ function $pointInSpelling(
   spelling: FragmentAccumulator,
   within: CaretByteAnchor,
 ): FragmentPoint | undefined {
-  const byte = $resolveFragmentByteAnchor(spelling, within, { addressDisplayBytes: true });
-  const glyph = byte && $getNodeByKey(byte.key);
-  if (byte && byte.offset > 0 && $isMarkerNode(glyph) && glyph.getMarkerSyntax() !== "opening")
-    return byte;
+  const glyph = $closingGlyphByte(spelling, within);
+  if (glyph) return glyph;
+  const afterPrevious = $afterPrecedingClosingGlyph(spelling, within);
+  if (afterPrevious) return afterPrevious;
   const point = $resolveFragmentByteAnchor(spelling, within);
   return point && pointAtSpanBoundary(spelling, point);
 }
@@ -1257,6 +1305,11 @@ function $scratchLocationFromLivePoint(
     $getLocationFromNode(node, offset, viewOptions),
   );
   return plan.scratch.getEditorState().read(() => {
+    // A byte inside a typed closing glyph reports that closer, ahead of the caret addressing
+    // below, which would move it past the glyph onto the content after it.
+    const glyph = $closingGlyphByte(scratchFragment, crossed);
+    const glyphNode = glyph && $getNodeByKey(glyph.key);
+    if (glyphNode) return $getLocationFromNode(glyphNode, glyph.offset, viewOptions);
     const anchor = $withWsRunIn(scratchFragment, crossed, addressDisplayBytes);
     const point = $resolveFragmentByteAnchor(scratchFragment, anchor, { addressDisplayBytes });
     const settledNode = point && $getNodeByKey(point.key);

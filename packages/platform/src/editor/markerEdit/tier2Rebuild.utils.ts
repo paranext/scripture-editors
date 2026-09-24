@@ -1371,8 +1371,11 @@ export function $caretSpanByteAnchor(
  * glyph: a completed closer (`\nd*`) has the caret belong on the content AFTER it, not inside the
  * glyph where continued typing would edit the marker. An OPENING glyph is deliberately NOT matched
  * here — a half-typed opener keeps the caret in the glyph so the user can extend the marker name.
+ *
+ * Exported for the settled-position translation's own closing-glyph handling — a settled caret
+ * inside a typed closer reports that closer, by the same span rule as here.
  */
-function $isClosingMarkerSpan(span: FragmentSpan): boolean {
+export function $isClosingMarkerSpan(span: FragmentSpan): boolean {
   if (span.isSentinel) return false;
   const node = $getNodeByKey(span.key);
   return $isMarkerNode(node) && node.getMarkerSyntax() !== "opening";
@@ -1394,8 +1397,12 @@ function $isClosingMarkerSpan(span: FragmentSpan): boolean {
  * the whole paragraph (into the next block, or off the end of the document), not just past the
  * closer within it, so a paragraph-direct closer returns nothing and falls through to the caller's
  * other fallback instead.
+ *
+ * Exported for the settled-position translation, which also needs the point just past a closer
+ * that is not the last span of its own fragment (a char closer directly followed by a note's own
+ * closer, say) — a case this function already answers correctly on its own terms.
  */
-function $pointAfterClosingSpan(span: FragmentSpan): FragmentPoint | undefined {
+export function $pointAfterClosingSpan(span: FragmentSpan): FragmentPoint | undefined {
   const glyph = $getNodeByKey(span.key);
   if (!$isMarkerNode(glyph)) return undefined;
   const enclosingSpan = glyph.getParent();

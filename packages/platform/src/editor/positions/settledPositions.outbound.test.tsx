@@ -859,3 +859,76 @@ describe("identity", () => {
     expect(settled).toEqual(direct);
   });
 });
+
+/** The settled location the live caret at `offset` into the typed paragraph `live` reports. */
+async function reportedAt(live: string, offset: number) {
+  const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning made"]));
+  await typeOver(mounted.lexical, "In the beginning made", live);
+  expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+  const context = settledPositionContext(mounted.lexical);
+  const location = mounted.lexical
+    .getEditorState()
+    .read(() =>
+      $settledLocationFromLivePoint($prepareSettleScopes(context), $textContaining(live), offset),
+    );
+  return { location, usj: mounted.ref.current?.getUsj() };
+}
+
+function childIndex(
+  content: MarkerObject["content"],
+  test: (item: MarkerObject) => boolean,
+): number {
+  return (content ?? []).findIndex(
+    (item) => typeof item === "object" && test(item as MarkerObject),
+  );
+}
+
+describe("a caret inside a typed closer", () => {
+  it.each([1, 2, 3])("reports byte %i of `\\nd*` on that closer", async (byte) => {
+    const live = "In the \\nd LORD\\nd* made";
+    const { location, usj } = await reportedAt(live, live.indexOf("\\nd*") + byte);
+    const para = settledPara(usj, 2);
+    expect(location).toEqual({
+      jsonPath: contentPath([2, settledCharIndex(para)]),
+      closingMarkerOffset: byte,
+    });
+  });
+
+  it.each([
+    ["\\+add*", 1, "add"],
+    ["\\+add*", 5, "add"],
+    ["\\nd*", 2, "nd"],
+  ] as const)(
+    "reports byte %i of stacked closer %s on its own span",
+    async (closer, byte, marker) => {
+      const live = "In the \\nd LORD \\+add God\\+add*\\nd* made";
+      const { location, usj } = await reportedAt(live, live.indexOf(closer) + byte);
+      const para = settledPara(usj, 2);
+      const ndIndex = settledCharIndex(para);
+      const nd = para.content?.[ndIndex] as MarkerObject;
+      const addIndex = childIndex(nd.content, (item) => item.marker === "add");
+      const jsonPath =
+        marker === "nd" ? contentPath([2, ndIndex]) : contentPath([2, ndIndex, addIndex]);
+      expect(location).toEqual({ jsonPath, closingMarkerOffset: byte });
+    },
+  );
+
+  it("reports byte 1 of a milestone closer `\\*` on the milestone", async () => {
+    const live = "In the \\qt-e\\* made";
+    const { location, usj } = await reportedAt(live, live.indexOf("\\*") + 1);
+    const para = settledPara(usj, 2);
+    const index = childIndex(para.content, (item) => item.type === "ms");
+    expect(location).toEqual({ jsonPath: contentPath([2, index]), closingMarkerOffset: 1 });
+  });
+});
+
+it("reports the byte between `\\` and `+` of a nested opener as the marker location", async () => {
+  const live = "In the \\nd LORD \\+add God\\+add*\\nd* made";
+  const { location, usj } = await reportedAt(live, live.indexOf("\\+add ") + 1);
+  const para = settledPara(usj, 2);
+  const ndIndex = settledCharIndex(para);
+  const nd = para.content?.[ndIndex] as MarkerObject;
+  expect(location).toEqual({
+    jsonPath: contentPath([2, ndIndex, childIndex(nd.content, (item) => item.marker === "add")]),
+  });
+});

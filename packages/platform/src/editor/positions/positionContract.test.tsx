@@ -35,6 +35,21 @@ const BASELINE: PositionScenario[] = [
     alignment: { segments: [["\\p In the \\nd LORD made", "\\p In the \\nd LORD made"]] },
   },
   {
+    name: "w-two-attributes",
+    usj: twoParaUsj([BASE]),
+    pend: typed('In the \\w grace|lemma="g" strong="G1"\\w* made'),
+    liveNeedle: "grace",
+    settledNeedle: "grace",
+    alignment: {
+      segments: [
+        [
+          '\\p In the \\w grace|lemma="g" strong="G1"\\w* made',
+          '\\p In the \\w grace|lemma="g" strong="G1"\\w* made',
+        ],
+      ],
+    },
+  },
+  {
     name: "typed-note-expanded",
     usj: twoParaUsj([BASE]),
     mount: "expandedNotes",
@@ -123,21 +138,20 @@ function namedDefault(
 }
 
 /**
- * A milestone whose attribute run is retyped as `|name="value"`, which settles to the bare default
- * `|value`. The milestone starts with a different attribute (`start`), so it has a run to retype,
- * and its closer is the milestone's own: a caret inside a TYPED closer is a case of its own.
+ * A milestone typed fresh with a named attribute (`|name="value"`), which settles to the bare
+ * default `|value`. Its closer is the milestone's own self-closing `\*`, typed along with it: a
+ * caret inside a TYPED closer is a case of its own.
  */
-function namedMilestone(
+function typedMilestone(
   name: string,
   marker: string,
-  start: { [name: string]: string },
   attribute: string,
   value: string,
 ): PositionScenario {
   return {
     name,
-    usj: twoParaUsj(["In the ", { type: "ms", marker, ...start }, " made"]),
-    pend: retypedAttributeRun(`|${attribute}="${value}"`),
+    usj: twoParaUsj([BASE]),
+    pend: typed(`In the \\${marker} |${attribute}="${value}"\\* made`),
     liveNeedle: "made",
     settledNeedle: "made",
     alignment: collapsedDefault(`\\p In the \\${marker} |`, attribute, value, "\\* made"),
@@ -172,9 +186,9 @@ const RESPELLINGS: PositionScenario[] = [
   namedDefault("rb-gloss-named", "rb", "grace", "gloss", "x"),
   namedDefault("xt-link-href-named", "xt", "grace", "link-href", "GEN 1:1"),
   namedDefault("jmp-link-href-named", "jmp", "grace", "link-href", "GEN 1:1"),
-  namedMilestone("qt-s-who-named", "qt-s", { sid: "q1" }, "who", "Pilate"),
-  namedMilestone("ts-s-sid-named", "ts-s", { eid: "z" }, "sid", "a"),
-  namedMilestone("qt-e-eid-named", "qt-e", { sid: "z" }, "eid", "a"),
+  typedMilestone("qt-s-who-named", "qt-s", "who", "Pilate"),
+  typedMilestone("ts-s-sid-named", "ts-s", "sid", "a"),
+  typedMilestone("qt-e-eid-named", "qt-e", "eid", "a"),
   {
     name: "w-duplicate-name",
     usj: spanUsj("w", "grace"),
@@ -270,8 +284,8 @@ const LITERALS: PositionScenario[] = [
   },
   {
     name: "fig-usfm2-positional",
-    usj: twoParaUsj(["In ", { type: "char", marker: "fig", content: ["a"] }, " made"]),
-    pend: appended("a", "|x.jpg|col|||"),
+    usj: twoParaUsj([BASE]),
+    pend: typed("In \\fig a|x.jpg|col|||\\fig* made"),
     liveNeedle: "made",
     settledNeedle: "made",
     alignment: {
@@ -284,10 +298,10 @@ const LITERALS: PositionScenario[] = [
     name: "note-with-named-default",
     usj: twoParaUsj([BASE]),
     mount: "expandedNotes",
-    pend: typed('In\\f + \\ft see \\w w|lemma="x"\\w* more\\f* made'),
+    pend: typed('In\\f + \\ft see \\w w|lemma="x"\\w*\\f* made'),
     liveNeedle: "made",
     settledNeedle: "made",
-    alignment: collapsedDefault("\\p In\\f + \\ft see \\w w|", "lemma", "x", "\\w* more\\f* made"),
+    alignment: collapsedDefault("\\p In\\f + \\ft see \\w w|", "lemma", "x", "\\w*\\f* made"),
   },
   {
     name: "B-named-then-note",
