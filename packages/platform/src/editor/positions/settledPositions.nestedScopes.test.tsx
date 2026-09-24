@@ -200,6 +200,35 @@ describe("a co-settling note whose bytes cannot be lined up", () => {
     expect(point).toEqual(front);
   });
 
+  it("places a settled point in a run the paragraph could not pair in front of that live run", async () => {
+    // The paragraph's pairing leaves the note's live run without a settled partner, so a settled
+    // point inside the note has no live member to walk down; it lands in front of the live run
+    // whose placeholder lines up with the settled one.
+    const { lexical, context, note, noteIndex } = await nested();
+    const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
+
+    const [point, front] = lexical.getEditorState().read(() => {
+      const prepared = $prepareSettleScopes(context);
+      const paraPlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "para");
+      const noteRun = paraPlan?.liveFragment?.sentinels.findIndex((run) => $isNoteNode(run[0]));
+      if (!paraPlan?.sentinelMap || noteRun === undefined || noteRun < 0)
+        throw new Error("expected a paragraph plan pairing the note's run");
+      // As below: no natural pending state leaves a run unpaired inside an otherwise paired scope.
+      (paraPlan as { sentinelMap?: unknown }).sentinelMap = paraPlan.sentinelMap.map(
+        (run, index) => (index === noteRun ? run.map(() => undefined) : run),
+      );
+      return [
+        $livePointFromSettledLocation(context, prepared, {
+          jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
+          offset: 5,
+        }),
+        $inFrontOfNote(),
+      ];
+    });
+
+    expect(point).toEqual(front);
+  });
+
   it("places a settled point in a note whose preserved runs cannot be paired at the note's front", async () => {
     // With no run correspondence the note's two byte sequences do not line up, so a byte anchor
     // would resolve one byte off per placeholder instead of landing where the host meant.

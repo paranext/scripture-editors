@@ -93,6 +93,30 @@ describe("a typed figure the settle spells differently from how it was typed", (
     expect(location).toEqual({ jsonPath: figure, keyName: "file", keyOffset: 3 });
   });
 
+  it("places a settled location in a node the live side has no literal for where its placeholder maps", async () => {
+    const { lexical, context, literalStart, figure } = await pendingFigure();
+
+    const [point, key] = lexical.getEditorState().read(() => {
+      const prepared = $prepareSettleScopes(context);
+      const [plan] = [...prepared.byFirstLiveKey.values()];
+      // No natural pending state leaves a settled node with neither a live partner nor a literal,
+      // so the plan's literal is taken away: the figure is then a settled run nothing live stands
+      // for, and a location in it lands where its placeholder maps — in front of the typed bytes,
+      // at the end of the word before them.
+      (plan as { settledOnlyRuns?: unknown }).settledOnlyRuns = [];
+      return [
+        $livePointFromSettledLocation(context, prepared, {
+          jsonPath: figure,
+          keyName: "file",
+          keyOffset: 1,
+        }),
+        $textContaining(LIVE).getKey(),
+      ];
+    });
+
+    expect(point).toEqual({ key, offset: literalStart - 1, type: "text" });
+  });
+
   it("snaps a settled location on re-spelled bytes left", async () => {
     const { lexical, context, literalStart, figure } = await pendingFigure();
 

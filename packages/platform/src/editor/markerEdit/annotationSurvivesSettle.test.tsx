@@ -445,6 +445,59 @@ describe("a comment mark in a settling paragraph", () => {
   });
 });
 
+describe("a comment mark over typed attribute bytes the settle re-spells away", () => {
+  it("is dropped, never moved onto the bytes around them", async () => {
+    // `|lemma="grace"` typed after a `\w` span's word settles to the bare default `|grace`, so
+    // the typed `lemma="` has no settled bytes at all: both ends of a mark over it snap to the
+    // same position, in front of the value. Wrapping there would mark the bytes in front of it.
+    const mounted = await mountStandardViewEditor(
+      twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God made"]),
+    );
+    const typed = '|lemma="grace"';
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const word = $textContaining("grace");
+        const text = `${word.getTextContent()}${typed}`;
+        word.setTextContent(text);
+        word.select(text.length, text.length);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+
+    // The shape `CommentPlugin` creates, over `lemma="` alone, with the caret back at the end of
+    // what was typed.
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const text = $textContaining(typed);
+        const start = text.getTextContent().indexOf("lemma=");
+        const selection = $createRangeSelection();
+        selection.anchor.set(text.getKey(), start, "text");
+        selection.focus.set(text.getKey(), start + 'lemma="'.length, "text");
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+        const tail = $textContaining('grace"');
+        tail.select(tail.getTextContentSize(), tail.getTextContentSize());
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    settle(mounted);
+
+    // The settle really happened: the attribute is the span's own now.
+    expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+      type: "para",
+      marker: "p",
+      content: [
+        "In the ",
+        { type: "char", marker: "w", lemma: "grace", content: ["grace"] },
+        " of God made",
+      ],
+    });
+    expect(annotatedText(mounted.lexical)).toEqual([]);
+  });
+});
+
 /** A paragraph whose annotated range BEGINS at a note: `alpha ` sits outside the mark, the note and
  * `bravo` inside it. */
 const markOverNoteUsj: Usj = {
