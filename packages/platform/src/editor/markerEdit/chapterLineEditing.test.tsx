@@ -377,8 +377,9 @@ describe("a caret on the chapter line", () => {
     expect(ref.current?.getUsj()?.content).toEqual(chapterDoc.content);
   });
 
-  // `\ca`/`\cp` right after a chapter belong to it; a paragraph put between them would part them.
-  it("Enter starts the paragraph after the chapter's \\cp", async () => {
+  // As in Paratext 9, the paragraph goes directly after the chapter even with a `\cp` paragraph
+  // following it: a `\cp` can stand on its own, and the user may mean to put a paragraph between.
+  it("Enter starts the paragraph before a following \\cp paragraph", async () => {
     const PUBLISHED_NUMBER: MarkerContent = { type: "para", marker: "cp", content: ["B"] };
     const { ref, lexical } = await mountStandardViewEditor({
       ...chapterDoc,
@@ -390,8 +391,8 @@ describe("a caret on the chapter line", () => {
     await typeText(lexical, "new");
     expect(ref.current?.getUsj()?.content).toEqual([
       CHAPTER_2,
-      PUBLISHED_NUMBER,
       { type: "para", marker: "p", content: ["new"] },
+      PUBLISHED_NUMBER,
       VERSE_1_PARA,
     ]);
   });

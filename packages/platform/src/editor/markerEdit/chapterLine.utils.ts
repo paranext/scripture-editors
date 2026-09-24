@@ -16,7 +16,6 @@
  */
 
 import { $setParaMarkerWithPrefix } from "./markerEditDeletion.utils";
-import { $chapterAdjacentAttributeNodes } from "./tier2Rebuild.utils";
 import { $findMatchingParent } from "@lexical/utils";
 import { $getSelection, $isRangeSelection, LexicalNode, RangeSelection } from "lexical";
 import { $createParaNode, $isChapterNode, ChapterNode } from "shared";
@@ -55,9 +54,9 @@ function $chapterLineAtCaret(): ChapterNode | undefined {
 
 /**
  * Handles a paragraph split requested at a chapter line: wherever the caret is on the line, a new
- * paragraph marked `marker` starts right after the chapter line — after any `\ca`/`\cp` that
- * belong to it, which a paragraph between would part from their chapter — with the caret at its
- * content start. With paragraph marker prefixes shown, the paragraph gets its visible prefix in the same
+ * paragraph marked `marker` starts right after the chapter line, with the caret at its content
+ * start. That is directly after the chapter even when a `\cp` paragraph follows it, as in Paratext
+ * 9: a `\cp` can stand on its own, so the user may mean to put a paragraph between the two. With paragraph marker prefixes shown, the paragraph gets its visible prefix in the same
  * update, as a split paragraph does.
  *
  * Mutating: call from an `INSERT_PARAGRAPH_COMMAND` handler that runs before Lexical's own split,
@@ -71,7 +70,7 @@ export function $splitOnChapterLine(marker: string, viewOptions: ViewOptions | u
   const chapter = $chapterLineAtCaret();
   if (!chapter) return false;
   const para = $createParaNode(marker);
-  ($chapterAdjacentAttributeNodes(chapter).at(-1) ?? chapter).insertAfter(para);
+  chapter.insertAfter(para);
   if (showParaMarkerPrefix(viewOptions)) $setParaMarkerWithPrefix(para, marker);
   else para.selectStart();
   return true;
