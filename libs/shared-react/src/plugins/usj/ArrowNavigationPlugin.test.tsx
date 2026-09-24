@@ -2688,6 +2688,47 @@ describe("Backward navigation in the book line", () => {
     });
   });
 
+  // Same fallback, different offset: mid-way through the opening glyph's own text, the caret is not
+  // adjacent to the prefix at all, so the same `$getPreviousNode` fallback must not refuse it.
+  it("leaves the default move to run from offset 1 inside a leading opener", async () => {
+    let openingGlyph: MarkerNode;
+    const { editor } = await testEnvironment(() => {
+      $buildBookLine(() => {
+        openingGlyph = $createMarkerNode("nd");
+        return [
+          $createCharNode("nd").append(
+            openingGlyph,
+            $createTextNode("LORD"),
+            $createMarkerNode("nd", "closing"),
+          ),
+        ];
+      });
+    });
+    updateSelection(editor, openingGlyph!, 1);
+
+    const event = await pressKey(editor, "ArrowLeft");
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  // `$getPreviousNode` resolves a TEXT anchor's previous sibling from its containing node alone,
+  // ignoring the offset WITHIN it — so a check keyed on that identity alone would refuse a press
+  // anywhere in the line's own first text run, not just at its start.
+  it("leaves the default move to run from offset 3 in the line's own content text", async () => {
+    let description: TextNode;
+    const { editor } = await testEnvironment(() => {
+      $buildBookLine(() => {
+        description = $createTextNode("Genesis");
+        return [description];
+      });
+    });
+    updateSelection(editor, description!, 3);
+
+    const event = await pressKey(editor, "ArrowLeft");
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it("moves to the point before a note that follows the line's own description text", async () => {
     let book: BookNode;
     let trailing: TextNode;

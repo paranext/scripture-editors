@@ -6,7 +6,7 @@ import {
   $selectPreviousVerse,
   ImmutableVerseNode,
 } from "../../nodes/usj";
-import { $advancePastParaPrefixes } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { $advancePastParaPrefixes, $isBookPrefixNode } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { $opaqueBlockAncestor } from "./OpaqueBlockGuardPlugin";
 import { ViewOptions } from "../../views/view-options.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -958,11 +958,15 @@ function $handleBackwardNavigation(
   // character span's OPENING glyph (whose own parent is the CharNode, not the book, so a check
   // keyed on the anchor's parent misses it). Both land here as `prevNode` before either the offset
   // or the anchor's own container is inspected.
-  if (
-    $isImmutableTypedTextNode(prevNode) &&
-    $isBookNode(prevNode.getParent()) &&
-    prevNode.is(prevNode.getParent()?.getFirstChild())
-  )
+  //
+  // Still gated on the anchor, the same way `$shouldRefuseBookPrefixDeletion` is: `$getPreviousNode`
+  // resolves a TEXT anchor's previous sibling from its containing node alone, ignoring the offset
+  // WITHIN that node, so an ungated identity check would also refuse a press anywhere in the line's
+  // first text run (e.g. `\id GEN Gen|esis`) or mid-way through a leading opener — positions where
+  // the prefix is not actually adjacent to the caret. An ELEMENT anchor is already offset-correct
+  // (only `(book, 1)` reaches here as one); only the TEXT case needs the extra `offset === 0` check.
+  const { anchor } = selection;
+  if ((anchor.type === "element" || anchor.offset === 0) && $isBookPrefixNode(prevNode))
     return true;
 
   // If not at the beginning of node text → skip.
