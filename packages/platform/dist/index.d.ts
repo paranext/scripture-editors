@@ -859,8 +859,8 @@ export declare interface EditorRef {
    * the note's USJ text and a host that captured a position over its OWN rendering of the same
    * note resolves to the same character whichever marker mode this editor is in.
    *
-   * KNOWN GAP - TODO(PT-4322): text the source wrote directly inside the note rather than inside a
-   * `\ft`-style run is not counted, so a host that renders such text inline drifts by its length.
+   * Text the source wrote directly inside the note rather than inside a `\ft`-style run is content
+   * and counts, as it does in the note's USJ.
    *
    * An offset past the end of the note's text clamps to the end; a note with no content text falls
    * back to {@link EditorRef.selectNote}.
@@ -910,10 +910,10 @@ export declare interface EditorRef {
    * changes the document. A host that vendors its own copy of `usj-nodes.css` needs that rule in
    * it, or this is a silent no-op visually.
    *
-   * Silently does nothing for a note BUILT expanded under `markerMode: "editable"`, whose caller
-   * is plain text rather than the immutable caller element the style attaches to — a note built
-   * collapsed keeps that element through an expand toggle, so Standard view is unaffected. The
-   * note is resolved when this is called and never retried, so a call made before the document
+   * The style goes on the caller element whichever shape the note was built in: collapsed (an
+   * immutable caller element, kept through an expand toggle) or expanded under
+   * `markerMode: "editable"` (the caller's plain text, as for an unclosed note). The note is
+   * resolved when this is called and never retried, so a call made before the document
    * has loaded, or with a stale key or an out-of-range index, is discarded and clears any
    * highlight already showing.
    * @param noteKeyOrIndex - Note key or document-order index (see
