@@ -77,3 +77,18 @@ refused. The public surface grew substantially; nothing was removed.
   setting a DOM selection inside a `contenteditable` focuses it, so a host editing a note in a
   separate editor lost its caret to the main editor on each apply. A focused editor still
   reconciles, and the explicit caret APIs (`focus`, `setSelection`, `selectNote`) are unchanged.
+- A caret parked by `selectAfterNote` while the editor was unfocused is where a later `focus()`
+  lands. The parking commit's skip-DOM-selection tag no longer outlives it (Lexical keeps a
+  selection-only commit's tags for the next commit, so `focus()` focused nothing), and the stale
+  DOM selection it left inside the editor is cleared rather than read back over the parked caret.
+- A caret before a verse number reports the verse the chapter actually has before it: `\v 1-2`
+  before `\v 3`, `\v 2a` before `\v 2b`, `\v 20` before `\v 22`, rather than the number minus
+  one. A scroll-reference navigation to the verse the caret already reports - including verse 0 for
+  a heading before verse 1 - no longer moves it.
+- `selectNote` on an expanded note whose last run is explicitly closed (`\ft a\ft*`) lands ahead
+  of the run's closing glyph, where typing extends the run.
+- `selectNoteTextOffset` counts text written directly in a note (outside any `\ft`-style run) and
+  never lands inside an unmatched closer's glyph.
+- `highlightNote` highlights the caller of a note built expanded (an unclosed note) too.
+- `getNoteIndex`, `getNoteKey` and `highlightNote` are safe to call from a callback that runs
+  inside one of the editor's own updates, such as `onSelectionChange`.

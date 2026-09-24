@@ -44,7 +44,12 @@ import {
   NoteNode,
   ParaNode,
 } from "shared";
-import { $createImmutableVerseNode, SomeVerseNode, usjReactNodes } from "shared-react";
+import {
+  $createImmutableVerseNode,
+  $selectAfterNote,
+  SomeVerseNode,
+  usjReactNodes,
+} from "shared-react";
 
 beforeAll(() => {
   // jsdom has no layout engine, so it never implemented `Range.getBoundingClientRect` (unlike
@@ -915,6 +920,22 @@ describe("ScriptureReferencePlugin", () => {
       });
     });
 
+    // A heading before verse 1 reports as verse 0, so a navigation to verse 0 finds the caret
+    // already there - the same reading as the report (I9). A footnote in a Psalm title publishes
+    // exactly this verse when the user picks it.
+    it("leaves a caret in the heading before verse 1 put on a navigation to verse 0", async () => {
+      const { editor, setScrRef } = await testEnvironment(scrRef, mockOnScrRefChange);
+      await setScrRef({ book: "GEN", chapterNum: 1, verseNum: 2 });
+      updateSelection(editor, sectionTextNode, 2);
+
+      await setScrRef({ book: "GEN", chapterNum: 1, verseNum: 0 });
+      await flushQueuedEvents();
+
+      editor.getEditorState().read(() => {
+        $expectSelectionToBe(sectionTextNode, 2);
+      });
+    });
+
     it("does not swallow the first user click after navigation in a read-only editor", async () => {
       const { editor, setScrRef } = await testEnvironment(scrRef, mockOnScrRefChange);
       await act(async () => {
@@ -1377,21 +1398,21 @@ function $appendVerseContentStartingWithNonText($createVerse: (number: string) =
  */
 function $appendVerseFinalNote($createVerse: (number: string) => SomeVerseNode) {
   firstVerseTextNode = $createTextNode("first verse text ");
-  verseFinalNote = $createNoteNode("f", "+", true).append($createTextNode("note body "));
+  verseFinalNote = $createNoteNode("f", "+", true);
   verseAfterFinalNoteTextNode = $createTextNode("third verse text ");
-  verseFinalNotePara = $createParaNode().append(
-    $createVerse("2"),
-    $createTextNode("second verse text "),
-    verseFinalNote,
-    $createVerse("3"),
-    verseAfterFinalNoteTextNode,
-  );
+  verseFinalNotePara = $createParaNode();
 
   $getRoot().append(
     $createBookNode("GEN").append($createTextNode("Test Book")),
     $createImmutableChapterNode("1"),
     $createParaNode().append($createVerse("1"), firstVerseTextNode),
-    verseFinalNotePara,
+    verseFinalNotePara.append(
+      $createVerse("2"),
+      $createTextNode("second verse text "),
+      verseFinalNote.append($createTextNode("note body ")),
+      $createVerse("3"),
+      verseAfterFinalNoteTextNode,
+    ),
   );
 }
 
@@ -1592,7 +1613,8 @@ function $expectCaretPastVerseFinalNote() {
 
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
-  const { key, offset, type } = selection.anchor;
+  expect(selection.isCollapsed()).toBe(true);
+  const { key, offset, type } = selection.focus;
   expect(acceptable).toContainEqual({ key, offset, type });
 }
 
@@ -1611,7 +1633,8 @@ function $expectCaretAtVerseAfterFinalNoteStart() {
 
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
-  const { key, offset, type } = selection.anchor;
+  expect(selection.isCollapsed()).toBe(true);
+  const { key, offset, type } = selection.focus;
   expect(acceptable).toContainEqual({ key, offset, type });
 }
 
@@ -1622,10 +1645,6 @@ function $expectCaretAtVerseAfterFinalNoteStart() {
  * @param editor - The editor holding a `$appendVerseFinalNote` document.
  */
 function selectAfterVerseFinalNote(editor: LexicalEditor) {
-  let slot = 0;
-  editor.getEditorState().read(() => {
-    slot = verseFinalNote.getIndexWithinParent() + 1;
-  });
-  updateSelection(editor, verseFinalNotePara, slot);
+  editor.update(() => $selectAfterNote(verseFinalNote), { discrete: true });
   editor.getEditorState().read($expectCaretPastVerseFinalNote);
 }

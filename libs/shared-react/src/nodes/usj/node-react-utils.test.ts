@@ -878,6 +878,41 @@ describe("$getEffectiveVerseForBcv()", () => {
     });
   });
 
+  // The verse before a marker is the one the chapter actually has there, which the next marker's
+  // number alone cannot tell: a bridge, a segment, or an omitted verse all break "number - 1".
+  it.each([
+    { previous: "1-2", next: "3", expected: { verseNum: 1, verse: "1-2" } },
+    { previous: "2a", next: "2b", expected: { verseNum: 2, verse: "2a" } },
+    { previous: "20", next: "22", expected: { verseNum: 20 } },
+  ])(
+    "returns the previous verse node's verse before `\\v $next` after `\\v $previous`",
+    ({ previous, next, expected }) => {
+      let nextKey: string;
+      const { editor } = createBasicTestEnvironment([ParaNode, VerseNode]);
+      editor.update(
+        () => {
+          const nextVerse = $createVerseNode(next, getVisibleOpenMarkerText("v", next));
+          $getRoot().append(
+            $createParaNode().append(
+              $createVerseNode(previous, getVisibleOpenMarkerText("v", previous)),
+              $createTextNode("text "),
+            ),
+            $createParaNode().append(nextVerse, $createTextNode("more")),
+          );
+          nextKey = nextVerse.getKey();
+          nextVerse.select(0, 0);
+        },
+        { discrete: true },
+      );
+      editor.getEditorState().read(() => {
+        const node = $getNodeByKey(nextKey);
+        const verseNode = $isSomeVerseNode(node) ? node : undefined;
+
+        expect($getEffectiveVerseForBcv(verseNode, $getSelection())).toEqual(expected);
+      });
+    },
+  );
+
   it("returns verse 0 when cursor is in parent at offset 0 (before first verse)", () => {
     let paraKey: string;
     let verse1Key: string;

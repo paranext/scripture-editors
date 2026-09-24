@@ -83,6 +83,7 @@ import {
   externalTypedMarkType,
   getPendedDisplayOwners,
   LoggerBasic,
+  NoteNode,
   ParaNode,
   SELECTION_CHANGE_TAG,
   TypedMarkNode,
@@ -108,12 +109,14 @@ import {
   AnnotationRef,
   ArrowNavigationPlugin,
   CharNodePlugin,
+  clearStaleDomSelection,
   ClipboardPlugin,
   CommandMenuPlugin,
   ContextMenuPlugin,
   DeltaOnChangePlugin,
   DeltaOp,
   DisableHistoryShortcutsPlugin,
+  editorHoldsDomFocus,
   EditableMarkerMenuHarness,
   EditablePlugin,
   EmptyVerseCaretGuardPlugin,
@@ -132,6 +135,8 @@ import {
   ParaNodePlugin,
   pasteSelection,
   pasteSelectionAsPlainText,
+  readLatest,
+  releaseTagsAfterNextCommit,
   StateChangePlugin,
   StateChangeSnapshot,
   StructureKeyboardPlugin,
@@ -151,6 +156,18 @@ const defaultOptions: EditorOptions = {};
 
 function Placeholder(): ReactElement {
   return <div className="editor-placeholder">Enter some Scripture...</div>;
+}
+
+/**
+ * Records `noteNode`'s key in `expandedNoteKeyRef` when it is expanded, so `NoteNodePlugin` knows
+ * to collapse that note once the caret leaves it. No-op for a collapsed note or no note at all.
+ * Call inside `editor.update()`.
+ */
+function $rememberExpandedNote(
+  noteNode: NoteNode | null | undefined,
+  expandedNoteKeyRef: React.MutableRefObject<string | undefined>,
+): void {
+  if (noteNode && !noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
 }
 
 /**
@@ -423,25 +440,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     if (effectiveIsReadonly) throw new Error(`Cannot ${operation} in readonly mode`);
   };
 
-  /**
-   * Whether this editor's content-editable root contains the active element.
-   *
-   * An update to an editor the user is NOT in must not pull DOM focus into it: Lexical reconciles
-   * the DOM selection after every commit, and writing a selection inside a `contenteditable`
-   * focuses that element as an intrinsic browser side effect - so a programmatic update would yank
-   * the caret out of whatever the user IS typing in (a host's note editor applying its edits back
-   * into the Scripture text, say). Commits made while this returns `false` carry Lexical's
-   * `SKIP_DOM_SELECTION_TAG`. When this editor DOES hold focus the reconcile is exactly right and
-   * stays: that is how a collaborator's op keeps the local caret in the correct place.
-   *
-   * Deliberately broader than `EditorRef.isFocused`, which answers "is the root itself the active
-   * element". A focused decorator inside the editor - a collapsed note's caller button, say - is
-   * the user being in THIS editor for the purposes of the rule above, and is not the root.
-   */
-  const holdsDomFocus = () => {
-    const rootElement = editorRef.current?.getRootElement();
-    return !!rootElement && rootElement.contains(rootElement.ownerDocument.activeElement);
-  };
+  /** See {@link editorHoldsDomFocus}. */
+  const holdsDomFocus = () => !!editorRef.current && editorHoldsDomFocus(editorRef.current);
 
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
@@ -597,6 +597,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // drops instead of throwing.
       assertNotBlockVerse("apply an update");
       const holdsFocus = holdsDomFocus();
+      if (!holdsFocus && editorRef.current)
+        releaseTagsAfterNextCommit(editorRef.current, SKIP_DOM_SELECTION_TAG);
       editorRef.current?.update(
         () => {
           if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
@@ -605,6 +607,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         },
         { discrete: true },
       );
+      if (!holdsFocus && editorRef.current) clearStaleDomSelection(editorRef.current);
       const editorState = editorRef.current?.getEditorState();
       if (!editorState) return;
 
@@ -921,7 +924,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           nodeOptions,
           stableLogger,
         );
-        if (noteNode && !noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
+        $rememberExpandedNote(noteNode, expandedNoteKeyRef);
       });
     },
     selectNote(noteKeyOrIndex) {
@@ -929,19 +932,30 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
         if (noteNode) {
           $selectNote(noteNode, viewOptions);
-          if (!noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
+          $rememberExpandedNote(noteNode, expandedNoteKeyRef);
         }
       });
     },
     selectAfterNote(noteKeyOrIndex) {
-      editorRef.current?.update(() => {
-        // Placing a caret is a selection-only commit, so the focus rule matters more here than
-        // anywhere: a host putting the caret past a note it is showing elsewhere (a footnotes
-        // pane whose row editor holds focus) must not have that editor blurred underneath it.
-        if (!holdsDomFocus()) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
-        const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
-        if (noteNode) $selectAfterNote(noteNode);
-      });
+      const editor = editorRef.current;
+      if (!editor) return;
+      // Placing a caret is a selection-only commit, so the focus rule matters more here than
+      // anywhere: a host putting the caret past a note it is showing elsewhere (a footnotes pane
+      // whose row editor holds focus) must not have that editor blurred underneath it. The skipped
+      // write must still leave the parked caret as the one a later `focus()` lands on: a
+      // selection-only commit does not retire its tag, and the stale DOM selection would be read
+      // back over the parked one.
+      const skipDomSelection = !holdsDomFocus();
+      if (skipDomSelection) releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG);
+      editor.update(
+        () => {
+          if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+          const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+          if (noteNode) $selectAfterNote(noteNode);
+        },
+        { discrete: true },
+      );
+      if (skipDomSelection) clearStaleDomSelection(editor);
     },
     selectNoteTextOffset(noteKeyOrIndex, utf16Offset) {
       editorRef.current?.update(() => {
@@ -950,7 +964,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         // A note with no content text has nowhere to put an offset; land where an offset-less
         // request would, so the caret is always somewhere sensible inside the note.
         if (!$selectNoteTextOffset(noteNode, utf16Offset)) $selectNote(noteNode, viewOptions);
-        if (!noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
+        $rememberExpandedNote(noteNode, expandedNoteKeyRef);
       });
     },
     getNoteOps(noteKeyOrIndex) {
@@ -962,10 +976,14 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       });
     },
     getNoteIndex(noteKey) {
-      return editorRef.current?.read(() => $getNoteIndex(noteKey));
+      const editor = editorRef.current;
+      return editor ? readLatest(editor, () => $getNoteIndex(noteKey)) : undefined;
     },
     getNoteKey(noteIndex) {
-      return editorRef.current?.read(() => $getNoteByKeyOrIndex(noteIndex)?.getKey());
+      const editor = editorRef.current;
+      return editor
+        ? readLatest(editor, () => $getNoteByKeyOrIndex(noteIndex)?.getKey())
+        : undefined;
     },
     highlightNote(noteKeyOrIndex) {
       noteCallerHighlightRef.current?.setHighlightedNote(noteKeyOrIndex);

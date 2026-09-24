@@ -300,9 +300,25 @@ function currentVerseResult(verseNode: SomeVerseNode): { verseNum: number; verse
 }
 
 /**
+ * The verse node before `verseNode` in document order, within its chapter.
+ * @param verseNode - The verse node to look before.
+ * @returns the previous verse node, or `undefined` when `verseNode` is its chapter's first.
+ */
+function $findPreviousVerse(verseNode: SomeVerseNode): SomeVerseNode | undefined {
+  const previous = $findNearestPreviousNode(verseNode);
+  if (!previous || $isSomeChapterNode(previous)) return undefined;
+  if ($isSomeVerseNode(previous)) return previous;
+  return $findLastVerseInNode(previous) ?? $findThisVerse(previous);
+}
+
+/**
  * Returns the verse number (and optional verse range) for BCV display. When the cursor is
- * before the verse number, returns the previous verse so BCV only updates after the number.
- * For "previous" verse, only `verseNum` is set (no `verse` range); e.g. cursor before "2-3" → `{ verseNum: 1 }`.
+ * before the verse number, returns the verse before it - the actual previous verse node when the
+ * chapter has one, so a caret before `\v 3` after `\v 1-2` reports `{ verseNum: 1, verse: "1-2" }`
+ * and one before `\v 2b` reports `{ verseNum: 2, verse: "2a" }`. Only when no earlier verse exists
+ * in the chapter is it inferred from the number: e.g. cursor before a lone "2-3" → `{ verseNum: 1 }`.
+ *
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
  *
  * @param verseNode - The verse node that contains or precedes the cursor.
  * @param selection - The current editor selection.
@@ -323,7 +339,10 @@ export function $getEffectiveVerseForBcv(
   const prevNum = selectedVerseNum <= 1 ? 0 : selectedVerseNum - 1;
 
   // Anchor before verse number: show previous verse
-  if ($shouldShowPreviousVerseForBcv(verseNode, selection)) return { verseNum: prevNum };
+  if ($shouldShowPreviousVerseForBcv(verseNode, selection)) {
+    const previousVerse = $findPreviousVerse(verseNode);
+    return previousVerse ? currentVerseResult(previousVerse) : { verseNum: prevNum };
+  }
 
   return currentVerseResult(verseNode);
 }

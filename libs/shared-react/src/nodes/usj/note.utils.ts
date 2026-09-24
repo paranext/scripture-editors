@@ -45,8 +45,10 @@ import {
   $isImmutableUnmatchedNode,
   $isMarkerNode,
   $isNoteNode,
+  $isVisibleMarkerNode,
   $moveSelectionToEnd,
   $normalizeSelectionOutOfGlyphText,
+  $noteEditableCallerNode,
   $separatorPrefixLength,
   $shouldIgnoreNodeForContentIndexes,
   CharNode,
@@ -67,8 +69,10 @@ import {
 
 // Lives in a leaf module so this file and `ImmutableNoteCallerNode` do not import each other (see
 // `note-index.utils`). Re-exported so it reaches the `nodes/usj` barrel, which exports this file
-// and not the leaf.
-export { $getNoteIndex } from "./note-index.utils";
+// and not the leaf; imported here too since `$getNoteByKeyOrIndex` below builds on it.
+import { $getNoteAtIndex } from "./note-index.utils";
+
+export { $getNoteAtIndex, $getNoteIndex } from "./note-index.utils";
 
 /** Caller count is in an object so it can be manipulated by passing the object. */
 export interface CallerData {
@@ -442,14 +446,7 @@ export function $getNoteByKeyOrIndex(noteKeyOrIndex: string | number): NoteNode 
     return node;
   }
 
-  const dfsNodes = $dfs();
-  if (dfsNodes.length <= 0) return;
-
-  const dfsNotes = dfsNodes.filter((dfsNode) => $isNoteNode(dfsNode.node));
-  const note = dfsNotes[noteKeyOrIndex]?.node;
-  if (!$isNoteNode(note)) return;
-
-  return note;
+  return $getNoteAtIndex(noteKeyOrIndex);
 }
 
 /**
@@ -459,6 +456,8 @@ export function $getNoteByKeyOrIndex(noteKeyOrIndex: string | number): NoteNode 
  * notes, where `expandInline` builds collapsed. Here the user is navigating INTO the note, so
  * `expandInline` must expand it (the caret is about to be adjacent — the same condition under
  * which the NoteNodePlugin keeps it open); only an always-`"collapsed"` mode keeps it closed.
+ *
+ * Mutating: call inside `editor.update()`.
  *
  * @param noteNode - The note node to select.
  * @param viewOptions - The current editor view options.
@@ -478,25 +477,53 @@ export function $selectNote(noteNode: NoteNode, viewOptions: ViewOptions | undef
   } else {
     const children = noteNode.getChildren();
     const lastCharChild = children.slice().reverse().find($isCharNode);
-    if (lastCharChild) lastCharChild.selectEnd();
+    if (lastCharChild) $selectCharContentEnd(lastCharChild);
     else {
       // An expanded note with no content run at all (`\f + \f*`) holds nothing to select the end
       // of, and leaving the caret where it was puts it OUTSIDE the note the user asked to be in -
       // so the next keystroke lands in the surrounding text. Land it at the child slot content
       // would occupy: just before the closing glyph, or at the end when there is none. The glyph
       // is a marker node under `markerMode: "editable"` and display-only text under `"visible"`.
-      const closerText = closingMarkerText(noteNode.getMarker());
-      const closingIndex = children.findIndex(
-        (child) =>
-          ($isMarkerNode(child) && child.getMarkerSyntax() === "closing") ||
-          ($isImmutableTypedTextNode(child) &&
-            child.getTextType() === "marker" &&
-            child.getTextContent() === closerText),
-      );
+      const closingIndex = $closingGlyphIndex(noteNode);
       const at = closingIndex === -1 ? children.length : closingIndex;
       noteNode.select(at, at);
     }
   }
+}
+
+/**
+ * Index of `element`'s own closing glyph among its children: a marker node under
+ * `markerMode: "editable"`, display-only text under `"visible"`.
+ * @param element - The note or char span whose closer to find.
+ * @returns The closer's index, or `-1` when the element has none (implicitly closed, or markers
+ *   hidden).
+ */
+function $closingGlyphIndex(element: NoteNode | CharNode): number {
+  const closerText = closingMarkerText(element.getMarker());
+  return element
+    .getChildren()
+    .findIndex(
+      (child) =>
+        ($isMarkerNode(child) && child.getMarkerSyntax() === "closing") ||
+        ($isVisibleMarkerNode(child) && child.getTextContent() === closerText),
+    );
+}
+
+/**
+ * Puts the caret at the end of a char span's CONTENT: ahead of its closing glyph when the span is
+ * explicitly closed (`\ft a\ft*`), where text typed extends the run rather than landing after it.
+ * @param charNode - The char span.
+ */
+function $selectCharContentEnd(charNode: CharNode) {
+  const closingIndex = $closingGlyphIndex(charNode);
+  if (closingIndex === -1) {
+    charNode.selectEnd();
+    return;
+  }
+  const beforeCloser = charNode.getChildAtIndex(closingIndex - 1);
+  if ($isTextNode(beforeCloser) && !$shouldIgnoreNodeForContentIndexes(beforeCloser))
+    beforeCloser.selectEnd();
+  else charNode.select(closingIndex, closingIndex);
 }
 
 /**
@@ -505,6 +532,8 @@ export function $selectNote(noteNode: NoteNode, viewOptions: ViewOptions | undef
  * past the caller.
  *
  * The mirror of {@link $selectNote}'s collapsed branch, which lands just BEFORE the note.
+ *
+ * Mutating: call inside `editor.update()`.
  *
  * @param noteNode - The note node to put the caret after.
  */
@@ -537,11 +566,12 @@ export function $selectAfterNote(noteNode: NoteNode) {
  * (a footnotes pane row, say) resolves against the same characters no matter which
  * `ViewOptions.markerMode` this editor renders in.
  *
- * KNOWN GAP - TODO(PT-4322): text the source wrote directly inside the note rather than inside a
- * `\ft`-style run is not counted, because the walk requires a char-span ancestor (which is also
- * what excludes the caller). A host that renders such text inline still drifts by its length.
+ * Text the source wrote directly inside the note rather than inside a `\ft`-style run counts too,
+ * as it does in the note's USJ.
  *
  * Offsets past the end of the note's text clamp to the end.
+ *
+ * Mutating: call inside `editor.update()`.
  *
  * @param noteNode - The note node whose text to place the caret in.
  * @param utf16Offset - Offset into the note's content text, in UTF-16 code units.
@@ -552,13 +582,14 @@ export function $selectNoteTextOffset(noteNode: NoteNode, utf16Offset: number): 
   let remaining = Math.max(utf16Offset, 0);
   let lastDataNode: TextNode | undefined;
 
+  const caller = $noteEditableCallerNode(noteNode);
   for (const { node } of $dfs(noteNode)) {
     if (!$isTextNode(node)) continue;
     if ($shouldIgnoreNodeForContentIndexes(node)) continue;
-    // Bounded at the note so a note nested inside a char span (`\w ...\f ...\f*...\w*`) is not
-    // mistaken for content of that outer span.
-    const container = $findMatchingParent(node, (n) => $isCharNode(n) || $isNoteNode(n));
-    if (!$isCharNode(container)) continue;
+    // A glyph's bytes are a picture of its own state (an unmatched closer, say), never content.
+    if ($isGlyphTextNode(node)) continue;
+    // An expanded editable note spells its caller out as plain text ahead of the content.
+    if (caller && node.is(caller)) continue;
 
     // An opening glyph's display separator rides as an NBSP prefix of the text after it; it is
     // display, never content, so the offset origin starts past it.

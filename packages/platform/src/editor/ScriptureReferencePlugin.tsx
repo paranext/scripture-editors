@@ -494,24 +494,11 @@ function schedulePlacingCaretAtVerseStart(machine: Machine, editor: LexicalEdito
  * resolves to that verse - a range containing it counts, a range being one location - or when the
  * target is absent. */
 function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
-  const selection = $getSelection();
-  const startNode = getSelectionStartNode(selection);
-  // Which verse the caret is in is ONE question, and $resolvePosition already answers it - so ask
-  // it the same way here. Reading the verse off the caret's node alone is offset-blind, and the
-  // two answers then disagree at every position that sits between two verses: the slot just past a
-  // note that ends a verse resolves to the NEXT verse's marker, so the host publishing the note's
-  // own verse looked like a cross-verse navigation and yanked the caret back to that verse's
-  // start.
-  const selectedVerseNode = startNode ? $resolveVerseNode(startNode, selection) : undefined;
-  // Resolve the caret's CHAPTER too, mirroring $resolvePosition's counting (content before the
-  // first chapter of a loaded document addresses as chapter 1). The verse-number match alone is
-  // chapter-blind: in a multi-chapter document, navigating chapter N verse K -> chapter M verse K
-  // keeps the verse number but is a genuine cross-chapter move, and a number-only "already here"
-  // guard would wrongly no-op and strand the caret in the wrong chapter.
-  const selectedChapterNode = $findThisChapter(startNode);
-  const selectedChapterNum = selectedChapterNode
-    ? parseInt(selectedChapterNode.getNumber() ?? "1", 10)
-    : 1;
+  // Which verse the caret is in is ONE question, and $resolvePosition answers it for reporting -
+  // so ask it here too (I9). Any other reading disagrees with the report at some position: the
+  // slot just past a note that ends a verse, or a heading before verse 1 (which reports verse 0),
+  // and the host publishing that very verse then reads as a navigation that yanks the caret.
+  //
   // Already parked in the verse being navigated to: moving to its start would eject a caret the
   // user is actively typing in. The scrRef echo of this editor's own save fires ~90-190ms after a
   // keystroke; without this guard it yanks the caret out of a freshly typed marker span, so the
@@ -522,16 +509,15 @@ function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
   // where the user placed it, not snapped to the verse start. Genuine cross-verse OR cross-chapter
   // navigation still moves, since the caret is not in the target chapter's target verse.
   //
-  // Gated on a verse node actually being resolved, never on the effective number alone: a document
-  // swap nulls the selection, which resolves to verse 0, and a navigation to verse 0 must still
-  // place a caret in the arriving document rather than read "already here" off having none.
-  if (selectedVerseNode && selectedChapterNum === chapterNum) {
-    const { verseNum: caretVerseNum, verse: caretVerse } = $getEffectiveVerseForBcv(
-      selectedVerseNode,
-      selection,
-    );
-    if (caretVerse ? verseInRangeSafe(verseNum, caretVerse) : caretVerseNum === verseNum) return;
-  }
+  // A document swap nulls the selection, which resolves to no position at all, so a navigation
+  // still places a caret in the arriving document rather than reading "already here" off having
+  // none.
+  const here = $resolvePosition();
+  if (
+    here?.chapterNum === chapterNum &&
+    (here.verse ? verseInRangeSafe(verseNum, here.verse) : here.verseNum === verseNum)
+  )
+    return;
 
   const children = $getRoot().getChildren();
   const chapterNode = $findChapter(children, chapterNum);

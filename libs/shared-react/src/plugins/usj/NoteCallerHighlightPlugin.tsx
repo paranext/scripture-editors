@@ -5,7 +5,8 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { mergeRegister } from "@lexical/utils";
 import { NodeKey } from "lexical";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
-import { EXTERNAL_USJ_MUTATION_TAG, NoteNode } from "shared";
+import { $noteEditableCallerNode, EXTERNAL_USJ_MUTATION_TAG, NoteNode } from "shared";
+import { readLatest } from "./editorUpdate.utils";
 
 /** PT9's selected-caller style: a yellow fill and thin blue top/bottom borders on the caller. */
 export const NOTE_CALLER_HIGHLIGHT_CLASS = "caller_highlight";
@@ -16,10 +17,10 @@ export interface NoteCallerHighlightHandle {
    * Highlights the caller of the given note (by key or document-order index); `undefined` clears
    * the highlight. Only one note is highlighted at a time.
    *
-   * Silently does nothing for a note BUILT expanded under `markerMode: "editable"`, whose caller
-   * is a plain TextNode rather than the ImmutableNoteCallerNode this class attaches to — a note
-   * built collapsed keeps that node through an expand toggle. The note is resolved here and
-   * never retried, so a call made before the document has loaded, or with a stale key or an
+   * The class goes on the caller element: the ImmutableNoteCallerNode a note is built with
+   * collapsed (which it keeps through an expand toggle), or the caller's plain text for a note
+   * BUILT expanded under `markerMode: "editable"` (an unclosed note, say). The note is resolved
+   * here and never retried, so a call made before the document has loaded, or with a stale key or an
    * out-of-range index, is discarded and clears any highlight already showing.
    */
   setHighlightedNote(noteKeyOrIndex: string | number | undefined): void;
@@ -49,11 +50,13 @@ export const NoteCallerHighlightPlugin = forwardRef<NoteCallerHighlightHandle>(
         noteKey === undefined
           ? undefined
           : editor.getEditorState().read(() => {
+              const note = $getNoteByKeyOrIndex(noteKey);
+              if (!note) return undefined;
               // The caller is not the note's first child: in editable marker mode the note opens
               // with its marker glyph.
-              const caller = $getNoteByKeyOrIndex(noteKey)
-                ?.getChildren()
-                .find($isImmutableNoteCallerNode);
+              const caller =
+                note.getChildren().find($isImmutableNoteCallerNode) ??
+                $noteEditableCallerNode(note);
               return caller?.getKey();
             });
       const element = callerKey ? (editor.getElementByKey(callerKey) ?? undefined) : undefined;
@@ -67,13 +70,12 @@ export const NoteCallerHighlightPlugin = forwardRef<NoteCallerHighlightHandle>(
       ref,
       () => ({
         setHighlightedNote(noteKeyOrIndex) {
-          // `editor.read` flushes any update still in flight first, as `EditorRef.getNoteIndex`
-          // does, so an index resolves against the document the caller just produced rather than
-          // the one before its last edit.
+          // Read the latest state, as `EditorRef.getNoteIndex` does, so an index resolves against
+          // the document the caller just produced rather than the one before its last edit.
           highlightedKeyRef.current =
             noteKeyOrIndex === undefined
               ? undefined
-              : editor.read(() => $getNoteByKeyOrIndex(noteKeyOrIndex)?.getKey());
+              : readLatest(editor, () => $getNoteByKeyOrIndex(noteKeyOrIndex)?.getKey());
           applyHighlight();
         },
       }),
@@ -90,6 +92,11 @@ export const NoteCallerHighlightPlugin = forwardRef<NoteCallerHighlightHandle>(
             (mutations, { prevEditorState, updateTags }) => {
               const noteKey = highlightedKeyRef.current;
               if (noteKey === undefined || mutations.get(noteKey) !== "destroyed") return;
+              // Only a note created in this same commit can be its in-place replacement.
+              if (![...mutations.values()].includes("created")) {
+                highlightedKeyRef.current = undefined;
+                return;
+              }
 
               // A load replaces the whole document and regenerates every key, so no note in the
               // new document is this one, whatever sits at its index. The host re-addresses the

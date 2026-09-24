@@ -9,6 +9,7 @@ export * from "./CommandMenuPlugin";
 export * from "./ContextMenuPlugin";
 export * from "./DisableHistoryShortcutsPlugin";
 export * from "./EditablePlugin";
+export * from "./editorUpdate.utils";
 export * from "./EmptyVerseCaretGuardPlugin";
 export * from "./LoadStatePlugin";
 export * from "./NoteCallerHighlightPlugin";

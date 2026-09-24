@@ -4,41 +4,23 @@
  * PT9's selected-caller highlight (`caller_highlight`) on one note's caller at a time.
  */
 import Editorial from "../Editorial";
-import { EditorOptions, EditorRef } from "./editor.model";
+import { EditorRef } from "./editor.model";
+import {
+  note,
+  noteKeys,
+  options,
+  renderEditor,
+  requireDefined,
+  scrRef,
+} from "./noteEditorRef.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act, render } from "@testing-library/react";
 import { createRef } from "react";
-import { $getNodeByKey, $getRoot, LexicalEditor } from "lexical";
-import { $dfs } from "@lexical/utils";
+import { $getNodeByKey, $getRoot } from "lexical";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { getEmbeddedLexicalEditor } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
-import { $isNoteNode, NoteNode } from "shared";
-import { getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
-
-function requireDefined<T>(value: T | undefined | null, message: string): T {
-  if (value === undefined || value === null) throw new Error(message);
-  return value;
-}
-
-const options: EditorOptions = {
-  hasSpellCheck: false,
-  markerMenuTrigger: "\\",
-  view: requireDefined(getViewOptions(STANDARD_VIEW_MODE), "standard view options"),
-  hasExternalUI: true,
-};
-
-function note(text: string): MarkerObject {
-  return {
-    type: "note",
-    marker: "f",
-    caller: "+",
-    content: [
-      { type: "char", marker: "fr", content: ["1:1 "] },
-      { type: "char", marker: "ft", content: [text] },
-    ],
-  };
-}
+import { $isNoteNode } from "shared";
 
 const threeNotesUsj: Usj = {
   type: "USJ",
@@ -63,8 +45,6 @@ const threeNotesUsj: Usj = {
   ],
 };
 
-const scrRef = { book: "GEN", chapterNum: 1, verseNum: 1 };
-
 const oneNoteUsj: Usj = {
   type: "USJ",
   version: "3.1",
@@ -78,35 +58,6 @@ const oneNoteUsj: Usj = {
     },
   ],
 };
-
-async function renderEditor(defaultUsj: Usj) {
-  const ref = createRef<EditorRef>();
-  let container: HTMLElement | undefined;
-  await act(async () => {
-    const result = render(
-      <Editorial
-        ref={ref}
-        defaultUsj={defaultUsj}
-        scrRef={scrRef}
-        onScrRefChange={() => undefined}
-        options={options}
-      />,
-    );
-    container = result.container;
-  });
-  const editorRef = requireDefined(ref.current, "editor ref");
-  const lexical = getEmbeddedLexicalEditor(container);
-  return { editorRef, lexical, container: requireDefined(container, "container") };
-}
-
-function noteKeys(lexical: LexicalEditor): string[] {
-  return lexical.getEditorState().read(() =>
-    $dfs($getRoot())
-      .map(({ node }) => node)
-      .filter($isNoteNode)
-      .map((n: NoteNode) => n.getKey()),
-  );
-}
 
 describe("EditorRef.getNoteIndex", () => {
   it("returns the document-order index for each note key", async () => {
@@ -235,6 +186,9 @@ describe("EditorRef.highlightNote", () => {
       );
       container = result.container;
     });
+    // This test mounts its own <Editorial> (for onUsjChange) rather than the shared renderEditor,
+    // which strips `children`, so the cleaner EditorRefPlugin-child handle isn't reachable — read
+    // the editor off the mounted DOM.
     const lexical = getEmbeddedLexicalEditor(container);
     onUsjChange.mockClear();
     let commits = 0;
@@ -284,6 +238,56 @@ describe("EditorRef.highlightNote", () => {
     const after = callerOf(container, 1);
     expect(after).not.toBe(before);
     expect(highlightedCallers(container)).toEqual([after]);
+  });
+
+  // An unclosed note renders expanded even in Standard view, so its caller is the note's plain
+  // caller text rather than an immutable caller element.
+  it("highlights the caller of a note built expanded", async () => {
+    const unclosedNote: MarkerObject = { ...note("alpha"), closed: "false" };
+    const { editorRef, container } = await renderEditor({
+      ...threeNotesUsj,
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+        { type: "chapter", marker: "c", number: "1" },
+        {
+          type: "para",
+          marker: "p",
+          content: [{ type: "verse", marker: "v", number: "1" }, "first ", unclosedNote],
+        },
+      ],
+    });
+    expect(container.querySelector(".note .immutable-note-caller")).toBeNull();
+
+    await act(async () => {
+      editorRef.highlightNote(0);
+    });
+
+    const highlighted = highlightedCallers(container);
+    expect(highlighted).toHaveLength(1);
+    expect(highlighted[0].textContent?.trim()).toBe("+");
+  });
+
+  // A host callback can run inside one of the editor's own updates (`onSelectionChange` runs from a
+  // command the update dispatches). Committing there would freeze the update in progress, so its
+  // next write would throw.
+  it("reads and highlights from inside an update without committing it", async () => {
+    const { editorRef, lexical, container } = await renderEditor(threeNotesUsj);
+    const [first, second, third] = noteKeys(lexical);
+    let index: number | undefined;
+    let key: string | undefined;
+    await act(async () => {
+      lexical.update(() => {
+        $getNodeByKey(first)?.remove();
+        index = editorRef.getNoteIndex(second);
+        key = editorRef.getNoteKey(1);
+        editorRef.highlightNote(0);
+        const thirdNote = $getNodeByKey(third);
+        if ($isNoteNode(thirdNote)) thirdNote.setIsCollapsed(false);
+      });
+    });
+    expect(index).toBe(0);
+    expect(key).toBe(third);
+    expect(highlightedCallers(container)).toEqual([callerOf(container, 0)]);
   });
 
   // A host that edits and then highlights by index in the same turn means the note at that index
