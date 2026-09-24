@@ -9,10 +9,13 @@ import {
   COMMAND_PRIORITY_EDITOR,
   COMMAND_PRIORITY_HIGH,
   DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
   isDOMNode,
   LexicalNode,
   RangeSelection,
 } from "lexical";
+import { mergeRegister } from "@lexical/utils";
 import { useEffect } from "react";
 import {
   $getNextNode,
@@ -97,10 +100,13 @@ export function $shouldRefuseBookPrefixDeletion(isBackward: boolean): boolean {
  * correction is committed in a single cycle — other listeners (e.g. `OnSelectionChangePlugin`)
  * see only the corrected cursor, never the intermediate prefix position.
  *
- * Also refuses `DELETE_CHARACTER_COMMAND` (the command both Backspace and Delete fall through to)
- * whenever it would remove the book's own prefix glyph. Lexical's default `deleteCharacter`
- * removes an adjacent `DecoratorNode` outright regardless of `isKeyboardSelectable()`
- * (ImmutableTypedTextNode.ts), so without this a Backspace at the very start of the line's content
+ * Also refuses `DELETE_CHARACTER_COMMAND` (the command both Backspace and Delete fall through to),
+ * `DELETE_WORD_COMMAND` (Ctrl/Alt+Backspace) and `DELETE_LINE_COMMAND` (Cmd+Backspace) whenever any
+ * of them would remove the book's own prefix glyph. All three can reach the same fallback: a
+ * collapsed word/line delete that finds nothing left to extend into falls back to
+ * `RangeSelection.deleteCharacter`, and Lexical's default `deleteCharacter` removes an adjacent
+ * `DecoratorNode` outright regardless of `isKeyboardSelectable()` (ImmutableTypedTextNode.ts) — so
+ * without refusing all three, any of these keystrokes at the very start of the line's content
  * deletes the `\id GEN ` glyph from the screen while the file — which never stored the glyph as
  * its own node — is left unchanged, until the next reload silently brings it back.
  */
@@ -119,10 +125,22 @@ export function ParaMarkerPrefixCursorGuardPlugin(): null {
   }, [editor]);
 
   useEffect(() => {
-    return editor.registerCommand<boolean>(
-      DELETE_CHARACTER_COMMAND,
-      $shouldRefuseBookPrefixDeletion,
-      COMMAND_PRIORITY_HIGH,
+    return mergeRegister(
+      editor.registerCommand<boolean>(
+        DELETE_CHARACTER_COMMAND,
+        $shouldRefuseBookPrefixDeletion,
+        COMMAND_PRIORITY_HIGH,
+      ),
+      editor.registerCommand<boolean>(
+        DELETE_WORD_COMMAND,
+        $shouldRefuseBookPrefixDeletion,
+        COMMAND_PRIORITY_HIGH,
+      ),
+      editor.registerCommand<boolean>(
+        DELETE_LINE_COMMAND,
+        $shouldRefuseBookPrefixDeletion,
+        COMMAND_PRIORITY_HIGH,
+      ),
     );
   }, [editor]);
 

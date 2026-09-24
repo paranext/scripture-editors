@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   $createTextNode,
   $getRoot,
@@ -6,6 +6,8 @@ import {
   $isRangeSelection,
   CLICK_COMMAND,
   COMMAND_PRIORITY_EDITOR,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
   LexicalEditor,
   TextNode,
 } from "lexical";
@@ -744,6 +746,87 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
     );
 
     expect(refused).toBe(false);
+  });
+});
+
+// Backspace/Delete are not the only keys that fall through to a delete command: Ctrl/Alt+Backspace
+// dispatches DELETE_WORD_COMMAND and Cmd+Backspace dispatches DELETE_LINE_COMMAND, and rich-text
+// handles both through `deleteWord`/`deleteLine` without ever going through
+// DELETE_CHARACTER_COMMAND. Guarding only the character command left both open: a collapsed
+// word/line delete at the same boundary falls back to `RangeSelection.deleteCharacter`, which
+// removes the adjacent DecoratorNode outright the same way plain Backspace could before that
+// guard existed.
+describe("DELETE_WORD_COMMAND and DELETE_LINE_COMMAND refuse to remove the book's prefix glyph", () => {
+  it("refuses DELETE_WORD_COMMAND at the start of the line's content", async () => {
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        content = $createTextNode("Genesis");
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", "\\id GEN "),
+            content,
+          ),
+        );
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, content, 0);
+
+    editor.update(
+      () => {
+        editor.dispatchCommand(DELETE_WORD_COMMAND, true);
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected a BookNode");
+      expect(book.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(book.getTextContent()).toBe("\\id GEN Genesis");
+    });
+  });
+
+  // jsdom has no `Selection.modify`, which `deleteLine`'s line-boundary extension calls before a
+  // collapsed selection ever reaches the `deleteCharacter` fallback this guard is meant to
+  // intercept; without a stub the call throws before that fallback runs at all. Stubbed as a
+  // no-op, the collapsed selection stays put and `deleteLine` takes the same fallback a real
+  // browser's selection would take once it finds nothing left to extend into.
+  it("refuses DELETE_LINE_COMMAND at the start of the line's content", async () => {
+    Selection.prototype.modify = vi.fn();
+    try {
+      let content!: TextNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          content = $createTextNode("Genesis");
+          $getRoot().append(
+            $createBookNode("GEN").append(
+              $createImmutableTypedTextNode("marker", "\\id GEN "),
+              content,
+            ),
+          );
+        },
+        <ParaMarkerPrefixCursorGuardPlugin />,
+      );
+      updateSelection(editor, content, 0);
+
+      editor.update(
+        () => {
+          editor.dispatchCommand(DELETE_LINE_COMMAND, true);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        const book = $getRoot().getFirstChild();
+        if (!$isBookNode(book)) throw new Error("expected a BookNode");
+        expect(book.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+        expect(book.getTextContent()).toBe("\\id GEN Genesis");
+      });
+    } finally {
+      delete (Selection.prototype as { modify?: () => void }).modify;
+    }
   });
 });
 
