@@ -2823,13 +2823,14 @@ describe("paragraph marker stops (paragraph-structure view)", () => {
       return { editor, before: before!, after: after!, q1: q1! };
     }
 
-    it("ArrowRight at the end of the paragraph before the table keeps the existing crossing", async () => {
+    // The mirror of the next test: ← out of the after-table marker steps back over the table.
+    it("ArrowRight at the end of the paragraph before the table steps over it onto the after-table marker", async () => {
       const { editor, before } = await tableEnvironment();
       updateSelection(editor, before);
 
       await pressKey(editor, "ArrowRight");
 
-      expect(selectedMarkerOf(editor)).toBeUndefined();
+      expect(selectedMarkerOf(editor)).toBe("q1");
     });
 
     it("ArrowLeft stops on the after-table marker, then lands at the end of the before-table text", async () => {
@@ -2853,6 +2854,52 @@ describe("paragraph marker stops (paragraph-structure view)", () => {
       expect(selectedMarkerOf(editor)).toBe("p");
       await pressKey(editor, "ArrowDown");
       expect(selectedMarkerOf(editor)).toBe("q1");
+    });
+  });
+
+  describe("paragraphs before and after a chapter number", () => {
+    it("ArrowRight steps over the chapter onto the next paragraph's marker, and ArrowLeft steps back", async () => {
+      let end: TextNode;
+      const { editor } = await markerStopEnvironment(() => {
+        end = $createTextNode("end of chapter one");
+        $getRoot().append(
+          $createGutterParaNode("p", end),
+          $createImmutableChapterNode("2"),
+          $createGutterParaNode("q1", $createTextNode("chapter two")),
+        );
+      });
+      updateSelection(editor, end!);
+
+      await pressKey(editor, "ArrowRight");
+      expect(selectedMarkerOf(editor)).toBe("q1");
+
+      await pressKey(editor, "ArrowLeft");
+      editor.getEditorState().read(() => {
+        $expectSelectionToBe(end);
+      });
+    });
+  });
+
+  describe("an editor that cannot hold a marker selection", () => {
+    it("does not stop on a marker when no ParaMarkerSelectionPlugin protects it", async () => {
+      let one: TextNode;
+      let two: TextNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          one = $createTextNode("one");
+          two = $createTextNode("two");
+          $getRoot().append($createGutterParaNode("p", one), $createGutterParaNode("q1", two));
+        },
+        <ArrowNavigationPlugin viewOptions={paragraphStructureView} />,
+      );
+
+      updateSelection(editor, two!, 0);
+      await pressKey(editor, "ArrowLeft");
+      expect(selectedMarkerOf(editor)).toBeUndefined();
+
+      updateSelection(editor, one!);
+      await pressKey(editor, "ArrowRight");
+      expect(selectedMarkerOf(editor)).toBeUndefined();
     });
   });
 

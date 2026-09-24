@@ -1,6 +1,7 @@
 import { getEditorTextDirection, isMovingForward } from "./ArrowNavigationPlugin";
 import { isEditingKey } from "./OpaqueBlockGuardPlugin";
 import { $advancePastParaPrefixes } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { registerParaMarkerSelectionOwner } from "./paraMarkerSelectionOwner";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -32,7 +33,10 @@ import {
   SomeParaNode,
 } from "shared";
 
-/** The class the paragraph whose marker is selected carries (with `aria-selected="true"`). */
+/**
+ * The class the paragraph whose marker is selected carries. The selection is exposed to assistive
+ * technology through `aria-activedescendant` on the editor root, naming the selected glyph.
+ */
 export const PARA_MARKER_SELECTED_CLASS_NAME = "psc-para-marker-selected";
 
 /** The class the editor root carries while a refused keystroke's hint should show. */
@@ -58,18 +62,30 @@ const COMPOSITION_KEYS = new Set(["Process", "Dead", "Unidentified"]);
  * everything here is inert unless one exists, so the plugin is mounted unconditionally: selection
  * targets only exist where gutter glyphs do.
  *
- * On every update it recomputes the owning paragraph — a retag replaces the paragraph node, so its
- * key and element change while the glyph keeps its key — and toggles
- * {@link PARA_MARKER_SELECTED_CLASS_NAME} and `aria-selected` on that element with plain DOM
- * calls (no nested `editor.update`). While a marker is selected it also removes any DOM range left
- * inside the editor, so no browser caret stays drawn in the glyph.
+ * On every update it recomputes the owning paragraph — an undo, or a structural edit elsewhere, can
+ * re-create the paragraph's node and element while the glyph keeps its key — and toggles
+ * {@link PARA_MARKER_SELECTED_CLASS_NAME} on that element with plain DOM calls (no nested
+ * `editor.update`). The root's `aria-activedescendant` points at the selected glyph, so a screen
+ * reader announces the marker the way it would an option in a list: the editor root is a
+ * `textbox`, which supports that attribute, while a paragraph's `<p>` supports no selection
+ * state at all. While a marker is selected it also removes any DOM range left inside the editor,
+ * so no browser caret stays drawn in the glyph.
+ *
+ * It also registers the editor as able to hold a marker selection
+ * (`registerParaMarkerSelectionOwner`). The click guard and arrow navigation create one only in an
+ * editor that has it, so a marker is never selected where nothing refuses its deletion. Nor in a
+ * read-only editor, where Lexical drops keydown and a selected marker could not be left by keyboard;
+ * if the editor turns read-only while one is selected, its highlight is hidden until it is editable
+ * again.
  *
  * Registers its key handling at `COMMAND_PRIORITY_CRITICAL`, ahead of `ArrowNavigationPlugin`,
  * `StructureKeyboardPlugin` and `MarkerEditPlugin` (all HIGH), so a selected marker owns the key
  * before those plugins see it: arrows leave or walk the marker column (mirrored for RTL via
  * {@link getEditorTextDirection}/{@link isMovingForward}), Enter and Alt+ArrowDown ask the host for
  * the marker menu, Escape returns the caret to the paragraph's content, and typing collapses to the
- * content and lets the keystroke proceed there.
+ * content and lets the keystroke proceed there. A Ctrl/Cmd/Alt arrow (other than Alt+ArrowDown) is a
+ * word, line or document move with no meaning in the marker column, so it too collapses to the
+ * content and proceeds from there; Shift is ignored, as a marker selection cannot be extended.
  *
  * Deleting the marker is refused, visibly: the editor ships no user-facing strings, so a refused
  * Backspace/Delete publishes a transient signal on the editor root —
@@ -101,8 +117,6 @@ export function ParaMarkerSelectionPlugin({
 
     /** Hands the request to the host outside this update, so its work never runs mid-commit. */
     const requestMenu = () => {
-      // A read-only editor offers nothing to change the marker to.
-      if (!editor.isEditable()) return;
       queueMicrotask(() => onMenuRequestRef.current?.());
     };
 
@@ -150,6 +164,14 @@ export function ParaMarkerSelectionPlugin({
       const para = glyph?.getParent();
       if (!glyph || !$isSomeParaNode(para)) return false;
 
+      if (
+        event.key.startsWith("Arrow") &&
+        (event.ctrlKey || event.metaKey || (event.altKey && event.key !== "ArrowDown"))
+      ) {
+        $selectParaContentStart(para, glyph);
+        return false;
+      }
+
       switch (event.key) {
         case "Enter":
           event.preventDefault();
@@ -176,13 +198,11 @@ export function ParaMarkerSelectionPlugin({
         case "Backspace":
         case "Delete":
           event.preventDefault();
-          // Invariant I forbids a silent no-op, so the refusal is published for the host to show —
-          // except in a read-only editor, where the hint ("change it with Enter") would mislead.
-          if (editor.isEditable())
-            publishRefusal(
-              glyph.getKey(),
-              event.key === "Backspace" ? "deleteBackward" : "deleteForward",
-            );
+          // Invariant I forbids a silent no-op, so the refusal is published for the host to show.
+          publishRefusal(
+            glyph.getKey(),
+            event.key === "Backspace" ? "deleteBackward" : "deleteForward",
+          );
           return true;
         default:
           // Typing lands in the paragraph's text: collapse to its first content position and let
@@ -204,7 +224,30 @@ export function ParaMarkerSelectionPlugin({
       return true;
     };
 
+    /** Brings the highlight and the root's active descendant in line with `glyphKey`/`ownerKey`. */
+    const syncHighlight = (glyphKey: NodeKey | undefined, ownerKey: NodeKey | undefined) => {
+      // Hidden while read-only: nothing can be done with the marker there.
+      if (!editor.isEditable()) glyphKey = ownerKey = undefined;
+      if (highlightedOwnerKey !== ownerKey) setOwnerHighlight(editor, highlightedOwnerKey, false);
+      highlightedOwnerKey = ownerKey;
+      // Re-applied on every update, not only on change: an idempotent add keeps a re-created
+      // element highlighted too.
+      setOwnerHighlight(editor, ownerKey, true);
+      setActiveDescendant(editor, glyphKey);
+    };
+
+    const readSelectedKeys = (editorState = editor.getEditorState()) =>
+      editorState.read(() => {
+        const glyph = $getSelectedParaMarker($getSelection());
+        return { glyphKey: glyph?.getKey(), ownerKey: glyph?.getParent()?.getKey() };
+      });
+
     const unregister = mergeRegister(
+      registerParaMarkerSelectionOwner(editor),
+      editor.registerEditableListener(() => {
+        const { glyphKey, ownerKey } = readSelectedKeys();
+        syncHighlight(glyphKey, ownerKey);
+      }),
       editor.registerCommand(KEY_DOWN_COMMAND, $handleKeyDown, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(KEY_ESCAPE_COMMAND, $handleEscape, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(CUT_COMMAND, $refuseWhileSelected, COMMAND_PRIORITY_CRITICAL),
@@ -218,16 +261,9 @@ export function ParaMarkerSelectionPlugin({
         COMMAND_PRIORITY_CRITICAL,
       ),
       editor.registerUpdateListener(({ editorState }) => {
-        const { glyphKey, ownerKey } = editorState.read(() => {
-          const glyph = $getSelectedParaMarker($getSelection());
-          return { glyphKey: glyph?.getKey(), ownerKey: glyph?.getParent()?.getKey() };
-        });
-        const ownerChanged = highlightedOwnerKey !== ownerKey;
-        if (ownerChanged) setOwnerHighlight(editor, highlightedOwnerKey, false);
-        highlightedOwnerKey = ownerKey;
-        // Re-applied on every update, not only on change: an idempotent add keeps a re-created
-        // element highlighted too.
-        setOwnerHighlight(editor, ownerKey, true);
+        const { glyphKey, ownerKey } = readSelectedKeys(editorState);
+        const previousOwnerKey = highlightedOwnerKey;
+        syncHighlight(glyphKey, ownerKey);
         if (refusedGlyphKey !== undefined && refusedGlyphKey !== glyphKey) clearRefusal();
         if (ownerKey !== undefined) removeDomRangesInside(editor.getRootElement());
         // A selected marker walked off-screen gets no help from Lexical or the browser: Lexical's
@@ -235,13 +271,15 @@ export function ParaMarkerSelectionPlugin({
         // `preventDefault` the arrow before it reaches the browser's own scroll. Scrolled only when
         // the owner actually changes — a marker newly selected, or selection moving to another
         // paragraph's marker — never on an unrelated update while the same marker stays selected.
-        if (ownerChanged && ownerKey !== undefined) scrollOwnerIntoView(editor, ownerKey);
+        if (highlightedOwnerKey !== undefined && highlightedOwnerKey !== previousOwnerKey)
+          scrollOwnerIntoView(editor, highlightedOwnerKey);
       }),
     );
 
     return () => {
       unregister();
       setOwnerHighlight(editor, highlightedOwnerKey, false);
+      setActiveDescendant(editor, undefined);
       clearRefusal();
     };
   }, [editor]);
@@ -259,8 +297,26 @@ function setOwnerHighlight(
   const element = editor.getElementByKey(key);
   if (!element) return;
   element.classList.toggle(PARA_MARKER_SELECTED_CLASS_NAME, isSelected);
-  if (isSelected) element.setAttribute("aria-selected", "true");
-  else element.removeAttribute("aria-selected");
+}
+
+/** Prefix of the ids given to glyph elements so the root's `aria-activedescendant` can name them. */
+const GLYPH_ID_PREFIX = "psc-para-marker-";
+let nextGlyphId = 0;
+
+/**
+ * Points the editor root's `aria-activedescendant` at the element of glyph `key`, giving the element
+ * an id if it has none, or removes the attribute when `key` is `undefined` or not rendered.
+ */
+function setActiveDescendant(editor: LexicalEditor, key: NodeKey | undefined): void {
+  const root = editor.getRootElement();
+  if (!root) return;
+  const element = key === undefined ? null : editor.getElementByKey(key);
+  if (!element) {
+    root.removeAttribute("aria-activedescendant");
+    return;
+  }
+  if (!element.id) element.id = `${GLYPH_ID_PREFIX}${nextGlyphId++}`;
+  root.setAttribute("aria-activedescendant", element.id);
 }
 
 /**

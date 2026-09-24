@@ -652,9 +652,9 @@ export function $isSynthesizedMarkerNode(node: LexicalNode | null | undefined): 
  * offsets and no glyph byte becomes a document position. This is the single definition every
  * consumer uses to recognize it.
  *
- * Decided per node, never per view: only a gutter glyph whose parent is a paragraph qualifies. A
- * book's `\id` glyph and a table's row and cell glyphs are gutter glyphs too, but they have no
- * paragraph marker to retag.
+ * Decided per node, never per view, and by the same rule as {@link $getSelectableParaMarker}: only
+ * the gutter glyph that is a `ParaNode`'s first child qualifies. A book's `\id` glyph and a table's
+ * row and cell glyphs are gutter glyphs too, but they have no paragraph marker to retag.
  *
  * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
  * command handler.
@@ -670,12 +670,13 @@ export function $getSelectedParaMarker(
   const nodes = selection.getNodes();
   if (nodes.length !== 1) return undefined;
   const [node] = nodes;
-  return $isGutterMarkerNode(node) && $isSomeParaNode(node.getParent()) ? node : undefined;
+  const glyph = $getSelectableParaMarker(node.getParent());
+  return glyph?.is(node) ? glyph : undefined;
 }
 
 /**
  * The marker glyph `node` would offer as a selection target: its leading gutter marker, when
- * `node` is a paragraph that renders one. Used to find the next stop when the keyboard walks
+ * `node` is a `ParaNode` that renders one. An implied paragraph has no marker to retag. Used to find the next stop when the keyboard walks
  * between paragraph markers.
  *
  * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
@@ -687,7 +688,7 @@ export function $getSelectedParaMarker(
 export function $getSelectableParaMarker(
   node: LexicalNode | null | undefined,
 ): ImmutableTypedTextNode | undefined {
-  if (!$isSomeParaNode(node)) return undefined;
+  if (!$isParaNode(node)) return undefined;
   const glyph = node.getFirstChild();
   return $isGutterMarkerNode(glyph) ? glyph : undefined;
 }

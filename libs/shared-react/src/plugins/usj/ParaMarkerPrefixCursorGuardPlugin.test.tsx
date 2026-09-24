@@ -52,6 +52,8 @@ import {
   ParaMarkerPrefixCursorGuardPlugin,
   registerParaMarkerPrefixCursorGuard,
 } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { ParaMarkerSelectionPlugin } from "./ParaMarkerSelectionPlugin";
+import { registerParaMarkerSelectionOwner } from "./paraMarkerSelectionOwner";
 import { baseTestEnvironment } from "./react-test.utils";
 
 const nodes = [
@@ -176,6 +178,7 @@ describe("which markers are caret territory is a per-node question", () => {
           $createParaNode("q1").append(gutterMarker, $createTextNode("Blessed is the man")),
         );
       });
+      registerParaMarkerSelectionOwner(editor);
 
       expect(runGutterGuard(editor, glyphKey)).toBe(true);
 
@@ -195,10 +198,34 @@ describe("which markers are caret territory is a per-node question", () => {
           ),
         );
       });
+      registerParaMarkerSelectionOwner(editor);
 
       expect(runGutterGuard(editor, glyphKey)).toBe(true);
 
       expect(selectedParaMarkerKey(editor)).toBe(glyphKey);
+    });
+
+    it.each([
+      ["the editor is read-only", true, false],
+      ["nothing protects a marker selection", false, true],
+    ])("moves a click on a paragraph's glyph to its text when %s", (_, isOwned, isEditable) => {
+      let glyphKey = "";
+      let content!: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        const gutterMarker = $createGutterMarkerNode(`\\q1${NBSP}`);
+        glyphKey = gutterMarker.getKey();
+        content = $createTextNode("Blessed is the man");
+        $getRoot().append($createParaNode("q1").append(gutterMarker, content));
+      });
+      if (isOwned) registerParaMarkerSelectionOwner(editor);
+      editor.setEditable(isEditable);
+
+      expect(runGutterGuard(editor, glyphKey)).toBe(true);
+
+      expect(selectedParaMarkerKey(editor)).toBeUndefined();
+      editor.getEditorState().read(() => {
+        $expectSelectionToBe(content, 0);
+      });
     });
 
     it("moves a click on a book's gutter marker to the book's text", () => {
@@ -299,6 +326,7 @@ describe("ParaMarkerPrefixCursorGuardPlugin click handling (real DOM click)", ()
       );
     });
     registerParaMarkerPrefixCursorGuard(editor);
+    registerParaMarkerSelectionOwner(editor);
 
     const glyphElement = editor.getElementByKey(glyphKey);
     if (!glyphElement) throw new Error("gutter marker element not rendered");
@@ -672,7 +700,10 @@ describe("a gutter-marker click inside a rich-text editor", () => {
           $createParaNode("li2").append(second, $createTextNode("two")),
         );
       },
-      <ParaMarkerPrefixCursorGuardPlugin />,
+      <>
+        <ParaMarkerPrefixCursorGuardPlugin />
+        <ParaMarkerSelectionPlugin />
+      </>,
     );
 
     await clickGlyph(editor, firstKey);
@@ -698,6 +729,7 @@ describe("a gutter-marker click inside a rich-text editor", () => {
       <>
         <ClickSpyPlugin onClick={lowSpy} priority={COMMAND_PRIORITY_LOW} />
         <ParaMarkerPrefixCursorGuardPlugin />
+        <ParaMarkerSelectionPlugin />
         <ClickSpyPlugin onClick={editorSpy} priority={COMMAND_PRIORITY_EDITOR} />
       </>,
     );
@@ -722,6 +754,7 @@ describe("a gutter-marker click inside a rich-text editor", () => {
       },
       <>
         <ParaMarkerPrefixCursorGuardPlugin />
+        <ParaMarkerSelectionPlugin />
         <ClickSpyPlugin onClick={editorSpy} priority={COMMAND_PRIORITY_EDITOR} />
       </>,
     );

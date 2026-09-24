@@ -31,8 +31,9 @@ refused. The public surface grew substantially; nothing was removed.
   on/off toggles; the handler declines while a composition is active.
 - **A paragraph's marker can be selected** in the paragraph-structure view (`hasGutterParaMarkers`):
   click it in the gutter, or reach it with ←/→ at a paragraph boundary and walk the marker column
-  with ↑/↓. The row is highlighted (`psc-para-marker-selected`, with `aria-selected` on the
-  paragraph), typing returns to the paragraph's text, and Backspace/Delete are refused with a
+  with ↑/↓. The row is highlighted (`psc-para-marker-selected`, with the editor root's
+  `aria-activedescendant` naming the marker), typing returns to the paragraph's text, and
+  Backspace/Delete are refused with a
   `psc-para-marker-refused` / `data-para-marker-refused-intent` root signal for the host to render a
   hint from.
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
@@ -52,9 +53,16 @@ refused. The public surface grew substantially; nothing was removed.
   transient input is declared it short-circuits to the previous behavior, so the other view modes are
   unaffected.
 - A click on a paragraph's gutter marker selects the marker instead of moving the caret to the
-  paragraph's text. Book (`\id`) and table markers still move the caret.
-- `EditorRef.formatPara` accepts a selected paragraph marker: it retags that paragraph and keeps
-  the marker selected.
+  paragraph's text. Book (`\id`) and table markers still move the caret, and so does any click in a
+  read-only editor.
+- **While a paragraph marker is selected there is no text range.** `EditorRef.getSelection()`
+  returns `undefined` after a gutter click where it used to return a caret, and selecting a marker
+  by keyboard fires no `onSelectionChange` — the marker selection clears the browser's selection,
+  which is what Lexical reports selection changes from. A host that derives the current paragraph
+  from either must also read `EditorRef.getSelectedParaMarker()` (or `onStateChange`'s
+  `blockMarker`), or its paragraph controls will act on a stale caret.
+- `EditorRef.formatPara` accepts a selected paragraph marker: it retags that paragraph in place —
+  keeping its attributes and identity — and keeps the marker selected.
 
 ### Fixed
 

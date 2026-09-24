@@ -690,15 +690,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       assertEditable("format a paragraph");
       editorRef.current?.update(() => {
         const selection = $getSelection();
-        // A selected paragraph marker names the paragraph outright. `$setBlocksType` takes its
-        // ancestor-block path for a node selection and moves the children (the glyph keeps its
-        // key, so the selection stays on it); the range-only post-step below would bail, so the
-        // marker is re-applied here on the glyph's new parent.
-        const selectedMarker = $getSelectedParaMarker(selection);
-        if (selectedMarker) {
-          $setBlocksType(selection, () => $createParaNode(blockMarker));
-          const owner = selectedMarker.getParent();
-          if ($isParaNode(owner)) $applyParaMarker(owner, blockMarker, viewOptions);
+        // A selected paragraph marker names the paragraph outright, so it is retagged in place —
+        // no `$setBlocksType`, which would swap in a fresh ParaNode and drop the paragraph's
+        // attributes and identity. The glyph is rewritten in place too, so the selection stays on
+        // it.
+        const owner = $getSelectedParaMarker(selection)?.getParent();
+        if ($isParaNode(owner)) {
+          $applyParaMarker(owner, blockMarker, viewOptions);
           return;
         }
         // A caller with no live selection has nothing to retag. Say so rather than returning

@@ -15,8 +15,14 @@ import {
   LexicalNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $getSelectedParaMarker, $isImmutableTypedTextNode, $isMarkerNode, ZWSP } from "shared";
-import { $isSomeVerseNode, ViewOptions } from "shared-react";
+import {
+  $getSelectedParaMarker,
+  $isImmutableTypedTextNode,
+  $isMarkerNode,
+  $isParaNode,
+  ZWSP,
+} from "shared";
+import { $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-react";
 
 const ACTIVE_CLASS = "psc-active-text";
 const EMPTY_CLASS = "psc-empty-text";
@@ -144,16 +150,12 @@ export function $getActiveVerseKey(): string | undefined {
   const selection = $getSelection();
   // A selected paragraph marker: the verse its content starts in — the verse a keystroke would
   // type into — is the active one, so its ellipsis stays hidden like a caret's would.
-  const selectedMarker = $getSelectedParaMarker(selection);
-  if (selectedMarker) {
-    const para = selectedMarker.getParent();
-    if (!$isElementNode(para)) return undefined;
-    let leadingVerseKey: string | undefined;
-    for (const child of para.getChildren()) {
-      if ($isSomeVerseNode(child)) leadingVerseKey = child.getKey();
-      else if (!$isImmutableTypedTextNode(child) && !$isMarkerNode(child)) break;
-    }
-    return leadingVerseKey;
+  // `$paraContentStartIndex` is the same measure of that paragraph's prefix the caret uses on the
+  // way out, so the two cannot disagree about which verse the content starts in.
+  const markerPara = $getSelectedParaMarker(selection)?.getParent();
+  if ($isParaNode(markerPara)) {
+    const prefix = markerPara.getChildren().slice(0, $paraContentStartIndex(markerPara));
+    return prefix.findLast($isSomeVerseNode)?.getKey();
   }
   if (!$isRangeSelection(selection)) return undefined;
 
@@ -193,6 +195,9 @@ export function $getActiveVerseKey(): string | undefined {
  * This is any paragraph the cursor lands in — verse-bearing paragraphs, section headings, book
  * code paragraph, empty paragraphs, etc. — or, while a paragraph's marker is selected, that
  * paragraph.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
  */
 export function $getParaFromSelection(
   selection: BaseSelection | undefined,

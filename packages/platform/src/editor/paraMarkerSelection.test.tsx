@@ -163,6 +163,27 @@ describe("formatPara with a selected paragraph marker", () => {
     expect(ref.current?.getUsj()?.content[3]).toMatchObject({ type: "para", marker: "q1" });
   });
 
+  it("retags the paragraph in place, keeping its node and attributes", async () => {
+    const { ref, lexical } = await mountParagraphStructure();
+    await act(async () => {
+      lexical.update(() => $paraOf("li2").setUnknownAttributes({ "x-note": "kept" }));
+    });
+    const keyBefore = lexical.getEditorState().read(() => $paraOf("li2").getKey());
+    await selectMarker(lexical, "li2");
+
+    await act(async () => {
+      ref.current?.formatPara("q1");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    lexical.getEditorState().read(() => {
+      const para = $paraOf("q1");
+      expect(para.getKey()).toBe(keyBefore);
+      expect(para.getUnknownAttributes()).toEqual({ "x-note": "kept" });
+    });
+  });
+
   it("is refused in a read-only editor", async () => {
     const { ref, lexical } = await mountParagraphStructure({ options: { isReadonly: true } });
     await selectMarker(lexical, "li2");
@@ -280,7 +301,22 @@ describe("clicking gutter markers on the real editor", () => {
 
     await clickElement(glyphLi2);
     expect(ref.current?.getSelectedParaMarker()).toBe("li2");
-    expect(paraElementOf(lexical, "li2").getAttribute("aria-selected")).toBe("true");
+    expect(lexical.getRootElement()?.getAttribute("aria-activedescendant")).toBe(glyphLi2.id);
+  });
+});
+
+describe("clicking gutter markers in a read-only editor", () => {
+  // Lexical delivers clicks to a read-only editor but drops keydown, so a marker selected there
+  // could never be left by keyboard. The click places a caret instead, as it did before.
+  it("places the caret in the paragraph's text instead of selecting its marker", async () => {
+    const { ref, lexical } = await mountParagraphStructure({ options: { isReadonly: true } });
+
+    await clickElement(glyphElementOf(lexical, "li2"));
+
+    expect(ref.current?.getSelectedParaMarker()).toBeUndefined();
+    expect(paraElementOf(lexical, "li2").classList.contains("psc-para-marker-selected")).toBe(
+      false,
+    );
   });
 });
 

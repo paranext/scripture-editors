@@ -11,6 +11,7 @@ import {
   $paraContentStartIndex,
 } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { $opaqueBlockAncestor } from "./OpaqueBlockGuardPlugin";
+import { $canSelectParaMarker } from "./paraMarkerSelectionOwner";
 import { ViewOptions } from "../../views/view-options.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $findMatchingParent } from "@lexical/utils";
@@ -771,8 +772,10 @@ function $extendOneVisibleStop(selection: RangeSelection, direction: TraversalDi
 // keys (leave, walk the marker column, open the menu) belong to `ParaMarkerSelectionPlugin`.
 //
 // Both rules run FIRST in their chains, ahead of the collapsed-note hops, so a hop cannot skip the
-// stop. The forward rule claims only when the next paragraph is the immediately following
-// root-level block — a table or chapter in between keeps its existing crossing.
+// stop. The two are mirror images: → at a paragraph's end steps over any chapter numbers or tables
+// that follow and stops on the next paragraph's marker, exactly as ← out of that marker steps back
+// over them to the previous paragraph's end (`ParaMarkerSelectionPlugin`). Neither claims unless
+// the editor can select a marker at all (`$canSelectParaMarker`).
 
 /** The paragraph a caret sits in, unless it sits inside a note (whose content is not a paragraph). */
 function $caretParagraph(node: LexicalNode): SomeParaNode | undefined {
@@ -808,6 +811,7 @@ function $isAtParaContentStart(point: PointType, para: SomeParaNode): boolean {
  * Mutating: call inside `editor.update()`; dispatched from the arrow handling above.
  */
 function $stopAtOwnParaMarker(selection: RangeSelection): boolean {
+  if (!$canSelectParaMarker()) return false;
   const point = selection.focus;
   const para = $caretParagraph(point.getNode());
   const glyph = $getSelectableParaMarker(para);
@@ -817,16 +821,30 @@ function $stopAtOwnParaMarker(selection: RangeSelection): boolean {
 }
 
 /**
- * → (RTL ←) at the end of a paragraph selects the next paragraph's marker, when that paragraph is
- * the immediately following root-level block and its marker can be selected.
+ * The nearest root-level paragraph after `block`, stepping over chapter numbers, tables and any
+ * other non-paragraph block — the forward mirror of `$findPreviousCaretPara`
+ * (`ParaMarkerSelectionPlugin`).
+ *
+ * Read-only: safe in any read.
+ */
+function $findNextCaretPara(block: LexicalNode): SomeParaNode | undefined {
+  for (let sibling = block.getNextSibling(); sibling; sibling = sibling.getNextSibling())
+    if ($isSomeParaNode(sibling)) return sibling;
+  return undefined;
+}
+
+/**
+ * → (RTL ←) at the end of a paragraph selects the next paragraph's marker, when its marker can be
+ * selected — stepping over any chapter numbers or tables in between.
  *
  * Mutating: call inside `editor.update()`; dispatched from the arrow handling above.
  */
 function $stopAtNextParaMarker(selection: RangeSelection): boolean {
+  if (!$canSelectParaMarker()) return false;
   const point = selection.focus;
   const para = $caretParagraph(point.getNode());
   if (!para || !$isAtEdgeOf(point, "next", para)) return false;
-  const glyph = $getSelectableParaMarker(para.getNextSibling());
+  const glyph = $getSelectableParaMarker($findNextCaretPara(para));
   if (!glyph) return false;
   $selectParaMarker(glyph);
   return true;
@@ -999,8 +1017,12 @@ function $handleForwardNavigation(
     } else if (nextNode.is(nextNode.getParent()?.getLastChild())) {
       // caret at end of node before collapsed note at end of para → move past note. When the next
       // paragraph's marker is a stop, land on it: hopping straight to its content skips the stop.
-      const nextPara = nextNode.getParent()?.getNextSibling();
-      const nextMarker = canStopAtParaMarker ? $getSelectableParaMarker(nextPara) : undefined;
+      const noteParent = nextNode.getParent();
+      const nextPara = noteParent?.getNextSibling();
+      const nextMarker =
+        canStopAtParaMarker && noteParent && $canSelectParaMarker()
+          ? $getSelectableParaMarker($findNextCaretPara(noteParent))
+          : undefined;
       if (nextMarker) $selectParaMarker(nextMarker);
       else if (nextPara && !($isSomeParaNode(nextPara) && $advancePastParaPrefixes(nextPara)))
         nextPara.selectStart();

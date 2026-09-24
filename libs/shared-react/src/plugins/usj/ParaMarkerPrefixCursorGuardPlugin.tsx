@@ -16,6 +16,7 @@ import {
 } from "lexical";
 import { useEffect } from "react";
 import {
+  $getSelectableParaMarker,
   $getSelectedParaMarker,
   $isGutterMarkerNode,
   $isSomeParaNode,
@@ -27,6 +28,7 @@ import {
   SomeParaNode,
 } from "shared";
 import { $isImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
+import { $canSelectParaMarker } from "./paraMarkerSelectionOwner";
 
 /**
  * Keeps the cursor out of the places a paragraph's structural prefix occupies but no caret may
@@ -181,7 +183,9 @@ export function $advancePastParaPrefixes(para: SomeParaNode): boolean {
 /**
  * Answers a click that landed ON a gutter marker glyph. A paragraph's glyph is SELECTED (see
  * `$getSelectedParaMarker`, shared) — re-clicking the selected glyph keeps it selected. Any other
- * owner (a book's `\id` line, a table cell) moves the cursor to the boundary just past the glyph.
+ * owner (a book's `\id` line, a table cell) moves the cursor to the boundary just past the glyph,
+ * and so does a paragraph's glyph when the editor cannot select it (`$canSelectParaMarker`: it is
+ * read-only, or no `ParaMarkerSelectionPlugin` protects the selection).
  *
  * Takes the click's DOM TARGET rather than the selection because a click on a gutter marker leaves
  * no selection to inspect: the glyph is a decorator, which Lexical renders `contenteditable="false"`,
@@ -207,7 +211,7 @@ export function $guardCursorAtGutterMarker(target: EventTarget | null): boolean 
 
   const owner = glyph.getParent();
   if (!owner) return false;
-  if ($isSomeParaNode(owner)) {
+  if ($getSelectableParaMarker(owner)?.is(glyph) && $canSelectParaMarker()) {
     $selectParaMarker(glyph);
     return true;
   }

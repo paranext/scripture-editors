@@ -55,6 +55,12 @@ function selectedMarkerOf(editor: LexicalEditor): string | undefined {
   });
 }
 
+/** The element the editor root's `aria-activedescendant` names, if any. */
+function activeDescendant(editor: LexicalEditor): HTMLElement | null {
+  const id = editor.getRootElement()?.getAttribute("aria-activedescendant");
+  return id ? document.getElementById(id) : null;
+}
+
 /** Elements under the editor root carrying the selected-marker highlight. */
 function highlightedElements(editor: LexicalEditor): Element[] {
   return Array.from(
@@ -105,15 +111,18 @@ async function selectMarkerOf(editor: LexicalEditor, para: ParaNode): Promise<vo
 }
 
 describe("ParaMarkerSelectionPlugin — highlight", () => {
-  it("marks the owning paragraph with the selected class and aria-selected", async () => {
+  it("marks the owning paragraph with the selected class and names the glyph as active descendant", async () => {
     const { editor, li2 } = await environment();
 
     await selectMarkerOf(editor, li2);
 
     const element = editor.getElementByKey(li2.getKey());
     expect(element?.classList.contains(PARA_MARKER_SELECTED_CLASS_NAME)).toBe(true);
-    expect(element?.getAttribute("aria-selected")).toBe("true");
+    // A `<p>` supports no selection state, so none is set on it.
+    expect(element?.hasAttribute("aria-selected")).toBe(false);
     expect(highlightedElements(editor)).toHaveLength(1);
+    const glyphKey = editor.getEditorState().read(() => li2.getFirstChildOrThrow().getKey());
+    expect(activeDescendant(editor)).toBe(editor.getElementByKey(glyphKey));
   });
 
   it("removes both when the selection leaves the marker", async () => {
@@ -124,7 +133,7 @@ describe("ParaMarkerSelectionPlugin — highlight", () => {
 
     const element = editor.getElementByKey(li2.getKey());
     expect(element?.classList.contains(PARA_MARKER_SELECTED_CLASS_NAME)).toBe(false);
-    expect(element?.hasAttribute("aria-selected")).toBe(false);
+    expect(editor.getRootElement()?.hasAttribute("aria-activedescendant")).toBe(false);
     expect(highlightedElements(editor)).toHaveLength(0);
   });
 
@@ -135,12 +144,14 @@ describe("ParaMarkerSelectionPlugin — highlight", () => {
     await selectMarkerOf(editor, p);
 
     expect(highlightedElements(editor)).toEqual([editor.getElementByKey(p.getKey())]);
-    expect(editor.getElementByKey(li2.getKey())?.hasAttribute("aria-selected")).toBe(false);
+    const glyphKey = editor.getEditorState().read(() => p.getFirstChildOrThrow().getKey());
+    expect(activeDescendant(editor)).toBe(editor.getElementByKey(glyphKey));
   });
 
-  // A retag replaces the paragraph node (new key, new element) and moves the glyph over with its
-  // key intact, so the selection survives but the element it must be drawn on changes.
-  it("recomputes the owner after a retag replaces the paragraph", async () => {
+  // Replacing the paragraph node (new key, new element) while moving the glyph over with its key
+  // intact — as an undo or a structural edit can — keeps the selection, but the element it must be
+  // drawn on changes.
+  it("recomputes the owner after the paragraph node is replaced", async () => {
     const { editor, li2 } = await environment();
     await selectMarkerOf(editor, li2);
 
@@ -157,7 +168,6 @@ describe("ParaMarkerSelectionPlugin — highlight", () => {
     const highlighted = highlightedElements(editor);
     expect(highlighted).toHaveLength(1);
     expect(highlighted[0]).toBe(editor.getElementByKey(retagged!.getKey()));
-    expect(highlighted[0].getAttribute("aria-selected")).toBe("true");
   });
 
   it("leaves nothing behind when the selected paragraph is replaced by a reload", async () => {
@@ -172,7 +182,7 @@ describe("ParaMarkerSelectionPlugin — highlight", () => {
 
     expect(selectedMarkerOf(editor)).toBeUndefined();
     expect(highlightedElements(editor)).toHaveLength(0);
-    expect(editor.getRootElement()?.querySelectorAll("[aria-selected]")).toHaveLength(0);
+    expect(editor.getRootElement()?.hasAttribute("aria-activedescendant")).toBe(false);
   });
 });
 
@@ -347,6 +357,40 @@ describe("ParaMarkerSelectionPlugin — vertical keys walk the marker column", (
   });
 });
 
+describe("ParaMarkerSelectionPlugin — modified arrows proceed from the paragraph's content", () => {
+  it.each([
+    [{ key: "ArrowUp", metaKey: true }],
+    [{ key: "ArrowDown", ctrlKey: true }],
+    [{ key: "ArrowUp", altKey: true }],
+    [{ key: "ArrowRight", ctrlKey: true }],
+    [{ key: "ArrowLeft", altKey: true }],
+  ])("%o collapses to content start without claiming the key", async (init) => {
+    const { editor, li2, secondText } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    const event = await pressKeyWith(editor, init);
+
+    expect(event.defaultPrevented).toBe(false);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(secondText, 0);
+    });
+  });
+});
+
+describe("ParaMarkerSelectionPlugin — read-only", () => {
+  it("hides the highlight while the editor is read-only, and restores it when editable", async () => {
+    const { editor, li2 } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    act(() => editor.setEditable(false));
+    expect(highlightedElements(editor)).toHaveLength(0);
+    expect(editor.getRootElement()?.hasAttribute("aria-activedescendant")).toBe(false);
+
+    act(() => editor.setEditable(true));
+    expect(highlightedElements(editor)).toEqual([editor.getElementByKey(li2.getKey())]);
+  });
+});
+
 describe("ParaMarkerSelectionPlugin — asking to change the marker", () => {
   it.each([[{ key: "Enter" }], [{ key: "ArrowDown", altKey: true }]])(
     "%o requests the marker menu and keeps the selection",
@@ -362,19 +406,6 @@ describe("ParaMarkerSelectionPlugin — asking to change the marker", () => {
       expect(selectedMarkerOf(editor)).toBe("li2");
     },
   );
-
-  it("does not request the menu in a read-only editor, where nothing can be changed", async () => {
-    const onMenuRequest = vi.fn();
-    const { editor, li2 } = await environment("ltr", onMenuRequest);
-    await selectMarkerOf(editor, li2);
-    act(() => editor.setEditable(false));
-
-    const event = await pressKey(editor, "Enter");
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(onMenuRequest).not.toHaveBeenCalled();
-    expect(selectedMarkerOf(editor)).toBe("li2");
-  });
 });
 
 describe("ParaMarkerSelectionPlugin — Escape", () => {
@@ -474,19 +505,6 @@ describe("ParaMarkerSelectionPlugin — deletion is refused visibly", () => {
     const root = editor.getRootElement();
     expect(root?.classList.contains(PARA_MARKER_REFUSED_CLASS_NAME)).toBe(false);
     expect(root?.hasAttribute(PARA_MARKER_REFUSED_INTENT_ATTRIBUTE)).toBe(false);
-  });
-
-  it("publishes no hint in a read-only editor, though the key is still refused", async () => {
-    const { editor, li2 } = await environment();
-    await selectMarkerOf(editor, li2);
-    act(() => editor.setEditable(false));
-    const before = documentJson(editor);
-
-    const event = await pressKey(editor, "Backspace");
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(documentJson(editor)).toBe(before);
-    expect(editor.getRootElement()?.classList.contains(PARA_MARKER_REFUSED_CLASS_NAME)).toBe(false);
   });
 });
 
