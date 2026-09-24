@@ -1333,9 +1333,35 @@ function $scratchLocationFromLivePoint(
       return $getLocationFromNode(afterPreviousNode, afterPrevious.offset, viewOptions);
     const anchor = $withWsRunIn(scratchFragment, crossed, addressDisplayBytes);
     const point = $resolveFragmentByteAnchor(scratchFragment, anchor, { addressDisplayBytes });
-    const settledNode = point && $getNodeByKey(point.key);
-    return settledNode ? $getLocationFromNode(settledNode, point.offset, viewOptions) : undefined;
+    return point && $scratchPointLocation(point, viewOptions);
   });
+}
+
+/**
+ * A resolved scratch point's location. The scratch holds one scope's settled root children and
+ * nothing after them, so the boundary past its last child — where a position past a root-level
+ * preserved run such as a sidebar lands — is the scratch's document end, which
+ * `$getLocationFromNode` spells one past the final newline. In the settled document the scope need
+ * not be last, so that boundary is spelled where the scope's last byte ends instead: at the end of
+ * its last leaf.
+ *
+ * Read-only: call inside a read of the scratch tree.
+ */
+function $scratchPointLocation(
+  point: FragmentPoint,
+  viewOptions: ViewOptions,
+): UsjDocumentLocation | undefined {
+  const node = $getNodeByKey(point.key);
+  if (!node) return undefined;
+  const last =
+    $isRootNode(node) && point.offset >= node.getChildrenSize() && node.getLastDescendant();
+  if (last)
+    return $getLocationFromNode(
+      last,
+      $isElementNode(last) ? last.getChildrenSize() : last.getTextContentSize(),
+      viewOptions,
+    );
+  return $getLocationFromNode(node, point.offset, viewOptions);
 }
 
 /** The settled location for a live point inside a rebuilt scope, through the scope's byte

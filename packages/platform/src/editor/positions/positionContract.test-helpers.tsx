@@ -61,8 +61,13 @@ export interface PositionScenario {
   pend(lexical: LexicalEditor): Promise<void>;
   /** Text that identifies the live paragraph under test (a substring of its text content). */
   liveNeedle: string;
-  /** Text that identifies the same paragraph in the reference editor. */
+  /** Text that identifies the same paragraph in the reference editor — for a paragraph that
+   * settles into several top-level items, the first of them. */
   settledNeedle: string;
+  /** How many consecutive top-level items of the reference editor, starting at the one
+   * `settledNeedle` identifies, the live paragraph settles into; their texts concatenated are the
+   * settled side. Default 1. */
+  settledItems?: number;
   alignment: AlignmentSpec;
 }
 
@@ -118,7 +123,7 @@ interface ParagraphText {
   leaves: { node: LexicalNode; size: number }[];
 }
 
-function $paragraphText(paragraph: LexicalNode): ParagraphText {
+function $paragraphText(paragraphs: readonly LexicalNode[]): ParagraphText {
   let text = "";
   const starts = new Map<NodeKey, number>();
   const ends = new Map<NodeKey, number>();
@@ -141,7 +146,7 @@ function $paragraphText(paragraph: LexicalNode): ParagraphText {
     }
     ends.set(node.getKey(), text.length);
   };
-  visit(paragraph);
+  paragraphs.forEach(visit);
   return { text, starts, ends, textNodes, leaves };
 }
 
@@ -159,12 +164,15 @@ function $offsetInParagraph(
   return child ? paragraph.starts.get(child.getKey()) : paragraph.ends.get(node.getKey());
 }
 
-function $paragraphContaining(needle: string): LexicalNode {
-  const paragraph = $getRoot()
-    .getChildren()
-    .find((child) => child.getTextContent().includes(needle));
-  if (!paragraph) throw new Error(`no top-level element containing ${JSON.stringify(needle)}`);
-  return paragraph;
+/** The top-level element containing `needle` and the `count - 1` top-level elements after it. */
+function $paragraphsFrom(needle: string, count = 1): LexicalNode[] {
+  const children = $getRoot().getChildren();
+  const index = children.findIndex((child) => child.getTextContent().includes(needle));
+  if (index < 0) throw new Error(`no top-level element containing ${JSON.stringify(needle)}`);
+  const paragraphs = children.slice(index, index + count);
+  if (paragraphs.length < count)
+    throw new Error(`fewer than ${count} top-level elements from ${JSON.stringify(needle)}`);
+  return paragraphs;
 }
 
 function viewOptionsFor(mount: PositionScenario["mount"]): ViewOptions {
@@ -194,10 +202,10 @@ export async function checkContract(scenario: PositionScenario): Promise<Contrac
 
   const live = pending.lexical
     .getEditorState()
-    .read(() => $paragraphText($paragraphContaining(scenario.liveNeedle)));
+    .read(() => $paragraphText($paragraphsFrom(scenario.liveNeedle)));
   const ref = reference.lexical
     .getEditorState()
-    .read(() => $paragraphText($paragraphContaining(scenario.settledNeedle)));
+    .read(() => $paragraphText($paragraphsFrom(scenario.settledNeedle, scenario.settledItems)));
 
   expect(
     stripWs(scenario.alignment.segments.map(([l]) => l).join("")),

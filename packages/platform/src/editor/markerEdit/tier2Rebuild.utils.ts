@@ -1167,6 +1167,45 @@ export function $buildParaScopeFragment(
   return combined;
 }
 
+/**
+ * One fragment over a mixed run of root children — paragraphs, the root's implied paragraph, a
+ * chapter, a table, a sidebar, a stray char span — for the SETTLED side of a paragraph scope whose
+ * typed block marker settled into a top-level item that is not a paragraph. `undefined` when a
+ * paragraph's own guard rails ({@link $buildParaFragment}) refuse it.
+ *
+ * A chapter contributes only its OWN children: its adjacent `\ca`/`\cp` nodes are root children
+ * of the same run, so {@link $buildChapterFragment} (which appends them too) would spell them
+ * twice. Everything else is walked as {@link $appendNodesFragment} walks any sibling, so a sidebar
+ * or other opaque block is one preserved-node sentinel.
+ *
+ * No separator bytes between the children: a separator names no node, and the live side of the
+ * same scope is one paragraph whose text already spells every byte these children do.
+ *
+ * Only pairs bytes for the settled-position basis; never tokenized.
+ */
+export function $buildSettledRootFragment(
+  nodes: readonly LexicalNode[],
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): FragmentAccumulator | undefined {
+  const combined: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  for (const node of nodes) {
+    if ($isParaNode(node)) {
+      const fragment = $buildParaFragment(node, getMarkerFn, viewOptions);
+      if (!fragment) return undefined;
+      const base = combined.text.length;
+      fragment.spans.forEach((span) =>
+        combined.spans.push({ ...span, start: span.start + base, end: span.end + base }),
+      );
+      combined.sentinels.push(...fragment.sentinels);
+      combined.text += fragment.text;
+    } else if ($isChapterNode(node))
+      $appendNodesFragment(node.getChildren(), combined, getMarkerFn, viewOptions);
+    else $appendNodesFragment([node], combined, getMarkerFn, viewOptions);
+  }
+  return combined;
+}
+
 /** Replace each U+FFFC in the rebuilt tree with the next preserved node run. */
 function $replaceSentinels(roots: LexicalNode[], originals: LexicalNode[][]): void {
   let queueIndex = 0;

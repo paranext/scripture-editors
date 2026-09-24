@@ -15,6 +15,7 @@ import {
   $buildImpliedParaFragment,
   $buildNoteFragment,
   $buildParaScopeFragment,
+  $buildSettledRootFragment,
   $chapterAdjacentAttributeNodes,
   $exportSubtree,
   cutFragment,
@@ -101,7 +102,8 @@ interface SettledTopIndex {
 
 /** The fragment over one scope's nodes, whichever kind of scope it is. The same builder runs over
  * the live nodes and over the scratch editor's root children, so the two sides' bytes are
- * comparable by construction. */
+ * comparable by construction — except where a paragraph's typed block marker settled into a
+ * chapter, table, sidebar or other non-paragraph root child, which only the settled side has. */
 function $buildScopeFragment(
   kind: SettleScopePlan["kind"],
   nodes: readonly LexicalNode[],
@@ -109,9 +111,11 @@ function $buildScopeFragment(
 ): FragmentAccumulator | undefined {
   if (kind === "para") {
     const [first] = nodes;
-    return nodes.length === 1 && $isImpliedParaNode(first)
-      ? $buildImpliedParaFragment(first, tier2.getMarker, tier2.viewOptions)
-      : $buildParaScopeFragment(nodes, tier2.getMarker, tier2.viewOptions);
+    if (nodes.length === 1 && $isImpliedParaNode(first))
+      return $buildImpliedParaFragment(first, tier2.getMarker, tier2.viewOptions);
+    return nodes.every($isParaNode)
+      ? $buildParaScopeFragment(nodes, tier2.getMarker, tier2.viewOptions)
+      : $buildSettledRootFragment(nodes, tier2.getMarker, tier2.viewOptions);
   }
   if (kind === "chapter") {
     const chapter = nodes.find($isChapterNode);

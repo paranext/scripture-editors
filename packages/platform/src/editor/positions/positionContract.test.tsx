@@ -398,6 +398,33 @@ const LITERALS: PositionScenario[] = [
   },
 ];
 
+/** A paragraph whose typed text settles into several top-level items: the paragraph itself, then
+ * what the typed block marker opens. Each side spells the same non-whitespace bytes, so every
+ * position maps one for one. */
+function splitScenario(name: string, live: string, settledItems: number): PositionScenario {
+  const bytes = `\\p ${live}`;
+  return {
+    name,
+    usj: twoParaUsj([BASE]),
+    pend: typed(live),
+    liveNeedle: "In the",
+    settledNeedle: "In the",
+    settledItems,
+    alignment: { segments: [[bytes, bytes]] },
+  };
+}
+
+const SPLITS: PositionScenario[] = [
+  // The paragraph, the chapter, and `made` as a bare root string.
+  splitScenario("typed-chapter", "In the \\c 2 made", 3),
+  // The paragraph, the chapter, and the unclosed `\ca` span at root, which does not fold.
+  splitScenario("typed-chapter-ca", "In the \\c 2 \\ca 3 made", 3),
+  // The paragraph and a table of one row.
+  splitScenario("typed-table-row", "In the \\tr \\tc1 a \\tc2 b", 2),
+  // The paragraph and the sidebar, which the settled side spells as one preserved run.
+  splitScenario("typed-sidebar", "In the \\esb \\p side \\esbe", 2),
+];
+
 describe("position contract — attribute re-spellings", () => {
   it.each(RESPELLINGS.map((s) => [s.name, s] as const))("%s maps every position", async (_, s) => {
     const report = await checkContract(s);
@@ -418,6 +445,15 @@ describe("position contract — literals the settle turns into nodes", () => {
 
 describe("position contract — baseline", () => {
   it.each(BASELINE.map((s) => [s.name, s] as const))("%s maps every position", async (_, s) => {
+    const report = await checkContract(s);
+    expect(report.outbound.length).toBeGreaterThan(0);
+    expect(report.inbound.length).toBeGreaterThan(0);
+    expect(contractMismatches(report)).toEqual([]);
+  });
+});
+
+describe("position contract — scopes that settle into several top-level items", () => {
+  it.each(SPLITS.map((s) => [s.name, s] as const))("%s maps every position", async (_, s) => {
     const report = await checkContract(s);
     expect(report.outbound.length).toBeGreaterThan(0);
     expect(report.inbound.length).toBeGreaterThan(0);
