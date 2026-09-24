@@ -64,6 +64,24 @@ import {
   VerseNode,
 } from "shared";
 
+/** The `\id` line as a `BookNode` carrying the immutable `\id GEN ` prefix plus whatever
+ * `children` builds — shared by every book-line describe block below so they cannot drift from
+ * one another. */
+function $buildBookLine(children: () => LexicalNode[]) {
+  const book = $createBookNode("GEN");
+  $getRoot().append(
+    book.append($createImmutableTypedTextNode("marker", "\\id GEN "), ...children()),
+  );
+  return book;
+}
+
+function $createCollapsedNoteNode() {
+  return $createNoteNode("f", "+").append(
+    $createImmutableNoteCallerNode("+", "note1 preview"),
+    $createCharNode("ft").append($createTextNode("note1 text")),
+  );
+}
+
 describe("Note collapsed", () => {
   describe("LTR forward direction", () => {
     it("should move over note when moving forward from note start", async () => {
@@ -2604,21 +2622,6 @@ describe("a collapsed note at a paragraph's end offers no text position after it
 // editor — notes and character spans included — so the caret has to be able to walk back out of the
 // text after one.
 describe("Backward navigation in the book line", () => {
-  function $buildBookLine(children: () => LexicalNode[]) {
-    const book = $createBookNode("GEN");
-    $getRoot().append(
-      book.append($createImmutableTypedTextNode("marker", "\\id GEN\u00a0"), ...children()),
-    );
-    return book;
-  }
-
-  function $createCollapsedNoteNode() {
-    return $createNoteNode("f", "+").append(
-      $createImmutableNoteCallerNode("+", "note1 preview"),
-      $createCharNode("ft").append($createTextNode("note1 text")),
-    );
-  }
-
   it("moves to the point before a note when moving backward from the text after it", async () => {
     let book: BookNode;
     let trailing: TextNode;
@@ -2795,21 +2798,6 @@ describe("Backward navigation in the book line", () => {
 // checks this exercises used `$isSomeParaNode`, which is false for a `BookNode`, so the line fell
 // through to Lexical's default move and let the caret enter the note's hidden content.
 describe("Forward navigation past a collapsed note in the book line", () => {
-  function $buildBookLine(children: () => LexicalNode[]) {
-    const book = $createBookNode("GEN");
-    $getRoot().append(
-      book.append($createImmutableTypedTextNode("marker", "\\id GEN "), ...children()),
-    );
-    return book;
-  }
-
-  function $createCollapsedNoteNode() {
-    return $createNoteNode("f", "+").append(
-      $createImmutableNoteCallerNode("+", "note1 preview"),
-      $createCharNode("ft").append($createTextNode("note1 text")),
-    );
-  }
-
   it("does not step into the note when crossing it from the element point before it", async () => {
     let book: BookNode;
     let note: NoteNode;
