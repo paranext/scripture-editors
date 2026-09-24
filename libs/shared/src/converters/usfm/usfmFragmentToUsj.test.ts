@@ -6,6 +6,7 @@ import {
 } from "./usfmFragmentToUsj.js";
 import { NBSP } from "../../nodes/usj/node-constants.js";
 import { createMarkerLookup, StyleInfo } from "../../utils/usfm/styleInfo.js";
+import { defaultStyleInfo } from "../../utils/usfm/defaultStyleInfo.js";
 
 describe("usfmFragmentToUsjContent — core", () => {
   it("tokenizes a plain paragraph", () => {
@@ -1844,6 +1845,87 @@ describe("usfmFragmentToUsjContent — figures parse without a project styleshee
           " after",
         ],
       },
+    ]);
+  });
+});
+
+describe("table cells under the default stylesheet (cell markers are Character styles)", () => {
+  // ParatextData (UsfmParser.IsCell): a cell is a CHARACTER-typed `th…`/`tc…` token inside an open
+  // row; its range form (`\tc1-2`) resolves to its base marker's style (ScrStylesheet.IsCellRange).
+  const getMarker = createMarkerLookup(defaultStyleInfo);
+  const cell = (marker: string, align: string, text: string, colspan?: string) => ({
+    type: "table:cell",
+    marker,
+    align,
+    ...(colspan ? { colspan } : {}),
+    content: [text],
+  });
+  const row = (...cells: unknown[]) => ({
+    type: "table:row",
+    marker: "tr",
+    content: cells,
+  });
+
+  it("builds header, body, aligned, and spanned cells", () => {
+    expect(
+      usfmFragmentToUsjContent(
+        "\\tr \\th1 A\\thr2 B\\tr \\tc1 C\\tcr2 D\\tr \\tcc1 E\\tc2 F\\tr \\thr1 G\\tc2-3 H\\tr \\tc1-2 I",
+        { getMarker },
+      ),
+    ).toEqual([
+      {
+        type: "table",
+        content: [
+          row(cell("th1", "start", "A"), cell("thr2", "end", "B")),
+          row(cell("tc1", "start", "C"), cell("tcr2", "end", "D")),
+          row(cell("tcc1", "center", "E"), cell("tc2", "start", "F")),
+          row(cell("thr1", "end", "G"), cell("tc2", "start", "H", "2")),
+          row(cell("tc1", "start", "I", "2")),
+        ],
+      },
+    ]);
+  });
+
+  it("builds the cells a paragraph's typed row carries", () => {
+    expect(usfmFragmentToUsjContent("\\p In the \\tr \\tc1 a \\tc2 b", { getMarker })).toEqual([
+      { type: "para", marker: "p", content: ["In the "] },
+      { type: "table", content: [row(cell("tc1", "start", "a "), cell("tc2", "start", "b"))] },
+    ]);
+  });
+
+  it("closes a char span open in a cell at the next cell", () => {
+    expect(usfmFragmentToUsjContent("\\tr \\tc1 a \\w w\\tc2 b", { getMarker })).toEqual([
+      {
+        type: "table",
+        content: [
+          row(
+            {
+              type: "table:cell",
+              marker: "tc1",
+              align: "start",
+              content: ["a ", { type: "char", marker: "w", content: ["w"], closed: "false" }],
+            },
+            cell("tc2", "start", "b"),
+          ),
+        ],
+      },
+    ]);
+  });
+
+  it("keeps a cell marker with no open row a character span, as ParatextData does", () => {
+    expect(usfmFragmentToUsjContent("\\p x \\tc1 y", { getMarker })).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: ["x ", { type: "char", marker: "tc1", content: ["y"], closed: "false" }],
+      },
+    ]);
+  });
+
+  it("ends the table at a cell name the sheet does not declare", () => {
+    expect(usfmFragmentToUsjContent("\\tr \\tc1 a\\tc13 x", { getMarker })).toEqual([
+      { type: "table", content: [row(cell("tc1", "start", "a"))] },
+      { type: "para", marker: "tc13", content: ["x"] },
     ]);
   });
 });

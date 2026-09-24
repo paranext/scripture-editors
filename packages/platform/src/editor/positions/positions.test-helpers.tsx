@@ -24,7 +24,8 @@ import {
   $isNoteNode,
   $isParaNode,
   $isUnknownNode,
-  getMarker as bundledGetMarker,
+  createMarkerLookup,
+  defaultStyleInfo,
   getPendedDisplayOwners,
   TypedMarkNode,
 } from "shared";
@@ -167,6 +168,9 @@ export function $liveTopIndexContaining(needle: string): number {
   return index;
 }
 
+/** The marker lookup `Editor.tsx` classifies with when the host passes no stylesheet. */
+const editorMarkerLookup = createMarkerLookup(defaultStyleInfo);
+
 /** Build the context `Editor.tsx` builds for its own position translation. Call outside a read —
  * `getPendedDisplayOwners` reads the engine's ledger, not the tree. */
 export function settledPositionContext(
@@ -180,7 +184,7 @@ export function settledPositionContext(
     pendedKeys: getPendedDisplayOwners(lexical) ?? new Set<string>(),
     transientInput: options.transientInput,
     lastKnownCaret: undefined,
-    tier2: { viewOptions: requireStandardViewOptions(), getMarker: bundledGetMarker },
+    tier2: { viewOptions: requireStandardViewOptions(), getMarker: editorMarkerLookup },
     nodes: [TypedMarkNode, ...usjReactNodes],
     cache: options.cache ?? { entries: new Map() },
   };

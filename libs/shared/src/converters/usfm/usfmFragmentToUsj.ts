@@ -30,15 +30,17 @@
  *
  * Figures, tables, and sidebars assemble to their faithful USJ shapes at the
  * assembly level, marker-name driven (they are parser-level structures in
- * ParatextData, independent of stylesheet classification): `\fig …\fig*` folds
- * to an inline `figure` object (USFM's `src` attribute renamed to USX/USJ's
- * `file`), `\tr` plus `t[hc][rc]#(-#)` cell markers build `table` →
- * `table:row` → `table:cell` with name-derived `align`/`colspan`, and
- * `\esb`…`\esbe` wraps the following blocks in a `sidebar` (`\cat` directly
- * after `\esb` folds to its `category`). Anything off the clean shapes —
- * nested markup or positional (USFM 2.0) attributes in a figure, a missing
- * `\fig*`, a cell marker with no open row — degrades to the plain char/para
- * output the marker classification produces on its own.
+ * ParatextData): `\fig …\fig*` folds to an inline `figure` object (USFM's
+ * `src` attribute renamed to USX/USJ's `file`), `\tr` plus `t[hc][rc]#(-#)`
+ * cell markers — a name the sheet types Character (usfm.sty types every cell
+ * marker Character) or leaves undeclared, inside an open row (ParatextData
+ * `UsfmParser.IsCell`) — build `table` → `table:row` → `table:cell` with
+ * name-derived `align`/`colspan`, and `\esb`…`\esbe` wraps the following
+ * blocks in a `sidebar` (`\cat` directly after `\esb` folds to its
+ * `category`). Anything off the clean shapes — nested markup or positional
+ * (USFM 2.0) attributes in a figure, a missing `\fig*`, a cell marker with
+ * no open row — degrades to the plain char/para output the marker
+ * classification produces on its own.
  *
  * Input is USFM text: `~` means NBSP; U+FFFC sentinels (atomic-node placeholders
  * from the Tier 2 fragment builder) ride through as ordinary text characters.
@@ -73,7 +75,9 @@ const SIDEBAR_END_MARKER = "esbe";
 /**
  * Table cell marker names: `t` + header/cell (`h`/`c`) + optional alignment infix (`r`/`c`) +
  * starting column + optional span end column (`th1`, `tc13`, `thr5`, `thc3-4`, `tcr1-4`).
- * ParatextData derives the whole cell shape from the name alone — no stylesheet entry needed.
+ * ParatextData derives the cell's alignment and span from the name alone; whether a name IS a
+ * cell (`UsfmParser.IsCell`) follows the marker's classification instead — Character-typed
+ * (usfm.sty types every cell marker Character) or undeclared to the stylesheet — in an open row.
  */
 const TABLE_CELL_MARKER_REGEX = /^t[hc]([rc]?)(\d+)(?:-(\d+))?$/;
 
@@ -882,6 +886,29 @@ export function usfmFragmentToUsjContent(
     table = undefined;
     tableRow = undefined;
   };
+  /** Open a cell in the open row when `marker` names one ParatextData recognizes (see
+   * isRecognizedTableCell), making the cell the current content container: text, char spans,
+   * notes, and verses then flow into it through the ordinary `para`-based container logic.
+   * Returns false, changing nothing, when there is no open row or `marker` is not a cell. */
+  const startTableCell = (marker: string): boolean => {
+    if (!tableRow) return false;
+    const cellMatch = TABLE_CELL_MARKER_REGEX.exec(marker);
+    if (!cellMatch || !isRecognizedTableCell(cellMatch)) return false;
+    closeCharStack();
+    const [, alignInfix, spanStart, spanEnd] = cellMatch;
+    // The cell keeps only the starting column in its marker (`thc3-4` → `thc3`); the span
+    // width becomes `colspan`, a string of columns spanned (`thc3-4` → "2").
+    const cell: TableCellObject = {
+      type: "table:cell",
+      marker: spanEnd ? marker.slice(0, marker.indexOf("-")) : marker,
+      align: TABLE_CELL_ALIGN_BY_INFIX[alignInfix],
+      content: [],
+    };
+    if (spanEnd) cell.colspan = String(Number(spanEnd) + 1 - Number(spanStart));
+    getContent(tableRow).push(cell);
+    para = cell;
+    return true;
+  };
   const closeSidebar = (terminated: boolean) => {
     if (!sidebar) return;
     // Only `\esbe` terminates a sidebar explicitly; an implicit close (fragment end or a
@@ -1216,9 +1243,12 @@ export function usfmFragmentToUsjContent(
       }
       case "para": {
         // ---- table assembly ----
-        // Row/cell markers reach assembly as para tokens (paragraph styles, or unknown to
-        // the sheet). Table shapes never engage inside note content — a row/cell marker
-        // there keeps its plain resolution, and ParatextData builds no tables there either.
+        // `\tr` reaches assembly as a para token. A cell marker reaches it as a para token
+        // when the sheet does not declare it (a ranged cell such as `\tc1-2`, or a sheet with
+        // no table markers) and as a charOpen token when it does (usfm.sty types every cell
+        // Character; see the charOpen case). Table shapes never engage inside note content —
+        // a row/cell marker there keeps its plain resolution, and ParatextData builds no
+        // tables there either.
         const tableEligible = !note && !isNoteContext;
         if (tableEligible && token.marker === TABLE_ROW_MARKER) {
           closeCharStack();
@@ -1234,30 +1264,9 @@ export function usfmFragmentToUsjContent(
           atChapterRootScope = false;
           break;
         }
-        if (tableEligible && tableRow) {
-          const cellMatch = TABLE_CELL_MARKER_REGEX.exec(token.marker);
-          // A name outside what ParatextData recognizes as a cell (see
-          // isRecognizedTableCell) is an unknown marker that ENDS the table (and the next
-          // `\tr` starts a fresh one).
-          if (cellMatch && isRecognizedTableCell(cellMatch)) {
-            closeCharStack();
-            const [, alignInfix, spanStart, spanEnd] = cellMatch;
-            // The cell keeps only the starting column in its marker (`thc3-4` → `thc3`);
-            // the span width becomes `colspan`, a string of columns spanned (`thc3-4` → "2").
-            const cell: TableCellObject = {
-              type: "table:cell",
-              marker: spanEnd ? token.marker.slice(0, token.marker.indexOf("-")) : token.marker,
-              align: TABLE_CELL_ALIGN_BY_INFIX[alignInfix],
-              content: [],
-            };
-            if (spanEnd) cell.colspan = String(Number(spanEnd) + 1 - Number(spanStart));
-            getContent(tableRow).push(cell);
-            // The cell becomes the current content container: text, char spans, notes, and
-            // verses flow into it through the ordinary `para`-based container logic.
-            para = cell;
-            break;
-          }
-        }
+        // A name outside what ParatextData recognizes as a cell (see isRecognizedTableCell)
+        // is an unknown marker that ENDS the table (and the next `\tr` starts a fresh one).
+        if (tableEligible && startTableCell(token.marker)) break;
         // Any other paragraph-kind token (esb/esbe included) ends an open table; the token
         // itself then processes normally. A cell marker with NO open row is not table
         // content — it stays an unknown paragraph, exactly as ParatextData splits it out.
@@ -1331,6 +1340,10 @@ export function usfmFragmentToUsjContent(
         break;
       }
       case "charOpen": {
+        // A Character-typed cell marker in an open row is a cell (ParatextData
+        // UsfmParser.IsCell); with no open row it stays an ordinary char span, as there. A
+        // `+`-nested one is never a cell: ParatextData's name test sees the `+`.
+        if (!token.isNested && !note && !isNoteContext && startTableCell(token.marker)) break;
         // A new non-nested char marker auto-closes open char styles (PT9) — but never
         // across an open note's boundary: the frames enclosing the note stay open.
         if (!token.isNested) {
