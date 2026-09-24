@@ -12,6 +12,7 @@ import {
 import { useRef, useEffect, useState, useCallback } from "react";
 import {
   $getCommonAncestorCompatible,
+  $getSelectedParaMarker,
   $isBookNode,
   $isParaNode,
   $isImmutableChapterNode,
@@ -51,6 +52,22 @@ export function StateChangePlugin({ onStateChange }: { onStateChange?: OnStateCh
 
   const $updateState = useCallback(() => {
     const selection = $getSelection();
+    // A selected paragraph marker names its block outright: the paragraph that owns it.
+    const selectedMarkerOwner = $getSelectedParaMarker(selection)?.getParent();
+    if (
+      $isParaNode(selectedMarkerOwner) &&
+      activeEditor.getElementByKey(selectedMarkerOwner.getKey()) !== null
+    ) {
+      blockMarkerRef.current = selectedMarkerOwner.getMarker();
+      contextMarkerRef.current = selectedMarkerOwner.getMarker();
+      onStateChange?.({
+        canUndo: canUndoRef.current,
+        canRedo: canRedoRef.current,
+        blockMarker: blockMarkerRef.current,
+        contextMarker: contextMarkerRef.current,
+      });
+      return;
+    }
     let contextMarker: string | undefined;
     if ($isRangeSelection(selection)) {
       const anchorNode = selection.anchor.getNode();

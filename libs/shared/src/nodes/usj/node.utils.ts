@@ -3,14 +3,17 @@
 import { MARKER_OBJECT_PROPS, MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import { $findMatchingParent } from "@lexical/utils";
 import {
+  $createNodeSelection,
   $createTextNode,
   $getCommonAncestor,
   $getSelection,
   $getState,
   $isElementNode,
   $isLineBreakNode,
+  $isNodeSelection,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   $setState,
   BaseSelection,
   ElementNode,
@@ -29,6 +32,7 @@ import {
   textTypeState,
 } from "../collab/delta.state.js";
 import {
+  $isGutterMarkerNode,
   $isImmutableTypedTextNode,
   ImmutableTypedTextNode,
   isSerializedImmutableTypedTextNode,
@@ -638,6 +642,70 @@ export function $isVisibleMarkerNode(
  */
 export function $isSynthesizedMarkerNode(node: LexicalNode | null | undefined): boolean {
   return $isMarkerNode(node) || $isVisibleMarkerNode(node);
+}
+
+/**
+ * The paragraph marker a selection has selected, if it has one.
+ *
+ * A paragraph's gutter marker glyph (see `gutterMarkerState`) is never a caret position, but it IS
+ * a selection target: selecting it is how the user picks the paragraph whose marker they are about
+ * to change. That selection is a Lexical `NodeSelection` of the glyph alone, so it carries no
+ * offsets and no glyph byte becomes a document position. This is the single definition every
+ * consumer uses to recognize it.
+ *
+ * Decided per node, never per view, and by the same rule as {@link $getSelectableParaMarker}: only
+ * the gutter glyph that is a `ParaNode`'s first child qualifies. A book's `\id` glyph and a table's
+ * row and cell glyphs are gutter glyphs too, but they have no paragraph marker to retag.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ *
+ * @param selection - The selection to inspect, e.g. `$getSelection()`.
+ * @returns the selected glyph, or `undefined` for any other selection — a range, a node selection
+ *   of some other node, or of more than one node.
+ */
+export function $getSelectedParaMarker(
+  selection: BaseSelection | null,
+): ImmutableTypedTextNode | undefined {
+  if (!$isNodeSelection(selection)) return undefined;
+  const nodes = selection.getNodes();
+  if (nodes.length !== 1) return undefined;
+  const [node] = nodes;
+  const glyph = $getSelectableParaMarker(node.getParent());
+  return glyph?.is(node) ? glyph : undefined;
+}
+
+/**
+ * The marker glyph `node` would offer as a selection target: its leading gutter marker, when
+ * `node` is a `ParaNode` that renders one. An implied paragraph has no marker to retag. Used to find the next stop when the keyboard walks
+ * between paragraph markers.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ *
+ * @param node - The node to inspect — typically a root-level sibling of the current paragraph.
+ * @returns the paragraph's gutter marker glyph, or `undefined`.
+ */
+export function $getSelectableParaMarker(
+  node: LexicalNode | null | undefined,
+): ImmutableTypedTextNode | undefined {
+  if (!$isParaNode(node)) return undefined;
+  const glyph = node.getFirstChild();
+  return $isGutterMarkerNode(glyph) ? glyph : undefined;
+}
+
+/**
+ * Selects a paragraph's gutter marker glyph, replacing the current selection — see
+ * {@link $getSelectedParaMarker} for what that selection means.
+ *
+ * Mutating: call inside `editor.update()` (a command handler already runs inside one).
+ *
+ * @param glyph - The paragraph's gutter marker glyph.
+ */
+export function $selectParaMarker(glyph: ImmutableTypedTextNode): void {
+  const selection = $createNodeSelection();
+  selection.add(glyph.getKey());
+  $setSelection(selection);
 }
 
 /**

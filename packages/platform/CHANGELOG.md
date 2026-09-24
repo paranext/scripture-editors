@@ -29,6 +29,16 @@ refused. The public surface grew substantially; nothing was removed.
 - **Ctrl+Space removes character formatting from the selection.** On macOS this is ⌃Space rather than
   ⌘Space, which is Spotlight. It can collide with the macOS input-source switcher and with some IME
   on/off toggles; the handler declines while a composition is active.
+- **A paragraph's marker can be selected** in the paragraph-structure view (`hasGutterParaMarkers`):
+  click it in the gutter, or reach it with ←/→ at a paragraph boundary and walk the marker column
+  with ↑/↓. The row is highlighted (`psc-para-marker-selected`, with the editor root's
+  `aria-activedescendant` naming the marker), typing returns to the paragraph's text, and
+  Backspace/Delete are refused with a
+  `psc-para-marker-refused` / `data-para-marker-refused-intent` root signal for the host to render a
+  hint from.
+- `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
+- `EditorProps.onParaMarkerMenuRequest` — fired on Enter or Alt+↓ while a paragraph marker is
+  selected, so the host can open its paragraph dropdown.
 
 ### Changed
 
@@ -76,6 +86,17 @@ refused. The public surface grew substantially; nothing was removed.
 - `getUsj()` returns the settled document in editable marker modes. When nothing is pending and no
   transient input is declared it short-circuits to the previous behavior, so the other view modes are
   unaffected.
+- A click on a paragraph's gutter marker selects the marker instead of moving the caret to the
+  paragraph's text. Book (`\id`) and table markers still move the caret, and so does any click in a
+  read-only editor.
+- **While a paragraph marker is selected there is no text range.** `EditorRef.getSelection()`
+  returns `undefined` after a gutter click where it used to return a caret, and selecting a marker
+  by keyboard fires no `onSelectionChange` — the marker selection clears the browser's selection,
+  which is what Lexical reports selection changes from. A host that derives the current paragraph
+  from either must also read `EditorRef.getSelectedParaMarker()` (or `onStateChange`'s
+  `blockMarker`), or its paragraph controls will act on a stale caret.
+- `EditorRef.formatPara` accepts a selected paragraph marker: it retags that paragraph in place —
+  keeping its attributes and identity — and keeps the marker selected.
 - **A Standard-view copy whose selection cuts through an opaque construct — a figure, sidebar,
   periph, ref, table or optbreak — no longer writes the private `application/x-lexical-editor`
   flavor.** That flavor carries a construct WHOLE and cannot carry part of one: a construct's text is

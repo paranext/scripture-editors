@@ -73,6 +73,7 @@ import {
 } from "react";
 import {
   $createParaNode,
+  $getSelectedParaMarker,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
@@ -125,6 +126,7 @@ import {
   OnSelectionChangePlugin,
   OpaqueBlockGuardPlugin,
   ParaMarkerPrefixCursorGuardPlugin,
+  ParaMarkerSelectionPlugin,
   ParaNodePlugin,
   pasteSelection,
   pasteSelectionAsPlainText,
@@ -160,6 +162,8 @@ function Placeholder(): ReactElement {
  *   changes in the editor as the cursor moves.
  * @param onSelectionChange - Callback function when the cursor selection changes.
  * @param onUsjChange - Callback function when USJ Scripture data has changed.
+ * @param onParaMarkerMenuRequest - Callback function when the user asks, by keyboard, to change
+ *   the selected paragraph marker.
  * @param options - Options to configure the editor.
  * @param logger - Logger instance.
  * @returns the editor element.
@@ -172,6 +176,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     onSelectionChange,
     onUsjChange,
     onStateChange,
+    onParaMarkerMenuRequest,
     options,
     logger,
     children,
@@ -626,6 +631,14 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       }
       return editorRef.current?.read($getUsjSelectionFromEditor);
     },
+    getSelectedParaMarker() {
+      // `getEditorState().read`, NOT `editor.read` — a host reads this from its own selection
+      // handlers, which can run mid-dispatch.
+      return editorRef.current?.getEditorState().read(() => {
+        const owner = $getSelectedParaMarker($getSelection())?.getParent();
+        return $isParaNode(owner) ? owner.getMarker() : undefined;
+      });
+    },
     setSelection(selection) {
       if (isBlockVerse) {
         reportUsjLocationsUnavailable("set the selection");
@@ -697,14 +710,23 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       editorRef.current?.update(
         () => {
           const selection = $getSelection();
+          // A selected paragraph marker names the paragraph outright, so it is retagged in place —
+          // no `$setBlocksType`, which would swap in a fresh ParaNode and drop the paragraph's
+          // attributes and identity. The glyph is rewritten in place too, so the selection stays
+          // on it.
+          const owner = $getSelectedParaMarker(selection)?.getParent();
+          if ($isParaNode(owner)) {
+            $applyParaMarker(owner, blockMarker, viewOptions);
+            return;
+          }
           // A caller with no live selection has nothing to retag. Say so rather than returning
           // quietly: this is the toolbar's paragraph-marker path, and the popover that drives it
           // takes focus off the editor — whose blur processing can null the editor-state selection
           // — so an unheard refusal here looks exactly like a dropdown that does not work.
           if (!$isRangeSelection(selection)) {
             logger?.warn(
-              `formatPara refused: no range selection to retag with "${blockMarker}" ` +
-                "(restore the caret before applying, as the marker palettes do)",
+              `formatPara refused: no range selection or selected paragraph marker to retag with ` +
+                `"${blockMarker}" (restore the caret before applying, as the marker palettes do)`,
             );
             return;
           }
@@ -1184,6 +1206,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <OpaqueBlockGuardPlugin />
           <ParaMarkerPrefixCursorGuardPlugin />
           <ParaMarkerPrefixGuardPlugin viewOptions={viewOptions} logger={stableLogger} />
+          <ParaMarkerSelectionPlugin onParaMarkerMenuRequest={onParaMarkerMenuRequest} />
           <ParaNodePlugin />
           <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
           <TextDirectionPlugin textDirection={textDirection} />

@@ -603,3 +603,31 @@ button.toolbar-item:disabled .chevron-down {
     box-shadow: 0 2px 0 -1px #dc2626; /* static glow underline — still signals "armed" */
   }
 }
+
+/* Paragraph marker selected (paragraph-structure view): ParaMarkerSelectionPlugin puts
+   `psc-para-marker-selected` on the paragraph whose gutter marker is the selection. The row is
+   highlighted on its own visual channel, distinct from the `psc-active-text` focus box: a tint on
+   the paragraph plus a same-coloured box-shadow offset across the gutter (the marker glyph is
+   absolutely positioned into the gutter, outside the paragraph's box; an outer box-shadow is
+   clipped under the box itself, so the two never double up), and a stronger accent on the glyph.
+   The focus box and book code use pseudo-elements on the element itself, but not on this class.
+   The tint is a demo placeholder; the platform app binds its own token. Lives here
+   (not usj-nodes.css) because that file will be generated per-project by core. */
+.psc-gutter-markers .para.psc-para-marker-selected {
+  --psc-para-marker-selected-tint: color-mix(
+    in srgb,
+    var(--scripture-accent, #c4956a) 18%,
+    transparent
+  );
+  background-color: var(--psc-para-marker-selected-tint);
+  box-shadow: calc(-1 * (var(--psc-gutter-width, 4em) + var(--para-indent, 0px))) 0 0 0
+    var(--psc-para-marker-selected-tint);
+}
+.psc-gutter-markers[dir="rtl"] .para.psc-para-marker-selected {
+  box-shadow: calc(var(--psc-gutter-width, 4em) + var(--para-indent, 0px)) 0 0 0
+    var(--psc-para-marker-selected-tint);
+}
+.psc-gutter-markers .para.psc-para-marker-selected > .marker:not(.verse):not(.chapter):first-child {
+  color: var(--scripture-accent, #c4956a);
+  font-weight: 700;
+}
