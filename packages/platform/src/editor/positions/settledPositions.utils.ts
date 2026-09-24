@@ -744,12 +744,25 @@ function pairedSides(plan: SettleScopePlan): PairedSides | undefined {
     : undefined;
 }
 
+/** The live point at the front of a scope: the start of a paragraph or chapter's content, or in
+ * front of a note. `undefined` only when the scope's own defining node has itself gone from the
+ * live tree, which leaves nothing to report a front for. */
+function $scopeFrontPoint(plan: SettleScopePlan): FragmentPoint | undefined {
+  const first = plan.liveNodes[0];
+  if (!first.isAttached()) return undefined;
+  if (plan.kind !== "note" && $isElementNode(first))
+    return { key: first.getKey(), offset: 0, type: "element" };
+  const parent = first.getParent();
+  return parent
+    ? { key: parent.getKey(), offset: first.getIndexWithinParent(), type: "element" }
+    : undefined;
+}
+
 /**
- * The live point at the front of a scope: the start of a paragraph or chapter's content, or in
- * front of a note. Where a settled location inside the scope lands when the scope's bytes cannot
- * be lined up with the settled ones — a fragment builder that does not cover the scope's shape —
- * so the host's position still reaches the scope it named rather than being dropped. `undefined`
- * only for a memoized plan whose nodes the tree has moved on from.
+ * The live point at the front of a scope: where a settled location inside the scope lands when the
+ * scope's bytes cannot be lined up with the settled ones — a fragment builder that does not cover
+ * the scope's shape — so the host's position still reaches the scope it named rather than being
+ * dropped.
  */
 function $liveScopeFront(
   plan: SettleScopePlan,
@@ -759,14 +772,20 @@ function $liveScopeFront(
     `[positions] A settled location in a pending ${plan.kind} scope could not be lined up with ` +
       "its live bytes; it resolves to the front of the scope.",
   );
-  const first = plan.liveNodes[0];
-  if (!first.isAttached()) return undefined;
-  if (plan.kind !== "note" && $isElementNode(first))
-    return { key: first.getKey(), offset: 0, type: "element" };
-  const parent = first.getParent();
-  return parent
-    ? { key: parent.getKey(), offset: first.getIndexWithinParent(), type: "element" }
-    : undefined;
+  return $scopeFrontPoint(plan);
+}
+
+/**
+ * The live point at the front of a scope, for a translation that found the tree had moved on from
+ * a plan's basis mid-walk (a preserved run's live member, or a settled child path, the plan no
+ * longer has): the scope is rebuilt from what the tree still has rather than refusing outright.
+ */
+function $rebuiltScopeFront(
+  plan: SettleScopePlan,
+  logger: LoggerBasic | undefined,
+): FragmentPoint | undefined {
+  logger?.error("settled-position basis out of date — rebuilt");
+  return $scopeFrontPoint(plan);
 }
 
 /** How many non-whitespace bytes of `fragment` precede each preserved run's placeholder, or
@@ -855,9 +874,9 @@ function $livePointInPreservedRun(
   if (!live) return $livePointForUnpairedRun(plan, sides, resolved.sentinelIndex, logger);
   const member = sides.liveFragment.sentinels[live.sentinelIndex]?.[live.memberIndex];
   // A memoized plan holds live node references, and the tree can have moved on under it (an undo,
-  // a host `setUsj`). Refuse such a position rather than walk a detached node, whose ancestors and
-  // offsets no longer describe anything the host can resolve against.
-  if (!member?.isAttached()) return undefined;
+  // a host `setUsj`) — a detached node's ancestors and offsets no longer describe anything the
+  // host can resolve against, so the scope is rebuilt from its front instead of walking it.
+  if (!member?.isAttached()) return $rebuiltScopeFront(plan, logger);
   // A note that is ALSO settling was handed through this scope as its SETTLED self, so its live
   // content is not the same subtree — that one crosses by its own fragment bytes instead, and lands
   // at the note's front when it has no bytes to cross by. Falling through to the child walk below
@@ -878,11 +897,14 @@ function $livePointInPreservedRun(
           logger,
         )
       : $liveScopeFront(notePlan, logger);
+  // The settled child path was resolved against the plan's own scratch tree, materialized once
+  // when the plan was built; a live node whose children have since changed no longer has a member
+  // at that path, and the scope is rebuilt from its front rather than landing on the wrong child.
   let node: LexicalNode = member;
   for (const index of resolved.path) {
-    if (!$isElementNode(node)) return undefined;
+    if (!$isElementNode(node)) return $rebuiltScopeFront(plan, logger);
     const child = node.getChildAtIndex(index);
-    if (!child) return undefined;
+    if (!child) return $rebuiltScopeFront(plan, logger);
     node = child;
   }
   return { key: node.getKey(), offset: resolved.offset, type: resolved.type };
@@ -912,9 +934,9 @@ function $livePointPastScope(
 
 /**
  * The live point for a settled location inside a rebuilt scope — `undefined` only when the
- * location names nothing in the scope's settled tree (or, as a backstop, when a memoized plan no
- * longer describes the live tree). Every location that does name something has a live point: its
- * own bytes' counterpart, or where the bytes in front of it snap LEFT to.
+ * location names nothing in the scope's settled tree. Every location that does name something has
+ * a live point: its own bytes' counterpart, or where the bytes in front of it snap LEFT to — or, for
+ * a preserved run the tree has moved on from under a memoized plan, the scope's own front (logged).
  */
 function $livePointInScope(
   context: SettledPositionContext,
@@ -986,8 +1008,7 @@ function $livePointInScope(
 
 /**
  * The live node and offset a SETTLED location addresses, or `undefined` when the location names
- * nothing in the settled document (or, as a backstop, when a memoized plan no longer describes the
- * live tree).
+ * nothing in the settled document.
  *
  * Call inside a read of the LIVE editor state, with `prepared` from the same read.
  */
@@ -1028,10 +1049,9 @@ function $liveLocationFromSettled(
 /**
  * `settled` restated in LIVE coordinates, so the editor's existing resolvers
  * (`$getRangeFromUsjSelection`, the annotation plugin, `$insertNote`) consume it unchanged — or
- * `undefined` when an endpoint names nothing in the settled document (or, as a backstop, when a
- * memoized plan no longer describes the live tree), which a caller must treat as "refuse", never
- * as "resolve it anyway". Every other endpoint has a live position: its own bytes' counterpart, or
- * where the bytes in front of it snap LEFT to while an edit is pending.
+ * `undefined` when an endpoint names nothing in the settled document, which a caller must treat as
+ * "refuse", never as "resolve it anyway". Every other endpoint has a live position: its own bytes'
+ * counterpart, or where the bytes in front of it snap LEFT to while an edit is pending.
  *
  * Call inside a read of the LIVE editor state, with `prepared` from the same read.
  */
@@ -1147,18 +1167,10 @@ function cutFragmentOffset(plan: SettleScopePlan, node: LexicalNode, offset: num
   return Math.max(cut.nodeOffset, offset - cut.length);
 }
 
-/**
- * What a live point's exact translation refuses with when the plan no longer describes the tree it
- * was prepared over — a node the settled side has no counterpart for only because the live tree
- * moved on under a memoized plan. Every plan is prepared in the same read that uses it, so this is
- * a backstop rather than a path production takes, and it stays a refusal: snapping left across a
- * stale basis would answer from nodes that no longer mean what the plan paired them with.
- */
-const STALE_BASIS = "stale-basis";
-
 /** A live point's settled location through its scope's byte alignment, `undefined` when the scope
- * cannot line its bytes up or the point has no settled node to land on, or {@link STALE_BASIS}. */
-type ExactLocation = UsjDocumentLocation | typeof STALE_BASIS | undefined;
+ * cannot line its bytes up, the point has no settled node to land on, or the tree has moved on
+ * from the plan's own basis (logged, and left to the caller's own snap-left to answer from). */
+type ExactLocation = UsjDocumentLocation | undefined;
 
 /** The settled location for a live point inside a preserved node run: the settle handed the same
  * subtree through, so only which run member it is and the child path down to it cross over. Call
@@ -1263,6 +1275,7 @@ function $scratchLocationFromLivePoint(
   node: LexicalNode,
   offset: number,
   viewOptions: ViewOptions,
+  logger: LoggerBasic | undefined,
 ): ExactLocation {
   const { liveFragment, scratchFragment, sentinelMap, alignment } = sides;
   const preserved = $preservedRunMember(liveFragment, node);
@@ -1275,32 +1288,38 @@ function $scratchLocationFromLivePoint(
     // counterpart either, and crosses the same way.
     if (!sentinelMap[preserved.sentinelIndex]?.some((member) => member !== undefined)) {
       const parent = run[0].getParent();
-      return parent
-        ? $scratchLocationFromLivePoint(
-            plan,
-            sides,
-            parent,
-            run[0].getIndexWithinParent(),
-            viewOptions,
-          )
-        : STALE_BASIS;
+      if (parent)
+        return $scratchLocationFromLivePoint(
+          plan,
+          sides,
+          parent,
+          run[0].getIndexWithinParent(),
+          viewOptions,
+          logger,
+        );
+      logger?.error("settled-position basis out of date — rebuilt");
+      return undefined;
     }
     const path = $childPath(preserved.member, node);
-    if (!path) return STALE_BASIS;
+    if (!path) {
+      logger?.error("settled-position basis out of date — rebuilt");
+      return undefined;
+    }
     // One member of a run the settle dropped while keeping the rest: it has no settled node, and
     // the bytes around it are the answer.
     const settled = sentinelMap[preserved.sentinelIndex]?.[preserved.memberIndex];
     if (!settled) return undefined;
     // Plain data only across the scratch boundary: a live node must never be carried into a
     // scratch read. The settle handed this subtree through unchanged, so a child path it does not
-    // have means the plan no longer describes the live tree.
-    return (
-      plan.scratch
-        .getEditorState()
-        .read(() =>
-          $settledLocationInPreservedRun(scratchFragment, settled, path, offset, viewOptions),
-        ) ?? STALE_BASIS
-    );
+    // have means the live tree has moved on since the scope's settled copy was materialized.
+    const inPreservedRun = plan.scratch
+      .getEditorState()
+      .read(() =>
+        $settledLocationInPreservedRun(scratchFragment, settled, path, offset, viewOptions),
+      );
+    if (inPreservedRun) return inPreservedRun;
+    logger?.error("settled-position basis out of date — rebuilt");
+    return undefined;
   }
   const anchored = $anchorForPoint(liveFragment, node, cutFragmentOffset(plan, node, offset));
   if (!anchored) return undefined;
@@ -1392,6 +1411,7 @@ function $exactSettledLocationInScope(
     node,
     offset,
     prepared.viewOptions,
+    prepared.logger,
   );
   if (typeof scratchLocation !== "object") return scratchLocation;
   const indexes = settledPathFromScratch(
@@ -1479,26 +1499,26 @@ function $snappedLeftInScope(
 }
 
 /** The settled location for a live point inside a rebuilt scope: where the scope's byte alignment
- * carries it, or — for a point the alignment cannot place — the nearest one at or before it
- * ({@link $snappedLeftInScope}). `undefined` only when the plan no longer describes the live tree
- * ({@link STALE_BASIS}). */
+ * carries it, or — for a point the alignment cannot place, including one the tree has moved on
+ * from under a memoized plan (logged as `$scratchLocationFromLivePoint` finds it) — the nearest one
+ * at or before it ({@link $snappedLeftInScope}). */
 function $settledLocationInScope(
   prepared: PreparedScopes,
   plan: SettleScopePlan,
   node: LexicalNode,
   offset: number,
 ): UsjDocumentLocation | undefined {
-  const exact = $exactSettledLocationInScope(prepared, plan, node, offset);
-  if (exact === STALE_BASIS) return undefined;
-  return exact ?? $snappedLeftInScope(prepared, plan, { node, offset });
+  return (
+    $exactSettledLocationInScope(prepared, plan, node, offset) ??
+    $snappedLeftInScope(prepared, plan, { node, offset })
+  );
 }
 
 /**
  * The SETTLED location a live point addresses — what a host, whose only view of the document is
  * `getUsj()`, can actually resolve. A point in front of bytes that have no settled counterpart
- * while an edit is pending snaps LEFT, to where the settled side's differing bytes start;
- * `undefined` only when a memoized plan no longer describes the live tree, which a plan prepared
- * in the same read never is.
+ * while an edit is pending snaps LEFT, to where the settled side's differing bytes start — including
+ * one whose plan the tree has moved on from under it (logged), which snaps left the same way.
  *
  * Call inside a read of the LIVE editor state, with `prepared` from the same read.
  */
@@ -1542,9 +1562,8 @@ function $settledDocumentEnd(
 
 /**
  * The editor's current selection in SETTLED coordinates — `undefined` only when there is no
- * selection to report or the layout has no USJ locations at all (or, as a backstop, when a
- * memoized basis no longer describes the live tree). An endpoint in front of bytes that have no
- * settled counterpart while an edit is pending snaps LEFT, each end of a range on its own
+ * selection to report or the layout has no USJ locations at all. An endpoint in front of bytes that
+ * have no settled counterpart while an edit is pending snaps LEFT, each end of a range on its own
  * ({@link $settledLocationFromLivePoint}).
  *
  * Call inside a read of the LIVE editor state, with `prepared` from the same read.

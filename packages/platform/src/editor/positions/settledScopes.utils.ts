@@ -42,6 +42,7 @@ import {
 import { $liveRunSide, $settledRunSide, pairRuns } from "../markerEdit/settledOnlyRuns.utils";
 import { SettledPositionContext, SettleScopePlan, TransientCut } from "./settledPositions.model";
 import {
+  $getNodeByKey,
   $getRoot,
   $isElementNode,
   $parseSerializedNode,
@@ -61,6 +62,7 @@ import {
   $isParaNode,
   ChapterNode,
   ImpliedParaNode,
+  LoggerBasic,
   LogicalContentItem,
   NoteNode,
   ParaNode,
@@ -91,6 +93,9 @@ export interface PreparedScopes {
   /** The view the scopes were prepared under, which also decides how live text maps to USJ
    * offsets. */
   readonly viewOptions: ViewOptions;
+  /** Where a translation logs a basis the tree has moved on from, once it falls back to answering
+   * from what is still there rather than refusing. */
+  readonly logger: LoggerBasic | undefined;
 }
 
 /** One settled top-level content item's provenance. */
@@ -392,14 +397,30 @@ function $isPlanned(node: LexicalNode, byLiveKey: ReadonlyMap<NodeKey, SettleSco
 }
 
 /** The identity basis: the settled document IS the live tree, index for index. */
-function identityPrepared(viewOptions: ViewOptions): PreparedScopes {
+function identityPrepared(
+  viewOptions: ViewOptions,
+  logger: LoggerBasic | undefined,
+): PreparedScopes {
   return {
     byFirstLiveKey: new Map(),
     liveToSettledTopIndex: (liveIndex) => liveIndex,
     settledToLiveTopIndex: (settledIndex) => ({ liveIndex: settledIndex, indexWithinScope: 0 }),
     planContaining: () => undefined,
     viewOptions,
+    logger,
   };
+}
+
+/**
+ * Whether a plan's live nodes still describe the CURRENT live tree: every live node is attached,
+ * and every live-fragment span still resolves to a node by key. A cached plan is reused only when
+ * this holds — otherwise the cache treats it as a miss and rebuilds, rather than handing back a
+ * plan the tree has moved on from.
+ */
+function $isPlanFresh(plan: SettleScopePlan): boolean {
+  if (!plan.liveNodes.every((node) => node.isAttached())) return false;
+  const spans = plan.liveFragment?.spans ?? [];
+  return spans.every((span) => $getNodeByKey(span.key) !== null);
 }
 
 /** The root child an item of the root's logical content sits in. That is the item's own node,
@@ -473,7 +494,7 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
     // Nothing is pending, so no cached plan can still be valid — and each one holds a scratch
     // editor plus references to live nodes the tree may have since replaced.
     context.cache.entries.clear();
-    return identityPrepared(context.tier2.viewOptions);
+    return identityPrepared(context.tier2.viewOptions, context.tier2.logger);
   }
   if (context.cache.getMarker !== context.tier2.getMarker) {
     context.cache.entries.clear();
@@ -510,7 +531,7 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
       transient,
     );
     const cached = context.cache.entries.get(key);
-    if (cached?.signature === signature) return cached.plan;
+    if (cached?.signature === signature && $isPlanFresh(cached.plan)) return cached.plan;
     const plan = build(liveFragment);
     if (plan) context.cache.entries.set(key, { signature, plan });
     else context.cache.entries.delete(key);
@@ -566,7 +587,8 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
   for (const key of [...context.cache.entries.keys()])
     if (!stillPending.has(key)) context.cache.entries.delete(key);
 
-  if (byFirstLiveKey.size === 0) return identityPrepared(context.tier2.viewOptions);
+  if (byFirstLiveKey.size === 0)
+    return identityPrepared(context.tier2.viewOptions, context.tier2.logger);
 
   const { liveToSettled, settledToLive } = $mapTopIndexes(
     topPlans,
@@ -584,5 +606,6 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
       return undefined;
     },
     viewOptions: context.tier2.viewOptions,
+    logger: context.tier2.logger,
   };
 }

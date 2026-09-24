@@ -617,8 +617,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
    *
    * `undefined` means there is nothing to report: no range selection, or a layout with no USJ
    * locations at all. A position whose own bytes have no settled counterpart reports the nearest
-   * one before it instead, so the one other way to get `undefined` is a basis the tree has moved on
-   * under — a backstop no read that prepares its own basis reaches, logged if it ever is.
+   * one before it instead — including one whose basis the tree has moved on from under it, which
+   * rebuilds from what the tree still has rather than refusing (logged).
    */
   const readSettledSelection = useCallback(
     (editor: LexicalEditor, caller: string): SelectionRange | undefined =>

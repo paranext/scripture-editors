@@ -6,12 +6,12 @@
  * (Editor.tsx).
  *
  * Each row names why the location names nothing, reaches it from a real pending state, and asserts
- * the refusal — plus the stale-basis backstop below.
+ * the refusal.
  *
  * The other direction has no refusals a real caret can reach: a live position always reports a
  * settled location — its own (settledPositions.noteBytes.test.tsx), or the nearest one at or before
- * it when its bytes have none (settledPositions.snapLeft.test.tsx). Its one refusal is the
- * stale-basis backstop below.
+ * it when its bytes have none (settledPositions.snapLeft.test.tsx) — or, for a plan the live tree
+ * has moved on from under it, the nearest one a rebuilt basis can still answer from (below).
  */
 import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes } from "./settledScopes.utils";
@@ -188,10 +188,11 @@ describe("a settled location the settled document does not have", () => {
 describe("a basis the tree has moved on under", () => {
   /**
    * A memoized plan (`SettledScopeCache`) holds live node references across reads. The cache
-   * rebuilds a plan once any node in its scope changes (settledScopes.utils.test.tsx), so these
-   * guards are a backstop rather than a path production takes: each row uses a basis prepared
-   * BEFORE a change, in a read AFTER it, and asserts the translation refuses rather than walk into
-   * nodes that no longer match what the basis paired up.
+   * rebuilds a plan once any node in its scope changes (settledScopes.utils.test.tsx); these rows
+   * instead reuse a basis prepared BEFORE a change in a read AFTER it, so the translation itself has
+   * to notice mid-walk that its plan no longer describes the live tree and answer from what the
+   * tree still has — the scope's own front, for a byte alignment that can no longer be walked at
+   * all — rather than refuse outright.
    *
    * The paragraph is pending only on its emptied optbreak husk, so both notes ride through its
    * rebuild as preserved runs and cross by their child paths.
@@ -214,7 +215,11 @@ describe("a basis the tree has moved on under", () => {
       jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, settledTextIndex(note, "note one")]),
       offset,
     });
-    return { ...mounted, context, prepared, inFirstNoteBody };
+    /** The pending paragraph's own live key — where a rebuilt scope's front lands. */
+    const paraKey = mounted.lexical
+      .getEditorState()
+      .read(() => $getRoot().getChildren().filter($isParaNode)[0].getKey());
+    return { ...mounted, context, prepared, inFirstNoteBody, paraKey };
   }
 
   /** The first note in the first paragraph. */
@@ -224,8 +229,16 @@ describe("a basis the tree has moved on under", () => {
     return note;
   }
 
-  it("refuses a settled position in a preserved node that has since been removed", async () => {
-    const { lexical, context, prepared, inFirstNoteBody } = await staleBasis(() =>
+  /** The second note in the first paragraph. */
+  function $secondNote() {
+    const notes = $getRoot().getChildren().filter($isParaNode)[0].getChildren().filter($isNoteNode);
+    const note = notes[1];
+    if (!note) throw new Error("no second note");
+    return note;
+  }
+
+  it("rebuilds a live point in a preserved node that has since been removed, from the scope's front", async () => {
+    const { lexical, context, prepared, inFirstNoteBody, paraKey } = await staleBasis(() =>
       $firstNote().remove(),
     );
 
@@ -233,11 +246,11 @@ describe("a basis the tree has moved on under", () => {
       .getEditorState()
       .read(() => $livePointFromSettledLocation(context, prepared, inFirstNoteBody(2)));
 
-    expect(point).toBeUndefined();
+    expect(point).toEqual({ key: paraKey, offset: 0, type: "element" });
   });
 
-  it("refuses a settled position whose child path no longer exists in the live node", async () => {
-    const { lexical, context, prepared, inFirstNoteBody } = await staleBasis(() => {
+  it("rebuilds a live point whose settled child path no longer exists in the live node, from the scope's front", async () => {
+    const { lexical, context, prepared, inFirstNoteBody, paraKey } = await staleBasis(() => {
       // The body text and everything after it, so the body's child index names no child at all.
       const children = $firstNote().getChildren();
       const body = children.findIndex(
@@ -251,10 +264,10 @@ describe("a basis the tree has moved on under", () => {
       .getEditorState()
       .read(() => $livePointFromSettledLocation(context, prepared, inFirstNoteBody(2)));
 
-    expect(point).toBeUndefined();
+    expect(point).toEqual({ key: paraKey, offset: 0, type: "element" });
   });
 
-  it("refuses a live point in a child the settled node does not have", async () => {
+  it("rebuilds a settled location for a live point in a child the settled node does not have", async () => {
     const { lexical, prepared } = await staleBasis(() =>
       $firstNote().append($createTextNode(" added")),
     );
@@ -265,7 +278,23 @@ describe("a basis the tree has moved on under", () => {
       return $settledLocationFromLivePoint(prepared, added, 1);
     });
 
-    expect(location).toBeUndefined();
+    expect(location).toBeDefined();
+  });
+
+  it("rebuilds a settled location for a live point in a SECOND preserved run's new content", async () => {
+    // The same guard as the row above, exercised on a different preserved run in the same scope —
+    // the fix is not specific to whichever run happens to be first.
+    const { lexical, prepared } = await staleBasis(() =>
+      $secondNote().append($createTextNode(" added")),
+    );
+
+    const location = lexical.getEditorState().read(() => {
+      const added = $secondNote().getLastChild();
+      if (!added) throw new Error("no added child");
+      return $settledLocationFromLivePoint(prepared, added, 1);
+    });
+
+    expect(location).toBeDefined();
   });
 });
 
