@@ -405,6 +405,50 @@ describe("the `\\id` line's settle scope", () => {
     });
   });
 
+  // A sentinel verse (one carrying `unknownAttributes`) rides through the splice as a PRESERVED
+  // node rather than a freshly parsed one, so it is missing from the stale pre-splice node list a
+  // naive sid carry-over would collect from — shifting every sid pairing after it by one.
+  it("carries a verse's sid over when a sentinel verse precedes it in the line", async () => {
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createBookNode("GEN").append(
+          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createTextNode("Genesis "),
+          $createVerseNode(
+            "1",
+            getVisibleOpenMarkerText("v", "1"),
+            "GEN 1:1",
+            undefined,
+            undefined,
+            { foo: "bar" },
+          ),
+          $createTextNode(" a "),
+          $createVerseNode("2", getVisibleOpenMarkerText("v", "2"), "GEN 1:2"),
+          $createTextNode(" tail"),
+        ),
+      );
+    });
+
+    // A TERMINATED char marker re-tokenizes immediately (no pend) — drives $rebuildBook directly.
+    await act(async () =>
+      editor.update(() => {
+        const tail = $bookLine().getLastChild();
+        if (!$isTextNode(tail)) throw new Error("expected the line's trailing text node");
+        tail.setTextContent(" tail \\nd Lord\\nd* more");
+        tail.select(tail.getTextContentSize(), tail.getTextContentSize());
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const verses = $bookLine().getChildren().filter($isVerseNode);
+      expect(verses).toHaveLength(2);
+      expect(verses[0].getNumber()).toBe("1");
+      expect(verses[0].getSid()).toBe("GEN 1:1");
+      expect(verses[1].getNumber()).toBe("2");
+      expect(verses[1].getSid()).toBe("GEN 1:2");
+    });
+  });
+
   it("carries a verse's sid over in the READ-ONLY settled output too", async () => {
     const { editor } = await testEnvironment(() => {
       $getRoot().append(
