@@ -708,6 +708,57 @@ describe("$applyMarkerMenuSelection", () => {
       });
     });
 
+    it("does not double the opener when a collapsed caret sits at offset 0 of a char span's opening glyph", async () => {
+      // A caret before ANY of the opener's own bytes is genuinely BEFORE the whole span, not a
+      // point inside it. `$splitParagraphAtCharStack` never reaches this shape at all — it bails
+      // outright whenever the anchor is a `MarkerNode` — but the book split has no such fallback
+      // to bail into, so it has to resolve the point itself.
+      let openingGlyph: MarkerNode;
+      let ndText: TextNode;
+      const { editor } = await historyTestEnvironment(() => {
+        const nd = $createCharNode("nd");
+        openingGlyph = $createMarkerNode("nd");
+        ndText = $createTextNode(`${NBSP}Lord`);
+        $getRoot().append(
+          $createBookNode("GEN").append(
+            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+            $createTextNode("Genesis "),
+            nd.append(openingGlyph, ndText, $createMarkerNode("nd", "closing")),
+          ),
+        );
+      });
+      await act(async () =>
+        editor.update(() => {
+          openingGlyph.select(0, 0);
+        }),
+      );
+
+      const item: MarkerMenuItem = { marker: "q1", kind: "paragraph", isBasic: true };
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            item,
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        const openers = $getRoot()
+          .getAllTextNodes()
+          .filter(
+            (node): node is MarkerNode =>
+              $isMarkerNode(node) &&
+              node.getMarker() === "nd" &&
+              node.getMarkerSyntax() !== "closing",
+          );
+        expect(openers).toHaveLength(1);
+        expect($getRoot().getTextContent()).toContain("Lord");
+      });
+    });
+
     it("splits through an annotation's mark wrapper at a collapsed caret, keeping the mark's ids on both halves", async () => {
       // A translator comment anchored on `\id` text wraps it in a TypedMarkNode. The same pick in
       // an ordinary paragraph splits through the wrapper, leaving the annotation on both halves.
