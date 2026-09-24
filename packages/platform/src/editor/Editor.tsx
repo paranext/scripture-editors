@@ -715,8 +715,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           // directly after the book (docs/standard-view-invariants.md). `$setBlocksType` has no such
           // rule — it would happily convert the BookNode itself into a `ParaNode`, dropping the book
           // object (and its code) from the file while the stale `\id GEN` glyph stayed on screen
-          // inside the new paragraph.
-          if ($findMatchingParent(selection.focus.getNode(), $isBookNode)) {
+          // inside the new paragraph. Route off the selection's START point, not its end: a
+          // selection can run either direction, and a forward selection out of the `\id` line
+          // leaves `focus` in the following paragraph while `anchor` is still in the book.
+          const start = selection.isBackward() ? selection.focus : selection.anchor;
+          if ($findMatchingParent(start.getNode(), $isBookNode)) {
             if (!$splitParagraphWithMarker(blockMarker, viewOptions)) {
               logger?.warn(
                 `formatPara refused: could not split the \\id line at the caret to retag with "${blockMarker}"`,

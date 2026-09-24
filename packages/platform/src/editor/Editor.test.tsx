@@ -1710,6 +1710,59 @@ describe("formatPara (standard view)", () => {
     });
   });
 
+  // A selection can run either direction: `selection.focus` alone is the drag's END point, not
+  // its start. Routing on focus only finds the book when the drag runs backward (focus stays in
+  // the `\id` line); a forward drag — the direction a normal top-to-bottom selection takes —
+  // leaves focus in the following paragraph, so the book/split check must look at the START point
+  // instead.
+  it("splits the \\id line for a forward selection that ends past the book", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+
+    // Select forward: anchor in the book's own text, focus in the next paragraph's verse text.
+    act(() => {
+      lexical.update(() => {
+        const bookText = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("Test Book"));
+        const verseText = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("first verse text"));
+        if (!bookText || !$isTextNode(bookText)) throw new Error("seed book text node not found");
+        if (!verseText || !$isTextNode(verseText))
+          throw new Error("seed verse text node not found");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(bookText.getKey(), 4, "text");
+        selection.focus = $createPoint(verseText.getKey(), 4, "text");
+        $setSelection(selection);
+        expect(selection.isBackward()).toBe(false);
+      });
+    });
+    await act(async () => {
+      ref.current?.formatPara("p");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    lexical.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected the BookNode to remain at the root");
+      expect(book.getCode()).toBe("GEN");
+    });
+  });
+
   // The host's paragraph dropdown is a popover: opening it takes focus off the editor, and
   // Lexical's blur processing can NULL the editor-state selection. `formatPara` then has nothing
   // to retag. It must still say so — a marker pick that changes nothing and logs nothing is
