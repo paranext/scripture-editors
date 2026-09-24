@@ -1928,4 +1928,32 @@ describe("table cells under the default stylesheet (cell markers are Character s
       { type: "para", marker: "tc13", content: ["x"] },
     ]);
   });
+
+  it("keeps a +-nested cell-named marker an ordinary nested char, not a second cell", () => {
+    // ParatextData's IsCell test excludes a nested token by construction — nesting is itself a
+    // `+`-prefixed CHARACTER-marker feature, and IsCell only ever sees the base (non-nested) name.
+    expect(
+      usfmFragmentToUsjContent("\\tr \\tc1 a \\nd b \\+tc2 c\\+tc2*\\nd* d", { getMarker }),
+    ).toEqual([
+      {
+        type: "table",
+        content: [
+          row({
+            type: "table:cell",
+            marker: "tc1",
+            align: "start",
+            content: [
+              "a ",
+              {
+                type: "char",
+                marker: "nd",
+                content: ["b ", { type: "char", marker: "tc2", content: ["c"] }],
+              },
+              " d",
+            ],
+          }),
+        ],
+      },
+    ]);
+  });
 });
