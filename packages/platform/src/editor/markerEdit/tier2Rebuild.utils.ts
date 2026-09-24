@@ -1781,12 +1781,14 @@ function $isGlyphPoint(point: FragmentPoint): boolean {
 }
 
 /**
- * Where one end of a carried mark lands in the rebuilt fragment: the point, plus — for an end
- * INSIDE a node the settle made from typed literal bytes — which of the rebuilt fragment's runs it
- * is inside, and for a start ON a preserved run, that run's first node (see {@link MarkStart}).
+ * Where one end of a carried mark lands in the rebuilt fragment: the point, and the non-whitespace
+ * byte count it landed at (in the rebuilt fragment, or in the literal's spelling), plus — for an
+ * end INSIDE a node the settle made from typed literal bytes — which of the rebuilt fragment's runs
+ * it is inside, and for a start ON a preserved run, that run's first node (see {@link MarkStart}).
  */
 interface ResolvedMarkEnd {
   point: FragmentPoint;
+  at: number;
   literalRun?: number;
   preservedKey?: NodeKey;
 }
@@ -1838,7 +1840,7 @@ function $resolveMarkEnd(
     if (!inside.within) return undefined;
     const point = $resolveFragmentByteAnchor(inside.run.spelling, inside.within, options);
     if (!point || !$isRunContentPoint(point)) return undefined;
-    return { point, literalRun: inside.run.sentinelIndex };
+    return { point, at: inside.within.nonWsBefore, literalRun: inside.run.sentinelIndex };
   }
   // A mark that starts on a literal's first byte starts on the node the literal became, which
   // no byte position can name the front of — the same case as a mark starting on a preserved
@@ -1852,14 +1854,11 @@ function $resolveMarkEnd(
       attributeRunSpans: 0,
     };
     const point = $resolveFragmentByteAnchor(fragment, past, options);
-    return point && preservedKey ? { point, preservedKey } : undefined;
+    return point && preservedKey ? { point, at: past.nonWsBefore, preservedKey } : undefined;
   }
-  const point = $resolveFragmentByteAnchor(
-    fragment,
-    anchorAcrossLiteralsSnapped(pairing.alignment, anchor, "toSettled"),
-    options,
-  );
-  return point && { point };
+  const settledAnchor = anchorAcrossLiteralsSnapped(pairing.alignment, anchor, "toSettled");
+  const point = $resolveFragmentByteAnchor(fragment, settledAnchor, options);
+  return point && { point, at: settledAnchor.nonWsBefore };
 }
 
 /** Where a carried mark's START lands in `fragment` — see {@link $resolveMarkEnd}. A start on a
@@ -1873,12 +1872,9 @@ function $resolveMarkStart(
   const settledRun = pairing.sentinelMap[start.run]?.find((member) => member !== undefined);
   const preservedKey = settledRun && fragment.sentinels[settledRun.sentinelIndex]?.[0]?.getKey();
   if (!preservedKey) return undefined;
-  const point = $resolveFragmentByteAnchor(
-    fragment,
-    anchorAcrossLiteralsSnapped(pairing.alignment, start.anchor, "toSettled"),
-    { addressDisplayBytes: true },
-  );
-  return point && { point, preservedKey };
+  const settledAnchor = anchorAcrossLiteralsSnapped(pairing.alignment, start.anchor, "toSettled");
+  const point = $resolveFragmentByteAnchor(fragment, settledAnchor, { addressDisplayBytes: true });
+  return point && { point, at: settledAnchor.nonWsBefore, preservedKey };
 }
 
 /**
@@ -1904,9 +1900,17 @@ function $resolveMarkStart(
  *
  * An anchor that no longer resolves is skipped, in the rebuild's own preserve-or-refuse spirit: a
  * dropped annotation is recoverable by the host re-applying it, one re-wrapped over the wrong
- * bytes is not. So is a mark over nothing but bytes the settle re-spelled (a typed `lemma="` that
- * settles away): both its ends snap to the same position, which the collapsed-range rule below
- * refuses. And so is every wrap when `$freshFragment` cannot describe the rebuilt nodes at all.
+ * bytes is not. So is every wrap when `$freshFragment` cannot describe the rebuilt nodes at all,
+ * and a mark whose resolved range names no bytes it covered:
+ *
+ * - an end inside a marker glyph (see {@link $isGlyphPoint});
+ * - two ends that land at the same byte count, where the mark's own ends did not — a mark over
+ *   nothing but bytes the settle re-spelled (a typed `lemma="` that settles away). Comparing the
+ *   points is not enough: the start is resolved with byte addressing and the end with caret
+ *   addressing, so a count at a boundary between two text spans resolves to the next span's start
+ *   and to the previous span's end, and the wrap would take in that whole previous span;
+ * - two ends at the same point, which the wrap would turn into a mark over the bytes in front of
+ *   it (below).
  *
  * Mutating: call inside `editor.update()`, after the splice.
  */
@@ -1938,6 +1942,13 @@ function $restoreMarkByteRanges(
       const resolvedEnd = $resolveMarkEnd(range.end, fragment, pairing, false);
       if (!resolvedStart || !resolvedEnd) continue;
       if (resolvedStart.literalRun !== resolvedEnd.literalRun) continue;
+      const startAnchor = range.start.anchor;
+      if (
+        resolvedStart.at === resolvedEnd.at &&
+        startAnchor.nonWsBefore !== range.end.nonWsBefore &&
+        !resolvedStart.preservedKey
+      )
+        continue;
       const { point: start, preservedKey } = resolvedStart;
       const { point: end } = resolvedEnd;
       if ($isGlyphPoint(start) || $isGlyphPoint(end)) continue;

@@ -496,6 +496,54 @@ describe("a comment mark over typed attribute bytes the settle re-spells away", 
     });
     expect(annotatedText(mounted.lexical)).toEqual([]);
   });
+
+  it("is dropped rather than re-wrapped onto the text span in front of it", async () => {
+    // Beside a mark over `grace|`, the mark over `lemma="` has its start resolve to the start of
+    // the settled attribute run and its end to the end of the word in front of it — the same byte
+    // count, two different points. Wrapping between them would mark the whole word's span.
+    const mounted = await mountStandardViewEditor(
+      twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God made"]),
+    );
+    const typed = '|lemma="grace"';
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const word = $textContaining("grace");
+        const text = `${word.getTextContent()}${typed}`;
+        word.setTextContent(text);
+        word.select(text.length, text.length);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const text = $textContaining(typed);
+        const content = text.getTextContent();
+        const wrap = (from: number, to: number, id: string) => {
+          const selection = $createRangeSelection();
+          selection.anchor.set(text.getKey(), from, "text");
+          selection.focus.set(text.getKey(), to, "text");
+          $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, id);
+        };
+        const attribute = content.indexOf("lemma=");
+        // The later range first, so the earlier one's offsets still address the same node.
+        wrap(attribute, attribute + 'lemma="'.length, "c2");
+        wrap(content.indexOf("grace"), attribute, "c1");
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    settle(mounted);
+
+    expect(annotatedText(mounted.lexical)).toEqual(["grace|"]);
+    expect(annotatedIDs(mounted.lexical)).toEqual([{ [COMMENT_MARK_TYPE]: ["c1"] }]);
+    // `getUsj()` writes a comment mark as a milestone pair carrying its id.
+    const usj = JSON.stringify(mounted.ref.current?.getUsj());
+    expect(usj).toContain('"c1"');
+    expect(usj).not.toContain('"c2"');
+  });
 });
 
 /** A paragraph whose annotated range BEGINS at a note: `alpha ` sits outside the mark, the note and
