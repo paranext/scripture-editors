@@ -1,12 +1,12 @@
 /**
- * What the settled-position translation does when it CANNOT carry a HOST location across: it
- * refuses (`undefined`), and never answers approximately. A wrong position annotates or selects the
- * wrong text with no signal anywhere; a refusal is one tick of a feature not firing, and the
- * editor's public methods log it (Editor.tsx).
+ * The one kind of HOST location the settled-position translation refuses (`undefined`): a location
+ * that names nothing in the document `getUsj()` returned. Every other settled location has a live
+ * position, its own or where the bytes in front of it snap left to (settledPositions.snapLeft.test.tsx).
+ * A refusal is one tick of a feature not firing, and the editor's public methods log it
+ * (Editor.tsx).
  *
- * Each row names the reason the position has no answer, reaches it from a real pending state
- * where one exists, and asserts the refusal. The one nested-scope refusal lives with its fixture in
- * settledPositions.nestedScopes.test.tsx.
+ * Each row names why the location names nothing, reaches it from a real pending state, and asserts
+ * the refusal — plus the stale-basis backstop below.
  *
  * The other direction has no refusals a real caret can reach: a live position always reports a
  * settled location — its own (settledPositions.noteBytes.test.tsx), or the nearest one at or before
@@ -136,6 +136,29 @@ describe("a settled location the settled document does not have", () => {
     expect(liveLength).toBeGreaterThan(settledLength);
     expect(point).toBeUndefined();
     expect(range).toBeUndefined();
+  });
+
+  it("refuses a location that names nothing in getUsj()", async () => {
+    const { lexical, para, context, ref } = await pendingCharLiteral();
+    const head = settledTextIndex(para, "In the beginning ");
+    const locations: UsjDocumentLocation[] = [
+      // A top-level index past the settled document's end.
+      { jsonPath: contentPath([ref.current?.getUsj()?.content.length ?? 0]) },
+      // A child index past the pending paragraph's settled content.
+      { jsonPath: contentPath([PARA_TOP_INDEX, para.content?.length ?? 0]), offset: 0 },
+      // A text offset past its settled item's end.
+      {
+        jsonPath: contentPath([PARA_TOP_INDEX, head]),
+        offset: "In the beginning ".length + 1,
+      },
+    ];
+
+    const ranges = lexical.getEditorState().read(() => {
+      const prepared = $prepareSettleScopes(context);
+      return locations.map((start) => $liveSelectionFromSettled(context, prepared, { start }));
+    });
+
+    expect(ranges).toEqual([undefined, undefined, undefined]);
   });
 
   it("refuses the whole range when either endpoint cannot be carried across", async () => {

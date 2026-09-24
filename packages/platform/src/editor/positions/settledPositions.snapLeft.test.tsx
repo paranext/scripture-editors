@@ -1,25 +1,26 @@
 /**
- * A live position whose own bytes have no settled counterpart while an edit is pending reports the
- * NEAREST settled location at or before it — the same rule a USFM byte with no USJ representation
- * follows (`UsjReaderWriter` snaps it left, and so do the editor's own locations). So a live
- * position never reports `undefined` for want of a translation: `undefined` from `getSelection`
- * means there is no selection.
+ * A position whose own bytes have no counterpart on the other side while an edit is pending snaps
+ * LEFT, in both directions — the same rule a USFM byte with no USJ representation follows
+ * (`UsjReaderWriter` snaps it left, and so do the editor's own locations). So a live position never
+ * reports `undefined` for want of a translation: `undefined` from `getSelection` means there is no
+ * selection. And a settled location a host read from `getUsj()` is never refused for it either.
  *
  * The bytes that have no counterpart are the ones a pending settle spells differently from how
- * they were typed: a typed figure whose `file="…"` the settled figure spells `src="…"`, and
- * everything past the first of two such literals in one paragraph, where the two sides' preserved
- * runs cannot be put in correspondence at all. Every settled coordinate is read from the document
- * `getUsj()` returned.
+ * they were typed: a typed figure whose `file="…"` the settled figure spells `src="…"`. Every other
+ * byte maps exactly, however many such literals the paragraph holds. Every settled coordinate is
+ * read from the document `getUsj()` returned.
  */
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes, PreparedScopes } from "./settledScopes.utils";
 import {
+  $livePointFromSettledLocation,
   $liveSelectionFromSettled,
   $settledLocationFromLivePoint,
   $settledSelectionFromLive,
 } from "./settledPositions.utils";
 import {
   contentPath,
+  propertyPath,
   settledPara,
   settledPositionContext,
   settledTextIndex,
@@ -27,7 +28,7 @@ import {
   typeOver,
   $textContaining,
 } from "./positions.test-helpers";
-import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerObject, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $createRangeSelection, $setSelection } from "lexical";
 import { getPendedDisplayOwners } from "shared";
@@ -91,64 +92,109 @@ describe("a typed figure the settle spells differently from how it was typed", (
 
     expect(location).toEqual({ jsonPath: figure, keyName: "file", keyOffset: 3 });
   });
+
+  it("snaps a settled location on re-spelled bytes left", async () => {
+    const { lexical, context, literalStart, figure } = await pendingFigure();
+
+    // Between the `s` and the `r` of the settled `src`: the typed bytes it stands for start at
+    // the `f` of `file`.
+    const [point, key] = lexical.getEditorState().read(() => [
+      $livePointFromSettledLocation(context, $prepareSettleScopes(context), {
+        jsonPath: figure,
+        keyName: "file",
+        keyOffset: 1,
+      }),
+      $textContaining(LIVE).getKey(),
+    ]);
+
+    expect(point).toEqual({ key, offset: literalStart + LITERAL.indexOf("file"), type: "text" });
+  });
 });
 
 describe("two typed literals the settle spells differently, in one paragraph", () => {
-  // Each figure's `file=` is re-spelled, and with two of them the literal extents cannot be found:
-  // the bytes after the first one are not the settled document's bytes after it. The two sides'
-  // runs are paired only in front of the first literal.
+  // Each figure's `file=` is re-spelled `src=`. Only those bytes lack a settled counterpart: the
+  // rest of both literals, and everything around them, map exactly.
   const LIVE = 'In \\fig a|file="x.jpg"\\fig* the \\fig b|file="y.jpg"\\fig* made';
 
   async function pendingFigures() {
     const mounted = await pending(LIVE);
-    const head = settledTextIndex(mounted.para, "In ");
-    return { ...mounted, head: contentPath([PARA_TOP_INDEX, head]) };
+    const { para } = mounted;
+    const at = (text: string) => contentPath([PARA_TOP_INDEX, settledTextIndex(para, text)]);
+    const figures = (para.content ?? []).flatMap((item, index) =>
+      typeof item !== "string" && item.type === "figure" ? [index] : [],
+    );
+    expect(figures).toHaveLength(2);
+    return {
+      ...mounted,
+      head: at("In "),
+      between: at(" the "),
+      tail: at(" made"),
+      first: [PARA_TOP_INDEX, figures[0]],
+      second: [PARA_TOP_INDEX, figures[1]],
+    };
+  }
+
+  type Fixture = Awaited<ReturnType<typeof pendingFigures>>;
+
+  function reportedAt(fixture: Fixture, offset: number) {
+    return fixture.lexical
+      .getEditorState()
+      .read(() =>
+        $settledLocationFromLivePoint(
+          $prepareSettleScopes(fixture.context),
+          $textContaining(LIVE),
+          offset,
+        ),
+      );
   }
 
   it("reports a caret in front of the literals exactly", async () => {
-    const { lexical, context, head } = await pendingFigures();
+    const fixture = await pendingFigures();
 
-    const location = lexical
-      .getEditorState()
-      .read(() =>
-        $settledLocationFromLivePoint($prepareSettleScopes(context), $textContaining(LIVE), 1),
-      );
-
-    expect(location).toEqual({ jsonPath: head, offset: 1 });
+    expect(reportedAt(fixture, 1)).toEqual({ jsonPath: fixture.head, offset: 1 });
   });
 
-  it.each([
-    ["inside the first literal", LIVE.indexOf("a|file")],
-    ["between the literals", LIVE.indexOf(" the ") + 2],
-    ["inside the second literal", LIVE.indexOf("y.jpg")],
-    ["past both literals", LIVE.indexOf(" made") + 3],
-  ])(
-    "reports a caret %s at the nearest position before them that has a settled location",
-    async (_, offset) => {
-      const { lexical, context, head } = await pendingFigures();
+  it.each<[string, number, (fixture: Fixture) => UsjDocumentLocation]>([
+    [
+      "on the first figure's content",
+      LIVE.indexOf("a|file"),
+      (f) => ({ jsonPath: contentPath([...f.first, 0]), offset: 0 }),
+    ],
+    [
+      "between the literals",
+      LIVE.indexOf(" the ") + 2,
+      (f) => ({ jsonPath: f.between, offset: 2 }),
+    ],
+    [
+      "on the second figure's file value",
+      LIVE.indexOf("y.jpg"),
+      (f) => ({ jsonPath: propertyPath(f.second, "file"), propertyOffset: 0 }),
+    ],
+    ["past both literals", LIVE.indexOf(" made") + 3, (f) => ({ jsonPath: f.tail, offset: 3 })],
+  ])("reports a caret %s exactly", async (_, offset, expected) => {
+    const fixture = await pendingFigures();
 
-      const location = lexical
-        .getEditorState()
-        .read(() =>
-          $settledLocationFromLivePoint(
-            $prepareSettleScopes(context),
-            $textContaining(LIVE),
-            offset,
-          ),
-        );
+    expect(reportedAt(fixture, offset)).toEqual(expected(fixture));
+  });
 
-      expect(location).toEqual({ jsonPath: head, offset: "In ".length });
-    },
-  );
+  it("reports a caret inside the second figure's re-spelled key at the start of that key", async () => {
+    const fixture = await pendingFigures();
 
-  it("snaps each end of a range left on its own", async () => {
-    const { lexical, context, head } = await pendingFigures();
+    expect(reportedAt(fixture, LIVE.lastIndexOf("file") + 2)).toEqual({
+      jsonPath: contentPath(fixture.second),
+      keyName: "file",
+      keyOffset: 0,
+    });
+  });
+
+  it("carries each end of a range on its own, snapping only the one on re-spelled bytes", async () => {
+    const { lexical, context, head, second } = await pendingFigures();
     await act(async () => {
       lexical.update(() => {
         const node = $textContaining(LIVE);
         const selection = $createRangeSelection();
         selection.anchor.set(node.getKey(), 1, "text");
-        selection.focus.set(node.getKey(), LIVE.indexOf(" made") + 3, "text");
+        selection.focus.set(node.getKey(), LIVE.lastIndexOf("file") + 2, "text");
         $setSelection(selection);
       });
       await Promise.resolve();
@@ -160,13 +206,11 @@ describe("two typed literals the settle spells differently, in one paragraph", (
 
     expect(selection).toEqual({
       start: { jsonPath: head, offset: 1 },
-      end: { jsonPath: head, offset: "In ".length },
+      end: { jsonPath: contentPath(second), keyName: "file", keyOffset: 0 },
     });
   });
 
-  it("still refuses a settled location in the paragraph, in front of the literals too", async () => {
-    // A host location is carried across exactly or refused — never approximated — so a pairing
-    // that holds for only part of the scope carries none of it inbound.
+  it("maps a settled location in front of the literals exactly", async () => {
     const { lexical, context, head } = await pendingFigures();
 
     const range = lexical.getEditorState().read(() =>
@@ -175,13 +219,13 @@ describe("two typed literals the settle spells differently, in one paragraph", (
       }),
     );
 
-    expect(range).toBeUndefined();
+    expect(range).toEqual({ start: { jsonPath: contentPath([PARA_TOP_INDEX, 0]), offset: 1 } });
   });
 });
 
 describe("two typed literals the settle spells differently, after a note the paragraph has", () => {
-  // The note is carried through the paragraph's rebuild and paired in front of the literals, so a
-  // caret in it crosses by the note's own path — and a host location in it is still refused.
+  // The note is carried through the paragraph's rebuild as the same node, so a position in it
+  // crosses by the note's own path in both directions.
   const LITERALS = ' \\fig a|file="x.jpg"\\fig* the \\fig b|file="y.jpg"\\fig* made';
 
   async function pendingAfterNote() {
@@ -225,16 +269,18 @@ describe("two typed literals the settle spells differently, after a note the par
     expect(location).toEqual({ jsonPath: body, offset: 2 });
   });
 
-  it("still refuses a settled location in the note", async () => {
+  it("maps a settled location in the note exactly", async () => {
     const { lexical, context, body } = await pendingAfterNote();
 
-    const range = lexical.getEditorState().read(() =>
-      $liveSelectionFromSettled(context, $prepareSettleScopes(context), {
-        start: { jsonPath: body, offset: 2 },
+    const [point, key] = lexical.getEditorState().read(() => [
+      $livePointFromSettledLocation(context, $prepareSettleScopes(context), {
+        jsonPath: body,
+        offset: 2,
       }),
-    );
+      $textContaining("note body").getKey(),
+    ]);
 
-    expect(range).toBeUndefined();
+    expect(point).toEqual({ key, offset: 2, type: "text" });
   });
 });
 

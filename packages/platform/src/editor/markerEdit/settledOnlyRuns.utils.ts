@@ -1,19 +1,26 @@
 /**
- * Lining up a settle scope's live bytes with its settled bytes when the settle turned typed literal
- * bytes into a preserved node — a `\f + \ft note\f*` typed as plain text that settles into a note.
+ * Lining up a settle scope's live bytes with its settled bytes: the preserved runs the two sides
+ * share, and the typed literal bytes the settle turned into a preserved node — a `\f + \ft note\f*`
+ * typed as plain text that settles into a note.
  *
  * Both sides are byte fragments (`FragmentAccumulator`, tier2Rebuild.utils.ts) over the same
  * displayed bytes, which is what lets a whitespace-tolerant byte anchor carry a position from one to
- * the other. A preserved node is the exception: a fragment spells it as ONE placeholder byte. So
- * where the live side spells a literal byte for byte and the settled side spells the node it became
- * as one placeholder, every byte past it sits a literal's length further along live than settled,
- * and a byte inside it is a byte of the settled node's own spelling. This module finds those runs
- * ({@link pairRuns}) and restates anchors across them, for everything that carries a live position
- * into a settled tree: the settled-position translation (positions/) and the rebuild's annotation
- * carry (tier2Rebuild.utils.ts).
+ * the other. They differ where the settle re-spells an attribute section, and where the live side
+ * spells a literal byte for byte while the settled side spells the node it became as ONE placeholder
+ * byte; a byte inside such a literal is a byte of the settled node's own spelling. The byte
+ * alignment (usfmByteAlignment.utils.ts) accounts for both, and this module builds it from the two
+ * fragments ({@link pairRuns}) and restates anchors through it, for everything that carries a live
+ * position into a settled tree: the settled-position translation (positions/) and the rebuild's
+ * annotation carry (tier2Rebuild.utils.ts).
  */
 
 import type { CaretByteAnchor, FragmentAccumulator, FragmentSpan } from "./tier2Rebuild.utils";
+import {
+  alignScopeBytes,
+  ByteAlignment,
+  mapCount,
+  mapCountSnapped,
+} from "./usfmByteAlignment.utils";
 import {
   $getNodeByKey,
   $getState,
@@ -72,9 +79,9 @@ export interface NonWsCounts {
 
 /**
  * A preserved run the settle introduced from literal bytes: the settled fragment spells it as one
- * placeholder byte, and the live fragment spells the literal it came from. Outside it the two
- * fragments spell the same bytes, the live one `liveLength - 1` bytes longer past it; inside it
- * the literal's bytes are the settled run's own bytes, wherever the settle spells them back.
+ * placeholder byte, and the live fragment spells the literal it came from. Inside it the literal's
+ * bytes are the settled run's own bytes, wherever the settle spells them back ({@link
+ * SettledOnlyRun.inner}).
  */
 export interface SettledOnlyRun {
   /** The run's index in the settled fragment's run list. */
@@ -89,17 +96,13 @@ export interface SettledOnlyRun {
   readonly settledBefore: NonWsCounts;
   /** The run's own bytes as the settled tree spells them (spans keyed by that tree's keys). */
   readonly spelling: FragmentAccumulator;
-  /** How many non-whitespace bytes `spelling` has. */
-  readonly spelledLength: number;
   /**
-   * How many of the literal's leading non-whitespace bytes `spelling` spells identically, and how
-   * many trailing ones besides — the bytes a position inside the literal crosses by. Together they
-   * cover the whole literal when the settled node spells the typed bytes back one for one; a
+   * How the literal's non-whitespace bytes (live, counted from its first one) line up with
+   * `spelling`'s (settled). One for one where the settled node spells the typed bytes back; a
    * settle that re-spells part of it (a figure's typed `file="…"`, which the settled figure spells
-   * `src="…"`) leaves the bytes between them with no settled counterpart.
+   * `src="…"`) leaves those bytes with no counterpart.
    */
-  readonly sharedPrefix: number;
-  readonly sharedSuffix: number;
+  readonly inner: ByteAlignment;
   /** The attributes `spelling` spells as bytes the settled tree does not display — see
    * {@link FoldedAttribute}. */
   readonly foldedAttributes: readonly FoldedAttribute[];
@@ -142,14 +145,12 @@ export interface RunPairing {
   /** Where each live run member sits in the settled run list, indexed `[live run][live member]`;
    * `undefined` for a member the settled side has no counterpart for. */
   sentinelMap: (SettledRunMember | undefined)[][];
-  /** The settled runs no live run became, in settled fragment order. */
+  /** The settled runs no live run became that the live side spells as a literal, in settled
+   * fragment order. */
   settledOnlyRuns: SettledOnlyRun[];
-  /**
-   * For a pairing asked for `partial`ly: how many of the live fragment's non-whitespace bytes it
-   * holds for, when the runs past them could not be put in correspondence. `undefined` when it
-   * holds for every byte.
-   */
-  pairedBefore?: number;
+  /** The live fragment's non-whitespace bytes lined up with the settled fragment's, every byte
+   * counted — the coordinates a byte anchor's `nonWsBefore` counts in. */
+  alignment: ByteAlignment;
 }
 
 /** One byte of a fragment's spans, as plain data — readable after the nodes it came from are
@@ -208,25 +209,6 @@ function wsRunBefore({ bytes }: FragmentBytes, position: number): number {
  * every-byte coordinates. */
 function nonWsBytes({ bytes }: FragmentBytes): SpanByte[] {
   return bytes.filter((byte) => !byte.isWs);
-}
-
-/**
- * How many leading bytes two strings share, and how many trailing ones. Where the two overlap — a
- * byte the front can claim and the back can too, which happens when the bytes one side re-spelled
- * begin with the byte that follows them on the other — neither is sure which byte it is, so
- * neither claims it.
- */
-function sharedEnds(first: string, second: string): { prefix: number; suffix: number } {
-  if (first === second) return { prefix: first.length, suffix: 0 };
-  const limit = Math.min(first.length, second.length);
-  let prefix = 0;
-  while (prefix < limit && first[prefix] === second[prefix]) prefix += 1;
-  let suffix = 0;
-  while (suffix < limit && first[first.length - 1 - suffix] === second[second.length - 1 - suffix])
-    suffix += 1;
-  return prefix + suffix > limit
-    ? { prefix: limit - suffix, suffix: limit - prefix }
-    : { prefix, suffix };
 }
 
 /** The USFM attribute marker a note's `category` is written as. */
@@ -378,57 +360,35 @@ export function $liveRunSide(
 }
 
 /**
- * Where each live preserved-run member sits in the settled fragment's own run list, plus the
- * settled runs no live run became — or `undefined` when the two sides' runs cannot be put in
- * correspondence at all.
+ * How the two sides of one scope correspond: where each live preserved-run member sits in the
+ * settled fragment's own run list, the settled runs the live side spells as literals, and how the
+ * two fragments' bytes line up.
  *
- * A rebuild splices the members it carries back into its output in fragment order, so the settled
- * fragment lists those same nodes in that same order with the dropped ones missing — which pairs
- * the two sides off member for member.
+ * A rebuild splices the members it carries back into its output in fragment order, so when the
+ * settled fragment lists no other runs, it lists those same nodes in that same order with the
+ * dropped ones missing — which pairs the two sides off member for member.
  *
  * A settled list LONGER than that has runs the rebuild made from literal bytes: a typed
  * `\f + \ft note\f*` tokenizes into a note, which the settled fragment spells as a placeholder.
- * Those are found by walking both fragments' runs in order: a carried run's placeholder sits at
- * the same non-whitespace byte count on both sides (less what the literals before it spelled
- * beyond their one placeholder byte), and a settled run with no live placeholder there must be
- * spelled out, byte for byte, by the live bytes at that count. A run neither accounts for is a
- * shape the pairing cannot describe, and the answer is nothing rather than a construct the two
- * sides disagree about — or, asked for `partial`ly, the pairing in front of that run, where the two
- * sides still agree ({@link RunPairing.pairedBefore}).
+ * Those are found by the byte alignment, which spells each settled placeholder the live side has no
+ * placeholder for out as its run's own bytes: a live run is paired with the settled run its
+ * placeholder lines up with, and a settled run the live side spells out byte for byte is a
+ * {@link SettledOnlyRun}. A run neither accounts for — one past a divergence the alignment cannot
+ * explain — is left without a counterpart, so a position in it has none either, while the rest of
+ * the scope still pairs.
  *
  * The live fragment must already be without the placeholders of the runs the settle dropped.
  */
-export function pairRuns(
-  live: LiveRunSide,
-  settled: SettledRunSide,
-  { partial = false }: { partial?: boolean } = {},
-): RunPairing | undefined {
+export function pairRuns(live: LiveRunSide, settled: SettledRunSide): RunPairing {
   const sentinelMap: (SettledRunMember | undefined)[][] = live.carried.map((run) =>
     run.map(() => undefined),
   );
-  const settledOnlyRuns: SettledOnlyRun[] = [];
-  /**
-   * The pairing as far as it holds: in front of the live byte count `before`, less any literal
-   * that reaches past it. Nothing from there on is paired — every run there is left without a
-   * counterpart, and every literal there without a spelling — so nothing there can be carried
-   * across by a pairing the two sides do not agree on.
-   */
-  const pairedUpTo = (before: number): RunPairing | undefined => {
-    if (!partial) return undefined;
-    const kept = settledOnlyRuns.filter(
-      (run) => run.liveBefore.full + run.liveLength.full <= before,
-    );
-    const pairedBefore = Math.min(
-      before,
-      ...settledOnlyRuns.filter((run) => !kept.includes(run)).map((run) => run.liveBefore.full),
-    );
-    live.carried.forEach((run, liveIndex) => {
-      const placeholder = live.facts.placeholders[liveIndex];
-      if (placeholder === undefined || nonWsBefore(live.facts, placeholder).full >= pairedBefore)
-        sentinelMap[liveIndex] = run.map(() => undefined);
-    });
-    return { sentinelMap, settledOnlyRuns: kept, pairedBefore };
-  };
+  const liveBytes = nonWsBytes(live.facts);
+  const { alignment, literals } = alignScopeBytes(
+    liveBytes.map(({ byte }) => byte).join(""),
+    settled.bytes,
+    new Map(settled.runs.map((run) => [run.before.full, run.spelled])),
+  );
   /** Pair one live run's carried members with one settled run's members, in order. */
   const pairRun = (liveIndex: number, sentinelIndex: number): void => {
     let memberIndex = 0;
@@ -442,7 +402,6 @@ export function pairRuns(
 
   const carriedCount = live.carried.reduce((count, run) => count + carriedIn(run), 0);
   const settledCount = settled.runs.reduce((count, run) => count + run.memberCount, 0);
-  if (carriedCount > settledCount) return pairedUpTo(0);
   if (carriedCount === settledCount) {
     // Every settled member is a carried one: pair the two flattened lists off in order.
     const members = settled.runs.flatMap((run, sentinelIndex) =>
@@ -454,44 +413,35 @@ export function pairRuns(
         if (isCarried) sentinelMap[liveIndex][liveMember] = members[next++];
       }),
     );
-    return { sentinelMap, settledOnlyRuns: [] };
+    return { sentinelMap, settledOnlyRuns: [], alignment };
   }
 
-  // The live runs that reach the settled side, in order, with where their placeholders sit.
-  const liveRuns = live.carried
-    .map((_, index) => ({
-      index,
-      before: nonWsBefore(live.facts, live.facts.placeholders[index] ?? 0),
-    }))
-    .filter(({ index }) => carriedIn(live.carried[index]) > 0);
-  const liveBytes = nonWsBytes(live.facts);
-  const liveText = liveBytes.map(({ byte }) => byte).join("");
-  let shift = 0;
-  let nextLive = 0;
-  for (let sentinelIndex = 0; sentinelIndex < settled.runs.length; sentinelIndex += 1) {
+  // Each settled run by where its placeholder sits in the settled bytes.
+  const settledAt = new Map(
+    settled.runs.map((run, sentinelIndex) => [run.before.full, sentinelIndex]),
+  );
+  live.carried.forEach((run, liveIndex) => {
+    const placeholder = live.facts.placeholders[liveIndex];
+    if (placeholder === undefined || carriedIn(run) === 0) return;
+    const count = mapCount(alignment, nonWsBefore(live.facts, placeholder).full, "live");
+    const sentinelIndex = count === undefined ? undefined : settledAt.get(count);
+    if (sentinelIndex === undefined || settled.runs[sentinelIndex].memberCount !== carriedIn(run))
+      return;
+    pairRun(liveIndex, sentinelIndex);
+  });
+
+  const settledOnlyRuns: SettledOnlyRun[] = [];
+  for (const [placeholder, literal] of literals) {
+    const sentinelIndex = settledAt.get(placeholder);
+    if (sentinelIndex === undefined) continue;
     const facts = settled.runs[sentinelIndex];
-    const liveRun = liveRuns[nextLive];
-    if (liveRun?.before.full === facts.before.full + shift) {
-      if (carriedIn(live.carried[liveRun.index]) !== facts.memberCount)
-        return pairedUpTo(liveRun.before.full);
-      pairRun(liveRun.index, sentinelIndex);
-      nextLive += 1;
-      continue;
-    }
-    const start = facts.before.full + shift;
-    let end = start + facts.spelled.length;
-    if (liveText.slice(start, end) !== facts.spelled) {
-      // The settled node does not spell the typed bytes back (a figure's typed `file="…"`, which
-      // it spells `src="…"`), so the literal's extent comes from the other side of it: everything
-      // after it is the same bytes on both sides.
-      const settledAfter = settled.bytes.slice(facts.before.full + 1);
-      end = liveText.length - settledAfter.length;
-      if (end <= start || liveText.slice(end) !== settledAfter) return pairedUpTo(start);
-    }
-    const literal = { start: liveBytes[start].position, end: liveBytes[end - 1].position + 1 };
-    const liveBefore = nonWsBefore(live.facts, literal.start);
-    const liveAfter = nonWsBefore(live.facts, literal.end);
-    const shared = sharedEnds(liveText.slice(start, end), facts.spelled);
+    // Where the literal's first byte sits in the live fragment, and where its last one ends; a
+    // literal with no bytes at all sits where its first byte would.
+    const start = liveBytes[literal.liveStart]?.position ?? Number.POSITIVE_INFINITY;
+    const end =
+      literal.liveEnd > literal.liveStart ? liveBytes[literal.liveEnd - 1].position + 1 : start;
+    const liveBefore = nonWsBefore(live.facts, start);
+    const liveAfter = nonWsBefore(live.facts, end);
     settledOnlyRuns.push({
       sentinelIndex,
       liveBefore,
@@ -499,88 +449,83 @@ export function pairRuns(
         full: liveAfter.full - liveBefore.full,
         document: liveAfter.document - liveBefore.document,
       },
-      liveWsBefore: wsRunBefore(live.facts, literal.start),
+      liveWsBefore: wsRunBefore(live.facts, start),
       settledBefore: facts.before,
       spelling: facts.spelling,
-      spelledLength: facts.spelled.length,
-      sharedPrefix: shared.prefix,
-      sharedSuffix: shared.suffix,
+      inner: literal.inner,
       foldedAttributes: facts.foldedAttributes,
     });
-    shift += end - start - 1;
   }
-  if (nextLive < liveRuns.length) return pairedUpTo(liveRuns[nextLive].before.full);
-  return { sentinelMap, settledOnlyRuns };
+  return { sentinelMap, settledOnlyRuns, alignment };
 }
 
 /**
- * `anchor` over one side's fragment restated over the other's, across every settled-only run it
- * lies past: the live fragment spells each such run's literal where the settled fragment spells one
- * placeholder byte. Each coordinate system is restated in its own counts.
+ * `anchor` over one side's fragment restated over the other's, through the scope's byte
+ * {@link RunPairing.alignment}. An anchor whose byte has no counterpart on the other side snaps
+ * LEFT to where the other side's differing bytes start (`mapCountSnapped`,
+ * usfmByteAlignment.utils.ts). Full bytes only: the alignment already accounts for every attribute
+ * section the settle re-spelled, which is what document coordinates exist to step around.
  */
-export function anchorAcrossLiterals(
-  runs: readonly SettledOnlyRun[],
+export function anchorAcrossLiteralsSnapped(
+  alignment: ByteAlignment,
   anchor: CaretByteAnchor,
   direction: "toSettled" | "toLive",
 ): CaretByteAnchor {
-  if (runs.length === 0) return anchor;
-  const restate = (count: number, coordinates: "full" | "document"): number => {
-    let shift = 0;
-    for (const run of runs) {
-      const extra = run.liveLength[coordinates] - 1;
-      const isPast =
-        direction === "toSettled"
-          ? count >= run.liveBefore[coordinates] + run.liveLength[coordinates]
-          : count >= run.settledBefore[coordinates] + 1;
-      if (isPast) shift += extra;
-    }
-    return direction === "toSettled" ? count - shift : count + shift;
-  };
   return {
-    ...anchor,
-    nonWsBefore: restate(anchor.nonWsBefore, "full"),
-    documentCoords: anchor.documentCoords && {
-      ...anchor.documentCoords,
-      nonWsBefore: restate(anchor.documentCoords.nonWsBefore, "document"),
-    },
+    nonWsBefore: mapCountSnapped(
+      alignment,
+      anchor.nonWsBefore,
+      direction === "toSettled" ? "live" : "settled",
+    ),
+    wsRun: anchor.wsRun,
+    attributeRunSpans: anchor.attributeRunSpans,
   };
 }
 
 /**
  * A count of non-whitespace bytes into one side of a settled-only run — the live literal, or the
  * run's spelling — restated as a count into the other, or `undefined` for a byte the settle
- * re-spelled, which the other side has no counterpart for. Bytes up to the shared prefix line up
- * from the front, and bytes from the shared suffix on line up from the back.
+ * re-spelled, which the other side has no counterpart for.
  */
 export function acrossLiteral(
   run: SettledOnlyRun,
   count: number,
   direction: "toSpelling" | "toLiteral",
 ): number | undefined {
-  const [fromLength, toLength] =
-    direction === "toSpelling"
-      ? [run.liveLength.full, run.spelledLength]
-      : [run.spelledLength, run.liveLength.full];
-  if (count <= run.sharedPrefix) return count;
-  if (count >= fromLength - run.sharedSuffix) return toLength - (fromLength - count);
-  return undefined;
+  return mapCount(run.inner, count, direction === "toSpelling" ? "live" : "settled");
 }
 
 /**
- * The settled-only run whose live literal a live anchor lies strictly inside, and the anchor
- * restated over that run's own spelling — `within` is `undefined` for a byte the settle re-spelled.
- * Full bytes only: the literal is plain text, and the spelling counts every byte it has.
+ * The settled-only run whose live literal a live anchor sits directly in front of: at the
+ * literal's first byte, past any whitespace in front of it. The literal's first byte is the first
+ * byte of the node it became, so the anchor stands in front of that node.
+ */
+export function literalStartingAt(
+  runs: readonly SettledOnlyRun[],
+  anchor: CaretByteAnchor,
+): SettledOnlyRun | undefined {
+  return runs.find(
+    (run) => anchor.nonWsBefore === run.liveBefore.full && anchor.wsRun >= run.liveWsBefore,
+  );
+}
+
+/**
+ * The settled-only run whose live literal a live anchor lies strictly inside, how far into the
+ * literal it lies (`count`), and the anchor restated over that run's own spelling — `within` is
+ * `undefined` for a byte the settle re-spelled. Full bytes only: the literal is plain text, and the
+ * spelling counts every byte it has.
  */
 export function literalContaining(
   runs: readonly SettledOnlyRun[],
   anchor: CaretByteAnchor,
-): { run: SettledOnlyRun; within: CaretByteAnchor | undefined } | undefined {
+): { run: SettledOnlyRun; count: number; within: CaretByteAnchor | undefined } | undefined {
   for (const run of runs) {
     const count = anchor.nonWsBefore - run.liveBefore.full;
     if (count <= 0 || count >= run.liveLength.full) continue;
     const within = acrossLiteral(run, count, "toSpelling");
     return {
       run,
+      count,
       within:
         within === undefined
           ? undefined

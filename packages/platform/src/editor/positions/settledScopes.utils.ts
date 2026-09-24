@@ -227,24 +227,27 @@ function $planFrom(
     };
   });
   const base = { kind, liveNodes, liveCut, scratch, scratchFragment, settledCount };
-  // Nothing preserved on either side: the correspondence is vacuous, not unknown.
-  if ((liveFragment?.sentinels.length ?? 0) === 0 && (settledSide?.runs.length ?? 0) === 0)
-    return { ...base, liveFragment, sentinelMap: [], settledOnlyRuns: [], pairedBefore: undefined };
+  // Nothing preserved on either side: the run correspondence is vacuous, not unknown, and the
+  // bytes still line up.
+  if ((liveFragment?.sentinels.length ?? 0) === 0 && (settledSide?.runs.length ?? 0) === 0) {
+    const alignment =
+      liveFragment &&
+      settledSide &&
+      pairRuns($liveRunSide(liveFragment, []), settledSide).alignment;
+    return { ...base, liveFragment, sentinelMap: [], settledOnlyRuns: [], alignment };
+  }
   const paired = liveFragment && carried && withoutDroppedSentinels(liveFragment, carried.live);
   const pairing =
-    paired &&
-    pairRuns($liveRunSide(paired, carried.live), settledSide ?? { runs: [], bytes: "" }, {
-      partial: true,
-    });
+    paired && settledSide && pairRuns($liveRunSide(paired, carried.live), settledSide);
   if (!pairing)
     return {
       ...base,
       liveFragment,
       sentinelMap: undefined,
       settledOnlyRuns: [],
-      pairedBefore: undefined,
+      alignment: undefined,
     };
-  return { ...base, liveFragment: paired, pairedBefore: undefined, ...pairing };
+  return { ...base, liveFragment: paired, ...pairing };
 }
 
 /** The live fragment for a scope with the declared bytes cut out of it, plus where that cut was. */

@@ -5,7 +5,17 @@ import {
   PositionScenario,
   specMapSnapped,
 } from "./positionContract.test-helpers";
-import { twoParaUsj, typeOver } from "./positions.test-helpers";
+import {
+  $textContaining,
+  huskBeforeNoteUsj,
+  pendNoteInsideSettlingPara,
+  twoParaUsj,
+  typeOver,
+} from "./positions.test-helpers";
+import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
+import { act } from "@testing-library/react";
+import { $getRoot, $getState, LexicalEditor, TextNode } from "lexical";
+import { $isMarkerNode, textTypeState } from "shared";
 
 const BASE = "In the beginning made";
 
@@ -46,6 +56,323 @@ const BASELINE: PositionScenario[] = [
     },
   },
 ];
+
+/** Run `edit` in one update and let the commit's listeners settle. */
+async function inOneUpdate(lexical: LexicalEditor, edit: () => void): Promise<void> {
+  await act(async () => {
+    lexical.update(edit);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+/** A paragraph holding one `marker` char span with `word` as its text, between "In the " and
+ * " of God made". */
+function spanUsj(marker: string, word: string, attributes: { [name: string]: string } = {}) {
+  const span: MarkerObject = { type: "char", marker, ...attributes, content: [word] };
+  return twoParaUsj(["In the ", span, " of God made"]);
+}
+
+/** Append `typed` to the text node holding `word`, caret at the end of what was typed. The node's
+ * leading separator stays: overwriting it would corrupt the span's marker. */
+function appended(word: string, typed: string): PositionScenario["pend"] {
+  return (lexical) =>
+    inOneUpdate(lexical, () => {
+      const node = $textContaining(word);
+      const text = `${node.getTextContent()}${typed}`;
+      node.setTextContent(text);
+      node.select(text.length, text.length);
+    });
+}
+
+/** The bytes around a span's attribute section, for a span whose typed `|name="value"` settles to
+ * the bare default `|value`. */
+function collapsedDefault(opener: string, name: string, value: string, closer: string) {
+  return {
+    segments: [
+      [opener, opener],
+      [`${name}="`, ""],
+      [value, value],
+      ['"', ""],
+      [closer, closer],
+    ] as const,
+  };
+}
+
+/** A char span whose text is `word`, with `|name="value"` typed after that text. */
+function namedDefault(
+  name: string,
+  marker: string,
+  word: string,
+  attribute: string,
+  value: string,
+): PositionScenario {
+  return {
+    name,
+    usj: spanUsj(marker, word),
+    pend: appended(word, `|${attribute}="${value}"`),
+    liveNeedle: "God",
+    settledNeedle: "God",
+    alignment: collapsedDefault(
+      `\\p In the \\${marker} ${word}|`,
+      attribute,
+      value,
+      `\\${marker}* of God made`,
+    ),
+  };
+}
+
+/**
+ * A milestone whose attribute run is retyped as `|name="value"`, which settles to the bare default
+ * `|value`. The milestone starts with a different attribute (`start`), so it has a run to retype,
+ * and its closer is the milestone's own: a caret inside a TYPED closer is a case of its own.
+ */
+function namedMilestone(
+  name: string,
+  marker: string,
+  start: { [name: string]: string },
+  attribute: string,
+  value: string,
+): PositionScenario {
+  return {
+    name,
+    usj: twoParaUsj(["In the ", { type: "ms", marker, ...start }, " made"]),
+    pend: retypedAttributeRun(`|${attribute}="${value}"`),
+    liveNeedle: "made",
+    settledNeedle: "made",
+    alignment: collapsedDefault(`\\p In the \\${marker} |`, attribute, value, "\\* made"),
+  };
+}
+
+/** The paragraph's attribute display run. */
+function $attributeRun(): TextNode {
+  const run = $getRoot()
+    .getAllTextNodes()
+    .find((node) => !$isMarkerNode(node) && $getState(node, textTypeState) === "attribute");
+  if (!run) throw new Error("no attribute run");
+  return run;
+}
+
+/** Retype the paragraph's attribute run as `typed`, keeping its leading separator, with the caret
+ * in front of the closing quote. */
+function retypedAttributeRun(typed: string): PositionScenario["pend"] {
+  return (lexical) =>
+    inOneUpdate(lexical, () => {
+      const run = $attributeRun();
+      const leading = /^\s*/.exec(run.getTextContent())?.[0] ?? "";
+      const text = `${leading}${typed}`;
+      run.setTextContent(text);
+      run.select(text.length - 1, text.length - 1);
+    });
+}
+
+const RESPELLINGS: PositionScenario[] = [
+  namedDefault("w-named-default-appended", "w", "grace", "lemma", "grace"),
+  namedDefault("w-lemma-repeated", "w", "lemma", "lemma", "lemma"),
+  namedDefault("rb-gloss-named", "rb", "grace", "gloss", "x"),
+  namedDefault("xt-link-href-named", "xt", "grace", "link-href", "GEN 1:1"),
+  namedDefault("jmp-link-href-named", "jmp", "grace", "link-href", "GEN 1:1"),
+  namedMilestone("qt-s-who-named", "qt-s", { sid: "q1" }, "who", "Pilate"),
+  namedMilestone("ts-s-sid-named", "ts-s", { eid: "z" }, "sid", "a"),
+  namedMilestone("qt-e-eid-named", "qt-e", { sid: "z" }, "eid", "a"),
+  {
+    name: "w-duplicate-name",
+    usj: spanUsj("w", "grace"),
+    pend: appended("grace", '|lemma="a" lemma="b"'),
+    liveNeedle: "God",
+    settledNeedle: "God",
+    alignment: {
+      segments: [
+        ["\\p In the \\w grace|", "\\p In the \\w grace|"],
+        ['lemma="a" lemma="', ""],
+        ["b", "b"],
+        ['"', ""],
+        ["\\w* of God made", "\\w* of God made"],
+      ],
+    },
+  },
+  {
+    name: "w-reserved-key",
+    usj: spanUsj("w", "grace"),
+    pend: appended("grace", '|lemma="a" type="b"'),
+    liveNeedle: "God",
+    settledNeedle: "God",
+    alignment: {
+      segments: [
+        ["\\p In the \\w grace|", "\\p In the \\w grace|"],
+        ['lemma="', ""],
+        ["a", "a"],
+        ['" type="b"', ""],
+        ["\\w* of God made", "\\w* of God made"],
+      ],
+    },
+  },
+  {
+    name: "w-spaced-attribute",
+    usj: spanUsj("w", "grace"),
+    pend: appended("grace", '| lemma = "b" '),
+    liveNeedle: "God",
+    settledNeedle: "God",
+    alignment: collapsedDefault("\\p In the \\w grace|", "lemma", "b", "\\w* of God made"),
+  },
+  {
+    name: "w-single-quoted",
+    usj: spanUsj("w", "grace"),
+    pend: appended("grace", "|lemma='x'"),
+    liveNeedle: "God",
+    settledNeedle: "God",
+    alignment: {
+      segments: [
+        [
+          "\\p In the \\w grace|lemma='x'\\w* of God made",
+          "\\p In the \\w grace|lemma='x'\\w* of God made",
+        ],
+      ],
+    },
+  },
+  {
+    name: "row5-collapse",
+    usj: spanUsj("w", "grace", { lemma: "grace", strong: "G5485" }),
+    pend: retypedAttributeRun('|lemma="grace"'),
+    liveNeedle: "God",
+    settledNeedle: "God",
+    alignment: collapsedDefault("\\p In the \\w grace|", "lemma", "grace", "\\w* of God made"),
+  },
+];
+
+/** A typed `\fig` whose `file="…"` the settled figure spells `src="…"`. */
+const FIGURE_LIVE = 'In \\fig a|file="x.jpg"\\fig* made';
+const FIGURE_ALIGNMENT: AlignmentSpec = {
+  segments: [
+    ["\\p In \\fig a|", "\\p In \\fig a|"],
+    ["file", "src"],
+    ['="x.jpg"\\fig* made', '="x.jpg"\\fig* made'],
+  ],
+};
+
+const LITERALS: PositionScenario[] = [
+  {
+    name: "typed-figure-standard",
+    usj: twoParaUsj([BASE]),
+    pend: typed(FIGURE_LIVE),
+    liveNeedle: "made",
+    settledNeedle: "made",
+    alignment: FIGURE_ALIGNMENT,
+  },
+  {
+    name: "typed-figure-expanded",
+    usj: twoParaUsj([BASE]),
+    mount: "expandedNotes",
+    pend: typed(FIGURE_LIVE),
+    liveNeedle: "made",
+    settledNeedle: "made",
+    alignment: FIGURE_ALIGNMENT,
+  },
+  {
+    name: "fig-usfm2-positional",
+    usj: twoParaUsj(["In ", { type: "char", marker: "fig", content: ["a"] }, " made"]),
+    pend: appended("a", "|x.jpg|col|||"),
+    liveNeedle: "made",
+    settledNeedle: "made",
+    alignment: {
+      segments: [
+        ["\\p In \\fig a|x.jpg|col|||\\fig* made", "\\p In \\fig a|x.jpg|col|||\\fig* made"],
+      ],
+    },
+  },
+  {
+    name: "note-with-named-default",
+    usj: twoParaUsj([BASE]),
+    mount: "expandedNotes",
+    pend: typed('In\\f + \\ft see \\w w|lemma="x"\\w* more\\f* made'),
+    liveNeedle: "made",
+    settledNeedle: "made",
+    alignment: collapsedDefault("\\p In\\f + \\ft see \\w w|", "lemma", "x", "\\w* more\\f* made"),
+  },
+  {
+    name: "B-named-then-note",
+    // The span and its closer are the document's, and so is the note's literal text, which the
+    // paragraph's settle turns into a note once the attribute typed into the span pends it.
+    usj: twoParaUsj([
+      "In the ",
+      { type: "char", marker: "w", content: ["beginning"] },
+      "\\f + \\ft n\\f* made",
+    ]),
+    mount: "expandedNotes",
+    pend: appended("beginning", '|lemma="b"'),
+    liveNeedle: "made",
+    settledNeedle: "made",
+    alignment: collapsedDefault(
+      "\\p In the \\w beginning|",
+      "lemma",
+      "b",
+      "\\w*\\f + \\ft n\\f* made",
+    ),
+  },
+  {
+    name: "D-fig-then-note",
+    usj: twoParaUsj([BASE]),
+    mount: "expandedNotes",
+    pend: typed('In \\fig a|file="x.jpg"\\fig* the\\f + \\ft n\\f* made'),
+    liveNeedle: "made",
+    settledNeedle: "made",
+    alignment: {
+      segments: [
+        ["\\p In \\fig a|", "\\p In \\fig a|"],
+        ["file", "src"],
+        ['="x.jpg"\\fig* the\\f + \\ft n\\f* made', '="x.jpg"\\fig* the\\f + \\ft n\\f* made'],
+      ],
+    },
+  },
+  {
+    name: "D-fig-then-optbreak",
+    usj: twoParaUsj([BASE]),
+    pend: typed('In \\fig a|file="x.jpg"\\fig* the // begin ning made'),
+    liveNeedle: "made",
+    settledNeedle: "made",
+    alignment: {
+      segments: [
+        ["\\p In \\fig a|", "\\p In \\fig a|"],
+        ["file", "src"],
+        ['="x.jpg"\\fig* the // begin ning made', '="x.jpg"\\fig* the // begin ning made'],
+      ],
+    },
+  },
+  {
+    name: "nested-note-in-settling-para",
+    usj: huskBeforeNoteUsj(),
+    mount: "expandedNotes",
+    pend: (lexical) => pendNoteInsideSettlingPara(lexical),
+    liveNeedle: "before",
+    settledNeedle: "before",
+    alignment: {
+      segments: [
+        [
+          "\\q1 before \\f + \\fq 1.1\\fq*note body\\f* after",
+          "\\q1 before \\f + \\fq 1.1\\fq*note body\\f* after",
+        ],
+      ],
+    },
+  },
+];
+
+describe("position contract — attribute re-spellings", () => {
+  it.each(RESPELLINGS.map((s) => [s.name, s] as const))("%s maps every position", async (_, s) => {
+    const report = await checkContract(s);
+    expect(report.outbound.length).toBeGreaterThan(0);
+    expect(report.inbound.length).toBeGreaterThan(0);
+    expect(contractMismatches(report)).toEqual([]);
+  });
+});
+
+describe("position contract — literals the settle turns into nodes", () => {
+  it.each(LITERALS.map((s) => [s.name, s] as const))("%s maps every position", async (_, s) => {
+    const report = await checkContract(s);
+    expect(report.outbound.length).toBeGreaterThan(0);
+    expect(report.inbound.length).toBeGreaterThan(0);
+    expect(contractMismatches(report)).toEqual([]);
+  });
+});
 
 describe("position contract — baseline", () => {
   it.each(BASELINE.map((s) => [s.name, s] as const))("%s maps every position", async (_, s) => {

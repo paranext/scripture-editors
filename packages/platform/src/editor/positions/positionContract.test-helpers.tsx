@@ -8,6 +8,11 @@
  * document, where nothing is pending, so its locations are canonical by construction. A scenario
  * only says how the two paragraphs' bytes line up ({@link AlignmentSpec}); the harness counts
  * positions in non-whitespace bytes, because the settle is free to move whitespace.
+ *
+ * A settled byte no location can name — the second `/` of an optbreak, whose every offset is the
+ * optbreak's own location — is not a position of the settled document at all: a settled location
+ * counts where the reference resolves it, and a live byte whose counterpart is such a byte expects
+ * the nearest position in front of it the settled document can name.
  */
 import {
   mountExpandedNoteEditor,
@@ -203,6 +208,26 @@ export async function checkContract(scenario: PositionScenario): Promise<Contrac
     "settled side of the spec",
   ).toBe(stripWs(ref.text));
 
+  // Every reference caret's own (canonical) location, counted where the reference resolves it.
+  const inboundLocations: { settledNonWs: number; location: UsjDocumentLocation }[] =
+    reference.lexical.getEditorState().read(() =>
+      ref.leaves.flatMap(({ node, size }) =>
+        Array.from({ length: size + 1 }, (_, offset) => {
+          const location = $getLocationFromNode(node, offset, viewOptions);
+          const [at, atOffset] = $getNodeFromLocation(location, viewOptions);
+          const resolved =
+            $offsetInParagraph(ref, at, atOffset) ?? (ref.starts.get(node.getKey()) ?? 0) + offset;
+          return { settledNonWs: nonWs(ref.text, resolved), location };
+        }),
+      ),
+    );
+  /** The nearest count at or before `count` that some settled location names. */
+  const nameable = [...new Set(inboundLocations.map(({ settledNonWs }) => settledNonWs))].sort(
+    (a, b) => a - b,
+  );
+  const nameableAtOrBefore = (count: number): number =>
+    nameable.filter((candidate) => candidate <= count).pop() ?? count;
+
   // Outbound: every live caret, in ONE read, without moving the selection (moving it can be a
   // caret departure that settles the very pend under test).
   const outboundLocations = pending.lexical.getEditorState().read(() => {
@@ -216,7 +241,9 @@ export async function checkContract(scenario: PositionScenario): Promise<Contrac
   });
   const outbound = reference.lexical.getEditorState().read(() =>
     outboundLocations.map(({ liveNonWs, location }) => {
-      const expected = specMapSnapped(scenario.alignment, liveNonWs, "live→settled");
+      const expected = nameableAtOrBefore(
+        specMapSnapped(scenario.alignment, liveNonWs, "live→settled"),
+      );
       if (!location) return { liveNonWs, expected, actual: "undefined" as const };
       const [node, offset] = $getNodeFromLocation(location, viewOptions);
       const at = $offsetInParagraph(ref, node, offset);
@@ -228,16 +255,7 @@ export async function checkContract(scenario: PositionScenario): Promise<Contrac
     }),
   );
 
-  // Inbound: every reference caret's own (canonical) location, carried into the pending editor.
-  const inboundLocations: { settledNonWs: number; location: UsjDocumentLocation }[] =
-    reference.lexical.getEditorState().read(() =>
-      ref.leaves.flatMap(({ node, size }) =>
-        Array.from({ length: size + 1 }, (_, offset) => ({
-          settledNonWs: nonWs(ref.text, (ref.starts.get(node.getKey()) ?? 0) + offset),
-          location: $getLocationFromNode(node, offset, viewOptions),
-        })),
-      ),
-    );
+  // Inbound: every reference caret's own location, carried into the pending editor.
   const inbound = pending.lexical.getEditorState().read(() => {
     const prepared = $prepareSettleScopes(context);
     return inboundLocations.map(({ settledNonWs, location }) => {

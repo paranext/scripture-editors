@@ -11,6 +11,7 @@
 
 import { SettledOnlyRun, SettledRunMember } from "../markerEdit/settledOnlyRuns.utils";
 import { FragmentAccumulator, Tier2Context } from "../markerEdit/tier2Rebuild.utils";
+import { ByteAlignment } from "../markerEdit/usfmByteAlignment.utils";
 import { AnchoredTransientInput, LastKnownCaret } from "../markerEdit/virtualSettle.utils";
 import { Klass, LexicalEditor, LexicalNode, LexicalNodeReplacement, NodeKey } from "lexical";
 
@@ -75,7 +76,8 @@ export interface SettleScopePlan {
    * Live fragment over `liveNodes` (spans keyed by LIVE keys), with the declared transient bytes
    * and the placeholder byte of every preserved run the settled side dropped already cut out.
    * `undefined` when the scope's live bytes cannot be fragmented, which leaves the scope's
-   * top-level index shift usable while refusing positions INSIDE it.
+   * top-level index shift usable while a position INSIDE it can only be placed at the scope's
+   * front.
    */
   readonly liveFragment: FragmentAccumulator | undefined;
   /** Where the declared bytes were cut out of `liveFragment`, when they were. */
@@ -91,8 +93,8 @@ export interface SettleScopePlan {
   /**
    * Where each live preserved-run member sits in {@link SettleScopePlan.scratchFragment}'s own run
    * list, indexed `[live run][live member]` — `undefined` for a member the settled side has no
-   * counterpart for, and `undefined` wholesale when the two sides' runs cannot be put in
-   * correspondence at all, which refuses the scope.
+   * counterpart for, and `undefined` wholesale when a scope with preserved runs could not be
+   * paired (see {@link SettleScopePlan.alignment}).
    *
    * The two run lists are built by the same builder over DIFFERENT trees, so a construct that
    * needs a preserved run on one side but not the other — a dead optbreak husk the settle splices
@@ -113,13 +115,15 @@ export interface SettleScopePlan {
    */
   readonly settledOnlyRuns: readonly SettledOnlyRun[];
   /**
-   * How many of the live fragment's non-whitespace bytes the run pairing holds for, when it holds
-   * only for the front of the scope — `undefined` when it holds for all of it. Past that byte the
-   * two sides' runs could not be put in correspondence (two literals the settle spells differently
-   * from how they were typed), so a live position there has no settled counterpart and reports the
-   * nearest one in front of it, while a settled location anywhere in the scope is refused.
+   * How {@link SettleScopePlan.liveFragment}'s non-whitespace bytes line up with
+   * {@link SettleScopePlan.scratchFragment}'s, every byte counted — the correspondence every
+   * position inside the scope crosses by, in both directions. A position in front of bytes one
+   * side has and the other lacks snaps LEFT (`mapCountSnapped`, usfmByteAlignment.utils.ts).
+   * `undefined` only when a fragment is missing or — in a scope with preserved runs — the
+   * rebuild's account of which of them it carried is; a position inside the scope then lands at
+   * the scope's front.
    */
-  readonly pairedBefore: number | undefined;
+  readonly alignment: ByteAlignment | undefined;
 }
 
 /**

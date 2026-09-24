@@ -28,13 +28,15 @@ import {
 } from "../markerEdit/tier2Rebuild.utils";
 import {
   acrossLiteral,
-  anchorAcrossLiterals,
+  anchorAcrossLiteralsSnapped,
   FoldedAttribute,
   FRAGMENT_WS,
   literalContaining,
+  literalStartingAt,
   SettledOnlyRun,
   SettledRunMember,
 } from "../markerEdit/settledOnlyRuns.utils";
+import { ByteAlignment, mapCount, mapCountSnapped } from "../markerEdit/usfmByteAlignment.utils";
 import { SettledPositionContext, SettleScopePlan } from "./settledPositions.model";
 import { PreparedScopes } from "./settledScopes.utils";
 import {
@@ -62,6 +64,7 @@ import {
   LexicalNode,
   NodeKey,
 } from "lexical";
+import { LoggerBasic } from "shared";
 import {
   $getLogicalContentItems,
   $getLogicalPointFromElementPoint,
@@ -588,6 +591,23 @@ function $resolveInScratch(
   };
 }
 
+/**
+ * Whether a settled location names anything in `plan`'s scratch tree — the settled document's own
+ * copy of the scope. A location that names nothing there names nothing a host can have read from
+ * `getUsj()`, and is the one kind of settled location with no live point. Call inside a read of
+ * the scratch tree.
+ */
+function $namesSomethingInScratch(
+  settledOnlyRuns: readonly SettledOnlyRun[],
+  location: UsjDocumentLocation,
+  viewOptions: ViewOptions,
+): boolean {
+  const folded = $resolveFoldedAttribute(settledOnlyRuns, location);
+  if (folded) return folded.resolution !== undefined;
+  const [node, offset] = $getNodeFromLocation(location, viewOptions);
+  return node !== undefined && offset !== undefined;
+}
+
 /** Whether the byte at `position` is part of a word rather than whitespace. */
 function isWordByte(fragment: FragmentAccumulator, position: number): boolean {
   const byte = fragment.text[position];
@@ -627,7 +647,7 @@ function cutCorrected(
 /**
  * The live preserved-run member a settled one came from — {@link SettleScopePlan.sentinelMap} read
  * backwards. `undefined` when the settled document's run is one the live tree has no counterpart
- * for, which is a position no live node can answer.
+ * for.
  */
 function liveRunMember(
   sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[],
@@ -647,49 +667,140 @@ function liveRunMember(
   return undefined;
 }
 
+/** A plan's two fragments and the correspondence between them, when it has all of them. */
+interface PairedSides {
+  liveFragment: FragmentAccumulator;
+  scratchFragment: FragmentAccumulator;
+  sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[];
+  alignment: ByteAlignment;
+}
+
+function pairedSides(plan: SettleScopePlan): PairedSides | undefined {
+  const { liveFragment, scratchFragment, sentinelMap, alignment } = plan;
+  return liveFragment && scratchFragment && sentinelMap && alignment
+    ? { liveFragment, scratchFragment, sentinelMap, alignment }
+    : undefined;
+}
+
 /**
- * The live point a byte anchor over `plan`'s SETTLED fragment names — or `undefined` when the plan
- * pairs no preserved runs across (so the two sides share no byte coordinates), or the anchor names
- * no live byte. `location` is the settled location the anchor came from: one that names USFM bytes
- * rather than USJ content wants those bytes back, including the ones no caret can rest in, and a
- * text location wants the caret's own addressing.
+ * The live point at the front of a scope: the start of a paragraph or chapter's content, or in
+ * front of a note. Where a settled location inside the scope lands when the scope's bytes cannot
+ * be lined up with the settled ones — a fragment builder that does not cover the scope's shape —
+ * so the host's position still reaches the scope it named rather than being dropped. `undefined`
+ * only for a memoized plan whose nodes the tree has moved on from.
+ */
+function $liveScopeFront(
+  plan: SettleScopePlan,
+  logger: LoggerBasic | undefined,
+): FragmentPoint | undefined {
+  logger?.warn(
+    `[positions] A settled location in a pending ${plan.kind} scope could not be lined up with ` +
+      "its live bytes; it resolves to the front of the scope.",
+  );
+  const first = plan.liveNodes[0];
+  if (!first.isAttached()) return undefined;
+  if (plan.kind !== "note" && $isElementNode(first))
+    return { key: first.getKey(), offset: 0, type: "element" };
+  const parent = first.getParent();
+  return parent
+    ? { key: parent.getKey(), offset: first.getIndexWithinParent(), type: "element" }
+    : undefined;
+}
+
+/** How many non-whitespace bytes of `fragment` precede each preserved run's placeholder, or
+ * `undefined` for a run whose placeholder was cut out (a run the settle dropped). */
+function placeholderCounts(fragment: FragmentAccumulator): (number | undefined)[] {
+  const counts: (number | undefined)[] = [];
+  let count = 0;
+  for (const span of fragment.spans) {
+    if (span.isSentinel) counts.push(span.end > span.start ? count : undefined);
+    for (let position = span.start; position < span.end; position += 1)
+      if (!FRAGMENT_WS.test(fragment.text[position])) count += 1;
+  }
+  return counts;
+}
+
+/**
+ * The live point for a settled point inside a preserved run the live side has no member for: a
+ * run the pairing could not match up, or one the settle made from typed bytes that the alignment
+ * could not find a literal for. It lands in front of the live run whose placeholder lines up with
+ * the settled one, when there is one, and otherwise in front of whatever live byte the settled
+ * placeholder lines up with, snapping left.
+ */
+function $livePointForUnpairedRun(
+  plan: SettleScopePlan,
+  sides: PairedSides,
+  sentinelIndex: number,
+  logger: LoggerBasic | undefined,
+): FragmentPoint | undefined {
+  const { liveFragment, scratchFragment, alignment } = sides;
+  const settledCount = placeholderCounts(scratchFragment)[sentinelIndex];
+  if (settledCount === undefined) return $liveScopeFront(plan, logger);
+  const liveIndex = placeholderCounts(liveFragment).findIndex(
+    (count) => count !== undefined && mapCount(alignment, count, "live") === settledCount,
+  );
+  const first = liveIndex < 0 ? undefined : liveFragment.sentinels[liveIndex]?.[0];
+  const parent = first?.isAttached() ? first.getParent() : undefined;
+  if (first && parent)
+    return { key: parent.getKey(), offset: first.getIndexWithinParent(), type: "element" };
+  const point = $resolveFragmentByteAnchor(liveFragment, {
+    nonWsBefore: mapCountSnapped(alignment, settledCount, "settled"),
+    wsRun: 0,
+    attributeRunSpans: 0,
+  });
+  return point ? cutCorrected(plan, point) : $liveScopeFront(plan, logger);
+}
+
+/**
+ * The live point a byte anchor over `plan`'s SETTLED fragment names, through the plan's byte
+ * alignment — snapping left when the byte it sits in front of has no live counterpart. `location`
+ * is the settled location the anchor came from: one that names USFM bytes rather than USJ content
+ * wants those bytes back, including the ones no caret can rest in, and a text location wants the
+ * caret's own addressing. A plan that cannot line its bytes up answers with the scope's front.
  */
 function $livePointFromAnchor(
   plan: SettleScopePlan,
   anchor: CaretByteAnchor,
   atWordByte: boolean,
   location: UsjDocumentLocation,
+  logger: LoggerBasic | undefined,
 ): FragmentPoint | undefined {
-  const { liveFragment, scratchFragment, sentinelMap } = plan;
-  if (!liveFragment || !scratchFragment || !sentinelMap || plan.pairedBefore !== undefined)
-    return undefined;
-  const liveAnchor = anchorAcrossLiterals(plan.settledOnlyRuns, anchor, "toLive");
-  const point = $resolveFragmentByteAnchor(liveFragment, liveAnchor, {
-    addressDisplayBytes: !isUsjTextContentLocation(location),
+  const sides = pairedSides(plan);
+  if (!sides) return $liveScopeFront(plan, logger);
+  const addressDisplayBytes = !isUsjTextContentLocation(location);
+  const liveAnchor = $withWsRunIn(
+    sides.liveFragment,
+    anchorAcrossLiteralsSnapped(sides.alignment, anchor, "toLive"),
+    addressDisplayBytes,
+  );
+  const point = $resolveFragmentByteAnchor(sides.liveFragment, liveAnchor, {
+    addressDisplayBytes,
   });
-  if (!point) return undefined;
-  return cutCorrected(plan, atWordByte ? advancePastWhitespace(liveFragment, point) : point);
+  if (!point) return $liveScopeFront(plan, logger);
+  return cutCorrected(plan, atWordByte ? advancePastWhitespace(sides.liveFragment, point) : point);
 }
 
 /** The live point for a settled point that landed inside a preserved node run. */
 function $livePointInPreservedRun(
   prepared: PreparedScopes,
   plan: SettleScopePlan,
-  sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[],
+  sides: PairedSides,
   resolved: Extract<ScratchResolution, { kind: "preserved" }>,
   location: UsjDocumentLocation,
+  logger: LoggerBasic | undefined,
 ): FragmentPoint | undefined {
-  const live = liveRunMember(sentinelMap, resolved);
-  const member = live && plan.liveFragment?.sentinels[live.sentinelIndex]?.[live.memberIndex];
+  const live = liveRunMember(sides.sentinelMap, resolved);
+  if (!live) return $livePointForUnpairedRun(plan, sides, resolved.sentinelIndex, logger);
+  const member = sides.liveFragment.sentinels[live.sentinelIndex]?.[live.memberIndex];
   // A memoized plan holds live node references, and the tree can have moved on under it (an undo,
   // a host `setUsj`). Refuse such a position rather than walk a detached node, whose ancestors and
   // offsets no longer describe anything the host can resolve against.
   if (!member?.isAttached()) return undefined;
   // A note that is ALSO settling was handed through this scope as its SETTLED self, so its live
-  // content is not the same subtree — that one crosses by its own fragment bytes instead, and
-  // REFUSES when it has no bytes to cross by. Falling through to the child walk below would spell
-  // a SETTLED child path against LIVE children, which resolves to whatever node happens to sit at
-  // that index.
+  // content is not the same subtree — that one crosses by its own fragment bytes instead, and lands
+  // at the note's front when it has no bytes to cross by. Falling through to the child walk below
+  // would spell a SETTLED child path against LIVE children, which resolves to whatever node happens
+  // to sit at that index.
   const notePlan = prepared.byFirstLiveKey.get(member.getKey());
   // The note's own marker, caller and closing glyph are outside its content, and a content settle
   // hands them through unchanged: resolve them against the live note itself.
@@ -702,8 +813,9 @@ function $livePointInPreservedRun(
           resolved.noteAnchor.anchor,
           resolved.noteAnchor.atWordByte,
           location,
+          logger,
         )
-      : undefined;
+      : $liveScopeFront(notePlan, logger);
   let node: LexicalNode = member;
   for (const index of resolved.path) {
     if (!$isElementNode(node)) return undefined;
@@ -736,14 +848,19 @@ function $livePointPastScope(
   return { key: parent.getKey(), offset: last.getIndexWithinParent() + 1, type: "element" };
 }
 
-/** The live point for a settled location inside a rebuilt scope. */
+/**
+ * The live point for a settled location inside a rebuilt scope — `undefined` only when the
+ * location names nothing in the scope's settled tree (or, as a backstop, when a memoized plan no
+ * longer describes the live tree). Every location that does name something has a live point: its
+ * own bytes' counterpart, or where the bytes in front of it snap LEFT to.
+ */
 function $livePointInScope(
   context: SettledPositionContext,
   prepared: PreparedScopes,
   target: Extract<SettledTarget, { kind: "scope" }>,
 ): FragmentPoint | undefined {
   const { plan } = target;
-  const { liveFragment, scratchFragment, sentinelMap } = plan;
+  const { logger, viewOptions } = context.tier2;
   // A location on the note's own bytes names the note itself, not a byte of its content fragment,
   // so it needs no byte correspondence at all.
   if (
@@ -752,51 +869,63 @@ function $livePointInScope(
     isNoteOwnBytesLocation(target.location)
   )
     return $livePointOnNoteOwnBytes(plan.liveNodes[0], target.location, prepared.viewOptions);
-  // No correspondence between the two sides' preserved runs means no shared byte coordinates
-  // either: refuse the whole scope rather than answer a position the two documents disagree about.
-  // A correspondence that holds only in front of some byte refuses the whole scope as well — a
-  // host location is either exactly carried across or refused, never approximated.
-  if (!liveFragment || !scratchFragment || !sentinelMap || plan.pairedBefore !== undefined)
-    return undefined;
   const scratchLocation = withContentIndexes(target.location, target.scratchIndexes);
-  const pastScope = $livePointPastScope(plan, scratchLocation, context.tier2.viewOptions);
+  const namesSomething = plan.scratch
+    .getEditorState()
+    .read(() => $namesSomethingInScratch(plan.settledOnlyRuns, scratchLocation, viewOptions));
+  if (!namesSomething) return undefined;
+  const pastScope = $livePointPastScope(plan, scratchLocation, viewOptions);
   if (pastScope) return pastScope;
+  const sides = pairedSides(plan);
+  if (!sides) return $liveScopeFront(plan, logger);
   const resolved = plan.scratch
     .getEditorState()
     .read(() =>
-      $resolveInScratch(scratchFragment, plan.settledOnlyRuns, scratchLocation, context.tier2),
+      $resolveInScratch(
+        sides.scratchFragment,
+        plan.settledOnlyRuns,
+        scratchLocation,
+        context.tier2,
+      ),
     );
-  if (!resolved) return undefined;
+  if (!resolved) return $liveScopeFront(plan, logger);
   if (resolved.kind === "preserved")
-    return $livePointInPreservedRun(prepared, plan, sentinelMap, resolved, target.location);
+    return $livePointInPreservedRun(prepared, plan, sides, resolved, target.location, logger);
   if (resolved.kind === "literal") {
     const { run, anchor } = resolved;
     // Over the literal's bytes in the live fragment. A point in front of the run's first byte
     // stands in front of the literal, past any whitespace the live bytes put before it; a byte
-    // the settle spelled differently from what was typed has no live byte to land on.
-    const count = acrossLiteral(run, anchor.nonWsBefore, "toLiteral");
-    if (count === undefined) return undefined;
-    const liveAnchor: CaretByteAnchor = {
-      nonWsBefore: run.liveBefore.full + count,
-      wsRun: anchor.nonWsBefore === 0 ? run.liveWsBefore + anchor.wsRun : anchor.wsRun,
-      attributeRunSpans: 0,
-    };
-    const point = $resolveFragmentByteAnchor(liveFragment, liveAnchor, {
-      addressDisplayBytes: !isUsjTextContentLocation(target.location),
+    // the settle spelled differently from what was typed snaps left to where the typed bytes it
+    // stands for start.
+    const count =
+      acrossLiteral(run, anchor.nonWsBefore, "toLiteral") ??
+      mapCountSnapped(run.inner, anchor.nonWsBefore, "settled");
+    const addressDisplayBytes = !isUsjTextContentLocation(target.location);
+    const liveAnchor = $withWsRunIn(
+      sides.liveFragment,
+      {
+        nonWsBefore: run.liveBefore.full + count,
+        wsRun: anchor.nonWsBefore === 0 ? run.liveWsBefore + anchor.wsRun : anchor.wsRun,
+        attributeRunSpans: 0,
+      },
+      addressDisplayBytes,
+    );
+    const point = $resolveFragmentByteAnchor(sides.liveFragment, liveAnchor, {
+      addressDisplayBytes,
     });
-    if (!point) return undefined;
+    if (!point) return $liveScopeFront(plan, logger);
     return cutCorrected(
       plan,
-      resolved.atWordByte ? advancePastWhitespace(liveFragment, point) : point,
+      resolved.atWordByte ? advancePastWhitespace(sides.liveFragment, point) : point,
     );
   }
-  return $livePointFromAnchor(plan, resolved.anchor, resolved.atWordByte, target.location);
+  return $livePointFromAnchor(plan, resolved.anchor, resolved.atWordByte, target.location, logger);
 }
 
 /**
- * The live node and offset a SETTLED location addresses, or `undefined` when it cannot be carried
- * across (a scope whose bytes could not be fragmented, or a path that does not resolve in the
- * settled document either).
+ * The live node and offset a SETTLED location addresses, or `undefined` when the location names
+ * nothing in the settled document (or, as a backstop, when a memoized plan no longer describes the
+ * live tree).
  *
  * Call inside a read of the LIVE editor state, with `prepared` from the same read.
  */
@@ -823,8 +952,12 @@ function $liveLocationFromSettled(
   if (!target) return undefined;
   // Outside every rebuilt scope only the top-level index moves, and restating it keeps the
   // location's own subtype and offsets exactly as the host wrote them — resolving and
-  // re-reporting it would put it through the snapping rules a second time.
-  if (target.kind === "live") return target.location;
+  // re-reporting it would put it through the snapping rules a second time. It is resolved only to
+  // find out whether it names anything.
+  if (target.kind === "live") {
+    const [node, offset] = $getNodeFromLocation(target.location, prepared.viewOptions);
+    return node && offset !== undefined ? target.location : undefined;
+  }
   const point = $livePointInScope(context, prepared, target);
   const node = point && $getNodeByKey(point.key);
   return node ? $getLocationFromNode(node, point.offset, prepared.viewOptions) : undefined;
@@ -833,8 +966,10 @@ function $liveLocationFromSettled(
 /**
  * `settled` restated in LIVE coordinates, so the editor's existing resolvers
  * (`$getRangeFromUsjSelection`, the annotation plugin, `$insertNote`) consume it unchanged — or
- * `undefined` when an endpoint cannot be carried across, which a caller must treat as "refuse",
- * never as "resolve it anyway".
+ * `undefined` when an endpoint names nothing in the settled document (or, as a backstop, when a
+ * memoized plan no longer describes the live tree), which a caller must treat as "refuse", never
+ * as "resolve it anyway". Every other endpoint has a live position: its own bytes' counterpart, or
+ * where the bytes in front of it snap LEFT to while an edit is pending.
  *
  * Call inside a read of the LIVE editor state, with `prepared` from the same read.
  */
@@ -959,8 +1094,8 @@ function cutFragmentOffset(plan: SettleScopePlan, node: LexicalNode, offset: num
  */
 const STALE_BASIS = "stale-basis";
 
-/** A live point's exact settled location, `undefined` when its bytes have no settled counterpart,
- * or {@link STALE_BASIS}. */
+/** A live point's settled location through its scope's byte alignment, `undefined` when the scope
+ * cannot line its bytes up or the point has no settled node to land on, or {@link STALE_BASIS}. */
 type ExactLocation = UsjDocumentLocation | typeof STALE_BASIS | undefined;
 
 /** The settled location for a live point inside a preserved node run: the settle handed the same
@@ -984,38 +1119,104 @@ function $settledLocationInPreservedRun(
   return $getLocationFromNode(node, offset, viewOptions);
 }
 
-/** Whether a live position `nonWsBefore` non-whitespace bytes into the scope's live fragment lies
- * past the part of the scope its run pairing holds for ({@link SettleScopePlan.pairedBefore}). */
-function isPastPairing(plan: SettleScopePlan, nonWsBefore: number): boolean {
-  return plan.pairedBefore !== undefined && nonWsBefore > plan.pairedBefore;
+/**
+ * The settled-only run a live anchor lies in the literal of, and the anchor restated over the
+ * run's own spelling. In front of the literal's first byte is in front of the node it became, so
+ * it counts as inside; inside it, the literal's bytes are that node's own bytes, so the anchor lands
+ * on the same byte of the settled node — and a byte the settle spelled differently snaps left to
+ * where the settled node's differing bytes start.
+ */
+function withinLiteral(
+  runs: readonly SettledOnlyRun[],
+  anchor: CaretByteAnchor,
+): { run: SettledOnlyRun; within: CaretByteAnchor } | undefined {
+  const front = literalStartingAt(runs, anchor);
+  if (front)
+    return {
+      run: front,
+      within: { nonWsBefore: 0, wsRun: anchor.wsRun - front.liveWsBefore, attributeRunSpans: 0 },
+    };
+  const inside = literalContaining(runs, anchor);
+  if (!inside) return undefined;
+  return {
+    run: inside.run,
+    within: inside.within ?? {
+      nonWsBefore: mapCountSnapped(inside.run.inner, inside.count, "live"),
+      wsRun: anchor.wsRun,
+      attributeRunSpans: 0,
+    },
+  };
 }
 
-/** Where a live point lands in its scope's settled tree, in that tree's OWN coordinates. */
+/**
+ * Whether a position can rest in front of `span`'s first byte: not a preserved node's placeholder,
+ * whose inner bytes are not addressable, and — for a caret — not a closing marker, which a caret
+ * never enters. Read-only: resolves the span's key.
+ */
+function $canRestInFront(span: FragmentSpan, addressDisplayBytes: boolean): boolean {
+  if (span.isSentinel) return false;
+  if (addressDisplayBytes) return true;
+  const node = $getNodeByKey(span.key);
+  return !($isMarkerNode(node) && node.getMarkerSyntax() !== "opening");
+}
+
+/**
+ * `anchor` fitted to the whitespace `fragment` actually has after its non-whitespace bytes. A
+ * position carried to the other side can count whitespace that side does not spell there — the
+ * settle drops the spaces in `| lemma = "b" ` — and is then resolved in front of the next byte.
+ * Where no position can rest in front of that byte ({@link $canRestInFront}), the resolver would
+ * carry on past the construct onto the content after it; such a position keeps only the
+ * whitespace that is there, and so stays at the end of what precedes it.
+ *
+ * Read-only: call inside a read of the tree `fragment` was built over.
+ */
+function $withWsRunIn(
+  fragment: { text: string; spans: FragmentSpan[] },
+  anchor: CaretByteAnchor,
+  addressDisplayBytes: boolean,
+): CaretByteAnchor {
+  let nonWs = 0;
+  let ws = 0;
+  for (const span of fragment.spans)
+    for (let position = span.start; position < span.end; position += 1) {
+      const isWs = FRAGMENT_WS.test(fragment.text[position]);
+      if (nonWs < anchor.nonWsBefore) {
+        if (!isWs) nonWs += 1;
+      } else if (isWs) ws += 1;
+      else if (ws >= anchor.wsRun || $canRestInFront(span, addressDisplayBytes)) return anchor;
+      else return { ...anchor, wsRun: ws };
+    }
+  return anchor;
+}
+
+/**
+ * Where a live point lands in its scope's settled tree, in that tree's OWN coordinates. A byte the
+ * settled side has no counterpart for snaps LEFT through the scope's byte alignment, to where the
+ * settled side's differing bytes start: a caret on the `lemma="` of a pending `|lemma="grace"`
+ * reports the settled `|grace`'s value start.
+ */
 function $scratchLocationFromLivePoint(
   plan: SettleScopePlan,
-  sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[],
-  liveFragment: FragmentAccumulator,
-  scratchFragment: FragmentAccumulator,
+  sides: PairedSides,
   node: LexicalNode,
   offset: number,
   viewOptions: ViewOptions,
 ): ExactLocation {
+  const { liveFragment, scratchFragment, sentinelMap, alignment } = sides;
   const preserved = $preservedRunMember(liveFragment, node);
   if (preserved) {
     const run = liveFragment.sentinels[preserved.sentinelIndex];
     // A run the settled document dropped entirely (an emptied optbreak husk, which the settle
     // splices out) has no node there, but the place it stood does: the boundary in front of it,
     // where the text on either side meets once it is gone. It is where the caret sits after the
-    // user deletes an optbreak's `//`. A run past the byte the pairing holds up to
-    // (`SettleScopePlan.pairedBefore`) has no counterpart either, and crosses the same way.
+    // user deletes an optbreak's `//`. A run the pairing could not match with a settled one has no
+    // counterpart either, and crosses the same way.
     if (!sentinelMap[preserved.sentinelIndex]?.some((member) => member !== undefined)) {
       const parent = run[0].getParent();
       return parent
         ? $scratchLocationFromLivePoint(
             plan,
-            sentinelMap,
-            liveFragment,
-            scratchFragment,
+            sides,
             parent,
             run[0].getIndexWithinParent(),
             viewOptions,
@@ -1040,19 +1241,13 @@ function $scratchLocationFromLivePoint(
     );
   }
   const anchored = $anchorForPoint(liveFragment, node, cutFragmentOffset(plan, node, offset));
-  if (!anchored || isPastPairing(plan, anchored.anchor.nonWsBefore)) return undefined;
-  const literal = literalContaining(plan.settledOnlyRuns, anchored.anchor);
-  if (literal) {
-    // Inside a literal the settle turned into a preserved node: the literal's bytes are that
-    // node's own bytes, so the point lands on the same byte of the settled node — and a byte the
-    // settle spelled differently has no settled byte to land on.
-    const { within } = literal;
-    if (!within) return undefined;
+  if (!anchored) return undefined;
+  const literal = withinLiteral(plan.settledOnlyRuns, anchored.anchor);
+  if (literal)
     return plan.scratch
       .getEditorState()
-      .read(() => $settledLocationInSpelling(literal.run, within, viewOptions));
-  }
-  const anchor = anchorAcrossLiterals(plan.settledOnlyRuns, anchored.anchor, "toSettled");
+      .read(() => $settledLocationInSpelling(literal.run, literal.within, viewOptions));
+  const crossed = anchorAcrossLiteralsSnapped(alignment, anchored.anchor, "toSettled");
   // The mirror of the inbound addressing choice, decided the same way: a live position that names
   // USFM bytes wants the settled spelling of those bytes, including the ones no caret can rest
   // in; a position in ordinary content is a caret, and keeps the caret's own addressing — which
@@ -1062,21 +1257,22 @@ function $scratchLocationFromLivePoint(
     $getLocationFromNode(node, offset, viewOptions),
   );
   return plan.scratch.getEditorState().read(() => {
+    const anchor = $withWsRunIn(scratchFragment, crossed, addressDisplayBytes);
     const point = $resolveFragmentByteAnchor(scratchFragment, anchor, { addressDisplayBytes });
     const settledNode = point && $getNodeByKey(point.key);
     return settledNode ? $getLocationFromNode(settledNode, point.offset, viewOptions) : undefined;
   });
 }
 
-/** The settled location for a live point inside a rebuilt scope, when the point's own bytes have
- * one. */
+/** The settled location for a live point inside a rebuilt scope, through the scope's byte
+ * alignment — `undefined` when the scope cannot line its bytes up, or the point has no settled
+ * node to land on. */
 function $exactSettledLocationInScope(
   prepared: PreparedScopes,
   plan: SettleScopePlan,
   node: LexicalNode,
   offset: number,
 ): ExactLocation {
-  const { liveFragment, scratchFragment, sentinelMap } = plan;
   if (plan.kind === "note") {
     // The note's own marker, caller and closing glyph are outside the content fragment, and a
     // content settle hands them through unchanged: the same location, at the note's settled path.
@@ -1086,14 +1282,13 @@ function $exactSettledLocationInScope(
       return settledPath && withContentIndexes(location, settledPath);
     }
   }
-  // Same condition the inbound side refuses on: without a run correspondence the two sides share
-  // no byte coordinates to report a position in.
-  if (!liveFragment || !scratchFragment || !sentinelMap) return undefined;
+  // Without the two fragments and their alignment there are no byte coordinates to report a
+  // position in; the caller snaps it to the scope's front.
+  const sides = pairedSides(plan);
+  if (!sides) return undefined;
   const scratchLocation = $scratchLocationFromLivePoint(
     plan,
-    sentinelMap,
-    liveFragment,
-    scratchFragment,
+    sides,
     node,
     offset,
     prepared.viewOptions,
@@ -1158,12 +1353,11 @@ function $settledScopeFront(
 }
 
 /**
- * The settled location nearest at or before a live point whose own bytes have none: walk back
+ * The settled location nearest at or before a live point that has none of its own: walk back
  * through the scope's live points until one translates, and failing every one, the front of the
  * scope. A USFM byte with no USJ representation snaps LEFT (`UsjReaderWriter` does, and so do the
- * editor's own locations), and so does a byte the pending settle leaves with no settled
- * counterpart — a typed literal the settle spells differently, or bytes past where the scope's run
- * pairing stops holding.
+ * editor's own locations), and so does a point the scope's byte alignment cannot place — a member
+ * of a run the settle dropped, or anywhere in a scope whose bytes could not be lined up at all.
  *
  * `before` is the point to walk back from, or `undefined` to walk back from the scope's end.
  */
@@ -1184,9 +1378,10 @@ function $snappedLeftInScope(
   return $settledScopeFront(prepared, plan);
 }
 
-/** The settled location for a live point inside a rebuilt scope: its own, or the nearest one at or
- * before it ({@link $snappedLeftInScope}). `undefined` only when the plan no longer describes the
- * live tree ({@link STALE_BASIS}). */
+/** The settled location for a live point inside a rebuilt scope: where the scope's byte alignment
+ * carries it, or — for a point the alignment cannot place — the nearest one at or before it
+ * ({@link $snappedLeftInScope}). `undefined` only when the plan no longer describes the live tree
+ * ({@link STALE_BASIS}). */
 function $settledLocationInScope(
   prepared: PreparedScopes,
   plan: SettleScopePlan,
@@ -1200,10 +1395,10 @@ function $settledLocationInScope(
 
 /**
  * The SETTLED location a live point addresses — what a host, whose only view of the document is
- * `getUsj()`, can actually resolve. A point whose own bytes have no settled counterpart while an
- * edit is pending reports the nearest settled location at or before it
- * ({@link $snappedLeftInScope}); `undefined` only when a memoized plan no longer describes the
- * live tree, which a plan prepared in the same read never is.
+ * `getUsj()`, can actually resolve. A point in front of bytes that have no settled counterpart
+ * while an edit is pending snaps LEFT, to where the settled side's differing bytes start;
+ * `undefined` only when a memoized plan no longer describes the live tree, which a plan prepared
+ * in the same read never is.
  *
  * Call inside a read of the LIVE editor state, with `prepared` from the same read.
  */
@@ -1248,9 +1443,9 @@ function $settledDocumentEnd(
 /**
  * The editor's current selection in SETTLED coordinates — `undefined` only when there is no
  * selection to report or the layout has no USJ locations at all (or, as a backstop, when a
- * memoized basis no longer describes the live tree). An endpoint whose own bytes have no settled
- * counterpart while an edit is pending reports the nearest settled location at or before it, each
- * end of a range on its own ({@link $settledLocationFromLivePoint}).
+ * memoized basis no longer describes the live tree). An endpoint in front of bytes that have no
+ * settled counterpart while an edit is pending snaps LEFT, each end of a range on its own
+ * ({@link $settledLocationFromLivePoint}).
  *
  * Call inside a read of the LIVE editor state, with `prepared` from the same read.
  */

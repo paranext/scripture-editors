@@ -6,9 +6,9 @@
  * be reported at the note's SETTLED index, which is the only one a host reading `getUsj()` can
  * resolve; reporting the live one names a different item of the same paragraph, silently.
  *
- * The suite also covers what the module does when it CANNOT carry a position across: every such
- * path must refuse (`undefined`), never answer approximately. A wrong position annotates or
- * selects the wrong text with no signal; a refusal is one tick of a feature not firing.
+ * The suite also covers a co-settling note whose bytes cannot be lined up with its settled self: a
+ * settled position in it lands at the note's front, never on whatever live child happens to sit at
+ * the settled index.
  */
 import { mountExpandedNoteEditor, requireStandardViewOptions } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes } from "./settledScopes.utils";
@@ -164,73 +164,63 @@ describe("an element boundary beside a preserved node", () => {
   });
 });
 
-describe("refusing rather than answering approximately", () => {
-  it("refuses a settled point in a co-settling note whose live bytes cannot be paired", async () => {
+describe("a co-settling note whose bytes cannot be lined up", () => {
+  /** The live point in front of the paragraph's note. */
+  function $inFrontOfNote() {
+    const para = $getRoot().getChildren().filter($isParaNode)[0];
+    const note = para.getChildren().find($isNoteNode);
+    if (!note) throw new Error("no live note");
+    return { key: para.getKey(), offset: note.getIndexWithinParent(), type: "element" };
+  }
+
+  it("places a settled point in a note with no live fragment at the note's front", async () => {
     // The note rides through the paragraph's rebuild as its SETTLED self, so its live content is
     // not the same subtree: the only thing the two sides still share is bytes. Without the note's
     // own live fragment there is nothing to resolve those bytes against, and walking the settled
     // child path down the LIVE note instead lands on whatever child happens to sit at that index.
-    // Reproduced by removing the correspondence the plan would normally carry.
     const { lexical, context, note, noteIndex } = await nested();
     const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
 
-    const point = lexical.getEditorState().read(() => {
+    const [point, front] = lexical.getEditorState().read(() => {
       const prepared = $prepareSettleScopes(context);
       const notePlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "note");
       if (!notePlan) throw new Error("expected a note plan");
       // Writing a plan field directly is the only way to reach this branch: every natural path
       // that drops the live fragment also drops the plan.
       (notePlan as { liveFragment?: unknown }).liveFragment = undefined;
-      return $livePointFromSettledLocation(context, prepared, {
-        jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
-        offset: 5,
-      });
+      return [
+        $livePointFromSettledLocation(context, prepared, {
+          jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
+          offset: 5,
+        }),
+        $inFrontOfNote(),
+      ];
     });
 
-    expect(point).toBeUndefined();
+    expect(point).toEqual(front);
   });
-  it("refuses a settled point in a co-settling note whose preserved runs cannot be paired", async () => {
-    // The same refusal a scope entered directly makes: with no run correspondence the note's two
-    // byte sequences do not line up past the first unpaired placeholder, so a byte anchor would
-    // resolve one byte off per placeholder instead of failing.
+
+  it("places a settled point in a note whose preserved runs cannot be paired at the note's front", async () => {
+    // With no run correspondence the note's two byte sequences do not line up, so a byte anchor
+    // would resolve one byte off per placeholder instead of landing where the host meant.
     const { lexical, context, note, noteIndex } = await nested();
     const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
 
-    const point = lexical.getEditorState().read(() => {
+    const [point, front] = lexical.getEditorState().read(() => {
       const prepared = $prepareSettleScopes(context);
       const notePlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "note");
       if (!notePlan) throw new Error("expected a note plan");
       // As above: no natural path reaches a note plan without a pairing but with a live fragment.
       (notePlan as { sentinelMap?: unknown }).sentinelMap = undefined;
-      return $livePointFromSettledLocation(context, prepared, {
-        jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
-        offset: 5,
-      });
+      return [
+        $livePointFromSettledLocation(context, prepared, {
+          jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
+          offset: 5,
+        }),
+        $inFrontOfNote(),
+      ];
     });
 
-    expect(point).toBeUndefined();
-  });
-
-  it("refuses a settled point in a co-settling note whose preserved runs pair only in part", async () => {
-    // A pairing that holds only in front of some byte carries a live position there to the
-    // nearest settled one before it, but a host location is carried exactly or not at all — even
-    // one in front of that byte.
-    const { lexical, context, note, noteIndex } = await nested();
-    const bodyIndex = settledTextIndex(note as MarkerObject, "note body");
-
-    const point = lexical.getEditorState().read(() => {
-      const prepared = $prepareSettleScopes(context);
-      const notePlan = [...prepared.byFirstLiveKey.values()].find((plan) => plan.kind === "note");
-      if (!notePlan) throw new Error("expected a note plan");
-      // A note's content cannot hold the typed literals that leave a pairing partial (a figure
-      // typed there is a char span), so the plan field is written directly, as above.
-      (notePlan as { pairedBefore?: number }).pairedBefore = 0;
-      return $livePointFromSettledLocation(context, prepared, {
-        jsonPath: contentPath([PARA_TOP_INDEX, noteIndex, bodyIndex]),
-        offset: 5,
-      });
-    });
-
-    expect(point).toBeUndefined();
+    expect(point).toEqual(front);
   });
 });
