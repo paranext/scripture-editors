@@ -15,6 +15,7 @@ import {
 import { $opaqueBlockAncestor } from "./OpaqueBlockGuardPlugin";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
 import {
+  $createBookLine,
   baseTestEnvironment,
   pressKey,
   pressKeyThroughDom,
@@ -37,7 +38,6 @@ import {
   TextNode,
 } from "lexical";
 import {
-  $createBookNode,
   BookNode,
   $createAttributeRunNode,
   $createCharNode,
@@ -63,17 +63,6 @@ import {
   textTypeState,
   VerseNode,
 } from "shared";
-
-/** The `\id` line as a `BookNode` carrying the immutable `\id GEN ` prefix plus whatever
- * `children` builds — shared by every book-line describe block below so they cannot drift from
- * one another. */
-function $buildBookLine(children: () => LexicalNode[]) {
-  const book = $createBookNode("GEN");
-  $getRoot().append(
-    book.append($createImmutableTypedTextNode("marker", "\\id GEN "), ...children()),
-  );
-  return book;
-}
 
 function $createCollapsedNoteNode() {
   return $createNoteNode("f", "+").append(
@@ -2626,10 +2615,9 @@ describe("Backward navigation in the book line", () => {
     let book: BookNode;
     let trailing: TextNode;
     const { editor } = await testEnvironment(() => {
-      book = $buildBookLine(() => {
-        trailing = $createTextNode(" trailing desc");
-        return [$createCollapsedNoteNode(), trailing];
-      });
+      trailing = $createTextNode(" trailing desc");
+      book = $createBookLine("GEN", $createCollapsedNoteNode(), trailing);
+      $getRoot().append(book);
     });
     updateSelection(editor, trailing!, 0);
 
@@ -2647,10 +2635,9 @@ describe("Backward navigation in the book line", () => {
     let book: BookNode;
     let trailing: TextNode;
     const { editor } = await testEnvironment(() => {
-      book = $buildBookLine(() => {
-        trailing = $createTextNode(" trailing desc");
-        return [$createCollapsedNoteNode(), trailing];
-      });
+      trailing = $createTextNode(" trailing desc");
+      book = $createBookLine("GEN", $createCollapsedNoteNode(), trailing);
+      $getRoot().append(book);
     });
     updateSelection(editor, trailing!, 0);
 
@@ -2670,16 +2657,17 @@ describe("Backward navigation in the book line", () => {
   it("does not cross the prefix from a leading character span's opening glyph", async () => {
     let openingGlyph: MarkerNode;
     const { editor } = await testEnvironment(() => {
-      $buildBookLine(() => {
-        openingGlyph = $createMarkerNode("nd");
-        return [
+      openingGlyph = $createMarkerNode("nd");
+      $getRoot().append(
+        $createBookLine(
+          "GEN",
           $createCharNode("nd").append(
             openingGlyph,
             $createTextNode("LORD"),
             $createMarkerNode("nd", "closing"),
           ),
-        ];
-      });
+        ),
+      );
     });
     updateSelection(editor, openingGlyph!, 0);
 
@@ -2696,16 +2684,17 @@ describe("Backward navigation in the book line", () => {
   it("leaves the default move to run from offset 1 inside a leading opener", async () => {
     let openingGlyph: MarkerNode;
     const { editor } = await testEnvironment(() => {
-      $buildBookLine(() => {
-        openingGlyph = $createMarkerNode("nd");
-        return [
+      openingGlyph = $createMarkerNode("nd");
+      $getRoot().append(
+        $createBookLine(
+          "GEN",
           $createCharNode("nd").append(
             openingGlyph,
             $createTextNode("LORD"),
             $createMarkerNode("nd", "closing"),
           ),
-        ];
-      });
+        ),
+      );
     });
     updateSelection(editor, openingGlyph!, 1);
 
@@ -2720,10 +2709,8 @@ describe("Backward navigation in the book line", () => {
   it("leaves the default move to run from offset 3 in the line's own content text", async () => {
     let description: TextNode;
     const { editor } = await testEnvironment(() => {
-      $buildBookLine(() => {
-        description = $createTextNode("Genesis");
-        return [description];
-      });
+      description = $createTextNode("Genesis");
+      $getRoot().append($createBookLine("GEN", description));
     });
     updateSelection(editor, description!, 3);
 
@@ -2736,10 +2723,14 @@ describe("Backward navigation in the book line", () => {
     let book: BookNode;
     let trailing: TextNode;
     const { editor } = await testEnvironment(() => {
-      book = $buildBookLine(() => {
-        trailing = $createTextNode(" trailing desc");
-        return [$createTextNode("description"), $createCollapsedNoteNode(), trailing];
-      });
+      trailing = $createTextNode(" trailing desc");
+      book = $createBookLine(
+        "GEN",
+        $createTextNode("description"),
+        $createCollapsedNoteNode(),
+        trailing,
+      );
+      $getRoot().append(book);
     });
     updateSelection(editor, trailing!, 0);
 
@@ -2756,10 +2747,8 @@ describe("Backward navigation in the book line", () => {
   it("does not move from the start of the line's text when nothing is before it", async () => {
     let description: TextNode;
     const { editor } = await testEnvironment(() => {
-      $buildBookLine(() => {
-        description = $createTextNode("description");
-        return [description];
-      });
+      description = $createTextNode("description");
+      $getRoot().append($createBookLine("GEN", description));
     });
     updateSelection(editor, description!, 0);
 
@@ -2776,14 +2765,15 @@ describe("Backward navigation in the book line", () => {
   it("leaves the default move to run from the text after a character span", async () => {
     let trailing: TextNode;
     const { editor } = await testEnvironment(() => {
-      $buildBookLine(() => {
-        trailing = $createTextNode(" trailing desc");
-        return [
+      trailing = $createTextNode(" trailing desc");
+      $getRoot().append(
+        $createBookLine(
+          "GEN",
           $createTextNode("description "),
           $createCharNode("nd").append($createTextNode("LORD")),
           trailing,
-        ];
-      });
+        ),
+      );
     });
     updateSelection(editor, trailing!, 0);
 
@@ -2802,10 +2792,9 @@ describe("Forward navigation past a collapsed note in the book line", () => {
     let book: BookNode;
     let note: NoteNode;
     const { editor } = await testEnvironment(() => {
-      book = $buildBookLine(() => {
-        note = $createCollapsedNoteNode();
-        return [$createTextNode("description"), note];
-      });
+      note = $createCollapsedNoteNode();
+      book = $createBookLine("GEN", $createTextNode("description"), note);
+      $getRoot().append(book);
     });
     // Element point right after the description text and before the note — exactly the shape the
     // book line's own backward note-hop lands the caret on (`(book, i)`).
@@ -2832,10 +2821,14 @@ describe("Forward navigation past a collapsed note in the book line", () => {
     let book: BookNode;
     let trailing: TextNode;
     const { editor } = await testEnvironment(() => {
-      book = $buildBookLine(() => {
-        trailing = $createTextNode(" trailing desc");
-        return [$createTextNode("description"), $createCollapsedNoteNode(), trailing];
-      });
+      trailing = $createTextNode(" trailing desc");
+      book = $createBookLine(
+        "GEN",
+        $createTextNode("description"),
+        $createCollapsedNoteNode(),
+        trailing,
+      );
+      $getRoot().append(book);
     });
     updateSelection(editor, book!, 2);
 
@@ -2891,19 +2884,16 @@ describe("Backward navigation into a collapsed note ending the previous block", 
     let para2Text: TextNode;
     const { editor } = await testEnvironment(
       () => {
-        book = $createBookNode("GEN");
         note = $createNoteNode("f", "+");
         para2Text = $createTextNode("p2 text");
-        $getRoot().append(
-          book.append(
-            $createImmutableTypedTextNode("marker", "\\id GEN "),
-            note.append(
-              $createImmutableNoteCallerNode("+", "note1 preview"),
-              $createCharNode("ft").append($createTextNode("note1 text")),
-            ),
+        book = $createBookLine(
+          "GEN",
+          note.append(
+            $createImmutableNoteCallerNode("+", "note1 preview"),
+            $createCharNode("ft").append($createTextNode("note1 text")),
           ),
-          $createParaNode().append(para2Text),
         );
+        $getRoot().append(book, $createParaNode().append(para2Text));
       },
       "ltr",
       standardView,

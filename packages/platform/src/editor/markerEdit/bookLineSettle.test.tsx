@@ -32,8 +32,6 @@ import {
   TextNode,
 } from "lexical";
 import {
-  $createBookNode,
-  $createImmutableTypedTextNode,
   $createNoteNode,
   $createVerseNode,
   $isBookNode,
@@ -48,6 +46,9 @@ import {
   NBSP,
   NoteNode,
 } from "shared";
+// Reaching inside only for tests.
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import { $createBookLine } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 
 // jsdom implements no layout, so `Range.prototype.getBoundingClientRect` is absent and Lexical's
 // post-commit scroll-into-view throws from outside any test's promise chain. Same stub the sibling
@@ -302,14 +303,7 @@ describe("the `\\id` line's settle scope", () => {
     const { editor } = await testEnvironment(() => {
       note = $createNoteNode("f", "+");
       tail = $createTextNode(" tail");
-      $getRoot().append(
-        $createBookNode("RUT").append(
-          $createImmutableTypedTextNode("marker", `\\id RUT${NBSP}`),
-          $createTextNode("Corpus fixture "),
-          note,
-          tail,
-        ),
-      );
+      $getRoot().append($createBookLine("RUT", $createTextNode("Corpus fixture "), note, tail));
     });
 
     // An unterminated char marker at the tail, AFTER the note: pends until departure/Enter, the
@@ -336,14 +330,7 @@ describe("the `\\id` line's settle scope", () => {
     const { editor } = await testEnvironment(() => {
       note = $createNoteNode("f", "+");
       tail = $createTextNode(" tail");
-      $getRoot().append(
-        $createBookNode("RUT").append(
-          $createImmutableTypedTextNode("marker", `\\id RUT${NBSP}`),
-          $createTextNode("Corpus fixture "),
-          note,
-          tail,
-        ),
-      );
+      $getRoot().append($createBookLine("RUT", $createTextNode("Corpus fixture "), note, tail));
     });
 
     // A palette-owned transient declaration, verified against the live caret — see
@@ -375,8 +362,8 @@ describe("the `\\id` line's settle scope", () => {
   it("carries a verse's sid over across a live rebuild of the line, like $rebuildParas does", async () => {
     const { editor } = await testEnvironment(() => {
       $getRoot().append(
-        $createBookNode("GEN").append(
-          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+        $createBookLine(
+          "GEN",
           $createTextNode("Genesis "),
           $createVerseNode("1", getVisibleOpenMarkerText("v", "1"), "GEN 1:1"),
           $createTextNode(" tail"),
@@ -411,8 +398,8 @@ describe("the `\\id` line's settle scope", () => {
   it("carries a verse's sid over when a sentinel verse precedes it in the line", async () => {
     const { editor } = await testEnvironment(() => {
       $getRoot().append(
-        $createBookNode("GEN").append(
-          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+        $createBookLine(
+          "GEN",
           $createTextNode("Genesis "),
           $createVerseNode(
             "1",
@@ -452,8 +439,8 @@ describe("the `\\id` line's settle scope", () => {
   it("carries a verse's sid over in the READ-ONLY settled output too", async () => {
     const { editor } = await testEnvironment(() => {
       $getRoot().append(
-        $createBookNode("GEN").append(
-          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+        $createBookLine(
+          "GEN",
           $createTextNode("Genesis "),
           $createVerseNode("1", getVisibleOpenMarkerText("v", "1"), "GEN 1:1"),
           $createTextNode(" tail"),
@@ -486,8 +473,8 @@ describe("the `\\id` line's settle scope", () => {
   it("does not lose the selection typing a terminated char marker right BEFORE a note in the line", async () => {
     const { editor } = await testEnvironment(() => {
       $getRoot().append(
-        $createBookNode("GEN").append(
-          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+        $createBookLine(
+          "GEN",
           $createTextNode("Genesis "),
           $createNoteNode("f", "+"),
           $createTextNode(" tail"),
@@ -516,8 +503,8 @@ describe("the `\\id` line's settle scope", () => {
   it("does not lose the selection typing a terminated char marker right AFTER a note in the line", async () => {
     const { editor } = await testEnvironment(() => {
       $getRoot().append(
-        $createBookNode("GEN").append(
-          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+        $createBookLine(
+          "GEN",
           $createTextNode("Genesis "),
           $createNoteNode("f", "+"),
           $createTextNode(" tail more"),
@@ -568,14 +555,7 @@ describe("the `\\id` line's settle scope", () => {
     const { editor } = await testEnvironment(() => {
       note = $createNoteNode("f", "+");
       tail = $createTextNode(" tail");
-      $getRoot().append(
-        $createBookNode("GEN").append(
-          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
-          $createTextNode("Genesis"),
-          note,
-          tail,
-        ),
-      );
+      $getRoot().append($createBookLine("GEN", $createTextNode("Genesis"), note, tail));
     });
 
     await act(async () =>

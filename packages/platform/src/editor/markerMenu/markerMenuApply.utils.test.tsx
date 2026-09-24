@@ -41,9 +41,7 @@ import {
   UNDO_COMMAND,
 } from "lexical";
 import {
-  $createBookNode,
   $createCharNode,
-  $createImmutableTypedTextNode,
   $createImmutableUnmatchedNode,
   $createMarkerNode,
   $createNoteNode,
@@ -69,7 +67,10 @@ import {
 import { CharNodePlugin, TextSpacingPlugin } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
-import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
+import {
+  $createBookLine,
+  baseTestEnvironment,
+} from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 
 /**
  * Full markerEdit harness: the marker-edit engine plus the neighboring plugins the real
@@ -453,8 +454,8 @@ describe("$applyMarkerMenuSelection", () => {
         const nd = $createCharNode("nd");
         ndText = $createTextNode(`${NBSP}holy name`);
         $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createBookLine(
+            "GEN",
             $createTextNode("Genesis "),
             nd.append($createMarkerNode("nd"), ndText, $createMarkerNode("nd", "closing")),
           ),
@@ -503,8 +504,8 @@ describe("$applyMarkerMenuSelection", () => {
         const nd = $createCharNode("nd");
         closingGlyph = $createMarkerNode("nd", "closing");
         $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createBookLine(
+            "GEN",
             $createTextNode("Genesis "),
             nd.append($createMarkerNode("nd"), $createTextNode(`${NBSP}holy name`), closingGlyph),
           ),
@@ -559,8 +560,8 @@ describe("$applyMarkerMenuSelection", () => {
         openingGlyph = $createMarkerNode("nd");
         ndText = $createTextNode(`${NBSP}Lord`);
         $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createBookLine(
+            "GEN",
             $createTextNode("Genesis "),
             nd.append(openingGlyph, ndText, $createMarkerNode("nd", "closing")),
           ),
@@ -615,13 +616,7 @@ describe("$applyMarkerMenuSelection", () => {
       const { editor } = await historyTestEnvironment(() => {
         const unmatched = $createImmutableUnmatchedNode("nd*");
         unmatched.setMode("normal");
-        $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
-            $createTextNode("Genesis "),
-            unmatched,
-          ),
-        );
+        $getRoot().append($createBookLine("GEN", $createTextNode("Genesis "), unmatched));
       });
       await act(async () =>
         editor.update(() => {
@@ -668,8 +663,8 @@ describe("$applyMarkerMenuSelection", () => {
         openingGlyph = $createMarkerNode("nd");
         ndText = $createTextNode(`${NBSP}Lord`);
         $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createBookLine(
+            "GEN",
             $createTextNode("Genesis "),
             nd.append(openingGlyph, ndText, $createMarkerNode("nd", "closing")),
           ),
@@ -720,8 +715,8 @@ describe("$applyMarkerMenuSelection", () => {
         openingGlyph = $createMarkerNode("nd");
         ndText = $createTextNode(`${NBSP}Lord`);
         $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createBookLine(
+            "GEN",
             $createTextNode("Genesis "),
             nd.append(openingGlyph, ndText, $createMarkerNode("nd", "closing")),
           ),
@@ -766,8 +761,8 @@ describe("$applyMarkerMenuSelection", () => {
       const { editor } = await historyTestEnvironment(() => {
         markedText = $createTextNode("esis");
         $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createBookLine(
+            "GEN",
             $createTextNode("Gen"),
             $createTypedMarkNode({ comment: ["c1"] }).append(markedText),
             $createTextNode(" tail"),
@@ -805,8 +800,8 @@ describe("$applyMarkerMenuSelection", () => {
       const { editor } = await historyTestEnvironment(() => {
         markedText = $createTextNode("holy name");
         $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createBookLine(
+            "GEN",
             $createTextNode("Genesis "),
             $createTypedMarkNode({ comment: ["c1"] }).append(markedText),
             $createTextNode(" end"),
@@ -839,8 +834,8 @@ describe("$applyMarkerMenuSelection", () => {
       const { editor } = await historyTestEnvironment(() => {
         markedText = $createTextNode("holy name");
         $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createBookLine(
+            "GEN",
             $createTextNode("Genesis "),
             $createCharNode("nd").append(
               $createMarkerNode("nd"),
@@ -885,8 +880,8 @@ describe("$applyMarkerMenuSelection", () => {
       const { editor } = await historyTestEnvironment(() => {
         ndText = $createTextNode(`${NBSP}holy name`);
         $getRoot().append(
-          $createBookNode("GEN").append(
-            $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createBookLine(
+            "GEN",
             $createTextNode("Genesis "),
             $createTypedMarkNode({ comment: ["c1"] }).append(
               $createCharNode("nd").append(
@@ -3278,8 +3273,8 @@ describe("$splitParagraphWithMarker — a selection reaching into a note's own c
         $createMarkerNode("f", "closing"),
       );
       $getRoot().append(
-        $createBookNode("GEN").append(
-          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+        $createBookLine(
+          "GEN",
           $createTextNode("Genesis "),
           nd.append($createMarkerNode("nd"), $createTextNode("Lord God"), closer),
           note,

@@ -8,7 +8,7 @@ import { $createImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
 import { UsjNodeOptions } from "../../nodes/usj/usj-node-options.model";
 import { ViewOptions } from "../../views/view-options.utils";
 import { CounterStyleRuleLike, NoteNodePlugin } from "./NoteNodePlugin";
-import { baseTestEnvironment, updateSelection } from "./react-test.utils";
+import { $createBookLine, baseTestEnvironment, updateSelection } from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
   $getRoot,
@@ -19,14 +19,12 @@ import {
   $getNodeByKey,
 } from "lexical";
 import {
-  $createBookNode,
   $createCharNode,
   $createImmutableChapterNode,
   $createMarkerNode,
   $createNoteNode,
   $createParaNode,
   $isCharNode,
-  $createImmutableTypedTextNode,
   $isNoteNode,
   $isParaNode,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
@@ -415,8 +413,8 @@ describe("NoteNodePlugin", () => {
           noteText = $createTextNode(NOTE_TEXT);
           note = $createNoteNode("f", "+");
           $getRoot().append(
-            $createBookNode("GEN").append(
-              $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+            $createBookLine(
+              "GEN",
               $createTextNode("description "),
               note.append(
                 $createImmutableNoteCallerNode("+", "preview"),
