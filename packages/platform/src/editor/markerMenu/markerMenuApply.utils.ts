@@ -43,6 +43,7 @@ import {
   $isTextNode,
   LexicalNode,
   PointType,
+  RangeSelection,
 } from "lexical";
 import {
   $createParaNode,
@@ -349,6 +350,27 @@ export function $commitTypedCloser(typedMarker: string): boolean {
 }
 
 /**
+ * Normalizes a caret or selection endpoint parked at or before the `\id` line's own immutable
+ * prefix glyph — an element point in the book at offset 0, the one position `$moveEndpointPastPrefixGlyph`
+ * already keeps the paragraph split off. Reachable through anything other than a click (Home,
+ * `selectStart()`, or any other programmatic selection): `ParaMarkerPrefixCursorGuardPlugin` only
+ * corrects a `CLICK_COMMAND`. A no-op everywhere else, including when the selection is not in a
+ * `BookNode` at all.
+ *
+ * Applied once, in the shared apply entry point, ahead of every kind's own branch: a caret this
+ * far ahead of the prefix has nowhere else to normalize FROM without duplicating the check in
+ * every insert arm a new entry could add.
+ */
+function $normalizeSelectionPastBookPrefix(selection: RangeSelection): void {
+  const book = $findMatchingParent(selection.anchor.getNode(), $isBookNode);
+  if (!book) return;
+  const prefixGlyph = book.getFirstChild();
+  if (!$isSynthesizedMarkerNode(prefixGlyph)) return;
+  $moveEndpointPastPrefixGlyph(selection.anchor, book, prefixGlyph);
+  $moveEndpointPastPrefixGlyph(selection.focus, book, prefixGlyph);
+}
+
+/**
  * Applies a marker-menu selection at the current editor selection (standard-view `\`/Enter
  * marker menus) — the `EditorRef.applyMarkerMenuSelection` implementation. Call inside
  * `editor.update()`.
@@ -359,14 +381,16 @@ export function $applyMarkerMenuSelection(
   reference: SerializedVerseRef,
   deps: ApplyMarkerMenuSelectionDeps,
 ): string | undefined {
+  const selection = $getSelection();
   // LOUD guard: without a range selection (e.g. the palette click blurred the editor and nulled
   // it), the literal cleanup AND the insert paths below all silently no-op — the typed literal
   // then strands in the document and reaches the host's save as data. Hosts should restore
   // focus/selection before applying; this warning names the failure when they don't.
-  if (!$isRangeSelection($getSelection()))
+  if (!$isRangeSelection(selection))
     deps.logger?.warn(
       "$applyMarkerMenuSelection: no range selection — cleanup/insert will no-op (editor blurred?)",
     );
+  else $normalizeSelectionPastBookPrefix(selection);
 
   // Delete the literal `\marker` trigger prefix (when one landed) BEFORE any branch — including the
   // `closeTag` branch, so closing a char span via the passive `\` palette doesn't strand the trigger

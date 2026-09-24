@@ -999,6 +999,78 @@ describe("$applyMarkerMenuSelection", () => {
     });
   });
 
+  // A `(book, 0)` caret — reachable via Home, `$getRoot().selectStart()`, or any other programmatic
+  // selection (the click guard only corrects a CLICK) — sits ahead of the prefix glyph. Inserting
+  // there would land the new span or note before `\id GEN ` on screen while the glyph keeps its own
+  // fixed spot in the saved file, splitting what the caret shows from what gets written.
+  describe("$applyMarkerMenuSelection — the `\\id` line's own prefix glyph", () => {
+    it("keeps the prefix glyph first when a character pick's collapsed caret sits at (book, 0)", async () => {
+      const { editor } = await historyTestEnvironment(() => {
+        $buildBookLine("Genesis description");
+      });
+      await act(async () =>
+        editor.update(() => {
+          const [book] = $getRoot().getChildren();
+          if (!$isBookNode(book)) throw new Error("expected a BookNode");
+          book.select(0, 0);
+        }),
+      );
+
+      const charItem = requireDefined(
+        ID_LINE_MENU_ITEMS.find((item) => item.kind === "character"),
+        "the sheet offers no character style under `id`",
+      );
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            charItem,
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        const book = $getRoot().getFirstChild();
+        if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+        const [prefix] = book.getChildren();
+        expect(prefix.getTextContent()).toBe(`\\id GEN${NBSP}`);
+      });
+    });
+
+    it("keeps the prefix glyph first when a note pick's collapsed caret sits at (book, 0)", async () => {
+      const { editor } = await historyTestEnvironment(() => {
+        $buildBookLine("Genesis description");
+      });
+      await act(async () =>
+        editor.update(() => {
+          const [book] = $getRoot().getChildren();
+          if (!$isBookNode(book)) throw new Error("expected a BookNode");
+          book.select(0, 0);
+        }),
+      );
+
+      await act(async () =>
+        editor.update(() => {
+          $applyMarkerMenuSelection(
+            { marker: "f", kind: "note", isBasic: true },
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          );
+        }),
+      );
+
+      editor.getEditorState().read(() => {
+        const book = $getRoot().getFirstChild();
+        if (!$isBookNode(book)) throw new Error("expected the book to stay first");
+        const [prefix] = book.getChildren();
+        expect(prefix.getTextContent()).toBe(`\\id GEN${NBSP}`);
+      });
+    });
+  });
+
   describe("collapsed char insert with the full marker-edit engine", () => {
     /** Shared setup: para `\p the wicked,` with a literal `\wj` typed at "wic|ked,". */
     async function setUpLiteralMidWord() {
