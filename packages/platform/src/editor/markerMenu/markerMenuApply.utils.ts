@@ -163,6 +163,22 @@ function $canSplitBookAt(point: PointType, book: BookNode): boolean {
 }
 
 /**
+ * Whether `point` sits INSIDE the `\id` line's own subtree at a position {@link $canSplitBookAt}
+ * refuses — concretely, inside a note nested in the line, which the char-stack lift-out below has
+ * no way to climb back out of (`NoteNode` is neither a `CharNode` nor a `TypedMarkNode`).
+ *
+ * Deliberately narrower than "`$canSplitBookAt` is false": a point OUTSIDE the book altogether —
+ * in a following paragraph a selection reaches into, the case
+ * {@link $splitBookWithMarker}'s own doc comment describes — is not this. That boundary is the
+ * split's own removal to handle, and is exercised by a passing selection today.
+ */
+function $isTrappedInsideBookNote(point: PointType, book: BookNode): boolean {
+  const node = point.getNode();
+  if (!book.is(node) && !book.isParentOf(node)) return false;
+  return !$canSplitBookAt(point, book);
+}
+
+/**
  * Moves `point` to just after `prefixGlyph` when it currently names a position at or before it.
  * The book's own prefix glyph never moves — it IS the `\id` line, and the view renders it as one
  * immutable decorator the caret cannot enter — so a caret or selection endpoint parked ahead of it
@@ -241,6 +257,14 @@ function $splitBookWithMarker(book: BookNode, marker: string, viewOptions?: View
   // was rather than having already deleted the selection it was about to replace.
   const start = selection.isBackward() ? selection.focus : selection.anchor;
   if (!$canSplitBookAt(start, book)) return false;
+  // The OTHER end is checked too, but narrowly: a selection can begin splittable and still reach
+  // into a note's own expanded content nested in the line, a shape the char-stack lift-out below
+  // cannot climb back out of — checking only the start left exactly that selection refused AFTER
+  // `removeText()` had already deleted it. A selection whose other end reaches PAST the book
+  // altogether, into a following paragraph, is deliberately not refused here: that boundary is
+  // what the removal just below is for, and is exercised by a passing test today.
+  const end = selection.isBackward() ? selection.anchor : selection.focus;
+  if (!selection.isCollapsed() && $isTrappedInsideBookNote(end, book)) return false;
 
   // Captured before any insertion could shift what `book.getFirstChild()` reports.
   const prefixGlyph = $isSynthesizedMarkerNode(book.getFirstChild())

@@ -3255,6 +3255,64 @@ describe("$splitParagraphWithMarker — a selection spanning the `\\id` line int
   });
 });
 
+describe("$splitParagraphWithMarker — a selection reaching into a note's own content", () => {
+  it("leaves the document unchanged when the split refuses a selection into an expanded note", async () => {
+    // A selection from OUTSIDE a note (the closed `\nd*` closer's trailing edge) into its OWN
+    // expanded content: `$breakAndLiftCharStack`'s lift-out loop only climbs through CharNode and
+    // TypedMarkNode ancestors, so a caret left inside the note after `removeText()` cannot climb
+    // back out to the book, and the split refuses late. The TSDoc says `false` means nothing
+    // happened — the removed text must not stay gone.
+    let closer: MarkerNode;
+    let ftContent: TextNode;
+    const { editor } = await historyTestEnvironment(() => {
+      const nd = $createCharNode("nd");
+      closer = $createMarkerNode("nd", "closing");
+      const note = $createNoteNode("f", "+", false);
+      const ftChar = $createCharNode("ft");
+      ftChar.setUnknownAttributes({ closed: "false" });
+      ftContent = $createTextNode(`${NBSP}A note`);
+      note.append(
+        $createMarkerNode("f"),
+        $createTextNode(getEditableCallerText("+")),
+        ftChar.append($createMarkerNode("ft"), ftContent),
+        $createMarkerNode("f", "closing"),
+      );
+      $getRoot().append(
+        $createBookNode("GEN").append(
+          $createImmutableTypedTextNode("marker", `\\id GEN${NBSP}`),
+          $createTextNode("Genesis "),
+          nd.append($createMarkerNode("nd"), $createTextNode("Lord God"), closer),
+          note,
+        ),
+      );
+    });
+
+    const before = editor.getEditorState().read(() => $getRoot().getTextContent());
+
+    await act(async () =>
+      editor.update(() => {
+        const size = closer.getTextContentSize();
+        const range = $createRangeSelection();
+        range.anchor = $createPoint(closer.getKey(), size, "text");
+        range.focus = $createPoint(ftContent.getKey(), 3, "text");
+        $setSelection(range);
+      }),
+    );
+
+    let result: boolean | undefined;
+    await act(async () =>
+      editor.update(() => {
+        result = $splitParagraphWithMarker("q1", viewOptions);
+      }),
+    );
+
+    expect(result).toBe(false);
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toBe(before);
+    });
+  });
+});
+
 describe("$splitParagraphWithMarker — caret placement across the mid-span split", () => {
   it("parks the caret INSIDE the reopened span's content start when the split lands mid-span", async () => {
     // Enter-menu apply with the caret mid-span: `\p say \nd Lo|rd\nd* of hosts`. The split goes
