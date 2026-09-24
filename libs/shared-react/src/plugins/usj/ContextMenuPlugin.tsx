@@ -373,10 +373,20 @@ export function ContextMenuPlugin({
     const list = document.getElementById(CONTEXT_MENU_LIST_ID);
     const item = document.getElementById(contextMenuItemId(selectedIndex));
     if (!list || !item) return;
-    if (item.offsetTop < list.scrollTop) {
-      list.scrollTop = item.offsetTop;
-    } else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight) {
-      list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
+    // `list` is `position: static`, so its items' `offsetTop` is measured from the outer
+    // fixed-position portal div (their nearest POSITIONED ancestor), not from `list` itself. Any
+    // spacing inside that portal above the list — e.g. `padding-top` on `.typeahead-popover` —
+    // shifts every item's `offsetTop` by that amount while its on-screen position does not move,
+    // so `offsetTop` alone overshoots. Rect math is relative to `list`'s own on-screen position
+    // instead, so it holds regardless of what any ancestor's layout does.
+    const listRect = list.getBoundingClientRect();
+    const itemRect = item.getBoundingClientRect();
+    const itemTop = itemRect.top - listRect.top + list.scrollTop;
+    const itemBottom = itemRect.bottom - listRect.top + list.scrollTop;
+    if (itemTop < list.scrollTop) {
+      list.scrollTop = itemTop;
+    } else if (itemBottom > list.scrollTop + list.clientHeight) {
+      list.scrollTop = itemBottom - list.clientHeight;
     }
   }, [editor, menuState.isOpen, selectedIndex]);
 

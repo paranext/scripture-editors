@@ -464,22 +464,38 @@ describe("ContextMenuPlugin scrolling", () => {
       },
       configurable: true,
     });
+    // `list` is `position: static`, so in a real browser `offsetTop` is measured from the outer
+    // fixed-position portal div, not from `list` — a `padding-top` on `.typeahead-popover` (or any
+    // spacing above the list within that portal) shifts every item's `offsetTop` by that amount
+    // while its ON-SCREEN position, and so its `getBoundingClientRect()`, does not move. Give
+    // `offsetTop` a fake 40px padding relative to each item's rect-derived position, so a fix that
+    // still reads `offsetTop` computes a different (wrong) `scrollTop` than one that reads rects.
+    const PORTAL_PADDING = 40;
+    const LIST_PAGE_TOP = 500;
+    Object.defineProperty(list, "getBoundingClientRect", {
+      value: () => new DOMRect(0, LIST_PAGE_TOP, 100, 30),
+      configurable: true,
+    });
     items.forEach((item, i) => {
-      Object.defineProperty(item, "offsetTop", { value: i * 30, configurable: true });
+      Object.defineProperty(item, "offsetTop", {
+        value: i * 30 + PORTAL_PADDING,
+        configurable: true,
+      });
       Object.defineProperty(item, "offsetHeight", { value: 30, configurable: true });
+      Object.defineProperty(item, "getBoundingClientRect", {
+        value: () => new DOMRect(0, LIST_PAGE_TOP + i * 30, 100, 30),
+        configurable: true,
+      });
     });
 
-    // The first ArrowDown highlights index 0, so reaching the last item takes `items.length` presses.
-    let remainingPresses = items.length;
-    while (remainingPresses > 0) {
-      await pressKeyOnDocument("ArrowDown");
-      remainingPresses -= 1;
-    }
+    // Nothing highlighted yet, so ArrowUp jumps straight to the LAST item in one press — landing
+    // on it directly, rather than accumulating scroll state across a run of ArrowDown presses.
+    await pressKeyOnDocument("ArrowUp");
 
     expect(selectedMenuItemTitle()).toBe(
       items[items.length - 1].querySelector(".text")?.textContent,
     );
-    expect(list.scrollTop).toBeGreaterThan(0);
+    // The rect-derived answer: the last item's on-screen top relative to the list's own rect.
     expect(list.scrollTop).toBe((items.length - 1) * 30);
   });
 });
