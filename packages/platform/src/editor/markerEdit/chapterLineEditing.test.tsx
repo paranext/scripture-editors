@@ -9,7 +9,7 @@
  * does in the USFM text, and leaves the text after the selection in its own paragraph. The other
  * half pins editing on the chapter line itself:
  * it cannot be split, so Enter there starts a new paragraph after it, Shift+Enter does nothing, and
- * a paste or a drop goes in as one line.
+ * a paste or a drop goes in as it would be typed there.
  */
 import { EditorRef } from "../editor.model";
 import { getEnterMenuItems } from "../markerMenu/markerItemSource";
@@ -434,29 +434,37 @@ describe("a caret on the chapter line", () => {
     expect(getEnterMenuItems(PARAGRAPH_SHEET, context)[0]?.marker).toBe("p");
   });
 
-  it("takes a multi-line paste as one line of text", async () => {
+  // What typing the same text there does: the first line goes onto the chapter line, and each line
+  // break starts a paragraph after it, as Enter there does.
+  const TYPED_AA_BB = [
+    CHAPTER_2,
+    "aa",
+    { type: "para", marker: "p", content: ["bb"] },
+    VERSE_1_PARA,
+    POETRY_PARA,
+  ];
+
+  it("takes a multi-line paste as it would be typed", async () => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
     await onChapterLine(lexical, () =>
       lexical.dispatchCommand(PASTE_COMMAND, plainTextPaste("aa\nbb")),
     );
-    lexical.getEditorState().read(() => expect($getRoot().getChildrenSize()).toBe(3));
-    expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, "aa bb", VERSE_1_PARA, POETRY_PARA]);
+    expect(ref.current?.getUsj()?.content).toEqual(TYPED_AA_BB);
   });
 
   // A drop inserts through Lexical's clipboard path, not the paste command, so it needs a claim of
   // its own: without one the second line lands after the last paragraph of the chapter.
-  it("takes a multi-line drop as one line of text", async () => {
+  it("takes a multi-line drop as it would be typed", async () => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
     await onChapterLine(lexical, () =>
       lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, drop("text/plain", "aa\r\nbb")),
     );
-    lexical.getEditorState().read(() => expect($getRoot().getChildrenSize()).toBe(3));
-    expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, "aa bb", VERSE_1_PARA, POETRY_PARA]);
+    expect(ref.current?.getUsj()?.content).toEqual(TYPED_AA_BB);
   });
 
   // Some drag sources carry html alone; a paste falls back to its text, and a drop must too, or it
   // reaches Lexical's rich-text insertion with no block to insert into.
-  it("takes an html-only drop as one line of text", async () => {
+  it("takes an html-only drop as it would be typed", async () => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
     await onChapterLine(lexical, () =>
       lexical.dispatchCommand(
@@ -464,7 +472,42 @@ describe("a caret on the chapter line", () => {
         drop("text/html", "<p>aa</p><p>bb</p>"),
       ),
     );
-    lexical.getEditorState().read(() => expect($getRoot().getChildrenSize()).toBe(3));
+    expect(ref.current?.getUsj()?.content).toEqual(TYPED_AA_BB);
+  });
+
+  // A pasted `\c` would put a second chapter into the chapter, exactly as it would anywhere else.
+  it("drops a pasted chapter marker, keeping the text after it", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await onChapterLine(lexical, () =>
+      lexical.dispatchCommand(PASTE_COMMAND, plainTextPaste("\\c 5 aa")),
+    );
+    expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, "aa", VERSE_1_PARA, POETRY_PARA]);
+  });
+
+  // A copy made in this editor carries its own rich payload, which structure protection's html
+  // sanitizer would insert as nodes — and a chapter line has no block to insert them into, so left
+  // to the sanitizer the paste throws and does nothing.
+  it("takes an internal paste in a protected document as one line", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc, {
+      structureProtectionMode: "protected",
+    });
+    const flavors: Record<string, string> = {
+      "text/plain": "aa\nbb",
+      "text/html": "<p>aa</p><p>bb</p>",
+      "application/x-lexical-editor": JSON.stringify({
+        namespace: lexical._config.namespace,
+        nodes: [],
+      }),
+    };
+    const internalPaste = {
+      clipboardData: {
+        types: Object.keys(flavors),
+        files: [],
+        getData: (type: string) => flavors[type] ?? "",
+      },
+      preventDefault: () => undefined,
+    } as unknown as ClipboardEvent;
+    await onChapterLine(lexical, () => lexical.dispatchCommand(PASTE_COMMAND, internalPaste));
     expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, "aa bb", VERSE_1_PARA, POETRY_PARA]);
   });
 });

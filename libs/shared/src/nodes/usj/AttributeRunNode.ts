@@ -150,10 +150,12 @@ export class AttributeRunNode extends ElementNode {
   }
 
   override exportDOM(): DOMExportOutput {
-    // A DocumentFragment rather than null: @lexical/html's $appendNodesToHTML treats a null
-    // element as "skip this subtree" and never walks the children, so the run's glyphs AND its
-    // value text (the "2" of `\va 2\va*`) vanished from the text/html clipboard flavor while
-    // getTextContent() kept them on text/plain — and most rich paste targets prefer HTML. The
+    // A DocumentFragment rather than null: @lexical/html's $appendNodesToHTML treats a null element
+    // as "skip this subtree" and never walks the children, which would drop the run's glyphs AND its
+    // value text (the "2" of `\va 2\va*`) from any DOM-export html while getTextContent() keeps them
+    // on text/plain. That export is what the HIDDEN-marker views' copy still ships, and what any
+    // consumer re-importing html through $generateNodesFromDOM reads; an editable-marker view's own
+    // `text/html` is the copy walker's USFM bytes instead and never reaches this method. The
     // fragment exports the children while still contributing no wrapper markup of its own.
     return { element: document.createDocumentFragment() };
   }

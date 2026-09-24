@@ -25,6 +25,7 @@ import {
   $setState,
 } from "lexical";
 import {
+  $createAttributeRunNode,
   $createCharNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
@@ -196,6 +197,29 @@ const cases: AgreementCase[] = [
           $createMarkerNode("ts-s"),
           attributeText,
           $createMarkerNode("", "selfClosing"),
+          $createTextNode("post"),
+        ),
+      );
+    },
+    expected: [{ kind: "text", text: "pre" }, { kind: "ms" }, { kind: "text", text: "post" }],
+  },
+  {
+    // The wrapped layout the shipped Standard view builds: the milestone's glyphs and attribute
+    // text ride in an AttributeRunNode SIBLING. The wrapper is display, like the pieces it holds —
+    // counting it shifted every later item in the paragraph by one.
+    name: "a MilestoneNode's AttributeRunNode wrapper is skipped with the display it holds",
+    $build: () => {
+      const attributeText = $createTextNode(`${NODE_ATTRIBUTE_PREFIX}who="P"`);
+      $setState(attributeText, textTypeState, "attribute");
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("pre"),
+          $createMilestoneNode("qt-s"),
+          $createAttributeRunNode("milestone").append(
+            $createMarkerNode("qt-s"),
+            attributeText,
+            $createMarkerNode("", "selfClosing"),
+          ),
           $createTextNode("post"),
         ),
       );

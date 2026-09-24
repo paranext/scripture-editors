@@ -12,10 +12,11 @@
  * document instead. Every split is therefore handled here before Lexical attempts it. A paragraph
  * split starts a new paragraph after the chapter line, which is what Enter after `\c N` does in the
  * USFM text; a line break is refused, since a chapter line cannot hold one; and a paste or a drop
- * goes in as one line of text.
+ * goes in as the user would type it, its lines starting paragraphs after the chapter line.
  */
 
 import { $setParaMarkerWithPrefix } from "./markerEditDeletion.utils";
+import { $insertPastedText } from "./whitespaceDisplay.plugin.utils";
 import { $findMatchingParent } from "@lexical/utils";
 import { $getSelection, $isRangeSelection, LexicalNode, RangeSelection } from "lexical";
 import { $createParaNode, $isChapterNode, ChapterNode } from "shared";
@@ -98,20 +99,32 @@ export function $refuseLineBreakOnChapterLine(): boolean {
 
 /**
  * Handles a paste or a drop at a chapter line: a selected range touching the chapter line is
- * deleted first, and text whose caret is still on the chapter line is inserted there as one line of
- * plain text — its line breaks become spaces, as they would in USFM — since a chapter line cannot
- * be split.
+ * deleted first, and text whose caret is still on the chapter line goes in exactly as an external
+ * paste does anywhere in Standard view ({@link $insertPastedText}) — `\c`/`\id` dropped, NBSPs
+ * normalized, and its lines replayed as typed, so each line after the first starts a paragraph
+ * after the chapter line, as Enter there does (or, structure-protected, joined into one line).
  *
- * Mutating: call from a `PASTE_COMMAND` handler that runs before Lexical's own paste, or from a
- * `CONTROLLED_TEXT_INSERTION_COMMAND` handler (which is how a drop arrives) that runs before
- * Lexical's own insertion.
+ * Claimed for every paste and drop that reaches a chapter line, internal ones included: Lexical's
+ * own insertion of a rich payload, and structure protection's html sanitizer, both insert nodes
+ * where the caret is, and with the caret in a chapter line there is no block to insert them into.
  *
- * @param text The pasted or dropped plain text, if there is any.
+ * Mutating: call from a `PASTE_COMMAND` handler that runs before Lexical's own paste and before
+ * structure protection's, or from a `CONTROLLED_TEXT_INSERTION_COMMAND` handler (which is how a
+ * drop arrives) that runs before Lexical's own insertion.
+ *
+ * @param text The pasted or dropped text, resolved as `getPastePayload` resolves it.
+ * @param isStructureProtected Whether the document is structure-protected.
+ * @param armSplitExpected Arms the engine's `splitExpected` flag for a multi-line replay.
  * @returns Whether the paste is claimed.
  */
-export function $pasteOnChapterLine(text: string | undefined): boolean {
+export function $pasteOnChapterLine(
+  text: string,
+  isStructureProtected: boolean,
+  armSplitExpected: () => void,
+): boolean {
   if (!$chapterLineAtCaret()) return false;
   const caret = $getSelection();
-  if (text && $isRangeSelection(caret)) caret.insertText(text.replace(/\n/g, " "));
+  if (text && $isRangeSelection(caret))
+    $insertPastedText(caret, text, isStructureProtected, armSplitExpected);
   return true;
 }

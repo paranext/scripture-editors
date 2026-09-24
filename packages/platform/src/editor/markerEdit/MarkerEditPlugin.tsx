@@ -36,6 +36,8 @@ import {
   $handleCopyForStandardView,
   $handlePasteForStandardView,
   getDataTransferPayload,
+  normalizePastedNbsp,
+  stripPastedChapterAndBookId,
   getPastePayload,
 } from "./whitespaceDisplay.plugin.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -97,7 +99,6 @@ import {
   MarkerLookup,
   MarkerNode,
   MilestoneNode,
-  NBSP,
   NoteNode,
   PARA_MARKER_DEFAULT,
   ParaNode,
@@ -107,7 +108,12 @@ import {
 } from "shared";
 import {
   $selectionReachesIntoOpaqueBlock,
+  $shouldBlockSelectionReplacement,
+  $shouldBlockStructuralEdit,
+  EditIntent,
   hasStandardViewWhitespace,
+  keyDownToIntent,
+  StructureProtectionMode,
   ViewOptions,
 } from "shared-react";
 
@@ -315,13 +321,38 @@ function registerDestroyedOwnerPend(editor: LexicalEditor, context: MarkerEditCo
 }
 
 /**
- * The engine's four `PASTE_COMMAND` claims — the in-note `\fp` break at CRITICAL, the
- * character-stack line replay at HIGH, the chapter-line paste and the paragraph-split arm at LOW.
- * Kept together because
- * they race on one command and their priorities are what keeps them apart; composed into the
- * plugin's `mergeRegister` in the position that ordering requires (the standard-view NBSP
- * normalization at HIGH is registered BEFORE this, and the char-stack claim relies on it). The
- * returned teardown unregisters all four.
+ * Whether structure protection would refuse this gesture outright — the same predicates
+ * `StructureKeyboardPlugin` decides with, asked before a handler that runs AHEAD of it commits to
+ * anything.
+ *
+ * Two handlers here need the answer early. One arms the paragraph reap from the pre-gesture
+ * selection; the other removes a selected range before it decides how to replay a paste. A refusal
+ * mutates nothing, so nothing commits and the update listener that resets the arms never runs — an
+ * arm left behind reads as fresh provenance on the next unrelated commit, and a range removed ahead
+ * of the refusal is the very content protection exists to keep.
+ *
+ * `intent` names the keystroke's structural effect for the collapsed-caret rules; without it the
+ * question is only whether the selection may be REPLACED (cut, paste, drop).
+ *
+ * Read-only: call inside an update or read.
+ */
+function $isRefusedByStructureProtection(context: MarkerEditContext, intent?: EditIntent): boolean {
+  if (context.structureProtectionMode !== "protected") return false;
+  const selection = $getSelection();
+  if (!selection) return false;
+  return intent
+    ? $shouldBlockStructuralEdit(selection, intent)
+    : $isRangeSelection(selection) && $shouldBlockSelectionReplacement(selection);
+}
+
+/**
+ * The engine's four `PASTE_COMMAND` claims — the in-note `\fp` break and the chapter-line paste at
+ * CRITICAL, the character-stack line replay at HIGH, and the paragraph-split arm at LOW. Kept
+ * together because they race on one command and their priorities are what keeps them apart;
+ * composed into the plugin's `mergeRegister` in the position that ordering requires (the
+ * Standard-view external-paste handler at HIGH is registered BEFORE this, so it wins the tie against
+ * the char-stack claim and replays a Standard-view paste's lines itself). The returned teardown
+ * unregisters all four.
  */
 function registerPasteNormalization(
   editor: LexicalEditor,
@@ -343,8 +374,12 @@ function registerPasteNormalization(
         // Simple-mode default) StructureKeyboardPlugin handles PASTE at HIGH and
         // sanitize-inserts any html-bearing payload before a lower-priority claim could run —
         // but an `\fp` break edits NOTE CONTENT, not document structure, so the in-note claim
-        // must win. Outranking the standard-view NBSP normalization at HIGH is fine because
-        // the claim applies the same NBSP → `~` display mapping itself (below).
+        // must win. Outranking the Standard-view external-paste handler
+        // ($handlePasteForStandardView, whitespaceDisplay.plugin.utils.ts) at HIGH is fine
+        // because this claim runs its own normalization below — it does not depend on that
+        // handler running first — but it reuses that handler's exported positional rule
+        // (`normalizePastedNbsp`) rather than a divergent mapping of its own, so a display-NBSP
+        // here is never corrupted into data any differently than it would be outside a note.
         //
         // The claim covers editor-internal rich pastes (application/x-lexical-editor) too:
         // an internal copy of multi-paragraph text replays REAL paragraph nodes, which
@@ -360,16 +395,40 @@ function registerPasteNormalization(
         // destroyed content of a read-only block. Consulting the guard's own predicate first
         // makes either registration order refuse.
         if ($selectionReachesIntoOpaqueBlock()) return false;
-        const payload = getPastePayload(event);
+        // Same reason, one rank up: this claim REMOVES the selected range (the replace-selection
+        // phase `$handlePasteLinesInNote` shares with Enter) before it decides anything, and it
+        // outranks `StructureKeyboardPlugin`'s own paste refusal at HIGH. A selection reaching out
+        // of the note across a paragraph boundary or a verse marker is that plugin's to refuse, so
+        // ask its predicate here rather than destroying the range ahead of it.
+        if ($isRefusedByStructureProtection(context)) return false;
+        const payload = getPastePayload(event, editor._config.namespace);
         if (!payload) return false;
-        const pastedText = payload.text;
-        if (pastedText.includes("\n")) {
-          // Standard view: a pasted data-NBSP takes its `~` display form here, exactly as
-          // `$handlePasteForStandardView` does for the pastes that reach it — inserted raw
-          // it is indistinguishable from a display-NBSP (a plain space in a run), so
-          // serialization would corrupt it into a plain space. A pasted literal `~` is
-          // already the display form and passes through in both paths.
-          const noteText = isStandardView ? pastedText.replaceAll(NBSP, "~") : pastedText;
+        // Cheap gate for the common single-line paste: neither the strip nor the NBSP mapping
+        // below can introduce a line break, so a payload with none stays single-line through both
+        // and the claim declines either way.
+        if (!payload.text.includes("\n")) return false;
+        // Standard view: every pasted NBSP is normalized POSITIONALLY here, via the same
+        // `normalizePastedNbsp` the Standard-view external-paste handler uses
+        // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`,
+        // a note's inter-child spacer) settles to a space exactly as it would outside a note, and
+        // only genuine data survives as `~`. Inserted raw an NBSP is
+        // indistinguishable from a display-NBSP (a plain space in a run), so serialization would
+        // corrupt it into a plain space if left unmapped. A pasted literal `~` is already the
+        // display form and passes through unchanged. `\c`/`\id` bytes are dropped first, via the
+        // same `stripPastedChapterAndBookId` the external handler uses — note content
+        // re-tokenizes literal text through the SAME Tier 2 tokenizer a paragraph does, so a
+        // pasted `\c`/`\id` landing here is just as reachable (and just as save-poisoning) as one
+        // landing in body text.
+        //
+        // Both run before the line-break test BELOW (the raw gate above only rules out text that
+        // never had a break), because the claim below removes the selected range before it inserts
+        // anything: a payload the strip reduces to one line, or to nothing, is not a multi-line
+        // paste, and is left to the Standard-view claim exactly as that line pasted on its own
+        // would be — which, for nothing at all, keeps the selection.
+        const noteText = isStandardView
+          ? normalizePastedNbsp(stripPastedChapterAndBookId(payload.text))
+          : payload.text;
+        if (noteText.includes("\n")) {
           const lines = noteText.split("\n");
           let outcome = $handlePasteLinesInNote(lines, context.getMarker);
           if (outcome === "declined" && $adoptDomCaretInExpandedNote(editor)) {
@@ -398,6 +457,32 @@ function registerPasteNormalization(
     editor.registerCommand(
       PASTE_COMMAND,
       (event) => {
+        // A paste landing on a chapter line goes in as it would be typed there (see
+        // chapterLine.utils.ts). CRITICAL, ahead of everything that inserts a paste at HIGH:
+        // Lexical's own rich-paste insertion and structure protection's html sanitizer both insert
+        // nodes at the caret, and a chapter line has no block to insert them into. Disjoint from the
+        // in-note claim above, since a chapter line holds no note. Like that claim, it removes a
+        // selected range first, so it declines ahead of the opaque-block guard and of structure
+        // protection's refusal, both of which it outranks.
+        if ($selectionReachesIntoOpaqueBlock()) return false;
+        if ($isRefusedByStructureProtection(context)) return false;
+        const payload = getPastePayload(event, editor._config.namespace);
+        if (!payload) return false;
+        const isClaimed = $pasteOnChapterLine(
+          payload.text,
+          context.structureProtectionMode === "protected",
+          () => {
+            context.splitExpected.current = true;
+          },
+        );
+        if (isClaimed) event?.preventDefault();
+        return isClaimed;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    ),
+    editor.registerCommand(
+      PASTE_COMMAND,
+      (event) => {
         // A multi-line plain-text paste at a caret inside a character-style stack has to close
         // and reopen that stack at every line break, exactly as Enter does. It cannot get there
         // on its own: @lexical/clipboard inserts the lines with a bare `selection.insertParagraph()`
@@ -410,21 +495,39 @@ function registerPasteNormalization(
         // Claimed narrowly and replayed as the same two steps the user would have performed by
         // hand: text, then the command. Only multi-line, since a single line never splits; only
         // inside a stack, so every other paste is left exactly as it was; and never an INTERNAL
-        // rich paste, whose real nodes carry structure a line replay would flatten. text/plain is
-        // authoritative when present, falling back to the decoded text/html — some sources (word
-        // processors, browsers) ship html alone, and those pastes otherwise reach the generic
-        // split and tear the span. Inside a stack that trade is worth it, the same call the
-        // in-note claim above makes.
+        // rich paste, whose real nodes carry structure a line replay would flatten. The bytes come
+        // from the one carrier rule every paste claim in this editor shares (`getPastePayload`): a
+        // Paratext 9 clipboard's html decoded to USFM, else text/plain when present, else the decoded
+        // text/html — some sources (word processors, browsers) ship html alone, and those pastes
+        // otherwise reach the generic split and tear the span. Inside a stack that trade is worth it,
+        // the same call the in-note claim above makes.
         //
-        // At HIGH, and registered AFTER the standard-view NBSP normalization at the same
-        // priority, which claims any paste carrying an NBSP and so never reaches this.
-        const payload = getPastePayload(event);
+        // At HIGH, and registered AFTER the Standard-view external-paste handler at the same
+        // priority. That handler claims every external paste it sees and replays the lines
+        // through this same command, so in Standard view this claim is reached only where it
+        // declines (a structure-protected document). Unformatted view, where it is not
+        // registered at all, is where this claim does its work.
+        const payload = getPastePayload(event, editor._config.namespace);
         if (!payload || payload.isInternal || !payload.text) return false;
         const lines = payload.text.split("\n");
         if (lines.length < 2) return false;
         if (!$isSelectionInParagraphCharStack()) return false;
-        event?.preventDefault();
         const selection = $getSelection();
+        // The one place the Standard-view handler declines is the one place this claim must decline
+        // too. Both register at HIGH and this one is registered LATER within the same
+        // `mergeRegister`, so a protected paste the Standard-view handler stands aside from
+        // (`$shouldBlockSelectionReplacement`, whitespaceDisplay.plugin.utils.ts) reaches here
+        // BEFORE `StructureKeyboardPlugin`'s refusal, which mounts after this plugin. Without this
+        // check the line replay below would `removeText()` and split the paragraph — deleting the
+        // very verse marker or paragraph boundary structure protection had just refused to let a
+        // paste replace.
+        if (
+          context.structureProtectionMode === "protected" &&
+          $isRangeSelection(selection) &&
+          $shouldBlockSelectionReplacement(selection)
+        )
+          return false;
+        event?.preventDefault();
         if ($isRangeSelection(selection) && !selection.isCollapsed()) selection.removeText();
         lines.forEach((line, index) => {
           // The split goes through the command so it takes that handler's char-stack path and arms
@@ -437,21 +540,6 @@ function registerPasteNormalization(
         return true;
       },
       COMMAND_PRIORITY_HIGH,
-    ),
-    editor.registerCommand(
-      PASTE_COMMAND,
-      (event) => {
-        // A chapter line cannot be split, and Lexical's paste splits at every line break without
-        // going through INSERT_PARAGRAPH_COMMAND, so a paste landing on a chapter line is claimed
-        // and inserted there as one line (see chapterLine.utils.ts). At LOW, below every claim
-        // above and below structure protection and the NBSP normalization at HIGH; declines
-        // outright for an opaque block, like the in-note claim.
-        if ($selectionReachesIntoOpaqueBlock()) return false;
-        if (!$pasteOnChapterLine(getPastePayload(event)?.text)) return false;
-        event?.preventDefault();
-        return true;
-      },
-      COMMAND_PRIORITY_LOW,
     ),
     editor.registerCommand(
       PASTE_COMMAND,
@@ -488,6 +576,7 @@ export function MarkerEditPlugin({
   getMarker,
   logger,
   markerSettleDelayMs,
+  structureProtectionMode = "off",
 }: {
   viewOptions: ViewOptions | undefined;
   /** Project StyleInfo-backed lookup; defaults to the bundled table. */
@@ -501,6 +590,11 @@ export function MarkerEditPlugin({
    * departure, Enter, blur, or a forced commit — the behavior before the idle clock existed.
    */
   markerSettleDelayMs?: number;
+  /**
+   * Mirrors `Editor`'s option of the same name. See
+   * `MarkerEditContext.structureProtectionMode`.
+   */
+  structureProtectionMode?: StructureProtectionMode;
 }): null {
   const [editor] = useLexicalComposerContext();
   const isEnabled = viewOptions?.markerMode === "editable";
@@ -540,7 +634,8 @@ export function MarkerEditPlugin({
     if (viewOptions) context.viewOptions = viewOptions;
     context.getMarker = getMarker ?? bundledGetMarker;
     context.logger = logger;
-  }, [viewOptions, getMarker, logger, markerSettleDelayMs]);
+    context.structureProtectionMode = structureProtectionMode;
+  }, [viewOptions, getMarker, logger, markerSettleDelayMs, structureProtectionMode]);
 
   useEffect(() => {
     if (!isEnabled || !viewOptions) return;
@@ -553,6 +648,7 @@ export function MarkerEditPlugin({
       collapsedDeleteCaretParas: new Set<NodeKey>(),
       rebuildAttempted: new Set<string>(),
       logger,
+      structureProtectionMode,
     };
     contextRef.current = context;
     // Publishes the live pending set to the self-healing display syncs through a side channel.
@@ -874,6 +970,10 @@ export function MarkerEditPlugin({
             editor.registerCommand(
               CUT_COMMAND,
               (event) =>
+                // A structure-protected document's cut of a selection `StructureKeyboardPlugin`
+                // refuses to replace is that plugin's to refuse: it registers CUT at CRITICAL for
+                // exactly that reason, so it has already had its turn by the time this claim runs
+                // and a selection reaching here is one it allowed.
                 $handleCopyForStandardView(
                   event && typeof event === "object" && "clipboardData" in event ? event : null,
                   editor,
@@ -889,6 +989,14 @@ export function MarkerEditPlugin({
                   event && typeof event === "object" && "clipboardData" in event
                     ? (event as ClipboardEvent)
                     : null,
+                  context.structureProtectionMode === "protected",
+                  // Consumed by $paraMarkerDeletionTransform below, same as the
+                  // INSERT_PARAGRAPH_COMMAND and LOW-priority PASTE_COMMAND handlers arm it for
+                  // the paste paths that reach them — this HIGH-priority claim reaches the
+                  // former only from its second line on, and the latter never.
+                  () => {
+                    context.splitExpected.current = true;
+                  },
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -901,7 +1009,14 @@ export function MarkerEditPlugin({
           // keys — arm the paragraph reap from the pre-cut selection. CRITICAL so it runs ahead
           // of whichever handler performs the removal (the standard-view CUT claim at HIGH, or
           // Lexical's own at EDITOR); never claims the event.
-          $armWholeParaDeletion(context);
+          //
+          // A refused cut deletes nothing, so it must arm nothing: nothing commits, the update
+          // listener never resets the arm, and an unrelated later commit would read it as this
+          // gesture's provenance. So ask each refusal that outranks or ties with this handler.
+          // Unlike the delete keys below, this arm cannot expire on a microtask: Lexical's own
+          // cut (the one Unformatted view uses) removes the range only after an `await`.
+          if (!$isRefusedByStructureProtection(context) && !$selectionReachesIntoOpaqueBlock())
+            $armWholeParaDeletion(context);
           return false;
         },
         COMMAND_PRIORITY_CRITICAL,
@@ -951,9 +1066,24 @@ export function MarkerEditPlugin({
           // gesture covers whole (selection arm), or which paragraph the collapsed caret sits
           // in (collapsed arm: a backspace chain that empties it dissolves it), so the
           // paragraph transform can reap them by provenance. Never claims the key.
-          if (event.key === "Backspace" || event.key === "Delete") {
+          //
+          // A refused keystroke deletes nothing, so an arm left for it would be read as this
+          // gesture's provenance by an unrelated later commit. Structure protection's refusal is
+          // asked up front; every other refusal (the opaque-block guard, guarded mode's first
+          // press, any added later) is covered by expiring the arms on a microtask. That is safe
+          // because the rich-text delete keys run to completion inside this same KEY_DOWN
+          // dispatch — Lexical's default KEY_DOWN handler dispatches the delete command
+          // synchronously, and the paragraph transform consumes the arm in that update.
+          if (
+            (event.key === "Backspace" || event.key === "Delete") &&
+            !$isRefusedByStructureProtection(context, keyDownToIntent(event))
+          ) {
             $armWholeParaDeletion(context);
             $armCollapsedParaDeletion(context);
+            queueMicrotask(() => {
+              context.wholeParaDeleteExpected?.clear();
+              context.collapsedDeleteCaretParas?.clear();
+            });
           }
           // Ctrl+Space collides with the composition trigger of several IMEs (Chinese/Japanese
           // input methods bind it to switch or commit), so mid-composition the keystroke belongs
@@ -1024,15 +1154,20 @@ export function MarkerEditPlugin({
         COMMAND_PRIORITY_CRITICAL,
       ),
       // A drop inserts through Lexical's clipboard path, which splits at every line break without
-      // going through INSERT_PARAGRAPH_COMMAND, so a drop on a chapter line goes in as one line,
+      // going through INSERT_PARAGRAPH_COMMAND, so a drop on a chapter line is claimed and goes in
       // as a paste there does. LOW: below structure protection's HIGH block and the NORMAL
       // replace-selection delete, above Lexical's own insertion at EDITOR.
       editor.registerCommand(
         CONTROLLED_TEXT_INSERTION_COMMAND,
         (payload) => {
           if (typeof payload === "string" || !payload.dataTransfer) return false;
-          const { text } = getDataTransferPayload(payload.dataTransfer);
-          return !!text && $pasteOnChapterLine(text);
+          const { text } = getDataTransferPayload(payload.dataTransfer, editor._config.namespace);
+          return (
+            !!text &&
+            $pasteOnChapterLine(text, context.structureProtectionMode === "protected", () => {
+              context.splitExpected.current = true;
+            })
+          );
         },
         COMMAND_PRIORITY_LOW,
       ),

@@ -86,9 +86,9 @@ export function OpaqueBlockGuardPlugin(): null {
       // CUT and PASTE run at CRITICAL because their standard-view handlers — the ones that
       // actually copy and then remove — are themselves registered at HIGH, where the winner is
       // decided by registration order rather than by intent. A refusal has to outrank the actor it
-      // refuses, not tie with it. The engine's own CRITICAL cut arm records what a cut would cover
-      // and claims nothing, so either order of the two is correct: with no removal, nothing it
-      // armed can be reaped.
+      // refuses, not tie with it. The engine's own CRITICAL cut arm, which records what a cut would
+      // cover, TIES with this refusal, so it consults `$selectionReachesIntoOpaqueBlock` itself
+      // rather than relying on order: an arm this refusal leaves behind would outlive the gesture.
       editor.registerCommand(
         PASTE_COMMAND,
         $refuseEditInsideOpaqueBlock,

@@ -4,6 +4,7 @@
  * Everything Tier 1 cannot express routes to Tier 2 ($requestTier2ForNode).
  */
 
+import { isCharKindMarker, isParaKindMarker } from "./markerKind.utils";
 import {
   BARE_OPENER_REGEX,
   CLOSER_FORM_REGEX,
@@ -63,7 +64,6 @@ import {
   getEditableCallerText,
   getVisibleOpenMarkerText,
   ImmutableUnmatchedNode,
-  isMilestoneHeuristicName,
   leadingAttributeNames,
   MarkerLookup,
   MarkerNode,
@@ -74,6 +74,7 @@ import {
   textTypeState,
   VerseNode,
 } from "shared";
+import { StructureProtectionMode } from "shared-react";
 
 /**
  * The engine's mutable per-editor state, threaded through every marker-edit transform and command
@@ -111,6 +112,20 @@ export interface MarkerEditContext extends Tier2Context {
    */
   collapsedDeleteCaretParas?: Set<NodeKey>;
   /**
+   * Mirrors the host `Editor`'s `structureProtectionMode` option. Read by the engine's two
+   * `COMMAND_PRIORITY_HIGH` paste claims — `$handlePasteForStandardView`
+   * (whitespaceDisplay.plugin.utils.ts) and the char-stack line replay (`MarkerEditPlugin.tsx`) —
+   * which must stand aside in a `"protected"` document for the ONE paste
+   * `StructureKeyboardPlugin` refuses outright: a selection `$shouldBlockSelectionReplacement`
+   * blocks. Not every protected paste; the sanitizer governs the rest, and both claims keep
+   * claiming those. The narrow rule is what the priorities require: all three register at HIGH and
+   * the marker-edit engine mounts first, so a claim here starves the refusal that would otherwise
+   * own the selection. Wiring, not engine state: refreshed every render alongside
+   * `viewOptions`/`getMarker`/`logger` rather than gating the registration effect, so toggling it
+   * doesn't tear down and reset the engine.
+   */
+  structureProtectionMode: StructureProtectionMode;
+  /**
    * Literal text already submitted to `$requestTier2ForNode` this commit.
    * `$rebuildParas` is deterministic (the degradation property): a paragraph
    * whose rebuild still contains a fragment the tokenizer cannot resolve into anything new
@@ -124,35 +139,6 @@ export interface MarkerEditContext extends Tier2Context {
    * Reset every commit by the plugin's update listener.
    */
   rebuildAttempted: Set<string>;
-}
-
-// Milestone-name heuristic shared with the fragment tokenizer (`isMilestoneHeuristicName`):
-// only stylesheet-family milestone names (`\qt#-s/-e`, `\ts-s/-e`) plus annotation comment
-// markers — see its doc comment for why bare `ts`/`t-s`/`t-e` and the z-prefix wildcard are
-// deliberately excluded. Keeping one predicate here and in the tokenizer means Tier-1 kind
-// guards and Tier-2 re-tokenization can never disagree about what is positionally a milestone.
-
-/** Same-positional-kind rule for paragraph openers. Stylesheet-first:
- * a marker the effective sheet KNOWS classifies by its styleType; heuristics
- * cover only markers absent from the sheet. Unknown markers stay as typed
- * (Tier-1 renames to unknown markers stay in place). */
-function isParaKindMarker(marker: string, getMarkerFn: MarkerLookup): boolean {
-  const clean = marker.replace(/^\+/, "");
-  if (clean === "v" || clean === "c") return false;
-  const kind = getMarkerFn(clean)?.type;
-  if (kind !== undefined && kind !== MarkerType.Unknown) return kind === MarkerType.Paragraph;
-  if (NoteNode.isValidMarker(clean) || isMilestoneHeuristicName(clean)) return false;
-  return true;
-}
-
-/** Same-positional-kind rule for char openers (see isParaKindMarker). */
-function isCharKindMarker(marker: string, getMarkerFn: MarkerLookup): boolean {
-  const clean = marker.replace(/^\+/, "");
-  if (clean === "v" || clean === "c") return false;
-  const kind = getMarkerFn(clean)?.type;
-  if (kind !== undefined && kind !== MarkerType.Unknown) return kind === MarkerType.Character;
-  if (NoteNode.isValidMarker(clean) || isMilestoneHeuristicName(clean)) return false;
-  return true;
 }
 
 /**

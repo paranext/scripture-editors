@@ -1276,6 +1276,42 @@ describe("$getUsjSelectionFromEditor", () => {
       });
     });
 
+    it("should tell the closing visible marker apart from the opening one (a span framed by its own glyphs)", () => {
+      // Both ends are element points on the same CharNode, differing only in which glyph they sit
+      // before. Keyed on the parent alone they collapsed to one location, and everything that maps
+      // the range back — the Markers view's USFM copy among them — saw an empty selection.
+      let char: CharNode;
+      const { editor } = createBasicTestEnvironment(
+        [ParaNode, CharNode, ImmutableTypedTextNode],
+        () => {
+          char = $createCharNode("nd");
+          $getRoot().append(
+            $createParaNode().append(
+              char.append(
+                $createImmutableTypedTextNode("marker", openingMarkerText("nd")),
+                $createTextNode("David"),
+                $createImmutableTypedTextNode("marker", closingMarkerText("nd")),
+              ),
+            ),
+          );
+        },
+      );
+      // Non-null assertion is safe: char is assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, char!, 0, char!, 2);
+
+      editor.getEditorState().read(() => {
+        const usjSelection = $getUsjSelectionFromEditor();
+
+        if (!usjSelection) throw new Error("Expected usjSelection to be defined");
+        expect(usjSelection.start).toEqual({ jsonPath: "$.content[0].content[0]" });
+        expect(usjSelection.end).toEqual({
+          jsonPath: "$.content[0].content[0]",
+          closingMarkerOffset: 0,
+        });
+      });
+    });
+
     it("should emit element jsonPath + offset when cursor is at start of para with visible marker", () => {
       let para: ParaNode;
       const { editor } = createBasicTestEnvironment([ParaNode, ImmutableTypedTextNode], () => {
