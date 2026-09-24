@@ -42,6 +42,40 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Changed
 
+- **`EditorRef.copy()` and `EditorRef.cut()` with nothing selected now leave the clipboard alone.**
+  Previously either one, called at a collapsed caret or with no selection, still wrote to the system
+  clipboard — it put a lone `#` there, because `@lexical/clipboard` synthesizes a copy event by
+  appending a hidden placeholder element and declines to fill it in before suppressing the browser's
+  own copy. A host calling `copy()` speculatively therefore destroyed whatever the user had on the
+  clipboard. The signatures are unchanged, so this arrives with no compile-time signal: a host that
+  worked around the old behavior (clearing the clipboard first, or reading it back and treating `#`
+  as empty) should drop that workaround.
+- **Standard view's `text/html` clipboard flavor now carries the same USFM bytes as `text/plain`.** It was
+  Lexical's DOM export, which is lossy in two independent ways: `ImmutableNoteCallerNode.exportDOM` puts a
+  collapsed note's caller in a `data-caller` attribute with no text, and `UnknownNode.exportDOM` returns a
+  null element for every kind, which stops the html walk before the construct's own display children. A
+  consumer that reads the fragment's text as USFM — Paratext 9 does — therefore received notes with an empty
+  caller and no figures, sidebars, peripherals, refs or optbreaks at all. The flavor is now the selection's
+  USFM, HTML-escaped, one `<p><span style="white-space: pre-wrap;">…</span></p>` per line, so both readable
+  flavors decode to one document. `application/x-lexical-editor` is unchanged, so an internal paste keeps its
+  node-tree fast path. A host that parsed the old export-shaped html (reading `data-caller`, `data-marker` or
+  node class names out of it) must read the USFM text instead.
+- **A structure-protected editor's pastes now get the same byte normalization as an unprotected one.**
+  With `structureProtectionMode: "protected"` the Standard-view paste handler used to decline outright,
+  handing every paste to `StructureKeyboardPlugin`'s html sanitizer — which reads `text/html` only. That
+  made the protected mode strictly less safe than the unprotected one: a pasted `\c 7` was never
+  stripped, so it created a second chapter node and every later save failed in the data provider; NBSPs
+  were never normalized positionally; and a Paratext 9 clipboard's note was never decoded. The handler
+  now owns a protected paste too. Two things still differ under protection: a selection
+  `StructureKeyboardPlugin` refuses to replace (a range spanning a paragraph boundary, or containing a
+  verse marker) is declined so that refusal keeps one owner, and a multi-line payload's newlines become
+  single spaces instead of paragraph splits, so a protected document never gains a block from a paste.
+- **A Paratext 9 clipboard's `text/html` is now decoded to USFM on paste, and wins over that clipboard's own
+  `text/plain`.** P9 writes `text/plain` as the selection's visible text and keeps the USFM its own paste
+  reads in `CF_HTML`, as escaped `<!--usfm:…-->` comments, so pasting a P9 footnote inserted the caller glyph
+  alone and lost the note. Every other source's `text/plain` still wins whenever present: the decoder
+  recognizes P9's html by signature (a `usfm:` comment, or an element carrying both a `usfm_<name>` class and
+  `usfmopen`/`usfmclosed`) and declines everything else, this editor's own html included.
 - `EditorRef.insertMarker` returns `string | undefined` (was `void`) — the created node's key.
 - `NoteCallerOnClick` takes a 7th parameter, `getNoteIndex: () => number | undefined`.
 - **Marker menu descriptions no longer carry the `(basic)` token.** `usfm.sty` marks commonly-used
@@ -63,8 +97,38 @@ refused. The public surface grew substantially; nothing was removed.
   `blockMarker`), or its paragraph controls will act on a stale caret.
 - `EditorRef.formatPara` accepts a selected paragraph marker: it retags that paragraph in place —
   keeping its attributes and identity — and keeps the marker selected.
+- **A Standard-view copy whose selection cuts through an opaque construct — a figure, sidebar,
+  periph, ref, table or optbreak — no longer writes the private `application/x-lexical-editor`
+  flavor.** That flavor carries a construct WHOLE and cannot carry part of one: a construct's text is
+  token-mode, which `@lexical/selection` refuses to slice, so a caption selected from its third
+  character to its seventh went on the clipboard as a COMPLETE figure — wrapper, attributes and the
+  whole caption — while the two readable flavors carried the four selected characters. Pasting that
+  through a native paste event inserted a second figure, and a save persisted it. `text/plain` and
+  `text/html` are unchanged and still carry exactly the selected bytes. A host that reads the private
+  flavor off the clipboard must handle its absence for such a selection; a host pasting through
+  `navigator.clipboard.read()` (the editor's own Ctrl+V and context-menu Paste) sees no change, since
+  that API never exposed the flavor.
+- **A Standard-view copy whose selection touches a book or chapter line no longer writes the private
+  `application/x-lexical-editor` flavor either.** A native paste event rebuilt the copied
+  `ChapterNode`/`BookNode` from it verbatim, past the `\c`/`\id` strip every text paste gets, and a
+  second chapter node made every later save of that chapter fail. The readable flavors are unchanged.
+- **The read-only Markers view (`markerMode: "visible"`) now copies USFM.** Its copy used to be the
+  display text — no note caller, no space after a char marker, no verse or chapter numbers, no
+  figure markers, and a note layout's spacer NBSPs — so pasting it anywhere produced broken USFM.
+  It now writes the same bytes a Standard-view copy of the same range writes, in `text/plain` and
+  `text/html`, and no `application/x-lexical-editor` flavor. A cut in a read-only editor copies and
+  removes nothing.
+- **A structure-protected editor's cut of a selection `StructureKeyboardPlugin` refuses to replace is
+  now refused whole.** With `structureProtectionMode: "protected"`, the Standard-view cut handler
+  claimed the cut ahead of that refusal and removed the range — a paragraph boundary or a verse
+  marker included. It now declines, as the paste handler already did, so nothing is copied or
+  removed.
 
 ### Fixed
+
+- In Standard view, the USJ positions the editor reports and accepts (selections, annotations)
+  after a milestone, a verse's `\va`/`\vp`, or a chapter's `\ca` were one content item too far:
+  the wrapper that carries the attribute display run was counted as content.
 
 - The attribute-run hover color resolves against the host's `--foreground` instead of a fixed
   near-black, which was all but invisible against a dark theme.
