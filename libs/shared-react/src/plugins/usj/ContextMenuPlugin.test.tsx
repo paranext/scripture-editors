@@ -570,7 +570,6 @@ describe("ContextMenuPlugin item identity", () => {
   });
 });
 
-
 /**
  * The context menu's Cut/Copy dispatch the same commands the keyboard shortcuts do, so they are
  * covered by the same empty-copy guard (`registerEmptyCopyGuard`). This pins that the leg really
