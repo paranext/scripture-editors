@@ -499,7 +499,7 @@ describe("the `\\id` line's settle scope", () => {
       editor.update(() => {
         const text = $bookLine().getChildren().find($isTextNode) as TextNode | undefined;
         if (!text) throw new Error("expected the line's leading text node");
-        text.setTextContent("Genesis \\nd x\\nd* ");
+        text.setTextContent("Genesis \\nd x\\nd*");
         text.select(text.getTextContentSize(), text.getTextContentSize());
       }),
     );

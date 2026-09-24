@@ -2185,8 +2185,10 @@ export function $rebuildBook(
   });
   trailingParas.forEach((para) => para.remove());
   // Re-derived from the book's OWN children now that the splice has settled, PLUS the freshly
-  // inserted following blocks (untouched by the splice above — a sentinel run never lands inside
-  // one) — see $restoreSelectionInContentRegion's doc comment for why the flat `newNodes` array is
+  // inserted following blocks — included because a preserved run CAN resolve into a new following
+  // block (e.g. typing a block marker at the very start of the line sends the whole tokenized
+  // content, preserved runs included, to `followingBlocks`), not only into the book's own children
+  // — see $restoreSelectionInContentRegion's doc comment for why the flat `newNodes` array is
   // stale for the book's own content, and $rebuildBook's own splice comment for why a typed block
   // marker's caret can resolve past the line's content into the new block after it.
   const liveContentNodes = [
