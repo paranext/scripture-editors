@@ -117,6 +117,7 @@ import {
   DeltaOp,
   DisableHistoryShortcutsPlugin,
   editorHoldsDomFocus,
+  EmptyNoteCaretGuardPlugin,
   EditableMarkerMenuHarness,
   EditablePlugin,
   EmptyVerseCaretGuardPlugin,
@@ -1235,6 +1236,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           {/* Not gated on viewOptions: it reads the note shell's own node mode, so it is
               structurally a no-op wherever the shell is built editable. */}
           <NoteShellCaretGuardPlugin />
+          {/* Not gated on viewOptions: it acts only on an EXPANDED note with no content. */}
+          <EmptyNoteCaretGuardPlugin />
           {/* Not gated on viewOptions either: a construct the editor cannot model is read-only in
               every marker mode, so the guard that keeps edits out of one is too. */}
           <OpaqueBlockGuardPlugin />

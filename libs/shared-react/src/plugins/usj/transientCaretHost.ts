@@ -14,6 +14,7 @@ import {
   TextNode,
 } from "lexical";
 import { useCallback, useEffect, useRef } from "react";
+import { releaseTagsAfterNextCommit } from "./editorUpdate.utils";
 import {
   $caretHostAtBoundary,
   $createCursorPlaceholderNode,
@@ -115,7 +116,10 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       // earlier arrival has already put a host there — from stacking hosts.
       const parent = target.getParentOrThrow();
       const boundary = target.getIndexWithinParent() + 1;
-      const existing = $caretHostAtBoundary(parent, boundary);
+      // Only a bare host counts: any text node can carry a caret, but a rule names this boundary
+      // because typing must land in a node of its own there, not in whatever text follows it.
+      const atBoundary = $caretHostAtBoundary(parent, boundary);
+      const existing = $isCursorPlaceholderOnlyText(atBoundary) ? atBoundary : undefined;
       if (existing) {
         // Track the adopted host too: every cleanup path (the stale-host pass below, blur,
         // unmount) acts solely on hostKeyRef, so a host reused from another instance — or one
@@ -162,6 +166,10 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       const hasWork = !!target || (!!staleKey && staleKey !== anchorKey);
       if (!hasWork) return;
       $addUpdateTag(CURSOR_CHANGE_TAG);
+      // A repair that only moves the caret is a selection-only commit, which keeps its tags pending
+      // for the next one: the user's next keystroke would then be taken for a caret move and never
+      // reach the host.
+      releaseTagsAfterNextCommit(editor, CURSOR_CHANGE_TAG);
       $repairCaret(target);
     };
 

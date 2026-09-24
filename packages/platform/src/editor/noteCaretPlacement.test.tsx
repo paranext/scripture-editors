@@ -14,7 +14,7 @@
  * attribute display run - so the offset origin is pinned under both note modes, in the
  * `expanded` describe block at the end.
  */
-import { EditorOptions } from "./editor.model";
+import { EditorOptions, EditorRef } from "./editor.model";
 import {
   note,
   noteKeys,
@@ -30,6 +30,8 @@ import {
   $getRoot,
   $getSelection,
   $isRangeSelection,
+  $isTextNode,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
   LexicalEditor,
   SKIP_DOM_SELECTION_TAG,
 } from "lexical";
@@ -403,6 +405,160 @@ describe("EditorRef.selectNote on a note with no content run", () => {
       expect(isCaretBeforeNoteCloser(lexical)).toBe(true);
     },
   );
+});
+
+/**
+ * The shape a host's own note editor renders the note in: expanded, editable markers, and the
+ * note's opening marker and caller protected from typing (the host governs them with its own UI).
+ */
+const noteEditorOptions: EditorOptions = {
+  ...options,
+  view: {
+    markerMode: "editable",
+    noteMode: "expanded",
+    hasSpacing: true,
+    isFormattedFont: true,
+    isNoteShellEditable: false,
+  },
+};
+
+/** The first note's content as the editor would save it. */
+function savedNoteContent(editorRef: EditorRef): unknown {
+  const para = editorRef.getUsj()?.content[2];
+  if (!para || typeof para === "string" || !("content" in para)) return undefined;
+  const noteObject = para.content?.find(
+    (child): child is MarkerObject => typeof child !== "string" && child.type === "note",
+  );
+  return noteObject?.content ?? [];
+}
+
+/** Types `text` at the caret, the way the editor receives typed characters. */
+async function typeText(lexical: LexicalEditor, text: string) {
+  for (const character of text)
+    await act(async () => {
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, character);
+    });
+}
+
+/**
+ * Puts the document selection on the editor's caret, as a browser's reconcile leaves it. jsdom can
+ * leave it at the start of the editor, and every keystroke reads the caret back from it.
+ */
+async function syncDomSelection(lexical: LexicalEditor) {
+  const point = lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) return undefined;
+    const { key, offset, type } = selection.anchor;
+    return { key, offset, type };
+  });
+  if (!point) throw new Error("expected a range caret");
+  const element = requireDefined(lexical.getElementByKey(point.key), "caret element");
+  // A text point addresses the node's DOM text; an element point, its DOM children.
+  const domNode =
+    point.type === "text" ? requireDefined(element.firstChild, "caret text") : element;
+  await act(async () => {
+    document.getSelection()?.collapse(domNode, point.offset);
+  });
+}
+
+/**
+ * Lets the caret come to rest as it does in a browser: the document selection on the caret, then
+ * the `selectionchange` the editor's caret guards run from (jsdom delivers its own only sometimes),
+ * then the document selection on wherever the guards put the caret.
+ */
+async function restCaret(lexical: LexicalEditor) {
+  await syncDomSelection(lexical);
+  await act(async () => {
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  await syncDomSelection(lexical);
+}
+
+describe("typing into a note with no content (`\\f + \\f*`)", () => {
+  // jsdom's `focus()` collapses the document selection to the start of the focused element, where a
+  // browser keeps it; Lexical focuses the root on reconciles here, and every keystroke reads the
+  // caret back from that selection. Keep it, as ScriptureReferencePlugin.test.tsx does.
+  const originalFocus = HTMLElement.prototype.focus;
+  beforeAll(() => {
+    HTMLElement.prototype.focus = function focus(focusOptions?: FocusOptions) {
+      const selection = document.getSelection();
+      const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
+      originalFocus.call(this, focusOptions);
+      if (range && selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    };
+  });
+  afterAll(() => {
+    HTMLElement.prototype.focus = originalFocus;
+  });
+
+  it("makes what is typed the note's own content, with no run marker added", async () => {
+    const { editorRef, lexical } = await renderEditor(usjEmptyNote, noteEditorOptions);
+    await act(async () => editorRef.selectNote(0));
+    await restCaret(lexical);
+
+    await typeText(lexical, "xy");
+
+    expect(savedNoteContent(editorRef)).toEqual(["xy"]);
+  });
+
+  // A browser can report the boundary as the start of the closing glyph, which is where an
+  // unguarded keystroke used to land: inside the glyph's bytes, shown but never saved.
+  it("takes the text when the caret is reported at the start of the closing glyph", async () => {
+    const { editorRef, lexical } = await renderEditor(usjEmptyNote, noteEditorOptions);
+    await act(async () => {
+      lexical.update(
+        () => {
+          const noteNode = requireDefined(
+            $dfs($getRoot())
+              .map(({ node }) => node)
+              .find($isNoteNode),
+            "note",
+          );
+          const closer = requireDefined(noteNode.getLastChild(), "closing glyph");
+          if (!$isTextNode(closer)) throw new Error("expected the closing glyph to be text");
+          closer.select(0, 0);
+        },
+        { discrete: true },
+      );
+    });
+    await restCaret(lexical);
+
+    await typeText(lexical, "x");
+
+    expect(savedNoteContent(editorRef)).toEqual(["x"]);
+  });
+
+  it("leaves nothing behind when the caret moves on without typing", async () => {
+    const { editorRef, lexical } = await renderEditor(usjEmptyNote, noteEditorOptions);
+    await act(async () => editorRef.selectNote(0));
+
+    await act(async () => {
+      lexical.update(
+        () => {
+          const after = requireDefined(
+            $getRoot()
+              .getAllTextNodes()
+              .find((node) => node.getTextContent() === "after"),
+            "text after the note",
+          );
+          after.select(0, 0);
+        },
+        { discrete: true },
+      );
+    });
+
+    expect(savedNoteContent(editorRef)).toEqual([]);
+    const noteText = lexical.getEditorState().read(() =>
+      $dfs($getRoot())
+        .map(({ node }) => node)
+        .find($isNoteNode)
+        ?.getTextContent(),
+    );
+    expect(noteText).not.toContain("\u200b");
+  });
 });
 
 /** A document holding `noteObject` in verse 1's paragraph. */

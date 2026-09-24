@@ -584,12 +584,7 @@ export function $selectNoteTextOffset(noteNode: NoteNode, utf16Offset: number): 
 
   const caller = $noteEditableCallerNode(noteNode);
   for (const { node } of $dfs(noteNode)) {
-    if (!$isTextNode(node)) continue;
-    if ($shouldIgnoreNodeForContentIndexes(node)) continue;
-    // A glyph's bytes are a picture of its own state (an unmatched closer, say), never content.
-    if ($isGlyphTextNode(node)) continue;
-    // An expanded editable note spells its caller out as plain text ahead of the content.
-    if (caller && node.is(caller)) continue;
+    if (!$isNoteContentText(node, caller)) continue;
 
     // An opening glyph's display separator rides as an NBSP prefix of the text after it; it is
     // display, never content, so the offset origin starts past it.
@@ -612,6 +607,40 @@ export function $selectNoteTextOffset(noteNode: NoteNode, utf16Offset: number): 
   const end = lastDataNode.getTextContentSize();
   lastDataNode.select(end, end);
   return true;
+}
+
+/**
+ * Whether `node`, somewhere inside a note, is text of the note's CONTENT rather than display the
+ * view adds around it (see {@link $selectNoteTextOffset} for the list).
+ * @param node - A node inside the note.
+ * @param caller - The note's editable caller text node, if it has one.
+ */
+function $isNoteContentText(node: LexicalNode, caller: TextNode | undefined): node is TextNode {
+  if (!$isTextNode(node)) return false;
+  if ($shouldIgnoreNodeForContentIndexes(node)) return false;
+  // A glyph's bytes are a picture of its own state (an unmatched closer, say), never content.
+  if ($isGlyphTextNode(node)) return false;
+  // An expanded editable note spells its caller out as plain text ahead of the content.
+  return !caller || !node.is(caller);
+}
+
+/**
+ * Where an expanded note with no content takes the text a user types into it: the child index just
+ * before its closing glyph, or its end when it has none. What is typed there is the note's content,
+ * written directly in the note (`\f + text\f*`) with no run marker added.
+ *
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
+ *
+ * @param noteNode - The note.
+ * @returns The child index, or `undefined` when the note is collapsed or already has content.
+ */
+export function $emptyNoteContentSlot(noteNode: NoteNode): number | undefined {
+  if (noteNode.getIsCollapsed() !== false) return undefined;
+  if (noteNode.getChildren().some($isCharNode)) return undefined;
+  const caller = $noteEditableCallerNode(noteNode);
+  for (const { node } of $dfs(noteNode)) if ($isNoteContentText(node, caller)) return undefined;
+  const closingIndex = $closingGlyphIndex(noteNode);
+  return closingIndex === -1 ? noteNode.getChildrenSize() : closingIndex;
 }
 
 /** Add the given space node after each child node */

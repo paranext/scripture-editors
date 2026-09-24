@@ -62,9 +62,14 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
-- Selecting an EXPANDED note that holds no content run at all (`\f + \f*`) puts the caret inside
-  the note, at the slot content would occupy, instead of leaving it wherever it happened to be —
-  outside the note, where the next keystroke landed in the surrounding text.
+- Typing into an EXPANDED note that holds no content at all (`\f + \f*`) makes what is typed the
+  note's content (`\f + text\f*`, no run marker added), where the note's caller is protected from
+  typing (`isNoteShellEditable: false`, as in a host's note editor). The keystroke used to land in
+  the closing glyph's bytes: shown, but never saved. `selectNote` on such a note puts the caret
+  there, instead of leaving it wherever it happened to be.
+- A caret-guard repair (an empty verse or note given a caret host, a caret moved past a trailing
+  note) no longer leaves its cursor-change tag pending, which made the next keystroke read as a
+  caret move and never reach `onUsjChange`.
 - The attribute-run hover color resolves against the host's `--foreground` instead of a fixed
   near-black, which was all but invisible against a dark theme.
 - The in-editor marker menu no longer swallows modifier chords: a keystroke carrying Ctrl/Cmd/Alt
