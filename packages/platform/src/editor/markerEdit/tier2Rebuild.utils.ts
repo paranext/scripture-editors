@@ -2184,12 +2184,6 @@ export function $rebuildBook(
     if (!preservedKeys.has(node.getKey())) node.remove();
   });
   trailingParas.forEach((para) => para.remove());
-  // Sid carry-over — identical logic to `$rebuildParas`' own, see its comment for the rationale.
-  const newVerses = $collectVerseNodes(newNodes);
-  for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
-    if (newVerses[i].getNumber() === oldVerseSids[i].number)
-      newVerses[i].setSid(oldVerseSids[i].sid);
-  }
   // Re-derived from the book's OWN children now that the splice has settled, PLUS the freshly
   // inserted following blocks (untouched by the splice above — a sentinel run never lands inside
   // one) — see $restoreSelectionInContentRegion's doc comment for why the flat `newNodes` array is
@@ -2199,6 +2193,15 @@ export function $rebuildBook(
     ...$buildBookFragment(book, getMarkerFn, viewOptions).contentNodes,
     ...newBlocks,
   ];
+  // Sid carry-over — identical logic to `$rebuildParas`' own, see its comment for the rationale.
+  // Collected from `liveContentNodes`, not the stale pre-splice `newNodes`: `$replaceSentinels`
+  // (above) splices each preserved sentinel run into the live tree, so a sentinel verse is missing
+  // from `newNodes` and every sid pairing after it shifts by one.
+  const newVerses = $collectVerseNodes(liveContentNodes);
+  for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
+    if (newVerses[i].getNumber() === oldVerseSids[i].number)
+      newVerses[i].setSid(oldVerseSids[i].sid);
+  }
   $restoreSelectionInContentRegion(
     liveContentNodes,
     caretAnchor,
