@@ -11,32 +11,23 @@
  * alignment (usfmByteAlignment.utils.ts) accounts for both, and this module builds it from the two
  * fragments ({@link pairRuns}) and restates anchors through it, for everything that carries a live
  * position into a settled tree: the settled-position translation (positions/) and the rebuild's
- * annotation carry (tier2Rebuild.utils.ts).
+ * caret and annotation carry (tier2Rebuild.utils.ts).
  */
 
-import type { CaretByteAnchor, FragmentAccumulator, FragmentSpan } from "./tier2Rebuild.utils";
+import type { CaretByteAnchor, FragmentAccumulator } from "./tier2Rebuild.utils";
 import {
   alignScopeBytes,
   ByteAlignment,
   mapCount,
   mapCountSnapped,
 } from "./usfmByteAlignment.utils";
-import {
-  $getNodeByKey,
-  $getState,
-  $isElementNode,
-  $isTextNode,
-  LexicalNode,
-  NodeKey,
-} from "lexical";
+import { $isElementNode, $isTextNode, LexicalNode, NodeKey } from "lexical";
 import {
   $isImmutableTypedTextNode,
-  $isMarkerNode,
   $isNoteNode,
   $noteCategoryRunPieces,
   $noteEditableCallerNode,
   NoteNode,
-  textTypeState,
 } from "shared";
 import { $isImmutableNoteCallerNode } from "shared-react";
 
@@ -45,37 +36,6 @@ import { $isImmutableNoteCallerNode } from "shared-react";
  * `toFragmentText`). The U+FFFC sentinel placeholder is deliberately NOT whitespace — it stands
  * for a preserved node and anchors like a document byte. */
 export const FRAGMENT_WS = /\s/;
-
-/**
- * Whether a span is an engine-owned ATTRIBUTE display run (`|who="stuff"`, `|sid="q1"`) rather
- * than ordinary document content.
- *
- * These bytes are the one part of the fragment the settle re-SPELLS without the user touching
- * them: a lone default attribute renders bare (`|stuff`) while any other set renders explicit
- * (`|who="stuff" sid="q1"`), so re-tokenizing an attribute run legitimately changes its LENGTH.
- * A caret anchored by a raw byte count over the whole fragment therefore drifts by that length
- * difference whenever it sits AFTER a run that re-spelled — which is the caret-jump this
- * predicate exists to prevent (Invariant II: display bytes are excluded from document positions).
- *
- * Read-only: resolves the span's node key, so call inside `editor.update()` or an editor-state read.
- */
-export function $isAttributeRunSpan(span: FragmentSpan): boolean {
-  if (span.isSentinel) return false;
-  const node = $getNodeByKey(span.key);
-  return (
-    $isTextNode(node) && !$isMarkerNode(node) && $getState(node, textTypeState) === "attribute"
-  );
-}
-
-/**
- * How many non-whitespace bytes of a fragment precede a position, in both coordinate systems a
- * byte anchor can be read in (`CaretByteAnchor`, tier2Rebuild.utils.ts): every byte (`full`), and
- * attribute display runs stepped over (`document`).
- */
-export interface NonWsCounts {
-  readonly full: number;
-  readonly document: number;
-}
 
 /**
  * A preserved run the settle introduced from literal bytes: the settled fragment spells it as one
@@ -87,13 +47,13 @@ export interface SettledOnlyRun {
   /** The run's index in the settled fragment's run list. */
   readonly sentinelIndex: number;
   /** Non-whitespace bytes of the live fragment before the literal's first byte. */
-  readonly liveBefore: NonWsCounts;
+  readonly liveBefore: number;
   /** Non-whitespace bytes the literal itself spans in the live fragment. */
-  readonly liveLength: NonWsCounts;
+  readonly liveLength: number;
   /** Whitespace bytes of the live fragment directly in front of the literal. */
   readonly liveWsBefore: number;
   /** Non-whitespace bytes of the settled fragment before the run's placeholder. */
-  readonly settledBefore: NonWsCounts;
+  readonly settledBefore: number;
   /** The run's own bytes as the settled tree spells them (spans keyed by that tree's keys). */
   readonly spelling: FragmentAccumulator;
   /**
@@ -159,7 +119,6 @@ interface SpanByte {
   byte: string;
   position: number;
   isWs: boolean;
-  isAttributeRun: boolean;
 }
 
 /** A fragment's span bytes in order, and where each preserved run's placeholder starts. */
@@ -168,17 +127,14 @@ interface FragmentBytes {
   placeholders: number[];
 }
 
-/** `fragment`'s bytes as plain data. Read-only: call inside a read of the tree the fragment was
- * built over. */
-function $fragmentBytes(fragment: FragmentAccumulator): FragmentBytes {
+/** `fragment`'s bytes as plain data. */
+function fragmentBytes(fragment: FragmentAccumulator): FragmentBytes {
   const bytes: SpanByte[] = [];
-  for (const span of fragment.spans) {
-    const isAttributeRun = $isAttributeRunSpan(span);
+  for (const span of fragment.spans)
     for (let position = span.start; position < span.end; position += 1) {
       const byte = fragment.text[position];
-      bytes.push({ byte, position, isWs: FRAGMENT_WS.test(byte), isAttributeRun });
+      bytes.push({ byte, position, isWs: FRAGMENT_WS.test(byte) });
     }
-  }
   // `pushSentinel` records a run and its placeholder span together, so the n-th sentinel span is
   // the n-th run's placeholder.
   const placeholders = fragment.spans.filter((span) => span.isSentinel).map((span) => span.start);
@@ -186,15 +142,8 @@ function $fragmentBytes(fragment: FragmentAccumulator): FragmentBytes {
 }
 
 /** Non-whitespace bytes before `position`, counted the way a byte anchor counts them. */
-function nonWsBefore({ bytes }: FragmentBytes, position: number): NonWsCounts {
-  let full = 0;
-  let document = 0;
-  for (const byte of bytes) {
-    if (byte.position >= position || byte.isWs) continue;
-    full += 1;
-    if (!byte.isAttributeRun) document += 1;
-  }
-  return { full, document };
+function nonWsBefore({ bytes }: FragmentBytes, position: number): number {
+  return bytes.filter((byte) => byte.position < position && !byte.isWs).length;
 }
 
 /** How many whitespace bytes sit directly in front of `position`, back to the last
@@ -295,7 +244,7 @@ function $runSpelling(members: readonly LexicalNode[]): {
 interface SettledRunFacts {
   memberCount: number;
   /** Non-whitespace bytes of the settled fragment before the run's placeholder. */
-  before: NonWsCounts;
+  before: number;
   spelling: FragmentAccumulator;
   foldedAttributes: FoldedAttribute[];
   /** `spelling`'s non-whitespace bytes, in order. */
@@ -311,7 +260,7 @@ export interface SettledRunSide {
 
 /** `fragment`'s settled half of a pairing. Read-only: call inside a read of the SETTLED tree. */
 export function $settledRunSide(fragment: FragmentAccumulator): SettledRunSide {
-  const facts = $fragmentBytes(fragment);
+  const facts = fragmentBytes(fragment);
   return {
     runs: fragment.sentinels.map((run, index) => {
       const { spelling, foldedAttributes } = $runSpelling(run);
@@ -320,7 +269,7 @@ export function $settledRunSide(fragment: FragmentAccumulator): SettledRunSide {
         before: nonWsBefore(facts, facts.placeholders[index] ?? fragment.text.length),
         spelling,
         foldedAttributes,
-        spelled: nonWsBytes($fragmentBytes(spelling))
+        spelled: nonWsBytes(fragmentBytes(spelling))
           .map(({ byte }) => byte)
           .join(""),
       };
@@ -351,7 +300,7 @@ export function $liveRunSide(
   carried: readonly (readonly LexicalNode[])[],
 ): LiveRunSide {
   return {
-    facts: $fragmentBytes(fragment),
+    facts: fragmentBytes(fragment),
     carried: fragment.sentinels.map((run, index) => {
       const keys = new Set(carried[index]?.map((node) => node.getKey()));
       return run.map((node) => keys.has(node.getKey()));
@@ -387,7 +336,7 @@ export function pairRuns(live: LiveRunSide, settled: SettledRunSide): RunPairing
   const { alignment, literals } = alignScopeBytes(
     liveBytes.map(({ byte }) => byte).join(""),
     settled.bytes,
-    new Map(settled.runs.map((run) => [run.before.full, run.spelled])),
+    new Map(settled.runs.map((run) => [run.before, run.spelled])),
   );
   /** Pair one live run's carried members with one settled run's members, in order. */
   const pairRun = (liveIndex: number, sentinelIndex: number): void => {
@@ -417,13 +366,11 @@ export function pairRuns(live: LiveRunSide, settled: SettledRunSide): RunPairing
   }
 
   // Each settled run by where its placeholder sits in the settled bytes.
-  const settledAt = new Map(
-    settled.runs.map((run, sentinelIndex) => [run.before.full, sentinelIndex]),
-  );
+  const settledAt = new Map(settled.runs.map((run, sentinelIndex) => [run.before, sentinelIndex]));
   live.carried.forEach((run, liveIndex) => {
     const placeholder = live.facts.placeholders[liveIndex];
     if (placeholder === undefined || carriedIn(run) === 0) return;
-    const count = mapCount(alignment, nonWsBefore(live.facts, placeholder).full, "live");
+    const count = mapCount(alignment, nonWsBefore(live.facts, placeholder), "live");
     const sentinelIndex = count === undefined ? undefined : settledAt.get(count);
     if (sentinelIndex === undefined || settled.runs[sentinelIndex].memberCount !== carriedIn(run))
       return;
@@ -441,14 +388,10 @@ export function pairRuns(live: LiveRunSide, settled: SettledRunSide): RunPairing
     const end =
       literal.liveEnd > literal.liveStart ? liveBytes[literal.liveEnd - 1].position + 1 : start;
     const liveBefore = nonWsBefore(live.facts, start);
-    const liveAfter = nonWsBefore(live.facts, end);
     settledOnlyRuns.push({
       sentinelIndex,
       liveBefore,
-      liveLength: {
-        full: liveAfter.full - liveBefore.full,
-        document: liveAfter.document - liveBefore.document,
-      },
+      liveLength: nonWsBefore(live.facts, end) - liveBefore,
       liveWsBefore: wsRunBefore(live.facts, start),
       settledBefore: facts.before,
       spelling: facts.spelling,
@@ -463,8 +406,8 @@ export function pairRuns(live: LiveRunSide, settled: SettledRunSide): RunPairing
  * `anchor` over one side's fragment restated over the other's, through the scope's byte
  * {@link RunPairing.alignment}. An anchor whose byte has no counterpart on the other side snaps
  * LEFT to where the other side's differing bytes start (`mapCountSnapped`,
- * usfmByteAlignment.utils.ts). Full bytes only: the alignment already accounts for every attribute
- * section the settle re-spelled, which is what document coordinates exist to step around.
+ * usfmByteAlignment.utils.ts). Every byte counts, attribute sections included: the alignment
+ * already accounts for every one the settle re-spelled.
  */
 export function anchorAcrossLiteralsSnapped(
   alignment: ByteAlignment,
@@ -478,7 +421,6 @@ export function anchorAcrossLiteralsSnapped(
       direction === "toSettled" ? "live" : "settled",
     ),
     wsRun: anchor.wsRun,
-    attributeRunSpans: anchor.attributeRunSpans,
   };
 }
 
@@ -505,32 +447,58 @@ export function literalStartingAt(
   anchor: CaretByteAnchor,
 ): SettledOnlyRun | undefined {
   return runs.find(
-    (run) => anchor.nonWsBefore === run.liveBefore.full && anchor.wsRun >= run.liveWsBefore,
+    (run) => anchor.nonWsBefore === run.liveBefore && anchor.wsRun >= run.liveWsBefore,
   );
 }
 
 /**
  * The settled-only run whose live literal a live anchor lies strictly inside, how far into the
  * literal it lies (`count`), and the anchor restated over that run's own spelling — `within` is
- * `undefined` for a byte the settle re-spelled. Full bytes only: the literal is plain text, and the
- * spelling counts every byte it has.
+ * `undefined` for a byte the settle re-spelled.
  */
 export function literalContaining(
   runs: readonly SettledOnlyRun[],
   anchor: CaretByteAnchor,
 ): { run: SettledOnlyRun; count: number; within: CaretByteAnchor | undefined } | undefined {
   for (const run of runs) {
-    const count = anchor.nonWsBefore - run.liveBefore.full;
-    if (count <= 0 || count >= run.liveLength.full) continue;
+    const count = anchor.nonWsBefore - run.liveBefore;
+    if (count <= 0 || count >= run.liveLength) continue;
     const within = acrossLiteral(run, count, "toSpelling");
     return {
       run,
       count,
-      within:
-        within === undefined
-          ? undefined
-          : { nonWsBefore: within, wsRun: anchor.wsRun, attributeRunSpans: 0 },
+      within: within === undefined ? undefined : { nonWsBefore: within, wsRun: anchor.wsRun },
     };
+  }
+  return undefined;
+}
+
+/** The preserved run member whose subtree holds `node`, if any, named by its run's index in
+ * `fragment`'s run list and its own index within that run. Read-only. */
+export function $preservedRunMember(
+  fragment: FragmentAccumulator,
+  node: LexicalNode,
+): (SettledRunMember & { member: LexicalNode }) | undefined {
+  const members = new Map<NodeKey, SettledRunMember & { member: LexicalNode }>();
+  fragment.sentinels.forEach((run, sentinelIndex) =>
+    run.forEach((member, memberIndex) =>
+      members.set(member.getKey(), { sentinelIndex, memberIndex, member }),
+    ),
+  );
+  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
+    const hit = members.get(current.getKey());
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/** Child indexes from `ancestor` down to `node`, or `undefined` when `node` is not under it.
+ * Read-only. */
+export function $childPath(ancestor: LexicalNode, node: LexicalNode): number[] | undefined {
+  const path: number[] = [];
+  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
+    if (current.is(ancestor)) return path;
+    path.unshift(current.getIndexWithinParent());
   }
   return undefined;
 }

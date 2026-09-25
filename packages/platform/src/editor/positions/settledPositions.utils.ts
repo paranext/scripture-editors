@@ -29,6 +29,8 @@ import {
   Tier2Context,
 } from "../markerEdit/tier2Rebuild.utils";
 import {
+  $childPath,
+  $preservedRunMember,
   acrossLiteral,
   anchorAcrossLiteralsSnapped,
   FoldedAttribute,
@@ -527,37 +529,6 @@ type ScratchResolution =
       atWordByte: boolean;
     };
 
-/** The preserved run member whose subtree holds `node`, if any. */
-function $preservedRunMember(
-  fragment: FragmentAccumulator,
-  node: LexicalNode,
-): { sentinelIndex: number; memberIndex: number; member: LexicalNode } | undefined {
-  const members = new Map<
-    NodeKey,
-    { sentinelIndex: number; memberIndex: number; member: LexicalNode }
-  >();
-  fragment.sentinels.forEach((run, sentinelIndex) =>
-    run.forEach((member, memberIndex) =>
-      members.set(member.getKey(), { sentinelIndex, memberIndex, member }),
-    ),
-  );
-  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
-    const hit = members.get(current.getKey());
-    if (hit) return hit;
-  }
-  return undefined;
-}
-
-/** Child indexes from `ancestor` down to `node`, or `undefined` when `node` is not under it. */
-function $childPath(ancestor: LexicalNode, node: LexicalNode): number[] | undefined {
-  const path: number[] = [];
-  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
-    if (current.is(ancestor)) return path;
-    path.unshift(current.getIndexWithinParent());
-  }
-  return undefined;
-}
-
 /**
  * A settled location on a folded attribute's bytes ({@link FoldedAttribute}) — bytes the scratch
  * tree does not display, so `$getNodeFromLocation` has nothing to resolve them against — as a byte
@@ -827,7 +798,6 @@ function $livePointForUnpairedRun(
   const point = $resolveFragmentByteAnchor(liveFragment, {
     nonWsBefore: mapCountSnapped(alignment, settledCount, "settled"),
     wsRun: 0,
-    attributeRunSpans: 0,
   });
   return point ? cutCorrected(plan, point) : $liveScopeFront(plan, logger);
 }
@@ -988,9 +958,8 @@ function $livePointInScope(
     const liveAnchor = $withWsRunIn(
       sides.liveFragment,
       {
-        nonWsBefore: run.liveBefore.full + count,
+        nonWsBefore: run.liveBefore + count,
         wsRun: anchor.nonWsBefore === 0 ? run.liveWsBefore + anchor.wsRun : anchor.wsRun,
-        attributeRunSpans: 0,
       },
       addressDisplayBytes,
     );
@@ -1208,7 +1177,7 @@ function withinLiteral(
   if (front)
     return {
       run: front,
-      within: { nonWsBefore: 0, wsRun: anchor.wsRun - front.liveWsBefore, attributeRunSpans: 0 },
+      within: { nonWsBefore: 0, wsRun: anchor.wsRun - front.liveWsBefore },
     };
   const inside = literalContaining(runs, anchor);
   if (!inside) return undefined;
@@ -1217,7 +1186,6 @@ function withinLiteral(
     within: inside.within ?? {
       nonWsBefore: mapCountSnapped(inside.run.inner, inside.count, "live"),
       wsRun: anchor.wsRun,
-      attributeRunSpans: 0,
     },
   };
 }

@@ -537,7 +537,9 @@ describe("a comment mark over typed attribute bytes the settle re-spells away", 
     });
     settle(mounted);
 
-    expect(annotatedText(mounted.lexical)).toEqual(["grace|"]);
+    // The mark over `grace|` keeps its word; the settled `|` is the attribute run's own display
+    // byte, which a mark never splits off.
+    expect(annotatedText(mounted.lexical)).toEqual(["grace"]);
     expect(annotatedIDs(mounted.lexical)).toEqual([{ [COMMENT_MARK_TYPE]: ["c1"] }]);
     // `getUsj()` writes a comment mark as a milestone pair carrying its id.
     const usj = JSON.stringify(mounted.ref.current?.getUsj());
