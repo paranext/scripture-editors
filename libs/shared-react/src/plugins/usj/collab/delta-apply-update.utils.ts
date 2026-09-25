@@ -2074,10 +2074,10 @@ function $createNestedChars(
           true,
           addEditableSeparator,
         );
-        innerCharNodes.forEach((node) => lastNode.append(node));
+        $appendSpanContent(lastNode, innerCharNodes);
       } else {
         // Tail-append into the existing span: mid-span content, NO separator.
-        if (innerNode) lastNode.append(innerNode);
+        if (innerNode) $appendSpanContent(lastNode, [innerNode]);
       }
       return []; // Return empty array since we merged into existing node
     }
@@ -2094,20 +2094,14 @@ function $createNestedChars(
 
       // If there's a child, append it (with markers if it's a CharNode)
       if (child) {
-        // If the child is a CharNode, it needs markers around it. The child nests inside this
-        // span, so its glyphs carry the `+`.
+        // A CharNode child carries its own glyphs INSIDE it, as the USJ adaptor and the merge
+        // branch above build a nested span. Glyphs left beside it in this span are bytes the
+        // marker-edit engine re-reads as this span's own content, and the nested span is lost.
+        // The child nests inside this span, so its glyphs carry the `+`.
         if ($isCharNode(child)) {
-          // The child was created from attr at idx+1, so get its marker
-          const childMarker = child.getMarker();
-          const childMarkers: LexicalNode[] = [];
-          $addOpeningMarker(childMarker, childMarkers, viewOptions, true);
-          childMarkers.forEach((marker) => charNode.append(marker));
-
+          $addOpeningMarker(child.getMarker(), child, viewOptions, true);
+          $addCharNodeClosingMarker(child, child, viewOptions, true);
           charNode.append(child);
-
-          const closingMarkers: LexicalNode[] = [];
-          $addCharNodeClosingMarker(child, closingMarkers, viewOptions, true);
-          closingMarkers.forEach((marker) => charNode.append(marker));
         } else {
           // Just append the child (it's the innermost text node)
           charNode.append(child);
@@ -2130,7 +2124,7 @@ function $createNestedChars(
     const lastNode = existingNodes?.[existingNodes.length - 1];
     if ($isCharNode(lastNode) && $hasSameCharAttributes(cleanAttr, lastNode)) {
       // Tail-append into the existing span: mid-span content, NO separator.
-      if (innerNode) lastNode.append(innerNode);
+      if (innerNode) $appendSpanContent(lastNode, [innerNode]);
       return []; // Return empty array since we merged into existing node
     }
 
@@ -2149,6 +2143,24 @@ function $createNestedChars(
 
     return [charNode];
   }
+}
+
+/**
+ * Appends content that continues `span`: inside its closing glyph when it has one, so the content
+ * stays part of the span rather than following its `\ft*`.
+ * @param span - The char span being continued.
+ * @param nodes - The content to add at its end.
+ */
+function $appendSpanContent(span: CharNode, nodes: LexicalNode[]): void {
+  const closer = span.getLastChild();
+  const isCloser =
+    ($isMarkerNode(closer) && closer.getMarkerSyntax() === "closing") ||
+    ($isImmutableTypedTextNode(closer) &&
+      closer.getTextType() === "marker" &&
+      closer.getTextContent() ===
+        closingMarkerText(span.getMarker(), $isCharNode(span.getParent())));
+  if (isCloser) nodes.forEach((node) => closer.insertBefore(node));
+  else span.append(...nodes);
 }
 
 /**

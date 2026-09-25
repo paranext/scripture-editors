@@ -495,10 +495,9 @@ export function $selectNote(noteNode: NoteNode, viewOptions: ViewOptions | undef
  * Index of `element`'s own closing glyph among its children: a marker node under
  * `markerMode: "editable"`, display-only text under `"visible"`.
  *
- * Only the LAST child can be the element's own closer. `$applyUpdate` materializes a nested span's
- * markers as siblings inside the run (`\ft a \+nd x\+nd* b\ft*` can arrive as
- * `[\ft, "a ", \ft*, \+nd…, " b"]`), so a closing glyph earlier in the children is not a boundary
- * the content ends at.
+ * Only the LAST child can be the element's own closer. A closing glyph earlier in the children is
+ * not a boundary the content ends at: it can be a nested span's, where that span's glyphs sit
+ * among the run's own children (the flattened nested shape collaborative input can carry).
  * @param element - The note or char span whose closer to find.
  * @returns The closer's index, or `-1` when the element does not end in one (implicitly closed,
  *   markers hidden, or content after an inner closer).
