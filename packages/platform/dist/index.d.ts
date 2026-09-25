@@ -316,12 +316,28 @@ export declare interface EditorProps<TLogger extends LoggerBasic> {
   /** Callback function when the Scripture reference has changed. */
   onScrRefChange?: (scrRef: SerializedVerseRef) => void;
   /**
-   * Callback function when the cursor selection changes. The `selection` passed is expressed
-   * against the SETTLED document — see {@link EditorRef.getSelection} for the contract. It is
-   * `undefined` only when there is no selection, as it is for `getSelection`.
+   * Callback function when the cursor selection changes.
+   *
+   * @remarks
+   * **Settled**: the `selection` passed refers to the document `getUsj()` returns at that moment —
+   * pending marker edits count as already settled; see {@link EditorRef.getSelection} for the full
+   * mapping contract. It is `undefined` only when there is no selection, as it is for
+   * `getSelection`.
    */
   onSelectionChange?: (selection: SelectionRange | undefined) => void;
-  /** Callback function when USJ Scripture data has changed. */
+  /**
+   * Callback function when USJ Scripture data has changed. Called synchronously, exactly once per
+   * change, in the order the changes happen; a selection-only change calls nothing.
+   *
+   * - `usj` — **Settled**: the document `getUsj()` returns at that moment — pending marker edits
+   *   count as already settled; this is what a host saves.
+   * - `ops` — **Live**: refers to the editor's current tree as displayed, including marker text
+   *   the user is still typing that has not settled yet; the change's delta ops in the live
+   *   document's delta coordinates, absent when the change moved no delta (a marker glyph or
+   *   attribute text edited, or its undo).
+   * - `insertedNodeKey` — **Live**: refers to the editor's current tree as displayed; the editor
+   *   key of a node the change inserted into it.
+   */
   onUsjChange?: (usj: Usj, ops?: DeltaOp[], source?: DeltaSource, insertedNodeKey?: string) => void;
   /** Callback function when state changes. */
   onStateChange?: ({ canUndo, canRedo, blockMarker, contextMarker }: StateChangeSnapshot) => void;
@@ -373,13 +389,16 @@ export declare interface EditorRef {
    */
   pastePlainText(): void;
   /**
-   * Get USJ Scripture data — always SETTLED, whatever the screen currently shows mid-edit. In
-   * editable marker modes a marker rename, a typed marker literal, or an edited display run stays
-   * pending in the document until the caret departs; this returns the document those bytes MEAN
-   * (the same re-tokenization a departure settle performs), computed without touching the editor,
-   * so the user's edit stays pending on screen and their caret and undo history are untouched.
-   * Settling is uniform: a half-typed `|stuf` settles to literal content, because that is what
-   * those bytes mean to anything that parses them.
+   * Get USJ Scripture data.
+   *
+   * @remarks
+   * **Settled**: this is the settled document itself — pending marker edits count as already
+   * settled. In editable marker modes a marker rename, a typed marker literal, or an edited
+   * display run stays pending in the document until the caret departs; this returns the document
+   * those bytes MEAN (the same re-tokenization a departure settle performs), computed without
+   * touching the editor, so the user's edit stays pending on screen and their caret and undo
+   * history are untouched. Settling is uniform: a half-typed `|stuf` settles to literal content,
+   * because that is what those bytes mean to anything that parses them.
    */
   getUsj(): Usj | undefined;
   /**
@@ -406,8 +425,9 @@ export declare interface EditorRef {
    * Declares in-progress input that an in-editor command surface (e.g. the marker palette) will
    * consume or discard — analogous to an IME composition string. While declared,
    * {@link EditorRef.getUsj} excludes these bytes from its settled output: the containing paragraph
-   * settles as if they were absent. Editor state, on-screen content, `onUsjChange`, and OT deltas
-   * are untouched. One declaration at a time; calling again replaces it; `undefined` clears it.
+   * settles as if they were absent, and so does the `usj` a later `onUsjChange` carries. Editor
+   * state, on-screen content, and OT deltas are untouched. One declaration at a time; calling
+   * again replaces it; `undefined` clears it.
    *
    * The declaration is ADVISORY. It is anchored to the text node the caret sits in when declared,
    * and re-verified against the live caret at every `getUsj()`: it is ignored whenever it does not
@@ -426,10 +446,12 @@ export declare interface EditorRef {
    * EXPERIMENTAL: Apply Operational Transform delta update.
    *
    * @remarks
-   * Delta ops address content by its position in the USJ, which the block verse layout
-   * (`ViewOptions.verseLayout: "block"`) regroups, so they cannot be applied there. A `"remote"`
-   * update is reported through the logger and dropped rather than thrown, so a collaborator's op
-   * loop is not torn down; refresh such a view by handing it new USJ instead.
+   * **Live**: refers to the editor's current tree as displayed, including marker text the user is
+   * still typing that has not settled yet — delta ops address content by its position in that live
+   * tree. In the block verse layout (`ViewOptions.verseLayout: "block"`), which regroups verses
+   * into blocks, the live position no longer matches the source USJ's, so ops cannot be applied
+   * there. A `"remote"` update is reported through the logger and dropped rather than thrown, so a
+   * collaborator's op loop is not torn down; refresh such a view by handing it new USJ instead.
    *
    * @throws Will throw an error if the editor uses the block verse layout and `source` is
    *   `"local"`.
@@ -438,8 +460,10 @@ export declare interface EditorRef {
   /**
    * EXPERIMENTAL: Replace an embed Operational Transform delta.
    *
-   * @remarks Embed nodes are treated as atomic units. These include chapter nodes, verse nodes,
-   *   milestone nodes, note nodes, and unmatched nodes.
+   * @remarks
+   * **Live**: refers to the editor's current tree as displayed, including marker text the user is
+   * still typing that has not settled yet. Embed nodes are treated as atomic units. These include
+   * chapter nodes, verse nodes, milestone nodes, note nodes, and unmatched nodes.
    *
    * @param embedNodeKey - The editor key of the embed node to replace.
    * @param insertEmbedOps - The delta operations that insert the new embed node.
@@ -449,44 +473,41 @@ export declare interface EditorRef {
    * Get the selection location or range.
    *
    * @remarks
-   * Positions are expressed against the SETTLED document — the one {@link EditorRef.getUsj}
-   * returns — never against the on-screen tree mid-edit. While a marker edit is pending (Standard
-   * view's marker-editing engine) the editor translates between the two automatically; when
-   * nothing is pending the two are identical. A USFM byte with no USJ representation (the `+` of a
-   * nested marker, the second `/` of `//`, an attribute's `|`, `=`, `"`, or the space between
-   * attributes) snaps LEFT to the nearest representable location, so a selection captured at such
-   * a byte and set back lands on that representative, not on the byte itself. A caret with no text
-   * beside it — in front of a marker, in an empty paragraph, at the end of the document — is
+   * **Settled**: positions and indexes refer to the document `getUsj()` returns at that moment —
+   * pending marker edits count as already settled. While a marker edit is pending (Standard
+   * view's marker-editing engine) the editor translates between the settled document and the live
+   * tree automatically; when nothing is pending the two are identical.
+   *
+   * A position names the byte in front of which it sits, and maps through whatever contains that
+   * byte on its own side. Where one side has bytes the other lacks, the position in front of them
+   * snaps LEFT to the nearest byte both sides share, and the position just past them is exact —
+   * one aligner serves both directions, and each end of a range resolves on its own. Outbound,
+   * every real caret has a location: this returns `undefined` only when there is no selection,
+   * never because a position could not be translated. Typed bytes a pending edit holds that the
+   * settled document carries as an attribute — a typed `\cat …\cat*` becomes a note's `category`,
+   * a typed figure's `|src="…"` its `file` — are reported as that attribute's location. With
+   * `|lemma="grace"` pending (settles to `|grace`), the settled value start
+   * (`['lemma'] propertyOffset 0`) lands at the start of the VALUE — before `grace` — because the
+   * position sits in front of `grace`, and `grace` is a byte both sides carry. A caret with no
+   * text beside it — in front of a marker, in an empty paragraph, at the end of the document — is
    * reported as the one location its USFM position has (see `UsjDocumentLocation`), never as a
    * container plus a content index; {@link EditorRef.setSelection} still accepts that older shape.
    *
-   * Every caret has a location. Typed bytes a pending edit holds that the settled document carries
-   * as an attribute — a typed `\cat …\cat*` becomes a note's `category`, a typed figure's
-   * `|src="…"` its `file` — are reported as that attribute's location. Bytes it has no counterpart for at all (a
-   * typed literal the settle spells differently from how it was typed) snap LEFT like any other
-   * byte with no representation, to the nearest location at or before them; each end of a range
-   * snaps on its own.
-   *
-   * Always returns `undefined` in the block verse layout (`ViewOptions.verseLayout: "block"`):
-   * it splits a paragraph spanning verses across their blocks, so the editor's content indexes no
-   * longer match the source USJ's and no location can be expressed. The editor reports this once
-   * through its logger.
-   *
-   * @returns the selection location or range, or `undefined` only when there is no selection (or
-   *   in the block verse layout) — never because a position could not be expressed. The
-   *   json-path in the selection assumes no comment Milestone nodes are present in the USJ.
+   * @returns the selection location or range, or `undefined` only when there is no selection —
+   *   never because a position could not be expressed. The json-path in the selection assumes no
+   *   comment Milestone nodes are present in the USJ.
    */
   getSelection(): SelectionRange | undefined;
   /**
    * Set the selection location or range.
    *
    * @remarks
-   * Positions are expressed against the SETTLED document ({@link EditorRef.getUsj}) — see
-   * {@link EditorRef.getSelection} for the full contract, including how a USFM byte with no USJ
-   * representation snaps left.
-   *
-   * Does nothing in the block verse layout, for the reason given on
-   * {@link EditorRef.getSelection}.
+   * **Settled**: positions and indexes refer to the document `getUsj()` returns at that moment —
+   * pending marker edits count as already settled. See {@link EditorRef.getSelection} for the
+   * full mapping contract. Inbound, this refuses (and logs the refusal) ONLY a location that
+   * names nothing in the settled document at all; anything else not representable snaps LEFT the
+   * same as outbound, each end of a range on its own. A position basis the live tree has moved on
+   * from is rebuilt (and the rebuild logged as an error), never refused.
    *
    * @param selection - A selection location or range. The json-path in the selection assumes no
    *   comment Milestone nodes are present in the USJ.
@@ -496,12 +517,9 @@ export declare interface EditorRef {
    * Set an ephemeral annotation with optional event callbacks.
    *
    * @remarks
-   * Positions are expressed against the SETTLED document ({@link EditorRef.getUsj}) — see
-   * {@link EditorRef.getSelection} for the full contract.
-   *
-   * Does nothing in the block verse layout (`ViewOptions.verseLayout: "block"`): an annotation is
-   * addressed by USJ location, which that layout cannot express - see
-   * {@link EditorRef.getSelection}. The failure is reported through the logger.
+   * **Settled**: positions and indexes refer to the document `getUsj()` returns at that moment —
+   * pending marker edits count as already settled. See {@link EditorRef.getSelection} for the
+   * full mapping contract, including the inbound refusal rule.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.
@@ -527,8 +545,9 @@ export declare interface EditorRef {
    * @deprecated Pass a callbacks object instead. This positional form is preserved for backward
    *   compatibility and will be removed in a future release.
    *
-   * @remarks Positions are expressed against the SETTLED document — see
-   *   {@link EditorRef.getSelection} for the contract.
+   * @remarks **Settled**: positions and indexes refer to the document `getUsj()` returns at that
+   *   moment — pending marker edits count as already settled. See {@link EditorRef.getSelection}
+   *   for the full mapping contract.
    *
    * @param selection - An annotation range containing the start and end location.
    * @param type - Type of the annotation.
@@ -555,7 +574,13 @@ export declare interface EditorRef {
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
    */
   formatPara(blockMarker: string): void;
-  /** Get the editor element for the given node key, if any. */
+  /**
+   * Get the editor element for the given node key, if any.
+   *
+   * @remarks **Live**: refers to the editor's current tree as displayed, including marker text
+   *   the user is still typing that has not settled yet — `nodeKey` names a node in that tree
+   *   directly.
+   */
   getElementByKey(nodeKey: string): HTMLElement | undefined;
   /**
    * Remove a character marker from the current editor selection, keeping its text content.
@@ -705,8 +730,9 @@ export declare interface EditorRef {
    * built-in marker menu. Works with both collapsed (insertion point) and range selections.
    *
    * @param marker - A USFM marker string, e.g. `"wj"`, `"p"`, `"f"`, `"v"`, `"c"`.
-   * @returns the freshly-inserted note's true Lexical node key when `marker` is a note marker
-   *   (e.g. `"f"`, `"x"`, `"fe"`); `undefined` for every other marker kind.
+   * @returns **Live**: the freshly-inserted note's node key in the editor's current tree (a true
+   *   Lexical key) when `marker` is a note marker (e.g. `"f"`, `"x"`, `"fe"`); `undefined` for
+   *   every other marker kind.
    * @throws Will throw an error if the editor is in readonly mode.
    * @throws Will throw an error if the `scrRef` prop was not provided to the editor.
    * @throws Will throw an error if the marker is not a supported para, char, note, chapter, or
@@ -754,9 +780,9 @@ export declare interface EditorRef {
    * @throws Will throw an error if `item.kind` is not `"closeTag"` and `item.marker` is not a
    *   supported para, char, note, chapter, or verse marker.
    *
-   * @returns the created note's TRUE Lexical node key when the applied item inserted a note
-   *   (hosts use it to track the note-editing session — the same contract as
-   *   {@link EditorRef.insertMarker}); `undefined` for every other item kind.
+   * @returns **Live**: the created note's node key in the editor's current tree (a true Lexical
+   *   key) when the applied item inserted a note (hosts use it to track the note-editing session —
+   *   the same contract as {@link EditorRef.insertMarker}); `undefined` for every other item kind.
    * @see {@link EditorRef.splitParagraphWithMarker} for the Enter-menu apply step.
    */
   applyMarkerMenuSelection(
@@ -847,9 +873,9 @@ export declare interface EditorRef {
    * Insert a note at the specified selection, e.g. footnote, cross-reference, endnote.
    * @param marker - The marker type for the note.
    * @param caller - Optional note caller to override the default for the given marker.
-   * @param selection - Optional selection range where the note should be inserted, expressed
-   *   against the SETTLED document (see {@link EditorRef.getSelection}). By default it will use
-   *   the current selection in the editor.
+   * @param selection - **Settled**: expressed against the document `getUsj()` returns at that
+   *   moment — pending marker edits count as already settled (see {@link EditorRef.getSelection}
+   *   for the full mapping contract). Optional; defaults to the current selection in the editor.
    * @throws Will throw an error if the marker is not a valid note marker.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
@@ -860,12 +886,32 @@ export declare interface EditorRef {
   insertNote(marker: string, caller?: string, selection?: SelectionRange): void;
   /**
    * EXPERIMENTAL: Select the note by editor key or at the given index in the editor, if any.
-   * @param noteKeyOrIndex - The note key or index, e.g. index=1 would select the second note in the
-   *   editor.
+   *
+   * @remarks
+   * A `noteKeyOrIndex` key — **Live**: refers to the editor's current tree as displayed; it names
+   * a node in that tree directly. A `noteKeyOrIndex` index — **Settled**: refers to the document
+   * `getUsj()` returns at that moment — pending marker edits count as already settled; it counts
+   * the notes of that document, in order (e.g. index=1 selects the second one), so a note still
+   * pending as a typed literal counts too — selecting it puts a collapsed caret at the literal's
+   * own `\`, since it is not a note yet in the live tree. Because of this, `getNoteOps(i)` and
+   * `selectNote(i)` can name DIFFERENT notes while a whole note literal is pending: `getNoteOps`
+   * always counts the LIVE notes, `selectNote`'s index counts the SETTLED ones.
+   *
+   * @param noteKeyOrIndex - The note key (LIVE) or index (SETTLED), e.g. index=1 would select the
+   *   second note of the settled document.
    */
   selectNote(noteKeyOrIndex: string | number): void;
   /**
    * EXPERIMENTAL: Get the note operations by editor key or at the given index in the editor, if any.
+   *
+   * @remarks
+   * Both a `noteKeyOrIndex` key and an index — **Live**: refer to the editor's current tree as
+   * displayed, including marker text the user is still typing that has not settled yet; the index
+   * counts the notes of that tree, not the settled document, so its ops round-trip into
+   * {@link EditorRef.replaceEmbedUpdate} against the same tree they were read from. See
+   * {@link EditorRef.selectNote} for how this can name a different note than a `selectNote` call
+   * with the same index while a whole note literal is pending.
+   *
    * @param noteKeyOrIndex - The note key or index, e.g. index=1 would get the second note in the
    *   editor.
    */
@@ -1134,7 +1180,11 @@ export declare interface MarginalProps<TLogger extends LoggerBasic> extends Omit
 > {
   /** Callback function when comments have changed. */
   onCommentChange?: (comments: Comments | undefined) => void;
-  /** Callback function when USJ Scripture data has changed. */
+  /**
+   * Callback function when USJ Scripture data has changed. Called as
+   * {@link EditorProps.onUsjChange} is, with `usj` SETTLED and `ops` and `insertedNodeKey` LIVE,
+   * plus the current comments.
+   */
   onUsjChange?: (
     usj: Usj,
     comments: Comments | undefined,
