@@ -28,6 +28,7 @@ import {
   $isMarkerTrailingSeparator,
   $isSynthesizedMarkerNode,
   $paraPrefixSeparatorCaretHeld,
+  $isParaLikeNode,
   $isParaNode,
   $placeCaretAtBoundary,
   canonicalAttributeText,
@@ -344,12 +345,12 @@ function $suppliesOwnParaMarker(para: ParaNode, getMarkerFn: MarkerLookup): bool
 /**
  * The engine's `ParaNode` transform, policing what deleting paragraph-prefix bytes MEANS: heal a
  * partially-damaged prefix back to canonical, merge a paragraph whose whole prefix was deleted
- * into the previous paragraph (deleting the marker joins the paragraphs — the PT9 outcome), or
- * reap a paragraph whose ENTIRE visible representation the user's deletion covered (armed via
- * `MarkerEditContext.wholeParaDeleteExpected`; emptiness alone never reaps, because rebuilds
- * legitimately empty a paragraph transiently). Stands down entirely for surfaces that render no
- * paragraph prefixes (`showParaMarkerPrefixes: false`) — there a prefix-less paragraph is
- * canonical, not damage.
+ * into the previous paragraph or `\id` line (deleting the marker joins the paragraphs — the PT9
+ * outcome), or reap a paragraph whose ENTIRE visible representation the user's deletion covered
+ * (armed via `MarkerEditContext.wholeParaDeleteExpected`; emptiness alone never reaps, because
+ * rebuilds legitimately empty a paragraph transiently). Stands down entirely for surfaces that
+ * render no paragraph prefixes (`showParaMarkerPrefixes: false`) — there a prefix-less paragraph
+ * is canonical, not damage.
  *
  * Mutating: call inside `editor.update()` (registered by `MarkerEditPlugin` as the `ParaNode`
  * transform).
@@ -428,7 +429,11 @@ export function $paraMarkerDeletionTransform(para: ParaNode, context: MarkerEdit
   }
 
   const previous = para.getPreviousSibling();
-  if ($isParaNode(previous)) {
+  // `ParaLike`, not `ParaNode`: the previous block can be an ordinary paragraph, an IMPLIED
+  // (unmarked) paragraph — bare root-level content that precedes an explicit `\p` loads as one,
+  // `insertImpliedParasRecurse` in usj-editor.adaptor.ts — or the `\id` line's BookNode. All three
+  // hold content the way a paragraph does, so a paragraph right below any of them merges into it.
+  if ($isParaLikeNode(previous)) {
     // Deleting a para's marker text merges its content into the previous para.
     const children = para.getChildren().filter((child) => {
       if ($isMarkerTrailingSeparator(child)) return false; // drop the orphaned separator

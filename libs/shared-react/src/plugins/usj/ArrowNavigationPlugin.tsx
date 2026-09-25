@@ -6,7 +6,7 @@ import {
   $selectPreviousVerse,
   ImmutableVerseNode,
 } from "../../nodes/usj";
-import { $advancePastParaPrefixes } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { $advancePastParaPrefixes, $isBookPrefixNode } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { $opaqueBlockAncestor } from "./OpaqueBlockGuardPlugin";
 import { ViewOptions } from "../../views/view-options.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -40,6 +40,7 @@ import {
   $isMarkerNode,
   $isMilestoneNode,
   $isNoteNode,
+  $isParaLikeNode,
   $isSomeParaNode,
   $placeCaretAtBoundary,
   CharNode,
@@ -891,7 +892,7 @@ function $handleForwardNavigation(selection: RangeSelection): boolean {
   const nextNode = $getNextNode(selection);
   if ($isNoteNode(nextNode) && !$isMarkerNode(nextNode.getFirstChild())) {
     // note is next and markers are not editable
-    if ($isSomeParaNode(node)) {
+    if ($isParaLikeNode(node)) {
       const isSelectionAtParaEnd = selection.anchor.offset === node.getChildrenSize();
       if (isSelectionAtParaEnd) return false;
     } else {
@@ -913,7 +914,7 @@ function $handleForwardNavigation(selection: RangeSelection): boolean {
     }
   }
 
-  if ($isSomeParaNode(node) && $isNoteNode(nextNode) && nextNode.getIsCollapsed()) {
+  if ($isParaLikeNode(node) && $isNoteNode(nextNode) && nextNode.getIsCollapsed()) {
     // caret between verse and collapsed note → move past note
     const nodeAfterNote = nextNode.getNextSibling();
     if (nodeAfterNote) nodeAfterNote.selectStart();
@@ -948,18 +949,43 @@ function $handleBackwardNavigation(
   // If a chapter node is the only thing at the beginning → don't move.
   if ($isImmutableChapterNode(prevNode) && !prevNode.getPreviousSibling()) return true;
 
+  // The `\id` line's own immutable `\id GEN ` prefix is the one glyph in the line the caret can
+  // never enter. Checked directly off `prevNode`'s identity, ahead of the offset gate below and
+  // before `node.getParent()` is even read, because `$getPreviousNode` resolves to the SAME prefix
+  // node from two different selection shapes this early: an ELEMENT point at `(book, 1)` (what the
+  // note-hop below creates, so a second press here has offset 1, not 0, and would otherwise skip
+  // past this whole function at the gate below), and a TEXT point at offset 0 of a leading
+  // character span's OPENING glyph (whose own parent is the CharNode, not the book, so a check
+  // keyed on the anchor's parent misses it). Both land here as `prevNode` before either the offset
+  // or the anchor's own container is inspected.
+  //
+  // Still gated on the anchor, the same way `$shouldRefuseBookPrefixDeletion` is: `$getPreviousNode`
+  // resolves a TEXT anchor's previous sibling from its containing node alone, ignoring the offset
+  // WITHIN that node, so an ungated identity check would also refuse a press anywhere in the line's
+  // first text run (e.g. `\id GEN Gen|esis`) or mid-way through a leading opener — positions where
+  // the prefix is not actually adjacent to the caret. An ELEMENT anchor is already offset-correct
+  // (only `(book, 1)` reaches here as one); only the TEXT case needs the extra `offset === 0` check.
+  const { anchor } = selection;
+  if ((anchor.type === "element" || anchor.offset === 0) && $isBookPrefixNode(prevNode))
+    return true;
+
   // If not at the beginning of node text → skip.
   const isSelectionAtNodeStart = selection.anchor.offset === 0;
   if (!isSelectionAtNodeStart) return false;
 
-  // If at the beginning of book node text → don't move.
+  // If at the start of the `\id` line's own content, with nothing before it at all → don't move.
+  // The prefix case is already handled above (whichever selection shape reached it); what's left
+  // here is the line's own first child having no previous sibling at all.
   const node = selection.anchor.getNode();
-  if ($isBookNode(node.getParent())) return true;
+  const bookNode = node.getParent();
+  if ($isBookNode(bookNode) && !prevNode) return true;
 
   if ($isNoteNode(prevNode) && prevNode.getIsCollapsed()) {
     // caret at end of collapsed note preceded by verse → move to start of note in para
     const nodeBeforeNote = prevNode.getPreviousSibling();
-    if (!$isImmutableVerseNode(nodeBeforeNote)) return false;
+    // The `\id` line has no verse to sit before its notes — the book code is part of the line's
+    // own immutable marker text — so the same hop applies there on the strength of the parent.
+    if (!$isImmutableVerseNode(nodeBeforeNote) && !$isBookNode(prevNode.getParent())) return false;
 
     const parent = prevNode.getParent();
     if (!parent) return false;
@@ -973,7 +999,11 @@ function $handleBackwardNavigation(
   // under "expandInline" the caret must instead land inside the note's end (Lexical's default
   // move), where the NoteNodePlugin expands it for inline editing — hopping over the note here
   // would defeat that enter-and-expand behavior.
-  if ($isSomeParaNode(prevNode) && viewOptions?.noteMode === "collapsed") {
+  //
+  // `ParaLike`, not `SomePara`: the `\id` line is a `BookNode` and can end in a note like any
+  // other content container, so backing into it from the following block hops over the note the
+  // same way.
+  if ($isParaLikeNode(prevNode) && viewOptions?.noteMode === "collapsed") {
     // caret at beginning of para after collapsed note → move to start in previous para
     const lastChild = prevNode.getLastChild();
     if (!lastChild) return false;

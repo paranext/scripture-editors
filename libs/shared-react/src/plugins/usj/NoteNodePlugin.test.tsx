@@ -8,7 +8,7 @@ import { $createImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
 import { UsjNodeOptions } from "../../nodes/usj/usj-node-options.model";
 import { ViewOptions } from "../../views/view-options.utils";
 import { CounterStyleRuleLike, NoteNodePlugin } from "./NoteNodePlugin";
-import { baseTestEnvironment } from "./react-test.utils";
+import { $createBookLine, baseTestEnvironment, updateSelection } from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
   $getRoot,
@@ -391,6 +391,60 @@ describe("NoteNodePlugin", () => {
           .filter((child): child is TextNode => $isTextNode(child) && !$isNoteNode(child))
           .map((child) => child.getTextContent());
         expect(paraTexts.some((text) => text.includes("zz"))).toBe(true);
+      });
+    });
+  });
+
+  // The `\\id` line is a `BookNode`, not a para, but it is a content container like any other and
+  // carries whatever follows the book code — a note included. A note at its end has to expand from
+  // the caret the same way one at the end of a para does.
+  describe("Note at the end of the book line", () => {
+    const NOTE_TEXT = "id line note text";
+
+    it("expands a collapsed note at the end of the \\id line when the caret reaches its end", async () => {
+      let note: NoteNode | undefined;
+      let noteText: TextNode | undefined;
+      // `expandInline` is the note mode the caret-driven expand exists for; the handler declines
+      // outright in every other one.
+      const { editor } = await testEnvironment(
+        undefined,
+        { markerMode: "hidden", hasSpacing: true, isFormattedFont: true, noteMode: "expandInline" },
+        () => {
+          noteText = $createTextNode(NOTE_TEXT);
+          note = $createNoteNode("f", "+");
+          $getRoot().append(
+            $createBookLine(
+              "GEN",
+              $createTextNode("description "),
+              note.append(
+                $createImmutableNoteCallerNode("+", "preview"),
+                $createCharNode("ft").append(noteText),
+              ),
+            ),
+          );
+        },
+      );
+
+      if (!note || !noteText) throw new Error("Initial editor state did not build the note");
+      const noteKey = note.getKey();
+
+      editor.getEditorState().read(() => {
+        expect(note?.getIsCollapsed()).toBe(true);
+      });
+
+      updateSelection(editor, noteText, NOTE_TEXT.length);
+      // A macrotask, not just a microtask: the toggle falls back to `setTimeout` whenever the
+      // immediate one lands in a read-only state, and that fallback is the path taken here.
+      await act(async () => {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 0);
+        });
+      });
+
+      editor.getEditorState().read(() => {
+        const current = $getNodeByKey(noteKey);
+        if (!$isNoteNode(current)) throw new Error("Expected NoteNode");
+        expect(current.getIsCollapsed()).toBe(false);
       });
     });
   });

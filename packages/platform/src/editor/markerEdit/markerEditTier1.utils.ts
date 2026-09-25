@@ -14,6 +14,7 @@ import {
 } from "./markerName.pattern";
 import {
   $idleSettleWouldDiscardCaretHeldBytes,
+  $rebuildBook,
   $rebuildParas,
   $requestTier2ForNode,
   Tier2Context,
@@ -32,6 +33,7 @@ import {
 import {
   $caretHoldsRunSite,
   $isAttributeRunNode,
+  $isBookNode,
   $isCanonicalMarkerNode,
   $isCanonicalRunOpenerGlyph,
   $isCanonicalUnmatchedNode,
@@ -58,6 +60,7 @@ import {
   $syncOpenerSeparators,
   $verseAttributeRunPieces,
   AttributeRunNode,
+  BookNode,
   ChapterNode,
   closingMarkerText,
   displayRunDescriptors,
@@ -172,6 +175,12 @@ function openerBytesEndTheSplit(text: string, getMarkerFn: MarkerLookup): boolea
 }
 
 /**
+ * An unknown-split rejoin scope: the artifact paragraph and the block its bytes rejoin — the
+ * paragraph before it, or the `\id` line's book when the line's own bytes split it off.
+ */
+export type UnknownSplitRejoinScope = readonly [previous: ParaNode | BookNode, artifact: ParaNode];
+
+/**
  * The widened Tier-2 scope that dissolves an unknown-split artifact around `glyph` —
  * `[previous, paragraph]`, so the tokenizer sees the JOINED bytes — or `undefined` when the shape
  * is not the artifact and the caller should keep its single-paragraph route.
@@ -186,8 +195,12 @@ function openerBytesEndTheSplit(text: string, getMarkerFn: MarkerLookup): boolea
  * Deliberately narrow beyond that: the paragraph's OWN marker must be unknown (a user-authored
  * `\p`/`\q1` has real blockness and keeps its own scope), the edited glyph must be the
  * paragraph's LEADING glyph (a stray opener mid-paragraph says nothing about the split), and a
- * previous sibling ParaNode must exist (with none, the degraded bytes re-tokenize alone and the
- * tokenizer's body-context default applies). A LOADED unknown paragraph (authored in the file,
+ * previous sibling ParaNode or BookNode must exist (with none, the degraded bytes re-tokenize alone
+ * and the tokenizer's body-context default applies). A BookNode predecessor is the `\id` line: its
+ * bytes end where a block marker starts, so an unknown marker typed there splits off a paragraph
+ * after the book exactly as one typed in a paragraph does, and the rejoin folds the bytes back
+ * into the line's content (`$rebuildBook` with the artifact as a trailing paragraph). A LOADED
+ * unknown paragraph (authored in the file,
  * not a split artifact) rejoins by the same rule — in the file a line without a leading marker
  * continues the previous paragraph, so the joined bytes are exactly what ParatextData would
  * parse.
@@ -202,7 +215,7 @@ function openerBytesEndTheSplit(text: string, getMarkerFn: MarkerLookup): boolea
 export function $unknownSplitRejoinScope(
   glyph: MarkerNode,
   getMarkerFn: MarkerLookup,
-): ParaNode[] | undefined {
+): UnknownSplitRejoinScope | undefined {
   if (glyph.getMarkerSyntax() !== "opening") return undefined;
   if (!openerBytesEndTheSplit(glyph.getTextContent(), getMarkerFn)) return undefined;
   const parent = glyph.getParent();
@@ -211,7 +224,7 @@ export function $unknownSplitRejoinScope(
   if (paraKind !== undefined && paraKind !== MarkerType.Unknown) return undefined;
   if (parent.getFirstChild()?.is(glyph) !== true) return undefined;
   const previous = parent.getPreviousSibling();
-  if (!$isParaNode(previous)) return undefined;
+  if (!$isParaNode(previous) && !$isBookNode(previous)) return undefined;
   return [previous, parent];
 }
 
@@ -228,7 +241,11 @@ export function $unknownSplitRejoinScope(
  */
 function $tryUnknownSplitRejoin(glyph: MarkerNode, context: MarkerEditContext): boolean {
   const scope = $unknownSplitRejoinScope(glyph, context.getMarker);
-  return scope !== undefined && $rebuildParas(scope, context);
+  if (!scope) return false;
+  const [previous, artifact] = scope;
+  return $isBookNode(previous)
+    ? $rebuildBook(previous, context, [artifact])
+    : $rebuildParas([previous, artifact], context);
 }
 
 function $clampSelectionToLength(node: MarkerNode, newLength: number): void {
@@ -393,11 +410,12 @@ export function $applyOpenerRename(
       // Correcting an unknown-split artifact's marker to any INLINE kind removes the split's
       // only reason to exist: in the file, `\p some` + newline + `\w stuff` is ONE paragraph (a
       // newline before an inline marker is ordinary whitespace), and the same holds for a
-      // milestone or a note. Widen the settle scope to include the PREVIOUS paragraph so
-      // re-tokenization rejoins them — the gate reads the glyph's own bytes (which already carry
-      // `newMarker` on every path into this function) through the SAME positional-kind rule this
-      // branch is guarded by, so no second kind check belongs here. The shape gate and the
-      // fabricated-`\p` failure mode live in {@link $unknownSplitRejoinScope}'s doc comment.
+      // milestone or a note. Widen the settle scope to include the PREVIOUS paragraph (or the
+      // `\id` line) so re-tokenization rejoins them — the gate reads the glyph's own bytes (which
+      // already carry `newMarker` on every path into this function) through the SAME
+      // positional-kind rule this branch is guarded by, so no second kind check belongs here. The
+      // shape gate and the fabricated-`\p` failure mode live in
+      // {@link $unknownSplitRejoinScope}'s doc comment.
       if ($tryUnknownSplitRejoin(node, context)) {
         context.logger?.debug(
           `[MarkerEdit] unknown-split paragraph rejoined its predecessor on rename to "${newMarker}"`,
@@ -1261,8 +1279,8 @@ export function $resolvePendingMarkers(
         // marker edited back into an inline one — so the unknown-split artifact has no reason
         // left to be its own paragraph (see $unknownSplitRejoinScope). The single-scope route
         // below would re-tokenize those bytes alone and fabricate a default `\p` around them;
-        // the widened rejoin lets the tokenizer join them to the previous paragraph instead,
-        // exactly as the file bytes would parse.
+        // the widened rejoin lets the tokenizer join them to the previous paragraph (or the `\id`
+        // line) instead, exactly as the file bytes would parse.
         mutated = true;
         context.logger?.debug(
           "[MarkerEdit] unknown-split paragraph rejoined its predecessor on marker degradation",

@@ -20,7 +20,12 @@
 import { $insertNoteForMarker, getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
 import { $applyParaMarker } from "../markerEdit/applyParaMarker.utils";
 import { LITERAL_TRIGGER_PREFIX_REGEX } from "../markerEdit/markerName.pattern";
-import { $splitParagraphAtCharStack } from "../markerEdit/charFormatting.utils";
+import {
+  $breakAndLiftCharStack,
+  $outermostCharStackAncestor,
+  $splitParagraphAtCharStack,
+  $stepCaretPastClosingGlyphSpan,
+} from "../markerEdit/charFormatting.utils";
 import { $handleEnterInNote } from "../markerEdit/markerEditNote.utils";
 import {
   $injectMarkerPrefix,
@@ -31,8 +36,32 @@ import { MarkerMenuItem } from "./markerItemSource";
 import { $isAtParagraphContentStart } from "./markerMenuContext.utils";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import { $findMatchingParent } from "@lexical/utils";
-import { $getEditor, $getSelection, $isRangeSelection, $isTextNode } from "lexical";
-import { $isMarkerNode, $isParaNode, LoggerBasic, NoteNode, ParaNode, StyleInfo } from "shared";
+import {
+  $createPoint,
+  $getEditor,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  $isTextNode,
+  LexicalNode,
+  PointType,
+  RangeSelection,
+} from "lexical";
+import {
+  $createParaNode,
+  $isBookNode,
+  $isCharNode,
+  $isMarkerNode,
+  $isParaNode,
+  $isSynthesizedMarkerNode,
+  $normalizeSelectionOutOfGlyphText,
+  $selectCharContentStart,
+  BookNode,
+  LoggerBasic,
+  NoteNode,
+  ParaNode,
+  StyleInfo,
+} from "shared";
 import { showParaMarkerPrefix, UsjNodeOptions, ViewOptions } from "shared-react";
 import { MutableRefObject } from "react";
 
@@ -114,7 +143,180 @@ function $applyParagraphSelection(
     $retagParagraph(para, marker, viewOptions);
     return;
   }
+  // No retag arm for the `\id` line: a book can never be retagged, so a pick there falls through
+  // to the split, which starts the new paragraph AFTER the line.
   $splitParagraphWithMarker(marker, viewOptions);
+}
+
+/**
+ * Whether {@link $splitBookWithMarker} can cut the `\id` line at `point`. The break point lands in
+ * the point's container, and the only things the split can lift it out of are char spans and
+ * annotation mark wrappers, in any interleaving ({@link $breakAndLiftCharStack}); anything else
+ * between it and the book (a note) leaves it short of the line, where the split cannot reason
+ * about it.
+ */
+function $canSplitBookAt(point: PointType, book: BookNode): boolean {
+  const node = point.getNode();
+  const container = $outermostCharStackAncestor($isElementNode(node) ? node : node.getParent());
+  return book.is(container);
+}
+
+/**
+ * Whether `point` sits INSIDE the `\id` line's own subtree at a position {@link $canSplitBookAt}
+ * refuses — concretely, inside a note nested in the line, which the char-stack lift-out below has
+ * no way to climb back out of (`NoteNode` is neither a `CharNode` nor a `TypedMarkNode`).
+ *
+ * Deliberately narrower than "`$canSplitBookAt` is false": a point OUTSIDE the book altogether —
+ * in a following paragraph a selection reaches into, the case
+ * {@link $splitBookWithMarker}'s own doc comment describes — is not this. That boundary is the
+ * split's own removal to handle, and is exercised by a passing selection today.
+ */
+function $isTrappedInsideBookNote(point: PointType, book: BookNode): boolean {
+  const node = point.getNode();
+  if (!book.is(node) && !book.isParentOf(node)) return false;
+  return !$canSplitBookAt(point, book);
+}
+
+/**
+ * Moves `point` to just after `prefixGlyph` when it currently names a position at or before it.
+ * The book's own prefix glyph never moves — it IS the `\id` line, and the view renders it as one
+ * immutable decorator the caret cannot enter — so a caret or selection endpoint parked ahead of it
+ * (an element point in the book at offset 0, the only such position: the glyph is always the
+ * book's first child) must land past it before the split decides what moves into the new
+ * paragraph. A no-op for any point elsewhere.
+ */
+function $moveEndpointPastPrefixGlyph(
+  point: PointType,
+  book: BookNode,
+  prefixGlyph: LexicalNode,
+): void {
+  const index = prefixGlyph.getIndexWithinParent();
+  if (point.getNode().is(book) && point.offset <= index)
+    point.set(book.getKey(), index + 1, "element");
+}
+
+/**
+ * Resolves a caret at offset 0 of an OPENING glyph to an element point just before the glyph's
+ * whole enclosing char span, rather than leaving it there for {@link $breakAndLiftCharStack} to
+ * treat as a point INSIDE the span's own content. `$normalizeSelectionOutOfGlyphText` leaves a
+ * glyph's own ends alone by design — both are legal document positions — so this shape reaches
+ * `$breakAndLiftCharStack` unnormalized: its text-point branch inserts the break point BEFORE the
+ * opener but still inside the char node, so the lift closes an empty left half and
+ * `$buildContinuationCharSpan` prepends a SECOND opener onto the continuation, which already has
+ * its own. `$splitParagraphAtCharStack` never reaches this shape at all — it bails outright
+ * whenever the anchor is a `MarkerNode`, leaving Lexical's generic split to handle it cleanly —
+ * but the book split has no such fallback to bail into, so it resolves the point itself instead.
+ *
+ * A no-op for any other point, including a closing glyph or an opening glyph's TRAILING edge
+ * (genuinely inside the span's content, where a normal close-and-reopen split is correct).
+ */
+function $resolvePointBeforeOpeningGlyph(point: PointType): PointType {
+  if (point.type !== "text" || point.offset !== 0) return point;
+  const node = point.getNode();
+  if (!$isMarkerNode(node) || node.getMarkerSyntax() !== "opening") return point;
+  const span = node.getParent();
+  if (!$isCharNode(span)) return point;
+  const container = span.getParent();
+  if (!container) return point;
+  return $createPoint(container.getKey(), span.getIndexWithinParent(), "element");
+}
+
+/**
+ * Splits the `\id` line at the caret and gives the tail a NEW paragraph marked `marker`, inserted
+ * directly after the book — the only outcome a paragraph pick can have there. PT9 starts a new
+ * paragraph wherever a paragraph marker is written, and a book can never be RETAGGED: `\id` names
+ * the book, and the view renders its prefix as one immutable `\id GEN ` decorator the caret cannot
+ * enter.
+ *
+ * The cut is made the way `$splitParagraphAtCharStack` makes it — a caret at a closing glyph's
+ * trailing edge is first stepped past its whole enclosing span ({@link $stepCaretPastClosingGlyphSpan}),
+ * then {@link $breakAndLiftCharStack} parks an empty break point at the caret and lifts it out of
+ * the open character-style stack — so a caret inside a span in the line (`\id GE \nd N gen` is
+ * legal USFM) closes that span on the left and reopens it in the new paragraph, instead of
+ * stranding the tail under a span left behind in the book. A caret inside an annotation's mark
+ * wrapper (a translator comment anchored on `\id` text) splits through the wrapper the same way an
+ * ordinary paragraph split does, leaving the annotation, with its ids, on both halves.
+ *
+ * Judged from the selection's START point (`isBackward() ? focus : anchor`), not either endpoint
+ * unconditionally: the removal below reaches from the start toward the other end regardless of
+ * which one is "live", so a selection that starts splittable can always be cut even when its other
+ * end reaches past the book into a following paragraph.
+ *
+ * Returns `true` when the split happened, `false` when `$canSplitBookAt` (or the equivalent check
+ * on wherever removing a selection left the caret) refused a start position it cannot reason a
+ * split through — the caller decides how to surface that refusal.
+ *
+ * The selection must already be normalized out of glyph text
+ * (`$normalizeSelectionOutOfGlyphText`) — its only caller, {@link $splitParagraphWithMarker}, does
+ * this immediately before calling in, with no selection change in between.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $splitBookWithMarker(book: BookNode, marker: string, viewOptions?: ViewOptions): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return false;
+  // Decided before anything is mutated, so a pick that cannot split leaves the line exactly as it
+  // was rather than having already deleted the selection it was about to replace.
+  const start = selection.isBackward() ? selection.focus : selection.anchor;
+  if (!$canSplitBookAt(start, book)) return false;
+  // The OTHER end is checked too, but narrowly: a selection can begin splittable and still reach
+  // into a note's own expanded content nested in the line, a shape the char-stack lift-out below
+  // cannot climb back out of — checking only the start left exactly that selection refused AFTER
+  // `removeText()` had already deleted it. A selection whose other end reaches PAST the book
+  // altogether, into a following paragraph, is deliberately not refused here: that boundary is
+  // what the removal just below is for, and is exercised by a passing test today.
+  const end = selection.isBackward() ? selection.anchor : selection.focus;
+  if (!selection.isCollapsed() && $isTrappedInsideBookNote(end, book)) return false;
+
+  // Captured before any insertion could shift what `book.getFirstChild()` reports.
+  const prefixGlyph = $isSynthesizedMarkerNode(book.getFirstChild())
+    ? book.getFirstChild()
+    : undefined;
+  if (prefixGlyph) {
+    $moveEndpointPastPrefixGlyph(selection.anchor, book, prefixGlyph);
+    $moveEndpointPastPrefixGlyph(selection.focus, book, prefixGlyph);
+  }
+
+  // A pick over a SELECTION replaces it first — the same delete-then-split
+  // `RangeSelection.insertParagraph` performs on the paragraph path.
+  if (!selection.isCollapsed()) selection.removeText();
+  const rawCaret = $getSelection();
+  if (!$isRangeSelection(rawCaret) || !rawCaret.isCollapsed()) return false;
+  // A caret at the TRAILING EDGE of a canonical closing glyph is genuinely AFTER the span, so the
+  // cut belongs past the WHOLE enclosing char — the same step `$splitParagraphAtCharStack` takes
+  // before its own break-and-lift.
+  const caret = $stepCaretPastClosingGlyphSpan(rawCaret);
+  if (!caret) return false;
+
+  const { parent, moving: liftedMoving } = $breakAndLiftCharStack(
+    $resolvePointBeforeOpeningGlyph(caret.anchor),
+  );
+  // `$canSplitBookAt` ruled out a start point the lift cannot bring back to the book, but only for
+  // the point the pick started from; this covers wherever removing a selection left it. Bail
+  // rather than move a partial subtree out of the line.
+  if (!book.is(parent)) return false;
+  // Defensive: the endpoint move above already keeps the prefix glyph out of a caret's path, so
+  // this should never actually filter anything.
+  const moving = liftedMoving.filter((node) => !node.is(prefixGlyph));
+
+  const newPara = $createParaNode(marker);
+  book.insertAfter(newPara);
+  newPara.append(...moving);
+
+  const [firstMoved] = moving;
+  if ($isCharNode(firstMoved)) {
+    // Typing continues the reopened style: the caret goes to the start of its content, past the
+    // separator, exactly where the user interrupted the run.
+    $selectCharContentStart(firstMoved);
+  } else {
+    // An ELEMENT point at offset 0 is the shape `$injectMarkerPrefix` recognizes to move the caret
+    // to the content side once it splices the prefix in.
+    newPara.select(0, 0);
+  }
+  // The same stand-down as every other flow when the view opted out of paragraph marker prefixes:
+  // the new paragraph gets its marker state without bytes the option promises are never built.
+  if (showParaMarkerPrefix(viewOptions)) $injectMarkerPrefix(newPara);
+  return true;
 }
 
 /** Dependencies threaded through from `Editor.tsx`'s closure — the same values `insertMarker`
@@ -203,6 +405,27 @@ export function $commitTypedCloser(typedMarker: string): boolean {
 }
 
 /**
+ * Normalizes a caret or selection endpoint parked at or before the `\id` line's own immutable
+ * prefix glyph — an element point in the book at offset 0, the one position `$moveEndpointPastPrefixGlyph`
+ * already keeps the paragraph split off. Reachable through anything other than a click (Home,
+ * `selectStart()`, or any other programmatic selection): `ParaMarkerPrefixCursorGuardPlugin` only
+ * corrects a `CLICK_COMMAND`. A no-op everywhere else, including when the selection is not in a
+ * `BookNode` at all.
+ *
+ * Applied once, in the shared apply entry point, ahead of every kind's own branch: a caret this
+ * far ahead of the prefix has nowhere else to normalize FROM without duplicating the check in
+ * every insert arm a new entry could add.
+ */
+function $normalizeSelectionPastBookPrefix(selection: RangeSelection): void {
+  const book = $findMatchingParent(selection.anchor.getNode(), $isBookNode);
+  if (!book) return;
+  const prefixGlyph = book.getFirstChild();
+  if (!prefixGlyph || !$isSynthesizedMarkerNode(prefixGlyph)) return;
+  $moveEndpointPastPrefixGlyph(selection.anchor, book, prefixGlyph);
+  $moveEndpointPastPrefixGlyph(selection.focus, book, prefixGlyph);
+}
+
+/**
  * Applies a marker-menu selection at the current editor selection (standard-view `\`/Enter
  * marker menus) — the `EditorRef.applyMarkerMenuSelection` implementation. Call inside
  * `editor.update()`.
@@ -213,14 +436,16 @@ export function $applyMarkerMenuSelection(
   reference: SerializedVerseRef,
   deps: ApplyMarkerMenuSelectionDeps,
 ): string | undefined {
+  const selection = $getSelection();
   // LOUD guard: without a range selection (e.g. the palette click blurred the editor and nulled
   // it), the literal cleanup AND the insert paths below all silently no-op — the typed literal
   // then strands in the document and reaches the host's save as data. Hosts should restore
   // focus/selection before applying; this warning names the failure when they don't.
-  if (!$isRangeSelection($getSelection()))
+  if (!$isRangeSelection(selection))
     deps.logger?.warn(
       "$applyMarkerMenuSelection: no range selection — cleanup/insert will no-op (editor blurred?)",
     );
+  else $normalizeSelectionPastBookPrefix(selection);
 
   // Delete the literal `\marker` trigger prefix (when one landed) BEFORE any branch — including the
   // `closeTag` branch, so closing a char span via the passive `\` palette doesn't strand the trigger
@@ -315,25 +540,48 @@ export function $applyMarkerMenuSelection(
  * new paragraph gets its marker state WITHOUT the visible prefix — the same stand-down as the
  * deletion transform and `$applyParaMarker`, so no flow re-materializes bytes the option
  * promises are never built.
+ *
+ * A caret in the `\id` line has no paragraph to split at all and routes to
+ * {@link $splitBookWithMarker} instead. Both marker-menu triggers reach it through here — the
+ * Enter menu calls this directly (`EditorRef.splitParagraphWithMarker`), the `\` menu through
+ * `$applyParagraphSelection` — so the book arm belongs on this path, not on either caller's. The
+ * routing is judged from the selection's START point (`isBackward() ? focus : anchor`), so a
+ * selection spanning from the `\id` line into the next paragraph is judged by where it BEGINS,
+ * forward or backward alike, rather than always by the live cursor end.
+ *
+ * Returns `true` when a paragraph was split (or the book line, via {@link $splitBookWithMarker}),
+ * `false` when nothing happened — no range selection, or a caret position the book arm's own
+ * `$canSplitBookAt` guard refuses. Existing callers that only need the split to happen are
+ * unaffected by ignoring the return value; `EditorRef.formatPara` uses it to surface a refused
+ * `\id`-line split the same way it already surfaces "no selection to retag".
  */
-export function $splitParagraphWithMarker(marker: string, viewOptions?: ViewOptions): void {
+export function $splitParagraphWithMarker(marker: string, viewOptions?: ViewOptions): boolean {
   const selection = $getSelection();
-  if (!$isRangeSelection(selection)) return;
+  if (!$isRangeSelection(selection)) return false;
+  $normalizeSelectionOutOfGlyphText(selection);
+  // The `\id` line is a BookNode, not a paragraph — `selection.insertParagraph()` has no
+  // `ParaNode` to split there. Route it to the split that starts the new paragraph AFTER the line.
+  const startNode = (selection.isBackward() ? selection.focus : selection.anchor).getNode();
+  if (!$findMatchingParent(startNode, $isParaNode)) {
+    const book = $findMatchingParent(startNode, $isBookNode);
+    if (book) return $splitBookWithMarker(book, marker, viewOptions);
+  }
   const showPrefix = showParaMarkerPrefix(viewOptions);
 
   if ($splitParagraphAtCharStack()) {
     const after = $getSelection();
-    if (!$isRangeSelection(after)) return;
+    if (!$isRangeSelection(after)) return false;
     const newPara = $findMatchingParent(after.anchor.getNode(), $isParaNode);
-    if (!newPara) return;
+    if (!newPara) return false;
     newPara.setMarker(marker);
     if (showPrefix) $injectMarkerPrefix(newPara);
-    return;
+    return true;
   }
 
   const newPara = selection.insertParagraph();
-  if (!$isParaNode(newPara)) return;
+  if (!$isParaNode(newPara)) return false;
 
   if (showPrefix) $setParaMarkerWithPrefix(newPara, marker);
   else newPara.setMarker(marker);
+  return true;
 }

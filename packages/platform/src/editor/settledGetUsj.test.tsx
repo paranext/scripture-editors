@@ -791,6 +791,56 @@ const pendingShapes: PendingShape[] = [
       glyph.select(6, 6);
     },
   },
+  {
+    // The `\id` line is its own settle scope ($rebuildBook) — a pend inside its own content, with
+    // no note co-resident, is the simplest shape that exercises it.
+    name: "byte typed into the \\id line's own content",
+    usj: {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["Genesis description"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "para", marker: "p", content: ["body text"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    },
+    $edit: () => {
+      const text = $textContaining("Genesis description");
+      text.setTextContent("Genesis description \\nd");
+      text.select(text.getTextContentSize(), text.getTextContentSize());
+    },
+  },
+  {
+    // The line also carries a note (PT9 accepts one in `\id` text): the pend sits ELSEWHERE in the
+    // line's content, so the rebuild must preserve the note as a sentinel run rather than folding
+    // its bytes into the retokenization or leaving its placeholder character behind.
+    name: "byte typed in the \\id line while it also carries a note",
+    usj: {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "book",
+          marker: "id",
+          code: "GEN",
+          content: [
+            "Genesis fixture ",
+            { type: "note", marker: "f", caller: "+", content: ["a note"] },
+            " tail",
+          ],
+        },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "para", marker: "p", content: ["body text"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    },
+    $edit: () => {
+      const text = $textContaining(" tail");
+      text.setTextContent(" tail \\nd");
+      text.select(text.getTextContentSize(), text.getTextContentSize());
+    },
+  },
 ];
 
 describe("settled getUsj — virtual settle equals the real settle", () => {

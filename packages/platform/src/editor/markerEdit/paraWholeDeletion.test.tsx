@@ -33,7 +33,10 @@ import {
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
 // Reaching inside only for tests (same pattern as markerEdit.test-helpers).
 // eslint-disable-next-line @nx/enforce-module-boundaries
-import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
+import {
+  $createBookLine,
+  baseTestEnvironment,
+} from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 import {
   getViewOptions,
   OpaqueBlockGuardPlugin,
@@ -61,12 +64,15 @@ import {
 } from "lexical";
 import {
   $createCharNode,
+  $createImpliedParaNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createParaNode,
   $createUnknownNode,
   $isMarkerNode,
   $isParaNode,
+  BookNode,
+  ImpliedParaNode,
   NBSP,
   ParaNode,
   VerseNode,
@@ -689,6 +695,204 @@ describe("backspacing an Enter-Enter split back together (content bytes survive 
       expect(anchor.key).toBe(first.getKey());
       const char = first.getChildren().findIndex((child) => !$isTextNode(child));
       expect(anchor.offset).toBe(char);
+    });
+  });
+
+  it("merges the paragraph below the `\\id` line INTO that line when its prefix is backspaced away", async () => {
+    // `\id GEN gen` -> Enter, Enter (`\ip` picked) -> caret at the start of the new paragraph's
+    // content -> backspace until the whole `\ip ` prefix is gone. The `\id` line is a BookNode, not
+    // a ParaNode, but it takes content exactly like a paragraph does, so the marker-deleted
+    // paragraph must join it. Resetting it to `\p` instead re-grows a prefix, so every further
+    // Backspace deletes and re-creates the same marker forever.
+    let book!: BookNode, next!: ParaNode, after!: ParaNode;
+    const { editor } = await testEnvironmentWithDisplaySyncs(() => {
+      book = $createBookLine("GEN", $createTextNode("gen"));
+      next = $createParaNode("ip");
+      after = $createParaNode("p");
+      $getRoot().append(
+        book,
+        next.append(
+          $createMarkerNode("ip"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("stuff"),
+        ),
+        after.append(
+          $createMarkerNode("p"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("more"),
+        ),
+      );
+    });
+    await act(async () =>
+      editor.update(() => {
+        const content = next.getLastChild();
+        if (!$isTextNode(content)) throw new Error("expected the paragraph's content text");
+        content.select(0, 0);
+      }),
+    );
+
+    const unblock = editor.registerCommand(KEY_DOWN_COMMAND, () => true, COMMAND_PRIORITY_NORMAL);
+    // Four presses: the separator, then `p`, `i`, and `\`.
+    for (let press = 0; press < 4; press++) await pressBackspace(editor);
+    unblock();
+
+    editor.getEditorState().read(() => {
+      expect(next.isAttached()).toBe(false);
+      const blocks = $getRoot().getChildren();
+      expect(blocks).toHaveLength(2);
+      expect(blocks[0].is(book)).toBe(true);
+      expect(blocks[1].is(after)).toBe(true);
+      expect(book.getTextContent()).toBe(`\\id GEN${NBSP}genstuff`);
+      // The caret stays at the junction: typing continues where the deleted prefix was.
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection after merge");
+      expect(selection.isCollapsed()).toBe(true);
+      const anchorNode = selection.anchor.getNode();
+      if (!$isTextNode(anchorNode)) throw new Error("caret is not on text");
+      expect(book.isParentOf(anchorNode)).toBe(true);
+      const text = anchorNode.getTextContent();
+      const before =
+        selection.anchor.offset > 0
+          ? text.slice(0, selection.anchor.offset)
+          : (anchorNode.getPreviousSibling()?.getTextContent() ?? "");
+      const afterCaret =
+        selection.anchor.offset < text.length
+          ? text.slice(selection.anchor.offset)
+          : (anchorNode.getNextSibling()?.getTextContent() ?? "");
+      expect(before.endsWith("gen")).toBe(true);
+      expect(afterCaret.startsWith("stuff")).toBe(true);
+    });
+    const usj = usjOf(editor);
+    expect(usj?.content[0]).toMatchObject({ type: "book", code: "GEN", content: ["genstuff"] });
+    expect(paraMarkersOf(usj)).toEqual(["p"]);
+  });
+
+  it("merges the paragraph below an implied paragraph INTO it when its prefix is backspaced away", async () => {
+    // Bare content that precedes any explicit paragraph marker loads as an ImpliedParaNode
+    // (`insertImpliedParasRecurse` in usj-editor.adaptor.ts) — e.g. a verse sitting right after
+    // `\c 1` with no `\p` of its own. It takes content exactly like a real paragraph, so a
+    // marker-deleted paragraph below it must join it the same way it joins an ordinary paragraph
+    // or the `\id` line: resetting to `\p` instead would grow a marker into a place the source
+    // never had one, and `removeImpliedParasRecurse` (editor-usj.adaptor.ts) serializes an
+    // implied paragraph's children as bare content, so the merge must leave none behind.
+    let impliedPara!: ImpliedParaNode, next!: ParaNode, after!: ParaNode;
+    const { editor } = await testEnvironmentWithDisplaySyncs(() => {
+      impliedPara = $createImpliedParaNode();
+      next = $createParaNode("p");
+      after = $createParaNode("q1");
+      $getRoot().append(
+        impliedPara.append($createTextNode("gen")),
+        next.append(
+          $createMarkerNode("p"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("stuff"),
+        ),
+        after.append(
+          $createMarkerNode("q1"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("more"),
+        ),
+      );
+    });
+    await act(async () =>
+      editor.update(() => {
+        const content = next.getLastChild();
+        if (!$isTextNode(content)) throw new Error("expected the paragraph's content text");
+        content.select(0, 0);
+      }),
+    );
+
+    const unblock = editor.registerCommand(KEY_DOWN_COMMAND, () => true, COMMAND_PRIORITY_NORMAL);
+    // Three presses: the separator, then `p`, and `\`.
+    for (let press = 0; press < 3; press++) await pressBackspace(editor);
+    unblock();
+
+    editor.getEditorState().read(() => {
+      expect(next.isAttached()).toBe(false);
+      const blocks = $getRoot().getChildren();
+      expect(blocks).toHaveLength(2);
+      expect(blocks[0].is(impliedPara)).toBe(true);
+      expect(blocks[1].is(after)).toBe(true);
+      expect(impliedPara.getTextContent()).toBe("genstuff");
+      // The caret stays at the junction: typing continues where the deleted prefix was.
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection after merge");
+      expect(selection.isCollapsed()).toBe(true);
+      const anchorNode = selection.anchor.getNode();
+      if (!$isTextNode(anchorNode)) throw new Error("caret is not on text");
+      expect(impliedPara.isParentOf(anchorNode)).toBe(true);
+      const text = anchorNode.getTextContent();
+      const before =
+        selection.anchor.offset > 0
+          ? text.slice(0, selection.anchor.offset)
+          : (anchorNode.getPreviousSibling()?.getTextContent() ?? "");
+      const afterCaret =
+        selection.anchor.offset < text.length
+          ? text.slice(selection.anchor.offset)
+          : (anchorNode.getNextSibling()?.getTextContent() ?? "");
+      expect(before.endsWith("gen")).toBe(true);
+      expect(afterCaret.startsWith("stuff")).toBe(true);
+    });
+    const usj = usjOf(editor);
+    // The merged content serializes as bare content with no `\p` marker of its own — the implied
+    // paragraph's own contract — while the following paragraph keeps its marker.
+    expect(usj?.content[0]).toBe("genstuff");
+    expect(paraMarkersOf(usj)).toEqual(["q1"]);
+  });
+});
+
+describe("backspacing a fresh paragraph below the `\\id` line away (collapsed-caret provenance)", () => {
+  it("reaps the paragraph the user backspaced empty, caret at the end of the `\\id` line", async () => {
+    // Enter, Enter at the end of the `\id` line leaves a fresh empty paragraph below it;
+    // backspacing its prefix away must dissolve it back into nothing, exactly as below a paragraph.
+    let book!: BookNode, fresh!: ParaNode;
+    const { editor } = await testEnvironment(() => {
+      book = $createBookLine("GEN", $createTextNode("gen"));
+      fresh = $createParaNode("ip");
+      $getRoot().append(
+        book,
+        fresh.append($createMarkerNode("ip"), $createTextNode(NBSP)),
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $createTextNode(NBSP),
+          $createTextNode("more"),
+        ),
+      );
+    });
+
+    // Same simulation as the paragraph twin above: the arming KEY_DOWN, then the chain's
+    // deletions applied directly, since jsdom cannot drive Lexical's native Selection.modify path.
+    const unblock = editor.registerCommand(KEY_DOWN_COMMAND, () => true, COMMAND_PRIORITY_NORMAL);
+    await act(async () =>
+      editor.update(() => {
+        const separator = fresh.getLastChild();
+        if (separator === null) throw new Error("expected the fresh paragraph's separator");
+        const selection = $createRangeSelection();
+        selection.anchor.set(separator.getKey(), 1, "text");
+        selection.focus.set(separator.getKey(), 1, "text");
+        $setSelection(selection);
+        editor.dispatchCommand(
+          KEY_DOWN_COMMAND,
+          new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }),
+        );
+        fresh.getChildren().forEach((child) => child.remove());
+      }),
+    );
+    unblock();
+
+    editor.getEditorState().read(() => {
+      expect(fresh.isAttached()).toBe(false);
+      expect($getRoot().getChildren()).toHaveLength(2);
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection after dissolve");
+      expect(selection.isCollapsed()).toBe(true);
+      const { anchor } = selection;
+      const atLineEnd =
+        anchor.type === "element"
+          ? anchor.key === book.getKey() && anchor.offset === book.getChildrenSize()
+          : anchor.getNode().is(book.getLastChild()) &&
+            anchor.offset === (book.getLastChild()?.getTextContentSize() ?? -1);
+      expect(atLineEnd).toBe(true);
     });
   });
 });

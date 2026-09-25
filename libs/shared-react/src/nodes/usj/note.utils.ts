@@ -50,7 +50,6 @@ import {
   closingMarkerText,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   getEditableCallerText,
-  getNoteKind,
   ImmutableTypedTextNode,
   LoggerBasic,
   MarkerNode,
@@ -86,6 +85,26 @@ export function $findImmutableNoteCallerNodes(nodes: LexicalNode[]): ImmutableNo
   nodes.forEach($traverse);
 
   return immutableNoteCallerNodes;
+}
+
+/**
+ * The caller a freshly inserted note gets when nothing explicit is given, matching Paratext 9's
+ * `DefaultCallerMapper`/`UsfmSnippetInserter.GetFallbackCaller` exactly: a project-level default
+ * caller exists ONLY for the two markers this editor exposes a setting for — `f`
+ * (`defaultFootnoteCaller`) and `x` (`defaultCrossRefCaller`). Paratext 9 also has project
+ * settings for `ef` and `ex`, under their own separate settings this editor does not model; every
+ * marker without a project setting here — `fe`, `ef`, `efe`, `ex`, and any custom note marker —
+ * falls back to Paratext 9's hardcoded per-marker default instead: `+` for a marker starting with
+ * `f`, `-` for everything else. Reusing the footnote/cross-reference project setting for those
+ * markers (e.g. giving `fe` the project's `f` caller) would be a default the project never
+ * actually configured.
+ *
+ * Read-only.
+ */
+function $defaultCallerForMarker(marker: string, nodeOptions: UsjNodeOptions): string {
+  if (marker === "f") return nodeOptions.defaultFootnoteCaller ?? "+";
+  if (marker === "x") return nodeOptions.defaultCrossRefCaller ?? "-";
+  return marker.startsWith("f") ? "+" : "-";
 }
 
 /**
@@ -126,13 +145,7 @@ export function $insertNote(
   );
   if (children === undefined) return undefined;
 
-  // PT9's caller-family rule (see `getNoteKind`): custom note markers deliberately take the
-  // cross-reference default, not the footnote one.
-  const resolvedCaller =
-    caller ??
-    (getNoteKind(marker) === "crossref"
-      ? (nodeOptions.defaultCrossRefCaller ?? "-")
-      : (nodeOptions.defaultFootnoteCaller ?? "+"));
+  const resolvedCaller = caller ?? $defaultCallerForMarker(marker, nodeOptions);
 
   const noteNode = $createWholeNote(
     marker,

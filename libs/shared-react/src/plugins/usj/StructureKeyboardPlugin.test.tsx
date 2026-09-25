@@ -4,7 +4,13 @@
 import { $createImmutableVerseNode, ImmutableVerseNode } from "../../nodes/usj";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { HistoryPlugin } from "../History/HistoryPlugin";
-import { baseTestEnvironment, pressKey, updateSelection } from "./react-test.utils";
+import { $isBookPrefixNode } from "./ParaMarkerPrefixCursorGuardPlugin";
+import {
+  $createBookLine,
+  baseTestEnvironment,
+  pressKey,
+  updateSelection,
+} from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
   $getRoot,
@@ -23,7 +29,17 @@ import {
   UNDO_COMMAND,
   REDO_COMMAND,
 } from "lexical";
-import { $createParaNode, $isParaNode, createEmptyHistoryState, ParaNode } from "shared";
+import {
+  $createBookNode,
+  $createMarkerNode,
+  $createMarkerTrailingSeparator,
+  $createParaNode,
+  $isBookNode,
+  $isParaNode,
+  BookNode,
+  createEmptyHistoryState,
+  ParaNode,
+} from "shared";
 
 // NOTE: jsdom cannot drive collapsed mid-text deletes (domSelection.modify) or printable-char
 // insertion via dispatchCommand, and IS_APPLE is false so Alt+Backspace is a no-op. Those cases
@@ -46,6 +62,54 @@ describe("StructureKeyboardPlugin — keyboard", () => {
 
     editor.getEditorState().read(() => {
       expect($getRoot().getChildrenSize()).toBe(2); // unchanged
+    });
+  });
+
+  // The `\id` line's BookNode is content like any paragraph's — protected mode must recognize a
+  // caret at the END of its own content as a block boundary too, or Delete there merges the
+  // following paragraph straight into the line, exactly as if the line were not a block at all.
+  it("blocks Delete at the end of the \\id line's content when protected", async () => {
+    let bookText: TextNode;
+    const { editor } = await protectedEnvironment(() => {
+      bookText = $createTextNode("GenesisTitle");
+      $getRoot().append(
+        $createBookNode("GEN").append(bookText),
+        $createParaNode("h").append($createTextNode("Genesis")),
+      );
+    });
+    updateSelection(editor, bookText!, "GenesisTitle".length);
+
+    await pressKey(editor, "Delete", 0);
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildrenSize()).toBe(2); // unchanged: the \h paragraph still stands
+      const book = $getRoot().getChildren()[0];
+      if (!$isBookNode(book)) throw new Error("expected the BookNode to remain");
+      expect(book.getTextContent()).toBe("GenesisTitle");
+    });
+  });
+
+  // Same rule, Rule-1 selection-replacement half: a selection from inside the line into the next
+  // paragraph must not collapse the two blocks into one when protected.
+  it("blocks controlled text insertion over a selection spanning from the \\id line into the next paragraph", async () => {
+    let bookText: TextNode;
+    let headingText: TextNode;
+    const { editor } = await protectedEnvironment(() => {
+      bookText = $createTextNode("Genesis");
+      headingText = $createTextNode("Heading");
+      $getRoot().append(
+        $createBookNode("GEN").append(bookText),
+        $createParaNode("h").append(headingText),
+      );
+    });
+    updateSelection(editor, bookText!, 3, headingText!, 3);
+
+    await act(async () => {
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "x");
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildrenSize()).toBe(2); // not merged/replaced
     });
   });
 
@@ -371,6 +435,101 @@ describe("StructureKeyboardPlugin — two-step delete (unprotected)", () => {
     });
   });
 
+  // The `\id` line's BookNode is a valid merge target too, the same as a paragraph — the line is
+  // content like any paragraph's (docs/standard-view-invariants.md), and a paragraph directly
+  // below it merges INTO it when its whole marker is deleted. Before this fix, the confirming
+  // Backspace here matched the two-step gate but did nothing (the merge only recognized a
+  // ParaNode predecessor): a third, un-gated Backspace then erased the paragraph's own text via
+  // Lexical's default handling of the still-live range selection from the first press.
+  it("paragraph Backspace at start merges into the \\id line's BookNode", async () => {
+    let book: BookNode;
+    let t2: TextNode;
+    const { editor } = await guardedEnvironment(() => {
+      book = $createBookNode("GEN");
+      t2 = $createTextNode("second");
+      $getRoot().append(book.append($createTextNode("first")), $createParaNode("q").append(t2));
+    });
+    updateSelection(editor, t2!, 0);
+
+    await pressKey(editor, "Backspace", 0);
+    editor.getEditorState().read(() => {
+      const sel = $getSelection();
+      expect(sel && !$isNodeSelection(sel) && !sel.isCollapsed()).toBe(true);
+      expect($getRoot().getChildrenSize()).toBe(2); // not yet merged
+    });
+
+    await pressKey(editor, "Backspace", 0);
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildrenSize()).toBe(1);
+      const merged = $getRoot().getChildren()[0];
+      if (!$isBookNode(merged)) throw new Error("expected the BookNode to remain");
+      expect(merged.getTextContent()).toBe("firstsecond");
+    });
+  });
+
+  // markerMode "editable" renders a paragraph's marker as a leading [MarkerNode, trailing
+  // separator] prefix inside the paragraph itself (markerEditDeletion.utils.ts's
+  // `$createMarkerPrefix`). Unlike that file's own merge, guarded structure-protection mode's
+  // merge runs straight off the keystroke with no earlier pass to strip the marker text, so the
+  // prefix is still there to drop. The caret starts as an element point on the paragraph itself
+  // (offset 0, before the prefix) — the true structural start `$caretAtParaStart` arms on; the
+  // position right after the prefix has a previous sibling (the prefix) and does not arm.
+  it("paragraph Backspace at start drops the merging paragraph's own marker prefix, not just the separator", async () => {
+    let q: ParaNode;
+    const { editor } = await guardedEnvironment(() => {
+      q = $createParaNode("q");
+      $getRoot().append(
+        $createParaNode("p").append($createTextNode("first")),
+        q.append(
+          $createMarkerNode("q"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("second"),
+        ),
+      );
+    });
+    updateSelection(editor, q!, 0);
+
+    await pressKey(editor, "Backspace", 0);
+    await pressKey(editor, "Backspace", 0);
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildrenSize()).toBe(1);
+      const merged = $getRoot().getChildren()[0] as ParaNode;
+      expect(merged.getMarker()).toBe("p");
+      // No fused marker glyph (`\q`) or leftover separator between the two paragraphs' text.
+      expect(merged.getTextContent()).toBe("firstsecond");
+    });
+  });
+
+  it("paragraph Backspace at start drops the marker prefix when merging into the \\id line's BookNode", async () => {
+    let book: BookNode;
+    let q: ParaNode;
+    const { editor } = await guardedEnvironment(() => {
+      q = $createParaNode("h");
+      book = $createBookNode("GEN");
+      $getRoot().append(
+        book.append($createTextNode("first")),
+        q.append(
+          $createMarkerNode("h"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("second"),
+        ),
+      );
+    });
+    updateSelection(editor, q!, 0);
+
+    await pressKey(editor, "Backspace", 0);
+    await pressKey(editor, "Backspace", 0);
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildrenSize()).toBe(1);
+      const merged = $getRoot().getChildren()[0];
+      if (!$isBookNode(merged)) throw new Error("expected the BookNode to remain");
+      // No fused marker glyph (`\h`) or leftover separator between the line and the paragraph.
+      expect(merged.getTextContent()).toBe("firstsecond");
+    });
+  });
+
   it("paragraph Delete at end: first press selects the next block, second merges it up", async () => {
     let t1: TextNode;
     const { editor } = await guardedEnvironment(() => {
@@ -558,6 +717,33 @@ describe("StructureKeyboardPlugin — two-step delete for range selections with 
       const para = $getRoot().getChildren()[0] as ParaNode;
       expect(para.getChildren().some((n) => n instanceof ImmutableVerseNode)).toBe(false); // verse gone
       expect(para.getTextContent()).toBe("ad"); // "b", verse, and "c" removed
+    });
+  });
+
+  // The armed range is deleted straight off the keystroke, not through DELETE_CHARACTER_COMMAND, so
+  // the prefix guard's own narrowing never sees it: a range starting before the `\id` line's
+  // immutable prefix (Ctrl+A normalizes to exactly that) must be narrowed here too, or the fire
+  // deletes the glyph along with the content.
+  it("second Backspace keeps the \\id line's prefix when the armed range starts before it", async () => {
+    let book: BookNode;
+    let t2: TextNode;
+    const { editor } = await guardedEnvironment(() => {
+      book = $createBookLine("GEN", $createTextNode("Genesis"));
+      t2 = $createTextNode("cd");
+      $getRoot().append(book, $createParaNode("p").append($createImmutableVerseNode("1"), t2));
+    });
+    updateSelection(editor, book!, 0, t2!, 1);
+
+    await pressKey(editor, "Backspace", 0); // arm
+    await pressKey(editor, "Backspace", 0); // fire
+
+    editor.getEditorState().read(() => {
+      const first = $getRoot().getFirstChild();
+      if (!$isBookNode(first)) throw new Error("expected the BookNode to remain");
+      expect($isBookPrefixNode(first.getFirstChild())).toBe(true);
+      expect(first.getTextContent()).not.toContain("Genesis");
+      expect($getRoot().getTextContent()).not.toContain("Genesis");
+      expect($getRoot().getTextContent()).toContain("d");
     });
   });
 

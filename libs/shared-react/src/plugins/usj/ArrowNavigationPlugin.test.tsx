@@ -15,6 +15,7 @@ import {
 import { $opaqueBlockAncestor } from "./OpaqueBlockGuardPlugin";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
 import {
+  $createBookLine,
   baseTestEnvironment,
   pressKey,
   pressKeyThroughDom,
@@ -37,6 +38,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  BookNode,
   $createAttributeRunNode,
   $createCharNode,
   $createImmutableTableCellNode,
@@ -61,6 +63,13 @@ import {
   textTypeState,
   VerseNode,
 } from "shared";
+
+function $createCollapsedNoteNode() {
+  return $createNoteNode("f", "+").append(
+    $createImmutableNoteCallerNode("+", "note1 preview"),
+    $createCharNode("ft").append($createTextNode("note1 text")),
+  );
+}
 
 describe("Note collapsed", () => {
   describe("LTR forward direction", () => {
@@ -2594,6 +2603,307 @@ describe("a collapsed note at a paragraph's end offers no text position after it
       const lastChild = para.getLastChild();
       expect($isTextNode(lastChild) && lastChild.getTextContent()).toBe("X");
       expect(note.getTextContent()).not.toContain("X");
+    });
+  });
+});
+
+// The `\\id` line is a content container like any other: whatever follows the book code reaches the
+// editor — notes and character spans included — so the caret has to be able to walk back out of the
+// text after one.
+describe("Backward navigation in the book line", () => {
+  it("moves to the point before a note when moving backward from the text after it", async () => {
+    let book: BookNode;
+    let trailing: TextNode;
+    const { editor } = await testEnvironment(() => {
+      trailing = $createTextNode(" trailing desc");
+      book = $createBookLine("GEN", $createCollapsedNoteNode(), trailing);
+      $getRoot().append(book);
+    });
+    updateSelection(editor, trailing!, 0);
+
+    await pressKey(editor, "ArrowLeft");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(book!, 1);
+    });
+  });
+
+  // The one caret position the immutable `\id GEN ` prefix must never surrender: a second press
+  // from the note-hop's own landing must not cross the prefix onto (book, 0), where the caret would
+  // sit ahead of the glyph on screen but land after it in the file (invariant I).
+  it("does not cross the prefix on a second backward press from the note-hop landing", async () => {
+    let book: BookNode;
+    let trailing: TextNode;
+    const { editor } = await testEnvironment(() => {
+      trailing = $createTextNode(" trailing desc");
+      book = $createBookLine("GEN", $createCollapsedNoteNode(), trailing);
+      $getRoot().append(book);
+    });
+    updateSelection(editor, trailing!, 0);
+
+    await pressKey(editor, "ArrowLeft");
+    const event = await pressKey(editor, "ArrowLeft");
+
+    expect(event.defaultPrevented).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(book!, 1);
+    });
+  });
+
+  // The same prefix guard reached from a different selection shape: a TEXT point at offset 0 of a
+  // leading character span's OPENING glyph. Its own parent is the CharNode, not the book, so a
+  // check keyed on `node.getParent()` misses this; `$getPreviousNode` still resolves to the
+  // prefix, which is what the fix keys on instead.
+  it("does not cross the prefix from a leading character span's opening glyph", async () => {
+    let openingGlyph: MarkerNode;
+    const { editor } = await testEnvironment(() => {
+      openingGlyph = $createMarkerNode("nd");
+      $getRoot().append(
+        $createBookLine(
+          "GEN",
+          $createCharNode("nd").append(
+            openingGlyph,
+            $createTextNode("LORD"),
+            $createMarkerNode("nd", "closing"),
+          ),
+        ),
+      );
+    });
+    updateSelection(editor, openingGlyph!, 0);
+
+    const event = await pressKey(editor, "ArrowLeft");
+
+    expect(event.defaultPrevented).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(openingGlyph!, 0);
+    });
+  });
+
+  // Same fallback, different offset: mid-way through the opening glyph's own text, the caret is not
+  // adjacent to the prefix at all, so the same `$getPreviousNode` fallback must not refuse it.
+  it("leaves the default move to run from offset 1 inside a leading opener", async () => {
+    let openingGlyph: MarkerNode;
+    const { editor } = await testEnvironment(() => {
+      openingGlyph = $createMarkerNode("nd");
+      $getRoot().append(
+        $createBookLine(
+          "GEN",
+          $createCharNode("nd").append(
+            openingGlyph,
+            $createTextNode("LORD"),
+            $createMarkerNode("nd", "closing"),
+          ),
+        ),
+      );
+    });
+    updateSelection(editor, openingGlyph!, 1);
+
+    const event = await pressKey(editor, "ArrowLeft");
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  // `$getPreviousNode` resolves a TEXT anchor's previous sibling from its containing node alone,
+  // ignoring the offset WITHIN it — so a check keyed on that identity alone would refuse a press
+  // anywhere in the line's own first text run, not just at its start.
+  it("leaves the default move to run from offset 3 in the line's own content text", async () => {
+    let description: TextNode;
+    const { editor } = await testEnvironment(() => {
+      description = $createTextNode("Genesis");
+      $getRoot().append($createBookLine("GEN", description));
+    });
+    updateSelection(editor, description!, 3);
+
+    const event = await pressKey(editor, "ArrowLeft");
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("moves to the point before a note that follows the line's own description text", async () => {
+    let book: BookNode;
+    let trailing: TextNode;
+    const { editor } = await testEnvironment(() => {
+      trailing = $createTextNode(" trailing desc");
+      book = $createBookLine(
+        "GEN",
+        $createTextNode("description"),
+        $createCollapsedNoteNode(),
+        trailing,
+      );
+      $getRoot().append(book);
+    });
+    updateSelection(editor, trailing!, 0);
+
+    await pressKey(editor, "ArrowLeft");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(book!, 2);
+    });
+  });
+
+  // The unchanged case, and the reason the guard cannot simply be deleted: the book code lives in
+  // the line's own immutable marker text, so the start of the description is the start of the
+  // document and there is nowhere to go.
+  it("does not move from the start of the line's text when nothing is before it", async () => {
+    let description: TextNode;
+    const { editor } = await testEnvironment(() => {
+      description = $createTextNode("description");
+      $getRoot().append($createBookLine("GEN", description));
+    });
+    updateSelection(editor, description!, 0);
+
+    await pressKey(editor, "ArrowLeft");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(description!, 0);
+    });
+  });
+
+  // A character span is not a note, so nothing here hops over it — the point is only that the guard
+  // stands down and lets the ordinary move happen. jsdom performs no caret movement of its own, so
+  // this asserts the CLAIM rather than the resulting position.
+  it("leaves the default move to run from the text after a character span", async () => {
+    let trailing: TextNode;
+    const { editor } = await testEnvironment(() => {
+      trailing = $createTextNode(" trailing desc");
+      $getRoot().append(
+        $createBookLine(
+          "GEN",
+          $createTextNode("description "),
+          $createCharNode("nd").append($createTextNode("LORD")),
+          trailing,
+        ),
+      );
+    });
+    updateSelection(editor, trailing!, 0);
+
+    const event = await pressKey(editor, "ArrowLeft");
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+});
+
+// The `\id` line's own forward-navigation half of "Backward navigation in the book line" above: a
+// collapsed note inside the line must be stepped OVER, the same as one inside a paragraph — the
+// checks this exercises used `$isSomeParaNode`, which is false for a `BookNode`, so the line fell
+// through to Lexical's default move and let the caret enter the note's hidden content.
+describe("Forward navigation past a collapsed note in the book line", () => {
+  it("does not step into the note when crossing it from the element point before it", async () => {
+    let book: BookNode;
+    let note: NoteNode;
+    const { editor } = await testEnvironment(() => {
+      note = $createCollapsedNoteNode();
+      book = $createBookLine("GEN", $createTextNode("description"), note);
+      $getRoot().append(book);
+    });
+    // Element point right after the description text and before the note — exactly the shape the
+    // book line's own backward note-hop lands the caret on (`(book, i)`).
+    updateSelection(editor, book!, 2);
+
+    const event = await pressKey(editor, "ArrowRight");
+
+    // The note is both the book's last child AND the book has nothing after it, so there is
+    // nowhere further forward to land — but the press is still claimed, and the caret stays put
+    // rather than the default move dropping it inside the note's hidden content.
+    expect(event.defaultPrevented).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(book!, 2);
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection");
+      const focusNode = selection.focus.getNode();
+      expect(focusNode.is(note!) || focusNode.getParents().some((parent) => parent.is(note!))).toBe(
+        false,
+      );
+    });
+  });
+
+  it("moves past the note onto the text that follows it", async () => {
+    let book: BookNode;
+    let trailing: TextNode;
+    const { editor } = await testEnvironment(() => {
+      trailing = $createTextNode(" trailing desc");
+      book = $createBookLine(
+        "GEN",
+        $createTextNode("description"),
+        $createCollapsedNoteNode(),
+        trailing,
+      );
+      $getRoot().append(book);
+    });
+    updateSelection(editor, book!, 2);
+
+    await pressKey(editor, "ArrowRight");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(trailing!, 0);
+    });
+  });
+});
+
+// A collapsed note ending a block is immediately followed by another block. Backward navigation
+// from the new block's content start must stop before the note rather than entering it — the same
+// rule for every kind of block that can end in a note, not just an ordinary paragraph.
+describe("Backward navigation into a collapsed note ending the previous block", () => {
+  const standardView = getViewOptions(STANDARD_VIEW_MODE);
+
+  it("stops before a collapsed note ending the previous paragraph", async () => {
+    let para1: ParaNode;
+    let note: NoteNode;
+    let para2Text: TextNode;
+    const { editor } = await testEnvironment(
+      () => {
+        para1 = $createParaNode();
+        note = $createNoteNode("f", "+");
+        para2Text = $createTextNode("p2 text");
+        $getRoot().append(
+          para1.append(
+            $createTextNode("p1 text"),
+            note.append(
+              $createImmutableNoteCallerNode("+", "note1 preview"),
+              $createCharNode("ft").append($createTextNode("note1 text")),
+            ),
+          ),
+          $createParaNode().append(para2Text),
+        );
+      },
+      "ltr",
+      standardView,
+    );
+    updateSelection(editor, para2Text!, 0);
+
+    await pressKey(editor, "ArrowLeft");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(para1!, note!.getIndexWithinParent());
+    });
+  });
+
+  it("stops before a collapsed note ending the \\id line, same as the paragraph case", async () => {
+    let book: BookNode;
+    let note: NoteNode;
+    let para2Text: TextNode;
+    const { editor } = await testEnvironment(
+      () => {
+        note = $createNoteNode("f", "+");
+        para2Text = $createTextNode("p2 text");
+        book = $createBookLine(
+          "GEN",
+          note.append(
+            $createImmutableNoteCallerNode("+", "note1 preview"),
+            $createCharNode("ft").append($createTextNode("note1 text")),
+          ),
+        );
+        $getRoot().append(book, $createParaNode().append(para2Text));
+      },
+      "ltr",
+      standardView,
+    );
+    updateSelection(editor, para2Text!, 0);
+
+    await pressKey(editor, "ArrowLeft");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(book!, note!.getIndexWithinParent());
     });
   });
 });

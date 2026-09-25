@@ -1040,7 +1040,7 @@ describe("$textNodeTier2Transform on `//` optbreak text in plain content", () =>
   });
 
   it("does NOT pend `//` inside an opaque unknown block (tokenizer keeps it literal there)", () => {
-    // Book/chapter/opaque-unknown content is a literal-only degradation context: the tokenizer
+    // Opaque-unknown content is a literal-only degradation context: the tokenizer
     // never re-tokenizes it, so a `//` there must stay literal rather than pend for a settle
     // that could never happen — the same exclusion the backslash path already applies.
     const { editor } = createBasicTestEnvironment();

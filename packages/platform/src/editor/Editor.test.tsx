@@ -33,6 +33,7 @@ import {
 } from "lexical";
 import { createRef, PropsWithChildren, ReactElement, RefObject, useEffect, useState } from "react";
 import {
+  $isBookNode,
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
@@ -1655,6 +1656,174 @@ describe("formatPara (standard view)", () => {
       expect(glyph.getTextContent()).toBe("\\m");
       // Content survived the block conversion.
       expect(para.getTextContent()).toContain("first verse text");
+    });
+  });
+
+  // `$setBlocksType` treats `BookNode` as an ordinary convertible block (nothing about it opts
+  // out), so a bare `$setBlocksType` with the caret in the `\id` line would convert the book
+  // itself into a `ParaNode` — dropping the book object and its code from the saved USJ while the
+  // stale `\id GEN` glyph stayed on screen inside the new paragraph. A book is never retagged: the
+  // pick can only SPLIT the line, starting a new paragraph after the book
+  // (docs/standard-view-invariants.md).
+  it("splits the \\id line instead of retagging the BookNode", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+
+    // Park the caret in the book's own text.
+    act(() => {
+      lexical.update(() => {
+        const textNode = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("Test Book"));
+        if (!textNode || !$isTextNode(textNode)) throw new Error("seed text node not found");
+        textNode.select(4, 4);
+      });
+    });
+    await act(async () => {
+      ref.current?.formatPara("p");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    lexical.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected the BookNode to remain at the root");
+      expect(book.getCode()).toBe("GEN");
+      // The tail after the caret became a new paragraph, inserted directly after the book.
+      const newPara = book.getNextSibling();
+      if (!$isParaNode(newPara)) throw new Error("expected a new ParaNode after the book");
+      expect(newPara.getMarker()).toBe("p");
+      expect(newPara.getTextContent()).toContain("Book");
+      expect(book.getTextContent()).not.toContain("Book");
+    });
+  });
+
+  // A selection can run either direction: `selection.focus` alone is the drag's END point, not
+  // its start. Routing on focus only finds the book when the drag runs backward (focus stays in
+  // the `\id` line); a forward drag — the direction a normal top-to-bottom selection takes —
+  // leaves focus in the following paragraph, so the book/split check must look at the START point
+  // instead.
+  it("splits the \\id line for a forward selection that ends past the book", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+
+    // Select forward: anchor in the book's own text, focus in the next paragraph's verse text.
+    act(() => {
+      lexical.update(() => {
+        const bookText = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("Test Book"));
+        const verseText = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("first verse text"));
+        if (!bookText || !$isTextNode(bookText)) throw new Error("seed book text node not found");
+        if (!verseText || !$isTextNode(verseText))
+          throw new Error("seed verse text node not found");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(bookText.getKey(), 4, "text");
+        selection.focus = $createPoint(verseText.getKey(), 4, "text");
+        $setSelection(selection);
+        expect(selection.isBackward()).toBe(false);
+      });
+    });
+    await act(async () => {
+      ref.current?.formatPara("p");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    lexical.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected the BookNode to remain at the root");
+      expect(book.getCode()).toBe("GEN");
+      // The book keeps only what stayed before the caret; nothing was deleted, the rest moved.
+      expect(book.getTextContent()).toContain("Test");
+      expect(book.getTextContent()).not.toContain("Book");
+      const newPara = book.getNextSibling();
+      if (!$isParaNode(newPara)) throw new Error("expected a new ParaNode after the book");
+      expect(newPara.getMarker()).toBe("p");
+      expect(newPara.getTextContent()).toContain("Book");
+      // The verse paragraph the selection reached into survived — text intact, still `\p`.
+      const versePara = $getRoot()
+        .getChildren()
+        .find((node) => $isParaNode(node) && node.getTextContent().includes("first verse text"));
+      if (!$isParaNode(versePara)) throw new Error("expected the verse ParaNode to remain");
+      expect(versePara.getMarker()).toBe("p");
+      expect(versePara.getTextContent()).toContain("first verse text");
+    });
+  });
+
+  // A selection that never leaves the `\id` line has nothing past the book to reach: the whole
+  // pick's tail becomes the split's one new paragraph, and nothing is deleted.
+  it("deletes nothing for a selection entirely inside the \\id line", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+
+    // Select forward within the book's own text: "Test Book" from after "Te" to after "Test B".
+    act(() => {
+      lexical.update(() => {
+        const bookText = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("Test Book"));
+        if (!bookText || !$isTextNode(bookText)) throw new Error("seed book text node not found");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(bookText.getKey(), 2, "text");
+        selection.focus = $createPoint(bookText.getKey(), 6, "text");
+        $setSelection(selection);
+        expect(selection.isBackward()).toBe(false);
+      });
+    });
+    await act(async () => {
+      ref.current?.formatPara("p");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    lexical.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected the BookNode to remain at the root");
+      const newPara = book.getNextSibling();
+      if (!$isParaNode(newPara)) throw new Error("expected a new ParaNode after the book");
+      // Every byte of "Test Book" survives, split across the book and the new paragraph — none
+      // of the selection's reach (nor anything outside it) was deleted.
+      expect(book.getTextContent()).toContain("Te");
+      expect(newPara.getTextContent()).toContain("st Book");
     });
   });
 
