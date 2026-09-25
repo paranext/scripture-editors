@@ -14,7 +14,9 @@
  * attribute display run - so the offset origin is pinned under both note modes, in the
  * `expanded` describe block at the end.
  */
+import Editorial from "../Editorial";
 import { EditorOptions, EditorRef } from "./editor.model";
+import { flushQueuedEvents } from "./editor-test.utils";
 import {
   note,
   noteKeys,
@@ -24,8 +26,9 @@ import {
   tagsOfUpdatesDuring,
 } from "./noteEditorRef.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
-import { act } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { afterAll, beforeAll, vi } from "vitest";
+import { createRef } from "react";
 import {
   $getRoot,
   $getSelection,
@@ -38,6 +41,9 @@ import {
 import { $dfs, $findMatchingParent } from "@lexical/utils";
 import { $isNoteNode } from "shared";
 import { getViewOptions, UNFORMATTED_VIEW_MODE } from "shared-react";
+// Reaching inside only for tests.
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import { getEmbeddedLexicalEditor } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 
 // jsdom implements `getBoundingClientRect` on Element but not on Range, and Lexical measures the
 // selection through a Range whenever it scrolls a collapsed caret into view after a commit — so
@@ -422,6 +428,30 @@ const noteEditorOptions: EditorOptions = {
   },
 };
 
+/**
+ * jsdom's `focus()` collapses the document selection to the start of the focused element, where a
+ * browser keeps it; Lexical focuses the root on reconciles here, and every keystroke reads the
+ * caret back from that selection. Keep it for the enclosing `describe`, as
+ * ScriptureReferencePlugin.test.tsx does.
+ */
+function keepDocumentSelectionAcrossFocus() {
+  const originalFocus = HTMLElement.prototype.focus;
+  beforeAll(() => {
+    HTMLElement.prototype.focus = function focus(focusOptions?: FocusOptions) {
+      const selection = document.getSelection();
+      const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
+      originalFocus.call(this, focusOptions);
+      if (range && selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    };
+  });
+  afterAll(() => {
+    HTMLElement.prototype.focus = originalFocus;
+  });
+}
+
 /** The first note's content as the editor would save it. */
 function savedNoteContent(editorRef: EditorRef): unknown {
   const para = editorRef.getUsj()?.content[2];
@@ -475,24 +505,7 @@ async function restCaret(lexical: LexicalEditor) {
 }
 
 describe("typing into a note with no content (`\\f + \\f*`)", () => {
-  // jsdom's `focus()` collapses the document selection to the start of the focused element, where a
-  // browser keeps it; Lexical focuses the root on reconciles here, and every keystroke reads the
-  // caret back from that selection. Keep it, as ScriptureReferencePlugin.test.tsx does.
-  const originalFocus = HTMLElement.prototype.focus;
-  beforeAll(() => {
-    HTMLElement.prototype.focus = function focus(focusOptions?: FocusOptions) {
-      const selection = document.getSelection();
-      const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
-      originalFocus.call(this, focusOptions);
-      if (range && selection) {
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
-    };
-  });
-  afterAll(() => {
-    HTMLElement.prototype.focus = originalFocus;
-  });
+  keepDocumentSelectionAcrossFocus();
 
   it("makes what is typed the note's own content, with no run marker added", async () => {
     const { editorRef, lexical } = await renderEditor(usjEmptyNote, noteEditorOptions);
@@ -681,5 +694,144 @@ describe("EditorRef.selectNoteTextOffset in an expanded note (a host's own note 
       return !!$findMatchingParent(selection.focus.getNode(), $isNoteNode);
     });
     expect(insideNote).toBe(true);
+  });
+});
+
+describe("EditorRef.selectAfterNote reports the new reference while unfocused", () => {
+  const twoVerseUsjWithNote: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+      { type: "chapter", marker: "c", number: "1" },
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "verse", marker: "v", number: "1" },
+          "first verse text ",
+          { type: "verse", marker: "v", number: "2" },
+          "before ",
+          note("alpha"),
+          "after",
+        ],
+      },
+    ],
+  };
+
+  // Placing the caret is a selection-only commit that writes no DOM selection while unfocused, so
+  // no DOM selectionchange fires to drive SELECTION_CHANGE_COMMAND on its own -
+  // ScriptureReferencePlugin, which reports scrRef only from that command, would otherwise never
+  // hear about the move, and a host's footnotes pane would show a stale reference for a note it
+  // just parked the Scripture caret past.
+  it("calls onScrRefChange with the note's verse", async () => {
+    const ref = createRef<EditorRef>();
+    const onScrRefChange = vi.fn();
+    let container: HTMLElement | undefined;
+    await act(async () => {
+      const result = render(
+        <Editorial
+          ref={ref}
+          defaultUsj={twoVerseUsjWithNote}
+          scrRef={{ book: "GEN", chapterNum: 1, verseNum: 1 }}
+          onScrRefChange={onScrRefChange}
+          options={options}
+        />,
+      );
+      container = result.container;
+    });
+    // Let the mount-time caret placement (ScriptureReferencePlugin's own navigation window) fully
+    // settle before the test's own move, so this measures selectAfterNote's report and not an
+    // artifact of the mount sequence still being in flight.
+    await flushQueuedEvents();
+    const lexical = getEmbeddedLexicalEditor(container);
+    const rootElement = requireDefined(lexical.getRootElement(), "root element");
+    expect(rootElement.contains(rootElement.ownerDocument.activeElement)).toBe(false);
+    onScrRefChange.mockClear();
+
+    await act(async () => {
+      ref.current?.selectAfterNote(0);
+    });
+
+    expect(onScrRefChange).toHaveBeenCalledWith(
+      expect.objectContaining({ book: "GEN", chapterNum: 1, verseNum: 2 }),
+    );
+  });
+});
+
+describe("EditorRef.selectNote on a note loaded through applyUpdate (a host's note editor)", () => {
+  keepDocumentSelectionAcrossFocus();
+
+  /** The host's note editor starts from one empty paragraph and receives the note as an op. */
+  const noteEditorStartUsj: Usj = { type: "USJ", version: "3.1", content: [{ type: "para" }] };
+
+  /** Loads `noteObject` the way a host's note editor does, selects it, and types `Z`. */
+  async function typeAfterSelectingLoadedNote(noteObject: MarkerObject): Promise<unknown> {
+    const host = await renderEditor(usjWithNote(noteObject));
+    const noteOps = requireDefined(host.editorRef.getNoteOps(0), "host note ops");
+    const { editorRef, lexical } = await renderEditor(noteEditorStartUsj, noteEditorOptions);
+    await act(async () => editorRef.applyUpdate([noteOps[0]]));
+    await act(async () => editorRef.selectNote(0));
+    await restCaret(lexical);
+
+    await typeText(lexical, "Z");
+
+    const para = editorRef.getUsj()?.content[0];
+    if (!para || typeof para === "string") return undefined;
+    const noteNode = para.content?.find(
+      (child): child is MarkerObject => typeof child !== "string" && child.type === "note",
+    );
+    return noteNode?.content;
+  }
+
+  // `$applyUpdate` materializes a nested span's markers as siblings inside the run, so the run's
+  // first closing glyph need not be its own, nor its last child.
+  it("types at the end of a closed run that holds a nested span mid-run", async () => {
+    const content = await typeAfterSelectingLoadedNote({
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [
+        {
+          type: "char",
+          marker: "ft",
+          content: ["a ", { type: "char", marker: "nd", content: ["x"] }, " b"],
+        },
+      ],
+    });
+
+    expect(content).toEqual([
+      {
+        type: "char",
+        marker: "ft",
+        content: ["a ", { type: "char", marker: "nd", content: ["x"] }, " bZ"],
+      },
+    ]);
+  });
+
+  // Asserted on the caret rather than on typed text: loading this shape through `applyUpdate`
+  // does not keep the leading nested span yet, so a saved note would not show where it landed.
+  it("lands at the end of a closed run that opens with a nested span", async () => {
+    const host = await renderEditor(
+      usjWithNote({
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [
+          {
+            type: "char",
+            marker: "ft",
+            content: [{ type: "char", marker: "nd", content: ["x"] }, " b"],
+          },
+        ],
+      }),
+    );
+    const noteOps = requireDefined(host.editorRef.getNoteOps(0), "host note ops");
+    const { editorRef, lexical } = await renderEditor(noteEditorStartUsj, noteEditorOptions);
+    await act(async () => editorRef.applyUpdate([noteOps[0]]));
+
+    await act(async () => editorRef.selectNote(0));
+
+    expect(caret(lexical)).toEqual({ text: " b", offset: 2 });
   });
 });

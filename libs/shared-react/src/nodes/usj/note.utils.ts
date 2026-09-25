@@ -494,19 +494,23 @@ export function $selectNote(noteNode: NoteNode, viewOptions: ViewOptions | undef
 /**
  * Index of `element`'s own closing glyph among its children: a marker node under
  * `markerMode: "editable"`, display-only text under `"visible"`.
+ *
+ * Only the LAST child can be the element's own closer. `$applyUpdate` materializes a nested span's
+ * markers as siblings inside the run (`\ft a \+nd x\+nd* b\ft*` can arrive as
+ * `[\ft, "a ", \ft*, \+nd…, " b"]`), so a closing glyph earlier in the children is not a boundary
+ * the content ends at.
  * @param element - The note or char span whose closer to find.
- * @returns The closer's index, or `-1` when the element has none (implicitly closed, or markers
- *   hidden).
+ * @returns The closer's index, or `-1` when the element does not end in one (implicitly closed,
+ *   markers hidden, or content after an inner closer).
  */
 function $closingGlyphIndex(element: NoteNode | CharNode): number {
-  const closerText = closingMarkerText(element.getMarker());
-  return element
-    .getChildren()
-    .findIndex(
-      (child) =>
-        ($isMarkerNode(child) && child.getMarkerSyntax() === "closing") ||
-        ($isVisibleMarkerNode(child) && child.getTextContent() === closerText),
-    );
+  const lastIndex = element.getChildrenSize() - 1;
+  const last = element.getLastChild();
+  const isCloser =
+    ($isMarkerNode(last) && last.getMarkerSyntax() === "closing") ||
+    ($isVisibleMarkerNode(last) &&
+      last.getTextContent() === closingMarkerText(element.getMarker()));
+  return isCloser ? lastIndex : -1;
 }
 
 /**

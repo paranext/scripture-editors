@@ -165,3 +165,24 @@ refused. The public surface grew substantially; nothing was removed.
 - `highlightNote` highlights the caller of a note built expanded (an unclosed note) too.
 - `getNoteIndex`, `getNoteKey` and `highlightNote` are safe to call from a callback that runs
   inside one of the editor's own updates, such as `onSelectionChange`.
+- A scrRef-driven caret placement (an external navigation, or the caret's own mount-time placement)
+  no longer leaves its cursor-change tag pending on the next commit, which could make a marker
+  inserted (or a character typed) right after navigating to a new reference read as a caret move
+  and never reach `onUsjChange`.
+- `commitPendingMarkerEdits`, `applyUpdate`, and `selectAfterNote` no longer leave a stale
+  tag-release listener armed when their own update commits nothing at all (nothing pending to
+  settle, an empty `ops`, or a stale note key) - it stayed registered and could later strip a tag
+  from an unrelated commit.
+- A remote `applyUpdate` (while the editor is unfocused) no longer clears a DOM selection that
+  already matches what Lexical committed - a selection the user made just before the update lands
+  is left alone instead of being wiped with nothing to restore it.
+- `selectAfterNote`, called while unfocused, reports the new reference through `onScrRefChange` the
+  same way a live caret move would; parking the caret writes no DOM selection to drive that report
+  on its own.
+- `isFocused()` agrees with the internal focus check every other method here uses: a focused
+  decorator inside the editor (a collapsed note's caller button) counts as the user being in this
+  editor, not just the root element itself.
+- `selectNote` lands at the end of a closed run that holds a nested span, in a note loaded through
+  `applyUpdate`, instead of before the span or inside it.
+- The right-click menu claims the Escape that closes it (`preventDefault`), so a host listening
+  for Escape further along can tell it was spent closing the menu.
