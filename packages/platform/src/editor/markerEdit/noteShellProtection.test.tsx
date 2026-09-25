@@ -236,6 +236,125 @@ describe("expanded note shell", () => {
     });
   });
 
+  describe("under a keystroke over a range", () => {
+    /** Select a range the way a double-click or a drag does: pointer down, then the selection. */
+    async function dragSelect(
+      editor: LexicalEditor,
+      pick: () => { anchor: [TextNode, number]; focus: [TextNode, number] },
+    ): Promise<void> {
+      const doc = editor.getRootElement()?.ownerDocument ?? document;
+      await act(async () => {
+        doc.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+        editor.update(() => {
+          const { anchor, focus } = pick();
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) {
+            anchor[0].select(anchor[1], anchor[1]);
+          }
+          const range = $getSelection();
+          if (!$isRangeSelection(range)) throw new Error("expected a range selection");
+          range.anchor.set(anchor[0].getKey(), anchor[1], "text");
+          range.focus.set(focus[0].getKey(), focus[1], "text");
+          editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        });
+        doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
+      });
+    }
+
+    /** The note's first content text node (the `\ft` run's text). */
+    function $contentText(note: NoteNode): TextNode {
+      const text = note.getAllTextNodes().find((node) => node.getTextContent().includes("A note"));
+      return requireDefined(text, "note content text");
+    }
+
+    function expectShellIntact(editor: LexicalEditor) {
+      editor.getEditorState().read(() => {
+        const note = findOnlyNote($getRoot());
+        expect($opener(note).getTextContent()).toBe("\\f");
+        expect($noteEditableCallerNode(note)?.getTextContent()).toBe(
+          getEditableCallerText(note.getCaller()),
+        );
+      });
+      const note = findUsjNote(usjOf(editor)?.content);
+      expect(note.marker).toBe("f");
+      expect(note.caller).toBe("+");
+      return note;
+    }
+
+    it("keeps the shell when a double-click selected it and the user types", async () => {
+      const { editor } = await mount(protectedShell);
+
+      await dragSelect(editor, () => {
+        const note = findOnlyNote($getRoot());
+        const caller = requireDefined($noteEditableCallerNode(note), "caller");
+        return { anchor: [$opener(note), 0], focus: [caller, caller.getTextContentSize() - 1] };
+      });
+      await typeText(editor, "Z");
+
+      const note = expectShellIntact(editor);
+      expect(note.content?.[0]).toBe("Z");
+    });
+
+    it("keeps the shell when a range from it into the content is deleted", async () => {
+      const { editor } = await mount(protectedShell);
+
+      await dragSelect(editor, () => {
+        const note = findOnlyNote($getRoot());
+        const content = $contentText(note);
+        return {
+          anchor: [$opener(note), 1],
+          focus: [content, content.getTextContent().indexOf("note")],
+        };
+      });
+      await act(async () => {
+        editor.update(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.removeText();
+        });
+      });
+
+      const note = expectShellIntact(editor);
+      expect(JSON.stringify(note.content)).toContain("note");
+      expect(JSON.stringify(note.content)).not.toContain("A note");
+    });
+
+    it("keeps the shell and the closer when a select-all is typed over", async () => {
+      // A protected shell exists only in a note editor, whose document is the note: select-all
+      // there means the note's text, never its marker, caller, or closer.
+      const { editor } = await mount(protectedShell);
+
+      await act(async () => {
+        editor.update(() => {
+          const para = findOnlyNote($getRoot()).getParentOrThrow();
+          para.select(0, para.getChildrenSize());
+          editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        });
+      });
+      await typeText(editor, "Z");
+
+      const note = expectShellIntact(editor);
+      expect(note.content).toEqual(["Z"]);
+    });
+
+    it("narrows a backward range that starts in the content and ends in the shell", async () => {
+      const { editor } = await mount(protectedShell);
+
+      await dragSelect(editor, () => {
+        const note = findOnlyNote($getRoot());
+        const content = $contentText(note);
+        return {
+          anchor: [content, content.getTextContent().indexOf("note")],
+          focus: [$opener(note), 1],
+        };
+      });
+      await typeText(editor, "Z");
+
+      const note = expectShellIntact(editor);
+      // The range took the `\\ft` glyph with it, so what is left of the run is plain note text.
+      expect(note.content).toEqual(["Znote"]);
+    });
+  });
+
   it("moves a caret that lands in the shell to the one position just past it", async () => {
     const { editor } = await mount(protectedShell);
 
