@@ -53,11 +53,15 @@ export function note(text: string): MarkerObject {
  *
  * @param editorOptions - Defaults to Standard view (`options`); pass a different `EditorOptions`
  *   for a suite that needs another marker or note mode.
+ * @param onUsjChange - The host-facing change notification (see {@link EditorProps.onUsjChange}).
+ *   Pass it when a test needs to observe what each commit reports to a host, as distinct from the
+ *   settled `EditorRef.getUsj()` read.
  */
 export async function renderEditor(
   defaultUsj: Usj,
   editorOptions: EditorOptions = options,
   onSelectionChange?: EditorProps<LoggerBasic>["onSelectionChange"],
+  onUsjChange?: EditorProps<LoggerBasic>["onUsjChange"],
 ): Promise<{ editorRef: EditorRef; lexical: LexicalEditor; container: HTMLElement }> {
   const ref = createRef<EditorRef>();
   let container: HTMLElement | undefined;
@@ -69,6 +73,7 @@ export async function renderEditor(
         scrRef={scrRef}
         onScrRefChange={() => undefined}
         onSelectionChange={onSelectionChange}
+        onUsjChange={onUsjChange}
         options={editorOptions}
       />,
     );

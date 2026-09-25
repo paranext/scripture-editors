@@ -186,3 +186,12 @@ refused. The public surface grew substantially; nothing was removed.
   `applyUpdate`, instead of before the span or inside it.
 - The right-click menu claims the Escape that closes it (`preventDefault`), so a host listening
   for Escape further along can tell it was spent closing the menu.
+- Typing right after an expanded note's editable caller (`\f + `, shell left editable — Standard
+  view's Markers view, or any unclosed note) saves what was typed as the note's own content,
+  instead of the whole diverged caller slot leaking into content while the caller itself stayed
+  `+` in the saved USJ.
+- `applyUpdate` keeps a nested char span that opens a run (`\ft \+nd LORD\+nd* said`): it builds
+  the nested span with its glyphs inside it, as it already did for one mid-run, and no longer
+  loses it. Text continuing a closed run lands inside the run's closing glyph.
+- The note-shell and trailing-note caret guards release their cursor-change tag after a
+  correction, so the keystroke right after it reaches `onUsjChange`.

@@ -25,7 +25,7 @@ import {
   requireDefined,
   tagsOfUpdatesDuring,
 } from "./noteEditorRef.test-helpers";
-import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act, render } from "@testing-library/react";
 import { afterAll, beforeAll, vi } from "vitest";
 import { createRef } from "react";
@@ -39,8 +39,8 @@ import {
   SKIP_DOM_SELECTION_TAG,
 } from "lexical";
 import { $dfs, $findMatchingParent } from "@lexical/utils";
-import { $isNoteNode } from "shared";
-import { getViewOptions, UNFORMATTED_VIEW_MODE } from "shared-react";
+import { $isNoteNode, $noteEditableCallerNode, getEditableCallerText } from "shared";
+import { DeltaOpInsertNoteEmbed, getViewOptions, UNFORMATTED_VIEW_MODE } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { getEmbeddedLexicalEditor } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
@@ -784,8 +784,8 @@ describe("EditorRef.selectNote on a note loaded through applyUpdate (a host's no
     return noteNode?.content;
   }
 
-  // `$applyUpdate` materializes a nested span's markers as siblings inside the run, so the run's
-  // first closing glyph need not be its own, nor its last child.
+  // The caret goes at the end of the run's content, past the nested span and ahead of the run's
+  // own closing glyph - not at the first closing glyph found, which can be the nested span's.
   it("types at the end of a closed run that holds a nested span mid-run", async () => {
     const content = await typeAfterSelectingLoadedNote({
       type: "note",
@@ -809,29 +809,160 @@ describe("EditorRef.selectNote on a note loaded through applyUpdate (a host's no
     ]);
   });
 
-  // Asserted on the caret rather than on typed text: loading this shape through `applyUpdate`
-  // does not keep the leading nested span yet, so a saved note would not show where it landed.
-  it("lands at the end of a closed run that opens with a nested span", async () => {
-    const host = await renderEditor(
-      usjWithNote({
-        type: "note",
-        marker: "f",
-        caller: "+",
-        content: [
-          {
-            type: "char",
-            marker: "ft",
-            content: [{ type: "char", marker: "nd", content: ["x"] }, " b"],
-          },
-        ],
-      }),
+  it("types at the end of a closed run that opens with a nested span", async () => {
+    const content = await typeAfterSelectingLoadedNote({
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [
+        {
+          type: "char",
+          marker: "ft",
+          content: [{ type: "char", marker: "nd", content: ["x"] }, " b"],
+        },
+      ],
+    });
+
+    expect(content).toEqual([
+      {
+        type: "char",
+        marker: "ft",
+        content: [{ type: "char", marker: "nd", content: ["x"] }, " bZ"],
+      },
+    ]);
+  });
+});
+
+/**
+ * Typing right after an expanded note's editable caller (` + ⍽`) must save what was typed as the
+ * note's own CONTENT, directly, with the caller staying byte-exact — never leaking the caller
+ * into content the way a diverged caller slot does. This is the shape a click on any unclosed
+ * note builds in Standard view, and the shape Unformatted view always builds for an expanded
+ * note whose shell is left editable (no `isNoteShellEditable: false`).
+ */
+describe("typing after an expanded note's caller", () => {
+  keepDocumentSelectionAcrossFocus();
+
+  /** `\f + \ft a\f*` — a caller followed by a run, so typed text lands ahead of existing content. */
+  const noteWithContent: MarkerObject = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "ft", content: ["a"] }],
+  };
+
+  /**
+   * Selects the end of the FIRST note's editable caller text specifically — not its content run's
+   * end, which `EditorRef.selectNote` lands on once the note already holds a `\ft` run.
+   */
+  async function selectCallerEnd(lexical: LexicalEditor) {
+    await act(async () => {
+      lexical.update(
+        () => {
+          const noteNode = requireDefined(
+            $dfs($getRoot())
+              .map(({ node }) => node)
+              .find($isNoteNode),
+            "note",
+          );
+          const caller = requireDefined($noteEditableCallerNode(noteNode), "editable caller");
+          caller.selectEnd();
+        },
+        { discrete: true },
+      );
+    });
+  }
+
+  /** The first note object in a document built by `usjWithNote`. */
+  function noteObjectOf(usj: Usj | undefined): MarkerObject | undefined {
+    const para = usj?.content[2];
+    if (!para || typeof para === "string" || !("content" in para)) return undefined;
+    return para.content?.find(
+      (child): child is MarkerObject => typeof child !== "string" && child.type === "note",
     );
-    const noteOps = requireDefined(host.editorRef.getNoteOps(0), "host note ops");
-    const { editorRef, lexical } = await renderEditor(noteEditorStartUsj, noteEditorOptions);
-    await act(async () => editorRef.applyUpdate([noteOps[0]]));
+  }
 
-    await act(async () => editorRef.selectNote(0));
+  /** Every plain string anywhere in `content`, depth first — flattens char-span nesting so a
+   * caller leaked into any run (or direct content) is still found. */
+  function allContentStrings(content: MarkerContent[] | undefined): string[] {
+    const out: string[] = [];
+    for (const item of content ?? []) {
+      if (typeof item === "string") out.push(item);
+      else if ("content" in item) out.push(...allContentStrings(item.content));
+    }
+    return out;
+  }
 
-    expect(caret(lexical)).toEqual({ text: " b", offset: 2 });
+  it("keeps the caller intact and saves typed text as content, with no leak between keystrokes (Unformatted view)", async () => {
+    const notified: Usj[] = [];
+    const { editorRef, lexical } = await renderEditor(
+      usjWithNote(noteWithContent),
+      expandedOptions,
+      undefined,
+      (usj) => notified.push(usj),
+    );
+
+    await selectCallerEnd(lexical);
+    await restCaret(lexical);
+
+    await typeText(lexical, "xy");
+
+    // Every USJ reported DURING typing (not only the final one) already has the caller split
+    // from content — this transform runs immediately, not deferred to a settle.
+    expect(notified.length).toBeGreaterThan(0);
+    for (const usj of notified) {
+      const noteObject = noteObjectOf(usj);
+      if (!noteObject) continue; // a notification from before this note existed/changed
+      expect(noteObject.caller).toBe("+");
+      expect(allContentStrings(noteObject.content).join("")).not.toContain(
+        getEditableCallerText("+"),
+      );
+    }
+
+    const finalNote = noteObjectOf(editorRef.getUsj());
+    expect(finalNote?.caller).toBe("+");
+    expect(finalNote?.content).toEqual(["xy", { type: "char", marker: "ft", content: ["a"] }]);
+  });
+
+  it("does the same for an empty unclosed note in Standard view (expanded because unclosed)", async () => {
+    const unclosedEmptyNote = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [],
+      closed: "false",
+    } as MarkerObject & { closed?: string };
+    const { editorRef, lexical } = await renderEditor(usjWithNote(unclosedEmptyNote));
+
+    await selectCallerEnd(lexical);
+    await restCaret(lexical);
+
+    await typeText(lexical, "xy");
+
+    const finalNote = noteObjectOf(editorRef.getUsj());
+    expect(finalNote?.caller).toBe("+");
+    expect(finalNote?.content).toEqual(["xy"]);
+  });
+
+  it("keeps the note's collab ops free of the caller text after typing (getNoteOps)", async () => {
+    const { editorRef, lexical } = await renderEditor(
+      usjWithNote(noteWithContent),
+      expandedOptions,
+    );
+
+    await selectCallerEnd(lexical);
+    await restCaret(lexical);
+
+    await typeText(lexical, "xy");
+
+    const ops = requireDefined(editorRef.getNoteOps(0), "note ops") as DeltaOpInsertNoteEmbed[];
+    expect(ops).toHaveLength(1);
+    const contentsOps = requireDefined(ops[0].insert.note?.contents?.ops, "note contents ops");
+    const inserted = contentsOps
+      .map((op) => (typeof op.insert === "string" ? op.insert : ""))
+      .join("");
+    expect(inserted).not.toContain(getEditableCallerText("+"));
+    expect(inserted).toContain("xy");
+    expect(ops[0].insert.note?.caller).toBe("+");
   });
 });
