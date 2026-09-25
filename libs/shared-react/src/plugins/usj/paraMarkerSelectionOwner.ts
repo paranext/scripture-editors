@@ -9,8 +9,8 @@ const ownerCounts = new WeakMap<LexicalEditor, number>();
 
 /**
  * Records that `editor` protects a selected paragraph marker — refusing delete, cut, paste and
- * drop on it, and owning its keys. Called by `ParaMarkerSelectionPlugin`; the plugins that CREATE
- * the selection (a gutter click, an arrow key) ask {@link $canSelectParaMarker} first, so a marker
+ * drop on it, and owning its keys. Called by `ParaMarkerSelectionPlugin`; the gutter click guard,
+ * which CREATES the selection, asks {@link $canSelectParaMarker} first, so a marker
  * selection never exists in an editor that would let rich-text's default Backspace delete it.
  *
  * @returns a function that withdraws this registration.

@@ -677,13 +677,13 @@ export function $getSelectedParaMarker(
 
 /**
  * The marker glyph `node` would offer as a selection target: its leading gutter marker, when
- * `node` is a `ParaNode` that renders one. An implied paragraph has no marker to retag. Used to find the next stop when the keyboard walks
- * between paragraph markers.
+ * `node` is a `ParaNode` that renders one. An implied paragraph has no marker to retag. Used to
+ * decide whether a clicked gutter glyph selects its paragraph's marker.
  *
  * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
  * command handler.
  *
- * @param node - The node to inspect — typically a root-level sibling of the current paragraph.
+ * @param node - The node to inspect — typically the parent of a clicked gutter glyph.
  * @returns the paragraph's gutter marker glyph, or `undefined`.
  */
 export function $getSelectableParaMarker(

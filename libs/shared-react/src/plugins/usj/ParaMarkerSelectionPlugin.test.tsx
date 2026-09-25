@@ -186,55 +186,6 @@ describe("ParaMarkerSelectionPlugin — highlight", () => {
   });
 });
 
-describe("ParaMarkerSelectionPlugin — scrolls the selected marker into view", () => {
-  // jsdom has no layout engine and so no `Element.scrollIntoView`; stub it so the plugin's
-  // feature-detected call is exercised and observable.
-  let scrollIntoView: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    scrollIntoView = vi.fn();
-    HTMLElement.prototype.scrollIntoView =
-      scrollIntoView as typeof HTMLElement.prototype.scrollIntoView;
-  });
-
-  afterEach(() => {
-    delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
-  });
-
-  it("scrolls the owning paragraph into view when a marker becomes selected", async () => {
-    const { editor, li2 } = await environment();
-
-    await selectMarkerOf(editor, li2);
-
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
-    expect(scrollIntoView.mock.instances[0]).toBe(editor.getElementByKey(li2.getKey()));
-  });
-
-  it("scrolls again when ↓ moves the selection to the next paragraph's marker", async () => {
-    const { editor, li2, q1 } = await environment();
-    await selectMarkerOf(editor, li2);
-    scrollIntoView.mockClear();
-
-    await pressKey(editor, "ArrowDown");
-
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
-    expect(scrollIntoView.mock.instances[0]).toBe(editor.getElementByKey(q1.getKey()));
-  });
-
-  it("does not scroll again on an unrelated update while the same marker stays selected", async () => {
-    const { editor, li2, firstText } = await environment();
-    await selectMarkerOf(editor, li2);
-    scrollIntoView.mockClear();
-
-    await sutUpdate(editor, () => {
-      firstText.setTextContent("changed");
-    });
-
-    expect(scrollIntoView).not.toHaveBeenCalled();
-  });
-});
-
 describe("ParaMarkerSelectionPlugin — browser caret", () => {
   // A click on the glyph leaves the browser's caret drawn inside it (a decorator Lexical cannot
   // address), and Lexical only removes DOM ranges for a non-range selection when the previous
@@ -321,39 +272,36 @@ describe.each([
   });
 });
 
-describe("ParaMarkerSelectionPlugin — vertical keys walk the marker column", () => {
-  it("ArrowUp selects the previous paragraph's marker, ArrowDown the next one's", async () => {
-    const { editor, li2 } = await environment();
-    await selectMarkerOf(editor, li2);
+describe("ParaMarkerSelectionPlugin — vertical keys return to the text", () => {
+  it.each([[{ key: "ArrowUp" }], [{ key: "ArrowDown" }], [{ key: "ArrowUp", shiftKey: true }]])(
+    "%o puts the caret at the paragraph's first content position and moves no further",
+    async (init) => {
+      const { editor, li2, secondText } = await environment();
+      await selectMarkerOf(editor, li2);
 
-    await pressKey(editor, "ArrowUp");
-    expect(selectedMarkerOf(editor)).toBe("p");
+      const event = await pressKeyWith(editor, init);
 
-    await pressKey(editor, "ArrowDown");
-    await pressKey(editor, "ArrowDown");
-    expect(selectedMarkerOf(editor)).toBe("q1");
-  });
+      expect(event.defaultPrevented).toBe(true);
+      editor.getEditorState().read(() => {
+        $expectSelectionToBe(secondText, 0);
+      });
+    },
+  );
 
-  it("stays selected at either end of the column, still claiming the key", async () => {
-    const { editor, p, q1 } = await environment();
+  it("does so at either end of the document too", async () => {
+    const { editor, p, q1, firstText, thirdText } = await environment();
+
     await selectMarkerOf(editor, p);
-    const up = await pressKey(editor, "ArrowUp");
-    expect(up.defaultPrevented).toBe(true);
-    expect(selectedMarkerOf(editor)).toBe("p");
+    await pressKey(editor, "ArrowUp");
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(firstText, 0);
+    });
 
     await selectMarkerOf(editor, q1);
-    const down = await pressKey(editor, "ArrowDown");
-    expect(down.defaultPrevented).toBe(true);
-    expect(selectedMarkerOf(editor)).toBe("q1");
-  });
-
-  it("Shift+ArrowUp behaves like ArrowUp", async () => {
-    const { editor, li2 } = await environment();
-    await selectMarkerOf(editor, li2);
-
-    await pressKeyWith(editor, { key: "ArrowUp", shiftKey: true });
-
-    expect(selectedMarkerOf(editor)).toBe("p");
+    await pressKey(editor, "ArrowDown");
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(thirdText, 0);
+    });
   });
 });
 

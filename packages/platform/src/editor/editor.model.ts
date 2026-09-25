@@ -197,9 +197,9 @@ export interface EditorRef {
    *
    * @remarks
    * In the paragraph-structure view (`ViewOptions.hasGutterParaMarkers`) the user can select a
-   * paragraph's marker itself — by clicking it in the gutter, or with the arrow keys — rather than
-   * placing a caret in its text. That selection names a paragraph, not a text range, so
-   * {@link EditorRef.getSelection} reports `undefined` for it; this method reports it instead.
+   * paragraph's marker itself — by clicking it in the gutter — rather than placing a caret in its
+   * text. That selection names a paragraph, not a text range, so {@link EditorRef.getSelection}
+   * reports `undefined` for it; this method reports it instead.
    * {@link EditorRef.formatPara} retags that paragraph. Always returns `undefined` in the block
    * verse layout, which renders no gutter markers.
    *

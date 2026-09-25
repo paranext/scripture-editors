@@ -1,6 +1,6 @@
 /**
- * Invariant regression for paragraph-marker selection: selecting a marker and leaving it again —
- * by click and by keyboard — must not change the document, must emit no delta ops, and must never
+ * Invariant regression for paragraph-marker selection: selecting a marker by click and leaving it
+ * again by keyboard must not change the document, must emit no delta ops, and must never
  * hand the glyph to the display-byte position helpers (glyphPositions.utils.ts, shared), because a
  * node selection carries no offsets and no glyph byte may become a document position.
  *
@@ -106,10 +106,9 @@ it("selecting and leaving a marker changes no USJ, emits no ops, and never passe
   });
   expect(ref.current?.getSelectedParaMarker()).toBe("li2");
   await press(lexical, "ArrowRight");
-  // By keyboard, in and out.
+  // A marker is not a keyboard stop: arrowing back from the content leaves it unselected.
   await press(lexical, "ArrowLeft");
-  expect(ref.current?.getSelectedParaMarker()).toBe("li2");
-  await press(lexical, "ArrowRight");
+  expect(ref.current?.getSelectedParaMarker()).toBeUndefined();
   await flushQueuedEvents();
 
   expect(ref.current?.getUsj()).toEqual(before);

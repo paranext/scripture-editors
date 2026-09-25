@@ -5,12 +5,12 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { $expectSelectionToBe } from "../../../../../libs/shared/src/nodes/usj/test.utils";
 import { $createImmutableNoteCallerNode, $createImmutableVerseNode } from "../../nodes/usj";
+import { getDefaultViewOptions, getViewOptions } from "../../views/view-options.utils";
 import {
   PARAGRAPH_STRUCTURE_VIEW_MODE,
   STANDARD_VIEW_MODE,
   UNFORMATTED_VIEW_MODE,
 } from "../../views/view-mode.model";
-import { getDefaultViewOptions, getViewOptions } from "../../views/view-options.utils";
 import {
   ArrowNavigationPlugin,
   getEditorTextDirection,
@@ -43,7 +43,6 @@ import {
 } from "lexical";
 import {
   $createAttributeRunNode,
-  $createBookNode,
   $createCharNode,
   $createGutterMarkerNode,
   $createImmutableTableCellNode,
@@ -59,9 +58,6 @@ import {
   $createParaNode,
   $createVerseNode,
   $getSelectedParaMarker,
-  $isGutterMarkerNode,
-  $isParaNode,
-  $selectParaMarker,
   AttributeRunNode,
   CharNode,
   getVisibleOpenMarkerText,
@@ -2610,7 +2606,9 @@ describe("a collapsed note at a paragraph's end offers no text position after it
   });
 });
 
-describe("paragraph marker stops (paragraph-structure view)", () => {
+// A paragraph's gutter marker can be selected by clicking it, but it is not a keyboard stop: with
+// the plugin that owns a selected marker mounted, arrows move exactly as they do without it.
+describe("paragraph gutter markers are not arrow stops", () => {
   const paragraphStructureView = getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE);
 
   /** A paragraph as the paragraph-structure view builds it: its gutter marker glyph, then content. */
@@ -2621,395 +2619,122 @@ describe("paragraph marker stops (paragraph-structure view)", () => {
     );
   }
 
-  /** Arrow navigation plus the selected-marker keys, as the platform editor mounts them. */
-  async function markerStopEnvironment(
+  /** Arrow navigation, with or without the plugin that lets a marker be selected. */
+  async function gutterEnvironment(
     $initialEditorState: () => void,
-    textDirection: "ltr" | "rtl" = "ltr",
+    { canSelectMarker = true, textDirection = "ltr" as "ltr" | "rtl" } = {},
   ) {
     return baseTestEnvironment(
       $initialEditorState,
       <>
         <ArrowNavigationPlugin viewOptions={paragraphStructureView} />
-        <ParaMarkerSelectionPlugin />
+        {canSelectMarker && <ParaMarkerSelectionPlugin />}
         <TextDirectionPlugin textDirection={textDirection} />
       </>,
     );
   }
 
-  /** The marker of the paragraph whose marker is selected, if any. */
-  function selectedMarkerOf(editor: LexicalEditor): string | undefined {
-    return editor.getEditorState().read(() => {
-      const owner = $getSelectedParaMarker($getSelection())?.getParent();
-      return $isParaNode(owner) ? owner.getMarker() : undefined;
-    });
-  }
-
-  async function selectMarkerOf(editor: LexicalEditor, para: ParaNode): Promise<void> {
-    await act(async () => {
-      editor.update(() => {
-        const glyph = para.getFirstChild();
-        if (!$isGutterMarkerNode(glyph)) throw new Error("no gutter glyph");
-        $selectParaMarker(glyph);
-      });
-    });
-  }
-
-  describe("entering", () => {
-    it("ArrowLeft at a paragraph's first content position selects its marker", async () => {
-      let content: TextNode;
-      const { editor } = await markerStopEnvironment(() => {
-        content = $createTextNode("second");
-        $getRoot().append(
-          $createGutterParaNode("p", $createTextNode("first")),
-          $createGutterParaNode("li2", $createImmutableVerseNode("2"), content),
-        );
-      });
-      updateSelection(editor, content!, 0);
-
-      const event = await pressKey(editor, "ArrowLeft");
-
-      expect(event.defaultPrevented).toBe(true);
-      expect(selectedMarkerOf(editor)).toBe("li2");
-    });
-
-    it("ArrowRight at a paragraph's end selects the next paragraph's marker", async () => {
-      let first: TextNode;
-      const { editor } = await markerStopEnvironment(() => {
-        first = $createTextNode("first");
-        $getRoot().append(
-          $createGutterParaNode("p", first),
-          $createGutterParaNode("li2", $createTextNode("second")),
-        );
-      });
-      updateSelection(editor, first!);
-
-      const event = await pressKey(editor, "ArrowRight");
-
-      expect(event.defaultPrevented).toBe(true);
-      expect(selectedMarkerOf(editor)).toBe("li2");
-    });
-
-    it("mirrors both entries in RTL", async () => {
-      let first: TextNode;
-      let second: TextNode;
-      const { editor } = await markerStopEnvironment(() => {
-        first = $createTextNode("first");
-        second = $createTextNode("second");
-        $getRoot().append($createGutterParaNode("p", first), $createGutterParaNode("li2", second));
-      }, "rtl");
-
-      updateSelection(editor, second!, 0);
-      await pressKey(editor, "ArrowRight");
-      expect(selectedMarkerOf(editor)).toBe("li2");
-
-      updateSelection(editor, first!);
-      await pressKey(editor, "ArrowLeft");
-      expect(selectedMarkerOf(editor)).toBe("li2");
-    });
-
-    it("does not stop mid-text, and leaves shift-extension alone", async () => {
-      let second: TextNode;
-      const { editor } = await markerStopEnvironment(() => {
-        second = $createTextNode("second");
-        $getRoot().append($createGutterParaNode("li2", second));
-      });
-
-      updateSelection(editor, second!, 3);
-      await pressKey(editor, "ArrowLeft");
-      expect(selectedMarkerOf(editor)).toBeUndefined();
-
-      updateSelection(editor, second!, 0);
-      await act(async () => {
-        editor.dispatchCommand(
-          KEY_DOWN_COMMAND,
-          new KeyboardEvent("keydown", { key: "ArrowLeft", shiftKey: true, cancelable: true }),
-        );
-      });
-      expect(selectedMarkerOf(editor)).toBeUndefined();
-    });
-  });
-
-  describe("the first paragraph after \\c", () => {
-    async function afterChapterEnvironment() {
-      let p: ParaNode;
-      let first: TextNode;
-      const { editor } = await markerStopEnvironment(() => {
-        first = $createTextNode("first");
-        p = $createGutterParaNode("p", $createImmutableVerseNode("1"), first);
-        $getRoot().append(
-          $createBookNode("GEN").append(
-            $createGutterMarkerNode(`\\id${NBSP}`),
-            $createTextNode("Test"),
-          ),
-          $createImmutableChapterNode("1"),
-          p,
-          $createGutterParaNode("q1", $createTextNode("second")),
-        );
-      });
-      return { editor, p: p!, first: first! };
-    }
-
-    it("stops on its marker from its first content position", async () => {
-      const { editor, first } = await afterChapterEnvironment();
-      updateSelection(editor, first, 0);
-
-      await pressKey(editor, "ArrowLeft");
-
-      expect(selectedMarkerOf(editor)).toBe("p");
-    });
-
-    it("stays on the marker for ArrowLeft and ArrowUp — nothing before it takes a caret or a stop", async () => {
-      const { editor, p } = await afterChapterEnvironment();
-      await selectMarkerOf(editor, p);
-
-      const left = await pressKey(editor, "ArrowLeft");
-      expect(left.defaultPrevented).toBe(true);
-      expect(selectedMarkerOf(editor)).toBe("p");
-
-      await pressKey(editor, "ArrowUp");
-      expect(selectedMarkerOf(editor)).toBe("p");
-    });
-  });
-
-  describe("the first paragraph after \\id", () => {
-    it("stops on its marker, and ArrowLeft/ArrowUp stay there", async () => {
-      let p: ParaNode;
-      let first: TextNode;
-      const { editor } = await markerStopEnvironment(() => {
-        first = $createTextNode("first");
-        p = $createGutterParaNode("p", first);
-        $getRoot().append(
-          $createBookNode("GEN").append(
-            $createGutterMarkerNode(`\\id${NBSP}`),
-            $createTextNode("Test"),
-          ),
-          p,
-        );
-      });
-      updateSelection(editor, first!, 0);
-
-      await pressKey(editor, "ArrowLeft");
-      expect(selectedMarkerOf(editor)).toBe("p");
-      await pressKey(editor, "ArrowLeft");
-      expect(selectedMarkerOf(editor)).toBe("p");
-      await pressKey(editor, "ArrowUp");
-      expect(selectedMarkerOf(editor)).toBe("p");
-    });
-  });
-
-  describe("paragraphs before and after a table", () => {
-    async function tableEnvironment() {
-      let before: TextNode;
-      let after: TextNode;
-      let q1: ParaNode;
-      const { editor } = await markerStopEnvironment(() => {
-        before = $createTextNode("before");
-        after = $createTextNode("after");
-        q1 = $createGutterParaNode("q1", after);
-        $getRoot().append(
-          $createGutterParaNode("p", before),
-          $createImmutableTableNode().append(
-            $createImmutableTableRowNode("tr").append(
-              $createGutterMarkerNode(`\\tr${NBSP}`),
-              $createImmutableTableCellNode("tc1").append(
-                $createGutterMarkerNode(`\\tc1${NBSP}`),
-                $createTextNode("cell"),
-              ),
-            ),
-          ),
-          q1,
-        );
-      });
-      return { editor, before: before!, after: after!, q1: q1! };
-    }
-
-    // The mirror of the next test: ← out of the after-table marker steps back over the table.
-    it("ArrowRight at the end of the paragraph before the table steps over it onto the after-table marker", async () => {
-      const { editor, before } = await tableEnvironment();
-      updateSelection(editor, before);
-
-      await pressKey(editor, "ArrowRight");
-
-      expect(selectedMarkerOf(editor)).toBe("q1");
-    });
-
-    it("ArrowLeft stops on the after-table marker, then lands at the end of the before-table text", async () => {
-      const { editor, before, after } = await tableEnvironment();
-      updateSelection(editor, after, 0);
-
-      await pressKey(editor, "ArrowLeft");
-      expect(selectedMarkerOf(editor)).toBe("q1");
-
-      await pressKey(editor, "ArrowLeft");
-      editor.getEditorState().read(() => {
-        $expectSelectionToBe(before);
-      });
-    });
-
-    it("ArrowUp and ArrowDown walk the marker column across the table", async () => {
-      const { editor, q1 } = await tableEnvironment();
-      await selectMarkerOf(editor, q1);
-
-      await pressKey(editor, "ArrowUp");
-      expect(selectedMarkerOf(editor)).toBe("p");
-      await pressKey(editor, "ArrowDown");
-      expect(selectedMarkerOf(editor)).toBe("q1");
-    });
-  });
-
-  describe("paragraphs before and after a chapter number", () => {
-    it("ArrowRight steps over the chapter onto the next paragraph's marker, and ArrowLeft steps back", async () => {
-      let end: TextNode;
-      const { editor } = await markerStopEnvironment(() => {
-        end = $createTextNode("end of chapter one");
-        $getRoot().append(
-          $createGutterParaNode("p", end),
-          $createImmutableChapterNode("2"),
-          $createGutterParaNode("q1", $createTextNode("chapter two")),
-        );
-      });
-      updateSelection(editor, end!);
-
-      await pressKey(editor, "ArrowRight");
-      expect(selectedMarkerOf(editor)).toBe("q1");
-
-      await pressKey(editor, "ArrowLeft");
-      editor.getEditorState().read(() => {
-        $expectSelectionToBe(end);
-      });
-    });
-  });
-
-  describe("an editor that cannot hold a marker selection", () => {
-    it("does not stop on a marker when no ParaMarkerSelectionPlugin protects it", async () => {
-      let one: TextNode;
-      let two: TextNode;
-      const { editor } = await baseTestEnvironment(
-        () => {
-          one = $createTextNode("one");
-          two = $createTextNode("two");
-          $getRoot().append($createGutterParaNode("p", one), $createGutterParaNode("q1", two));
-        },
-        <ArrowNavigationPlugin viewOptions={paragraphStructureView} />,
+  /** `\p first`, `\li2 \v 2 second`, `\q1 third`, with the caret placed by `place`. */
+  async function selectionAfterPress(
+    key: string,
+    place: (texts: { first: TextNode; second: TextNode }) => [TextNode, number?],
+    options: { canSelectMarker?: boolean; textDirection?: "ltr" | "rtl" } = {},
+  ) {
+    const texts = {} as { first: TextNode; second: TextNode };
+    const { editor } = await gutterEnvironment(() => {
+      texts.first = $createTextNode("first");
+      texts.second = $createTextNode("second");
+      $getRoot().append(
+        $createGutterParaNode("p", texts.first),
+        $createGutterParaNode("li2", $createImmutableVerseNode("2"), texts.second),
+        $createGutterParaNode("q1", $createTextNode("third")),
       );
-
-      updateSelection(editor, two!, 0);
-      await pressKey(editor, "ArrowLeft");
-      expect(selectedMarkerOf(editor)).toBeUndefined();
-
-      updateSelection(editor, one!);
-      await pressKey(editor, "ArrowRight");
-      expect(selectedMarkerOf(editor)).toBeUndefined();
+    }, options);
+    const [node, offset] = place(texts);
+    updateSelection(editor, node, offset);
+    await pressKey(editor, key);
+    return editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      return {
+        selectedMarker: $getSelectedParaMarker(selection)?.getTextContent(),
+        isRange: $isRangeSelection(selection),
+        // Described by content rather than key, so runs in two editors compare.
+        anchor: $isRangeSelection(selection)
+          ? {
+              node: selection.anchor.getNode().getType(),
+              text: selection.anchor.getNode().getTextContent(),
+              offset: selection.anchor.offset,
+              type: selection.anchor.type,
+            }
+          : undefined,
+      };
     });
-  });
+  }
 
-  describe("an empty paragraph", () => {
-    it("is a stop on the way in, a caret position, and a stop on the way out", async () => {
-      let one: TextNode;
-      let m: ParaNode;
-      const { editor } = await markerStopEnvironment(() => {
-        one = $createTextNode("one");
-        m = $createGutterParaNode("m");
-        $getRoot().append(
-          $createGutterParaNode("p", one),
-          m,
-          $createGutterParaNode("q1", $createTextNode("two")),
-        );
-      });
-      updateSelection(editor, one!);
+  it.each([
+    ["ltr", "ArrowLeft"],
+    ["rtl", "ArrowRight"],
+  ] as const)(
+    "backward (%s %s) at a paragraph's first content position moves as it does with no selectable marker",
+    async (textDirection, key) => {
+      const place = ({ second }: { second: TextNode }): [TextNode, number] => [second, 0];
 
-      await pressKey(editor, "ArrowRight");
-      expect(selectedMarkerOf(editor)).toBe("m");
-
-      await pressKey(editor, "ArrowRight");
-      editor.getEditorState().read(() => {
-        $expectSelectionToBe(m!, 1);
+      const actual = await selectionAfterPress(key, place, { textDirection });
+      const unselectable = await selectionAfterPress(key, place, {
+        textDirection,
+        canSelectMarker: false,
       });
 
-      await pressKey(editor, "ArrowLeft");
-      expect(selectedMarkerOf(editor)).toBe("m");
+      expect(actual.selectedMarker).toBeUndefined();
+      expect(actual.isRange).toBe(true);
+      expect(actual.anchor).toEqual(unselectable.anchor);
+    },
+  );
 
-      await pressKey(editor, "ArrowRight");
-      await pressKey(editor, "ArrowRight");
-      expect(selectedMarkerOf(editor)).toBe("q1");
+  it.each([
+    ["ltr", "ArrowRight"],
+    ["rtl", "ArrowLeft"],
+  ] as const)(
+    "forward (%s %s) at a paragraph's end moves as it does with no selectable marker",
+    async (textDirection, key) => {
+      const place = ({ first }: { first: TextNode }): [TextNode] => [first];
+
+      const actual = await selectionAfterPress(key, place, { textDirection });
+      const unselectable = await selectionAfterPress(key, place, {
+        textDirection,
+        canSelectMarker: false,
+      });
+
+      expect(actual.selectedMarker).toBeUndefined();
+      expect(actual.isRange).toBe(true);
+      expect(actual.anchor).toEqual(unselectable.anchor);
+    },
+  );
+
+  it("ArrowRight before a collapsed note that ends its paragraph hops to the next paragraph's content", async () => {
+    let one: TextNode;
+    let two: TextNode;
+    const { editor } = await gutterEnvironment(() => {
+      one = $createTextNode("one");
+      two = $createTextNode("two");
+      $getRoot().append(
+        $createGutterParaNode(
+          "p",
+          one,
+          $createNoteNode("f", "+").append(
+            $createImmutableNoteCallerNode("+", "note preview"),
+            $createCharNode("ft").append($createTextNode("note body")),
+          ),
+        ),
+        $createGutterParaNode("q1", two),
+      );
     });
-  });
+    updateSelection(editor, one!);
 
-  describe("a verse-only paragraph", () => {
-    it("leaves its marker for the position past the verse number, and comes back", async () => {
-      let q2: ParaNode;
-      const { editor } = await markerStopEnvironment(() => {
-        q2 = $createGutterParaNode("q2", $createImmutableVerseNode("2"));
-        $getRoot().append($createGutterParaNode("p", $createTextNode("one")), q2);
-      });
-      await selectMarkerOf(editor, q2!);
+    await pressKey(editor, "ArrowRight");
 
-      await pressKey(editor, "ArrowRight");
-      editor.getEditorState().read(() => {
-        $expectSelectionToBe(q2!, 2);
-      });
-
-      await pressKey(editor, "ArrowLeft");
-      expect(selectedMarkerOf(editor)).toBe("q2");
-    });
-  });
-
-  describe("a paragraph ending in a collapsed note", () => {
-    async function trailingNoteEnvironment() {
-      let p: ParaNode;
-      let one: TextNode;
-      let two: TextNode;
-      let note: NoteNode;
-      const { editor } = await markerStopEnvironment(() => {
-        one = $createTextNode("one");
-        two = $createTextNode("two");
-        note = $createNoteNode("f", "+").append(
-          $createImmutableNoteCallerNode("+", "note preview"),
-          $createCharNode("ft").append($createTextNode("note body")),
-        );
-        p = $createGutterParaNode("p", one, note);
-        $getRoot().append(p, $createGutterParaNode("q1", two));
-      });
-      return { editor, p: p!, one: one!, two: two!, note: note! };
-    }
-
-    it("ArrowRight before the note hops onto the next marker rather than past it", async () => {
-      const { editor, one } = await trailingNoteEnvironment();
-      updateSelection(editor, one);
-
-      await pressKey(editor, "ArrowRight");
-
-      expect(selectedMarkerOf(editor)).toBe("q1");
-    });
-
-    it("ArrowRight past the note selects the next marker", async () => {
-      const { editor, p } = await trailingNoteEnvironment();
-      let end = 0;
-      editor.getEditorState().read(() => {
-        end = p.getChildrenSize();
-      });
-      updateSelection(editor, p, end);
-
-      await pressKey(editor, "ArrowRight");
-
-      expect(selectedMarkerOf(editor)).toBe("q1");
-    });
-
-    it("ArrowLeft stops on the next marker, then lands past the note — never inside it", async () => {
-      const { editor, p, two, note } = await trailingNoteEnvironment();
-      updateSelection(editor, two, 0);
-
-      await pressKey(editor, "ArrowLeft");
-      expect(selectedMarkerOf(editor)).toBe("q1");
-
-      await pressKey(editor, "ArrowLeft");
-      editor.getEditorState().read(() => {
-        $expectSelectionToBe(p, p.getChildrenSize());
-        const selection = $getSelection();
-        if (!$isRangeSelection(selection)) throw new Error("no range selection");
-        const focusNode = selection.focus.getNode();
-        expect(focusNode.is(note) || focusNode.getParents().some((n) => n.is(note))).toBe(false);
-      });
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(two!, 0);
     });
   });
 });

@@ -17,18 +17,15 @@ import {
   KEY_DOWN_COMMAND,
   KEY_ESCAPE_COMMAND,
   LexicalEditor,
-  LexicalNode,
   NodeKey,
   PASTE_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
 import {
   $findFirstAncestorNoteNode,
-  $getSelectableParaMarker,
   $getSelectedParaMarker,
   $isSomeParaNode,
   $placeCaretAtBoundary,
-  $selectParaMarker,
   ImmutableTypedTextNode,
   SomeParaNode,
 } from "shared";
@@ -57,9 +54,8 @@ const COMPOSITION_KEYS = new Set(["Process", "Dead", "Unidentified"]);
  * accessibility state, and every key and command that reaches it.
  *
  * A paragraph marker is selected by a `NodeSelection` of its gutter glyph
- * (`$getSelectedParaMarker`, shared). Nothing here creates one — a click
- * (`ParaMarkerPrefixCursorGuardPlugin`) or an arrow key (`ArrowNavigationPlugin`) does — and
- * everything here is inert unless one exists, so the plugin is mounted unconditionally: selection
+ * (`$getSelectedParaMarker`, shared). Nothing here creates one — a click on the glyph
+ * (`ParaMarkerPrefixCursorGuardPlugin`) does — and everything here is inert unless one exists, so the plugin is mounted unconditionally: selection
  * targets only exist where gutter glyphs do.
  *
  * On every update it recomputes the owning paragraph — an undo, or a structural edit elsewhere, can
@@ -80,7 +76,7 @@ const COMPOSITION_KEYS = new Set(["Process", "Dead", "Unidentified"]);
  *
  * Registers its key handling at `COMMAND_PRIORITY_CRITICAL`, ahead of `ArrowNavigationPlugin`,
  * `StructureKeyboardPlugin` and `MarkerEditPlugin` (all HIGH), so a selected marker owns the key
- * before those plugins see it: arrows leave or walk the marker column (mirrored for RTL via
+ * before those plugins see it: arrows leave the marker for the text (mirrored for RTL via
  * {@link getEditorTextDirection}/{@link isMovingForward}), Enter and Alt+ArrowDown ask the host for
  * the marker menu, Escape returns the caret to the paragraph's content, and typing collapses to the
  * content and lets the keystroke proceed there. A Ctrl/Cmd/Alt arrow (other than Alt+ArrowDown) is a
@@ -180,11 +176,11 @@ export function ParaMarkerSelectionPlugin({
         case "ArrowDown":
           event.preventDefault();
           if (event.altKey) requestMenu();
-          else $selectSiblingParaMarker(para, "next");
+          else $selectParaContentStart(para, glyph);
           return true;
         case "ArrowUp":
           event.preventDefault();
-          $selectSiblingParaMarker(para, "previous");
+          $selectParaContentStart(para, glyph);
           return true;
         case "ArrowLeft":
         case "ArrowRight": {
@@ -262,17 +258,9 @@ export function ParaMarkerSelectionPlugin({
       ),
       editor.registerUpdateListener(({ editorState }) => {
         const { glyphKey, ownerKey } = readSelectedKeys(editorState);
-        const previousOwnerKey = highlightedOwnerKey;
         syncHighlight(glyphKey, ownerKey);
         if (refusedGlyphKey !== undefined && refusedGlyphKey !== glyphKey) clearRefusal();
         if (ownerKey !== undefined) removeDomRangesInside(editor.getRootElement());
-        // A selected marker walked off-screen gets no help from Lexical or the browser: Lexical's
-        // `updateDOMSelection` only scrolls for a RangeSelection, and the key handlers above
-        // `preventDefault` the arrow before it reaches the browser's own scroll. Scrolled only when
-        // the owner actually changes — a marker newly selected, or selection moving to another
-        // paragraph's marker — never on an unrelated update while the same marker stays selected.
-        if (highlightedOwnerKey !== undefined && highlightedOwnerKey !== previousOwnerKey)
-          scrollOwnerIntoView(editor, highlightedOwnerKey);
       }),
     );
 
@@ -320,17 +308,6 @@ function setActiveDescendant(editor: LexicalEditor, key: NodeKey | undefined): v
 }
 
 /**
- * Scrolls the element of paragraph `key`, if rendered, minimally into view. DOM-only (no
- * `editor.update()`), so it is safe to call from the update listener directly. `scrollIntoView`
- * is feature-detected: jsdom's DOM has no layout engine and does not implement it.
- */
-function scrollOwnerIntoView(editor: LexicalEditor, key: NodeKey): void {
-  const element = editor.getElementByKey(key);
-  if (element && typeof element.scrollIntoView === "function")
-    element.scrollIntoView({ block: "nearest" });
-}
-
-/**
  * Removes the document's DOM ranges when they sit inside the editor root. Lexical cannot address a
  * position inside the glyph, so a caret the browser drew there on a click would otherwise stay on
  * screen beside a selection that has no caret.
@@ -341,34 +318,6 @@ function removeDomRangesInside(root: HTMLElement | null): void {
   if (!domSelection || domSelection.rangeCount === 0) return;
   if (domSelection.anchorNode && root.contains(domSelection.anchorNode))
     domSelection.removeAllRanges();
-}
-
-/** The root-level sibling of `node` one step in `direction`. */
-function $siblingOf(node: LexicalNode, direction: "previous" | "next"): LexicalNode | null {
-  return direction === "next" ? node.getNextSibling() : node.getPreviousSibling();
-}
-
-/**
- * The marker glyph of the nearest root-level sibling of `para`, in `direction`, whose marker can be
- * selected — the next stop when ↑/↓ walk the marker column. Chapter numbers, the book `\id` line,
- * tables and paragraphs without a gutter glyph are stepped over.
- *
- * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
- * command handler.
- */
-export function $findSiblingParaMarker(
-  para: SomeParaNode,
-  direction: "previous" | "next",
-): ImmutableTypedTextNode | undefined {
-  for (
-    let sibling = $siblingOf(para, direction);
-    sibling;
-    sibling = $siblingOf(sibling, direction)
-  ) {
-    const glyph = $getSelectableParaMarker(sibling);
-    if (glyph) return glyph;
-  }
-  return undefined;
 }
 
 /**
@@ -383,12 +332,6 @@ export function $findPreviousCaretPara(para: SomeParaNode): SomeParaNode | undef
   for (let sibling = para.getPreviousSibling(); sibling; sibling = sibling.getPreviousSibling())
     if ($isSomeParaNode(sibling)) return sibling;
   return undefined;
-}
-
-/** Mutating: selects the nearest sibling marker in `direction`, or leaves the selection alone. */
-function $selectSiblingParaMarker(para: SomeParaNode, direction: "previous" | "next"): void {
-  const target = $findSiblingParaMarker(para, direction);
-  if (target) $selectParaMarker(target);
 }
 
 /**
