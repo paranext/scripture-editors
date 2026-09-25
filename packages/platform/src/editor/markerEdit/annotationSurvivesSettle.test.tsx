@@ -24,7 +24,7 @@ import {
 } from "../positions/positions.test-helpers";
 import { $pendGlyphEdit } from "./markerEdit.test-helpers";
 import { $rebuildParas } from "./tier2Rebuild.utils";
-import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
@@ -1143,6 +1143,21 @@ describe("a comment mark across a leaf display owner and its attribute run", () 
     });
   }
 
+  /** The first paragraph's settled content with the comment's own `zmsc` milestones left out and
+   * the text on either side of each rejoined, so it reads as the document text the comment covers. */
+  function settledContentWithoutComments(mounted: Mounted): MarkerContent[] {
+    const para = mounted.ref.current?.getUsj()?.content[2];
+    if (typeof para !== "object" || !para.content) throw new Error("expected the first paragraph");
+    const out: MarkerContent[] = [];
+    para.content.forEach((item) => {
+      if (typeof item === "object" && item.marker?.startsWith("zmsc")) return;
+      const last = out[out.length - 1];
+      if (typeof item === "string" && typeof last === "string") out[out.length - 1] = last + item;
+      else out.push(item);
+    });
+    return out;
+  }
+
   /** The first paragraph's content items of `type`, in the settled document. */
   function settledItems(mounted: Mounted, type: string): MarkerObject[] {
     const para = mounted.ref.current?.getUsj()?.content[2];
@@ -1162,7 +1177,11 @@ describe("a comment mark across a leaf display owner and its attribute run", () 
     await commentAcross(mounted, ["said to him", 5], ["What is truth", 5]);
 
     expect(annotatedText(mounted.lexical)).toEqual(["to him ", " What"]);
-    expect(settledItems(mounted, "ms").filter((ms) => ms.marker === "qt-s")).toEqual([quote]);
+    expect(settledContentWithoutComments(mounted)).toEqual([
+      "said to him ",
+      quote,
+      " What is truth?",
+    ]);
 
     await typeOver(mounted.lexical, " is truth?", " is truth? \\nd LORD\\nd*");
     settle(mounted);
@@ -1175,7 +1194,7 @@ describe("a comment mark across a leaf display owner and its attribute run", () 
     ]);
   });
 
-  it("keeps a verse with its alternate number, and never splits the verse", async () => {
+  it("keeps a verse with its alternate number, and adds no space in front of it", async () => {
     const verse: MarkerObject = { type: "verse", marker: "v", number: "2", altnumber: "3" };
     const mounted = await mountStandardViewEditor(
       twoParaUsj(["in the beginning ", verse, "and the earth"]),
@@ -1185,6 +1204,12 @@ describe("a comment mark across a leaf display owner and its attribute run", () 
     await commentAcross(mounted, ["in the beginning", 7], ["and the earth", 3]);
 
     expect(annotatedText(mounted.lexical)).toEqual(["beginning ", "and"]);
-    expect(settledItems(mounted, "verse")).toEqual([verse]);
+    // The text in front of the verse already ends in its space, so the comment's end beside the
+    // verse must not add another.
+    expect(settledContentWithoutComments(mounted)).toEqual([
+      "in the beginning ",
+      verse,
+      "and the earth",
+    ]);
   });
 });

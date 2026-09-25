@@ -1,13 +1,23 @@
 import { displayRunDescriptor } from "../../displayRun/displayRunRegistry.js";
-import { $isAttributeRunNode } from "../usj/AttributeRunNode.js";
+import { $createAttributeRunNode, $isAttributeRunNode } from "../usj/AttributeRunNode.js";
+import {
+  $chapterAltnumberRunPieces,
+  $chapterGlyphTextNode,
+  $noteCategoryRunPieces,
+  $noteEditableCallerNode,
+} from "../usj/attributeDisplay.utils.js";
+import { $createChapterNode, ChapterNode } from "../usj/ChapterNode.js";
 import { $syncDisplayRun } from "../usj/displayRunSync.utils.js";
 import { $createMilestoneNode, MilestoneNode } from "../usj/MilestoneNode.js";
-import { getVisibleOpenMarkerText } from "../usj/node.utils.js";
+import { NBSP } from "../usj/node-constants.js";
+import { $createNoteNode, NoteNode } from "../usj/NoteNode.js";
+import { getEditableCallerText, getVisibleOpenMarkerText } from "../usj/node.utils.js";
 import { $createParaNode, ParaNode } from "../usj/ParaNode.js";
 import { usjBaseNodes } from "../usj/index.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
 import { $createVerseNode, VerseNode } from "../usj/VerseNode.js";
 import { textTypeState } from "../collab/delta.state.js";
+import { $createMarkerNode } from "./MarkerNode.js";
 import {
   $createTypedMarkNode,
   $isTypedMarkNode,
@@ -789,6 +799,86 @@ describe("TypedMarkNode", () => {
         expect(wrapper?.getParent()?.is(para)).toBe(true);
         const marks = para.getChildren().filter($isTypedMarkNode);
         expect(marks.map((mark) => mark.getTextContent())).toEqual(["beginning ", "and"]);
+      });
+    });
+
+    /** An attribute run wrapper of `kind` holding `value` between its opening and closing glyph. */
+    function $attributeRun(kind: "cat" | "ca", value: string) {
+      const text = $setState($createTextNode(`${NBSP}${value}`), textTypeState, "attribute");
+      return $createAttributeRunNode(kind).append(
+        $createMarkerNode(kind),
+        text,
+        $createMarkerNode(kind, "closing"),
+      );
+    }
+
+    it("keeps a note's editable caller and its `\\cat` run out of a mark starting at the caller", () => {
+      const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+      let note!: NoteNode;
+      editor.update(
+        () => {
+          note = $createNoteNode("f", "+", false, "People");
+          const caller = $createTextNode(getEditableCallerText("+"));
+          const body = $createTextNode("note body");
+          note.append(
+            $createMarkerNode("f"),
+            caller,
+            $attributeRun("cat", "People"),
+            body,
+            $createMarkerNode("f", "closing"),
+          );
+          $getRoot().append($createParaNode().append(note));
+          expect($noteCategoryRunPieces(note).wrapper).toBeDefined();
+          const selection = $createRangeSelection();
+          selection.anchor.set(caller.getKey(), 1, "text");
+          selection.focus.set(body.getKey(), 4, "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        const caller = $noteEditableCallerNode(note);
+        expect(caller?.getParent()?.is(note)).toBe(true);
+        const pieces = $noteCategoryRunPieces(note);
+        expect(pieces.wrapper?.getParent()?.is(note)).toBe(true);
+        expect(pieces.value?.getTextContent()).toBe(`${NBSP}People`);
+        const marks = note.getChildren().filter($isTypedMarkNode);
+        expect(marks.map((mark) => mark.getTextContent())).toEqual(["note"]);
+      });
+    });
+
+    it("keeps a chapter's `\\c` glyph and its `\\ca` run out of a mark starting in the glyph", () => {
+      const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+      let chapter!: ChapterNode;
+      let para!: ParaNode;
+      const glyphText = getVisibleOpenMarkerText("c", "1") ?? "";
+      editor.update(
+        () => {
+          chapter = $createChapterNode("1", undefined, "2");
+          const glyph = $createTextNode(glyphText);
+          chapter.append(glyph, $attributeRun("ca", "2"));
+          const body = $createTextNode("In the beginning");
+          para = $createParaNode().append(body);
+          $getRoot().append(chapter, para);
+          expect($chapterAltnumberRunPieces(chapter).wrapper).toBeDefined();
+          const selection = $createRangeSelection();
+          selection.anchor.set(glyph.getKey(), 1, "text");
+          selection.focus.set(body.getKey(), 6, "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        const glyph = $chapterGlyphTextNode(chapter);
+        expect(glyph?.getTextContent()).toBe(glyphText);
+        const pieces = $chapterAltnumberRunPieces(chapter);
+        expect(pieces.wrapper?.getParent()?.is(chapter)).toBe(true);
+        expect(pieces.value?.getTextContent()).toBe(`${NBSP}2`);
+        expect(chapter.getChildren().some($isTypedMarkNode)).toBe(false);
+        const marks = para.getChildren().filter($isTypedMarkNode);
+        expect(marks.map((mark) => mark.getTextContent())).toEqual(["In the"]);
       });
     });
 

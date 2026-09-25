@@ -25,6 +25,7 @@ import {
   $syncDisplayRun,
   CharNode,
   displayRunDescriptor,
+  NBSP,
   NoteNode,
   textTypeState,
   VerseNode,
@@ -212,10 +213,21 @@ function $verseNodeTransform(node: SomeVerseNode): void {
   // - Text inside an annotation wrapper: bare text gets its structural space from
   //   $textNodeTrailingSpaceTransform, but wrapped text can't (that transform skips
   //   TypedMarkNode parents), so the space is inserted here instead and coalesces onto the same
-  //   USJ text run.
+  //   USJ text run. Only when that text does not already end in one — the rule
+  //   `$addTrailingSpace` applies to bare text — or a comment ending beside the verse writes a
+  //   second space into the document.
   if (
     $isCharNode(previousSibling) ||
-    ($isTextNode(previousSibling) && $isTypedMarkNode(previousSibling.getParent()))
+    ($isTextNode(previousSibling) &&
+      $isTypedMarkNode(previousSibling.getParent()) &&
+      !$endsInSpace(previousSibling))
   )
     node.insertBefore($createTextNode(" "));
+}
+
+/** Whether `node`'s text already ends in a space or NBSP — the same test `$addTrailingSpace` uses
+ * to decide text is already spaced. */
+function $endsInSpace(node: TextNode): boolean {
+  const text = node.getTextContent();
+  return text.endsWith(" ") || text.endsWith(NBSP);
 }

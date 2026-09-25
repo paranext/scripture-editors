@@ -6,7 +6,10 @@
 
 import { textTypeState } from "../collab/delta.state.js";
 import { $isAttributeRunNode } from "../usj/AttributeRunNode.js";
+import { $chapterGlyphTextNode, $noteEditableCallerNode } from "../usj/attributeDisplay.utils.js";
+import { $isChapterNode } from "../usj/ChapterNode.js";
 import { $isMilestoneNode } from "../usj/MilestoneNode.js";
+import { $isNoteNode } from "../usj/NoteNode.js";
 import { $isVerseNode } from "../usj/VerseNode.js";
 import { $isMarkerNode } from "./MarkerNode.js";
 import { assertSafeKey } from "@eten-tech-foundation/scripture-utilities";
@@ -1365,20 +1368,36 @@ function $isAttributeDisplayRun(node: LexicalNode): boolean {
 }
 
 /**
- * Whether `node` is part of a leaf display owner's unit: a verse or milestone together with the
- * `AttributeRunNode` wrapper(s) of its attribute display run (`\va 3\va*`, `|who="Pilate"`), or
- * anything inside such a wrapper. The run belongs to its owner by position alone — the wrapper
- * directly follows it — so moving either into a mark without the other reads as the run having
- * been deleted, and the display-run sync settles that by removing the owner. A verse is also a
- * `TextNode`, which the wrap would otherwise split like content. The wrapper a note (`\cat`) or
- * chapter (`\ca`, `\cp`) holds as a child is kept out of a mark for the same reason.
+ * Whether `node` is the text an element owner's attribute display run is anchored after: a note's
+ * editable caller (its `\cat` run follows it) or a chapter's `\c N` glyph text (its `\ca` and
+ * `\cp` runs follow it). Both runs are found as the anchor's next sibling, so an anchor moved into
+ * a mark without its run reads as the run being missing, and the sync writes a second one.
  */
-function $isLeafDisplayOwnerUnit(node: LexicalNode): boolean {
+function $isElementOwnerRunAnchor(node: LexicalNode): boolean {
+  if (!$isTextNode(node)) return false;
+  let owner = node.getParent();
+  while ($isTypedMarkNode(owner)) owner = owner.getParent();
+  if ($isNoteNode(owner)) return $noteEditableCallerNode(owner)?.is(node) ?? false;
+  if ($isChapterNode(owner)) return $chapterGlyphTextNode(owner)?.is(node) ?? false;
+  return false;
+}
+
+/**
+ * Whether `node` is part of a display owner's unit: the owner's `AttributeRunNode` wrapper(s) and
+ * anything inside one, together with what the run is found beside — a verse or milestone the
+ * wrapper directly follows (`\va 3\va*`, `|who="Pilate"`), or a note's caller or chapter's glyph
+ * text ({@link $isElementOwnerRunAnchor}). The run belongs to its owner by position alone, so
+ * moving either half into a mark without the other reads as the run having been deleted: the
+ * display-run sync then removes a milestone, or writes a second run beside a caller. A verse is
+ * also a `TextNode`, which the wrap would otherwise split like content.
+ */
+function $isDisplayOwnerUnit(node: LexicalNode): boolean {
   return (
     $isVerseNode(node) ||
     $isMilestoneNode(node) ||
     $isAttributeRunNode(node) ||
-    $isAttributeRunNode(node.getParent())
+    $isAttributeRunNode(node.getParent()) ||
+    $isElementOwnerRunAnchor(node)
   );
 }
 
@@ -1410,7 +1429,7 @@ export function $wrapSelectionInTypedMarkNode(
       // If the current node is a child of the last created mark node, there is nothing to do here
       continue;
     }
-    if ($isMarkerNode(node) || $isAttributeDisplayRun(node) || $isLeafDisplayOwnerUnit(node)) {
+    if ($isMarkerNode(node) || $isAttributeDisplayRun(node) || $isDisplayOwnerUnit(node)) {
       // A marker glyph is display bytes its construct owns, never annotated content: moving one
       // into a mark takes it out of the construct's own children, which the marker-edit engine
       // reads as the marker having been deleted (a char span or note loses its closer, a note its
@@ -1423,9 +1442,9 @@ export function $wrapSelectionInTypedMarkNode(
       // after which the display-run sync no longer recognizes the run and rebuilds it beside the
       // split-off piece — and the next settle reads both into the attribute's value.
       //
-      // A verse or milestone and its run wrapper are one unit: the selection lists the wrapper
-      // ELEMENT before its children, so the glyph guard alone never sees it. Neither is ever moved
-      // or split, so the unit stays together outside the mark.
+      // A display owner (or a run's anchor text) and its run wrapper are one unit: the selection
+      // lists the wrapper ELEMENT before its children, so the glyph guard alone never sees it.
+      // Neither half is ever moved or split, so the unit stays together outside the mark.
       currentNodeParent = node.getParent();
       lastCreatedMarkNode = undefined;
       continue;
