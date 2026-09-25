@@ -46,6 +46,7 @@ import {
   COMMENT_MARK_TYPE,
   getMarker as bundledGetMarker,
   getPendedDisplayOwners,
+  NBSP,
   TypedIDs,
   TypedMarkNode,
   TypedMarkOnRemove,
@@ -1211,5 +1212,55 @@ describe("a comment mark across a leaf display owner and its attribute run", () 
       verse,
       "and the earth",
     ]);
+  });
+});
+
+describe("a comment mark across a paragraph boundary", () => {
+  /** Wrap a comment from `charlie` in the first paragraph to the end of `depart` in the second —
+   * the selection running backward (anchor after focus) when `backward`. */
+  async function commentAcrossParagraphs(backward = false): Promise<Mounted> {
+    const mounted = await mountStandardViewEditor(twoParaUsj([body]));
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const start = [$textContaining(body).getKey(), body.indexOf("charlie"), "text"] as const;
+        const end = [$textContaining("depart here").getKey(), "depart".length, "text"] as const;
+        const selection = $createRangeSelection();
+        selection.anchor.set(...(backward ? end : start));
+        selection.focus.set(...(backward ? start : end));
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return mounted;
+  }
+
+  it("leaves the next paragraph's separator out of the mark and adds no space", async () => {
+    const mounted = await commentAcrossParagraphs();
+
+    const paragraphText = (index: number): string => {
+      const para = mounted.ref.current?.getUsj()?.content[index];
+      if (typeof para !== "object" || !para.content) throw new Error(`no paragraph at ${index}`);
+      return para.content.filter((item) => typeof item === "string").join("");
+    };
+    expect(paragraphText(2)).toBe(body);
+    expect(paragraphText(3)).toBe("depart here");
+    // The second paragraph still displays its `\p` and ONE separator space.
+    expect(
+      mounted.lexical
+        .getEditorState()
+        .read(() => $textContaining("depart").getTopLevelElementOrThrow().getTextContent()),
+    ).toBe(`\\p${NBSP}depart here`);
+    // The space after the second paragraph's `\p` is its display separator, not document text.
+    expect(annotatedText(mounted.lexical)).toEqual(["charlie", "depart"]);
+  });
+
+  it("reports a location for the caret a backward wrap leaves", async () => {
+    const mounted = await commentAcrossParagraphs(true);
+    expect(annotatedText(mounted.lexical)).toEqual(["charlie", "depart"]);
+    // The wrap collapses the caret onto the start of the last mark it made.
+    expect(mounted.ref.current?.getSelection()).toEqual({
+      start: { jsonPath: contentPath([3, 0]), offset: 0 },
+    });
   });
 });

@@ -1307,11 +1307,19 @@ function $locationBeside(
 ): UsjDocumentLocation {
   const parent = node.getParent();
   if (!parent) return { jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)) };
-  return $locationFromNode(
-    parent,
-    node.getIndexWithinParent() + (after ? 1 : 0),
-    collapsesSpaceRuns,
-  );
+  const index = node.getIndexWithinParent() + (after ? 1 : 0);
+  if ($isTypedMarkNode(parent)) {
+    // A mark is transparent, so a gap at its edge is the gap beside the mark itself, and a gap
+    // between its children is in front of the content that follows. Asking the mark for its own
+    // element point instead would hand a point at its front straight back to the child that asked
+    // — presentation text opening a mark defers to the gap in front of itself — and never return.
+    if (index > 0 && index < parent.getChildrenSize()) {
+      const inFront = $locationInFrontOfMarkChild(parent, index, collapsesSpaceRuns);
+      if (inFront) return inFront;
+    }
+    return $locationBeside(parent, index > 0, collapsesSpaceRuns);
+  }
+  return $locationFromNode(parent, index, collapsesSpaceRuns);
 }
 
 // ---------------------------------------------------------------------------

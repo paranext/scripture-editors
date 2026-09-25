@@ -153,7 +153,7 @@ describe.each<[string, AnnotationRange, string[]]>([
       start: { jsonPath: contentPath(notePath) },
       end: { jsonPath: contentPath([2, 2]), offset: 3 },
     },
-    [`${NBSP}\\ft${NBSP}note body\\ft*${NBSP}`, " af"],
+    [`\\ft${NBSP}note body\\ft*`, " af"],
   ],
   [
     "starts at the note's caller",
@@ -161,7 +161,7 @@ describe.each<[string, AnnotationRange, string[]]>([
       start: { jsonPath: propertyPath(notePath, "caller"), propertyOffset: 0 },
       end: { jsonPath: contentPath([2, 2]), offset: 3 },
     },
-    [`${NBSP}\\ft${NBSP}note body\\ft*${NBSP}`, " af"],
+    [`\\ft${NBSP}note body\\ft*`, " af"],
   ],
   [
     "spans the note's caller value",

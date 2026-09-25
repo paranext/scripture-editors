@@ -32,6 +32,7 @@ import {
   $createImmutableChapterNode,
   $createImmutableTypedTextNode,
   $createImpliedParaNode,
+  $createMarkerTrailingSeparator,
   $createMarkerNode,
   $createMilestoneNode,
   $createParaNode,
@@ -1285,6 +1286,38 @@ describe("$getUsjSelectionFromEditor", () => {
         expect($getUsjSelectionFromEditor(undefined)?.start).toEqual({
           jsonPath: "$.content[0].content[2]",
           offset: 0,
+        });
+      });
+    });
+
+    it("should report both ends of a backward selection from a mark that opens on presentation text", () => {
+      // A mark whose first child is display-only text (a marker's trailing separator): the point
+      // in front of that text is the point in front of the mark, never the mark's own front again.
+      let separator: TextNode;
+      let first: TextNode;
+      const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode], () => {
+        first = $createTextNode("alpha charlie");
+        separator = $createMarkerTrailingSeparator();
+        $getRoot().append(
+          $createParaNode().append(first),
+          $createParaNode().append(
+            $createTypedMarkNode({ testType: ["testId"] }).append(
+              separator,
+              $createTextNode("depart"),
+            ),
+            $createTextNode(" here"),
+          ),
+        );
+      });
+      // Anchor in the second paragraph, focus in the first: the selection runs backward.
+      // Non-null assertions are safe: both nodes are assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, separator!, 0, first!, "alpha ".length);
+
+      editor.getEditorState().read(() => {
+        expect($getUsjSelectionFromEditor(undefined)).toEqual({
+          start: { jsonPath: "$.content[0].content[0]", offset: "alpha ".length },
+          end: { jsonPath: "$.content[1].content[0]", offset: 0 },
         });
       });
     });

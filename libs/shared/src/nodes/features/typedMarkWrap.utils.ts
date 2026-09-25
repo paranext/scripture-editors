@@ -6,7 +6,7 @@
  * (`attributeDisplay.utils.ts`), which itself imports `TypedMarkNode.ts`.
  */
 
-import { textTypeState } from "../collab/delta.state.js";
+import { MARKER_TRAILING_SPACE_TEXT_TYPE, textTypeState } from "../collab/delta.state.js";
 import { $isAttributeRunNode } from "../usj/AttributeRunNode.js";
 import { $chapterGlyphTextNode, $noteEditableCallerNode } from "../usj/attributeDisplay.utils.js";
 import { $isChapterNode } from "../usj/ChapterNode.js";
@@ -30,6 +30,14 @@ import { $getState, $isElementNode, $isTextNode } from "lexical";
  * annotated content. */
 function $isAttributeDisplayRun(node: LexicalNode): boolean {
   return $isTextNode(node) && $getState(node, textTypeState) === "attribute";
+}
+
+/** Whether `node` is the engine-owned separator after an editable marker glyph (the space after a
+ * paragraph's `\p`, or a char span's opener) — display bytes the glyph owns, never annotated
+ * content. Moved into a mark, it no longer follows its glyph, which then reads as missing its
+ * separator and gets a second one. */
+function $isMarkerSeparator(node: LexicalNode): boolean {
+  return $isTextNode(node) && $getState(node, textTypeState) === MARKER_TRAILING_SPACE_TEXT_TYPE;
 }
 
 /**
@@ -95,13 +103,20 @@ export function $wrapSelectionInTypedMarkNode(
       // If the current node is a child of the last created mark node, there is nothing to do here
       continue;
     }
-    if ($isMarkerNode(node) || $isAttributeDisplayRun(node) || $isDisplayOwnerUnit(node)) {
+    if (
+      $isMarkerNode(node) ||
+      $isMarkerSeparator(node) ||
+      $isAttributeDisplayRun(node) ||
+      $isDisplayOwnerUnit(node)
+    ) {
       // A marker glyph is display bytes its construct owns, never annotated content: moving one
       // into a mark takes it out of the construct's own children, which the marker-edit engine
       // reads as the marker having been deleted (a char span or note loses its closer, a note its
       // opener) and settles by dissolving or deleting the construct. So end the current mark at
       // the glyph, and start any later content in a new one. Remember the glyph's parent, though:
       // it is the element the selection is inside, which must not then be wrapped whole.
+      //
+      // The separator a glyph is followed by is the glyph's own display bytes too.
       //
       // An attribute display run (`|grace`, `|who="Pilate"`) is the same kind of bytes and gets
       // the same treatment, never split or moved: a mark over part of it splits its text node,
