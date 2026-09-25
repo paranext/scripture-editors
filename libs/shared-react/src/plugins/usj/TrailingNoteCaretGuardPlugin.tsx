@@ -22,15 +22,24 @@ import { $isCursorPlaceholderOnlyText, $isNoteNode, CURSOR_CHANGE_TAG, NoteNode 
 /**
  * `node` when it is a collapsed note that nothing in its block renders past — the one shape with no
  * caret position of its own and none after it either — or `undefined`.
+ *
+ * The note need not sit directly in the block. A char span the note ends that renders nothing after
+ * it either - an unclosed span (`closed="false"`) has no closing glyph - leaves the note the last
+ * thing on the line all the same, so the walk goes up through every inline ancestor the note ends.
  */
 function $asTrailingCollapsedNote(node: LexicalNode | null | undefined): NoteNode | undefined {
   if (!$isNoteNode(node) || node.getIsCollapsed() !== true) return undefined;
-  const block = node.getParent();
-  if (!block || block.isInline()) return undefined;
-  const rendersPastNote = node
-    .getNextSiblings()
-    .some((sibling) => !$isCursorPlaceholderOnlyText(sibling));
-  return rendersPastNote ? undefined : node;
+  let current: LexicalNode = node;
+  for (;;) {
+    const rendersPast = current
+      .getNextSiblings()
+      .some((sibling) => !$isCursorPlaceholderOnlyText(sibling));
+    if (rendersPast) return undefined;
+    const parent: LexicalNode | null = current.getParent();
+    if (!parent) return undefined;
+    if (!$isElementNode(parent) || !parent.isInline()) return node;
+    current = parent;
+  }
 }
 
 /** The child an element-point caret is resting immediately AFTER. */
@@ -61,7 +70,9 @@ function $childBeforeCaret(anchor: PointType): LexicalNode | undefined {
  * - **Collapsed only.** An EXPANDED note's own content is rendered text and is a legitimate resting
  *   place, so it needs nothing. `getIsCollapsed()` is the node's own declared property, which is
  *   also the axis the note-as-atom rule is keyed on everywhere else.
- * - **Nothing rendered may follow the note in its block.** That is the one boundary where "nothing
+ * - **Nothing rendered may follow the note in its block**, whether the note sits in the block itself
+ *   or ends an inline span that renders nothing after it (an unclosed char span). That is the one
+ *   boundary where "nothing
  *   rendered follows" is decidable from the node alone; where a sibling does render, its own start
  *   is a caret position at the same screen location and there is nothing to repair. A bare caret
  *   host renders nothing and is this guard's own doing, so it does not count as rendered — which is

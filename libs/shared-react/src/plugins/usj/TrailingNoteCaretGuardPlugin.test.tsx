@@ -28,6 +28,7 @@ import {
 import {
   $isNoteNode,
   $createCharNode,
+  CharNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createNoteNode,
@@ -938,6 +939,61 @@ describe("TrailingNoteCaretGuardPlugin", () => {
         expect(note.getTextContent()).not.toContain(CURSOR_PLACEHOLDER_CHAR);
       });
       expect(allHosts(editor).length).toBe(1);
+    });
+
+    describe("when the note ends an unclosed char span", () => {
+      /** `\p before \wj stuff |note|` with no `\wj*`: nothing renders past the note in its line. */
+      async function unclosedSpanEnvironment(closed: boolean) {
+        let para: ParaNode;
+        let before: TextNode;
+        let wj: CharNode;
+        let note: NoteNode;
+        const { editor } = await baseTestEnvironment(
+          () => {
+            before = $createTextNode("before ");
+            note = $createTrailingNote();
+            wj = $createCharNode("wj", closed ? undefined : { closed: "false" }).append(
+              $createMarkerNode("wj", "opening"),
+              $createTextNode("stuff "),
+              note,
+            );
+            if (closed) wj.append($createMarkerNode("wj", "closing"));
+            para = $createParaNode("p");
+            $getRoot().append(para.append(before, wj));
+          },
+          <TrailingNoteCaretGuardPlugin />,
+        );
+        return { editor, para: para!, before: before!, wj: wj!, note: note! };
+      }
+
+      it("lands past the note, inside the span the note ends", async () => {
+        const { editor, before, wj, note } = await unclosedSpanEnvironment(false);
+        await giveEditorACaret(editor, before);
+        const { paraDom, callerDom } = noteParagraphDom(editor);
+
+        await clickIntoUnfocusedEditor(editor, paraDom, callerDom, 0);
+
+        editor.getEditorState().read(() => {
+          const host = wj.getLastChild();
+          if (!$isTextNode(host)) throw new Error("expected a text host past the note");
+          expect(host.getTextContent()).toBe(CURSOR_PLACEHOLDER_CHAR);
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+          expect(selection.anchor.key).toBe(host.getKey());
+          expect(note.getTextContent()).not.toContain(CURSOR_PLACEHOLDER_CHAR);
+        });
+        expect(allHosts(editor).length).toBe(1);
+      });
+
+      it("leaves a note alone when the span's closing glyph renders past it", async () => {
+        const { editor, before } = await unclosedSpanEnvironment(true);
+        await giveEditorACaret(editor, before);
+        const { paraDom, callerDom } = noteParagraphDom(editor);
+
+        await clickIntoUnfocusedEditor(editor, paraDom, callerDom, 0);
+
+        expect(allHosts(editor).length).toBe(0);
+      });
     });
 
     it("leaves a note that something in its block renders past alone", async () => {
