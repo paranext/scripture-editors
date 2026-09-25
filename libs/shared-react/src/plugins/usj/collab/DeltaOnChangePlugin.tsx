@@ -45,35 +45,66 @@ export function DeltaOnChangePlugin({
     if (!onChange) return;
 
     return editor.registerUpdateListener((payload) => {
-      const { editorState, dirtyElements, dirtyLeaves, prevEditorState, tags } = payload;
       if (
-        (ignoreSelectionChange && dirtyElements.size === 0 && dirtyLeaves.size === 0) ||
-        // A `MARKER_SETTLE_TAG` commit carries the merge tag only to stay out of the undo
-        // stack — its bytes really did change, so it must reach `onChange` like any edit.
-        // Without this exemption the cached USJ and the emitted delta both keep showing the
-        // pre-settle bytes, and the host saves a document the editor is no longer displaying.
-        (ignoreHistoryMergeTagChange &&
-          tags.has(HISTORY_MERGE_TAG) &&
-          !tags.has(MARKER_SETTLE_TAG)) ||
-        ignoreTags.some((tag) => tags.has(tag)) ||
-        prevEditorState.isEmpty()
-      ) {
+        shouldSkipUpdateForOps(payload, {
+          ignoreSelectionChange,
+          ignoreHistoryMergeTagChange,
+          ignoreTags,
+        })
+      )
         return;
-      }
 
       const ops = $getUpdateOps(editor, payload);
       // TODO: this may have been added because nodes are made dirty when they shouldn't be as a
       // result of NoteNode collapsing/expanding. If so, we should fix that instead.
       if (ops.length === 0) return;
 
-      onChange(editorState, editor, tags, ops);
+      onChange(payload.editorState, editor, payload.tags, ops);
     });
   }, [editor, ignoreHistoryMergeTagChange, ignoreSelectionChange, ignoreTags, onChange]);
 
   return null;
 }
 
-function $getUpdateOps(
+/**
+ * Whether a commit should produce no delta ops at all — the filter {@link DeltaOnChangePlugin}
+ * applies before it computes any, exposed so a listener of its own can apply the same one.
+ *
+ * @param payload - The commit's update-listener payload.
+ * @param options - The same switches {@link DeltaOnChangePlugin} takes as props.
+ * @returns `true` when no ops should be computed for this commit.
+ */
+export function shouldSkipUpdateForOps(
+  { dirtyElements, dirtyLeaves, prevEditorState, tags }: UpdateListenerPayload,
+  options: {
+    ignoreSelectionChange: boolean;
+    ignoreHistoryMergeTagChange: boolean;
+    ignoreTags: readonly string[];
+  },
+): boolean {
+  return (
+    (options.ignoreSelectionChange && dirtyElements.size === 0 && dirtyLeaves.size === 0) ||
+    // A `MARKER_SETTLE_TAG` commit carries the merge tag only to stay out of the undo
+    // stack — its bytes really did change, so it must reach `onChange` like any edit.
+    // Without this exemption the cached USJ and the emitted delta both keep showing the
+    // pre-settle bytes, and the host saves a document the editor is no longer displaying.
+    (options.ignoreHistoryMergeTagChange &&
+      tags.has(HISTORY_MERGE_TAG) &&
+      !tags.has(MARKER_SETTLE_TAG)) ||
+    options.ignoreTags.some((tag) => tags.has(tag)) ||
+    prevEditorState.isEmpty()
+  );
+}
+
+/**
+ * The delta ops a commit produced, in "delta-doc" coordinates. Call from an update listener, with
+ * that listener's payload: it reads the editor's current state as the commit's result.
+ *
+ * @param editor - The editor that committed.
+ * @param payload - The commit's update-listener payload.
+ * @returns The ops that turn the previous state's delta into the current one's.
+ */
+export function $getUpdateOps(
   editor: LexicalEditor,
   { dirtyLeaves, prevEditorState }: UpdateListenerPayload,
 ): DeltaOp[] {

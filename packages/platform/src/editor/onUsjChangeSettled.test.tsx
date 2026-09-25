@@ -1,0 +1,199 @@
+// Target: packages/platform/src/editor/onUsjChangeSettled.test.tsx
+// Probe-run against SE 41e67470: tests 1, 2, 3, 4 FAIL for the intended reasons; 5 and 6 pass
+// (regression guards).
+import { mountStandardViewEditor } from "./settledGetUsj.test-helpers";
+import { $textContaining, twoParaUsj } from "./positions/positions.test-helpers";
+import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { act } from "@testing-library/react";
+import { $getSelection, $isRangeSelection, LexicalEditor } from "lexical";
+import { getPendedDisplayOwners } from "shared";
+
+// Undo restores a caret while the root holds DOM focus; Lexical's scroll-into-view then reads an
+// Element rect jsdom does not implement.
+if (typeof Element.prototype.getBoundingClientRect !== "function")
+  Element.prototype.getBoundingClientRect = function (): DOMRect {
+    return {
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      toJSON() {
+        return this;
+      },
+    };
+  };
+
+interface Emission {
+  usj: Usj;
+  ops: unknown[] | undefined;
+  getUsjNow: Usj | undefined;
+}
+
+const graceUsj = () =>
+  twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God made"]);
+
+async function mountRecording() {
+  const emissions: Emission[] = [];
+  const holder: { get?: () => Usj | undefined } = {};
+  const mounted = await mountStandardViewEditor(graceUsj(), {
+    onUsjChange: (usj, ops) => emissions.push({ usj, ops, getUsjNow: holder.get?.() }),
+  });
+  holder.get = () => mounted.ref.current?.getUsj() ?? undefined;
+  return { ...mounted, emissions };
+}
+
+/** Commit `update` discretely inside a SYNCHRONOUS `act`: the commit and its listeners run before
+ * this returns, while queued microtasks still do not, and React state the commit sets (the
+ * toolbar's undo state) is flushed inside `act`. */
+function commitNow(lexical: LexicalEditor, update: () => void): void {
+  act(() => {
+    lexical.update(update, { discrete: true });
+  });
+}
+
+/** Type `appended` at the end of the text node holding `needle`, in ONE discrete commit. */
+function appendNow(lexical: LexicalEditor, needle: string, appended: string): void {
+  commitNow(lexical, () => {
+    const node = $textContaining(needle);
+    node.setTextContent(node.getTextContent() + appended);
+    const end = node.getTextContentSize();
+    node.select(end, end);
+  });
+}
+
+/** Depart by EDITING another paragraph: the edit opens its own history entry, so one undo lands
+ * on the pending literal rather than on the pre-typing document (a bare caret move would merge
+ * the settle into the typing's entry). `twoParaUsj`'s second paragraph holds "depart here". */
+async function editDeparture(lexical: LexicalEditor): Promise<void> {
+  await act(async () => {
+    lexical.update(() => {
+      const target = $textContaining("depart here");
+      const end = target.getTextContentSize();
+      target.select(end, end);
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) selection.insertText("!");
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+async function flush(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+/** A `\w` span as USJ carries it: `lemma` is one of its attributes, which `MarkerObject` leaves
+ * untyped. */
+type WordChar = MarkerObject & { lemma?: string };
+
+function wCharOf(usj: Usj | undefined): WordChar | undefined {
+  const para = usj?.content.find(
+    (item) =>
+      typeof item === "object" && item.type === "para" && JSON.stringify(item).includes("grace"),
+  ) as MarkerObject | undefined;
+  return para?.content?.find((item) => typeof item === "object" && item.marker === "w") as
+    | WordChar
+    | undefined;
+}
+
+const LEMMA = '|lemma="grace"';
+
+it("emits getUsj()'s document while an attribute is pending", async () => {
+  const { lexical, emissions } = await mountRecording();
+  const before = emissions.length;
+  appendNow(lexical, "grace", LEMMA);
+  expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
+  const emitted = emissions[before];
+  expect(emitted).toBeDefined();
+  expect(wCharOf(emitted.usj)?.lemma).toBe("grace");
+  expect(emitted.usj).toEqual(emitted.getUsjNow);
+});
+
+it("emits exactly once per content commit, synchronously", async () => {
+  const { lexical, emissions } = await mountRecording();
+  const before = emissions.length;
+  appendNow(lexical, "grace", LEMMA);
+  expect(emissions.length).toBe(before + 1);
+  await flush();
+  expect(emissions.length).toBe(before + 1);
+});
+
+it("emits once per commit after a reload re-registers the change listeners", async () => {
+  const { lexical, ref, emissions } = await mountRecording();
+  await act(async () => {
+    ref.current?.setUsj(
+      twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God made."]),
+    );
+    await Promise.resolve();
+  });
+  await flush();
+  const before = emissions.length;
+  appendNow(lexical, "grace", LEMMA);
+  await flush();
+  const emitted = emissions.slice(before);
+  expect(emitted.length).toBe(1);
+  expect(emitted[0].ops?.length ?? 0).toBeGreaterThan(0);
+  expect(wCharOf(emitted[0].usj)?.lemma).toBe("grace");
+});
+
+it("emits the settled document, synchronously, on an undo that restores a pending literal", async () => {
+  const { lexical, ref, emissions } = await mountRecording();
+  appendNow(lexical, "grace", LEMMA);
+  await flush();
+  await editDeparture(lexical);
+  await flush();
+  expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBe(0);
+  const before = emissions.length;
+  // Discrete, so the undo commits (and its listeners run) before this returns.
+  commitNow(lexical, () => ref.current?.undo());
+  expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
+  const emitted = emissions.slice(before);
+  expect(emitted.length).toBe(1);
+  expect(emitted[0].ops?.length ?? 0).toBeGreaterThan(0);
+  // The in-callback getUsj() alone is not a sufficient oracle: before the pend set is re-derived
+  // it agrees with a payload that shows the literal as plain text.
+  expect(wCharOf(emitted[0].usj)?.lemma).toBe("grace");
+  expect(emitted[0].usj).toEqual(ref.current?.getUsj());
+  await flush();
+  expect(emissions.length).toBe(before + 1);
+});
+
+it("emits nothing for a selection-only commit", async () => {
+  const { lexical, emissions } = await mountRecording();
+  const before = emissions.length;
+  commitNow(lexical, () => $textContaining("of God").select(2, 2));
+  await flush();
+  expect(emissions.length).toBe(before);
+});
+
+it("keeps ops in live delta coordinates", async () => {
+  const { lexical, emissions } = await mountRecording();
+  const before = emissions.length;
+  appendNow(lexical, "grace", LEMMA);
+  expect(emissions[before].ops?.length ?? 0).toBeGreaterThan(0);
+});
+
+it("emits nothing for a commit that changes no bytes, after the first load or a reload", async () => {
+  const { lexical, ref, emissions } = await mountRecording();
+  await flush();
+  const touchWithoutChange = (needle: string) =>
+    commitNow(lexical, () => $textContaining(needle).markDirty());
+  touchWithoutChange("of God");
+  await flush();
+  expect(emissions).toHaveLength(0);
+  await act(async () => {
+    ref.current?.setUsj(twoParaUsj(["In the beginning"]));
+    await Promise.resolve();
+  });
+  await flush();
+  touchWithoutChange("beginning");
+  await flush();
+  expect(emissions).toHaveLength(0);
+});

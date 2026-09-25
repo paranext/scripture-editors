@@ -83,6 +83,7 @@ import {
   DELTA_CHANGE_TAG,
   displayRunDescriptor,
   DisplayRunOwnerRef,
+  ensurePendedDisplayOwnersCurrent,
   getMarker as bundledGetMarker,
   ImmutableTypedTextNode,
   ImmutableUnmatchedNode,
@@ -540,7 +541,19 @@ export function MarkerEditPlugin({
     // own transforms below. The driver lives below the engine in the module graph and cannot
     // import it directly, but must still leave a pended owner's run alone instead of resurrecting
     // a deletion the engine has not settled yet.
-    const unregisterPended = registerPendedDisplayOwners(editor, context.pendingKeys);
+    //
+    // The re-derivation a history restore needs is published with it, so any listener that reads
+    // the set for a historic commit can bring it current first, whichever listener runs first.
+    const unregisterPended = registerPendedDisplayOwners(
+      editor,
+      context.pendingKeys,
+      (restoredState) => {
+        // Stale keys are cleared first — they describe the pre-restore document, and a leftover
+        // key pointing at a now-canonical node would drive a pointless refused rebuild later.
+        context.pendingKeys.clear();
+        restoredState.read(() => $rependPendShapedNodes(context));
+      },
+    );
     // Tracks the caret's node key as of the most recent commit — keyed off the selection FOCUS
     // (the live cursor end, so it stays correct even for a backward range selection), updated
     // synchronously by the update listener below (which never lags, unlike command handlers
@@ -1132,11 +1145,9 @@ export function MarkerEditPlugin({
           // and caret departure would settle NOTHING, leaving it literal forever (reviving only
           // when typed inside). Re-derive the pend set from the restored bytes with a strictly
           // READ-ONLY scan: keys land in the plain pendingKeys Set, no node is mutated, so this
-          // commit produces no history entry and the undo/redo stacks stay intact. Stale keys
-          // are cleared first — they describe the pre-restore document, and a leftover key
-          // pointing at a now-canonical node would drive a pointless refused rebuild later.
-          context.pendingKeys.clear();
-          editorState.read(() => $rependPendShapedNodes(context));
+          // commit produces no history entry and the undo/redo stacks stay intact. A no-op when
+          // another listener already brought the set current for this commit.
+          ensurePendedDisplayOwnersCurrent(editor, editorState, tags);
           // The restored caret is app-placed (history put it there, not a fresh user gesture),
           // and a historic restore is NOT a departure: resolving now — or on any follow-on
           // bookkeeping commit — would re-settle the just-undone literal immediately, making

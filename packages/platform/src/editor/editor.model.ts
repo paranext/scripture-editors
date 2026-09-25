@@ -130,8 +130,9 @@ export interface EditorRef {
    * Declares in-progress input that an in-editor command surface (e.g. the marker palette) will
    * consume or discard — analogous to an IME composition string. While declared,
    * {@link EditorRef.getUsj} excludes these bytes from its settled output: the containing paragraph
-   * settles as if they were absent. Editor state, on-screen content, `onUsjChange`, and OT deltas
-   * are untouched. One declaration at a time; calling again replaces it; `undefined` clears it.
+   * settles as if they were absent, and so does the `usj` a later `onUsjChange` carries. Editor
+   * state, on-screen content, and OT deltas are untouched. One declaration at a time; calling
+   * again replaces it; `undefined` clears it.
    *
    * The declaration is ADVISORY. It is anchored to the text node the caret sits in when declared,
    * and re-verified against the live caret at every `getUsj()`: it is ignored whenever it does not
@@ -606,7 +607,16 @@ export interface EditorProps<TLogger extends LoggerBasic> {
    * `undefined` only when there is no selection, as it is for `getSelection`.
    */
   onSelectionChange?: (selection: SelectionRange | undefined) => void;
-  /** Callback function when USJ Scripture data has changed. */
+  /**
+   * Callback function when USJ Scripture data has changed. Called synchronously, exactly once per
+   * change, in the order the changes happen; a selection-only change calls nothing.
+   *
+   * - `usj` is SETTLED: the document {@link EditorRef.getUsj} returns at that moment, which is
+   *   what a host saves.
+   * - `ops` are LIVE: the change's delta ops in the live document's delta coordinates, absent when
+   *   the change moved no delta (a marker glyph or attribute text edited, or its undo).
+   * - `insertedNodeKey` is LIVE: the editor key of a node the change inserted into the live tree.
+   */
   onUsjChange?: (usj: Usj, ops?: DeltaOp[], source?: DeltaSource, insertedNodeKey?: string) => void;
   /** Callback function when state changes. */
   onStateChange?: ({ canUndo, canRedo, blockMarker, contextMarker }: StateChangeSnapshot) => void;

@@ -53,7 +53,11 @@ export interface MarginalProps<TLogger extends LoggerBasic> extends Omit<
 > {
   /** Callback function when comments have changed. */
   onCommentChange?: (comments: Comments | undefined) => void;
-  /** Callback function when USJ Scripture data has changed. */
+  /**
+   * Callback function when USJ Scripture data has changed. Called as
+   * {@link EditorProps.onUsjChange} is, with `usj` SETTLED and `ops` and `insertedNodeKey` LIVE,
+   * plus the current comments.
+   */
   onUsjChange?: (
     usj: Usj,
     comments: Comments | undefined,

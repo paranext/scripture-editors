@@ -5,18 +5,64 @@
  * can leave a pended owner's run alone instead of resurrecting a deletion the engine has not
  * settled yet. Keyed per editor (main editor and footnote popover each register their own set).
  */
-import { $getEditor, LexicalEditor, LexicalNode, NodeKey } from "lexical";
+import {
+  $getEditor,
+  EditorState,
+  HISTORIC_TAG,
+  LexicalEditor,
+  LexicalNode,
+  NodeKey,
+} from "lexical";
 
-const pendedOwnersByEditor = new WeakMap<LexicalEditor, Set<NodeKey>>();
+interface PendedOwnersEntry {
+  owners: Set<NodeKey>;
+  /** Rebuilds `owners` from the bytes of a state that undo/redo restored. */
+  rederive?: (editorState: EditorState) => void;
+  /** The history-restored state `owners` was last rebuilt for. */
+  derivedFor?: EditorState;
+}
 
+const pendedOwnersByEditor = new WeakMap<LexicalEditor, PendedOwnersEntry>();
+
+/**
+ * Publishes the engine's live pending set for `editor`.
+ *
+ * @param rederive - Rebuilds `owners` from a history-restored state's bytes. Lexical restores an
+ *   undo/redo state without running node transforms, so nothing re-pends a restored literal unless
+ *   this runs; see {@link ensurePendedDisplayOwnersCurrent}.
+ * @returns A function that unregisters the set, if it is still the registered one.
+ */
 export function registerPendedDisplayOwners(
   editor: LexicalEditor,
-  pendedKeys: Set<NodeKey>,
+  owners: Set<NodeKey>,
+  rederive?: (editorState: EditorState) => void,
 ): () => void {
-  pendedOwnersByEditor.set(editor, pendedKeys);
+  const entry: PendedOwnersEntry = { owners, rederive };
+  pendedOwnersByEditor.set(editor, entry);
   return () => {
-    if (pendedOwnersByEditor.get(editor) === pendedKeys) pendedOwnersByEditor.delete(editor);
+    if (pendedOwnersByEditor.get(editor) === entry) pendedOwnersByEditor.delete(editor);
   };
+}
+
+/**
+ * Re-derive the pend set for a history-restored state if not yet done for that state. Idempotent.
+ *
+ * Any update listener that reads the pend set for a commit calls this first, so what it reads does
+ * not depend on whether the engine's own listener ran before it: listener order follows
+ * registration order, which a re-mounted plugin changes. Only a commit tagged `HISTORIC_TAG` is
+ * re-derived; every other commit's pends are already current, because the engine's node transforms
+ * maintain them inside the update. Keyed on the state object, which is safe because Lexical clones
+ * a restored state before committing it, so no two restores ever commit the same object.
+ */
+export function ensurePendedDisplayOwnersCurrent(
+  editor: LexicalEditor,
+  editorState: EditorState,
+  tags: ReadonlySet<string>,
+): void {
+  const entry = pendedOwnersByEditor.get(editor);
+  if (!entry?.rederive || !tags.has(HISTORIC_TAG) || entry.derivedFor === editorState) return;
+  entry.rederive(editorState);
+  entry.derivedFor = editorState;
 }
 
 /**
@@ -28,12 +74,12 @@ export function registerPendedDisplayOwners(
  * to enter a read at all based on whether anything is pending).
  */
 export function getPendedDisplayOwners(editor: LexicalEditor): ReadonlySet<NodeKey> | undefined {
-  return pendedOwnersByEditor.get(editor);
+  return pendedOwnersByEditor.get(editor)?.owners;
 }
 
 /** Whether `node`'s key is pended in the active editor. Call inside a read/update. */
 export function $isDisplayOwnerPended(node: LexicalNode): boolean {
-  return pendedOwnersByEditor.get($getEditor())?.has(node.getKey()) ?? false;
+  return pendedOwnersByEditor.get($getEditor())?.owners.has(node.getKey()) ?? false;
 }
 
 /**
@@ -49,5 +95,5 @@ export function $isDisplayOwnerPended(node: LexicalNode): boolean {
  * engine is currently registered for the active editor.
  */
 export function $reportDestroyedDisplayOwner(node: LexicalNode): void {
-  pendedOwnersByEditor.get($getEditor())?.add(node.getKey());
+  pendedOwnersByEditor.get($getEditor())?.owners.add(node.getKey());
 }
