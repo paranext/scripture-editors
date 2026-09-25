@@ -10,6 +10,7 @@ import { createRef } from "react";
 import { $isNoteNode, getPendedDisplayOwners } from "shared";
 import {
   $getOTPositionOfNode,
+  BLOCK_VERSE_VIEW_MODE,
   DeltaOp,
   DeltaSource,
   FORMATTED_VIEW_MODE,
@@ -220,6 +221,48 @@ it.each([
   commitNow(lexical, () => $textContaining("of God").getParentOrThrow().markDirty());
   await flush();
   expect(emissions).toHaveLength(0);
+});
+
+/** The text of the first paragraph of `usj`, which `twoParaUsj` fills. */
+function firstParaText(usj: Usj | undefined): unknown {
+  const para = usj?.content[2];
+  return typeof para === "object" ? para.content : undefined;
+}
+
+// `getUsj()` right after a load is the tree's own export, the same document every later read
+// reports — never the host's USJ in the moments before a commit refreshes the cache.
+it.each([
+  ["a lossless load", "In the beginning of God"],
+  ["a lossy load (a double space)", "In the  beginning of God"],
+])("reports the tree's document from getUsj() right after %s", async (_, text) => {
+  const emissions: Usj[] = [];
+  const { lexical, ref } = await mountStandardViewEditor(twoParaUsj([text]), {
+    onUsjChange: (usj) => emissions.push(usj),
+  });
+  await flush();
+  const afterLoad = ref.current?.getUsj();
+  commitNow(lexical, () => $textContaining("of God").getParentOrThrow().markDirty());
+  await flush();
+  const afterCommit = ref.current?.getUsj();
+  expect(firstParaText(afterLoad)).toEqual(["In the beginning of God"]);
+  expect(afterLoad).toEqual(afterCommit);
+  expect(emissions).toHaveLength(0);
+});
+
+it("reports the loaded document from getUsj() in the block verse layout", async () => {
+  const ref = createRef<EditorRef>();
+  const usj = twoParaUsj(["In the beginning of God"]);
+  await act(async () => {
+    render(
+      <Editor
+        ref={ref}
+        defaultUsj={usj}
+        options={{ isReadonly: true, view: getViewOptions(BLOCK_VERSE_VIEW_MODE) }}
+      />,
+    );
+  });
+  await flush();
+  expect(firstParaText(ref.current?.getUsj())).toEqual(["In the beginning of God"]);
 });
 
 /** Every paragraph marker of `usj`, in document order. */

@@ -1358,13 +1358,16 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     // becomes the yardstick: a later commit that moves no bytes (a note toggling open) must not
     // announce it back as a change. The yardstick is the tree's own export, not the host's USJ,
     // because every later comparison is against an export and the round trip can be lossy (a run
-    // of spaces collapses); the block verse layout has no export and announces nothing anyway.
+    // of spaces collapses). The cache takes the same export, so `getUsj()` reports the tree's
+    // document from the load on rather than switching to it, unannounced, at the next commit. The
+    // block verse layout has no export, so its cache keeps the host's USJ.
     if (tags.has(EXTERNAL_USJ_MUTATION_TAG)) {
       const inputs = commitInputsRef.current;
-      lastNotifiedUsjRef.current =
-        (!inputs.isBlockVerse &&
-          editorUsjAdaptor.deserializeEditorState(editorState, inputs.viewOptions)) ||
-        editedUsjRef.current;
+      const loaded =
+        !inputs.isBlockVerse &&
+        editorUsjAdaptor.deserializeEditorState(editorState, inputs.viewOptions);
+      if (loaded) editedUsjRef.current = loaded;
+      lastNotifiedUsjRef.current = editedUsjRef.current;
       return;
     }
     if (tags.has(DELTA_CHANGE_TAG) || isApplyingLocalUpdateRef.current) return;
