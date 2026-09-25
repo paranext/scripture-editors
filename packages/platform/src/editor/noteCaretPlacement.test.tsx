@@ -697,6 +697,123 @@ describe("EditorRef.selectNoteTextOffset in an expanded note (a host's own note 
   });
 });
 
+describe("EditorRef.selectNoteTextOffset into a note's \\cat category", () => {
+  it("lands at the offset within the category value, past its display separator", async () => {
+    const { editorRef, lexical } = await renderEditor(usjCategorizedNote, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 3, "category"));
+
+    const { text, offset } = caret(lexical);
+    expect(text.trim()).toBe("People");
+    expect(text.slice(offset)).toBe("ple");
+  });
+
+  it("clamps an offset past the end of the category to its end", async () => {
+    const { editorRef, lexical } = await renderEditor(usjCategorizedNote, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 50, "category"));
+
+    const { text, offset } = caret(lexical);
+    expect(text.trim()).toBe("People");
+    expect(offset).toBe(text.length);
+  });
+
+  it("lands at the start of the content when the note has no category", async () => {
+    const { editorRef, lexical } = await renderEditor(usj, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 3, "category"));
+
+    const { text, offset } = caret(lexical);
+    expect(text.slice(offset)).toBe("1:1 ");
+  });
+});
+
+describe("EditorRef.getNoteCaret", () => {
+  /** Put the caret on `offset` of the first text node inside the note that `pick` accepts. */
+  async function caretOn(
+    lexical: LexicalEditor,
+    pick: (text: string) => boolean,
+    offset: (text: string) => number,
+  ) {
+    await act(async () => {
+      lexical.update(
+        () => {
+          const noteNode = requireDefined(
+            $dfs($getRoot())
+              .map(({ node }) => node)
+              .find($isNoteNode),
+            "note",
+          );
+          const target = requireDefined(
+            noteNode.getAllTextNodes().find((node) => pick(node.getTextContent())),
+            "text in the note",
+          );
+          const at = offset(target.getTextContent());
+          target.select(at, at);
+        },
+        { discrete: true },
+      );
+    });
+  }
+
+  it("reads back every content offset selectNoteTextOffset puts the caret at", async () => {
+    const { editorRef } = await renderEditor(usj, expandedOptions);
+    const contentLength = "1:1 alpha".length;
+
+    for (let offset = 0; offset <= contentLength; offset += 1) {
+      await act(async () => editorRef.selectNoteTextOffset(0, offset));
+      expect({ offset, caret: editorRef.getNoteCaret() }).toEqual({
+        offset,
+        caret: { noteKey: editorRef.getNoteKey(0), noteIndex: 0, utf16Offset: offset },
+      });
+    }
+  });
+
+  it("reads a caret in the note's shell as the start of its content", async () => {
+    const { editorRef, lexical } = await renderEditor(usj, expandedOptions);
+
+    await caretOn(
+      lexical,
+      (text) => text.includes("+"),
+      () => 1,
+    );
+
+    expect(editorRef.getNoteCaret()?.utf16Offset).toBe(0);
+  });
+
+  it("reads a caret in a run's opening glyph as the start of that run's text", async () => {
+    const { editorRef, lexical } = await renderEditor(usj, expandedOptions);
+
+    await caretOn(
+      lexical,
+      (text) => text.startsWith("\\ft"),
+      () => 2,
+    );
+
+    // `1:1 ` is the `\fr` run before it.
+    expect(editorRef.getNoteCaret()?.utf16Offset).toBe(4);
+  });
+
+  it("reads a caret in the category value as an offset into the category", async () => {
+    const { editorRef } = await renderEditor(usjCategorizedNote, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 2, "category"));
+
+    expect(editorRef.getNoteCaret()).toMatchObject({ utf16Offset: 2, field: "category" });
+  });
+
+  it("reports nothing for a caret outside every note or in a collapsed one", async () => {
+    const outside = await renderEditor(usj, expandedOptions);
+    await act(async () => outside.editorRef.selectAfterNote(0));
+    expect(outside.editorRef.getNoteCaret()).toBeUndefined();
+
+    // Standard view collapses a closed note to its caller.
+    const collapsed = await renderEditor(usj);
+    await act(async () => collapsed.editorRef.selectNote(0));
+    expect(collapsed.editorRef.getNoteCaret()).toBeUndefined();
+  });
+});
+
 describe("EditorRef.selectAfterNote reports the new reference while unfocused", () => {
   const twoVerseUsjWithNote: Usj = {
     type: "USJ",

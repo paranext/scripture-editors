@@ -46,9 +46,11 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { $setBlocksType } from "@lexical/selection";
+import { $findMatchingParent } from "@lexical/utils";
 import { deepEqual } from "fast-equals";
 import {
   $addUpdateTag,
+  $getNodeByKey,
   $getSelection,
   $isRangeSelection,
   $isTextNode,
@@ -75,6 +77,7 @@ import {
 } from "react";
 import {
   $createParaNode,
+  $isNoteNode,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
@@ -102,7 +105,9 @@ import {
   $getReplaceEmbedOps,
   $insertNote,
   $selectAfterNote,
+  $getNoteCaretOffset,
   $selectNote,
+  $selectNoteCategoryOffset,
   $selectNoteTextOffset,
   AnnotationPlugin,
   AnnotationRange,
@@ -1039,14 +1044,37 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         unregisterDispatchTagRelease();
       }
     },
-    selectNoteTextOffset(noteKeyOrIndex, utf16Offset) {
+    selectNoteTextOffset(noteKeyOrIndex, utf16Offset, field) {
       editorRef.current?.update(() => {
         const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
         if (!noteNode) return;
+        // A note that shows no category run has no category to land in; its content's start is
+        // the position that follows the category everywhere else.
+        const placed =
+          field === "category"
+            ? $selectNoteCategoryOffset(noteNode, utf16Offset) || $selectNoteTextOffset(noteNode, 0)
+            : $selectNoteTextOffset(noteNode, utf16Offset);
         // A note with no content text has nowhere to put an offset; land where an offset-less
         // request would, so the caret is always somewhere sensible inside the note.
-        if (!$selectNoteTextOffset(noteNode, utf16Offset)) $selectNote(noteNode, viewOptions);
+        if (!placed) $selectNote(noteNode, viewOptions);
         $rememberExpandedNote(noteNode, expandedNoteKeyRef);
+      });
+    },
+    getNoteCaret() {
+      const editor = editorRef.current;
+      if (!editor) return undefined;
+      return readLatest(editor, () => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+        const node = selection.anchor.getNode();
+        const noteNode = $isNoteNode(node) ? node : $findMatchingParent(node, $isNoteNode);
+        // A collapsed note shows only its caller: nothing inside it is a place the user can be.
+        if (!$isNoteNode(noteNode) || noteNode.getIsCollapsed() !== false) return undefined;
+        const noteKey = noteNode.getKey();
+        const noteIndex = $getNoteIndex(noteKey);
+        if (noteIndex === undefined) return undefined;
+        const caret = $getNoteCaretOffset(noteNode, { node, offset: selection.anchor.offset });
+        return { noteKey, noteIndex, ...caret };
       });
     },
     getNoteOps(noteKeyOrIndex) {
@@ -1095,7 +1123,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   }, []);
 
   const handleChange = useCallback(
-    (editorState: EditorState, _editor: LexicalEditor, _tags: Set<string>, ops: DeltaOp[]) => {
+    (
+      editorState: EditorState,
+      _editor: LexicalEditor,
+      _tags: Set<string>,
+      ops: DeltaOp[],
+      prevEditorState: EditorState,
+    ) => {
       // No blacklisted-tag guard is needed here: `DeltaOnChangePlugin` is given
       // `ignoreTags={blackListedChangeTags}` and short-circuits before calling this handler, so
       // only local user edits (which carry no blacklisted tag) ever reach this point.
@@ -1117,7 +1151,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           // `applyUpdate` never reach here - they emit `onUsjChange` with source "remote" directly.
           // Default "delta-doc" coordinates: these ops come from `DeltaOnChangePlugin`, whose
           // retains are doc-delta diff positions, so the reverse lookup must count the same way.
-          const insertedNodeKey = getInsertedNodeKey(ops, editorState);
+          // An edit inside an existing note diffs as that note replaced by its new self, so the
+          // ops alone read as an insertion of it. Only a node the previous state did not have is
+          // one: reporting an edited note as inserted is how a host comes to open a new-note editor
+          // on the note the user is typing in.
+          const opsNodeKey = getInsertedNodeKey(ops, editorState);
+          const insertedNodeKey =
+            opsNodeKey && !prevEditorState.read(() => $getNodeByKey(opsNodeKey))
+              ? opsNodeKey
+              : undefined;
           lastNotifiedUsjRef.current = newUsj;
           onUsjChange?.(newUsj, ops, "local", insertedNodeKey);
         }

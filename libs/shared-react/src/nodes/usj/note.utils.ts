@@ -48,6 +48,7 @@ import {
   $isVisibleMarkerNode,
   $moveSelectionToEnd,
   $normalizeSelectionOutOfGlyphText,
+  $noteCategoryRunPieces,
   $noteEditableCallerNode,
   $separatorPrefixLength,
   $shouldIgnoreNodeForContentIndexes,
@@ -610,6 +611,95 @@ export function $selectNoteTextOffset(noteNode: NoteNode, utf16Offset: number): 
   const end = lastDataNode.getTextContentSize();
   lastDataNode.select(end, end);
   return true;
+}
+
+/**
+ * Puts the caret at `utf16Offset` within a note's `\cat` category value - the category a
+ * study-Bible note carries as a field rather than as content, which an expanded editable note shows
+ * as its own run right after the caller. The value's display separator is skipped, so offset 0 is
+ * the start of the category itself. Offsets past the end clamp to the end.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @param noteNode - The note whose category to place the caret in.
+ * @param utf16Offset - Offset into the category value, in UTF-16 code units.
+ * @returns `true` when a caret was placed, `false` when the note shows no category run.
+ */
+export function $selectNoteCategoryOffset(noteNode: NoteNode, utf16Offset: number): boolean {
+  const { value } = $noteCategoryRunPieces(noteNode);
+  if (!value) return false;
+  const start = $categoryValueStart(value);
+  const at = Math.min(start + Math.max(utf16Offset, 0), value.getTextContentSize());
+  value.select(at, at);
+  return true;
+}
+
+/** Where a category value's own text starts, past the NBSP display separator it leads with. */
+function $categoryValueStart(value: TextNode): number {
+  return value.getTextContent().startsWith(NBSP) ? NBSP.length : 0;
+}
+
+/**
+ * Where a caret sits within a note, in the same terms {@link $selectNoteTextOffset} and
+ * {@link $selectNoteCategoryOffset} take: an offset into the note's content text, or into its
+ * `\cat` category value when `field` is `"category"`.
+ */
+export interface NoteCaretOffset {
+  utf16Offset: number;
+  field?: "category";
+}
+
+/**
+ * The inverse of {@link $selectNoteTextOffset}: where `point` sits in `noteNode`'s own text.
+ *
+ * A point in display the view adds around the content - the opening glyph, the caller, a run's
+ * marker glyphs, the `\cat` closer - resolves to the next position the user can type at, which is
+ * where a caret put there is headed: past the shell is the content's start, and past a run's
+ * opener is that run's text. A point in the `\cat` opener or value resolves into the category.
+ *
+ * Read-only: call inside `editor.read()` or an update.
+ *
+ * @param noteNode - The note the point is inside.
+ * @param point - The caret, as a node and an offset in it (a text offset for a text node, a child
+ *   index for an element).
+ */
+export function $getNoteCaretOffset(
+  noteNode: NoteNode,
+  point: { node: LexicalNode; offset: number },
+): NoteCaretOffset {
+  let { node: anchor, offset } = point;
+  // An element point sits between two children; it is the start of whatever follows it.
+  while ($isElementNode(anchor)) {
+    const child = anchor.getChildAtIndex(offset);
+    if (child) {
+      anchor = child;
+      offset = 0;
+    } else {
+      const last = anchor.getLastDescendant();
+      if (!last) break;
+      anchor = last;
+      offset = last.getTextContentSize();
+    }
+  }
+
+  const { opener: categoryOpener, value: categoryValue } = $noteCategoryRunPieces(noteNode);
+  if (categoryValue?.is(anchor))
+    return {
+      utf16Offset: Math.max(0, offset - $categoryValueStart(categoryValue)),
+      field: "category",
+    };
+  if (categoryOpener?.is(anchor)) return { utf16Offset: 0, field: "category" };
+
+  const caller = $noteEditableCallerNode(noteNode);
+  let accumulated = 0;
+  for (const { node } of $dfs(noteNode)) {
+    if ($isNoteContentText(node, caller)) {
+      const dataStart = $separatorPrefixLength(node);
+      if (node.is(anchor)) return { utf16Offset: accumulated + Math.max(0, offset - dataStart) };
+      accumulated += node.getTextContentSize() - dataStart;
+    } else if (node.is(anchor)) return { utf16Offset: accumulated };
+  }
+  return { utf16Offset: accumulated };
 }
 
 /**
