@@ -6,11 +6,12 @@
  * (`attributeDisplay.utils.ts`), which itself imports `TypedMarkNode.ts`.
  */
 
-import { MARKER_TRAILING_SPACE_TEXT_TYPE, textTypeState } from "../collab/delta.state.js";
+import { textTypeState } from "../collab/delta.state.js";
 import { $isAttributeRunNode } from "../usj/AttributeRunNode.js";
 import { $chapterGlyphTextNode, $noteEditableCallerNode } from "../usj/attributeDisplay.utils.js";
 import { $isChapterNode } from "../usj/ChapterNode.js";
 import { $isMilestoneNode } from "../usj/MilestoneNode.js";
+import { $isMarkerTrailingSeparator } from "../usj/node.utils.js";
 import { $isNoteNode } from "../usj/NoteNode.js";
 import { $isVerseNode } from "../usj/VerseNode.js";
 import { $isMarkerNode } from "./MarkerNode.js";
@@ -30,14 +31,6 @@ import { $getState, $isElementNode, $isTextNode } from "lexical";
  * annotated content. */
 function $isAttributeDisplayRun(node: LexicalNode): boolean {
   return $isTextNode(node) && $getState(node, textTypeState) === "attribute";
-}
-
-/** Whether `node` is the engine-owned separator after an editable marker glyph (the space after a
- * paragraph's `\p`, or a char span's opener) — display bytes the glyph owns, never annotated
- * content. Moved into a mark, it no longer follows its glyph, which then reads as missing its
- * separator and gets a second one. */
-function $isMarkerSeparator(node: LexicalNode): boolean {
-  return $isTextNode(node) && $getState(node, textTypeState) === MARKER_TRAILING_SPACE_TEXT_TYPE;
 }
 
 /**
@@ -105,7 +98,7 @@ export function $wrapSelectionInTypedMarkNode(
     }
     if (
       $isMarkerNode(node) ||
-      $isMarkerSeparator(node) ||
+      $isMarkerTrailingSeparator(node) ||
       $isAttributeDisplayRun(node) ||
       $isDisplayOwnerUnit(node)
     ) {
@@ -116,7 +109,9 @@ export function $wrapSelectionInTypedMarkNode(
       // the glyph, and start any later content in a new one. Remember the glyph's parent, though:
       // it is the element the selection is inside, which must not then be wrapped whole.
       //
-      // The separator a glyph is followed by is the glyph's own display bytes too.
+      // The engine-owned separator after a `\p`, `\tr` or `\tc` glyph, and a collapsed note's
+      // layout separators, are display bytes too. Moved into a mark, a separator no longer sits
+      // where its glyph expects it, so the glyph reads as missing one and gets a second.
       //
       // An attribute display run (`|grace`, `|who="Pilate"`) is the same kind of bytes and gets
       // the same treatment, never split or moved: a mark over part of it splits its text node,

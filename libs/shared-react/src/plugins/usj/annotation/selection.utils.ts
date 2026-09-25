@@ -71,6 +71,7 @@ import {
   IMMUTABLE_NOTE_CALLER_NODE_TYPE,
   ImmutableTypedTextNode,
   type LogicalContentItem,
+  type LogicalPoint,
   MarkerNode,
   milestoneDefaultAttribute,
   openingMarkerText,
@@ -1172,16 +1173,18 @@ function $locationFromNode(
       if (inFront) return inFront;
     }
 
-    // An edge of a mark whose child there is not text (e.g. a CharNode wrapped in the mark), or an
-    // empty mark (childAtOffset is null): anchor on the mark's parent at the mark's own position
-    // instead of falling through to treat the mark itself as the logical parent, which would drop
-    // the mark's content index. The mark contributes no content of its own, so the boundary
-    // before/after it is the boundary before/after its own position in its parent — which, for a
-    // mark inside the root's implied paragraph, is itself a boundary among the root's items.
+    // An edge of a mark whose child there is not text (e.g. a CharNode wrapped in the mark), an
+    // interior point with no content from there to the mark's end, or an empty mark (childAtOffset
+    // is null): anchor on the mark's parent at the mark's own position instead of falling through
+    // to treat the mark itself as the logical parent, which would drop the mark's content index.
+    // The mark contributes no content of its own, so the boundary before/after it is the boundary
+    // before/after its own position in its parent — which, for a mark inside the root's implied
+    // paragraph, is itself a boundary among the root's items. Any point past the mark's front is
+    // after it.
     const parent = node.getParent();
     if (parent) {
       const markIndex = node.getIndexWithinParent();
-      const elementOffset = offset >= childrenSize ? markIndex + 1 : markIndex;
+      const elementOffset = offset > 0 ? markIndex + 1 : markIndex;
       return $locationFromNode(parent, elementOffset, collapsesSpaceRuns);
     }
   }
@@ -1215,16 +1218,11 @@ function $locationFromNode(
     // items.
     const container =
       $isImpliedParaNode(node) && $isRootNode(node.getParent()) ? node.getParentOrThrow() : node;
-    const containerIndexes = $getJsonPathIndexes(container);
-    const logicalPoint = $getLogicalPointFromElementPoint(node, offset, collapsesSpaceRuns);
-    if (logicalPoint.type === "text") {
-      // The boundary falls inside a coalesced USJ text item (e.g. at an annotation edge).
-      return {
-        jsonPath: usjJsonPathFromIndexes([...containerIndexes, logicalPoint.index]),
-        offset: logicalPoint.offset,
-      };
-    }
-    return $boundaryLocation(container, containerIndexes, logicalPoint.index, collapsesSpaceRuns);
+    return $locationFromLogicalPoint(
+      container,
+      $getLogicalPointFromElementPoint(node, offset, collapsesSpaceRuns),
+      collapsesSpaceRuns,
+    );
   }
 
   // Regular text node - UsjTextContentLocation in coalesced-USJ coordinates.
@@ -1277,20 +1275,33 @@ function $locationInFrontOfMarkChild(
     if ($displayBytesOf(child)) return $locationFromDisplayBytes(child, 0, collapsesSpaceRuns);
     if ($isTextNode(child) && $getLogicalTextLocation(child, 0, collapsesSpaceRuns))
       return $locationFromNode(child, 0, collapsesSpaceRuns);
-    // Presentation-only children hold no position of their own: the boundary is in front of what
-    // follows them.
+    // Presentation-only children — including a nested mark holding nothing but presentation —
+    // hold no position of their own: the boundary is in front of what follows them.
     if ($isTextNode(child) || $shouldIgnoreNodeForContentIndexes(child)) continue;
     const logical = $getLogicalPointBeforeNode(child, collapsesSpaceRuns);
-    if (!logical) return undefined;
-    const indexes = $getJsonPathIndexes(logical.parent);
-    if (logical.point.type === "text")
-      return {
-        jsonPath: usjJsonPathFromIndexes([...indexes, logical.point.index]),
-        offset: logical.point.offset,
-      };
-    return $boundaryLocation(logical.parent, indexes, logical.point.index, collapsesSpaceRuns);
+    if (logical)
+      return $locationFromLogicalPoint(logical.parent, logical.point, collapsesSpaceRuns);
   }
   return undefined;
+}
+
+/**
+ * The location of a logical point among `container`'s items: a text point inside a coalesced USJ
+ * text item (e.g. at an annotation edge) keeps its offset, and an index point is the gap in front
+ * of that item ({@link $boundaryLocation}).
+ */
+function $locationFromLogicalPoint(
+  container: ElementNode,
+  point: LogicalPoint,
+  collapsesSpaceRuns: boolean,
+): UsjDocumentLocation {
+  const containerIndexes = $getJsonPathIndexes(container);
+  if (point.type === "text")
+    return {
+      jsonPath: usjJsonPathFromIndexes([...containerIndexes, point.index]),
+      offset: point.offset,
+    };
+  return $boundaryLocation(container, containerIndexes, point.index, collapsesSpaceRuns);
 }
 
 /** Whether `glyph` is `owner`'s own closing marker glyph. */

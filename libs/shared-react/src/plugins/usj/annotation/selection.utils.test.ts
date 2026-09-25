@@ -1290,6 +1290,56 @@ describe("$getUsjSelectionFromEditor", () => {
       });
     });
 
+    it("should report an interior mark point with no content after it at the mark's back edge", () => {
+      let markNode: TypedMarkNode;
+      const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode], () => {
+        markNode = $createTypedMarkNode({ testType: ["testId"] }).append(
+          $createTextNode("abc"),
+          $createLineBreakNode(),
+        );
+        $getRoot().append($createParaNode().append(markNode, $createTextNode("def")));
+      });
+      // Non-null assertion is safe: markNode is assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, markNode!, 1);
+
+      editor.getEditorState().read(() => {
+        // The line break is presentation, so the point is past "abc": the para's one text item is
+        // "abcdef".
+        expect($getUsjSelectionFromEditor(undefined)?.start).toEqual({
+          jsonPath: "$.content[0].content[0]",
+          offset: "abc".length,
+        });
+      });
+    });
+
+    it("should skip a nested mark holding only presentation when naming an interior mark point", () => {
+      let markNode: TypedMarkNode;
+      const { editor } = createBasicTestEnvironment(
+        [ParaNode, TypedMarkNode, ImmutableVerseNode],
+        () => {
+          markNode = $createTypedMarkNode({ testType: ["testId"] }).append(
+            $createTextNode("abc"),
+            $createTypedMarkNode({ testType: ["otherId"] }).append(
+              $createMarkerTrailingSeparator(),
+            ),
+            $createImmutableVerseNode("3"),
+          );
+          $getRoot().append($createParaNode().append(markNode, $createTextNode("def")));
+        },
+      );
+      // Non-null assertion is safe: markNode is assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, markNode!, 1);
+
+      editor.getEditorState().read(() => {
+        // USJ content: [0]="abc", [1]=verse 3, [2]="def".
+        expect($getUsjSelectionFromEditor(undefined)?.start).toEqual({
+          jsonPath: "$.content[0].content[1]",
+        });
+      });
+    });
+
     it("should report both ends of a backward selection from a mark that opens on presentation text", () => {
       // A mark whose first child is display-only text (a marker's trailing separator): the point
       // in front of that text is the point in front of the mark, never the mark's own front again.

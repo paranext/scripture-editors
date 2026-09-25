@@ -32,6 +32,7 @@ import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $setSelection,
   LexicalEditor,
   LexicalNode,
 } from "lexical";
@@ -1253,6 +1254,43 @@ describe("a comment mark across a paragraph boundary", () => {
     ).toBe(`\\p${NBSP}depart here`);
     // The space after the second paragraph's `\p` is its display separator, not document text.
     expect(annotatedText(mounted.lexical)).toEqual(["charlie", "depart"]);
+  });
+
+  it("reports both ends of a backward selection ending at a comment that opens on a spacer", async () => {
+    // `\nd \+wj God\+wj*\nd*`: the span's content starts with a nested span, so its opener is
+    // followed by a standalone NBSP spacer. A comment starting at `\nd` begins with that spacer,
+    // and a caret at the comment's start sits on presentation text that opens a mark.
+    const wj: MarkerObject = { type: "char", marker: "wj", content: ["God"] };
+    const nd: MarkerObject = { type: "char", marker: "nd", content: [wj] };
+    const mounted = await mountStandardViewEditor(twoParaUsj(["the ", nd, " made"]));
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const selection = $createRangeSelection();
+        selection.anchor.set($textContaining("\\nd").getKey(), 0, "text");
+        selection.focus.set($textContaining("depart here").getKey(), "depart".length, "text");
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // Anchor in the second paragraph, focus on the first comment's opening spacer: backward.
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const [firstComment] = $marks();
+        const spacer = firstComment.getFirstChildOrThrow();
+        const selection = $createRangeSelection();
+        selection.anchor.set($textContaining(" here").getKey(), 2, "text");
+        selection.focus.set(spacer.getKey(), 0, "text");
+        $setSelection(selection);
+      });
+      await Promise.resolve();
+    });
+
+    // In front of the nested span is the nested span's own location.
+    expect(mounted.ref.current?.getSelection()).toEqual({
+      start: { jsonPath: contentPath([2, 1, 0]) },
+      end: { jsonPath: contentPath([3, 0]), offset: "depart h".length },
+    });
   });
 
   it("reports a location for the caret a backward wrap leaves", async () => {

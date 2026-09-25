@@ -1323,10 +1323,12 @@ export function $getLogicalPointFromElementPoint(
  * The logical point in front of `node` among its logical parent's items. Annotation marks around
  * `node` are transparent, so a node between two of a mark's children still gets the exact point in
  * front of it; a node in the root's implied paragraph counts among the root's items.
- * @param node - A node that is, or holds, logical content.
+ * @param node - The node to find the point in front of.
  * @param collapsesSpaceRuns - Whether this editor's serialization collapses space runs; see
  *   {@link $getLogicalContentItems}.
- * @returns the logical parent and the point in its coordinates, or `undefined` for the root.
+ * @returns the logical parent and the point in its coordinates, or `undefined` for the root and for
+ *   a node that neither is nor holds any of its logical parent's items (presentation, or a mark
+ *   holding only presentation), which has no point of its own to be in front of.
  */
 export function $getLogicalPointBeforeNode(
   node: LexicalNode,
@@ -1334,6 +1336,8 @@ export function $getLogicalPointBeforeNode(
 ): { parent: ElementNode; point: LogicalPoint } | undefined {
   const parent = $getLogicalParent(node);
   if (!parent) return undefined;
+  if (!$logicalItemWithin($getLogicalContentItems(parent, collapsesSpaceRuns), node))
+    return undefined;
   return { parent, point: $logicalPointBefore(parent, node, collapsesSpaceRuns) };
 }
 
