@@ -1565,12 +1565,38 @@ function $restoreSelectionInContentRegion(
 ): void {
   if (!anchorInShell) return;
   if (anchor === undefined) {
-    liveContentNodes.find($isElementNode)?.selectStart();
+    $selectBeforeFirstUnaddressableRegionChild(liveContentNodes, getMarkerFn);
     return;
   }
   const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
   $appendNodesFragment(liveContentNodes, out, getMarkerFn, viewOptions);
   $selectAtFragmentByteAnchor({ text: out.text, spans: out.spans }, anchor, liveContentNodes);
+}
+
+/**
+ * The no-byte-anchor fallback's own target: the first ELEMENT node among `liveContentNodes`,
+ * entered at its own start — UNLESS that node is one `$appendNodesFragment` renders as an opaque
+ * sentinel span (a collapsed note, an unknown node, an unrecoverable char span, a non-re-
+ * tokenizable milestone, a sentinel verse — {@link $isRebuildSentinel}, the shared authority for
+ * exactly this question). Entering a sentinel selects INSIDE content the fragment never gave the
+ * caret a byte position in — invisible on screen, and (for a note) editing the note body instead of
+ * the region typing was meant to land in. The caret belongs immediately BEFORE it instead: its own
+ * parent, at its own index, the same boundary a caret genuinely resting there would occupy.
+ */
+function $selectBeforeFirstUnaddressableRegionChild(
+  liveContentNodes: LexicalNode[],
+  getMarkerFn: MarkerLookup,
+): void {
+  const target = liveContentNodes.find($isElementNode);
+  if (target && $isRebuildSentinel(target, getMarkerFn)) {
+    const parent = target.getParent();
+    if (parent) {
+      const index = target.getIndexWithinParent();
+      parent.select(index, index);
+      return;
+    }
+  }
+  target?.selectStart();
 }
 
 /**

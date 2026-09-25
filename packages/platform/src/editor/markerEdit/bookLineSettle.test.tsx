@@ -583,6 +583,47 @@ describe("the `\\id` line's settle scope", () => {
       expect(selection.anchor.offset).toBe(genesisText.getTextContentSize());
     });
   });
+
+  it("selects immediately BEFORE a note that LEADS the line's content, never inside it, when the caret has no byte anchor to restore", async () => {
+    // Unlike the previous test, nothing but the immutable prefix precedes the note here — no
+    // addressable span for the element point's own boundary lookup to resolve against, so the
+    // caret keeps its ORIGINAL key/offset into the rebuild's no-byte-anchor fallback. That fallback
+    // used to enter the rebuild's first ELEMENT node outright, landing an invisible caret inside
+    // the collapsed note's own body instead of stopping before it.
+    let note: NoteNode;
+    let tail: TextNode;
+    const { editor } = await testEnvironment(() => {
+      note = $createNoteNode("f", "+");
+      tail = $createTextNode(" tail");
+      $getRoot().append($createBookLine("GEN", note, tail));
+    });
+
+    await act(async () =>
+      editor.update(() => {
+        tail.setTextContent(" tail \\nd x\\nd* ");
+        // The note-hop ArrowNavigationPlugin performs for ArrowLeft past a collapsed note: an
+        // ELEMENT point on the book itself, right after the prefix and before the note.
+        const noteIndex = note.getIndexWithinParent();
+        $bookLine().select(noteIndex, noteIndex);
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const book = $bookLine();
+      const liveNote = book.getChildren().find($isNoteNode);
+      if (!liveNote) throw new Error("expected the note to survive the rebuild");
+      expect(liveNote.getKey()).toBe(note.getKey()); // same instance, not recreated
+      const spans = book.getChildren().filter($isCharNode);
+      expect(spans).toHaveLength(1);
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !selection.isCollapsed())
+        throw new Error("expected a collapsed caret");
+      // An ELEMENT point on the book itself, immediately before the note — never inside it.
+      expect(selection.anchor.type).toBe("element");
+      expect(selection.anchor.getNode().getKey()).toBe(book.getKey());
+      expect(selection.anchor.offset).toBe(liveNote.getIndexWithinParent());
+    });
+  });
 });
 
 describe("where the `\\id` line's bytes end the line", () => {
