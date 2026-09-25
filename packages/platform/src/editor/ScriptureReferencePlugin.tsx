@@ -135,6 +135,7 @@ import {
   $isSomeVerseNode,
   $resolveVerseNode,
   ImmutableVerseNode,
+  releaseTagsAfterNextCommit,
   SomeVerseNode,
 } from "shared-react";
 
@@ -372,7 +373,7 @@ function onPropChanged(machine: Machine, editor: LexicalEditor, newRef: Serializ
   // Prop-driven placement gate: never move the caret inside a different book's (stale) document.
   const bookCode = getCommittedBookCode(editor);
   if (!bookCode || bookCode === newRef.book) {
-    editor.update(() => $moveCaretToVerseStart(newRef.chapterNum, newRef.verseNum), {
+    editor.update(() => $placeCaretAtVerseStart(editor, newRef.chapterNum, newRef.verseNum), {
       tag: CURSOR_CHANGE_TAG,
     });
   }
@@ -484,10 +485,29 @@ function onDocumentChanged(
 function schedulePlacingCaretAtVerseStart(machine: Machine, editor: LexicalEditor) {
   queueMicrotask(() => {
     editor.update(
-      () => $moveCaretToVerseStart(machine.scrRef.chapterNum, machine.scrRef.verseNum),
+      () => $placeCaretAtVerseStart(editor, machine.scrRef.chapterNum, machine.scrRef.verseNum),
       { tag: CURSOR_CHANGE_TAG },
     );
   });
+}
+
+/**
+ * {@link $moveCaretToVerseStart} for an update tagged `CURSOR_CHANGE_TAG`, releasing that tag once
+ * the placement commits.
+ *
+ * A pure caret placement dirties no nodes, so Lexical never resets its pending tags for it: the tag
+ * would ride along onto whatever commit the user's next keystroke produces (a footnote insert
+ * included), and every listener that ignores caret moves (`DeltaOnChangePlugin` among them) would
+ * drop that edit. The release is armed only when the caret actually moved: an unchanged selection
+ * commits nothing, and an armed release would then strip the tag from some later, unrelated commit.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $placeCaretAtVerseStart(editor: LexicalEditor, chapterNum: number, verseNum: number) {
+  const before = $getSelection()?.clone();
+  $moveCaretToVerseStart(chapterNum, verseNum);
+  const after = $getSelection();
+  if (after && !(before && after.is(before))) releaseTagsAfterNextCommit(editor, CURSOR_CHANGE_TAG);
 }
 
 /** Moves the caret to the start of `verseNum` in `chapterNum`. No-op when the caret already

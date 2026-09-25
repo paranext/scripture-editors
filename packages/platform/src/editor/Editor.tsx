@@ -57,6 +57,7 @@ import {
   LexicalEditor,
   HISTORIC_TAG,
   REDO_COMMAND,
+  SELECTION_CHANGE_COMMAND,
   SKIP_DOM_SELECTION_TAG,
   UNDO_COMMAND,
 } from "lexical";
@@ -520,9 +521,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     focus() {
       editorRef.current?.focus();
     },
+    // Delegates to `holdsDomFocus` (above), the same check every internal caller here uses,
+    // rather than comparing `activeElement` to the root directly: a focused decorator inside the
+    // editor - a collapsed note's caller button, say - is the user being in THIS editor, and a
+    // host gating a keyboard shortcut or a PDP-sync deferral on `isFocused()` needs that answer,
+    // not a narrower one that reads such a caret as unfocused.
     isFocused() {
-      const root = editorRef.current?.getRootElement();
-      return !!root && root.ownerDocument.activeElement === root;
+      return holdsDomFocus();
     },
     undo() {
       editorRef.current?.dispatchCommand(UNDO_COMMAND, undefined);
@@ -559,7 +564,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // so the settle follows the same focus rule as `applyUpdate`: it must not write the DOM
       // selection, and with it focus, back into this editor.
       const skipDomSelection = !holdsDomFocus();
-      if (skipDomSelection) releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG);
+      const unregisterTagRelease = skipDomSelection
+        ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
+        : undefined;
       // Discrete so the settle commits synchronously: `DeltaOnChangePlugin` then refreshes
       // `editedUsjRef` before this method returns, letting callers read fresh USJ via
       // `getUsj()` immediately (the host save path depends on this ordering).
@@ -570,6 +577,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         },
         { discrete: true },
       );
+      // With nothing pending, `COMMIT_PENDING_MARKERS_COMMAND` finds no work and the update above
+      // commits nothing - disarm the listener rather than leave it to strip the tag off whatever
+      // commit happens next.
+      unregisterTagRelease?.();
       if (skipDomSelection) clearStaleDomSelection(editor);
     },
     setTransientInput(input) {
@@ -622,8 +633,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // drops instead of throwing.
       assertNotBlockVerse("apply an update");
       const holdsFocus = holdsDomFocus();
-      if (!holdsFocus && editorRef.current)
-        releaseTagsAfterNextCommit(editorRef.current, SKIP_DOM_SELECTION_TAG);
+      const unregisterTagRelease =
+        !holdsFocus && editorRef.current
+          ? releaseTagsAfterNextCommit(editorRef.current, SKIP_DOM_SELECTION_TAG)
+          : undefined;
       editorRef.current?.update(
         () => {
           if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
@@ -632,6 +645,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         },
         { discrete: true },
       );
+      // An empty (or fully no-op) `ops` leaves `$applyUpdate` with nothing to change, and the
+      // update above then commits nothing - disarm rather than leave the listener armed for
+      // whatever commit happens next.
+      unregisterTagRelease?.();
       if (!holdsFocus && editorRef.current) clearStaleDomSelection(editorRef.current);
       const editorState = editorRef.current?.getEditorState();
       if (!editorState) return;
@@ -982,7 +999,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // selection-only commit does not retire its tag, and the stale DOM selection would be read
       // back over the parked one.
       const skipDomSelection = !holdsDomFocus();
-      if (skipDomSelection) releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG);
+      const unregisterTagRelease = skipDomSelection
+        ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
+        : undefined;
       editor.update(
         () => {
           if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
@@ -991,12 +1010,33 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         },
         { discrete: true },
       );
+      // A stale `noteKeyOrIndex` leaves nothing to select, and the update above then commits
+      // nothing - disarm rather than leave the listener armed for whatever commit happens next.
+      unregisterTagRelease?.();
       if (skipDomSelection) {
         clearStaleDomSelection(editor);
-        // `onSelectionChange` is driven by the DOM selection changing, and this move wrote none.
-        // The host still has to learn where the caret now is: what it does "at the selection"
-        // (inserting a comment, say) can be asked for while focus is in the other editor.
-        onSelectionChange?.(editor.getEditorState().read(() => $getUsjSelectionFromEditor()));
+        // With no DOM selectionchange to fire, SELECTION_CHANGE_COMMAND never dispatches on its
+        // own, so ScriptureReferencePlugin (which reports scrRef only from that command) and
+        // OnSelectionChangePlugin (which drives `onSelectionChange`) never hear about this move.
+        // Dispatch it explicitly, the same way a live caret move would, so the host learns both.
+        // Wrapped in its own SKIP_DOM_SELECTION_TAG update, the same protection the placement
+        // update above carries: a caret-guard plugin reacting to this command (a trailing note
+        // host, say) can still correct the selection or even insert a node, and without the tag
+        // that correction's own DOM-selection reconcile would write a selection into this
+        // unfocused root and, as an intrinsic browser side effect, focus it - the exact steal this
+        // whole branch exists to avoid.
+        const unregisterDispatchTagRelease = releaseTagsAfterNextCommit(
+          editor,
+          SKIP_DOM_SELECTION_TAG,
+        );
+        editor.update(
+          () => {
+            $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+            editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+          },
+          { discrete: true },
+        );
+        unregisterDispatchTagRelease();
       }
     },
     selectNoteTextOffset(noteKeyOrIndex, utf16Offset) {
@@ -1237,6 +1277,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
               normalization that keeps a point out of one is too. */}
           <DecoratorBoundarySelectionPlugin />
+          {/* Not gated on viewOptions: it acts only on an EXPANDED note with no content. */}
+          <EmptyNoteCaretGuardPlugin />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects
@@ -1271,8 +1313,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           {/* Not gated on viewOptions: it reads the note shell's own node mode, so it is
               structurally a no-op wherever the shell is built editable. */}
           <NoteShellCaretGuardPlugin />
-          {/* Not gated on viewOptions: it acts only on an EXPANDED note with no content. */}
-          <EmptyNoteCaretGuardPlugin />
           {/* Not gated on viewOptions either: a construct the editor cannot model is read-only in
               every marker mode, so the guard that keeps edits out of one is too. */}
           <OpaqueBlockGuardPlugin />
