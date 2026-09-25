@@ -16,6 +16,7 @@ import {
   $isParaLikeNode,
   $isSomeChapterNode,
   $isSomeParaNode,
+  $isSynthesizedMarkerNode,
   SomeParaNode,
 } from "shared";
 
@@ -333,11 +334,22 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   const prev = para.getPreviousSibling();
   if (!$isParaLikeNode(prev)) return;
   const junction = prev.getLastChild();
+  const leadingPrefix = para.getFirstChild();
+  const dropsLeadingPrefix = $isSynthesizedMarkerNode(leadingPrefix);
   // A trailing marker separator has no meaning once it is no longer the last thing before a
   // dissolving paragraph's own (now-removed) marker — markerEditDeletion.utils.ts drops the same
-  // orphaned separator for the identical reason, never a marker prefix, since none remains in
-  // the paragraph's children by the point either merge runs.
-  const moved = para.getChildren().filter((child) => !$isMarkerTrailingSeparator(child));
+  // orphaned separator for the identical reason. Unlike that transform, this merge runs directly
+  // off the keystroke with no prior pass to remove the marker text first, so `para`'s own leading
+  // prefix glyph (markerMode "editable"'s MarkerNode, or the "visible" mode's marker-typed
+  // ImmutableTypedTextNode) is still its first child here; moving it into `prev` would fuse it
+  // onto `prev`'s trailing text as a literal marker byte (e.g. `first\qsecond`), so it is dropped
+  // along with the separator instead of moved.
+  const moved = para
+    .getChildren()
+    .filter(
+      (child) =>
+        !$isMarkerTrailingSeparator(child) && !(dropsLeadingPrefix && child.is(leadingPrefix)),
+    );
   prev.append(...moved);
   para.remove();
   // When `prev` had content, the junction is the end of its last child; when it was empty the
