@@ -12,6 +12,11 @@ import {
   $prepareReplaceSelection,
 } from "./markerEditDeletion.utils";
 import {
+  $pasteOnChapterLine,
+  $refuseLineBreakOnChapterLine,
+  $splitOnChapterLine,
+} from "./chapterLine.utils";
+import {
   $adoptDomCaretInExpandedNote,
   $handleEnterInNote,
   $handlePasteLinesInNote,
@@ -30,7 +35,9 @@ import {
   $displayWhitespaceTransform,
   $handleCopyForStandardView,
   $handlePasteForStandardView,
+  getDataTransferPayload,
   normalizePastedNbsp,
+  stripPastedBlockMarkers,
   stripPastedChapterAndBookId,
   getPastePayload,
 } from "./whitespaceDisplay.plugin.utils";
@@ -55,6 +62,7 @@ import {
   EditorState,
   HISTORIC_TAG,
   HISTORY_MERGE_TAG,
+  INSERT_LINE_BREAK_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
@@ -93,6 +101,7 @@ import {
   MarkerNode,
   MilestoneNode,
   NoteNode,
+  PARA_MARKER_DEFAULT,
   ParaNode,
   registerPendedDisplayOwners,
   textTypeState,
@@ -338,13 +347,13 @@ function $isRefusedByStructureProtection(context: MarkerEditContext, intent?: Ed
 }
 
 /**
- * The engine's three `PASTE_COMMAND` claims — the in-note `\fp` break at CRITICAL, the
- * character-stack line replay at HIGH, and the paragraph-split arm at LOW. Kept together because
- * they race on one command and their priorities are what keeps them apart; composed into the
- * plugin's `mergeRegister` in the position that ordering requires (the Standard-view
- * external-paste handler at HIGH is registered BEFORE this, so it wins the tie against the
- * char-stack claim and replays a Standard-view paste's lines itself). The returned teardown
- * unregisters all three.
+ * The engine's four `PASTE_COMMAND` claims — the in-note `\fp` break and the chapter-line paste at
+ * CRITICAL, the character-stack line replay at HIGH, and the paragraph-split arm at LOW. Kept
+ * together because they race on one command and their priorities are what keeps them apart;
+ * composed into the plugin's `mergeRegister` in the position that ordering requires (the
+ * Standard-view external-paste handler at HIGH is registered BEFORE this, so it wins the tie against
+ * the char-stack claim and replays a Standard-view paste's lines itself). The returned teardown
+ * unregisters all four.
  */
 function registerPasteNormalization(
   editor: LexicalEditor,
@@ -417,9 +426,16 @@ function registerPasteNormalization(
         // anything: a payload the strip reduces to one line, or to nothing, is not a multi-line
         // paste, and is left to the Standard-view claim exactly as that line pasted on its own
         // would be — which, for nothing at all, keeps the selection.
-        const noteText = isStandardView
-          ? normalizePastedNbsp(stripPastedChapterAndBookId(payload.text))
+        const withoutChapterOrBookId = isStandardView
+          ? stripPastedChapterAndBookId(payload.text)
           : payload.text;
+        // Under structure protection a note, like anywhere else, gains no structure marker from a
+        // paste that it could not gain from typing.
+        const withoutStructure =
+          isStandardView && context.structureProtectionMode === "protected"
+            ? stripPastedBlockMarkers(withoutChapterOrBookId, context.getMarker)
+            : withoutChapterOrBookId;
+        const noteText = isStandardView ? normalizePastedNbsp(withoutStructure) : withoutStructure;
         if (noteText.includes("\n")) {
           const lines = noteText.split("\n");
           let outcome = $handlePasteLinesInNote(lines, context.getMarker);
@@ -443,6 +459,33 @@ function registerPasteNormalization(
           // paragraph-splitting insertion below — exactly the outside-note behavior.
         }
         return false;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    ),
+    editor.registerCommand(
+      PASTE_COMMAND,
+      (event) => {
+        // A paste landing on a chapter line goes in as it would be typed there (see
+        // chapterLine.utils.ts). CRITICAL, ahead of everything that inserts a paste at HIGH:
+        // Lexical's own rich-paste insertion and structure protection's html sanitizer both insert
+        // nodes at the caret, and a chapter line has no block to insert them into. Disjoint from the
+        // in-note claim above, since a chapter line holds no note. Like that claim, it removes a
+        // selected range first, so it declines ahead of the opaque-block guard and of structure
+        // protection's refusal, both of which it outranks.
+        if ($selectionReachesIntoOpaqueBlock()) return false;
+        if ($isRefusedByStructureProtection(context)) return false;
+        const payload = getPastePayload(event, editor._config.namespace);
+        if (!payload) return false;
+        const isClaimed = $pasteOnChapterLine(
+          payload.text,
+          context.structureProtectionMode === "protected",
+          () => {
+            context.splitExpected.current = true;
+          },
+          context.getMarker,
+        );
+        if (isClaimed) event?.preventDefault();
+        return isClaimed;
       },
       COMMAND_PRIORITY_CRITICAL,
     ),
@@ -963,6 +1006,7 @@ export function MarkerEditPlugin({
                   () => {
                     context.splitExpected.current = true;
                   },
+                  context.getMarker,
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -1105,6 +1149,42 @@ export function MarkerEditPlugin({
           return claimed;
         },
         COMMAND_PRIORITY_HIGH,
+      ),
+      // A chapter line cannot be split: Enter there starts a `\p` after it and a line break is
+      // refused (see chapterLine.utils.ts). CRITICAL so both run ahead of every split, including
+      // this plugin's own char-stack split below.
+      editor.registerCommand(
+        INSERT_PARAGRAPH_COMMAND,
+        () => $splitOnChapterLine(PARA_MARKER_DEFAULT, context.viewOptions),
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
+        INSERT_LINE_BREAK_COMMAND,
+        () => $refuseLineBreakOnChapterLine(),
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      // A drop inserts through Lexical's clipboard path, which splits at every line break without
+      // going through INSERT_PARAGRAPH_COMMAND, so a drop on a chapter line is claimed and goes in
+      // as a paste there does. LOW: below structure protection's HIGH block and the NORMAL
+      // replace-selection delete, above Lexical's own insertion at EDITOR.
+      editor.registerCommand(
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        (payload) => {
+          if (typeof payload === "string" || !payload.dataTransfer) return false;
+          const { text } = getDataTransferPayload(payload.dataTransfer, editor._config.namespace);
+          return (
+            !!text &&
+            $pasteOnChapterLine(
+              text,
+              context.structureProtectionMode === "protected",
+              () => {
+                context.splitExpected.current = true;
+              },
+              context.getMarker,
+            )
+          );
+        },
+        COMMAND_PRIORITY_LOW,
       ),
       editor.registerCommand(
         INSERT_PARAGRAPH_COMMAND,
