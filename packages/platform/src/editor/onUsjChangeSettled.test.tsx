@@ -1,12 +1,23 @@
 // Target: packages/platform/src/editor/onUsjChangeSettled.test.tsx
 // Probe-run against SE 41e67470: tests 1, 2, 3, 4 FAIL for the intended reasons; 5 and 6 pass
 // (regression guards).
+import Editor from "./Editor";
+import { EditorRef } from "./editor.model";
 import { mountStandardViewEditor } from "./settledGetUsj.test-helpers";
 import { $textContaining, twoParaUsj } from "./positions/positions.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
-import { act } from "@testing-library/react";
-import { $getSelection, $isRangeSelection, LexicalEditor } from "lexical";
-import { getPendedDisplayOwners } from "shared";
+import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
+import { act, render } from "@testing-library/react";
+import { $getNodeByKey, $getSelection, $isRangeSelection, LexicalEditor } from "lexical";
+import { createRef } from "react";
+import { $isNoteNode, getPendedDisplayOwners } from "shared";
+import {
+  $getOTPositionOfNode,
+  DeltaOp,
+  DeltaSource,
+  FORMATTED_VIEW_MODE,
+  getViewOptions,
+} from "shared-react";
 
 // Undo restores a caret while the root holds DOM focus; Lexical's scroll-into-view then reads an
 // Element rect jsdom does not implement.
@@ -196,4 +207,99 @@ it("emits nothing for a commit that changes no bytes, after the first load or a 
   touchWithoutChange("beginning");
   await flush();
   expect(emissions).toHaveLength(0);
+});
+
+/** Every paragraph marker of `usj`, in document order. */
+function paraMarkersOf(usj: Usj | undefined): string[] {
+  return (usj?.content ?? []).flatMap((item) =>
+    typeof item === "object" && item.type === "para" && item.marker ? [item.marker] : [],
+  );
+}
+
+// In the formatted view a one-text paragraph's retag dirties exactly one leaf, the moved text node,
+// whose text is unchanged — so the commit's delta is a lone retain (or nothing at all, for the
+// document's first node) although the paragraph's marker changed.
+it.each([
+  [
+    "after other content",
+    twoParaUsj(["In the beginning"]).content.toSpliced(3, 0, {
+      type: "para",
+      marker: "s1",
+      content: ["Heading Title"],
+    }),
+  ],
+  [
+    "at the start of the document",
+    [
+      { type: "para", marker: "s1", content: ["Heading Title"] },
+      { type: "para", marker: "p", content: ["depart here"] },
+    ],
+  ],
+])(
+  "announces a paragraph retag whose only dirty leaf kept its text (%s)",
+  async (_label, content) => {
+    const emissions: Usj[] = [];
+    const ref = createRef<EditorRef>();
+    const lexicalRef = createRef<LexicalEditor>();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={{ type: "USJ", version: "3.1", content }}
+          options={{ view: getViewOptions(FORMATTED_VIEW_MODE) }}
+          onUsjChange={(usj) => emissions.push(usj)}
+        >
+          <EditorRefPlugin editorRef={lexicalRef} />
+        </Editor>,
+      );
+    });
+    await flush();
+    const lexical = lexicalRef.current;
+    if (!lexical) throw new Error("lexical editor was not captured");
+    commitNow(lexical, () => $textContaining("Heading Title").select(0, 0));
+    const before = emissions.length;
+    await act(async () => {
+      ref.current?.formatPara("s2");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(emissions.length).toBe(before + 1);
+    expect(paraMarkersOf(emissions[before])).toContain("s2");
+    expect(paraMarkersOf(ref.current?.getUsj())).toEqual(paraMarkersOf(emissions[before]));
+    expect(paraMarkersOf(ref.current?.getUsj())).not.toContain("s1");
+  },
+);
+
+it("announces a local applyUpdate exactly once, with the caller's ops and the inserted node", async () => {
+  const emissions: {
+    ops: DeltaOp[] | undefined;
+    source: DeltaSource | undefined;
+    insertedNodeKey: string | undefined;
+  }[] = [];
+  const { lexical, ref } = await mountStandardViewEditor(graceUsj(), {
+    onUsjChange: (_usj, ops, source, insertedNodeKey) =>
+      emissions.push({ ops, source, insertedNodeKey }),
+  });
+  await flush();
+  // Just after "In the " — addressed in "apply" coordinates, the ones `applyUpdate` reads.
+  const retain =
+    (lexical
+      .getEditorState()
+      .read(() => $getOTPositionOfNode($textContaining("In the "), "apply")) ?? 0) +
+    "In the ".length;
+  const ops: DeltaOp[] = [
+    { retain },
+    { insert: { note: { style: "f", caller: "+", contents: { ops: [{ insert: "a note" }] } } } },
+  ];
+  act(() => ref.current?.applyUpdate(ops, "local"));
+  await flush();
+  expect(emissions).toHaveLength(1);
+  expect(emissions[0].ops).toBe(ops);
+  expect(emissions[0].source).toBe("local");
+  const insertedNodeKey = emissions[0].insertedNodeKey;
+  expect(insertedNodeKey).toBeDefined();
+  expect(
+    lexical.getEditorState().read(() => $isNoteNode($getNodeByKey(insertedNodeKey ?? ""))),
+  ).toBe(true);
 });

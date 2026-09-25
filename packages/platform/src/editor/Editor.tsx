@@ -268,6 +268,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // Set when a commit may have moved the tree without the change listener refreshing
   // `editedUsjRef` (see `handleCommit`); the next settled read re-serializes instead of trusting it.
   const isEditedUsjStaleRef = useRef(false);
+  // True only while `applyUpdate` commits a local apply, which announces itself (see there).
+  const isApplyingLocalUpdateRef = useRef(false);
   const expandedNoteKeyRef = useRef<string>(undefined);
   // In-progress input an in-editor command surface has claimed (see `EditorRef.setTransientInput`),
   // anchored to the text node the caret sat in when it was declared (see AnchoredTransientInput).
@@ -857,13 +859,24 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // would tear down the host's op loop for the same reason the remote branch above reports and
       // drops instead of throwing.
       assertNotBlockVerse("apply an update");
-      editorRef.current?.update(
-        () => {
-          if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
-          $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
-        },
-        { discrete: true },
-      );
+      // A local apply is the user's own edit, so it is not tagged `DELTA_CHANGE_TAG`, which tells
+      // the marker-edit engine and the display syncs a collaborator made the change. Its one
+      // announcement is still the one below, with the caller's ops and "apply" coordinates, so
+      // the change listener stands down while it commits. A flag around the discrete commit
+      // rather than a tag: a tag on an update that ends up dirtying nothing stays on the editor
+      // and would silence the user's next edit.
+      isApplyingLocalUpdateRef.current = source === "local";
+      try {
+        editorRef.current?.update(
+          () => {
+            if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
+            $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
+          },
+          { discrete: true },
+        );
+      } finally {
+        isApplyingLocalUpdateRef.current = false;
+      }
       const editorState = editorRef.current?.getEditorState();
       if (!editorState) return;
 
@@ -1325,15 +1338,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     const { editorState, dirtyElements, dirtyLeaves, tags } = payload;
     // A selection-only commit moves no bytes.
     if (dirtyElements.size === 0 && dirtyLeaves.size === 0) return;
-    // A load (`setUsj`) and a remote apply (`applyUpdate`) set the cache themselves, and
-    // `applyUpdate` announces its own change. A loaded document came FROM the host, so it becomes
-    // the yardstick: a later commit that moves no bytes (a note toggling open) must not announce it
-    // back as a change.
+    // A load (`setUsj`) and any apply (`applyUpdate`) set the cache themselves, and `applyUpdate`
+    // announces its own change, with the caller's ops. A loaded document came FROM the host, so it
+    // becomes the yardstick: a later commit that moves no bytes (a note toggling open) must not
+    // announce it back as a change.
     if (tags.has(EXTERNAL_USJ_MUTATION_TAG)) {
       lastNotifiedUsjRef.current = editedUsjRef.current;
       return;
     }
-    if (tags.has(DELTA_CHANGE_TAG)) return;
+    if (tags.has(DELTA_CHANGE_TAG) || isApplyingLocalUpdateRef.current) return;
     // Any other blacklisted commit is not the user's edit and is not announced, but it can still
     // move the tree: an annotation over a pending paragraph settles it inside the annotation's own
     // update, and once nothing is pending `readSettledUsj` hands out the cache as the settled
@@ -1359,14 +1372,19 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     // carries no ops, and neither does the first load into an empty editor. Chopped, because a
     // text node marked dirty without changing yields a lone trailing retain, which edits nothing
     // and must not count as a change.
-    const ops = shouldSkipUpdateForOps(payload, {
+    const isSkippedForOps = shouldSkipUpdateForOps(payload, {
       ignoreSelectionChange: true,
       ignoreHistoryMergeTagChange: true,
       ignoreTags: blackListedChangeTags,
-    })
+    });
+    const ops = isSkippedForOps
       ? []
       : new Delta(editorState.read(() => $getUpdateOps(editor, payload))).chop().ops;
-    if (ops.length > 0) {
+    // Refreshed whether or not any ops survived: the ops only see TEXT, and a commit can change
+    // the document without changing any text. Retagging a one-text paragraph moves its only child
+    // into a new paragraph node, so the one dirty leaf reads the same, the delta is a lone retain
+    // (or nothing, at the document's start), and only a fresh serialization shows the new marker.
+    if (!isSkippedForOps) {
       const treeUsj = editorUsjAdaptor.deserializeEditorState(editorState, inputs.viewOptions);
       if (treeUsj) editedUsjRef.current = treeUsj;
     }
