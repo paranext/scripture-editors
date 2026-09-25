@@ -28,6 +28,7 @@ import {
   $createParaNode,
   $createTypedMarkNode,
   $createCursorPlaceholderNode,
+  CURSOR_PLACEHOLDER_CHAR,
   $createVerseBlockNode,
   $createVerseNode,
   ChapterNode,
@@ -1714,6 +1715,34 @@ describe("$getUsjSelectionFromEditor with a transient caret host", () => {
   // A caret host is presentation, absent from the USJ the host application sees, so a caret
   // resting in one has to report the position the host stands in for — the boundary just past the
   // verse marker — and not fall back to the paragraph's start.
+  it("reports a position for a zero-width-space run inside an annotation mark", () => {
+    // A mark contributes no content of its own, so asking it for the location of the child at some
+    // index hands that same child straight back. Reporting the raw parent therefore cycles between
+    // the two. It has to be the mark's own position in the block instead.
+    //
+    // Reachable without any caret host: a lone zero-width space is a Thai/Khmer/Lao line break, and
+    // splitting text at a comment boundary can leave one as a mark's only child. This runs on the
+    // hot path, from the selection-change listener, so a cycle here takes the editor down.
+    let zwsp: TextNode;
+    const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode], () => {
+      zwsp = $createTextNode(CURSOR_PLACEHOLDER_CHAR);
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("before "),
+          $createTypedMarkNode({ comment: ["comment-1"] }).append(zwsp),
+          $createTextNode(" after"),
+        ),
+      );
+    });
+    // Non-null assertion is safe: zwsp is assigned during setup.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    updateSelection(editor, zwsp!, 0);
+
+    editor.getEditorState().read(() => {
+      expect(() => $getUsjSelectionFromEditor()).not.toThrow();
+    });
+  });
+
   it("reports the empty verse's own position, not the paragraph start", () => {
     let host: TextNode;
     const { editor } = createBasicTestEnvironment([ParaNode, ImmutableVerseNode], () => {
