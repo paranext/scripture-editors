@@ -10,7 +10,12 @@
  * Standard view only — the marker-edit engine that settles a scope runs in no other view.
  */
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
-import { twoParaUsj, typeOver, $textContaining } from "../positions/positions.test-helpers";
+import {
+  contentPath,
+  twoParaUsj,
+  typeOver,
+  $textContaining,
+} from "../positions/positions.test-helpers";
 import { IDLE_SETTLE_DELAY_MS } from "./MarkerEditPlugin";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -46,13 +51,17 @@ const CARET = "‸";
 /** How {@link caretText} spells a note the caret is not inside. */
 const NOTE = "⟨note⟩";
 
-/** `In the \w grace\w* of God made`: a `\w` span whose default attribute is `lemma`. */
+/** A `\w` span holding `word`, whose default attribute is `lemma`. */
+const wordSpan = (word: string, attributes: { [name: string]: string } = {}): MarkerObject => ({
+  type: "char",
+  marker: "w",
+  ...attributes,
+  content: [word],
+});
+
+/** `In the \w grace\w* of God made`. */
 const graceUsj = (attributes: { [name: string]: string } = {}): Usj =>
-  twoParaUsj([
-    "In the ",
-    { type: "char", marker: "w", ...attributes, content: ["grace"] },
-    " of God made",
-  ]);
+  twoParaUsj(["In the ", wordSpan("grace", attributes), " of God made"]);
 
 const TYPED_ATTRIBUTE = '|lemma="grace"';
 
@@ -202,6 +211,27 @@ function settledWord(mounted: Mounted): MarkerObject | undefined {
   return para.content?.find(
     (item): item is MarkerObject => typeof item === "object" && item.marker === "w",
   );
+}
+
+/** The live first paragraph's bytes, NBSPs read as spaces. */
+function liveParaText(lexical: LexicalEditor): string {
+  return lexical
+    .getEditorState()
+    .read(() => $getRoot().getChildren().find($isParaNode)?.getTextContent() ?? "")
+    .replaceAll(NBSP, " ");
+}
+
+/** What every annotation mark in the live tree wraps, of any type. */
+function liveMarkTexts(lexical: LexicalEditor): string[] {
+  return lexical.getEditorState().read(() => {
+    const out: string[] = [];
+    const walk = (node: LexicalNode): void => {
+      if ($isTypedMarkNode(node)) out.push(node.getTextContent());
+      else if ($isElementNode(node)) node.getChildren().forEach(walk);
+    };
+    walk($getRoot());
+    return out;
+  });
 }
 
 beforeEach(() => {
@@ -368,14 +398,6 @@ describe('a comment mark over the `|lemma="` of a typed attribute section', () =
 
   const settledGrace = { type: "char", marker: "w", lemma: "grace", content: ["grace"] };
 
-  /** The live first paragraph's bytes. */
-  function liveParaText(lexical: LexicalEditor): string {
-    return lexical
-      .getEditorState()
-      .read(() => $getRoot().getChildren().find($isParaNode)?.getTextContent() ?? "")
-      .replaceAll(NBSP, " ");
-  }
-
   it("settles the attribute exactly once with the caret held at the end of what was typed", async () => {
     const mounted = await markOverAttributeName(() => {
       const tail = $textContaining('grace"');
@@ -420,5 +442,61 @@ describe('a comment mark over the `|lemma="` of a typed attribute section', () =
     expect(settledWord(mounted)).toMatchObject({ lemma: "grace" });
     expect(liveParaText(mounted.lexical)).toBe("\\p In the \\w grace|grace\\w* of God made");
     expect(liveComments(mounted.lexical)).toEqual({ c1: "ace" });
+  });
+});
+
+describe("an annotation mark wrapped over an attribute display run", () => {
+  it("covers only the content when a comment is made across the run", async () => {
+    const mounted = await mountStandardViewEditor(graceUsj({ lemma: "grace" }));
+    // The shape `CommentPlugin` makes from a selection that runs from the word into the span's
+    // attribute run: `gr[ace|gr]ace`.
+    await inOneUpdate(mounted.lexical, () => {
+      const word = $textContaining("grace");
+      const run = $getRoot()
+        .getAllTextNodes()
+        .find((node) => $getState(node, textTypeState) === "attribute");
+      if (!run) throw new Error("no attribute run");
+      const selection = $createRangeSelection();
+      selection.anchor.set(word.getKey(), word.getTextContent().indexOf("ace"), "text");
+      selection.focus.set(run.getKey(), run.getTextContent().indexOf("|") + "|gr".length, "text");
+      $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+    });
+
+    expect(settledWord(mounted)).toMatchObject({ lemma: "grace" });
+    expect(liveParaText(mounted.lexical)).toBe("\\p In the \\w grace|grace\\w* of God made");
+    expect(liveComments(mounted.lexical)).toEqual({ c1: "ace" });
+  });
+
+  it("leaves the run whole when a mark that begins with the span is carried through a settle", async () => {
+    const mounted = await mountStandardViewEditor(
+      twoParaUsj(["start ", wordSpan("name", { lemma: "grace" }), " end words"]),
+    );
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: contentPath([2, 0]), offset: 2 },
+          end: { jsonPath: contentPath([2, 2]), offset: 4 },
+        },
+        "test",
+        "1",
+      );
+      await Promise.resolve();
+    });
+    // The shape a user leaves by deleting the mark's leading text: the char span is now the
+    // mark's first child.
+    await inOneUpdate(mounted.lexical, () => {
+      const lead = $getRoot()
+        .getAllTextNodes()
+        .find((node) => node.getTextContent() === "art ");
+      if (!lead) throw new Error("expected leading text in the mark");
+      lead.remove();
+    });
+
+    await typeOver(mounted.lexical, " words", " words \\wj x\\wj*");
+    await idleSettle();
+
+    expect(settledWord(mounted)).toMatchObject({ lemma: "grace" });
+    expect(liveParaText(mounted.lexical)).toContain("name|grace\\w* end");
+    expect(liveMarkTexts(mounted.lexical).join("")).not.toContain("|");
   });
 });

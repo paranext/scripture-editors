@@ -1754,49 +1754,6 @@ function $isGlyphPoint(point: FragmentPoint): boolean {
 }
 
 /**
- * A resolved end of a mark moved out of an ATTRIBUTE display run (`|grace`, `|who="Pilate"`) onto
- * the document content beside it: a start to the front of the content after the run, an end to
- * the back of the content in front of it. `point` itself when it is not in an attribute run, and
- * `undefined` when no content sits on that side of the run (a closing glyph does, for a `\w`
- * span's run), which refuses the carry.
- *
- * An attribute run is engine-owned display bytes that a mark must never split: a typed
- * `|lemma="grace"` a mark covered part of settles into the span's attribute run, and a wrap from
- * inside the run splits its text node, after which the display-run sync no longer recognizes the
- * run and rebuilds it beside the split-off piece — and the next settle reads both into the
- * attribute's value, duplicating the user's bytes on every pass. Moved out, the mark keeps the
- * content it covered and none of the run.
- *
- * Read-only: resolves node keys, so call inside `editor.update()` or an editor-state read.
- */
-function $clearOfAttributeRun(
-  point: FragmentPoint,
-  side: "before" | "after",
-): FragmentPoint | undefined {
-  if (point.type !== "text") return point;
-  const node = $getNodeByKey(point.key);
-  if (!$isTextNode(node) || $getState(node, textTypeState) !== "attribute") return point;
-  const neighbour = side === "before" ? node.getPreviousSibling() : node.getNextSibling();
-  const leaf = $isElementNode(neighbour)
-    ? side === "before"
-      ? neighbour.getLastDescendant()
-      : neighbour.getFirstDescendant()
-    : neighbour;
-  if (
-    !$isTextNode(leaf) ||
-    $isMarkerNode(leaf) ||
-    $isMarkerTrailingSeparator(leaf) ||
-    $getState(leaf, textTypeState) === "attribute"
-  )
-    return undefined;
-  return {
-    key: leaf.getKey(),
-    offset: side === "before" ? leaf.getTextContentSize() : 0,
-    type: "text",
-  };
-}
-
-/**
  * Where one end of a carried mark lands in the rebuilt fragment: the point, and the non-whitespace
  * byte count it landed at (in the rebuilt fragment, or in the literal's spelling), plus — for an
  * end INSIDE a node the settle made from typed literal bytes — which of the rebuilt fragment's runs
@@ -1918,8 +1875,7 @@ function $resolveMarkStart(
  * bytes is not. So is every wrap when `$freshFragment` cannot describe the rebuilt nodes at all,
  * and a mark whose resolved range names no bytes it covered:
  *
- * - an end inside a marker glyph (see {@link $isGlyphPoint}), or inside an attribute display run
- *   with no content beside it on the mark's side (see {@link $clearOfAttributeRun});
+ * - an end inside a marker glyph (see {@link $isGlyphPoint});
  * - two ends that land at the same byte count, where the mark's own ends did not — a mark over
  *   nothing but bytes the settle re-spelled (a typed `lemma="` that settles away). Comparing the
  *   points is not enough: the start is resolved with byte addressing and the end with caret
@@ -1965,10 +1921,9 @@ function $restoreMarkByteRanges(
         !resolvedStart.preservedKey
       )
         continue;
-      const { preservedKey } = resolvedStart;
-      const start = $clearOfAttributeRun(resolvedStart.point, "after");
-      const end = $clearOfAttributeRun(resolvedEnd.point, "before");
-      if (!start || !end || $isGlyphPoint(start) || $isGlyphPoint(end)) continue;
+      const { point: start, preservedKey } = resolvedStart;
+      const { point: end } = resolvedEnd;
+      if ($isGlyphPoint(start) || $isGlyphPoint(end)) continue;
       // A collapsed range covers no bytes, and wrapping one splits a text node at the same offset
       // twice, which marks everything IN FRONT of it: a mark over the wrong bytes is worse than a
       // dropped mark, so refuse. (Offset 0 collapses to a no-op inside the wrap itself.) The one
@@ -1980,9 +1935,6 @@ function $restoreMarkByteRanges(
       const selection = $createRangeSelection();
       selection.anchor.set(start.key, start.offset, start.type);
       selection.focus.set(end.key, end.offset, end.type);
-      // Both ends moved out of one attribute run, to either side of it: the mark covered nothing
-      // but the run's bytes.
-      if (selection.isBackward()) continue;
       $wrapSelectionInTypedMarkNode(
         selection,
         annotation.type,

@@ -4,6 +4,7 @@
  * a selection.
  */
 
+import { textTypeState } from "../collab/delta.state.js";
 import { $isMarkerNode } from "./MarkerNode.js";
 import { assertSafeKey } from "@eten-tech-foundation/scripture-utilities";
 import { addClassNamesToElement, removeClassNamesFromElement } from "@lexical/utils";
@@ -22,6 +23,7 @@ import type {
 } from "lexical";
 import {
   $applyNodeReplacement,
+  $getState,
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
@@ -1353,6 +1355,12 @@ export function $unwrapTypedMarkNode(node: TypedMarkNode): void {
   node.remove();
 }
 
+/** Whether `node` is the text of an attribute display run — engine-owned display bytes, never
+ * annotated content. */
+function $isAttributeDisplayRun(node: LexicalNode): boolean {
+  return $isTextNode(node) && $getState(node, textTypeState) === "attribute";
+}
+
 export function $wrapSelectionInTypedMarkNode(
   selection: RangeSelection,
   type: string,
@@ -1381,13 +1389,18 @@ export function $wrapSelectionInTypedMarkNode(
       // If the current node is a child of the last created mark node, there is nothing to do here
       continue;
     }
-    if ($isMarkerNode(node)) {
+    if ($isMarkerNode(node) || $isAttributeDisplayRun(node)) {
       // A marker glyph is display bytes its construct owns, never annotated content: moving one
       // into a mark takes it out of the construct's own children, which the marker-edit engine
       // reads as the marker having been deleted (a char span or note loses its closer, a note its
       // opener) and settles by dissolving or deleting the construct. So end the current mark at
       // the glyph, and start any later content in a new one. Remember the glyph's parent, though:
       // it is the element the selection is inside, which must not then be wrapped whole.
+      //
+      // An attribute display run (`|grace`, `|who="Pilate"`) is the same kind of bytes and gets
+      // the same treatment, never split or moved: a mark over part of it splits its text node,
+      // after which the display-run sync no longer recognizes the run and rebuilds it beside the
+      // split-off piece — and the next settle reads both into the attribute's value.
       currentNodeParent = node.getParent();
       lastCreatedMarkNode = undefined;
       continue;

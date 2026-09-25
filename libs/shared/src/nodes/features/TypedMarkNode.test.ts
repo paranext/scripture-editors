@@ -1,13 +1,22 @@
 import { $createParaNode, ParaNode } from "../usj/ParaNode.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
+import { textTypeState } from "../collab/delta.state.js";
 import {
   $createTypedMarkNode,
   $isTypedMarkNode,
+  $wrapSelectionInTypedMarkNode,
   TypedMarkNode,
   TypedMarkOnMouseEnter,
   TypedMarkOnMouseLeave,
 } from "./TypedMarkNode.js";
-import { $createTextNode, $getRoot, EditorConfig, TextNode } from "lexical";
+import {
+  $createRangeSelection,
+  $createTextNode,
+  $getRoot,
+  $setState,
+  EditorConfig,
+  TextNode,
+} from "lexical";
 import { vi } from "vitest";
 
 const testType1 = "testType1";
@@ -665,6 +674,35 @@ describe("TypedMarkNode", () => {
         next.updateDOM(previous, element, mockEditorConfig);
 
         expect(element.classList.contains(`annotationId-${testID1}`)).toBe(true);
+      });
+    });
+  });
+
+  describe("$wrapSelectionInTypedMarkNode()", () => {
+    it("never splits or moves an attribute display run", () => {
+      const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode]);
+      editor.update(
+        () => {
+          const word = $createTextNode("grace");
+          const run = $setState($createTextNode("|grace"), textTypeState, "attribute");
+          const tail = $createTextNode(" of God");
+          $getRoot().append($createParaNode().append(word, run, tail));
+          const selection = $createRangeSelection();
+          selection.anchor.set(word.getKey(), 2, "text");
+          selection.focus.set(tail.getKey(), 3, "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        const para = $getRoot().getFirstChildOrThrow<ParaNode>();
+        const children = para.getChildren();
+        const marks = children.filter($isTypedMarkNode).map((mark) => mark.getTextContent());
+        expect(marks).toEqual(["ace", " of"]);
+        const run = children.find((child) => child.getTextContent() === "|grace");
+        expect(run?.getParent()?.is(para)).toBe(true);
+        expect(para.getTextContent()).toBe("grace|grace of God");
       });
     });
   });
