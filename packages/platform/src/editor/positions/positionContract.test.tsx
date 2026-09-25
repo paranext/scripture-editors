@@ -12,7 +12,7 @@ import {
   twoParaUsj,
   typeOver,
 } from "./positions.test-helpers";
-import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $getRoot, $getState, LexicalEditor, TextNode } from "lexical";
 import { $isMarkerNode, textTypeState } from "shared";
@@ -401,17 +401,29 @@ const LITERALS: PositionScenario[] = [
 /** A paragraph whose typed text settles into several top-level items: the paragraph itself, then
  * what the typed block marker opens. Each side spells the same non-whitespace bytes, so every
  * position maps one for one. */
-function splitScenario(name: string, live: string, settledItems: number): PositionScenario {
+function splitScenario(
+  name: string,
+  live: string,
+  settledItems: number,
+  usj: Usj = twoParaUsj([BASE]),
+): PositionScenario {
   const bytes = `\\p ${live}`;
   return {
     name,
-    usj: twoParaUsj([BASE]),
+    usj,
     pend: typed(live),
     liveNeedle: "In the",
     settledNeedle: "In the",
     settledItems,
     alignment: { segments: [[bytes, bytes]] },
   };
+}
+
+/** {@link twoParaUsj} without its trailing paragraph, so the typed paragraph is the document's last
+ * item. */
+function lastParaUsj(): Usj {
+  const usj = twoParaUsj([BASE]);
+  return { ...usj, content: usj.content.slice(0, -1) };
 }
 
 const SPLITS: PositionScenario[] = [
@@ -423,6 +435,12 @@ const SPLITS: PositionScenario[] = [
   splitScenario("typed-table-row", "In the \\tr \\tc1 a \\tc2 b", 2),
   // The paragraph and the sidebar, which the settled side spells as one preserved run.
   splitScenario("typed-sidebar", "In the \\esb \\p side \\esbe", 2),
+  // The same sidebar typed into the document's last paragraph: the scope is then the last root item,
+  // and its end is the end of its last leaf, not one past the document's final newline.
+  splitScenario("typed-sidebar-last", "In the \\esb \\p side \\esbe", 2, lastParaUsj()),
+  // The paragraph, the chapter, and the closed `\nd` span at root as the scope's last item: the end
+  // of the scope is just past the span's closer.
+  splitScenario("typed-char-at-scope-end", "In the \\c 2 \\nd LORD\\nd*", 3),
 ];
 
 describe("position contract — attribute re-spellings", () => {
