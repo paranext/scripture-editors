@@ -21,11 +21,11 @@ import { $createMarkerNode } from "./MarkerNode.js";
 import {
   $createTypedMarkNode,
   $isTypedMarkNode,
-  $wrapSelectionInTypedMarkNode,
   TypedMarkNode,
   TypedMarkOnMouseEnter,
   TypedMarkOnMouseLeave,
 } from "./TypedMarkNode.js";
+import { $wrapSelectionInTypedMarkNode } from "./typedMarkWrap.utils.js";
 import {
   $createRangeSelection,
   $createTextNode,
