@@ -32,6 +32,7 @@ import {
   $getState,
   $isTextNode,
   $setState,
+  LexicalEditor,
   TextNode,
 } from "lexical";
 import {
@@ -43,6 +44,7 @@ import {
   $isMarkerNode,
   $isParaNode,
   DELTA_CHANGE_TAG,
+  markApplyingUpdate,
   NBSP,
   textTypeState,
 } from "shared";
@@ -66,6 +68,23 @@ if (typeof Range.prototype.getBoundingClientRect !== "function") {
       },
     };
   };
+}
+
+/** Run `$mutate` the way `Editor.applyUpdate` runs a remote apply: one discrete update carrying
+ * DELTA_CHANGE_TAG, committed while the editor is marked as applying a remote update. */
+function applyRemote(editor: LexicalEditor, $mutate: () => void): void {
+  markApplyingUpdate(editor, "remote");
+  try {
+    editor.update(
+      () => {
+        $addUpdateTag(DELTA_CHANGE_TAG);
+        $mutate();
+      },
+      { discrete: true },
+    );
+  } finally {
+    markApplyingUpdate(editor, undefined);
+  }
 }
 
 describe("char attribute-run deletion settles (TJ repro, 2026-08-05)", () => {
@@ -197,7 +216,7 @@ describe("char attribute-run deletion settles (TJ repro, 2026-08-05)", () => {
     });
   });
 
-  it("a remote (DELTA_CHANGE_TAG) commit that destroys a still-wanted run does not pend the owner", async () => {
+  it("a remote apply that destroys a still-wanted run does not pend the owner", async () => {
     const { editor } = await testEnvironmentWithCharSync($initial);
     const $firstChar = () =>
       requireDefined(
@@ -205,8 +224,7 @@ describe("char attribute-run deletion settles (TJ repro, 2026-08-05)", () => {
         "char missing",
       );
     await act(async () =>
-      editor.update(() => {
-        $addUpdateTag(DELTA_CHANGE_TAG);
+      applyRemote(editor, () => {
         const char = $firstChar();
         const run = requireDefined(
           char
@@ -230,8 +248,8 @@ describe("char attribute-run deletion settles (TJ repro, 2026-08-05)", () => {
     // never pends the owner (I-1). This one pins the other side of "remote-authority semantics
     // preserved" — with the owner never pended, CharNodePlugin's self-heal sync (mounted here
     // alongside the engine) re-derives the run from the char's still-set `unknownAttributes`
-    // within the SAME commit (its destruction-detection branch is itself excluded on a
-    // DELTA_CHANGE_TAG commit — displayRunSync.utils.ts), so there is nothing left pending for
+    // within the SAME commit (its destruction-detection branch is itself excluded for a remote
+    // apply — displayRunSync.utils.ts), so there is nothing left pending for
     // a later departure to settle. A subsequent, unrelated caret departure must therefore be a
     // pure no-op: no settle ever fires to (wrongly) re-clear the attributes a remote peer still
     // wants displayed.
@@ -254,8 +272,7 @@ describe("char attribute-run deletion settles (TJ repro, 2026-08-05)", () => {
     };
 
     await act(async () =>
-      editor.update(() => {
-        $addUpdateTag(DELTA_CHANGE_TAG);
+      applyRemote(editor, () => {
         const char = $firstChar();
         const run = requireDefined($findRun(char), "run missing");
         run.remove();

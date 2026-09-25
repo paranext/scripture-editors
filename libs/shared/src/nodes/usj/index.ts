@@ -17,6 +17,7 @@ import { ParaNode } from "./ParaNode.js";
 import { VerseNode } from "./VerseNode.js";
 import { Klass, LexicalNode, LexicalNodeReplacement, ParagraphNode } from "lexical";
 
+export * from "./applyingUpdate.utils.js";
 export * from "./attributeDisplay.utils.js";
 export * from "./AttributeRunNode.js";
 export * from "./BookNode.js";

@@ -80,10 +80,10 @@ import {
   CharNode,
   APP_PLACED_CARET_COMMAND,
   CURSOR_CHANGE_TAG,
-  DELTA_CHANGE_TAG,
   displayRunDescriptor,
   DisplayRunOwnerRef,
   ensurePendedDisplayOwnersCurrent,
+  getApplyingUpdateSource,
   getMarker as bundledGetMarker,
   ImmutableTypedTextNode,
   ImmutableUnmatchedNode,
@@ -256,14 +256,15 @@ function registerDestroyedOwnerPend(editor: LexicalEditor, context: MarkerEditCo
   // HISTORIC (undo/redo) commits re-pend by re-scanning the RESTORED state directly
   // ($rependPendShapedNodes) — reacting to their destroyed-node diff here as well would just
   // duplicate that work against a state the restore itself, not a user edit, produced. A
-  // DELTA_CHANGE_TAG commit applies a remote collab update, not a local deletion. An owner
-  // destroyed in the SAME commit (a whole-construct deletion, or a Tier-2 splice that replaces
+  // collaborator's applied update ({@link getApplyingUpdateSource}) is not a local deletion. An
+  // owner destroyed in the SAME commit (a whole-construct deletion, or a Tier-2 splice that replaces
   // the owner outright) needs no pend — there is nothing left to settle.
   const $pendOwnersOfDestroyed = (
     mutations: Map<NodeKey, NodeMutation>,
     payload: { updateTags: Set<string>; prevEditorState: EditorState },
   ) => {
-    if (payload.updateTags.has(HISTORIC_TAG) || payload.updateTags.has(DELTA_CHANGE_TAG)) return;
+    if (payload.updateTags.has(HISTORIC_TAG) || getApplyingUpdateSource(editor) === "remote")
+      return;
     const destroyedRuns: DisplayRunOwnerRef[] = [];
     payload.prevEditorState.read(() => {
       for (const [key, mutation] of mutations) {

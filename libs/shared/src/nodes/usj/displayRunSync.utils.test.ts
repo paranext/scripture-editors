@@ -3,7 +3,8 @@ import { $createCharNode } from "./CharNode.js";
 import { $caretHoldsRunSite, $syncDisplayRun } from "./displayRunSync.utils.js";
 import { $createMilestoneNode } from "./MilestoneNode.js";
 import { getVisibleOpenMarkerText } from "./node.utils.js";
-import { NBSP } from "./node-constants.js";
+import { markApplyingUpdate } from "./applyingUpdate.utils.js";
+import { DELTA_CHANGE_TAG, NBSP } from "./node-constants.js";
 import { registerPendedDisplayOwners } from "./pendedDisplayOwners.utils.js";
 import { createBasicTestEnvironment } from "./test.utils.js";
 import { $createVerseNode } from "./VerseNode.js";
@@ -11,7 +12,15 @@ import { $createMarkerNode } from "../features/MarkerNode.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { displayRunDescriptor } from "../../displayRun/displayRunRegistry.js";
 import { $createParaNode } from "./ParaNode.js";
-import { $createTextNode, $getRoot, $getState, $isTextNode } from "lexical";
+import {
+  $addUpdateTag,
+  $createTextNode,
+  $getRoot,
+  $getState,
+  $hasUpdateTag,
+  $isTextNode,
+  LexicalEditor,
+} from "lexical";
 import { describe, expect, it } from "vitest";
 
 describe("$syncDisplayRun (char)", () => {
@@ -62,6 +71,91 @@ describe("$syncDisplayRun (char)", () => {
     editor.getEditorState().read(() => {
       expect(char.getChildren().at(-2)?.getTextContent()).toBe(`${NBSP}Lord`);
       expect(pended.has(char.getKey())).toBe(true);
+    });
+    unregister();
+  });
+});
+
+describe("$syncDisplayRun (char) around an applied update", () => {
+  /** `<p>\p ␣<char nd>\nd ␣Lord|lemma="grace"\nd*</char></p>`, the run already synced. */
+  function buildSyncedChar() {
+    const { editor } = createBasicTestEnvironment();
+    let char!: ReturnType<typeof $createCharNode>;
+    editor.update(
+      () => {
+        char = $createCharNode("nd", { lemma: "grace" });
+        char.append(
+          $createMarkerNode("nd", "opening"),
+          $createTextNode(`${NBSP}Lord`),
+          $createMarkerNode("nd", "closing"),
+        );
+        $getRoot().append($createParaNode("p").append(char));
+        $syncDisplayRun(displayRunDescriptor("char"), char);
+      },
+      { discrete: true },
+    );
+    return { editor, char };
+  }
+
+  /** Commit `$mutate` the way the editor commits a collaborator's applied update. */
+  function applyRemote(editor: LexicalEditor, $mutate: () => void): void {
+    markApplyingUpdate(editor, "remote");
+    try {
+      editor.update(
+        () => {
+          $addUpdateTag(DELTA_CHANGE_TAG);
+          $mutate();
+        },
+        { discrete: true },
+      );
+    } finally {
+      markApplyingUpdate(editor, undefined);
+    }
+  }
+
+  /** Remove the run and sync, with the caret parked nowhere the char descriptor's graceSite
+   * recognizes. */
+  function $deleteRunAndSync(char: ReturnType<typeof $createCharNode>): void {
+    char.getChildren().at(-2)?.remove();
+    $getRoot().selectStart();
+    $syncDisplayRun(displayRunDescriptor("char"), char);
+  }
+
+  it("leaves a run the user deletes alone after an applied update that moved only the caret", () => {
+    const { editor, char } = buildSyncedChar();
+    const pended = new Set<string>();
+    const unregister = registerPendedDisplayOwners(editor, pended);
+    // An apply whose ops the tree already reflects commits only the caret, so Lexical keeps its
+    // tag on the editor for the next commit.
+    applyRemote(editor, () => $getRoot().selectEnd());
+    let isTagCarriedOver = false;
+
+    editor.update(
+      () => {
+        isTagCarriedOver = $hasUpdateTag(DELTA_CHANGE_TAG);
+        $deleteRunAndSync(char);
+      },
+      { discrete: true },
+    );
+
+    expect(isTagCarriedOver).toBe(true);
+    editor.getEditorState().read(() => {
+      expect(char.getChildren().at(-2)?.getTextContent()).toBe(`${NBSP}Lord`);
+      expect(pended.has(char.getKey())).toBe(true);
+    });
+    unregister();
+  });
+
+  it("heals a run a collaborator's applied update removes", () => {
+    const { editor, char } = buildSyncedChar();
+    const pended = new Set<string>();
+    const unregister = registerPendedDisplayOwners(editor, pended);
+
+    applyRemote(editor, () => $deleteRunAndSync(char));
+
+    editor.getEditorState().read(() => {
+      expect(char.getChildren().at(-2)?.getTextContent()).toBe('|lemma="grace"');
+      expect(pended.has(char.getKey())).toBe(false);
     });
     unregister();
   });

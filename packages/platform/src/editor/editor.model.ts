@@ -161,6 +161,11 @@ export interface EditorRef {
    * there. A `"remote"` update is reported through the logger and dropped rather than thrown, so a
    * collaborator's op loop is not torn down; refresh such a view by handing it new USJ instead.
    *
+   * Must not be called inside an update of this editor (an `update` callback, a command handler,
+   * or an update listener): the apply's commit would then land after this call returns and be
+   * announced through `onUsjChange` as the user's own local edit, without these ops or `source`.
+   * Such a call is reported through the logger and still applied.
+   *
    * @throws Will throw an error if the editor uses the block verse layout and `source` is
    *   `"local"`.
    */

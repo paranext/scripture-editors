@@ -391,8 +391,37 @@ describe("a remote applyUpdate", () => {
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0].source).toBe("local");
+    expect(emissions[0].ops).toContainEqual({ insert: "X" });
     expect(JSON.stringify(emissions[0].usj)).toContain("In the beginningX");
     expect(emissions[0].usj).toEqual(ref.current?.getUsj());
+  });
+
+  it("called inside an update of the editor is reported and still applied", async () => {
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    const emissions: Usj[] = [];
+    const { lexical, ref } = await mountStandardViewEditor(twoParaUsj(["In the beginning"]), {
+      onUsjChange: (usj) => emissions.push(usj),
+      logger,
+    });
+    await flush();
+    const retain =
+      (lexical
+        .getEditorState()
+        .read(() => $getOTPositionOfNode($textContaining("In the beginning"), "apply")) ?? 0) +
+      "In the beginning".length;
+
+    act(() =>
+      lexical.update(() => ref.current?.applyUpdate([{ retain }, { insert: " nested" }], "local"), {
+        discrete: true,
+      }),
+    );
+    await flush();
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("inside an update of this editor"),
+    );
+    expect(JSON.stringify(ref.current?.getUsj())).toContain("In the beginning nested");
+    expect(emissions).toHaveLength(1);
   });
 
   it("that changes the text is announced once, as remote, and getUsj() reflects it", async () => {

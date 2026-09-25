@@ -11,7 +11,7 @@
 
 import { $createAttributeRunNode, AttributeRunNode } from "./AttributeRunNode.js";
 import { DisplayRunDescriptor, ExpectedRun, ScannedRun } from "./displayRunDescriptor.js";
-import { DELTA_CHANGE_TAG } from "./node-constants.js";
+import { getApplyingUpdateSource } from "./applyingUpdate.utils.js";
 import { $isDescendantOf } from "./node.utils.js";
 import {
   $isDisplayOwnerPended,
@@ -24,7 +24,6 @@ import {
   $getEditor,
   $getNodeByKey,
   $getSelection,
-  $hasUpdateTag,
   $isRangeSelection,
   $isTextNode,
   $setState,
@@ -183,8 +182,9 @@ export function $caretHoldsRunSite(descriptor: DisplayRunDescriptor, owner: Lexi
  *
  * Detecting the destruction from the last-committed state, inside the sync's own decision path,
  * keeps the result independent of which plugin's transforms happen to run first on a shared dirty
- * node — mount order varies across hosts. A remote collab apply is excluded: it clears owner state
- * directly, so the run is already unwanted before this sync next runs.
+ * node — mount order varies across hosts. A collaborator's applied update is excluded
+ * ({@link getApplyingUpdateSource}): it clears owner state directly, so the run is already unwanted
+ * before this sync next runs.
  */
 function $runDestroyedSinceLastCommit(
   descriptor: DisplayRunDescriptor,
@@ -196,7 +196,7 @@ function $runDestroyedSinceLastCommit(
   // Byte pieces only: a deletion that empties the wrapper but leaves the husk standing is still
   // a destroyed run — see runHasByteContent.
   if (runHasByteContent(pieces)) return false;
-  if ($hasUpdateTag(DELTA_CHANGE_TAG)) return false;
+  if (getApplyingUpdateSource($getEditor()) === "remote") return false;
   return $getEditor()
     .getEditorState()
     .read(() => {

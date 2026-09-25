@@ -27,10 +27,10 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   LexicalEditor,
   LexicalNode,
   PointType,
-  $setSelection,
   TextNode,
 } from "lexical";
 import {
@@ -601,6 +601,8 @@ describe("an element-point caret in a paragraph whose literal settles", () => {
   });
 
   it("stays at the paragraph's start when it was in front of every child", async () => {
+    // Lexical normalizes this element point onto the `\p` glyph's text before the settle reads
+    // it, so the row guards the outcome, not the element-point branch.
     const mounted = await elementCaretAfterLiteral(["lord ", footnote], () => 0);
 
     expect(caretText(mounted.lexical)).toMatch(new RegExp(`^${CARET}`));
