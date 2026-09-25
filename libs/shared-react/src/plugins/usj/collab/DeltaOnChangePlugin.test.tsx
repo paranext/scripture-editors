@@ -5,6 +5,7 @@ import {
   ImmutableVerseNode,
 } from "../../../nodes/usj/ImmutableVerseNode";
 import { EmptyVerseCaretGuardPlugin } from "../EmptyVerseCaretGuardPlugin";
+import { CharNodePlugin } from "../CharNodePlugin";
 import { TextSpacingPlugin } from "../TextSpacingPlugin";
 import {
   $typeTextAtSelection,
@@ -39,6 +40,7 @@ import {
   blackListedChangeTags,
   charIdState,
   CURSOR_CHANGE_TAG,
+  EMPTY_CHAR_PLACEHOLDER_TEXT,
   $createParaNode,
   $isParaNode,
   EXTERNAL_USJ_MUTATION_TAG,
@@ -474,6 +476,55 @@ describe("typing into a transient caret host", () => {
 
     expect(calls).toHaveLength(1);
     // Nothing was removed, so no op may claim otherwise: a delete here lands on verse 4's marker.
+    expect(calls[0].some((op) => "delete" in op)).toBe(false);
+  });
+});
+
+describe("typing into an empty char span", () => {
+  // An empty `\w \w*` span shows as a CharNode holding one NBSP, which the peer holds as zero
+  // characters. The keystroke that fills it goes through the single-changed-node fast path, and
+  // `$charTextNodeTransform` strips the NBSP in the same update — so the previous state's raw bytes
+  // are one longer than the delta-doc length the retain is counted in, and the diff pays the
+  // difference with a delete that eats the following run.
+  async function setup() {
+    const calls: DeltaOp[][] = [];
+    let placeholder: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        placeholder = $createTextNode(EMPTY_CHAR_PLACEHOLDER_TEXT);
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createImmutableVerseNode("2"),
+            $createTextNode("And the earth. "),
+            $createCharNode("w").append(placeholder),
+            $createTextNode("Light."),
+          ),
+        );
+      },
+      <>
+        <CharNodePlugin />
+        <DeltaOnChangePlugin
+          onChange={(_editorState, _editor, _tags, ops) => calls.push(ops)}
+          ignoreSelectionChange
+          ignoreHistoryMergeTagChange
+          ignoreTags={blackListedChangeTags}
+        />
+      </>,
+    );
+    calls.length = 0;
+    // Defined by the test environment.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    return { editor, calls, placeholder: placeholder! };
+  }
+
+  it("emits no delete for a keystroke that only inserts", async () => {
+    const { editor, calls, placeholder } = await setup();
+
+    // Past the structural NBSP, which is where the caret sits in an empty span.
+    await typeTextAtSelection(editor, "a", placeholder, EMPTY_CHAR_PLACEHOLDER_TEXT.length);
+
+    expect(calls).toHaveLength(1);
+    // Nothing was removed, so no op may claim otherwise: a delete here eats the "L" of "Light.".
     expect(calls[0].some((op) => "delete" in op)).toBe(false);
   });
 });
