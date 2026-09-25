@@ -7,9 +7,13 @@ import {
   $isRangeSelection,
   CLICK_COMMAND,
   COMMAND_PRIORITY_EDITOR,
+  COMMAND_PRIORITY_LOW,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  CUT_COMMAND,
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
   LexicalEditor,
+  PASTE_COMMAND,
   RangeSelection,
   TextNode,
 } from "lexical";
@@ -42,6 +46,7 @@ import {
   $guardCursorAtGutterMarker,
   $guardCursorAtParaStart,
   $guardCursorOnClick,
+  $narrowSelectionPastBookPrefix,
   $shouldRefuseBookPrefixDeletion,
   ParaMarkerPrefixCursorGuardPlugin,
 } from "./ParaMarkerPrefixCursorGuardPlugin";
@@ -636,7 +641,7 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
     });
   });
 
-  it("refuses a selection reaching from the prefix into the content", async () => {
+  it("narrows a selection reaching from the prefix into the content, instead of refusing it", async () => {
     let book!: BookNode;
     let content!: TextNode;
     const { editor } = await baseTestEnvironment(
@@ -656,8 +661,11 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
     editor.getEditorState().read(() => {
       const rootBook = $getRoot().getFirstChild();
       if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
+      // The prefix glyph survives; only the content the selection actually covered ("Gen") is
+      // removed — refusing the whole delete would be a silent no-op against a selection that never
+      // resolved to the prefix directly.
       expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
-      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}Genesis`);
+      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}esis`);
     });
   });
 
@@ -912,6 +920,260 @@ describe("DELETE_LINE_COMMAND clamps a collapsed mid-content caret past the pref
       expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
       expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}one two `);
     });
+  });
+});
+
+describe("$narrowSelectionPastBookPrefix", () => {
+  const nodesForBook = [BookNode, ImmutableTypedTextNode, TextNode];
+
+  it("narrows the ANCHOR when it is the earlier endpoint (a forward selection)", () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = createBasicTestEnvironment(nodesForBook, () => {
+      content = $createTextNode("Genesis");
+      book = $createBookLine("GEN", content);
+      $getRoot().append(book);
+    });
+    updateSelection(editor, book, 0, content, 3);
+
+    let narrowed = false;
+    editor.update(
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) narrowed = $narrowSelectionPastBookPrefix(selection);
+      },
+      { discrete: true },
+    );
+
+    expect(narrowed).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(content, 0, content, 3);
+    });
+  });
+
+  it("narrows the FOCUS when it is the earlier endpoint (a backward selection)", () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = createBasicTestEnvironment(nodesForBook, () => {
+      content = $createTextNode("Genesis");
+      book = $createBookLine("GEN", content);
+      $getRoot().append(book);
+    });
+    updateSelection(editor, content, 3, book, 0);
+
+    let narrowed = false;
+    editor.update(
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) narrowed = $narrowSelectionPastBookPrefix(selection);
+      },
+      { discrete: true },
+    );
+
+    expect(narrowed).toBe(true);
+    editor.getEditorState().read(() => {
+      // Document order (start, end), not anchor/focus directly: the focus moved from (book, 0) to
+      // (content, 0), so the selection is still backward, spanning content offsets 0 to 3.
+      $expectSelectionToBe(content, 0, content, 3);
+    });
+  });
+
+  it("is a no-op for a selection that does not touch the prefix", () => {
+    let content!: TextNode;
+    const { editor } = createBasicTestEnvironment(nodesForBook, () => {
+      content = $createTextNode("Genesis");
+      $getRoot().append($createBookLine("GEN", content));
+    });
+    updateSelection(editor, content, 1, content, 4);
+
+    let narrowed = true;
+    editor.update(
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) narrowed = $narrowSelectionPastBookPrefix(selection);
+      },
+      { discrete: true },
+    );
+
+    expect(narrowed).toBe(false);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(content, 1, content, 4);
+    });
+  });
+
+  it("collapses (and still reports narrowed) when the selection spans only the prefix", () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = createBasicTestEnvironment(nodesForBook, () => {
+      content = $createTextNode("Genesis");
+      book = $createBookLine("GEN", content);
+      $getRoot().append(book);
+    });
+    updateSelection(editor, book, 0, book, 1); // exactly the prefix, nothing else
+
+    let narrowed = false;
+    editor.update(
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) narrowed = $narrowSelectionPastBookPrefix(selection);
+      },
+      { discrete: true },
+    );
+
+    expect(narrowed).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(content, 0);
+    });
+  });
+});
+
+// Ctrl+A's selection normalizes to an anchor at (book, 0) — the whole line, prefix included — so
+// Backspace and typing over the selection both used to lose the glyph along with the content (the
+// non-collapsed branches $narrowSelectionPastBookPrefix now fixes). Constructed directly rather
+// than dispatched through SELECT_ALL_COMMAND: the shape under test is the resulting selection, not
+// Lexical's own $selectAll().
+describe("a non-collapsed selection spanning the prefix narrows instead of losing it", () => {
+  it("Backspace over the whole line removes only the content; typing after that lands past the prefix", async () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        content = $createTextNode("Genesis");
+        book = $createBookLine("GEN", content);
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, book, 0, content, 7); // "Genesis" is 7 chars
+
+    await pressKey(editor, "Backspace");
+
+    editor.getEditorState().read(() => {
+      const rootBook = $getRoot().getFirstChild();
+      if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
+      expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}`);
+    });
+
+    editor.update(
+      () => {
+        editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "x");
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      const rootBook = $getRoot().getFirstChild();
+      if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
+      expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}x`);
+    });
+  });
+
+  it("typing over the whole line replaces only the content; the prefix is still the book's first child", async () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        content = $createTextNode("Genesis");
+        book = $createBookLine("GEN", content);
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, book, 0, content, 7); // "Genesis" is 7 chars
+
+    editor.update(
+      () => {
+        editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "x");
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      const rootBook = $getRoot().getFirstChild();
+      if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
+      expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}x`);
+    });
+  });
+
+  // No paste test harness exists in this file yet; PASTE_COMMAND and CUT_COMMAND share the same
+  // $narrowSelectionBeforeCommand registration CONTROLLED_TEXT_INSERTION_COMMAND uses above, so
+  // these pin the WIRING — the selection is narrowed before any other handler for the command
+  // runs — rather than re-exercising Lexical's own paste/cut mechanics.
+  it("narrows the selection before a lower-priority PASTE_COMMAND handler runs", async () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        content = $createTextNode("Genesis");
+        book = $createBookLine("GEN", content);
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, book, 0, content, 7); // "Genesis" is 7 chars
+
+    let sawAnchorKey = "";
+    const unregister = editor.registerCommand(
+      PASTE_COMMAND,
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) sawAnchorKey = selection.anchor.getNode().getKey();
+        return true; // claim it — nothing here exercises Lexical's own paste handling
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+    try {
+      editor.update(
+        () => {
+          editor.dispatchCommand(PASTE_COMMAND, new KeyboardEvent("paste"));
+        },
+        { discrete: true },
+      );
+    } finally {
+      unregister();
+    }
+
+    expect(sawAnchorKey).toBe(content.getKey());
+  });
+
+  it("narrows the selection before a lower-priority CUT_COMMAND handler runs", async () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        content = $createTextNode("Genesis");
+        book = $createBookLine("GEN", content);
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, book, 0, content, 7); // "Genesis" is 7 chars
+
+    let sawAnchorKey = "";
+    const unregister = editor.registerCommand(
+      CUT_COMMAND,
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) sawAnchorKey = selection.anchor.getNode().getKey();
+        return true; // claim it — nothing here exercises Lexical's own cut handling
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+    try {
+      editor.update(
+        () => {
+          editor.dispatchCommand(CUT_COMMAND, null);
+        },
+        { discrete: true },
+      );
+    } finally {
+      unregister();
+    }
+
+    expect(sawAnchorKey).toBe(content.getKey());
   });
 });
 
