@@ -945,6 +945,39 @@ describe("the boundary between two touching closers", () => {
     expect(location).toEqual({ jsonPath: contentPath([2, ndIndex]), closingMarkerOffset: 0 });
   });
 
+  it.each([
+    ["\\nd*", "nd"],
+    ["\\f*", "f"],
+  ] as const)(
+    "reports byte 0 of %s in a run of three touching closers just past the closer before it",
+    async (closer, marker) => {
+      // `\+add*\nd*\f*` all touch: byte 0 of `\f*` is past TWO closers, and must still report the
+      // position just past the one directly in front of it — what the same caret reports in an
+      // editor loaded with the settled document.
+      const live = "In\\f + \\ft see \\nd LORD \\+add God\\+add*\\nd*\\f* made";
+      const mounted = await mountExpandedNoteEditor(twoParaUsj(["In the beginning made"]));
+      await typeOver(mounted.lexical, "In the beginning made", live);
+      expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+      const context = settledPositionContext(mounted.lexical);
+      const location = mounted.lexical
+        .getEditorState()
+        .read(() =>
+          $settledLocationFromLivePoint(
+            $prepareSettleScopes(context),
+            $textContaining(live),
+            live.indexOf(closer),
+          ),
+        );
+      const para = settledPara(mounted.ref.current?.getUsj(), 2);
+      const [noteIndex] = settledNoteIndexes(para);
+      const note = para.content?.[noteIndex] as MarkerObject;
+      const ndIndex = childIndex(note.content, (item) => item.marker === "nd");
+      const jsonPath =
+        marker === "f" ? contentPath([2, noteIndex]) : contentPath([2, noteIndex, ndIndex]);
+      expect(location).toEqual({ jsonPath, closingMarkerOffset: 0 });
+    },
+  );
+
   it("reports a milestone directly after a char closer at the milestone's own location", async () => {
     // Unlike the row above, `\qt-e` is an OPENING glyph, not a closer: the ordinary
     // caret-addressed resolve already lands on it correctly without any special handling for
