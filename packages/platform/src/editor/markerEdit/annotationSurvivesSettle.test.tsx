@@ -813,13 +813,19 @@ describe("an annotation that begins with a whole char span", () => {
     await typeOver(mounted.lexical, " words", " words \\wj x\\wj*");
     settle(mounted);
 
-    // The span's glyphs and separator are display, not content.
-    expect(
-      annotatedText(mounted.lexical)
-        .join("")
-        .replace(/\\nd\*?/g, "")
-        .trim(),
-    ).toBe("name end");
+    // The span's glyphs and separator are display, not content: the carried mark covers the
+    // span's text and what follows it, and the separator stays the span's own.
+    expect(annotatedText(mounted.lexical)).toEqual(["name", " end"]);
+    expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+      type: "para",
+      marker: "p",
+      content: [
+        "st",
+        { type: "char", marker: "nd", content: ["name"] },
+        " end words ",
+        { type: "char", marker: "wj", content: ["x"] },
+      ],
+    });
     expect(annotatedIDs(mounted.lexical)).toEqual(
       annotatedText(mounted.lexical).map(() => ({ [markType("test")]: ["1"] })),
     );

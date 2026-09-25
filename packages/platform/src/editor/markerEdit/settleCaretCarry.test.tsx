@@ -500,3 +500,44 @@ describe("an annotation mark wrapped over an attribute display run", () => {
     expect(liveMarkTexts(mounted.lexical).join("")).not.toContain("|");
   });
 });
+
+describe("an annotation mark that begins with a whole char span", () => {
+  it("keeps the span's separator a display byte when the paragraph settles", async () => {
+    const mounted = await mountStandardViewEditor(
+      twoParaUsj(["start ", { type: "char", marker: "nd", content: ["name"] }, " end words"]),
+    );
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: contentPath([2, 0]), offset: "st".length },
+          end: { jsonPath: contentPath([2, 2]), offset: 0 },
+        },
+        "test",
+        "1",
+      );
+      await Promise.resolve();
+    });
+    // The shape a user leaves by deleting the mark's leading text: the char span is now the
+    // mark's first child.
+    await inOneUpdate(mounted.lexical, () => {
+      const lead = $getRoot()
+        .getAllTextNodes()
+        .find((node) => node.getTextContent() === "art ");
+      if (!lead) throw new Error("expected leading text in the mark");
+      lead.remove();
+    });
+    expect(liveMarkTexts(mounted.lexical).join("").replaceAll(NBSP, " ")).toBe("\\nd name\\nd*");
+
+    await typeOver(mounted.lexical, " end words", " end words \\wj x\\wj*");
+    await idleSettle();
+
+    const para = settledPara(mounted);
+    expect(typeof para === "object" && para.content?.[1]).toEqual({
+      type: "char",
+      marker: "nd",
+      content: ["name"],
+    });
+    expect(liveParaText(mounted.lexical)).toContain("st\\nd name\\nd* end words");
+    expect(liveMarkTexts(mounted.lexical)).toEqual(["name"]);
+  });
+});

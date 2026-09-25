@@ -1588,14 +1588,18 @@ function $subtreeKeys(node: LexicalNode, out = new Set<NodeKey>()): Set<NodeKey>
 }
 
 /**
- * Where a mark whose first covered span is `first` begins. A sentinel span also carries its run's
- * index, because its byte anchor names the position PAST the preserved node rather than in front
- * of it — see {@link MarkStart}.
+ * Where a mark whose first covered span is `first` begins, `offset` bytes into it. A sentinel span
+ * also carries its run's index, because its byte anchor names the position PAST the preserved node
+ * rather than in front of it — see {@link MarkStart}.
  *
  * Read-only: walks the fragment's spans, so call inside `editor.update()` or an editor-state read.
  */
-function $markStartAt(fragment: FragmentAccumulator, first: FragmentSpan): MarkStart | undefined {
-  const anchor = $caretSpanByteAnchor(fragment, first.key, 0);
+function $markStartAt(
+  fragment: FragmentAccumulator,
+  first: FragmentSpan,
+  offset: number,
+): MarkStart | undefined {
+  const anchor = $caretSpanByteAnchor(fragment, first.key, offset);
   if (!anchor) return undefined;
   // `pushSentinel` records a run and its placeholder span together, so the n-th sentinel span is
   // the n-th run's placeholder.
@@ -1642,13 +1646,22 @@ function $captureMarkByteRanges(
     const owners = $subtreeKeys(mark);
     const covered = fragment.spans.filter((span) => owners.has(span.key));
     // A mark that begins with a whole char span starts on the span's opening glyph, and a glyph
-    // point is never re-wrapped (see `$isGlyphPoint`), so anchor on the first CONTENT byte instead.
+    // point is never re-wrapped (see `$isGlyphPoint`), so anchor on the first CONTENT byte instead
+    // — past the whitespace that separates the glyph from the content (the NBSP a char's content
+    // text starts with), which is display too: a start in front of it re-wraps it into the mark,
+    // where the span no longer reads it as its separator, grows a new one, and settles the
+    // wrapped one as a content byte the user never typed.
     const first =
       covered.find((span) => span.isSentinel || !$isMarkerNode($getNodeByKey(span.key))) ??
       covered[0];
     const last = covered[covered.length - 1];
     if (!first || !last) continue;
-    const start = $markStartAt(fragment, first);
+    const firstText = fragment.text.slice(first.start, first.end);
+    const pastSeparator =
+      first === covered[0] || first.isSentinel
+        ? 0
+        : firstText.length - firstText.trimStart().length;
+    const start = $markStartAt(fragment, first, pastSeparator);
     const end = $caretSpanByteAnchor(fragment, last.key, last.end - last.start);
     if (!start || !end) continue;
     const onClicks = mark.getTypedOnClicks();
