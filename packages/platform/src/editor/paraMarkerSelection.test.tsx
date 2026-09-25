@@ -5,12 +5,13 @@
  */
 import Editor from "./Editor";
 import { EditorProps, EditorRef } from "./editor.model";
+import { MarkerMenuItem } from "./markerMenu/markerItemSource";
 import { flushQueuedEvents } from "./editor-test.utils";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
 import { act, render } from "@testing-library/react";
 import { $getRoot, $getSelection, KEY_DOWN_COMMAND, LexicalEditor } from "lexical";
-import { createRef, RefObject } from "react";
+import { createRef, ReactElement, RefObject } from "react";
 import {
   $getSelectedParaMarker,
   $isGutterMarkerNode,
@@ -184,12 +185,12 @@ describe("formatPara with a selected paragraph marker", () => {
     });
   });
 
-  it("is refused in a read-only editor", async () => {
+  it("is refused in a read-only editor, where no marker can be selected either", async () => {
     const { ref, lexical } = await mountParagraphStructure({ options: { isReadonly: true } });
     await selectMarker(lexical, "li2");
 
+    expect(selectedMarker(lexical)).toBeUndefined();
     expect(() => ref.current?.formatPara("q1")).toThrow(/readonly/);
-    expect(selectedMarker(lexical)).toBe("li2");
   });
 
   it("is refused in the block verse layout", async () => {
@@ -301,17 +302,138 @@ describe("clicking gutter markers on the real editor", () => {
 });
 
 describe("clicking gutter markers in a read-only editor", () => {
-  // Lexical delivers clicks to a read-only editor but drops keydown, so a marker selected there
-  // could never be left by keyboard. The click places a caret instead, as it did before.
-  it("places the caret in the paragraph's text instead of selecting its marker", async () => {
+  // There is nothing to change a marker to in a read-only editor, so the click places a caret at
+  // the start of the paragraph's text — past its leading verse number — instead.
+  it("places the caret in the paragraph's text, past its verse number, instead of selecting its marker", async () => {
     const { ref, lexical } = await mountParagraphStructure({ options: { isReadonly: true } });
 
     await clickElement(glyphElementOf(lexical, "li2"));
 
     expect(ref.current?.getSelectedParaMarker()).toBeUndefined();
+    expect(ref.current?.getSelection()?.start).toEqual({
+      jsonPath: "$.content[3].content[1]",
+      offset: 0,
+    });
     expect(paraElementOf(lexical, "li2").classList.contains("psc-para-marker-selected")).toBe(
       false,
     );
+  });
+});
+
+describe("EditorRef edits with a selected paragraph marker", () => {
+  const scrRef = { book: "GEN", chapterNum: 1, verseNum: 2 };
+  const ndItem: MarkerMenuItem = { marker: "nd", kind: "character", isBasic: true };
+
+  /** The `\li2` paragraph's USJ, which every edit below must leave a `\li2`. */
+  function li2Usj(ref: RefObject<EditorRef | null>) {
+    return ref.current?.getUsj()?.content[3];
+  }
+
+  it.each([
+    ["insertMarker('wj')", "wj", (ref: EditorRef) => ref.insertMarker("wj")],
+    [
+      "applyMarkerMenuSelection(\\nd)",
+      "nd",
+      (ref: EditorRef) =>
+        ref.applyMarkerMenuSelection(ndItem, { trigger: "backslash", literalPrefixLanded: false }),
+    ],
+  ])("%s acts at the paragraph's text, never on the marker", async (_name, marker, edit) => {
+    const { ref, lexical } = await mountParagraphStructure({ scrRef });
+    await selectMarker(lexical, "li2");
+
+    await act(async () => {
+      if (ref.current) edit(ref.current);
+    });
+    await flushQueuedEvents();
+
+    const li2 = li2Usj(ref);
+    expect(li2).toMatchObject({ type: "para", marker: "li2" });
+    expect(JSON.stringify(li2)).toContain(`"marker":"${marker}"`);
+    lexical.getEditorState().read(() => {
+      expect($isGutterMarkerNode($paraOf("li2").getFirstChild())).toBe(true);
+    });
+  });
+
+  it("insertNote acts at the paragraph's text, never on the marker", async () => {
+    const { ref, lexical } = await mountParagraphStructure({ scrRef });
+    await selectMarker(lexical, "li2");
+
+    await act(async () => {
+      ref.current?.insertNote("f");
+    });
+    await flushQueuedEvents();
+
+    const li2 = li2Usj(ref);
+    expect(li2).toMatchObject({ type: "para", marker: "li2" });
+    expect(JSON.stringify(li2)).toContain('"type":"note"');
+  });
+});
+
+describe("EditorRef.focus with a selected paragraph marker", () => {
+  it("returns keyboard focus to the editor from a host control", async () => {
+    const { ref, lexical } = await mountParagraphStructure();
+    await selectMarker(lexical, "li2");
+    const hostControl = document.createElement("button");
+    document.body.append(hostControl);
+    hostControl.focus();
+
+    await act(async () => {
+      ref.current?.focus();
+    });
+    hostControl.remove();
+
+    expect(document.activeElement).toBe(lexical.getRootElement());
+    expect(ref.current?.getSelectedParaMarker()).toBe("li2");
+  });
+});
+
+describe("host navigation with a selected paragraph marker", () => {
+  it("moves to the verse before the selected paragraph, rather than reading it as already there", async () => {
+    const ref = createRef<EditorRef>();
+    const lexicalRef = createRef<LexicalEditor>();
+    // The editor tracks the scripture reference only for a host that listens for it.
+    const onScrRefChange = vi.fn();
+    const renderAt = (verseNum: number) => (
+      <Editor
+        ref={ref}
+        defaultUsj={paragraphStructureUsj}
+        scrRef={{ book: "GEN", chapterNum: 1, verseNum }}
+        onScrRefChange={onScrRefChange}
+        options={{ view: getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE) }}
+      >
+        <EditorRefPlugin editorRef={lexicalRef} />
+      </Editor>
+    );
+    let rerender!: (ui: ReactElement) => void;
+    await act(async () => {
+      ({ rerender } = render(renderAt(2)));
+    });
+    await flushQueuedEvents();
+    const lexical = lexicalRef.current;
+    if (!lexical) throw new Error("editor did not mount");
+    await selectMarker(lexical, "li2");
+
+    await act(async () => rerender(renderAt(1)));
+    await flushQueuedEvents();
+
+    expect(ref.current?.getSelectedParaMarker()).toBeUndefined();
+    lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      expect(selection?.getNodes()[0]?.getTopLevelElement()?.is($paraOf("p"))).toBe(true);
+    });
+  });
+});
+
+describe("EditorRef.getSelectedParaMarker while read-only", () => {
+  it("reports nothing once the editor turns read-only, and the marker again when editable", async () => {
+    const { ref, lexical } = await mountParagraphStructure();
+    await selectMarker(lexical, "li2");
+
+    act(() => lexical.setEditable(false));
+    expect(ref.current?.getSelectedParaMarker()).toBeUndefined();
+
+    act(() => lexical.setEditable(true));
+    expect(ref.current?.getSelectedParaMarker()).toBe("li2");
   });
 });
 

@@ -10,6 +10,7 @@ import {
   CLICK_COMMAND,
   COMMAND_PRIORITY_EDITOR,
   COMMAND_PRIORITY_LOW,
+  CommandListenerPriority,
   LexicalEditor,
   TextNode,
 } from "lexical";
@@ -53,7 +54,6 @@ import {
   registerParaMarkerPrefixCursorGuard,
 } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { ParaMarkerSelectionPlugin } from "./ParaMarkerSelectionPlugin";
-import { registerParaMarkerSelectionOwner } from "./paraMarkerSelectionOwner";
 import { baseTestEnvironment } from "./react-test.utils";
 
 const nodes = [
@@ -169,46 +169,9 @@ describe("which markers are caret territory is a per-node question", () => {
   });
 
   describe("gutter marker glyphs (the paragraph-structure aid)", () => {
-    it("selects the paragraph's marker when the click lands ON its glyph", () => {
-      let glyphKey = "";
-      const { editor } = createBasicTestEnvironment(nodes, () => {
-        const gutterMarker = $createGutterMarkerNode(`\\q1${NBSP}`);
-        glyphKey = gutterMarker.getKey();
-        $getRoot().append(
-          $createParaNode("q1").append(gutterMarker, $createTextNode("Blessed is the man")),
-        );
-      });
-      registerParaMarkerSelectionOwner(editor);
-
-      expect(runGutterGuard(editor, glyphKey)).toBe(true);
-
-      expect(selectedParaMarkerKey(editor)).toBe(glyphKey);
-    });
-
-    it("selects the marker even when a verse number leads the paragraph's content", () => {
-      let glyphKey = "";
-      const { editor } = createBasicTestEnvironment(nodes, () => {
-        const gutterMarker = $createGutterMarkerNode(`\\q1${NBSP}`);
-        glyphKey = gutterMarker.getKey();
-        $getRoot().append(
-          $createParaNode("q1").append(
-            gutterMarker,
-            $createImmutableVerseNode("1"),
-            $createTextNode("Blessed is the man"),
-          ),
-        );
-      });
-      registerParaMarkerSelectionOwner(editor);
-
-      expect(runGutterGuard(editor, glyphKey)).toBe(true);
-
-      expect(selectedParaMarkerKey(editor)).toBe(glyphKey);
-    });
-
-    it.each([
-      ["the editor is read-only", true, false],
-      ["nothing protects a marker selection", false, true],
-    ])("moves a click on a paragraph's glyph to its text when %s", (_, isOwned, isEditable) => {
+    // Selecting the marker is `ParaMarkerSelectionPlugin`'s, which claims the click first; what
+    // reaches this guard is a click on a glyph that could not be selected (read-only, say).
+    it("moves a click on a paragraph's glyph to its text", () => {
       let glyphKey = "";
       let content!: TextNode;
       const { editor } = createBasicTestEnvironment(nodes, () => {
@@ -217,12 +180,29 @@ describe("which markers are caret territory is a per-node question", () => {
         content = $createTextNode("Blessed is the man");
         $getRoot().append($createParaNode("q1").append(gutterMarker, content));
       });
-      if (isOwned) registerParaMarkerSelectionOwner(editor);
-      editor.setEditable(isEditable);
 
       expect(runGutterGuard(editor, glyphKey)).toBe(true);
 
       expect(selectedParaMarkerKey(editor)).toBeUndefined();
+      editor.getEditorState().read(() => {
+        $expectSelectionToBe(content, 0);
+      });
+    });
+
+    it("moves a click on a paragraph's glyph past a leading verse marker too", () => {
+      let glyphKey = "";
+      let content!: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        const gutterMarker = $createGutterMarkerNode(`\\q1${NBSP}`);
+        glyphKey = gutterMarker.getKey();
+        content = $createTextNode("Blessed is the man");
+        $getRoot().append(
+          $createParaNode("q1").append(gutterMarker, $createImmutableVerseNode("1"), content),
+        );
+      });
+
+      expect(runGutterGuard(editor, glyphKey)).toBe(true);
+
       editor.getEditorState().read(() => {
         $expectSelectionToBe(content, 0);
       });
@@ -316,24 +296,25 @@ describe("which markers are caret territory is a per-node question", () => {
 // Lexical's own click listener routes the browser event into `CLICK_COMMAND`, and the update it
 // opens commits on a microtask — so each of these awaits one before reading the committed state.
 describe("ParaMarkerPrefixCursorGuardPlugin click handling (real DOM click)", () => {
-  it("selects the paragraph's marker when a real click lands on its glyph element", async () => {
+  it("moves a real click on a paragraph's glyph element to its text", async () => {
     let glyphKey = "";
+    let content!: TextNode;
     const { editor } = createBasicTestEnvironment(nodes, () => {
       const gutterMarker = $createGutterMarkerNode(`\\q1${NBSP}`);
       glyphKey = gutterMarker.getKey();
-      $getRoot().append(
-        $createParaNode("q1").append(gutterMarker, $createTextNode("Blessed is the man")),
-      );
+      content = $createTextNode("Blessed is the man");
+      $getRoot().append($createParaNode("q1").append(gutterMarker, content));
     });
     registerParaMarkerPrefixCursorGuard(editor);
-    registerParaMarkerSelectionOwner(editor);
 
     const glyphElement = editor.getElementByKey(glyphKey);
     if (!glyphElement) throw new Error("gutter marker element not rendered");
     glyphElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await Promise.resolve();
 
-    expect(selectedParaMarkerKey(editor)).toBe(glyphKey);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(content, 0);
+    });
   });
 
   it("leaves a click in ordinary content where it landed", async () => {
@@ -658,7 +639,13 @@ describe("ParaMarkerPrefixCursorGuardPlugin (CLICK_COMMAND integration)", () => 
 });
 
 /** Registers a CLICK_COMMAND spy at `priority`, in mount order relative to its siblings. */
-function ClickSpyPlugin({ onClick, priority }: { onClick: () => void; priority: 0 | 1 }): null {
+function ClickSpyPlugin({
+  onClick,
+  priority,
+}: {
+  onClick: () => void;
+  priority: CommandListenerPriority;
+}): null {
   const [editor] = useLexicalComposerContext();
   useEffect(
     () =>
@@ -683,8 +670,9 @@ async function clickGlyph(editor: LexicalEditor, glyphKey: string): Promise<void
   });
 }
 
-// Rich-text clears any NodeSelection on CLICK_COMMAND at EDITOR priority. The guard claims a glyph
-// click at LOW, so that clear never runs — which only a composer with RichTextPlugin can show.
+// Rich-text clears any NodeSelection on CLICK_COMMAND at EDITOR priority. `ParaMarkerSelectionPlugin`
+// claims a glyph click at CRITICAL, so that clear never runs — which only a composer with
+// RichTextPlugin can show.
 describe("a gutter-marker click inside a rich-text editor", () => {
   it("keeps the marker selected across a re-click and moves to another marker on its click", async () => {
     let firstKey = "";
@@ -716,7 +704,7 @@ describe("a gutter-marker click inside a rich-text editor", () => {
     expect(selectedParaMarkerKey(editor)).toBe(secondKey);
   });
 
-  it("lets earlier LOW click listeners observe the claimed click, and stops EDITOR ones", async () => {
+  it("claims the glyph click ahead of the LOW and EDITOR click listeners", async () => {
     const lowSpy = vi.fn();
     const editorSpy = vi.fn();
     let glyphKey = "";
@@ -736,7 +724,7 @@ describe("a gutter-marker click inside a rich-text editor", () => {
 
     await clickGlyph(editor, glyphKey);
 
-    expect(lowSpy).toHaveBeenCalledTimes(1);
+    expect(lowSpy).not.toHaveBeenCalled();
     expect(editorSpy).not.toHaveBeenCalled();
     expect(selectedParaMarkerKey(editor)).toBe(glyphKey);
   });

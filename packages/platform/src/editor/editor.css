@@ -612,7 +612,19 @@ button.toolbar-item:disabled .chevron-down {
    clipped under the box itself, so the two never double up), and a stronger accent on the glyph.
    The focus box and book code use pseudo-elements on the element itself, but not on this class.
    The tint is a demo placeholder; the platform app binds its own token. Lives here
-   (not usj-nodes.css) because that file will be generated per-project by core. */
+   (not usj-nodes.css) because that file will be generated per-project by core.
+   The offset spans the gutter the ROOT lays out, so it must not be sized in the paragraph's own
+   `em` (a `\mt1` would overshoot the editor's edge). An unregistered custom property inherits as
+   the bare token `4em`, which resolves wherever it is used; this registered twin computes to a
+   length on the root and inherits that. */
+@property --psc-para-marker-gutter-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+.psc-gutter-markers {
+  --psc-para-marker-gutter-width: var(--psc-gutter-width, 4em);
+}
 .psc-gutter-markers .para.psc-para-marker-selected {
   --psc-para-marker-selected-tint: color-mix(
     in srgb,
@@ -620,11 +632,11 @@ button.toolbar-item:disabled .chevron-down {
     transparent
   );
   background-color: var(--psc-para-marker-selected-tint);
-  box-shadow: calc(-1 * (var(--psc-gutter-width, 4em) + var(--para-indent, 0px))) 0 0 0
+  box-shadow: calc(-1 * (var(--psc-para-marker-gutter-width) + var(--para-indent, 0px))) 0 0 0
     var(--psc-para-marker-selected-tint);
 }
 .psc-gutter-markers[dir="rtl"] .para.psc-para-marker-selected {
-  box-shadow: calc(var(--psc-gutter-width, 4em) + var(--para-indent, 0px)) 0 0 0
+  box-shadow: calc(var(--psc-para-marker-gutter-width) + var(--para-indent, 0px)) 0 0 0
     var(--psc-para-marker-selected-tint);
 }
 .psc-gutter-markers .para.psc-para-marker-selected > .marker:not(.verse):not(.chapter):first-child {

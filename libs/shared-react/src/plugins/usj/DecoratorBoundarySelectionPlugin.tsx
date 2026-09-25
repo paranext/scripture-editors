@@ -16,6 +16,7 @@ import {
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
+import { $isGutterMarkerNode } from "shared";
 
 /** One end of a DOM selection — the container node plus the offset within it. */
 interface DomPoint {
@@ -67,7 +68,12 @@ function nearestBoundary(point: DomPoint): Boundary {
  * Whether another rule already owns where a selection landing on this decorator belongs, so
  * normalizing it here would take the landing away from that rule.
  *
- * A note caller is the one such decorator. `TrailingNoteCaretGuardPlugin` answers a landing on the
+ * A gutter marker glyph is one: a click on it selects the paragraph's marker
+ * (`ParaMarkerSelectionPlugin`) or moves the caret past the paragraph's prefix
+ * (`ParaMarkerPrefixCursorGuardPlugin`). Snapping the press to the glyph's boundary first would
+ * report a caret before the paragraph's leading verse — the previous verse — to the host.
+ *
+ * A note caller is the other. `TrailingNoteCaretGuardPlugin` answers a landing on the
  * caller of a collapsed note that ends its block by hosting a caret PAST the whole note, and it
  * recognizes that landing precisely by the selection being unresolved — so supplying a selection
  * for it silently disables the repair and leaves the caret in the note's hidden body, which is the
@@ -76,7 +82,7 @@ function nearestBoundary(point: DomPoint): Boundary {
  * Neither is a position a collapsed note can draw a caret at, so there is nothing here to win.
  */
 function $hasDedicatedSelectionOwner(node: LexicalNode): boolean {
-  return $isImmutableNoteCallerNode(node);
+  return $isGutterMarkerNode(node) || $isImmutableNoteCallerNode(node);
 }
 
 /**

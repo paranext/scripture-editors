@@ -1,8 +1,11 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 /**
- * A selected paragraph marker must outlive every deferred clock the editor runs — jsdom's queued
- * native `selectionchange`, the verse-mutation dispatch, and the marker-edit idle settle clock —
- * rather than being cleared a beat after the click.
+ * A selected paragraph marker must outlive the deferred work the editor runs after a click —
+ * jsdom's queued native `selectionchange` and the verse-mutation dispatch — rather than being
+ * cleared a beat after it. The marker-edit idle settle clock is advanced too, as defence in depth:
+ * `MarkerEditPlugin` registers only in editable marker mode, so the clock does not run in the
+ * paragraph-structure view today, and this pins that nothing it would do clears the selection if it
+ * ever did.
  */
 import Editor from "../Editor";
 import { EditorRef } from "../editor.model";

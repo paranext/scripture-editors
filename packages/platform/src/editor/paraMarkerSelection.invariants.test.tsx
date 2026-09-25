@@ -114,19 +114,9 @@ it("selecting and leaving a marker changes no USJ, emits no ops, and never passe
   expect(ref.current?.getUsj()).toEqual(before);
   expect(onUsjChange).not.toHaveBeenCalled();
 
-  // Positive control: prove the spies actually intercept calls the editor makes through the
-  // real `shared` module entry — otherwise the assertion below (no recorded call named the
-  // glyph) would pass vacuously, either because selecting/leaving the marker never calls these
-  // helpers at all, or because the mock failed to wire up. `$getMarkerMenuContext`
-  // (markerMenuContext.utils.ts) unconditionally calls `$isPointInMarkerGlyphText` for any live
-  // range selection, and bails out with no call at all for a node selection — so first
-  // re-selecting the marker (a definite node selection) and confirming a still-selected read
-  // makes zero recorded calls, then moving an ordinary caret into the paragraph's own text and
-  // reading `EditorRef.getMarkerMenuContext()` again — a routed public-API path, not a direct
-  // call into the mocked module — is a call the editor is guaranteed to make through the
-  // intercepted binding. Checkpointed (not cleared) so the calls recorded above, from selecting
-  // and leaving the marker the first time, are still covered by the "never named the glyph"
-  // check below.
+  // Positive control, so the "never named the glyph" check below cannot pass vacuously: a marker
+  // selection makes no spied call, while a caret in the paragraph's text makes one through the
+  // public `getMarkerMenuContext()`. Checkpointed, not cleared, so the earlier calls stay covered.
   await act(async () => {
     glyphElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });

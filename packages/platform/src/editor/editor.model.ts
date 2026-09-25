@@ -192,8 +192,8 @@ export interface EditorRef {
    */
   getSelection(): SelectionRange | undefined;
   /**
-   * Get the marker of the paragraph whose marker is selected, if a paragraph marker is the
-   * selection.
+   * The selected paragraph marker's name (e.g. `"li2"`), if a paragraph's gutter marker is
+   * selected.
    *
    * @remarks
    * In the paragraph-structure view (`ViewOptions.hasGutterParaMarkers`) the user can select a
@@ -201,9 +201,14 @@ export interface EditorRef {
    * text. That selection names a paragraph, not a text range, so {@link EditorRef.getSelection}
    * reports `undefined` for it; this method reports it instead.
    * {@link EditorRef.formatPara} retags that paragraph. Always returns `undefined` in the block
-   * verse layout, which renders no gutter markers.
+   * verse layout, which renders no gutter markers, and while the editor is read-only.
    *
-   * @returns the selected paragraph marker's name (e.g. `"li2"`), or `undefined`.
+   * Reads the committed editor state. {@link EditorProps.onSelectionChange} fires before a
+   * selection change commits, so a read inside that callback still reports the selection being
+   * replaced; defer it (e.g. `queueMicrotask`), or use `onStateChange`'s `blockMarker`, which is
+   * reported after the commit.
+   *
+   * @returns the selected paragraph marker's name, or `undefined`.
    */
   getSelectedParaMarker(): string | undefined;
   /**

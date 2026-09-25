@@ -6,6 +6,7 @@ import {
   $getSelection,
   $isRangeSelection,
   $isTextNode,
+  BaseSelection,
   CLICK_COMMAND,
   COMMAND_PRIORITY_EDITOR,
   COMMAND_PRIORITY_LOW,
@@ -16,31 +17,22 @@ import {
 } from "lexical";
 import { useEffect } from "react";
 import {
-  $getSelectableParaMarker,
-  $getSelectedParaMarker,
+  $getSelectedParaMarkerOwner,
   $isGutterMarkerNode,
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
   $isVisibleMarkerNode,
   $placeCaretAtBoundary,
-  $selectParaMarker,
   NBSP,
   SomeParaNode,
 } from "shared";
 import { $isImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
-import { $canSelectParaMarker } from "./paraMarkerSelectionOwner";
 
 /**
  * Keeps the cursor out of the places a paragraph's structural prefix occupies but no caret may
- * rest in, and turns a click on a paragraph's gutter marker into a selection of that marker.
- *
- * WHICH marker is caret territory is decided one NODE at a time, never per view. A marker glyph has
- * three states: a marker rendered as editable text in the flow IS content the user clicks into on
- * purpose; a marker rendered in the gutter is an aid to reading and never a caret position; and a
- * gutter marker whose parent is a paragraph is a selection target — clicking it selects the marker
- * itself (a `NodeSelection`, see `$getSelectedParaMarker` in shared), so the user can retag that
- * paragraph. A document can carry all three at once, so every question here is asked of the nodes
- * in the tree.
+ * rest in. WHICH marker is caret territory is decided one node at a time, never per view — see
+ * `gutterMarkerState` (shared). A click that selects a paragraph's gutter marker never reaches this
+ * plugin: `ParaMarkerSelectionPlugin` claims it first.
  *
  * Two registrations, because the two corrections need different places in the click chain — see
  * {@link registerParaMarkerPrefixCursorGuard}.
@@ -57,11 +49,7 @@ export function ParaMarkerPrefixCursorGuardPlugin(): null {
  * Registers the click policy on `editor`. Exported so tests register exactly what the plugin does.
  *
  * - A click ON a gutter glyph is answered at `COMMAND_PRIORITY_LOW` by
- *   {@link $guardGutterMarkerClick}, which CLAIMS the click when it selected a paragraph marker.
- *   Rich-text clears every `NodeSelection` on `CLICK_COMMAND` at EDITOR priority; claiming first is
- *   what keeps the marker selected. LOW listeners registered earlier still run first — the
- *   marker-edit engine's click bookkeeping is one — and it never shares a document with a gutter
- *   glyph anyway (it runs only in editable marker mode, where no glyph is built in the gutter).
+ *   {@link $guardGutterMarkerClick}, which moves the cursor past it.
  * - Everything else is judged at EDITOR priority from where the selection came to rest
  *   ({@link $guardCursorOnClick}). Using `CLICK_COMMAND` instead of `registerUpdateListener` +
  *   `editor.update` commits the correction in the click's own update, so other listeners (e.g.
@@ -95,19 +83,17 @@ export function registerParaMarkerPrefixCursorGuard(editor: LexicalEditor): () =
  * {@link registerParaMarkerPrefixCursorGuard}.
  *
  * @param event - The click that Lexical dispatched through `CLICK_COMMAND`.
- * @returns `true` — claiming the click — only when it selected a paragraph's marker; a caret
- *   placed past a book or table glyph leaves the rest of the click chain to run as before.
+ * @returns always `false`, so the rest of the click chain runs as before.
  */
-export function $guardGutterMarkerClick(event: MouseEvent): boolean {
-  if (!$guardCursorAtGutterMarker(event.target)) return false;
-  return $getSelectedParaMarker($getSelection()) !== undefined;
+function $guardGutterMarkerClick(event: MouseEvent): boolean {
+  $guardCursorAtGutterMarker(event.target);
+  return false;
 }
 
 /**
  * The EDITOR-priority half of the click policy: everything that did not land on a gutter glyph,
  * judged from where the selection came to rest. A click ON a gutter glyph was already answered at
- * LOW by {@link $guardGutterMarkerClick} — either claimed (a paragraph's marker is now selected)
- * or corrected to a caret past the glyph — so it is left alone here.
+ * LOW by {@link $guardGutterMarkerClick}, so it is left alone here.
  *
  * Mutating: runs inside the click's update; registered by
  * {@link registerParaMarkerPrefixCursorGuard}.
@@ -166,7 +152,7 @@ export function $paraContentStartIndex(para: SomeParaNode): number {
  *
  * Also called directly when programmatically navigating to a verse whose paragraph has a
  * non-text first child (e.g. in `ScriptureReferencePlugin`), and to leave a selected paragraph
- * marker for its content.
+ * marker for its content (`$collapseParaMarkerSelection`).
  *
  * Mutating: call inside `editor.update()`.
  *
@@ -181,17 +167,15 @@ export function $advancePastParaPrefixes(para: SomeParaNode): boolean {
 }
 
 /**
- * Answers a click that landed ON a gutter marker glyph. A paragraph's glyph is SELECTED (see
- * `$getSelectedParaMarker`, shared) — re-clicking the selected glyph keeps it selected. Any other
- * owner (a book's `\id` line, a table cell) moves the cursor to the boundary just past the glyph,
- * and so does a paragraph's glyph when the editor cannot select it (`$canSelectParaMarker`: it is
- * read-only, or no `ParaMarkerSelectionPlugin` protects the selection).
+ * Answers a click that landed ON a gutter marker glyph, which is never a caret position: the
+ * cursor moves to the first place past it that is one — past a paragraph's whole structural prefix
+ * (its glyph and any leading verse, see {@link $advancePastParaPrefixes}), or just past the glyph
+ * for any other owner (a book's `\id` line, a table cell).
  *
  * Takes the click's DOM TARGET rather than the selection because a click on a gutter marker leaves
  * no selection to inspect: the glyph is a decorator, which Lexical renders `contenteditable="false"`,
  * so the browser's caret lands inside a node Lexical cannot resolve and the editor's selection is
- * left null. (Measured in Chrome: the DOM selection anchors in the glyph's own text with a drawn
- * caret, while `$getSelection()` is null.) `ParaMarkerSelectionPlugin` removes that stray caret.
+ * left null.
  *
  * Scoped to the GUTTER flavor by {@link $isGutterMarkerNode}, not to the node class: markerMode
  * "visible" renders the same class of node INLINE among the words, and this rule has no opinion
@@ -200,8 +184,7 @@ export function $advancePastParaPrefixes(para: SomeParaNode): boolean {
  * Mutating: call inside `editor.update()` (the click's update, via {@link $guardGutterMarkerClick}).
  *
  * @param target - The click's `event.target`.
- * @returns `true` if the click was handled — a marker selected or the cursor moved — and `false`
- *   if it was not on a gutter marker.
+ * @returns `true` if the cursor moved, and `false` if the click was not on a gutter marker.
  */
 export function $guardCursorAtGutterMarker(target: EventTarget | null): boolean {
   if (!isDOMNode(target)) return false;
@@ -211,12 +194,45 @@ export function $guardCursorAtGutterMarker(target: EventTarget | null): boolean 
 
   const owner = glyph.getParent();
   if (!owner) return false;
-  if ($getSelectableParaMarker(owner)?.is(glyph) && $canSelectParaMarker()) {
-    $selectParaMarker(glyph);
-    return true;
-  }
+  if ($isSomeParaNode(owner) && $advancePastParaPrefixes(owner)) return true;
   $placeCaretAtBoundary(owner, glyph.getIndexWithinParent() + 1);
   return true;
+}
+
+/**
+ * Collapses a selected paragraph marker to a caret at its paragraph's content start — the position
+ * the rest of the editor treats a marker selection as. Call before running an edit written for a
+ * caret, so it acts on the paragraph's text rather than on the glyph.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns `true` if a marker was selected and is now collapsed, `false` if nothing changed.
+ */
+export function $collapseParaMarkerSelection(): boolean {
+  const owner = $getSelectedParaMarkerOwner($getSelection());
+  if (!owner) return false;
+  if (!$advancePastParaPrefixes(owner)) owner.selectStart();
+  return true;
+}
+
+/**
+ * The node a selected paragraph marker counts as selecting for location purposes (which verse,
+ * which chapter): the first child of its paragraph's content, or the paragraph's last prefix child
+ * (a leading verse, or the glyph) when it has no content yet.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ *
+ * @param selection - The selection to inspect, e.g. `$getSelection()`.
+ * @returns the node, or `undefined` when no paragraph marker is selected.
+ */
+export function $getParaMarkerSelectionLocationNode(
+  selection: BaseSelection | null | undefined,
+): LexicalNode | undefined {
+  const owner = $getSelectedParaMarkerOwner(selection);
+  if (!owner) return undefined;
+  const index = $paraContentStartIndex(owner);
+  return owner.getChildAtIndex(index) ?? owner.getChildAtIndex(index - 1) ?? owner;
 }
 
 /**

@@ -32,11 +32,22 @@ refused. The public surface grew substantially; nothing was removed.
 - **A paragraph's marker can be selected** in the paragraph-structure view (`hasGutterParaMarkers`):
   click it in the gutter. Arrow keys do not stop on a marker; arrow movement is unchanged. The row
   is highlighted (`psc-para-marker-selected`, with the editor root's `aria-activedescendant` naming
-  the marker). Any arrow key on a selected marker returns the caret to the start of the paragraph's
-  text without moving further, and typing goes into the paragraph's text. Backspace or Delete
-  merges the paragraph into the one before it in a single undo step, as removing a paragraph marker
-  does; nothing happens on the first paragraph of a book or chapter, and `"protected"`
-  `structureProtectionMode` refuses the merge.
+  the marker, which carries `role="option"` and `aria-selected`). Everywhere else a selected marker
+  counts as a caret at the start of its paragraph's text: the scripture reference reports the verse
+  that text starts in, and `insertMarker`, `insertNote`, `applyMarkerMenuSelection`,
+  `splitParagraphWithMarker`, `commitTypedMarker` and `commitTypedCloser` act there. Any arrow key
+  returns the caret to that position without moving further, and typing, dictation, pasting and
+  the emoji picker insert there. Enter and Alt+↓ go to `onParaMarkerMenuRequest` when it is set, and
+  otherwise act as they would at that position. Backspace or Delete — or any other deletion, such
+  as macOS ⌃H/⌃D or a virtual keyboard's — merges the paragraph into the one before it in a single
+  undo step, as removing a paragraph marker does; nothing happens on the first paragraph of a book
+  or chapter, and `"protected"` `structureProtectionMode` refuses the merge. Cut, copy and drag are
+  refused, since the marker is not content, unless the browser's selection has moved to other text
+  (a right-click, say), which they then use.
+- **Paragraphs the editor creates in the paragraph-structure view get their gutter marker.** An
+  Enter split or a multi-line paste used to create a paragraph with no marker glyph, which the
+  marker-prefix guard then reset to `\p`; the new paragraph now keeps its marker (an Enter in a `\li2`
+  makes another `\li2`) and shows it in the gutter, where it can be selected.
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
 - `EditorProps.onParaMarkerMenuRequest` — fired on Enter or Alt+↓ while a paragraph marker is
   selected, so the host can open its paragraph dropdown.
@@ -89,11 +100,15 @@ refused. The public surface grew substantially; nothing was removed.
   unaffected.
 - A click on a paragraph's gutter marker selects the marker instead of moving the caret to the
   paragraph's text. Book (`\id`) and table markers still move the caret, and so does any click in a
-  read-only editor.
-- **While a paragraph marker is selected there is no text range.** `EditorRef.getSelection()`
-  returns `undefined` after a gutter click where it used to return a caret. A host that derives the
-  current paragraph from it must also read `EditorRef.getSelectedParaMarker()` (or `onStateChange`'s
-  `blockMarker`), or its paragraph controls will act on a stale caret.
+  read-only editor, which puts it past the paragraph's leading verse number.
+- **While a paragraph marker is selected there is no text range.** Every marker selection fires
+  `onSelectionChange(undefined)`, and `EditorRef.getSelection()` returns `undefined` where it used to
+  return a caret. A host that derives the current paragraph from them must also read
+  `EditorRef.getSelectedParaMarker()` (or `onStateChange`'s `blockMarker`), or its paragraph controls
+  will act on a stale caret. `getSelectedParaMarker()` reads the committed state, so call it after
+  `onSelectionChange` returns rather than inside it.
+- `EditorRef.focus()` returns keyboard focus to the editor while a paragraph marker is selected;
+  Lexical's own focus handling did so only for a text range.
 - `EditorRef.formatPara` accepts a selected paragraph marker: it retags that paragraph in place —
   keeping its attributes and identity — and keeps the marker selected.
 - **A Standard-view copy whose selection cuts through an opaque construct — a figure, sidebar,

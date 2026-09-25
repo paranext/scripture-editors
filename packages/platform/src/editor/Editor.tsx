@@ -50,6 +50,7 @@ import { deepEqual } from "fast-equals";
 import {
   $addUpdateTag,
   $getSelection,
+  $isNodeSelection,
   $isRangeSelection,
   $isTextNode,
   $setSelection,
@@ -73,7 +74,7 @@ import {
 } from "react";
 import {
   $createParaNode,
-  $getSelectedParaMarker,
+  $getSelectedParaMarkerOwner,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
@@ -96,6 +97,7 @@ import {
   $getParticularNodeOps,
   $getUsjSelectionFromEditor,
   $getRangeFromUsjSelection,
+  $collapseParaMarkerSelection,
   $getReplaceEmbedOps,
   $insertNote,
   $selectNote,
@@ -495,7 +497,16 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // for exactly the no-ref consumer the mirror exists to serve.
   const editorApi: EditorRef = {
     focus() {
-      editorRef.current?.focus();
+      const editor = editorRef.current;
+      if (!editor) return;
+      editor.focus();
+      // Lexical's `focus()` focuses the root only for a range selection, so a selected paragraph
+      // marker (a node selection) would leave keyboard focus wherever the host put it — its marker
+      // dropdown, say.
+      const hasNodeSelection = editor
+        .getEditorState()
+        .read(() => $isNodeSelection($getSelection()));
+      if (hasNodeSelection) editor.getRootElement()?.focus({ preventScroll: true });
     },
     isFocused() {
       const root = editorRef.current?.getRootElement();
@@ -634,10 +645,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     getSelectedParaMarker() {
       // `getEditorState().read`, NOT `editor.read` — a host reads this from its own selection
       // handlers, which can run mid-dispatch.
-      return editorRef.current?.getEditorState().read(() => {
-        const owner = $getSelectedParaMarker($getSelection())?.getParent();
-        return $isParaNode(owner) ? owner.getMarker() : undefined;
-      });
+      const editor = editorRef.current;
+      if (!editor?.isEditable()) return undefined;
+      return editor
+        .getEditorState()
+        .read(() => $getSelectedParaMarkerOwner($getSelection())?.getMarker());
     },
     setSelection(selection) {
       if (isBlockVerse) {
@@ -714,8 +726,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           // no `$setBlocksType`, which would swap in a fresh ParaNode and drop the paragraph's
           // attributes and identity. The glyph is rewritten in place too, so the selection stays
           // on it.
-          const owner = $getSelectedParaMarker(selection)?.getParent();
-          if ($isParaNode(owner)) {
+          const owner = $getSelectedParaMarkerOwner(selection);
+          if (owner) {
             $applyParaMarker(owner, blockMarker, viewOptions);
             return;
           }
@@ -829,6 +841,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       if (!isUsjMarkerSupported(marker, nodeOptions.extraValidMarkers))
         throw new Error(`Unsupported marker '${marker}'`);
 
+      // Every edit below is written for a caret; a selected paragraph marker counts as one at its
+      // paragraph's content start, so collapse to there first rather than act on the glyph.
+      editorRef.current.update($collapseParaMarkerSelection, { discrete: true });
       const markerAction = getUsjMarkerAction(
         marker,
         expandedNoteKeyRef,
@@ -872,6 +887,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       let insertedNoteKey: string | undefined;
       const editor = editorRef.current;
       editor.update(() => {
+        $collapseParaMarkerSelection();
         insertedNoteKey = $applyMarkerMenuSelection(item, opts, scrRef, {
           expandedNoteKeyRef,
           viewOptions,
@@ -887,6 +903,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       if (!editorRef.current) return;
 
       editorRef.current.update(() => {
+        $collapseParaMarkerSelection();
         $splitParagraphWithMarker(marker, viewOptions);
       });
     },
@@ -898,6 +915,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // terminating separator); this handle only supplies the update and the refusal warning.
       let committed = false;
       editorRef.current.update(() => {
+        $collapseParaMarkerSelection();
         committed = $commitTypedMarker(typedMarker, options);
         if (!committed)
           logger?.warn(
@@ -916,6 +934,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // the refusal warning, matching `commitTypedMarker`.
       let committed = false;
       editorRef.current.update(() => {
+        $collapseParaMarkerSelection();
         committed = $commitTypedCloser(typedMarker);
         if (!committed)
           logger?.warn(
@@ -929,6 +948,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // `discrete` for the same reason `formatPara` above uses it.
       editorRef.current?.update(
         () => {
+          $collapseParaMarkerSelection();
           const noteNode = $insertNote(
             marker,
             caller,

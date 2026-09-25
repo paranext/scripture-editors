@@ -500,10 +500,10 @@ export function getUsjMarkerAction(
             else nodeToInsert.selectStart();
           }
         }
-      } else {
-        // Insert the node directly
-        selection?.insertNodes([nodeToInsert]);
       }
+      // Nothing is inserted at a non-range selection: `NodeSelection.insertNodes` REMOVES the
+      // selected node, so a selected paragraph marker would be deleted. `EditorRef.insertMarker`
+      // collapses one to its paragraph's text before getting here.
     }, editorUpdateOptions);
   };
   return { action, label: markerAction?.label };

@@ -96,10 +96,12 @@ import {
   $getSelection,
   $isElementNode,
   $isTextNode,
+  BaseSelection,
   COMMAND_PRIORITY_LOW,
   EditorState,
   ElementNode,
   LexicalEditor,
+  LexicalNode,
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
@@ -109,7 +111,6 @@ import {
   $findChapter,
   $findNextChapter,
   $findThisChapter,
-  $getSelectedParaMarker,
   $isBookNode,
   $isNoteNode,
   $isParaNode,
@@ -131,6 +132,7 @@ import {
   $findThisVerse,
   $findVerseOrPara,
   $getEffectiveVerseForBcv,
+  $getParaMarkerSelectionLocationNode,
   $isSomeVerseNode,
   $resolveVerseNode,
   ImmutableVerseNode,
@@ -387,16 +389,19 @@ function consumePendingEcho(machine: Machine, ref: SerializedVerseRef): boolean 
   return true;
 }
 
+/** The node a selection addresses: its start, or — for a selected paragraph marker, which counts
+ * as a caret at its paragraph's content start — the node there, so the glyph is never read as a
+ * position in the previous verse. */
+function $getSelectionLocationNode(selection: BaseSelection | null): LexicalNode | undefined {
+  return $getParaMarkerSelectionLocationNode(selection) ?? getSelectionStartNode(selection);
+}
+
 /** Resolve the selection to a position the document can address, or undefined (no selection, or
  * an empty document). Content before the first chapter of a loaded document addresses as
  * chapter 1 per USFM convention (its verse resolves to 0). */
 function $resolvePosition(): ResolvedPosition | undefined {
   const selection = $getSelection();
-  // A selected paragraph marker is not a place in the text: it names a paragraph, not a verse.
-  // Resolving it would read a reference off the glyph and move the host's reference for a
-  // selection that has not moved the caret.
-  if ($getSelectedParaMarker(selection)) return undefined;
-  const startNode = getSelectionStartNode(selection);
+  const startNode = $getSelectionLocationNode(selection);
   if (!startNode) return undefined;
 
   // The unaddressable check needs the NODE's existence - a BookNode with an empty code still
@@ -496,7 +501,7 @@ function schedulePlacingCaretAtVerseStart(machine: Machine, editor: LexicalEdito
 /** Moves the caret to the start of `verseNum` in `chapterNum`. No-op when the caret is already
  * inside a verse range containing `verseNum` (a range is one location), or the target is absent. */
 function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
-  const startNode = getSelectionStartNode($getSelection());
+  const startNode = $getSelectionLocationNode($getSelection());
   const selectedVerse = $findThisVerse(startNode)?.getNumber();
   // Resolve the caret's CHAPTER too, mirroring $resolvePosition's counting (content before the
   // first chapter of a loaded document addresses as chapter 1). The verse-number match alone is

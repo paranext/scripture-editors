@@ -38,11 +38,11 @@ const MARKER_TEXT_TYPE = "marker";
  * `textType: "marker"`. Nor can it be read off the view, because "is this marker in the gutter?" is
  * asked one node at a time — a document can carry gutter markers and inline glyphs at once (a
  * book's `\id` line, for one). So the fact travels on the node that has it, set where the glyph is
- * built. It gives a gutter glyph three states, all decided by `ParaMarkerPrefixCursorGuardPlugin`
- * (shared-react) one node at a time: an inline glyph keeps its caret; a gutter glyph is never a
- * caret position; and a gutter glyph whose parent is a paragraph is a SELECTION target — a
- * `NodeSelection` of the glyph alone (`$getSelectedParaMarker`, node.utils.ts), which carries no
- * offsets and admits only a retag of that paragraph.
+ * built. It separates three cases, each decided per node: an inline glyph keeps its caret; a gutter
+ * glyph is never a caret position; and a paragraph's gutter glyph is also a selection target
+ * (`$getSelectedParaMarker`, node.utils.ts) that admits a retag or, on Backspace/Delete, a merge
+ * into the previous paragraph. This is the one place that explanation lives; the plugins that act
+ * on it link here.
  *
  * Set on the SERIALIZED twin by the USJ→editor adaptor's `createImmutableTypedText`
  * (usj-editor.adaptor.ts, platform), which builds JSON rather than live nodes — the same split the
@@ -200,9 +200,10 @@ export class ImmutableTypedTextNode extends DecoratorNode<null> {
 
   /**
    * Stays `false` even though a paragraph's gutter glyph can be selected: it is selected only by a
-   * click (`ParaMarkerPrefixCursorGuardPlugin`, shared-react), and reaching it by keyboard is left to
-   * the arrow-navigation work. Returning `true` would also change Lexical's native Backspace-beside-a-decorator behavior at
-   * every paragraph start, where `StructureKeyboardPlugin` arms paragraph merges.
+   * click (`ParaMarkerSelectionPlugin`, shared-react), and reaching it by keyboard is left to the
+   * arrow-navigation work. Returning `true` would also change Lexical's native
+   * Backspace-beside-a-decorator behavior at every paragraph start, where `StructureKeyboardPlugin`
+   * arms paragraph merges.
    */
   override isKeyboardSelectable(): false {
     return false;

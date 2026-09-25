@@ -16,10 +16,9 @@ import {
 } from "lexical";
 import { useEffect, useRef } from "react";
 import {
-  $getSelectedParaMarker,
+  $getSelectedParaMarkerOwner,
   $isImmutableTypedTextNode,
   $isMarkerNode,
-  $isParaNode,
   ZWSP,
 } from "shared";
 import { $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-react";
@@ -152,8 +151,8 @@ export function $getActiveVerseKey(): string | undefined {
   // type into — is the active one, so its ellipsis stays hidden like a caret's would.
   // `$paraContentStartIndex` is the same measure of that paragraph's prefix the caret uses on the
   // way out, so the two cannot disagree about which verse the content starts in.
-  const markerPara = $getSelectedParaMarker(selection)?.getParent();
-  if ($isParaNode(markerPara)) {
+  const markerPara = $getSelectedParaMarkerOwner(selection);
+  if (markerPara) {
     const prefix = markerPara.getChildren().slice(0, $paraContentStartIndex(markerPara));
     return prefix.findLast($isSomeVerseNode)?.getKey();
   }
@@ -202,14 +201,8 @@ export function $getActiveVerseKey(): string | undefined {
 export function $getParaFromSelection(
   selection: BaseSelection | undefined,
 ): ElementNode | undefined {
-  const selectedMarker = $getSelectedParaMarker(selection ?? null);
-  if (selectedMarker) {
-    // `DecoratorNode.getTopLevelElement()` types as `ElementNode | this | null` — the glyph
-    // itself only when it has no element ancestor, which never happens for a selectable marker
-    // (its parent is always a paragraph per `$getSelectedParaMarker`).
-    const top = selectedMarker.getTopLevelElement();
-    return $isElementNode(top) ? top : undefined;
-  }
+  const markerPara = $getSelectedParaMarkerOwner(selection);
+  if (markerPara) return markerPara.getTopLevelElement() ?? markerPara;
   if (!$isRangeSelection(selection)) return undefined;
   return selection.anchor.getNode().getTopLevelElement() ?? undefined;
 }

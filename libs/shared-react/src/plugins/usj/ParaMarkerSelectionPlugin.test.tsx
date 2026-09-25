@@ -22,15 +22,17 @@ import {
   $setSelection,
   $setState,
   COMMAND_PRIORITY_LOW,
+  BEFORE_INPUT_COMMAND,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
   CUT_COMMAND,
+  DELETE_CHARACTER_COMMAND,
   DRAGSTART_COMMAND,
   DROP_COMMAND,
+  FOCUS_COMMAND,
   KEY_DOWN_COMMAND,
   LexicalCommand,
   LexicalEditor,
-  LexicalNode,
   PASTE_COMMAND,
   TextNode,
   UNDO_COMMAND,
@@ -53,9 +55,9 @@ import {
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { $expectSelectionToBe } from "../../../../shared/src/nodes/usj/test.utils";
 
-/** A paragraph as the paragraph-structure view builds it: its gutter marker glyph, then content. */
-function $createGutterParaNode(marker: string, ...content: LexicalNode[]): ParaNode {
-  return $createParaNode(marker).append($createGutterMarkerNode(`\\${marker}${NBSP}`), ...content);
+/** The gutter marker glyph the paragraph-structure view builds as a `marker` paragraph's first child. */
+function $createGutterGlyphNode(marker: string): ImmutableTypedTextNode {
+  return $createGutterMarkerNode(`\\${marker}${NBSP}`);
 }
 
 /** The marker of the paragraph whose marker is selected, if any. */
@@ -67,9 +69,9 @@ function selectedMarkerOf(editor: LexicalEditor): string | undefined {
 }
 
 /** The element the editor root's `aria-activedescendant` names, if any. */
-function activeDescendant(editor: LexicalEditor): HTMLElement | null {
+function activeDescendant(editor: LexicalEditor): HTMLElement | undefined {
   const id = editor.getRootElement()?.getAttribute("aria-activedescendant");
-  return id ? document.getElementById(id) : null;
+  return (id && document.getElementById(id)) || undefined;
 }
 
 /** Elements under the editor root carrying the selected-marker highlight. */
@@ -99,10 +101,18 @@ async function environment(
       doc.firstText = $createTextNode("first");
       doc.secondText = $createTextNode("second");
       doc.thirdText = $createTextNode("third");
-      doc.p = $createGutterParaNode("p", $createImmutableVerseNode("1"), doc.firstText);
-      doc.li2 = $createGutterParaNode("li2", $createImmutableVerseNode("2"), doc.secondText);
-      doc.q1 = $createGutterParaNode("q1", doc.thirdText);
-      $getRoot().append(doc.p, doc.li2, doc.q1);
+      doc.p = $createParaNode("p");
+      doc.li2 = $createParaNode("li2");
+      doc.q1 = $createParaNode("q1");
+      $getRoot().append(
+        doc.p.append($createGutterGlyphNode("p"), $createImmutableVerseNode("1"), doc.firstText),
+        doc.li2.append(
+          $createGutterGlyphNode("li2"),
+          $createImmutableVerseNode("2"),
+          doc.secondText,
+        ),
+        doc.q1.append($createGutterGlyphNode("q1"), doc.thirdText),
+      );
     },
     <>
       <ParaMarkerSelectionPlugin onParaMarkerMenuRequest={onParaMarkerMenuRequest} />
@@ -133,7 +143,11 @@ describe("ParaMarkerSelectionPlugin — highlight", () => {
     expect(element?.hasAttribute("aria-selected")).toBe(false);
     expect(highlightedElements(editor)).toHaveLength(1);
     const glyphKey = editor.getEditorState().read(() => li2.getFirstChildOrThrow().getKey());
-    expect(activeDescendant(editor)).toBe(editor.getElementByKey(glyphKey));
+    const glyphElement = editor.getElementByKey(glyphKey);
+    expect(glyphElement).not.toBeNull();
+    expect(activeDescendant(editor)).toBe(glyphElement);
+    expect(glyphElement?.getAttribute("role")).toBe("option");
+    expect(glyphElement?.getAttribute("aria-selected")).toBe("true");
   });
 
   it("removes both when the selection leaves the marker", async () => {
@@ -156,7 +170,22 @@ describe("ParaMarkerSelectionPlugin — highlight", () => {
 
     expect(highlightedElements(editor)).toEqual([editor.getElementByKey(p.getKey())]);
     const glyphKey = editor.getEditorState().read(() => p.getFirstChildOrThrow().getKey());
-    expect(activeDescendant(editor)).toBe(editor.getElementByKey(glyphKey));
+    const glyphElement = editor.getElementByKey(glyphKey);
+    expect(glyphElement).not.toBeNull();
+    expect(activeDescendant(editor)).toBe(glyphElement);
+  });
+
+  // The class is re-applied on every update, not only when the owner changes, so an element that
+  // lost it (one Lexical re-created under the same key, say) gets it back.
+  it("re-applies the highlight on the next update to an element that lost it", async () => {
+    const { editor, li2, thirdText } = await environment();
+    await selectMarkerOf(editor, li2);
+    const element = editor.getElementByKey(li2.getKey())!;
+    element.classList.remove(PARA_MARKER_SELECTED_CLASS_NAME);
+
+    await sutUpdate(editor, () => thirdText.setTextContent("third, edited"));
+
+    expect(element.classList.contains(PARA_MARKER_SELECTED_CLASS_NAME)).toBe(true);
   });
 
   // Replacing the paragraph node (new key, new element) while moving the glyph over with its key
@@ -188,7 +217,12 @@ describe("ParaMarkerSelectionPlugin — highlight", () => {
     await sutUpdate(editor, () => {
       $getRoot()
         .clear()
-        .append($createGutterParaNode("p", $createTextNode("fresh document")));
+        .append(
+          $createParaNode("p").append(
+            $createGutterGlyphNode("p"),
+            $createTextNode("fresh document"),
+          ),
+        );
     });
 
     expect(selectedMarkerOf(editor)).toBeUndefined();
@@ -359,6 +393,35 @@ describe("ParaMarkerSelectionPlugin — asking to change the marker", () => {
   );
 });
 
+describe("ParaMarkerSelectionPlugin — without a marker menu", () => {
+  it("Enter acts as it would at the paragraph's content start", async () => {
+    const { editor, li2 } = await deletionEnvironment("off");
+    await selectMarkerOf(editor, li2);
+
+    await pressKey(editor, "Enter");
+
+    expect(selectedMarkerOf(editor)).toBeUndefined();
+    expect(paragraphsOf(editor)).toEqual([
+      { marker: "p", glyphs: 1, text: "first" },
+      { marker: "li2", glyphs: 1, text: "" },
+      { marker: "li2", glyphs: 0, text: "second" },
+      { marker: "q1", glyphs: 1, text: "third" },
+    ]);
+  });
+
+  it("Alt+ArrowDown returns to the paragraph's text like any other arrow", async () => {
+    const { editor, li2, secondText } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    const event = await pressKeyWith(editor, { key: "ArrowDown", altKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(secondText, 0);
+    });
+  });
+});
+
 describe("ParaMarkerSelectionPlugin — Escape", () => {
   it("returns the caret to the paragraph's first content position without stopping the event", async () => {
     const { editor, li2, secondText } = await environment();
@@ -407,6 +470,18 @@ describe("ParaMarkerSelectionPlugin — typing collapses to the content, then pr
     },
   );
 
+  it("a character outside the BMP (an emoji) collapses too", async () => {
+    const { editor, li2, secondText } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    const event = await pressKey(editor, "😀");
+
+    expect(event.defaultPrevented).toBe(false);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(secondText, 0);
+    });
+  });
+
   it.each([
     [{ key: "z", ctrlKey: true }],
     [{ key: "Tab" }],
@@ -441,11 +516,15 @@ async function deletionEnvironment(
       doc.firstText = $createTextNode("first");
       doc.secondText = $createTextNode("second");
       doc.thirdText = $createTextNode("third");
-      doc.p = $createGutterParaNode("p", doc.firstText);
-      doc.li2 = $createGutterParaNode("li2", doc.secondText);
-      doc.q1 = $createGutterParaNode("q1", doc.thirdText);
+      doc.p = $createParaNode("p");
+      doc.li2 = $createParaNode("li2");
+      doc.q1 = $createParaNode("q1");
       if (afterChapter) $getRoot().append($createImmutableChapterNode("1"));
-      $getRoot().append(doc.p, doc.li2, doc.q1);
+      $getRoot().append(
+        doc.p.append($createGutterGlyphNode("p"), doc.firstText),
+        doc.li2.append($createGutterGlyphNode("li2"), doc.secondText),
+        doc.q1.append($createGutterGlyphNode("q1"), doc.thirdText),
+      );
     },
     <>
       <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
@@ -537,6 +616,69 @@ describe.each(["off", "guarded"] as const)(
   },
 );
 
+describe("ParaMarkerSelectionPlugin — deletion without a Backspace/Delete keydown", () => {
+  const merged = [
+    { marker: "p", glyphs: 1, text: "firstsecond" },
+    { marker: "q1", glyphs: 1, text: "third" },
+  ];
+
+  it.each([true, false])(
+    "DELETE_CHARACTER_COMMAND (backward: %s), as macOS Ctrl+H/Ctrl+D dispatch it, merges the paragraph",
+    async (isBackward) => {
+      const { editor, li2 } = await deletionEnvironment("off");
+      await selectMarkerOf(editor, li2);
+
+      await act(async () => {
+        editor.dispatchCommand(DELETE_CHARACTER_COMMAND, isBackward);
+      });
+
+      expect(paragraphsOf(editor)).toEqual(merged);
+    },
+  );
+
+  it("a virtual keyboard's deleteContentBackward input merges the paragraph", async () => {
+    const { editor, li2 } = await deletionEnvironment("off");
+    await selectMarkerOf(editor, li2);
+    const event = new InputEvent("beforeinput", {
+      inputType: "deleteContentBackward",
+      cancelable: true,
+    });
+
+    await act(async () => {
+      editor.dispatchCommand(BEFORE_INPUT_COMMAND, event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(paragraphsOf(editor)).toEqual(merged);
+  });
+
+  it("an insertText input with no keydown (dictation, the emoji picker) lands in the text", async () => {
+    const { editor, li2, secondText } = await environment();
+    await selectMarkerOf(editor, li2);
+    let isCollapsedWhenHandled = false;
+    const unregister = editor.registerCommand(
+      BEFORE_INPUT_COMMAND,
+      () => {
+        const selection = $getSelection();
+        isCollapsedWhenHandled =
+          $isRangeSelection(selection) && selection.anchor.key === secondText.getKey();
+        return true;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+
+    await act(async () => {
+      editor.dispatchCommand(
+        BEFORE_INPUT_COMMAND,
+        new InputEvent("beforeinput", { inputType: "insertText", data: "x" }),
+      );
+    });
+    unregister();
+
+    expect(isCollapsedWhenHandled).toBe(true);
+  });
+});
+
 describe("ParaMarkerSelectionPlugin — Backspace/Delete in protected structure", () => {
   it.each(["Backspace", "Delete"])(
     "%s changes nothing, as a paragraph merge is refused there",
@@ -557,20 +699,18 @@ describe("ParaMarkerSelectionPlugin — Backspace/Delete in protected structure"
 describe("ParaMarkerSelectionPlugin — commands that would make the glyph an operand", () => {
   const preventable = () => new Event("synthetic", { cancelable: true });
   it.each([
-    ["CUT_COMMAND", CUT_COMMAND, preventable],
-    ["COPY_COMMAND", COPY_COMMAND, preventable],
-    ["PASTE_COMMAND", PASTE_COMMAND, preventable],
-    ["DRAGSTART_COMMAND", DRAGSTART_COMMAND, preventable],
-    ["CONTROLLED_TEXT_INSERTION_COMMAND", CONTROLLED_TEXT_INSERTION_COMMAND, () => "x"],
-  ] as [string, LexicalCommand<unknown>, () => unknown][])(
+    ["CUT_COMMAND", CUT_COMMAND],
+    ["COPY_COMMAND", COPY_COMMAND],
+    ["DRAGSTART_COMMAND", DRAGSTART_COMMAND],
+  ] as [string, LexicalCommand<unknown>][])(
     "%s is refused before any lower-priority handler",
-    async (_name, command, payload) => {
+    async (_name, command) => {
       const { editor, li2 } = await environment();
       await selectMarkerOf(editor, li2);
       const before = documentJson(editor);
       const spy = vi.fn(() => false);
       const unregister = editor.registerCommand(command, spy, COMMAND_PRIORITY_LOW);
-      const dispatched = payload();
+      const dispatched = preventable();
 
       await act(async () => {
         editor.dispatchCommand(command, dispatched);
@@ -579,9 +719,140 @@ describe("ParaMarkerSelectionPlugin — commands that would make the glyph an op
 
       expect(spy).not.toHaveBeenCalled();
       expect(documentJson(editor)).toBe(before);
-      if (dispatched instanceof Event) expect(dispatched.defaultPrevented).toBe(true);
+      expect(dispatched.defaultPrevented).toBe(true);
     },
   );
+
+  it.each([
+    ["PASTE_COMMAND", PASTE_COMMAND, preventable],
+    ["CONTROLLED_TEXT_INSERTION_COMMAND", CONTROLLED_TEXT_INSERTION_COMMAND, () => "x"],
+  ] as [string, LexicalCommand<unknown>, () => unknown][])(
+    "%s collapses to the paragraph's text and passes on, as typing does",
+    async (_name, command, payload) => {
+      const { editor, li2, secondText } = await environment();
+      await selectMarkerOf(editor, li2);
+      let isCollapsedWhenHandled = false;
+      const unregister = editor.registerCommand(
+        command,
+        () => {
+          const selection = $getSelection();
+          isCollapsedWhenHandled =
+            $isRangeSelection(selection) && selection.anchor.key === secondText.getKey();
+          return true;
+        },
+        COMMAND_PRIORITY_LOW,
+      );
+
+      await act(async () => {
+        editor.dispatchCommand(command, payload());
+      });
+      unregister();
+
+      expect(isCollapsedWhenHandled).toBe(true);
+    },
+  );
+
+  it("pastes where the browser's selection moved to after a right-click on other text", async () => {
+    const { editor, li2, thirdText } = await environment();
+    await selectMarkerOf(editor, li2);
+    // A right-click moves the browser's caret without Lexical rebuilding its selection.
+    const textElement = editor.getElementByKey(thirdText.getKey())!;
+    const range = document.createRange();
+    range.setStart(textElement.firstChild!, 2);
+    range.collapse(true);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+    let landing: [string, number] | undefined;
+    const unregister = editor.registerCommand(
+      PASTE_COMMAND,
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) landing = [selection.anchor.key, selection.anchor.offset];
+        return true;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+
+    await act(async () => {
+      editor.dispatchCommand(PASTE_COMMAND, preventable() as ClipboardEvent);
+    });
+    unregister();
+
+    expect(landing).toEqual([thirdText.getKey(), 2]);
+  });
+});
+
+describe("ParaMarkerSelectionPlugin — clicks", () => {
+  it("a click on a verse number while a marker is selected puts the caret past it", async () => {
+    const { editor, li2, p, firstText } = await environment();
+    await selectMarkerOf(editor, li2);
+    const verseKey = editor.getEditorState().read(() => p.getChildAtIndex(1)!.getKey());
+
+    await act(async () => {
+      editor.getElementByKey(verseKey)?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(selectedMarkerOf(editor)).toBeUndefined();
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(firstText, 0);
+    });
+  });
+});
+
+describe("ParaMarkerSelectionPlugin — focus returning without a click", () => {
+  it("removes the caret the browser draws, keeping the marker selected", async () => {
+    const { editor, li2, firstText } = await environment();
+    await selectMarkerOf(editor, li2);
+    const range = document.createRange();
+    range.setStart(editor.getElementByKey(firstText.getKey())!.firstChild!, 0);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, new FocusEvent("focus"));
+    });
+
+    expect(document.getSelection()?.rangeCount).toBe(0);
+    expect(selectedMarkerOf(editor)).toBe("li2");
+  });
+});
+
+describe("ParaMarkerSelectionPlugin — a selection whose marker goes away", () => {
+  // A remote edit, say. (Removing only the glyph needs no repair: Lexical itself turns a node
+  // selection of a removed decorator into a caret where it was.) The key that follows acts from the
+  // repaired caret.
+  it("collapses to the end of the previous paragraph when the whole paragraph is removed", async () => {
+    const { editor, li2, firstText } = await environment();
+    await selectMarkerOf(editor, li2);
+    await sutUpdate(editor, () => li2.remove());
+
+    await pressKey(editor, "a");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(firstText, "first".length);
+    });
+  });
+});
+
+describe("ParaMarkerSelectionPlugin — while read-only", () => {
+  it("lets copy through, since nothing can be done with the marker there", async () => {
+    const { editor, li2 } = await environment();
+    await selectMarkerOf(editor, li2);
+    act(() => editor.setEditable(false));
+    // Claims the copy, so rich-text's clipboard write (which jsdom cannot run) never starts.
+    const spy = vi.fn(() => true);
+    const unregister = editor.registerCommand(COPY_COMMAND, spy, COMMAND_PRIORITY_LOW);
+
+    await act(async () => {
+      editor.dispatchCommand(
+        COPY_COMMAND,
+        new Event("copy", { cancelable: true }) as ClipboardEvent,
+      );
+    });
+    unregister();
+
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
 });
 
 /** A cancelable DROP event whose `target` is `domNode` — the drop-target judging DROP_COMMAND reads. */

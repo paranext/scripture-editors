@@ -212,6 +212,9 @@ export function StructureKeyboardPlugin({
         event.preventDefault();
         return true;
       }
+      // A drop that starts from no range (a selected paragraph marker, say) says nothing about
+      // where it lands: leave it to the default handler, which resolves it from the drop target.
+      if (!$isRangeSelection(selection)) return false;
       return $sanitizeAndInsert(event.dataTransfer?.getData("text/html"), event);
     };
 

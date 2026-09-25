@@ -1,11 +1,25 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { $getSelection, $isRangeSelection } from "lexical";
 import { useEffect } from "react";
-import { $isSynthesizedMarkerNode, LoggerBasic, ParaNode, PARA_MARKER_DEFAULT } from "shared";
+import {
+  $createGutterMarkerNode,
+  $isSynthesizedMarkerNode,
+  LoggerBasic,
+  NBSP,
+  openingMarkerText,
+  ParaNode,
+  PARA_MARKER_DEFAULT,
+} from "shared";
 import { showParaMarkerPrefix, ViewOptions } from "shared-react";
 
 /**
- * Reverts a paragraph back to the default `\p` marker when the user deletes the visible
- * USFM-marker label (e.g. `\s2`, `\q1`) at the start of the paragraph.
+ * Keeps a paragraph's visible USFM-marker label (e.g. `\s2`, `\q1`) in agreement with its marker.
+ *
+ * In the gutter view every paragraph carries its marker's glyph, including one the editor creates
+ * (an Enter split, a multi-line paste): a paragraph found without one is given it. The user cannot
+ * delete a gutter glyph — removing a selected marker merges its paragraph instead — so a missing
+ * one is never a request to change the marker. Elsewhere (markerMode "visible") the plugin reverts
+ * a paragraph back to the default `\p` marker when the user deletes the label.
  *
  * In views that render a paragraph's marker as a visible node — either inline (markerMode
  * "editable"/"visible") or in the gutter (`hasGutterParaMarkers`) — the adaptor injects that
@@ -35,12 +49,16 @@ export function ParaMarkerPrefixGuardPlugin({
     showParaMarkerPrefix(viewOptions) &&
     (viewOptions?.markerMode === "visible" || (viewOptions?.hasGutterParaMarkers ?? false));
 
+  const hasGutterParaMarkers = viewOptions?.hasGutterParaMarkers ?? false;
+
   useEffect(() => {
     if (!isEnabled) return;
     return editor.registerNodeTransform(ParaNode, (para) =>
-      $resetMarkerIfPrefixDeleted(para, logger),
+      hasGutterParaMarkers
+        ? $restoreGutterMarkerIfMissing(para)
+        : $resetMarkerIfPrefixDeleted(para, logger),
     );
-  }, [editor, isEnabled, logger]);
+  }, [editor, isEnabled, hasGutterParaMarkers, logger]);
 
   return null;
 }
@@ -70,4 +88,25 @@ export function $resetMarkerIfPrefixDeleted(para: ParaNode, logger?: LoggerBasic
     `[ParaMarkerPrefixGuard] Resetting paragraph "${para.getMarker()}" → "${PARA_MARKER_DEFAULT}" (key ${para.getKey()})`,
   );
   para.setMarker(PARA_MARKER_DEFAULT);
+}
+
+/**
+ * Gives `para` its gutter marker glyph if its first child is not one — see
+ * {@link ParaMarkerPrefixGuardPlugin}. Shaped as the adaptor builds it (`createPara`,
+ * usj-editor.adaptor.ts): the opening marker text plus NBSP, flagged as a gutter glyph.
+ *
+ * Mutating: call inside `editor.update()` (a node transform already runs inside one).
+ */
+export function $restoreGutterMarkerIfMissing(para: ParaNode): void {
+  const first = para.getFirstChild();
+  if ($isSynthesizedMarkerNode(first)) return;
+  const glyph = $createGutterMarkerNode(openingMarkerText(para.getMarker()) + NBSP);
+  if (first) first.insertBefore(glyph);
+  else para.append(glyph);
+  // A caret at the paragraph's start would now sit before the glyph, which is no caret position.
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return;
+  for (const point of [selection.anchor, selection.focus])
+    if (point.type === "element" && point.key === para.getKey() && point.offset === 0)
+      point.set(para.getKey(), 1, "element");
 }

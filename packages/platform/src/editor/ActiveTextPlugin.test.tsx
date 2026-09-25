@@ -7,6 +7,7 @@ import {
   $createParaNode,
   $createVerseNode,
   $selectParaMarker,
+  registerParaMarkerSelectionOwner,
   CharNode,
   ImmutableTypedTextNode,
   MarkerNode,
@@ -394,6 +395,7 @@ describe("a selected paragraph marker", () => {
       $getRoot().append(para.append(glyph, $createImmutableVerseNode("2"), $createTextNode("two")));
     });
 
+    registerParaMarkerSelectionOwner(editor);
     editor.update(() => $selectParaMarker(glyph), { discrete: true });
 
     editor.getEditorState().read(() => {
@@ -410,6 +412,7 @@ describe("a selected paragraph marker", () => {
       $getRoot().append($createParaNode("li2").append(glyph, v2));
     });
 
+    registerParaMarkerSelectionOwner(editor);
     editor.update(() => $selectParaMarker(glyph), { discrete: true });
 
     editor.getEditorState().read(() => {

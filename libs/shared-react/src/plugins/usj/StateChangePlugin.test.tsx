@@ -1,5 +1,6 @@
 import { $createImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
 import { usjBlockVerseNodes } from "../../nodes/usj";
+import { ParaMarkerSelectionPlugin } from "./ParaMarkerSelectionPlugin";
 import { baseTestEnvironment, sutUpdate, updateSelection } from "./react-test.utils";
 import { StateChangePlugin, StateChangeSnapshot } from "./StateChangePlugin";
 import { $createTextNode, $getRoot, LexicalEditor, LexicalNode } from "lexical";
@@ -142,7 +143,10 @@ describe("StateChangePlugin with a selected paragraph marker", () => {
           $createParaNode("li2").append(glyph, $createTextNode("two")),
         );
       },
-      <StateChangePlugin onStateChange={onStateChange} />,
+      <>
+        <StateChangePlugin onStateChange={onStateChange} />
+        <ParaMarkerSelectionPlugin />
+      </>,
     );
     onStateChange.mockClear();
 
