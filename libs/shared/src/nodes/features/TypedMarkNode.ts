@@ -5,6 +5,9 @@
  */
 
 import { textTypeState } from "../collab/delta.state.js";
+import { $isAttributeRunNode } from "../usj/AttributeRunNode.js";
+import { $isMilestoneNode } from "../usj/MilestoneNode.js";
+import { $isVerseNode } from "../usj/VerseNode.js";
 import { $isMarkerNode } from "./MarkerNode.js";
 import { assertSafeKey } from "@eten-tech-foundation/scripture-utilities";
 import { addClassNamesToElement, removeClassNamesFromElement } from "@lexical/utils";
@@ -1361,6 +1364,24 @@ function $isAttributeDisplayRun(node: LexicalNode): boolean {
   return $isTextNode(node) && $getState(node, textTypeState) === "attribute";
 }
 
+/**
+ * Whether `node` is part of a leaf display owner's unit: a verse or milestone together with the
+ * `AttributeRunNode` wrapper(s) of its attribute display run (`\va 3\va*`, `|who="Pilate"`), or
+ * anything inside such a wrapper. The run belongs to its owner by position alone — the wrapper
+ * directly follows it — so moving either into a mark without the other reads as the run having
+ * been deleted, and the display-run sync settles that by removing the owner. A verse is also a
+ * `TextNode`, which the wrap would otherwise split like content. The wrapper a note (`\cat`) or
+ * chapter (`\ca`, `\cp`) holds as a child is kept out of a mark for the same reason.
+ */
+function $isLeafDisplayOwnerUnit(node: LexicalNode): boolean {
+  return (
+    $isVerseNode(node) ||
+    $isMilestoneNode(node) ||
+    $isAttributeRunNode(node) ||
+    $isAttributeRunNode(node.getParent())
+  );
+}
+
 export function $wrapSelectionInTypedMarkNode(
   selection: RangeSelection,
   type: string,
@@ -1389,7 +1410,7 @@ export function $wrapSelectionInTypedMarkNode(
       // If the current node is a child of the last created mark node, there is nothing to do here
       continue;
     }
-    if ($isMarkerNode(node) || $isAttributeDisplayRun(node)) {
+    if ($isMarkerNode(node) || $isAttributeDisplayRun(node) || $isLeafDisplayOwnerUnit(node)) {
       // A marker glyph is display bytes its construct owns, never annotated content: moving one
       // into a mark takes it out of the construct's own children, which the marker-edit engine
       // reads as the marker having been deleted (a char span or note loses its closer, a note its
@@ -1401,6 +1422,10 @@ export function $wrapSelectionInTypedMarkNode(
       // the same treatment, never split or moved: a mark over part of it splits its text node,
       // after which the display-run sync no longer recognizes the run and rebuilds it beside the
       // split-off piece — and the next settle reads both into the attribute's value.
+      //
+      // A verse or milestone and its run wrapper are one unit: the selection lists the wrapper
+      // ELEMENT before its children, so the glyph guard alone never sees it. Neither is ever moved
+      // or split, so the unit stays together outside the mark.
       currentNodeParent = node.getParent();
       lastCreatedMarkNode = undefined;
       continue;

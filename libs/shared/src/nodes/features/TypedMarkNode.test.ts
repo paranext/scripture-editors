@@ -1,5 +1,12 @@
+import { displayRunDescriptor } from "../../displayRun/displayRunRegistry.js";
+import { $isAttributeRunNode } from "../usj/AttributeRunNode.js";
+import { $syncDisplayRun } from "../usj/displayRunSync.utils.js";
+import { $createMilestoneNode, MilestoneNode } from "../usj/MilestoneNode.js";
+import { getVisibleOpenMarkerText } from "../usj/node.utils.js";
 import { $createParaNode, ParaNode } from "../usj/ParaNode.js";
+import { usjBaseNodes } from "../usj/index.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
+import { $createVerseNode, VerseNode } from "../usj/VerseNode.js";
 import { textTypeState } from "../collab/delta.state.js";
 import {
   $createTypedMarkNode,
@@ -13,8 +20,11 @@ import {
   $createRangeSelection,
   $createTextNode,
   $getRoot,
+  $getState,
+  $isTextNode,
   $setState,
   EditorConfig,
+  LexicalNode,
   TextNode,
 } from "lexical";
 import { vi } from "vitest";
@@ -703,6 +713,111 @@ describe("TypedMarkNode", () => {
         const run = children.find((child) => child.getTextContent() === "|grace");
         expect(run?.getParent()?.is(para)).toBe(true);
         expect(para.getTextContent()).toBe("grace|grace of God");
+      });
+    });
+
+    /** The attribute-tagged value text inside `wrapper`, the display run's `|…` bytes. */
+    function $attributeTextIn(wrapper: LexicalNode | null): TextNode {
+      if (!$isAttributeRunNode(wrapper)) throw new Error("expected an attribute run wrapper");
+      const value = wrapper
+        .getChildren()
+        .find((child) => $isTextNode(child) && $getState(child, textTypeState) === "attribute");
+      if (!$isTextNode(value)) throw new Error("expected the run's attribute text");
+      return value;
+    }
+
+    it("keeps a milestone and its attribute run out of a mark that spans them", () => {
+      const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+      let milestone!: MilestoneNode;
+      editor.update(
+        () => {
+          const before = $createTextNode("said to ");
+          milestone = $createMilestoneNode("qt-s", undefined, undefined, { who: "Pilate" });
+          const after = $createTextNode(" What is truth?");
+          $getRoot().append($createParaNode().append(before, milestone, after));
+          $syncDisplayRun(displayRunDescriptor("milestone"), milestone);
+          const selection = $createRangeSelection();
+          selection.anchor.set(before.getKey(), 5, "text");
+          selection.focus.set(after.getKey(), 5, "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        const para = $getRoot().getFirstChildOrThrow<ParaNode>();
+        expect(milestone.getParent()?.is(para)).toBe(true);
+        const wrapper = milestone.getNextSibling();
+        expect($isAttributeRunNode(wrapper)).toBe(true);
+        expect(wrapper?.getParent()?.is(para)).toBe(true);
+        const pieces = displayRunDescriptor("milestone").scanPieces(milestone);
+        expect(pieces.opener && pieces.value && pieces.closer).toBeTruthy();
+        expect(pieces.value?.getTextContent()).toContain("|Pilate");
+        const marks = para.getChildren().filter($isTypedMarkNode);
+        expect(marks.map((mark) => mark.getTextContent())).toEqual(["to ", " What"]);
+        expect(marks.every((mark) => mark.hasID(testType1, testID1))).toBe(true);
+        expect(milestone.getMarker()).toBe("qt-s");
+        expect(milestone.getUnknownAttributes()).toEqual({ who: "Pilate" });
+      });
+    });
+
+    it("keeps a verse and its `\\va` run out of a mark that spans them, without splitting the verse", () => {
+      const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+      let verse!: VerseNode;
+      const verseText = getVisibleOpenMarkerText("v", "2");
+      editor.update(
+        () => {
+          const before = $createTextNode("in the beginning ");
+          verse = $createVerseNode("2", verseText, undefined, "3");
+          const after = $createTextNode("and the earth");
+          $getRoot().append($createParaNode().append(before, verse, after));
+          $syncDisplayRun(displayRunDescriptor("va"), verse);
+          const selection = $createRangeSelection();
+          selection.anchor.set(before.getKey(), 7, "text");
+          selection.focus.set(after.getKey(), 3, "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        const para = $getRoot().getFirstChildOrThrow<ParaNode>();
+        expect(verse.getParent()?.is(para)).toBe(true);
+        expect(verse.getTextContent()).toBe(verseText);
+        const wrapper = verse.getNextSibling();
+        expect($isAttributeRunNode(wrapper)).toBe(true);
+        expect(wrapper?.getParent()?.is(para)).toBe(true);
+        const marks = para.getChildren().filter($isTypedMarkNode);
+        expect(marks.map((mark) => mark.getTextContent())).toEqual(["beginning ", "and"]);
+      });
+    });
+
+    it("starts the mark after the run when the range starts inside the attribute value", () => {
+      const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+      let milestone!: MilestoneNode;
+      editor.update(
+        () => {
+          milestone = $createMilestoneNode("qt-s", undefined, undefined, { who: "Pilate" });
+          const after = $createTextNode(" What is truth?");
+          $getRoot().append($createParaNode().append(milestone, after));
+          $syncDisplayRun(displayRunDescriptor("milestone"), milestone);
+          const value = $attributeTextIn(milestone.getNextSibling());
+          const selection = $createRangeSelection();
+          selection.anchor.set(value.getKey(), value.getTextContent().indexOf("late"), "text");
+          selection.focus.set(after.getKey(), 5, "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        const para = $getRoot().getFirstChildOrThrow<ParaNode>();
+        const wrapper = milestone.getNextSibling();
+        expect($isAttributeRunNode(wrapper)).toBe(true);
+        expect(wrapper?.getParent()?.is(para)).toBe(true);
+        expect($attributeTextIn(wrapper).getTextContent()).toContain("|Pilate");
+        const marks = para.getChildren().filter($isTypedMarkNode);
+        expect(marks.map((mark) => mark.getTextContent())).toEqual([" What"]);
       });
     });
   });

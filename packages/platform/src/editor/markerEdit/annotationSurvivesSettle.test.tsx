@@ -1122,3 +1122,69 @@ describe("annotations around a typed footnote literal", () => {
     });
   });
 });
+
+describe("a comment mark across a leaf display owner and its attribute run", () => {
+  /** Wrap a comment from `startOffset` in the text holding `startNeedle` to `endOffset` in the text
+   * holding `endNeedle` — the shape `CommentPlugin` creates over a range crossing the owner. */
+  async function commentAcross(
+    mounted: Mounted,
+    [startNeedle, startOffset]: [string, number],
+    [endNeedle, endOffset]: [string, number],
+  ): Promise<void> {
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const selection = $createRangeSelection();
+        selection.anchor.set($textContaining(startNeedle).getKey(), startOffset, "text");
+        selection.focus.set($textContaining(endNeedle).getKey(), endOffset, "text");
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  /** The first paragraph's content items of `type`, in the settled document. */
+  function settledItems(mounted: Mounted, type: string): MarkerObject[] {
+    const para = mounted.ref.current?.getUsj()?.content[2];
+    if (typeof para !== "object" || !para.content) throw new Error("expected the first paragraph");
+    return para.content.filter(
+      (item): item is MarkerObject => typeof item === "object" && item.type === type,
+    );
+  }
+
+  it("keeps a quote milestone through the display-run sync and a later settle", async () => {
+    const quote = { type: "ms", marker: "qt-s", who: "Pilate" };
+    const mounted = await mountStandardViewEditor(
+      twoParaUsj(["said to him ", quote, " What is truth?"]),
+    );
+    expect(settledItems(mounted, "ms").filter((ms) => ms.marker === "qt-s")).toEqual([quote]);
+
+    await commentAcross(mounted, ["said to him", 5], ["What is truth", 5]);
+
+    expect(annotatedText(mounted.lexical)).toEqual(["to him ", " What"]);
+    expect(settledItems(mounted, "ms").filter((ms) => ms.marker === "qt-s")).toEqual([quote]);
+
+    await typeOver(mounted.lexical, " is truth?", " is truth? \\nd LORD\\nd*");
+    settle(mounted);
+
+    expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
+    expect(settledItems(mounted, "ms").filter((ms) => ms.marker === "qt-s")).toEqual([quote]);
+    expect(annotatedIDs(mounted.lexical)).toEqual([
+      { [COMMENT_MARK_TYPE]: ["c1"] },
+      { [COMMENT_MARK_TYPE]: ["c1"] },
+    ]);
+  });
+
+  it("keeps a verse with its alternate number, and never splits the verse", async () => {
+    const verse: MarkerObject = { type: "verse", marker: "v", number: "2", altnumber: "3" };
+    const mounted = await mountStandardViewEditor(
+      twoParaUsj(["in the beginning ", verse, "and the earth"]),
+    );
+    expect(settledItems(mounted, "verse")).toEqual([verse]);
+
+    await commentAcross(mounted, ["in the beginning", 7], ["and the earth", 3]);
+
+    expect(annotatedText(mounted.lexical)).toEqual(["beginning ", "and"]);
+    expect(settledItems(mounted, "verse")).toEqual([verse]);
+  });
+});
