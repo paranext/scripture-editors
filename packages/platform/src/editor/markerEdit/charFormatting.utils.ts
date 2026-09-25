@@ -196,6 +196,21 @@ export function $coveredTextNodes(selection: RangeSelection): TextNode[] {
 }
 
 /**
+ * The first ancestor at or above `node` — `node` itself is checked first — that is neither a
+ * `CharNode` nor a `TypedMarkNode`: the container a break/split reaches once every character-style
+ * span and annotation mark wrapper enclosing the starting point, in any interleaving, has been
+ * climbed out of. Callers pass whichever node is their own walk's starting point (`node` itself,
+ * or its parent); this only climbs from there.
+ *
+ * Read-only: safe inside `editor.update()` or either read form.
+ */
+export function $outermostCharStackAncestor(node: LexicalNode | null): LexicalNode | null {
+  let current = node;
+  while ($isCharNode(current) || $isTypedMarkNode(current)) current = current.getParent();
+  return current;
+}
+
+/**
  * The paragraph a break at `node` would split: the first ancestor past every char span and
  * annotation mark wrapper (`TypedMarkNode`) enclosing `node`, in any interleaving, when that
  * ancestor is a paragraph. `undefined` otherwise — notably inside a NOTE, where the walk stops at
@@ -208,9 +223,8 @@ export function $coveredTextNodes(selection: RangeSelection): TextNode[] {
  * Read-only: safe inside `editor.update()` or either read form.
  */
 function $charStackParagraph(node: LexicalNode): SomeParaNode | undefined {
-  let parent = node.getParent();
-  while ($isCharNode(parent) || $isTypedMarkNode(parent)) parent = parent.getParent();
-  return $isSomeParaNode(parent) ? parent : undefined;
+  const ancestor = $outermostCharStackAncestor(node.getParent());
+  return $isSomeParaNode(ancestor) ? ancestor : undefined;
 }
 
 /**
@@ -234,9 +248,9 @@ export function $isSelectionInParagraphCharStack(): boolean {
 
 /** What a break-and-lift left behind: where it came to rest, and what ended up after it. */
 export interface CharStackBreak {
-  /** The break point's resting parent after the lift — `null` only when no break point could be
-   * created at all (a point with neither a text nor an element shape to cut). */
-  parent: LexicalNode | null;
+  /** The break point's resting parent after the lift — `undefined` only when no break point could
+   * be created at all (a point with neither a text nor an element shape to cut). */
+  parent: LexicalNode | undefined;
   /** The nodes originally after the break point, now siblings ready to move into a new container. */
   moving: LexicalNode[];
 }
@@ -285,14 +299,14 @@ export function $breakAndLiftCharStack(point: PointType): CharStackBreak {
       : elementOrLeaf;
     if (nextNode) nextNode.insertBefore(breakPoint);
     else if (container) container.append(breakPoint);
-    else return { parent: null, moving: [] };
+    else return { parent: undefined, moving: [] };
   }
   for (let parent = breakPoint.getParent(); ; parent = breakPoint.getParent()) {
     if ($isCharNode(parent)) $liftOutOfCharStack(breakPoint, { renderGlyphs: true });
     else if (!$isTypedMarkNode(parent) || !$liftOutOfTypedMark(breakPoint, parent)) break;
   }
   const moving = breakPoint.getNextSiblings();
-  const parent = breakPoint.getParent();
+  const parent = breakPoint.getParent() ?? undefined;
   breakPoint.remove();
   return { parent, moving };
 }

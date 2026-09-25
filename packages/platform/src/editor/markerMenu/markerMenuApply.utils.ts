@@ -22,6 +22,7 @@ import { $applyParaMarker } from "../markerEdit/applyParaMarker.utils";
 import { LITERAL_TRIGGER_PREFIX_REGEX } from "../markerEdit/markerName.pattern";
 import {
   $breakAndLiftCharStack,
+  $outermostCharStackAncestor,
   $splitParagraphAtCharStack,
   $stepCaretPastClosingGlyphSpan,
 } from "../markerEdit/charFormatting.utils";
@@ -53,7 +54,6 @@ import {
   $isMarkerNode,
   $isParaNode,
   $isSynthesizedMarkerNode,
-  $isTypedMarkNode,
   $normalizeSelectionOutOfGlyphText,
   $selectCharContentStart,
   BookNode,
@@ -157,8 +157,7 @@ function $applyParagraphSelection(
  */
 function $canSplitBookAt(point: PointType, book: BookNode): boolean {
   const node = point.getNode();
-  let container: LexicalNode | null = $isElementNode(node) ? node : node.getParent();
-  while ($isCharNode(container) || $isTypedMarkNode(container)) container = container.getParent();
+  const container = $outermostCharStackAncestor($isElementNode(node) ? node : node.getParent());
   return book.is(container);
 }
 
@@ -247,12 +246,15 @@ function $resolvePointBeforeOpeningGlyph(point: PointType): PointType {
  * on wherever removing a selection left the caret) refused a start position it cannot reason a
  * split through — the caller decides how to surface that refusal.
  *
+ * The selection must already be normalized out of glyph text
+ * (`$normalizeSelectionOutOfGlyphText`) — its only caller, {@link $splitParagraphWithMarker}, does
+ * this immediately before calling in, with no selection change in between.
+ *
  * Mutating: call inside `editor.update()`.
  */
 function $splitBookWithMarker(book: BookNode, marker: string, viewOptions?: ViewOptions): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
-  $normalizeSelectionOutOfGlyphText(selection);
   // Decided before anything is mutated, so a pick that cannot split leaves the line exactly as it
   // was rather than having already deleted the selection it was about to replace.
   const start = selection.isBackward() ? selection.focus : selection.anchor;
