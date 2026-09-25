@@ -352,6 +352,23 @@ describe("alignScopeBytes edge cases", () => {
     expect(mapCount(r.alignment, live.indexOf("bcd"), "live")).toBe(settled.indexOf("bcd"));
   });
 
+  it("ends a plain-text attribute section at a placeholder, so a literal after it still pairs", () => {
+    const note = nows("\\f + \\ft x\\f*");
+    const live = nows(`a|b${note}more \\w z\\w*`);
+    const settled = nows(`a|b${PLACEHOLDER}more \\w z\\w*`);
+    const index = settled.indexOf(PLACEHOLDER);
+    const r = alignScopeBytes(live, settled, new Map([[index, note]]));
+    expectTiles(r.alignment, live.length, settled.length);
+    expect(r.literals.size).toBe(1);
+    const literal = r.literals.get(index);
+    if (!literal) throw new Error("no literal");
+    expect(live.slice(literal.liveStart, literal.liveEnd)).toBe(note);
+    expect(mapCountSnapped(r.alignment, live.indexOf("more"), "live")).toBe(
+      settled.indexOf("more"),
+    );
+    expect(mapCount(r.alignment, live.indexOf("z"), "live")).toBe(settled.indexOf("z"));
+  });
+
   it("covers the whole spelling when the live scope ends inside the literal", () => {
     const live = nows("a \\f + \\ft");
     const spelling = nows("\\f + \\ft n\\f*");

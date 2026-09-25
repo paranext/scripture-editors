@@ -641,8 +641,10 @@ export interface EditorProps<TLogger extends LoggerBasic> {
    */
   onSelectionChange?: (selection: SelectionRange | undefined) => void;
   /**
-   * Callback function when USJ Scripture data has changed. Called synchronously, exactly once per
-   * change, in the order the changes happen; a selection-only change calls nothing.
+   * Callback function when USJ Scripture data has changed. Called synchronously, once per commit
+   * that changes the settled document or carries delta ops, in commit order. A commit that does
+   * neither calls nothing, and neither does a selection-only, annotation, or cursor change; the
+   * block verse layout, being read-only, never calls it.
    *
    * - `usj` — **Settled**: the document `getUsj()` returns at that moment — pending marker edits
    *   count as already settled; this is what a host saves.

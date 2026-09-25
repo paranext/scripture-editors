@@ -96,10 +96,14 @@ class SegmentList {
   }
 }
 
-/** Where an attribute section that starts at `start` (a `|`) ends: the next marker, or the end. */
+/** Where an attribute section that starts at `start` (a `|`) ends: the next marker or placeholder,
+ * or the end. A placeholder ends it too, because the live side may spell that node as a literal
+ * starting with `\`, and the two sections must end at the same node. */
 function sectionEnd(text: string, start: number): number {
-  const next = text.indexOf(MARKER_START, start + 1);
-  return next < 0 ? text.length : next;
+  const ends = [text.indexOf(MARKER_START, start + 1), text.indexOf(PLACEHOLDER, start + 1)].filter(
+    (index) => index >= 0,
+  );
+  return ends.length > 0 ? Math.min(...ends) : text.length;
 }
 
 interface ParsedAttribute {

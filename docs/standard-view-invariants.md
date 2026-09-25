@@ -284,17 +284,16 @@ document end is spelled on the SETTLED last token (`$settledDocumentEnd` in
 **Every caret has a location, pending edit or not.** A position names the byte in front of which
 it sits, and maps through whatever contains that byte on its own side. Where one side has bytes the
 other lacks, the position in front of them snaps LEFT to the nearest byte both sides share, and the
-position just past them is exact — one aligner (`packages/platform/src/editor/positions/`) serves
-BOTH directions, each end of a range resolved on its own; there is no separate
-outbound-snap/inbound-refuse split.
+position just past them is exact — one aligner
+(`packages/platform/src/editor/markerEdit/usfmByteAlignment.utils.ts`) serves BOTH directions, each
+end of a range resolved on its own; there is no separate outbound-snap/inbound-refuse split.
 
 - **Outbound** (`getSelection`, `onSelectionChange`) never answers `undefined` for a real caret —
-  `undefined` means there is no selection (or the layout has no USJ locations at all). Typed bytes
-  the settle carries as an attribute map exactly (a typed `\cat x\cat*` is the note's `category`, a
-  figure's `|src="…"` its `file`), by `UsjReaderWriter`'s locations. Bytes with no settled
-  counterpart at all — a typed literal the settle spells differently from how it was typed — snap
-  LEFT to the nearest translatable position at or before them, the same rule a USFM byte with no
-  USJ representation follows.
+  `undefined` means there is no selection. Typed bytes the settle carries as an attribute map
+  exactly (a typed `\cat x\cat*` is the note's `category`, a figure's `|src="…"` its `file`), by
+  `UsjReaderWriter`'s locations. Bytes with no settled counterpart at all — a typed literal the
+  settle spells differently from how it was typed — snap LEFT to the nearest translatable position
+  at or before them, the same rule a USFM byte with no USJ representation follows.
 - **Inbound** (`setSelection`, `setAnnotation`, `insertNote`) refuses (and logs the refusal) ONLY a
   host location that names nothing in the settled document at all. A location inside a scope the
   editor can pair only in part is not a whole-scope refusal — it snaps LEFT the same as outbound. A
@@ -302,9 +301,11 @@ outbound-snap/inbound-refuse split.
   never refused.
 
 **`onUsjChange`'s `usj` payload is a SETTLED, synchronous snapshot.** It equals `getUsj()` at the
-moment of emission, fires synchronously within the commit's own listener pass, exactly once per
-content commit and in commit order — including once, not twice, after a `setUsj` reload. A
-selection-only commit emits nothing. `ops` stay a LIVE view of the same commit.
+moment of emission, fires synchronously within the commit's own listener pass, once per commit that
+changes the settled document or carries delta ops, in commit order — including once, not twice,
+after a `setUsj` reload. A commit that does neither emits nothing, and so does a selection-only
+commit or one tagged as an annotation, cursor, or selection change. The block verse layout emits
+nothing: it is read-only. `ops` stay a LIVE view of the same commit.
 
 **Notes are counted in the SETTLED document.** `selectNote(index)` counts and selects against
 `getUsj()`'s notes; a note still pending as a typed literal gets the caret placed at the literal's

@@ -1530,17 +1530,17 @@ function $settledDocumentEnd(
 
 /**
  * The editor's current selection in SETTLED coordinates — `undefined` only when there is no
- * selection to report or the layout has no USJ locations at all. An endpoint in front of bytes that
+ * selection to report. An endpoint in front of bytes that
  * have no settled counterpart while an edit is pending snaps LEFT, each end of a range on its own
  * ({@link $settledLocationFromLivePoint}).
  *
  * Call inside a read of the LIVE editor state, with `prepared` from the same read.
  */
 export function $settledSelectionFromLive(prepared: PreparedScopes): SelectionRange | undefined {
-  // Called even when a translation follows, and deliberately: "there is no range selection" and
-  // "this layout has no USJ locations at all" are both properties of the live tree that a settle
-  // cannot change, so they stay the editor's own reporter's answers rather than being restated
-  // here. Two extra location reports is nothing beside preparing a scope.
+  // Called even when a translation follows, and deliberately: "there is no range selection" is a
+  // property of the live tree that a settle cannot change, so it stays the editor's own reporter's
+  // answer rather than being restated here. Two extra location reports is nothing beside preparing
+  // a scope.
   const live = $getUsjSelectionFromEditor(prepared.viewOptions);
   // Nothing was rebuilt, so the live tree IS the settled document and that reporter already
   // addressed it.

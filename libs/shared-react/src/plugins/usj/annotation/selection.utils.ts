@@ -78,29 +78,6 @@ import {
   unknownUsjAttributeName,
 } from "shared";
 
-/** The USJ location of a point in the block verse layout. Call inside a read of that editor. */
-export function $usjLocationFromBlockPoint(
-  node: LexicalNode,
-  offset: number,
-  viewOptions: ViewOptions | undefined,
-): UsjDocumentLocation | undefined {
-  return $blockToUsj(
-    $getLocationFromNode(node, offset, viewOptions),
-    $getBlockUnits(hasStandardViewWhitespace(viewOptions)),
-    (unit) => $getLocationFromNode(unit, 0, viewOptions),
-  );
-}
-
-/** The block-layout point a USJ location names, or `[undefined, undefined]` when it names nothing. */
-export function $blockPointFromUsjLocation(
-  location: UsjDocumentLocation,
-  viewOptions: ViewOptions | undefined,
-): [LexicalNode | undefined, number | undefined] {
-  const collapsesSpaceRuns = hasStandardViewWhitespace(viewOptions);
-  const block = $usjToBlock(location, $getBlockUnits(collapsesSpaceRuns), collapsesSpaceRuns);
-  return block ? $getNodeFromLocation(block, viewOptions) : [undefined, undefined];
-}
-
 /**
  * Converts a USJ SelectionRange or AnnotationRange to an editor RangeSelection.
  *

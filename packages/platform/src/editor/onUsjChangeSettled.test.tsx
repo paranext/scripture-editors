@@ -206,6 +206,22 @@ it("emits nothing for a commit that changes no bytes, after the first load or a 
   expect(emissions).toHaveLength(0);
 });
 
+// Standard view's export collapses a run of spaces, so a double space makes the load round trip
+// lossy; the single space is the control.
+it.each([
+  ["a lossless load", "In the beginning of God"],
+  ["a lossy load (a double space)", "In the  beginning of God"],
+])("emits nothing for a paragraph commit that changes no bytes after %s", async (_, text) => {
+  const emissions: Usj[] = [];
+  const { lexical } = await mountStandardViewEditor(twoParaUsj([text]), {
+    onUsjChange: (usj) => emissions.push(usj),
+  });
+  await flush();
+  commitNow(lexical, () => $textContaining("of God").getParentOrThrow().markDirty());
+  await flush();
+  expect(emissions).toHaveLength(0);
+});
+
 /** Every paragraph marker of `usj`, in document order. */
 function paraMarkersOf(usj: Usj | undefined): string[] {
   return (usj?.content ?? []).flatMap((item) =>
