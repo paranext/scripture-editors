@@ -1,5 +1,6 @@
 import { $isSomeVerseNode } from "../../../nodes/usj/node-react.utils";
 import { hasStandardViewWhitespace, ViewOptions } from "../../../views/view-options.utils";
+import { $blockToUsj, $getBlockUnits, $usjToBlock } from "./blockVerseLocations.utils";
 import { AnnotationRange, SelectionRange } from "./selection.model";
 import {
   type PropertyJsonPath,
@@ -77,6 +78,29 @@ import {
   unknownUsjAttributeName,
 } from "shared";
 
+/** The USJ location of a point in the block verse layout. Call inside a read of that editor. */
+export function $usjLocationFromBlockPoint(
+  node: LexicalNode,
+  offset: number,
+  viewOptions: ViewOptions | undefined,
+): UsjDocumentLocation | undefined {
+  return $blockToUsj(
+    $getLocationFromNode(node, offset, viewOptions),
+    $getBlockUnits(hasStandardViewWhitespace(viewOptions)),
+    (unit) => $getLocationFromNode(unit, 0, viewOptions),
+  );
+}
+
+/** The block-layout point a USJ location names, or `[undefined, undefined]` when it names nothing. */
+export function $blockPointFromUsjLocation(
+  location: UsjDocumentLocation,
+  viewOptions: ViewOptions | undefined,
+): [LexicalNode | undefined, number | undefined] {
+  const collapsesSpaceRuns = hasStandardViewWhitespace(viewOptions);
+  const block = $usjToBlock(location, $getBlockUnits(collapsesSpaceRuns), collapsesSpaceRuns);
+  return block ? $getNodeFromLocation(block, viewOptions) : [undefined, undefined];
+}
+
 /**
  * Converts a USJ SelectionRange or AnnotationRange to an editor RangeSelection.
  *
@@ -96,20 +120,29 @@ import {
  *   a range), it defaults to the 'start' value.
  * - If either the start or end node cannot be found, or if their offsets are undefined, the
  *   function returns undefined.
- * - In the block verse layout it always returns `undefined`: that layout splits a paragraph
- *   spanning verses across their blocks, so the editor's content indexes no longer match the
- *   source USJ's and no location can be resolved. Callers that need to tell a host why report it
- *   through their own logger - these are `$` functions with none threaded in.
+ * - In the block verse layout, `start` and `end` are first restated in that layout's own tree
+ *   coordinates ({@link $usjToBlock}), since it regroups paragraphs into verse blocks and so does
+ *   not share the USJ's content indexes; a location naming nothing there returns `undefined` the
+ *   same way a location naming nothing in the ordinary tree does.
  */
 export function $getRangeFromUsjSelection(
   selection: SelectionRange | AnnotationRange,
   viewOptions: ViewOptions | undefined,
 ): RangeSelection | undefined {
-  if ($hasVerseBlocks()) return undefined;
-
-  const { start } = selection;
-  let { end } = selection;
-  end ??= start;
+  let { start } = selection;
+  let end = selection.end ?? start;
+  // The block verse layout regroups paragraphs into verse blocks, so its tree's indexes are not the
+  // USJ's: restate both ends in block-tree coordinates first. `end === start` is kept as identity —
+  // the closing-marker adjustment below tells a caret from a range by it.
+  if ($hasVerseBlocks()) {
+    const collapsesSpaceRuns = hasStandardViewWhitespace(viewOptions);
+    const units = $getBlockUnits(collapsesSpaceRuns);
+    const blockStart = $usjToBlock(start, units, collapsesSpaceRuns);
+    const blockEnd = end === start ? blockStart : $usjToBlock(end, units, collapsesSpaceRuns);
+    if (!blockStart || !blockEnd) return undefined;
+    start = blockStart;
+    end = blockEnd;
+  }
 
   // Find the start and end nodes with offsets based on the location.
   let [startNode, startOffset] = $getNodeFromLocation(start, viewOptions);
@@ -147,16 +180,24 @@ export function $getRangeFromUsjSelection(
  * @param viewOptions - The editor's view options, which decide how its text maps to USJ offsets
  *   (see {@link $getLocationFromNode}).
  * @returns A USJ `SelectionRange` object containing the start and end positions of the selection,
- *   or `undefined` if there is no valid range selection. Always `undefined` in the block verse
- *   layout - see {@link $getRangeFromUsjSelection} for why.
+ *   or `undefined` if there is no valid range selection, or the caret sits where the block verse
+ *   layout's regrouping ({@link $blockToUsj}) has nothing in the USJ to name.
  */
 export function $getUsjSelectionFromEditor(
   viewOptions: ViewOptions | undefined,
 ): SelectionRange | undefined {
-  if ($hasVerseBlocks()) return undefined;
-
   const editorSelection = $getSelection();
   if (!editorSelection || !$isRangeSelection(editorSelection)) return;
+
+  const units = $hasVerseBlocks()
+    ? $getBlockUnits(hasStandardViewWhitespace(viewOptions))
+    : undefined;
+  const $locate = (node: LexicalNode, offset: number): UsjDocumentLocation | undefined => {
+    const location = $getLocationFromNode(node, offset, viewOptions);
+    return units
+      ? $blockToUsj(location, units, (unit) => $getLocationFromNode(unit, 0, viewOptions))
+      : location;
+  };
 
   const startNode = editorSelection.isBackward()
     ? editorSelection.focus.getNode()
@@ -164,7 +205,8 @@ export function $getUsjSelectionFromEditor(
   const startOffset = editorSelection.isBackward()
     ? editorSelection.focus.offset
     : editorSelection.anchor.offset;
-  const start = $getLocationFromNode(startNode, startOffset, viewOptions);
+  const start = $locate(startNode, startOffset);
+  if (!start) return undefined;
   if (editorSelection.isCollapsed()) return { start };
 
   const endNode = editorSelection.isBackward()
@@ -173,7 +215,8 @@ export function $getUsjSelectionFromEditor(
   const endOffset = editorSelection.isBackward()
     ? editorSelection.anchor.offset
     : editorSelection.focus.offset;
-  const end = $getLocationFromNode(endNode, endOffset, viewOptions);
+  const end = $locate(endNode, endOffset);
+  if (!end) return undefined;
 
   return { start, end };
 }
@@ -1421,15 +1464,18 @@ function $closingMarkerLength(node: LexicalNode): number | undefined {
   return undefined;
 }
 
-/** Whether `node`'s content runs to the end of a USFM line, so a newline follows it. */
+/** Whether `node`'s content runs to the end of a USFM line, so a newline follows it. A verse
+ * block's children are root-level lines of the USJ the block layout regroups. */
 function $endsLine(node: LexicalNode): boolean {
+  const parent = $getLogicalParent(node);
   return (
     $isParaNode(node) ||
     $isImpliedParaNode(node) ||
     $isBookNode(node) ||
     $isImmutableTableRowNode(node) ||
     ($isUnknownNode(node) && node.getTag() === "table:row") ||
-    $isRootNode($getLogicalParent(node))
+    $isRootNode(parent) ||
+    $isVerseBlockNode(parent)
   );
 }
 
@@ -1541,11 +1587,11 @@ export function $getJsonPathIndexes(node: LexicalNode): number[] {
 /**
  * Whether the document uses the block verse layout.
  *
- * USJ locations are indexes into the source USJ's content. That layout regroups verses into blocks,
- * splitting any paragraph that spans verses into one fragment per verse, so the editor's content
- * indexes no longer line up with the USJ's - and no amount of treating the block itself as
- * transparent fixes the renumbering underneath. Locations are therefore unavailable there, rather
- * than confidently wrong.
+ * USJ locations are indexes into the source USJ's content. That layout regroups verses into
+ * blocks, splitting any paragraph that spans verses into one fragment per verse, so the editor's
+ * content indexes no longer line up with the USJ's on their own - every position that crosses this
+ * boundary is translated through `blockVerseLocations.utils` first ({@link $blockToUsj},
+ * {@link $usjToBlock}).
  */
 function $hasVerseBlocks(): boolean {
   // Both callers run on every selection change, so this walks siblings and exits at the first

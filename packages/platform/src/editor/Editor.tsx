@@ -331,7 +331,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // some emissions, an ordinary edit followed by an undo back to an earlier state would compare
   // equal to that earlier state and suppress the one notification that matters.
   const lastNotifiedUsjRef = useRef<Usj | undefined>(undefined);
-  const hasReportedUsjLocationsUnavailableRef = useRef(false);
   const [usj, setUsj] = useState(defaultUsj);
   const [loadTrigger, setLoadTrigger] = useState(0);
   const [contextMarker, setContextMarker] = useState<string>();
@@ -508,22 +507,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
    * are split across verse blocks, so an edit has no correct USJ to go back to; refusing is what
    * keeps the rendered document and `getUsj()` from silently diverging.
    */
-  /**
-   * Reports, once per editor, that a USJ-addressed selection API has nothing to answer with.
-   *
-   * Per editor rather than per module: a multi-pane webview mounts several of these, and a
-   * module-level flag would leave every pane after the first failing silently. Through the injected
-   * logger for the same reason - the host that mounted this editor is the one that needs to know.
-   */
-  const reportUsjLocationsUnavailable = (operation: string) => {
-    if (hasReportedUsjLocationsUnavailableRef.current) return;
-    hasReportedUsjLocationsUnavailableRef.current = true;
-    loggerRef.current?.warn(
-      `Editor: cannot ${operation} in the block verse layout; its paragraphs are split across ` +
-        "verse blocks, so editor content indexes do not match the source USJ.",
-    );
-  };
-
   const assertNotBlockVerse = (operation: string) => {
     if (isBlockVerse)
       throw new Error(
@@ -716,24 +699,24 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
    * The pending state is read INSIDE the flush rather than before it, because the commit this
    * forces can settle the very pend that made a translation necessary in the first place.
    *
-   * `undefined` means there is nothing to report: no range selection, or a layout with no USJ
-   * locations at all. A position whose own bytes have no settled counterpart reports the nearest
-   * one before it instead — including one whose basis the tree has moved on from under it, which
-   * rebuilds from what the tree still has rather than refusing (logged).
+   * `undefined` means there is nothing to report: no range selection. A position whose own bytes
+   * have no settled counterpart reports the nearest one before it instead — including one whose
+   * basis the tree has moved on from under it, which rebuilds from what the tree still has rather
+   * than refusing (logged).
    */
   const readSettledSelection = useCallback(
     (editor: LexicalEditor, caller: string): SelectionRange | undefined =>
       editor.read(() => {
         const context = buildSettledPositionContext();
         const settled = context && $settledSelectionFromLive($prepareSettleScopes(context));
-        if (!settled && !isBlockVerse && $isRangeSelection($getSelection()))
+        if (!settled && $isRangeSelection($getSelection()))
           stableLogger?.warn(
             `${caller} refused: the selection could not be expressed against the document the ` +
               "host is reading",
           );
         return settled;
       }),
-    [buildSettledPositionContext, isBlockVerse, stableLogger],
+    [buildSettledPositionContext, stableLogger],
   );
 
   /**
@@ -930,10 +913,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         );
     },
     getSelection() {
-      if (isBlockVerse) {
-        reportUsjLocationsUnavailable("get the selection");
-        return undefined;
-      }
       const editor = editorRef.current;
       if (!editor) return undefined;
       // The host resolves what this returns against `getUsj()`, which is the SETTLED document, so
@@ -954,10 +933,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       return readSettledSelection(editor, "getSelection");
     },
     setSelection(selection) {
-      if (isBlockVerse) {
-        reportUsjLocationsUnavailable("set the selection");
-        return;
-      }
       const live = liveSelectionFromSettled(selection);
       if (!live) {
         stableLogger?.warn(
@@ -1010,11 +985,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           },
       fifth?: TypedMarkOnRemove,
     ) {
-      if (isBlockVerse) {
-        reportUsjLocationsUnavailable("set an annotation");
-        return;
-      }
-
       let onClick: TypedMarkOnClick | undefined;
       let onRemove: TypedMarkOnRemove | undefined;
       let onMouseEnter: TypedMarkOnMouseEnter | undefined;

@@ -192,14 +192,9 @@ export interface EditorRef {
    * byte with no representation, to the nearest location at or before them; each end of a range
    * snaps on its own.
    *
-   * Always returns `undefined` in the block verse layout (`ViewOptions.verseLayout: "block"`):
-   * it splits a paragraph spanning verses across their blocks, so the editor's content indexes no
-   * longer match the source USJ's and no location can be expressed. The editor reports this once
-   * through its logger.
-   *
-   * @returns the selection location or range, or `undefined` only when there is no selection (or
-   *   in the block verse layout) — never because a position could not be expressed. The
-   *   json-path in the selection assumes no comment Milestone nodes are present in the USJ.
+   * @returns the selection location or range, or `undefined` only when there is no selection —
+   *   never because a position could not be expressed. The json-path in the selection assumes no
+   *   comment Milestone nodes are present in the USJ.
    */
   getSelection(): SelectionRange | undefined;
   /**
@@ -209,9 +204,6 @@ export interface EditorRef {
    * Positions are expressed against the SETTLED document ({@link EditorRef.getUsj}) — see
    * {@link EditorRef.getSelection} for the full contract, including how a USFM byte with no USJ
    * representation snaps left.
-   *
-   * Does nothing in the block verse layout, for the reason given on
-   * {@link EditorRef.getSelection}.
    *
    * @param selection - A selection location or range. The json-path in the selection assumes no
    *   comment Milestone nodes are present in the USJ.
@@ -223,10 +215,6 @@ export interface EditorRef {
    * @remarks
    * Positions are expressed against the SETTLED document ({@link EditorRef.getUsj}) — see
    * {@link EditorRef.getSelection} for the full contract.
-   *
-   * Does nothing in the block verse layout (`ViewOptions.verseLayout: "block"`): an annotation is
-   * addressed by USJ location, which that layout cannot express - see
-   * {@link EditorRef.getSelection}. The failure is reported through the logger.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.

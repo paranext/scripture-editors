@@ -20,6 +20,7 @@ import {
 import {
   $createLineBreakNode,
   $createTextNode,
+  $getNodeByKey,
   $getRoot,
   $setState,
   LineBreakNode,
@@ -1672,9 +1673,10 @@ describe("round-trip conversion", () => {
   });
 });
 
-// USJ locations are indexes into the source USJ's content. The block verse layout splits any
-// paragraph that spans verses into one fragment per verse, so those indexes no longer describe the
-// source document and a location taken from this tree would be confidently wrong.
+// The block verse layout splits any paragraph that spans verses into one fragment per verse, so
+// its tree's content indexes are not the USJ's on their own - both selection functions translate
+// through them (`blockVerseLocations.utils`) first, and this pins that a verse block reports and
+// accepts the same locations the inline layout does.
 describe("block verse layout", () => {
   const blockVerseNodes = [VerseBlockNode, ParaNode, ImmutableVerseNode, TextNode];
 
@@ -1696,32 +1698,40 @@ describe("block verse layout", () => {
     return editor;
   }
 
-  it("reports no location for a caret inside a verse block", () => {
-    const editor = createChapter(true);
+  it("reports the same location for a caret inside a verse block as the inline layout does", () => {
+    const inline = createChapter(false);
+    const block = createChapter(true);
 
-    expect(
-      editor.getEditorState().read(() => $getUsjSelectionFromEditor(undefined)),
-    ).toBeUndefined();
-  });
-
-  // The control: the same caret in the same content resolves normally when it is not in a block,
-  // so the test above is about the layout and not about the caret being missing.
-  it("reports a location for the same caret in the inline layout", () => {
-    const editor = createChapter(false);
-
-    expect(editor.getEditorState().read(() => $getUsjSelectionFromEditor(undefined))).toBeDefined();
-  });
-
-  it("refuses to resolve a USJ location back to a range in a verse block document", () => {
-    const editor = createChapter(true);
-
-    const range = editor
+    const inlineLocation = inline
       .getEditorState()
-      .read(() =>
-        $getRangeFromUsjSelection({ start: { jsonPath: "$.content[0]", offset: 0 } }, undefined),
-      );
+      .read(() => $getUsjSelectionFromEditor(undefined));
+    const blockLocation = block.getEditorState().read(() => $getUsjSelectionFromEditor(undefined));
 
-    expect(range).toBeUndefined();
+    expect(inlineLocation).toBeDefined();
+    expect(blockLocation).toEqual(inlineLocation);
+  });
+
+  it("resolves a USJ location back to the same range in a verse block document as inline", () => {
+    const inline = createChapter(false);
+    const block = createChapter(true);
+    const location: SelectionRange = { start: { jsonPath: "$.content[0].content[1]", offset: 1 } };
+
+    const inlineRange = inline
+      .getEditorState()
+      .read(() => $getRangeFromUsjSelection(location, undefined));
+    const blockRange = block
+      .getEditorState()
+      .read(() => $getRangeFromUsjSelection(location, undefined));
+    if (!inlineRange || !blockRange) throw new Error("expected both ranges to resolve");
+
+    const inlineText = inline
+      .getEditorState()
+      .read(() => $getNodeByKey(inlineRange.anchor.key)?.getTextContent());
+    const blockText = block
+      .getEditorState()
+      .read(() => $getNodeByKey(blockRange.anchor.key)?.getTextContent());
+    expect(blockText).toBe(inlineText);
+    expect(blockRange.anchor.offset).toBe(inlineRange.anchor.offset);
   });
 });
 

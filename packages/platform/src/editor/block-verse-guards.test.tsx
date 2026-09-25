@@ -213,22 +213,10 @@ describe("block verse layout guards", () => {
     expect(() => callMethod(editor)).toThrow(/readonly/i);
   });
 
-  // The USJ-addressed APIs have no location to answer with, and no return value a host could check
-  // for `setSelection`/`setAnnotation`. Report through the editor's own logger so a multi-pane host
-  // hears it for every pane, not just the one that happened to ask first.
-  it.each([
-    ["getSelection", (ref: EditorRef) => ref.getSelection()],
-    ["setSelection", (ref: EditorRef) => ref.setSelection({ start: { jsonPath: "$", offset: 0 } })],
-    [
-      "setAnnotation",
-      (ref: EditorRef) =>
-        ref.setAnnotation(
-          { start: { jsonPath: "$", offset: 0 }, end: { jsonPath: "$", offset: 0 } },
-          "comment",
-          "annotation-1",
-        ),
-    ],
-  ] as const)("reports that %s is unavailable", async (_name, callMethod) => {
+  // The read-only guards above stop an EDIT, not a caret: positions are expressed against the
+  // SETTLED document exactly as they are in the inline layouts, so these report and accept
+  // locations instead of refusing them.
+  it("reports a placed selection instead of refusing it", async () => {
     const logger = createLogger();
     const ref = createRef<EditorRef>();
     await act(async () => {
@@ -244,8 +232,46 @@ describe("block verse layout guards", () => {
 
     const editor = ref.current;
     if (!editor) throw new Error("editor ref is not set");
-    expect(callMethod(editor)).toBeUndefined();
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("block verse layout"));
+    act(() => editor.setSelection({ start: { jsonPath: "$", offset: 0 } }));
+
+    // The caret lands at the document's very start, which round-trips through its own (newer)
+    // canonical spelling rather than the older root spelling it was placed with.
+    expect(editor.getSelection()).toEqual({
+      start: { jsonPath: "$.content[0].content[0]", offset: 0 },
+    });
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("block verse layout"));
+  });
+
+  it("applies a setAnnotation range instead of refusing it", async () => {
+    const logger = createLogger();
+    const ref = createRef<EditorRef>();
+    let container: HTMLElement | undefined;
+    await act(async () => {
+      ({ container } = render(
+        <Editorial
+          ref={ref}
+          defaultUsj={usjGen1v1}
+          options={{ isReadonly: true, view: blockVerseOptions }}
+          logger={logger}
+        />,
+      ));
+    });
+
+    const editor = ref.current;
+    if (!editor) throw new Error("editor ref is not set");
+    // Content[2].content[1] is "the first verse ", inside verse 1's own paragraph - a span an
+    // annotation can wrap without crossing the fragment split this layout introduces.
+    const jsonPath = "$.content[2].content[1]";
+    await act(async () => {
+      editor.setAnnotation(
+        { start: { jsonPath, offset: 0 }, end: { jsonPath, offset: 3 } },
+        "comment",
+        "annotation-1",
+      );
+    });
+
+    expect(container?.querySelectorAll("mark").length).toBeGreaterThan(0);
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("block verse layout"));
   });
 
   // A local update is a caller error, so it throws.
