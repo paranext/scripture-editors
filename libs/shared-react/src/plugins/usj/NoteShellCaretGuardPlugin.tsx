@@ -1,3 +1,4 @@
+import { releaseTagsAfterNextCommit } from "./editorUpdate.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $addUpdateTag,
@@ -257,8 +258,14 @@ export function NoteShellCaretGuardPlugin(): null {
       () => {
         // Command handlers already run inside an update, so the tag joins that commit rather than
         // opening a new one. Nothing here changes content, so tagging it costs nothing already
-        // excluded from saved Scripture and collaborative traffic.
-        if ($guardCaretOutOfNoteShell(isPointerDown.current)) $addUpdateTag(CURSOR_CHANGE_TAG);
+        // excluded from saved Scripture and collaborative traffic. The correction only moves the
+        // caret, and a selection-only commit keeps its tags pending for the next one - the user's
+        // next keystroke would then be taken for a caret move and never reach the host - so the
+        // tag is released once this commit is done.
+        if ($guardCaretOutOfNoteShell(isPointerDown.current)) {
+          $addUpdateTag(CURSOR_CHANGE_TAG);
+          releaseTagsAfterNextCommit(editor, CURSOR_CHANGE_TAG);
+        }
         return false;
       },
       COMMAND_PRIORITY_EDITOR,

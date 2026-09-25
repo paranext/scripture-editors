@@ -32,6 +32,7 @@ import {
   $createMarkerTrailingSeparator,
   $createNoteNode,
   $createParaNode,
+  CURSOR_CHANGE_TAG,
   CURSOR_PLACEHOLDER_CHAR,
   NoteNode,
   ParaNode,
@@ -768,6 +769,50 @@ describe("TrailingNoteCaretGuardPlugin", () => {
         if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
         expect(selection.anchor.key).toBe(para.getLastChild()?.getKey());
       });
+    });
+
+    // Reusing the host only moves the caret, and Lexical keeps a selection-only commit's tags
+    // pending: the repair's cursor-change tag would then ride onto the user's next keystroke, which
+    // the host's change listener skips as a caret move.
+    it("does not tag the keystroke typed into a reused host as a caret move", async () => {
+      const { editor } = await baseTestEnvironment(
+        () => {
+          $getRoot().append(
+            $createParaNode("p").append(
+              $createTextNode("before "),
+              $createTrailingNote(),
+              $createTextNode(CURSOR_PLACEHOLDER_CHAR),
+            ),
+          );
+        },
+        <TrailingNoteCaretGuardPlugin />,
+      );
+      const dom = noteParagraphDom(editor);
+      await resolveDomPosition(editor, dom.noteDom, 2);
+      const contentCommitTags: string[][] = [];
+      const unregister = editor.registerUpdateListener(({ tags, dirtyLeaves }) => {
+        if (dirtyLeaves.size > 0) contentCommitTags.push([...tags]);
+      });
+
+      // The keystroke follows the click's commit directly: nothing (no `selectionchange`) gets in
+      // between to clear pending tags on the repair's behalf.
+      await act(async () => {
+        putDomCaret(dom.noteDom, 2);
+        dom.paraDom.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+        editor.update(
+          () => {
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) selection.insertText("x");
+          },
+          { discrete: true },
+        );
+      });
+      unregister();
+      releaseDomSelection();
+
+      expect(contentCommitTags.length).toBeGreaterThan(0);
+      for (const tags of contentCommitTags) expect(tags).not.toContain(CURSOR_CHANGE_TAG);
     });
 
     it("leaves a caret put inside the note by anything but a click alone", async () => {

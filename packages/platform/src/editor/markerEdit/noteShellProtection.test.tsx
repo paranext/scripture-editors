@@ -44,7 +44,13 @@ import {
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
-import { $isMarkerNode, $noteEditableCallerNode, getEditableCallerText, NoteNode } from "shared";
+import {
+  $isMarkerNode,
+  $noteEditableCallerNode,
+  CURSOR_CHANGE_TAG,
+  getEditableCallerText,
+  NoteNode,
+} from "shared";
 import { NoteShellCaretGuardPlugin, ViewOptions } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
@@ -300,6 +306,36 @@ describe("expanded note shell", () => {
       expect(note.is(anchorNode)).toBe(false);
       expect(anchorNode.getParent()?.is(note) ?? false).toBe(false);
     });
+  });
+
+  // The correction only moves the caret, and Lexical keeps a selection-only commit's tags pending:
+  // its cursor-change tag would ride onto the keystroke that follows, which the host's change
+  // listener then skips as a caret move - the character is shown but never saved.
+  it("does not tag the keystroke after a shell correction as a caret move", async () => {
+    const { editor } = await mount(protectedShell);
+    await clickCaretInShell(
+      editor,
+      (note) => requireDefined($noteEditableCallerNode(note), "caller"),
+      1,
+    );
+    const contentCommitTags: string[][] = [];
+    const unregister = editor.registerUpdateListener(({ tags, dirtyLeaves, dirtyElements }) => {
+      if (dirtyLeaves.size > 0 || dirtyElements.size > 0) contentCommitTags.push([...tags]);
+    });
+
+    await act(async () => {
+      editor.update(
+        () => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.insertText("x");
+        },
+        { discrete: true },
+      );
+    });
+    unregister();
+
+    expect(contentCommitTags.length).toBeGreaterThan(0);
+    for (const tags of contentCommitTags) expect(tags).not.toContain(CURSOR_CHANGE_TAG);
   });
 
   it("leaves an editable shell alone, caret and keystroke both", async () => {
