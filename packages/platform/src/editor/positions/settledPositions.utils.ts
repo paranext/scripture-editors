@@ -17,6 +17,7 @@
  */
 
 import {
+  $anchorForPoint,
   $buildNoteFragment,
   $caretSpanByteAnchor,
   $isClosingMarkerSpan,
@@ -26,6 +27,7 @@ import {
   FragmentAccumulator,
   FragmentPoint,
   FragmentSpan,
+  spanFor,
   Tier2Context,
 } from "../markerEdit/tier2Rebuild.utils";
 import {
@@ -66,7 +68,6 @@ import {
   $isRootNode,
   $isTextNode,
   LexicalNode,
-  NodeKey,
 } from "lexical";
 import { LoggerBasic } from "shared";
 import {
@@ -412,85 +413,6 @@ function $settledTarget(
       location,
     };
   return { kind: "live", location: withContentIndexes(location, liveIndexes) };
-}
-
-/** Every key in `node`'s subtree, `node` included. */
-function $collectKeys(node: LexicalNode, out: Set<NodeKey>): void {
-  out.add(node.getKey());
-  if ($isElementNode(node)) node.getChildren().forEach((child) => $collectKeys(child, out));
-}
-
-/** The span a `(key, offset)` pair addresses, if the fragment carries one for that node. */
-function spanFor(
-  fragment: FragmentAccumulator,
-  key: NodeKey,
-  offset: number,
-): FragmentSpan | undefined {
-  return fragment.spans.find(
-    (span) => !span.isSentinel && span.key === key && offset <= span.end - span.start,
-  );
-}
-
-/**
- * The byte anchor for a point in a fragment's own tree, plus the byte of `fragment.text` it
- * anchored at. A text point anchors on its own bytes; an ELEMENT point is a boundary between
- * children, which anchors at the END of the last byte before it — the one spelling that is stable
- * when the boundary happens to sit in front of a preserved node, whose inner bytes are not
- * addressable at all. A boundary in front of all of an element's own content is where that
- * element starts, so it anchors on the element's first byte when there is one to anchor on.
- *
- * Read-only: resolves span node keys, so call inside a read of the tree the fragment was built
- * over.
- */
-function $anchorForPoint(
-  fragment: FragmentAccumulator,
-  node: LexicalNode,
-  offset: number,
-): { anchor: CaretByteAnchor; position: number } | undefined {
-  const anchored = (key: NodeKey, keyOffset: number) => {
-    const anchor = $caretSpanByteAnchor(fragment, key, keyOffset);
-    const span = spanFor(fragment, key, keyOffset);
-    return anchor && span ? { anchor, position: span.start + keyOffset } : undefined;
-  };
-  // Deliberately not through `anchored`: the span before the boundary may be a preserved node's
-  // one-byte SENTINEL, which `spanFor` refuses (its inner bytes are not addressable). The END of
-  // that byte is exactly what the boundary means — just past the construct — and
-  // `$caretSpanByteAnchor` spells a sentinel's end without trouble. A boundary in FRONT of a
-  // sentinel is the case that genuinely has no spelling, and it is the fragment-start branch
-  // below that refuses it.
-  const anchoredAfter = (span: FragmentSpan) => {
-    const keyOffset = span.end - span.start;
-    const anchor = $caretSpanByteAnchor(fragment, span.key, keyOffset);
-    return anchor ? { anchor, position: span.start + keyOffset } : undefined;
-  };
-  if (!$isElementNode(node)) return anchored(node.getKey(), offset);
-  const before = new Set<NodeKey>();
-  node
-    .getChildren()
-    .slice(0, offset)
-    .forEach((child) => $collectKeys(child, before));
-  const last = [...fragment.spans].reverse().find((span) => before.has(span.key));
-  if (last) return anchoredAfter(last);
-
-  // Nothing of the element's own is before the boundary, so it sits where the element starts —
-  // the fragment's start only when the element opens the fragment. In front of the element's
-  // first byte is the precise spelling: a boundary past the previous paragraph's last byte would
-  // resolve into that paragraph wherever the two are joined by whitespace.
-  const inside = new Set<NodeKey>();
-  $collectKeys(node, inside);
-  const firstInside = fragment.spans.find((span) => inside.has(span.key));
-  if (firstInside && !firstInside.isSentinel) return anchored(firstInside.key, 0);
-  // An element that opens with a preserved node, or holds no bytes at all, has no first byte to
-  // stand in front of, so the boundary is spelled from the byte before the element instead.
-  const lastOutside = [...fragment.spans]
-    .reverse()
-    .find((span) => !inside.has(span.key) && $getNodeByKey(span.key)?.isBefore(node));
-  if (lastOutside) return anchoredAfter(lastOutside);
-  // Nothing before the element either: it is the fragment's own start, which only a non-sentinel
-  // first span can express — a sentinel anchor counts its placeholder byte and would land PAST the
-  // construct rather than in front of it.
-  const first = fragment.spans[0];
-  return first && !first.isSentinel ? anchored(first.key, 0) : undefined;
 }
 
 /** What resolving a settled location inside a scope's scratch tree produced. Plain data only: a

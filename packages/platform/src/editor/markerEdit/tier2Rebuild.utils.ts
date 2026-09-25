@@ -1346,6 +1346,88 @@ export function $caretSpanByteAnchor(
   return undefined;
 }
 
+/** Every key in `node`'s subtree, `node` included. */
+function $collectKeys(node: LexicalNode, out: Set<NodeKey>): void {
+  out.add(node.getKey());
+  if ($isElementNode(node)) node.getChildren().forEach((child) => $collectKeys(child, out));
+}
+
+/** The span a `(key, offset)` pair addresses, if the fragment carries one for that node. */
+export function spanFor(
+  fragment: FragmentAccumulator,
+  key: NodeKey,
+  offset: number,
+): FragmentSpan | undefined {
+  return fragment.spans.find(
+    (span) => !span.isSentinel && span.key === key && offset <= span.end - span.start,
+  );
+}
+
+/**
+ * The byte anchor for a point in a fragment's own tree, plus the byte of `fragment.text` it
+ * anchored at. A text point anchors on its own bytes; an ELEMENT point is a boundary between
+ * children, which anchors at the END of the last byte before it — the one spelling that is stable
+ * when the boundary happens to sit in front of a preserved node, whose inner bytes are not
+ * addressable at all. A boundary in front of all of an element's own content is where that
+ * element starts, so it anchors on the element's first byte when there is one to anchor on.
+ *
+ * Shared by the settle's caret capture and the settled-position translation, so a caret and a
+ * position at the same boundary spell the same anchor.
+ *
+ * Read-only: resolves span node keys, so call inside a read of the tree the fragment was built
+ * over.
+ */
+export function $anchorForPoint(
+  fragment: FragmentAccumulator,
+  node: LexicalNode,
+  offset: number,
+): { anchor: CaretByteAnchor; position: number } | undefined {
+  const anchored = (key: NodeKey, keyOffset: number) => {
+    const anchor = $caretSpanByteAnchor(fragment, key, keyOffset);
+    const span = spanFor(fragment, key, keyOffset);
+    return anchor && span ? { anchor, position: span.start + keyOffset } : undefined;
+  };
+  // Deliberately not through `anchored`: the span before the boundary may be a preserved node's
+  // one-byte SENTINEL, which `spanFor` refuses (its inner bytes are not addressable). The END of
+  // that byte is exactly what the boundary means — just past the construct — and
+  // `$caretSpanByteAnchor` spells a sentinel's end without trouble. A boundary in FRONT of a
+  // sentinel is the case that genuinely has no spelling, and it is the fragment-start branch
+  // below that refuses it.
+  const anchoredAfter = (span: FragmentSpan) => {
+    const keyOffset = span.end - span.start;
+    const anchor = $caretSpanByteAnchor(fragment, span.key, keyOffset);
+    return anchor ? { anchor, position: span.start + keyOffset } : undefined;
+  };
+  if (!$isElementNode(node)) return anchored(node.getKey(), offset);
+  const before = new Set<NodeKey>();
+  node
+    .getChildren()
+    .slice(0, offset)
+    .forEach((child) => $collectKeys(child, before));
+  const last = [...fragment.spans].reverse().find((span) => before.has(span.key));
+  if (last) return anchoredAfter(last);
+
+  // Nothing of the element's own is before the boundary, so it sits where the element starts —
+  // the fragment's start only when the element opens the fragment. In front of the element's
+  // first byte is the precise spelling: a boundary past the previous paragraph's last byte would
+  // resolve into that paragraph wherever the two are joined by whitespace.
+  const inside = new Set<NodeKey>();
+  $collectKeys(node, inside);
+  const firstInside = fragment.spans.find((span) => inside.has(span.key));
+  if (firstInside && !firstInside.isSentinel) return anchored(firstInside.key, 0);
+  // An element that opens with a preserved node, or holds no bytes at all, has no first byte to
+  // stand in front of, so the boundary is spelled from the byte before the element instead.
+  const lastOutside = [...fragment.spans]
+    .reverse()
+    .find((span) => !inside.has(span.key) && $getNodeByKey(span.key)?.isBefore(node));
+  if (lastOutside) return anchoredAfter(lastOutside);
+  // Nothing before the element either: it is the fragment's own start, which only a non-sentinel
+  // first span can express — a sentinel anchor counts its placeholder byte and would land PAST the
+  // construct rather than in front of it.
+  const first = fragment.spans[0];
+  return first && !first.isSentinel ? anchored(first.key, 0) : undefined;
+}
+
 /**
  * Whether a span is a CLOSING (or self-closing) marker glyph. The caret never lands on such a
  * glyph: a completed closer (`\nd*`) has the caret belong on the content AFTER it, not inside the
@@ -2174,8 +2256,9 @@ function $selectAtFragmentByteAnchor(
  * once the nodes it was read from are gone.
  */
 interface CapturedCaret {
-  /** The caret as a byte anchor over the scope's live fragment; `undefined` when its node has no
-   * span there — a point inside a preserved run, or an element boundary. */
+  /** The caret as a byte anchor over the scope's live fragment, an element boundary spelled from
+   * the child bytes beside it ({@link $anchorForPoint}); `undefined` when nothing of the fragment
+   * spells it — a point inside a preserved run. */
   anchor: CaretByteAnchor | undefined;
   /** A caret inside a preserved run the settle carries across whole: the run member holding it,
    * and the child path from that member down to the caret's own node. */
@@ -2196,7 +2279,12 @@ function $captureCaret(fragment: FragmentAccumulator, point: PointType): Capture
   const preserved = $preservedRunMember(fragment, node);
   const path = preserved && $childPath(preserved.member, node);
   return {
-    anchor: $caretSpanByteAnchor(fragment, point.key, point.offset),
+    // An element point (a click past a paragraph's trailing note) has no span of its own, so it
+    // is spelled from the child bytes beside it, the same way a settled position spells one.
+    anchor:
+      point.type === "element"
+        ? $anchorForPoint(fragment, node, point.offset)?.anchor
+        : $caretSpanByteAnchor(fragment, point.key, point.offset),
     inRun:
       preserved && path
         ? {

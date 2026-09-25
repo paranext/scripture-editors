@@ -30,6 +30,7 @@ import {
   LexicalEditor,
   LexicalNode,
   PointType,
+  $setSelection,
   TextNode,
 } from "lexical";
 import {
@@ -42,6 +43,7 @@ import {
   getPendedDisplayOwners,
   NBSP,
   textTypeState,
+  ZWSP,
 } from "shared";
 
 type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
@@ -539,5 +541,68 @@ describe("an annotation mark that begins with a whole char span", () => {
     });
     expect(liveParaText(mounted.lexical)).toContain("st\\nd name\\nd* end words");
     expect(liveMarkTexts(mounted.lexical)).toEqual(["name"]);
+  });
+});
+
+describe("an element-point caret in a paragraph whose literal settles", () => {
+  const LITERAL = "In the \\nd LORD\\nd* of God ";
+
+  /** A footnote with the body `note body text`. */
+  const footnote: MarkerObject = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "fr", content: ["1.1"] }, "note body text"],
+  };
+
+  /** Mount `content` as the first paragraph, type {@link LITERAL} over its `lord` text, then put
+   * the caret on the paragraph element at the child offset `offsetOf` picks, which departs the
+   * literal. */
+  async function elementCaretAfterLiteral(
+    content: Usj["content"],
+    offsetOf: (childrenSize: number) => number,
+  ): Promise<Mounted> {
+    const mounted = await mountStandardViewEditor(twoParaUsj(content));
+    await typeOver(mounted.lexical, "lord", LITERAL, LITERAL.indexOf("nd "));
+    await inOneUpdate(mounted.lexical, () => {
+      const para = $getRoot().getChildren().find($isParaNode);
+      if (!para) throw new Error("no paragraph");
+      const offset = offsetOf(para.getChildrenSize());
+      const selection = $createRangeSelection();
+      selection.anchor.set(para.getKey(), offset, "element");
+      selection.focus.set(para.getKey(), offset, "element");
+      $setSelection(selection);
+    });
+    await idleSettle();
+    const literalLeft = mounted.lexical.getEditorState().read(() =>
+      $getRoot()
+        .getAllTextNodes()
+        .some((node) => node.getTextContent().includes("LORD\\nd*")),
+    );
+    expect(literalLeft).toBe(false);
+    expect(liveParaText(mounted.lexical)).toContain("\\nd LORD\\nd*");
+    return mounted;
+  }
+
+  it("stays after a trailing note when it was past the paragraph's last child", async () => {
+    const mounted = await elementCaretAfterLiteral(["lord ", footnote], (size) => size);
+
+    // A caret past a trailing note gets a display-only caret host after the note.
+    expect(caretText(mounted.lexical).replaceAll(ZWSP, "")).toMatch(new RegExp(`${NOTE}${CARET}$`));
+  });
+
+  it("stays in front of a note it was in front of", async () => {
+    const mounted = await elementCaretAfterLiteral(
+      ["lord ", footnote, " made"],
+      (size) => size - 2,
+    );
+
+    expect(caretText(mounted.lexical)).toContain(`of God ${CARET}${NOTE} made`);
+  });
+
+  it("stays at the paragraph's start when it was in front of every child", async () => {
+    const mounted = await elementCaretAfterLiteral(["lord ", footnote], () => 0);
+
+    expect(caretText(mounted.lexical)).toMatch(new RegExp(`^${CARET}`));
   });
 });
