@@ -27,6 +27,8 @@ import {
   $createMilestoneNode,
   $createParaNode,
   $createTypedMarkNode,
+  $createCursorPlaceholderNode,
+  CURSOR_PLACEHOLDER_CHAR,
   $createVerseBlockNode,
   $createVerseNode,
   ChapterNode,
@@ -1742,5 +1744,65 @@ describe("block verse layout", () => {
       .read(() => $getRangeFromUsjSelection({ start: { jsonPath: "$.content[0]", offset: 0 } }));
 
     expect(range).toBeUndefined();
+  });
+});
+
+describe("$getUsjSelectionFromEditor with a transient caret host", () => {
+  // A caret host is presentation, absent from the USJ the host application sees, so a caret
+  // resting in one has to report the position the host stands in for — the boundary just past the
+  // verse marker — and not fall back to the paragraph's start.
+  it("reports a position for a zero-width-space run inside an annotation mark", () => {
+    // A mark contributes no content of its own, so asking it for the location of the child at some
+    // index hands that same child straight back. Reporting the raw parent therefore cycles between
+    // the two. It has to be the mark's own position in the block instead.
+    //
+    // Reachable without any caret host: a lone zero-width space is a Thai/Khmer/Lao line break, and
+    // splitting text at a comment boundary can leave one as a mark's only child. This runs on the
+    // hot path, from the selection-change listener, so a cycle here takes the editor down.
+    let zwsp: TextNode;
+    const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode], () => {
+      zwsp = $createTextNode(CURSOR_PLACEHOLDER_CHAR);
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("before "),
+          $createTypedMarkNode({ comment: ["comment-1"] }).append(zwsp),
+          $createTextNode(" after"),
+        ),
+      );
+    });
+    // Non-null assertion is safe: zwsp is assigned during setup.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    updateSelection(editor, zwsp!, 0);
+
+    editor.getEditorState().read(() => {
+      expect(() => $getUsjSelectionFromEditor()).not.toThrow();
+    });
+  });
+
+  it("reports the empty verse's own position, not the paragraph start", () => {
+    let host: TextNode;
+    const { editor } = createBasicTestEnvironment([ParaNode, ImmutableVerseNode], () => {
+      host = $createCursorPlaceholderNode();
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createImmutableVerseNode("2"),
+          $createTextNode("And the earth. "),
+          $createImmutableVerseNode("3"),
+          host,
+          $createImmutableVerseNode("4"),
+          $createTextNode("Light."),
+        ),
+      );
+    });
+    // Non-null assertion is safe: host is assigned during setup.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    updateSelection(editor, host!, 0);
+
+    editor.getEditorState().read(() => {
+      // Same position the caret reports at this boundary when no host is present.
+      expect($getUsjSelectionFromEditor()).toEqual({
+        start: { jsonPath: "$.content[0]", offset: 3 },
+      });
+    });
   });
 });

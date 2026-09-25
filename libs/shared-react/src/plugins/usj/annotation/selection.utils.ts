@@ -36,6 +36,7 @@ import {
   $getLogicalPointFromElementPoint,
   $getLogicalTextLocation,
   $getTextNodeAtLogicalOffset,
+  $isCursorPlaceholderOnlyText,
   $isMarkerNode,
   $isParaLikeNode,
   $isTypedMarkNode,
@@ -462,6 +463,23 @@ function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLoc
       jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)),
       offset: logicalPoint.index,
     };
+  }
+
+  // A transient caret host carries no USJ of its own, so it has no location to report. It stands
+  // in for the boundary it was materialized at, which is the position the caret would occupy
+  // without it — report that, rather than falling through to the parent's start.
+  //
+  // Annotation wrappers are walked out of rather than handed back: a mark contributes no content,
+  // so asking it for the child at this node's index returns this same node and the two call each
+  // other forever. The position wanted is the outermost wrapper's own place in the block.
+  if ($isCursorPlaceholderOnlyText(node)) {
+    let child: LexicalNode = node;
+    let parent = child.getParent();
+    while ($isTypedMarkNode(parent)) {
+      child = parent;
+      parent = parent.getParent();
+    }
+    if (parent) return $getLocationFromNode(parent, child.getIndexWithinParent());
   }
 
   // Regular text node - UsjTextContentLocation in coalesced-USJ coordinates.

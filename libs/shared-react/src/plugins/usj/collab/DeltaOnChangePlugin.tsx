@@ -73,6 +73,20 @@ export function DeltaOnChangePlugin({
   return null;
 }
 
+/**
+ * Drops zero-length inserts from a document delta so it can be diffed.
+ *
+ * An empty char span (`\w \w*` with no content) is emitted as `{ insert: "", attributes: … }`,
+ * which carries the span but no characters. `Delta.diff` cannot represent it: it builds a string
+ * from each side and an op contributing no characters has nothing to align against, so the patch
+ * it returns re-inserts the tail and deletes past the end — a peer applying it ends up with the
+ * trailing run duplicated. Zero-length ops contribute nothing to any OT coordinate system, so
+ * removing them from both sides shifts no position and the diff becomes the minimal correct patch.
+ */
+function $withoutEmptyInserts(doc: Delta): Delta {
+  return new Delta(doc.ops.filter((op) => op.insert !== ""));
+}
+
 function $getUpdateOps(
   editor: LexicalEditor,
   { dirtyLeaves, prevEditorState }: UpdateListenerPayload,
@@ -93,10 +107,30 @@ function $getUpdateOps(
     // Scripture and every later offset would shift. $isFastPathContentText derives eligibility
     // from the same delta-doc counting instead of re-listing the exclusions; anything ineligible
     // falls to the full diff, whose $handleTextNodes applies the one authoritative list.
+    // The PREVIOUS state has to clear the same bar, and for the same reason: the diff below takes
+    // the previous node's RAW bytes while the retain is counted in delta-doc coordinates. For any
+    // node those coordinates give a length its bytes do not — a bare caret host, an empty char
+    // span's placeholder — the two currencies disagree, and the diff settles the difference with a
+    // delete the document never earned. Emitted after typing into an emptied verse, that delete
+    // lands on the next verse's marker at the peer. A newly created node has no previous bytes to
+    // disagree with, so it stays eligible; everything else falls to the full diff, which counts
+    // both sides the same way.
+    //
+    // Both states are looked up by node key, so a host Lexical MERGES into an adjacent plain text
+    // node escapes this: the surviving key's previous text was not placeholder-only. Neither guard
+    // rule places a host next to plain text today, and closing it for good needs the host's
+    // identity to live in editor state rather than in its content.
+    const prevIsFastPathSafe = prevEditorState.read(() => {
+      const previousNode = $getNodeByKey(nodeKey);
+      return (
+        previousNode === null || ($isTextNode(previousNode) && $isFastPathContentText(previousNode))
+      );
+    });
     if (
       dirtyLeaves.size === 1 &&
       $isTextNode(dirtyNode) &&
       !isInsideNote &&
+      prevIsFastPathSafe &&
       $isFastPathContentText(dirtyNode)
     ) {
       // Handle the most common case of text changing in a single text node.
@@ -118,8 +152,8 @@ function $getUpdateOps(
         update = update.concat(nodePositionRetain).concat(prevTextDoc.diff(textDoc));
       }
     } else {
-      const prevDoc = getEditorDelta(prevEditorState);
-      const currentDoc = getEditorDelta(editor.getEditorState());
+      const prevDoc = $withoutEmptyInserts(getEditorDelta(prevEditorState));
+      const currentDoc = $withoutEmptyInserts(getEditorDelta(editor.getEditorState()));
       update = prevDoc.diff(currentDoc);
     }
   });
