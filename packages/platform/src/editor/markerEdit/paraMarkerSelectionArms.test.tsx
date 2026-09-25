@@ -1,8 +1,9 @@
 /**
  * The marker-edit engine arms paragraph deletion from the pre-delete selection on Backspace/Delete
  * (KEY_DOWN, HIGH) and on cut (CRITICAL). A selected paragraph marker is a node selection, which
- * must never arm either: the delete keys are refused before the engine's HIGH handler runs, and
- * the cut arm — which ties at CRITICAL and registers first — reads only range selections.
+ * must never arm either: `ParaMarkerSelectionPlugin` claims the delete keys at CRITICAL, before the
+ * engine's HIGH handler runs, and the cut arm — which ties at CRITICAL and registers first — reads
+ * only range selections.
  */
 import { $armCollapsedParaDeletion, $armWholeParaDeletion } from "./markerEditDeletion.utils";
 import { MarkerEditContext } from "./markerEditTier1.utils";

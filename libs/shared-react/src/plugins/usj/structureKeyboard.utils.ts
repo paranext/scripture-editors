@@ -11,7 +11,7 @@ import {
   LexicalNode,
   NodeKey,
 } from "lexical";
-import { $isSomeChapterNode, $isSomeParaNode, SomeParaNode } from "shared";
+import { $isGutterMarkerNode, $isSomeChapterNode, $isSomeParaNode, SomeParaNode } from "shared";
 
 /** Editing operations that can alter block structure. */
 export type EditIntent = "insertParagraph" | "deleteBackward" | "deleteForward" | "insertText";
@@ -308,9 +308,12 @@ export function $placeCaretAtEnd(node: LexicalNode): void {
 /**
  * Merge-into-previous semantics for a paragraph delete: move `para`'s children into its
  * previous paragraph sibling (which keeps ITS marker), remove `para` (dropping its marker),
- * and place the caret at the junction. Text is never lost. Only paragraphs merge into
- * paragraphs (ParaNode/ImpliedParaNode either way); any other previous sibling is a no-op.
- * Caller guarantees a previous element sibling exists (checked via `$hasNeighborBlock`).
+ * and place the caret at the junction. Text is never lost. A gutter marker glyph leading `para`
+ * names the marker being dropped, so it is removed with the paragraph rather than moved into the
+ * middle of the previous one. Only paragraphs merge into paragraphs (ParaNode/ImpliedParaNode
+ * either way); with any other previous sibling, or none, it does nothing.
+ *
+ * Mutating: call inside `editor.update()` (a command handler already runs inside one).
  *
  * @param para - The paragraph whose marker is being removed by merging it into its predecessor.
  */
@@ -318,6 +321,8 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   const prev = para.getPreviousSibling();
   if (!$isSomeParaNode(prev)) return;
   const junction = prev.getLastChild();
+  const ownGlyph = para.getFirstChild();
+  if ($isGutterMarkerNode(ownGlyph)) ownGlyph.remove();
   const moved = para.getChildren();
   prev.append(...moved);
   para.remove();

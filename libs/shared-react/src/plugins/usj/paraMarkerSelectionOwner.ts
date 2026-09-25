@@ -8,10 +8,11 @@ import { $getEditor, LexicalEditor } from "lexical";
 const ownerCounts = new WeakMap<LexicalEditor, number>();
 
 /**
- * Records that `editor` protects a selected paragraph marker — refusing delete, cut, paste and
- * drop on it, and owning its keys. Called by `ParaMarkerSelectionPlugin`; the gutter click guard,
- * which CREATES the selection, asks {@link $canSelectParaMarker} first, so a marker
- * selection never exists in an editor that would let rich-text's default Backspace delete it.
+ * Records that `editor` protects a selected paragraph marker — owning its keys, so Backspace and
+ * Delete merge its paragraph instead of deleting the glyph, and refusing cut, paste and drop on it.
+ * Called by `ParaMarkerSelectionPlugin`; the gutter click guard, which CREATES the selection, asks
+ * {@link $canSelectParaMarker} first, so a marker selection never exists in an editor that would
+ * let rich-text's default Backspace delete it.
  *
  * @returns a function that withdraws this registration.
  */

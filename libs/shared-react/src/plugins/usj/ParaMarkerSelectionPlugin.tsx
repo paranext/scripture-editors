@@ -1,6 +1,8 @@
 import { isEditingKey } from "./OpaqueBlockGuardPlugin";
 import { $advancePastParaPrefixes } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { registerParaMarkerSelectionOwner } from "./paraMarkerSelectionOwner";
+import { StructureProtectionMode } from "./structure-protection.model";
+import { $mergeParaIntoPrevious } from "./structureKeyboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -33,13 +35,6 @@ import {
  */
 export const PARA_MARKER_SELECTED_CLASS_NAME = "psc-para-marker-selected";
 
-/** The class the editor root carries while a refused keystroke's hint should show. */
-export const PARA_MARKER_REFUSED_CLASS_NAME = "psc-para-marker-refused";
-/** Root attribute naming which delete key was refused. */
-export const PARA_MARKER_REFUSED_INTENT_ATTRIBUTE = "data-para-marker-refused-intent";
-/** The refused delete direction published in {@link PARA_MARKER_REFUSED_INTENT_ATTRIBUTE}. */
-export type ParaMarkerRefusedIntent = "deleteBackward" | "deleteForward";
-
 /**
  * Keys that begin text input without announcing a character: an IME's first composition keystroke
  * (`Process`), a dead key, and the `Unidentified` some platforms report while composing.
@@ -69,7 +64,8 @@ const COMPOSITION_KEYS = new Set(["Process", "Dead", "Unidentified"]);
  *
  * It also registers the editor as able to hold a marker selection
  * (`registerParaMarkerSelectionOwner`). The click guard creates one only in an editor that has
- * it, so a marker is never selected where nothing refuses its deletion. Nor in a read-only editor,
+ * it, so a marker is never selected where nothing owns its keys — rich-text's own Backspace would
+ * delete the glyph. Nor in a read-only editor,
  * where Lexical drops keydown and a selected marker could not be left by keyboard; if the editor
  * turns read-only while one is selected, its highlight is hidden until it is editable again.
  *
@@ -81,51 +77,45 @@ const COMPOSITION_KEYS = new Set(["Process", "Dead", "Unidentified"]);
  * the scripture reference land exactly where a click at that position would put them. Escape
  * returns to the same place, and typing collapses there and lets the keystroke proceed.
  *
- * Deleting the marker is refused, visibly: the editor ships no user-facing strings, so a refused
- * Backspace/Delete publishes a transient signal on the editor root —
- * {@link PARA_MARKER_REFUSED_CLASS_NAME} plus {@link PARA_MARKER_REFUSED_INTENT_ATTRIBUTE} — for
- * the host to render a hint from, cleared on the next selection change (the same pattern as
- * `StructureKeyboardPlugin`'s armed-delete signal). Cut, copy, paste, drag and drop are refused
- * too: rich-text would export the glyph node on copy, and pasting it would insert a glyph into
- * content. Drop is judged by the drop target rather than the live selection, so only a drop onto
- * the selected glyph itself is refused — a drop elsewhere in the document goes through.
+ * Backspace and Delete remove the marker the way removing a paragraph marker does elsewhere: the
+ * paragraph merges into the one before it (`$mergeParaIntoPrevious`, the merge
+ * `StructureKeyboardPlugin` performs from a caret), in one update and so one undo step, with the
+ * caret left at the join. The paragraph is the operand; the glyph goes with it. With nothing before
+ * it to merge into (the first paragraph, or one after a chapter number) the key does nothing, and
+ * where structure is protected the merge is refused, as it is from a caret. Cut, copy, paste, drag
+ * and drop are refused: rich-text would export the glyph node on copy, and pasting it would insert a
+ * glyph into content. Drop is judged by the drop target rather than the live selection, so only a
+ * drop onto the selected glyph itself is refused — a drop elsewhere in the document goes through.
  *
  * @param onParaMarkerMenuRequest - Called when the user asks, by keyboard, to change the selected
  *   marker.
- * @returns Always `null`; the highlight and signals are published to the DOM.
+ * @param structureProtectionMode - The editor's structure protection; `"protected"` refuses the
+ *   merge that Backspace/Delete would perform. Defaults to `"off"`.
+ * @returns Always `null`; the highlight is published to the DOM.
  */
 export function ParaMarkerSelectionPlugin({
   onParaMarkerMenuRequest,
+  structureProtectionMode = "off",
 }: {
   onParaMarkerMenuRequest?: () => void;
+  structureProtectionMode?: StructureProtectionMode;
 }): null {
   const [editor] = useLexicalComposerContext();
   const onMenuRequestRef = useRef(onParaMarkerMenuRequest);
   useEffect(() => {
     onMenuRequestRef.current = onParaMarkerMenuRequest;
   }, [onParaMarkerMenuRequest]);
+  const structureProtectionModeRef = useRef(structureProtectionMode);
+  useEffect(() => {
+    structureProtectionModeRef.current = structureProtectionMode;
+  }, [structureProtectionMode]);
 
   useEffect(() => {
     let highlightedOwnerKey: NodeKey | undefined;
-    let refusedGlyphKey: NodeKey | undefined;
 
     /** Hands the request to the host outside this update, so its work never runs mid-commit. */
     const requestMenu = () => {
       queueMicrotask(() => onMenuRequestRef.current?.());
-    };
-
-    const publishRefusal = (glyphKey: NodeKey, intent: ParaMarkerRefusedIntent) => {
-      refusedGlyphKey = glyphKey;
-      const root = editor.getRootElement();
-      root?.classList.add(PARA_MARKER_REFUSED_CLASS_NAME);
-      root?.setAttribute(PARA_MARKER_REFUSED_INTENT_ATTRIBUTE, intent);
-    };
-
-    const clearRefusal = () => {
-      refusedGlyphKey = undefined;
-      const root = editor.getRootElement();
-      root?.classList.remove(PARA_MARKER_REFUSED_CLASS_NAME);
-      root?.removeAttribute(PARA_MARKER_REFUSED_INTENT_ATTRIBUTE);
     };
 
     // `unknown` because one guard serves commands with different payloads: an Event for cut,
@@ -176,11 +166,10 @@ export function ParaMarkerSelectionPlugin({
         case "Backspace":
         case "Delete":
           event.preventDefault();
-          // Invariant I forbids a silent no-op, so the refusal is published for the host to show.
-          publishRefusal(
-            glyph.getKey(),
-            event.key === "Backspace" ? "deleteBackward" : "deleteForward",
-          );
+          // Both keys remove the marker, which merges its paragraph into the one before — the
+          // paragraph is the operand, never the glyph. Refused where structure is protected, as
+          // `StructureKeyboardPlugin` refuses the same merge from a caret.
+          if (structureProtectionModeRef.current !== "protected") $mergeParaIntoPrevious(para);
           return true;
         default:
           // Typing lands in the paragraph's text: collapse to its first content position and let
@@ -241,7 +230,6 @@ export function ParaMarkerSelectionPlugin({
       editor.registerUpdateListener(({ editorState }) => {
         const { glyphKey, ownerKey } = readSelectedKeys(editorState);
         syncHighlight(glyphKey, ownerKey);
-        if (refusedGlyphKey !== undefined && refusedGlyphKey !== glyphKey) clearRefusal();
         if (ownerKey !== undefined) removeDomRangesInside(editor.getRootElement());
       }),
     );
@@ -250,7 +238,6 @@ export function ParaMarkerSelectionPlugin({
       unregister();
       setOwnerHighlight(editor, highlightedOwnerKey, false);
       setActiveDescendant(editor, undefined);
-      clearRefusal();
     };
   }, [editor]);
 

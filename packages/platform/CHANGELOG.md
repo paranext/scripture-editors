@@ -33,10 +33,10 @@ refused. The public surface grew substantially; nothing was removed.
   click it in the gutter. Arrow keys do not stop on a marker; arrow movement is unchanged. The row
   is highlighted (`psc-para-marker-selected`, with the editor root's `aria-activedescendant` naming
   the marker). Any arrow key on a selected marker returns the caret to the start of the paragraph's
-  text without moving further, typing goes into the paragraph's text, and Backspace/Delete are
-  refused with a
-  `psc-para-marker-refused` / `data-para-marker-refused-intent` root signal for the host to render a
-  hint from.
+  text without moving further, and typing goes into the paragraph's text. Backspace or Delete
+  merges the paragraph into the one before it in a single undo step, as removing a paragraph marker
+  does; nothing happens on the first paragraph of a book or chapter, and `"protected"`
+  `structureProtectionMode` refuses the merge.
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
 - `EditorProps.onParaMarkerMenuRequest` — fired on Enter or Alt+↓ while a paragraph marker is
   selected, so the host can open its paragraph dropdown.
@@ -124,6 +124,9 @@ refused. The public surface grew substantially; nothing was removed.
   removed.
 
 ### Fixed
+
+- In the paragraph-structure view, a guarded two-step paragraph merge no longer leaves the merged
+  paragraph's gutter marker in the middle of the paragraph it joined.
 
 - In Standard view, the USJ positions the editor reports and accepts (selections, annotations)
   after a milestone, a verse's `\va`/`\vp`, or a chapter's `\ca` were one content item too far:

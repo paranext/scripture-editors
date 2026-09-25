@@ -2,12 +2,12 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
 import { $createImmutableVerseNode } from "../../nodes/usj";
+import { HistoryPlugin } from "../History/HistoryPlugin";
 import {
-  PARA_MARKER_REFUSED_CLASS_NAME,
-  PARA_MARKER_REFUSED_INTENT_ATTRIBUTE,
   PARA_MARKER_SELECTED_CLASS_NAME,
   ParaMarkerSelectionPlugin,
 } from "./ParaMarkerSelectionPlugin";
+import { StructureProtectionMode } from "./structure-protection.model";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
 import { baseTestEnvironment, pressKey, sutUpdate, updateSelection } from "./react-test.utils";
@@ -16,6 +16,7 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  $isRangeSelection,
   COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
@@ -28,13 +29,17 @@ import {
   LexicalNode,
   PASTE_COMMAND,
   TextNode,
+  UNDO_COMMAND,
 } from "lexical";
 import {
   $createGutterMarkerNode,
+  $createImmutableChapterNode,
   $createParaNode,
   $getSelectedParaMarker,
+  $isGutterMarkerNode,
   $isParaNode,
   $selectParaMarker,
+  createEmptyHistoryState,
   ImmutableTypedTextNode,
   NBSP,
   ParaNode,
@@ -416,36 +421,131 @@ function documentJson(editor: LexicalEditor): string {
   return JSON.stringify(editor.getEditorState().toJSON().root);
 }
 
-describe("ParaMarkerSelectionPlugin — deletion is refused visibly", () => {
-  it.each([
-    ["Backspace", "deleteBackward"],
-    ["Delete", "deleteForward"],
-  ])("%s changes nothing and publishes the refusal signal", async (key, intent) => {
-    const { editor, li2 } = await environment();
-    await selectMarkerOf(editor, li2);
-    const before = documentJson(editor);
+/**
+ * `\p first`, `\li2 second`, `\q1 third` — optionally after a chapter number — with the
+ * plugins a Backspace/Delete on a selected marker passes through, and undo history.
+ */
+async function deletionEnvironment(
+  structureProtectionMode: StructureProtectionMode,
+  { afterChapter = false } = {},
+): Promise<{ editor: LexicalEditor } & Doc> {
+  const doc = {} as Doc;
+  const { editor } = await baseTestEnvironment(
+    () => {
+      doc.firstText = $createTextNode("first");
+      doc.secondText = $createTextNode("second");
+      doc.thirdText = $createTextNode("third");
+      doc.p = $createGutterParaNode("p", doc.firstText);
+      doc.li2 = $createGutterParaNode("li2", doc.secondText);
+      doc.q1 = $createGutterParaNode("q1", doc.thirdText);
+      if (afterChapter) $getRoot().append($createImmutableChapterNode("1"));
+      $getRoot().append(doc.p, doc.li2, doc.q1);
+    },
+    <>
+      <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
+      <ParaMarkerSelectionPlugin structureProtectionMode={structureProtectionMode} />
+      <HistoryPlugin externalHistoryState={createEmptyHistoryState()} />
+    </>,
+  );
+  return { editor, ...doc };
+}
 
-    const event = await pressKey(editor, key);
+/** Each root-level paragraph's marker and text, with its gutter glyphs listed separately. */
+function paragraphsOf(editor: LexicalEditor) {
+  return editor.getEditorState().read(() =>
+    $getRoot()
+      .getChildren()
+      .filter($isParaNode)
+      .map((para) => ({
+        marker: para.getMarker(),
+        glyphs: para.getChildren().filter($isGutterMarkerNode).length,
+        text: para
+          .getChildren()
+          .filter((child) => !$isGutterMarkerNode(child))
+          .map((child) => child.getTextContent())
+          .join(""),
+      })),
+  );
+}
 
-    expect(event.defaultPrevented).toBe(true);
-    expect(documentJson(editor)).toBe(before);
-    expect(selectedMarkerOf(editor)).toBe("li2");
-    const root = editor.getRootElement();
-    expect(root?.classList.contains(PARA_MARKER_REFUSED_CLASS_NAME)).toBe(true);
-    expect(root?.getAttribute(PARA_MARKER_REFUSED_INTENT_ATTRIBUTE)).toBe(intent);
-  });
+describe.each(["off", "guarded"] as const)(
+  "ParaMarkerSelectionPlugin — Backspace/Delete merge the paragraph into the previous one (%s)",
+  (structureProtectionMode) => {
+    it.each(["Backspace", "Delete"])(
+      "%s merges in one press, dropping the marker and leaving the caret at the join",
+      async (key) => {
+        const { editor, li2 } = await deletionEnvironment(structureProtectionMode);
+        await selectMarkerOf(editor, li2);
 
-  it("clears the signal on the next selection change", async () => {
-    const { editor, li2 } = await environment();
-    await selectMarkerOf(editor, li2);
-    await pressKey(editor, "Backspace");
+        const event = await pressKey(editor, key);
 
-    await pressKey(editor, "ArrowUp");
+        expect(event.defaultPrevented).toBe(true);
+        expect(paragraphsOf(editor)).toEqual([
+          { marker: "p", glyphs: 1, text: "firstsecond" },
+          { marker: "q1", glyphs: 1, text: "third" },
+        ]);
+        expect(selectedMarkerOf(editor)).toBeUndefined();
+        expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
+        // The two texts normalize into one node, so the join is offset 5 of "firstsecond".
+        editor.getEditorState().read(() => {
+          const selection = $getSelection();
+          expect($isRangeSelection(selection) && selection.isCollapsed()).toBe(true);
+          if (!$isRangeSelection(selection)) return;
+          expect(selection.anchor.getNode().getTextContent()).toBe("firstsecond");
+          expect(selection.anchor.offset).toBe("first".length);
+        });
+      },
+    );
 
-    const root = editor.getRootElement();
-    expect(root?.classList.contains(PARA_MARKER_REFUSED_CLASS_NAME)).toBe(false);
-    expect(root?.hasAttribute(PARA_MARKER_REFUSED_INTENT_ATTRIBUTE)).toBe(false);
-  });
+    it("is undone, exactly, by a single Undo", async () => {
+      const { editor, li2 } = await deletionEnvironment(structureProtectionMode);
+      await selectMarkerOf(editor, li2);
+      const before = documentJson(editor);
+      await pressKey(editor, "Backspace");
+      expect(documentJson(editor)).not.toBe(before);
+
+      await act(async () => {
+        editor.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+
+      expect(documentJson(editor)).toBe(before);
+    });
+
+    it.each([
+      ["the first paragraph of the book", false],
+      ["the first paragraph after a chapter number", true],
+    ])(
+      "on %s, with nothing to merge into, changes nothing and keeps the marker selected",
+      async (_name, afterChapter) => {
+        const { editor, p } = await deletionEnvironment(structureProtectionMode, { afterChapter });
+        await selectMarkerOf(editor, p);
+        const before = documentJson(editor);
+
+        const event = await pressKey(editor, "Backspace");
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(documentJson(editor)).toBe(before);
+        expect(selectedMarkerOf(editor)).toBe("p");
+      },
+    );
+  },
+);
+
+describe("ParaMarkerSelectionPlugin — Backspace/Delete in protected structure", () => {
+  it.each(["Backspace", "Delete"])(
+    "%s changes nothing, as a paragraph merge is refused there",
+    async (key) => {
+      const { editor, li2 } = await deletionEnvironment("protected");
+      await selectMarkerOf(editor, li2);
+      const before = documentJson(editor);
+
+      const event = await pressKey(editor, key);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(documentJson(editor)).toBe(before);
+      expect(selectedMarkerOf(editor)).toBe("li2");
+    },
+  );
 });
 
 describe("ParaMarkerSelectionPlugin — commands that would make the glyph an operand", () => {
@@ -527,43 +627,8 @@ describe("ParaMarkerSelectionPlugin — drop is refused only onto the selected m
 describe.each(["guarded", "protected"] as const)(
   "ParaMarkerSelectionPlugin alongside StructureKeyboardPlugin (%s)",
   (structureProtectionMode) => {
-    async function coexistingEnvironment() {
-      const doc = {} as Doc;
-      const { editor } = await baseTestEnvironment(
-        () => {
-          doc.firstText = $createTextNode("first");
-          doc.secondText = $createTextNode("second");
-          doc.thirdText = $createTextNode("third");
-          doc.p = $createGutterParaNode("p", doc.firstText);
-          doc.li2 = $createGutterParaNode("li2", doc.secondText);
-          doc.q1 = $createGutterParaNode("q1", doc.thirdText);
-          $getRoot().append(doc.p, doc.li2, doc.q1);
-        },
-        <>
-          <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
-          <ParaMarkerSelectionPlugin />
-        </>,
-      );
-      return { editor, ...doc };
-    }
-
-    it("refuses Backspace twice without arming a paragraph merge", async () => {
-      const { editor, li2 } = await coexistingEnvironment();
-      await selectMarkerOf(editor, li2);
-      const before = documentJson(editor);
-
-      await pressKey(editor, "Backspace");
-      await pressKey(editor, "Backspace");
-
-      expect(documentJson(editor)).toBe(before);
-      expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
-      expect(editor.getRootElement()?.classList.contains(PARA_MARKER_REFUSED_CLASS_NAME)).toBe(
-        true,
-      );
-    });
-
     it("lets a typed character through to the paragraph's text", async () => {
-      const { editor, li2, secondText } = await coexistingEnvironment();
+      const { editor, li2, secondText } = await deletionEnvironment(structureProtectionMode);
       await selectMarkerOf(editor, li2);
 
       const event = await pressKey(editor, "a");

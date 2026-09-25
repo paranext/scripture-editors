@@ -1206,7 +1206,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <OpaqueBlockGuardPlugin />
           <ParaMarkerPrefixCursorGuardPlugin />
           <ParaMarkerPrefixGuardPlugin viewOptions={viewOptions} logger={stableLogger} />
-          <ParaMarkerSelectionPlugin onParaMarkerMenuRequest={onParaMarkerMenuRequest} />
+          <ParaMarkerSelectionPlugin
+            onParaMarkerMenuRequest={onParaMarkerMenuRequest}
+            structureProtectionMode={structureProtectionMode}
+          />
           <ParaNodePlugin />
           <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
           <TextDirectionPlugin textDirection={textDirection} />

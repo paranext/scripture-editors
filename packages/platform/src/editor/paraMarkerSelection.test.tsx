@@ -399,3 +399,58 @@ describe("EditorProps.onParaMarkerMenuRequest", () => {
     },
   );
 });
+
+describe("Backspace/Delete on a selected paragraph marker", () => {
+  const view = getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE);
+
+  it.each(["Backspace", "Delete"])(
+    "%s merges the paragraph into the previous one, and a single undo restores the document",
+    async (key) => {
+      const { ref, lexical } = await mountParagraphStructure({
+        options: { view, structureProtectionMode: "guarded" },
+      });
+      const before = ref.current?.getUsj();
+      await clickElement(glyphElementOf(lexical, "li2"));
+
+      await pressKeyOn(lexical, { key });
+      await flushQueuedEvents();
+
+      expect(ref.current?.getUsj()?.content.slice(2)).toEqual([
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            { type: "verse", marker: "v", number: "1" },
+            // The editor's usual spacing before a verse that follows text.
+            "first verse text ",
+            { type: "verse", marker: "v", number: "2" },
+            "second verse text",
+          ],
+        },
+      ]);
+      expect(ref.current?.getSelectedParaMarker()).toBeUndefined();
+
+      await act(async () => {
+        ref.current?.undo();
+      });
+      await flushQueuedEvents();
+
+      expect(ref.current?.getUsj()).toEqual(before);
+    },
+  );
+
+  it("changes nothing where structure is protected", async () => {
+    const { ref, lexical } = await mountParagraphStructure({
+      options: { view, structureProtectionMode: "protected" },
+    });
+    const before = ref.current?.getUsj();
+    await clickElement(glyphElementOf(lexical, "li2"));
+
+    const event = await pressKeyOn(lexical, { key: "Backspace" });
+    await flushQueuedEvents();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(ref.current?.getUsj()).toEqual(before);
+    expect(ref.current?.getSelectedParaMarker()).toBe("li2");
+  });
+});
