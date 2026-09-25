@@ -973,17 +973,12 @@ function $handleBackwardNavigation(
   const isSelectionAtNodeStart = selection.anchor.offset === 0;
   if (!isSelectionAtNodeStart) return false;
 
-  // If at the start of the `\id` line's own content → don't move. The line carries whatever
-  // follows the book code — description text, notes, character spans — so the start of the line is
-  // only where nothing but its immutable `\id GEN ` prefix sits to the left. Anything else there is
-  // a real position to move to, owned by the note handling below or by the default move.
+  // If at the start of the `\id` line's own content, with nothing before it at all → don't move.
+  // The prefix case is already handled above (whichever selection shape reached it); what's left
+  // here is the line's own first child having no previous sibling at all.
   const node = selection.anchor.getNode();
   const bookNode = node.getParent();
-  if (
-    $isBookNode(bookNode) &&
-    (!prevNode || ($isImmutableTypedTextNode(prevNode) && prevNode.is(bookNode.getFirstChild())))
-  )
-    return true;
+  if ($isBookNode(bookNode) && !prevNode) return true;
 
   if ($isNoteNode(prevNode) && prevNode.getIsCollapsed()) {
     // caret at end of collapsed note preceded by verse → move to start of note in para
