@@ -1226,6 +1226,69 @@ describe("$getUsjSelectionFromEditor", () => {
       });
     });
 
+    it("should report an element point inside a mark at the non-text child it names", () => {
+      // The mark spans a verse, so the verse sits between two of the mark's children rather than at
+      // either edge: the point in front of it is the verse's own location, not the mark's edge.
+      let markNode: TypedMarkNode;
+      const { editor } = createBasicTestEnvironment(
+        [ParaNode, TypedMarkNode, ImmutableVerseNode],
+        () => {
+          markNode = $createTypedMarkNode({ testType: ["testId"] }).append(
+            $createTextNode("commented start "),
+            $createImmutableVerseNode("3"),
+            $createTextNode("commented end"),
+          );
+          $getRoot().append(
+            $createParaNode().append(
+              $createImmutableVerseNode("2"),
+              $createTextNode("In the beginning "),
+              markNode,
+              $createTextNode(" rest of three"),
+            ),
+          );
+        },
+      );
+      // Non-null assertion is safe: markNode is assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, markNode!, 1);
+
+      editor.getEditorState().read(() => {
+        // USJ content: [0]=verse 2, [1]="In the beginning commented start ", [2]=verse 3,
+        // [3]="commented end rest of three".
+        expect($getUsjSelectionFromEditor(undefined)?.start).toEqual({
+          jsonPath: "$.content[0].content[2]",
+        });
+      });
+    });
+
+    it("should report an element point inside a mark at the start of the text child it names", () => {
+      let markNode: TypedMarkNode;
+      const { editor } = createBasicTestEnvironment(
+        [ParaNode, TypedMarkNode, ImmutableVerseNode],
+        () => {
+          markNode = $createTypedMarkNode({ testType: ["testId"] }).append(
+            $createTextNode("commented start "),
+            $createImmutableVerseNode("3"),
+            $createTextNode("commented end"),
+          );
+          $getRoot().append(
+            $createParaNode().append($createTextNode("In the beginning "), markNode),
+          );
+        },
+      );
+      // Non-null assertion is safe: markNode is assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, markNode!, 2);
+
+      editor.getEditorState().read(() => {
+        // USJ content: [0]="In the beginning commented start ", [1]=verse 3, [2]="commented end".
+        expect($getUsjSelectionFromEditor(undefined)?.start).toEqual({
+          jsonPath: "$.content[0].content[2]",
+          offset: 0,
+        });
+      });
+    });
+
     it("should return USJ selection of ImmutableVerseNode as an atomic unit", () => {
       let paraNode: ParaNode;
       let textNode: TextNode;

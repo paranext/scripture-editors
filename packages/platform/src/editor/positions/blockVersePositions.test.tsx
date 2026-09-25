@@ -15,7 +15,7 @@ import {
   LexicalNode,
 } from "lexical";
 import { createRef, RefObject } from "react";
-import { $isImmutableTableNode, $isTypedMarkNode } from "shared";
+import { $isImmutableTableNode } from "shared";
 import { BLOCK_VERSE_VIEW_MODE, getViewOptions, ViewOptions } from "shared-react";
 
 /** One chapter exercising every regrouping shape the block layout has: content before any
@@ -139,9 +139,8 @@ interface Point {
   type: "text" | "element";
 }
 
-/** Every text offset, every empty element, and both edges of every non-text leaf. An element point
- * inside a comment mark is left out: the inline layout reports it inconsistently (it names the text
- * before the mark rather than the verse after it), which is not what this pins. */
+/** Every text offset, every empty element, and both edges of every non-text leaf — including a leaf
+ * inside a comment mark, whose edges are element points on the mark. */
 function $points(): Point[] {
   const out: Point[] = [];
   for (const leaf of $leaves()) {
@@ -151,7 +150,6 @@ function $points(): Point[] {
     } else if ($isElementNode(leaf)) out.push({ key: leaf.getKey(), offset: 0, type: "element" });
     else {
       const parent = leaf.getParentOrThrow();
-      if ($isTypedMarkNode(parent)) continue;
       const index = leaf.getIndexWithinParent();
       out.push({ key: parent.getKey(), offset: index, type: "element" });
       out.push({ key: parent.getKey(), offset: index + 1, type: "element" });
@@ -234,16 +232,6 @@ describe("positions in the block verse layout", () => {
     expect(mismatches).toEqual([]);
   });
 
-  // Content[5] offset 2 names the item just before the verse that a comment mark spans (the mark
-  // wraps "commented start ", verse 3, and "commented end", so verse 3 sits INTERIOR to it, not at
-  // either edge). That is the same pre-existing inline-only quirk `$points()` already excludes
-  // above: the inline layout's TypedMarkNode handling snaps an interior point to the mark's own
-  // front edge instead of naming the verse. The block layout never reproduces it - splitting a mark
-  // at a verse always leaves the verse as the FIRST child of the fragment it opens, never interior
-  // to a continuing one - so it reports the verse cleanly instead, which is excluded here for the
-  // same reason `$points()` excludes it.
-  const KNOWN_INLINE_QUIRKS: UsjDocumentLocation[] = [{ jsonPath: "$.content[5]", offset: 2 }];
-
   it("accepts the older root and container spellings the inline layout accepts", async () => {
     const inline = await mountReadonly(inlineOptions);
     const block = await mountReadonly(blockOptions);
@@ -256,10 +244,6 @@ describe("positions in the block verse layout", () => {
         older.push({ jsonPath: `$.content[${top}]`, offset } as UsjDocumentLocation);
     });
     const mismatches = older
-      .filter(
-        (location) =>
-          !KNOWN_INLINE_QUIRKS.some((quirk) => JSON.stringify(quirk) === JSON.stringify(location)),
-      )
       .map((location) => ({
         location,
         inline: landAt(inline, location),
