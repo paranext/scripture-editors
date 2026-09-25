@@ -1742,22 +1742,16 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
 }
 
 /**
- * Build the re-tokenizable fragment for a note's CONTENT children — everything strictly
- * between the note's opening MarkerNode(s) + caller prefix and its trailing closing
- * MarkerNode(s). Preserve-or-refuse (returns undefined) when the note is collapsed, has
- * unknown attributes, an unrecoverable marker, or an unexpected caller/prefix shape: a
- * note the engine cannot cleanly re-derive is never rebuilt.
+ * The guard checks and child slicing {@link $buildNoteFragment} builds its fragment from — the
+ * note's CONTENT children, everything strictly between its opening MarkerNode(s) + caller prefix
+ * and its trailing closing MarkerNode(s) — WITHOUT building the fragment text/spans. Preserve-or-
+ * refuse (returns `undefined`) when the note is collapsed, has an unrecoverable marker, or an
+ * unexpected caller/prefix shape: a note the engine cannot cleanly re-derive is never rebuilt.
  *
- * Exported for the read-only settle (virtualSettle.utils.ts): note content is its own settle scope,
- * and the settled output a consumer reads must be built from the SAME fragment the mutating rebuild
- * below would build. Every other caller in this module still reaches it through
- * `$rebuildNoteContent`.
+ * Factored out so a caller that only needs the CURRENT content nodes — post-splice, to restore the
+ * caret — is not also paying for `$appendNodesFragment`'s walk over them a second time.
  */
-export function $buildNoteFragment(
-  note: NoteNode,
-  getMarkerFn: MarkerLookup,
-  viewOptions: ViewOptions | undefined,
-): { out: FragmentAccumulator; contentNodes: LexicalNode[] } | undefined {
+function $noteContentNodes(note: NoteNode): LexicalNode[] | undefined {
   // Only inline-expanded notes are re-tokenizable: a collapsed note's content is not
   // inline-editable and its display layout (interspersed spacing) is not text-recoverable.
   if (note.getIsCollapsed() !== false) return undefined;
@@ -1793,7 +1787,25 @@ export function $buildNoteFragment(
     end--;
   }
 
-  const contentNodes = children.slice(start, end);
+  return children.slice(start, end);
+}
+
+/**
+ * Build the re-tokenizable fragment for a note's CONTENT children. Preserve-or-refuse (returns
+ * undefined) exactly as {@link $noteContentNodes} does — see it for the guard rails.
+ *
+ * Exported for the read-only settle (virtualSettle.utils.ts): note content is its own settle scope,
+ * and the settled output a consumer reads must be built from the SAME fragment the mutating rebuild
+ * below would build. Every other caller in this module still reaches it through
+ * `$rebuildNoteContent`.
+ */
+export function $buildNoteFragment(
+  note: NoteNode,
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): { out: FragmentAccumulator; contentNodes: LexicalNode[] } | undefined {
+  const contentNodes = $noteContentNodes(note);
+  if (!contentNodes) return undefined;
   const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
   $appendNodesFragment(contentNodes, out, getMarkerFn, viewOptions);
   return { out, contentNodes };
@@ -1992,8 +2004,9 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   });
   // Re-derived from the note's OWN children now that the splice has settled — see
   // $restoreSelectionInContentRegion's doc comment for why the flat `newNodes` array is stale here.
-  const liveContentNodes =
-    $buildNoteFragment(note, getMarkerFn, viewOptions)?.contentNodes ?? newNodes;
+  // `$noteContentNodes` alone (not `$buildNoteFragment`) because only the content nodes are
+  // needed here — re-walking their fragment text/spans a second time would be wasted work.
+  const liveContentNodes = $noteContentNodes(note) ?? newNodes;
   $restoreSelectionInContentRegion(
     liveContentNodes,
     caretAnchor,
@@ -2005,9 +2018,20 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
 }
 
 /**
- * Build the re-tokenizable fragment for the `\id` line's CONTENT children — everything after the
- * immutable `\id GEN ` prefix glyph (markerMode "hidden" builds none, so the skip is conditional
- * on finding one).
+ * The `\id` line's CONTENT children {@link $buildBookFragment} builds its fragment from —
+ * everything after the immutable `\id GEN ` prefix glyph (markerMode "hidden" builds none, so the
+ * skip is conditional on finding one) — WITHOUT building the fragment text/spans.
+ *
+ * Factored out for the same reason {@link $noteContentNodes} is: a caller that only needs the
+ * CURRENT content nodes post-splice is not also paying for `$appendNodesFragment`'s walk again.
+ */
+function $bookContentNodes(book: BookNode): LexicalNode[] {
+  const children = book.getChildren();
+  return $isSynthesizedMarkerNode(children[0]) ? children.slice(1) : children;
+}
+
+/**
+ * Build the re-tokenizable fragment for the `\id` line's CONTENT children.
  *
  * The book node itself is PRESERVED across the rebuild, exactly as a note's shell is: its marker
  * is always `\id`, its code names the book, and the view renders both as one decorator the caret
@@ -2024,8 +2048,7 @@ export function $buildBookFragment(
   getMarkerFn: MarkerLookup,
   viewOptions: ViewOptions | undefined,
 ): { out: FragmentAccumulator; contentNodes: LexicalNode[] } {
-  const children = book.getChildren();
-  const contentNodes = $isSynthesizedMarkerNode(children[0]) ? children.slice(1) : children;
+  const contentNodes = $bookContentNodes(book);
   const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
   $appendNodesFragment(contentNodes, out, getMarkerFn, viewOptions);
   return { out, contentNodes };
@@ -2216,11 +2239,10 @@ export function $rebuildBook(
   // content, preserved runs included, to `followingBlocks`), not only into the book's own children
   // — see $restoreSelectionInContentRegion's doc comment for why the flat `newNodes` array is
   // stale for the book's own content, and $rebuildBook's own splice comment for why a typed block
-  // marker's caret can resolve past the line's content into the new block after it.
-  const liveContentNodes = [
-    ...$buildBookFragment(book, getMarkerFn, viewOptions).contentNodes,
-    ...newBlocks,
-  ];
+  // marker's caret can resolve past the line's content into the new block after it. `$bookContentNodes`
+  // alone (not `$buildBookFragment`) because only the content nodes are needed here — re-walking
+  // their fragment text/spans a second time would be wasted work.
+  const liveContentNodes = [...$bookContentNodes(book), ...newBlocks];
   // Sid carry-over — identical logic to `$rebuildParas`' own, see its comment for the rationale.
   // Collected from `liveContentNodes`, not the stale pre-splice `newNodes`: `$replaceSentinels`
   // (above) splices each preserved sentinel run into the live tree, so a sentinel verse is missing
