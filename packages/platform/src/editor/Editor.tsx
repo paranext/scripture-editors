@@ -169,6 +169,13 @@ import {
 const defaultViewOptions = getDefaultViewOptions();
 const defaultNodeOptions: UsjNodeOptions = {};
 const defaultOptions: EditorOptions = {};
+/**
+ * The change listener's blacklist: every tag that keeps a commit out of the host's USJ-change
+ * handling except `DELTA_CHANGE_TAG`. The listener recognizes an apply by `applyUpdate`'s own flag,
+ * not by that tag, because the tag outlives an apply whose commit dirties nothing and would
+ * otherwise hide the user's next edit.
+ */
+const commitIgnoredTags = blackListedChangeTags.filter((tag) => tag !== DELTA_CHANGE_TAG);
 
 function Placeholder(): ReactElement {
   return <div className="editor-placeholder">Enter some Scripture...</div>;
@@ -291,8 +298,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // Set when a commit may have moved the tree without the change listener refreshing
   // `editedUsjRef` (see `handleCommit`); the next settled read re-serializes instead of trusting it.
   const isEditedUsjStaleRef = useRef(false);
-  // True only while `applyUpdate` commits a local apply, which announces itself (see there).
-  const isApplyingLocalUpdateRef = useRef(false);
+  // True only while `applyUpdate` commits, local or remote; the apply announces itself (see there).
+  const isApplyingUpdateRef = useRef(false);
   const expandedNoteKeyRef = useRef<string>(undefined);
   // In-progress input an in-editor command surface has claimed (see `EditorRef.setTransientInput`),
   // anchored to the text node the caret sat in when it was declared (see AnchoredTransientInput).
@@ -865,13 +872,17 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // would tear down the host's op loop for the same reason the remote branch above reports and
       // drops instead of throwing.
       assertNotBlockVerse("apply an update");
-      // A local apply is the user's own edit, so it is not tagged `DELTA_CHANGE_TAG`, which tells
-      // the marker-edit engine and the display syncs a collaborator made the change. Its one
-      // announcement is still the one below, with the caller's ops and "apply" coordinates, so
-      // the change listener stands down while it commits. A flag around the discrete commit
-      // rather than a tag: a tag on an update that ends up dirtying nothing stays on the editor
-      // and would silence the user's next edit.
-      isApplyingLocalUpdateRef.current = source === "local";
+      // Either source's one announcement is the one below, with the caller's ops and "apply"
+      // coordinates, so the change listener stands down while the apply commits — told so by a
+      // flag around the discrete commit, never by a tag. Lexical clears an update's tags only when
+      // its commit dirties a node, so a tag on an apply whose ops the tree already reflects (a
+      // retain-only op, one replayed twice) stays on the editor when the commit carries only a
+      // caret the DOM moved, and rides onto the user's next edit.
+      //
+      // A remote apply is still tagged `DELTA_CHANGE_TAG`, which tells the marker-edit engine and
+      // the display syncs a collaborator made the change. A local apply is the user's own edit, so
+      // it is not.
+      isApplyingUpdateRef.current = true;
       try {
         editorRef.current?.update(
           () => {
@@ -881,7 +892,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           { discrete: true },
         );
       } finally {
-        isApplyingLocalUpdateRef.current = false;
+        isApplyingUpdateRef.current = false;
       }
       const editorState = editorRef.current?.getEditorState();
       if (!editorState) return;
@@ -1370,13 +1381,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       lastNotifiedUsjRef.current = editedUsjRef.current;
       return;
     }
-    if (tags.has(DELTA_CHANGE_TAG) || isApplyingLocalUpdateRef.current) return;
+    if (isApplyingUpdateRef.current) return;
     // Any other blacklisted commit is not the user's edit and is not announced, but it can still
     // move the tree: an annotation over a pending paragraph settles it inside the annotation's own
     // update, and once nothing is pending `readSettledUsj` hands out the cache as the settled
     // document — the typed literal, not the paragraph it settled into. Mark the cache stale so the
     // next read re-serializes.
-    if (blackListedChangeTags.some((tag) => tags.has(tag))) {
+    if (commitIgnoredTags.some((tag) => tags.has(tag))) {
       isEditedUsjStaleRef.current = true;
       return;
     }
@@ -1399,7 +1410,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     const isSkippedForOps = shouldSkipUpdateForOps(payload, {
       ignoreSelectionChange: true,
       ignoreHistoryMergeTagChange: true,
-      ignoreTags: blackListedChangeTags,
+      ignoreTags: commitIgnoredTags,
     });
     const ops = isSkippedForOps
       ? []

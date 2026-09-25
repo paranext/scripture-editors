@@ -359,3 +359,58 @@ it("announces a local applyUpdate exactly once, with the caller's ops and the in
     lexical.getEditorState().read(() => $isNoteNode($getNodeByKey(insertedNodeKey ?? ""))),
   ).toBe(true);
 });
+
+describe("a remote applyUpdate", () => {
+  interface SourcedEmission {
+    usj: Usj;
+    ops: DeltaOp[] | undefined;
+    source: DeltaSource | undefined;
+  }
+
+  async function mountSourced() {
+    const emissions: SourcedEmission[] = [];
+    const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning"]), {
+      onUsjChange: (usj, ops, source) => emissions.push({ usj, ops, source }),
+    });
+    await flush();
+    return { ...mounted, emissions };
+  }
+
+  it("that changes nothing leaves the user's next edit announced", async () => {
+    const { lexical, ref, emissions } = await mountSourced();
+    // The user clicks into the text as the remote op arrives, so the apply commits the caret the
+    // DOM now holds even though its ops move no bytes.
+    const key = lexical.getEditorState().read(() => $textContaining("beginning").getKey());
+    const text = lexical.getElementByKey(key)?.firstChild;
+    if (!text) throw new Error("no DOM text for the paragraph");
+    window.getSelection()?.collapse(text, "In ".length);
+    act(() => ref.current?.applyUpdate([{ retain: "In ".length }], "remote"));
+    expect(emissions).toHaveLength(0);
+
+    appendNow(lexical, "beginning", "X");
+
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0].source).toBe("local");
+    expect(JSON.stringify(emissions[0].usj)).toContain("In the beginningX");
+    expect(emissions[0].usj).toEqual(ref.current?.getUsj());
+  });
+
+  it("that changes the text is announced once, as remote, and getUsj() reflects it", async () => {
+    const { lexical, ref, emissions } = await mountSourced();
+    const retain =
+      (lexical
+        .getEditorState()
+        .read(() => $getOTPositionOfNode($textContaining("In the beginning"), "apply")) ?? 0) +
+      "In the beginning".length;
+    const ops: DeltaOp[] = [{ retain }, { insert: " remote" }];
+
+    act(() => ref.current?.applyUpdate(ops, "remote"));
+    await flush();
+
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0].source).toBe("remote");
+    expect(emissions[0].ops).toBe(ops);
+    expect(JSON.stringify(ref.current?.getUsj())).toContain("In the beginning remote");
+    expect(emissions[0].usj).toEqual(ref.current?.getUsj());
+  });
+});
