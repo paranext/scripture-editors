@@ -884,8 +884,34 @@ export declare interface EditorRef {
    *   {@link EditorRef.getNoteIndex}).
    * @param utf16Offset - Offset into the note's content text, in UTF-16 code units (the unit DOM
    *   Selection APIs and Lexical text nodes both count in).
+   * @param field - `"category"` to address the note's `\cat` category value instead of its content
+   *   (the value's display separator excluded). A note that shows no category run takes the caret
+   *   at the start of its content instead.
    */
-  selectNoteTextOffset(noteKeyOrIndex: string | number, utf16Offset: number): void;
+  selectNoteTextOffset(
+    noteKeyOrIndex: string | number,
+    utf16Offset: number,
+    field?: "category",
+  ): void;
+  /**
+   * EXPERIMENTAL: Where the caret is within an expanded note, in the terms
+   * {@link EditorRef.selectNoteTextOffset} takes, so a host can hand the same position to another
+   * editor showing the same note (a footnotes pane's note editor, say).
+   *
+   * A caret in display the view adds around the content - the note's opening glyph, its caller, a
+   * run's marker glyphs - reports the next position the user can type at.
+   *
+   * @returns `undefined` when the selection is not a caret inside an expanded note (a range, a
+   *   caret outside every note, or a collapsed note, which shows only its caller).
+   */
+  getNoteCaret():
+    | {
+        noteKey: string;
+        noteIndex: number;
+        utf16Offset: number;
+        field?: "category";
+      }
+    | undefined;
   /**
    * EXPERIMENTAL: Get the note operations by editor key or at the given index in the editor, if any.
    * @param noteKeyOrIndex - The note key or index, e.g. index=1 would get the second note in the

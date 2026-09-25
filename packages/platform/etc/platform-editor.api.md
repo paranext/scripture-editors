@@ -175,6 +175,12 @@ export interface EditorRef {
             height: number;
         };
     }) | undefined;
+    getNoteCaret(): {
+        noteKey: string;
+        noteIndex: number;
+        utf16Offset: number;
+        field?: "category";
+    } | undefined;
     getNoteIndex(noteKey: string): number | undefined;
     getNoteKey(noteIndex: number): string | undefined;
     getNoteOps(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
@@ -194,7 +200,7 @@ export interface EditorRef {
     replaceEmbedUpdate(embedNodeKey: string, insertEmbedOps: DeltaOp[]): void;
     selectAfterNote(noteKeyOrIndex: string | number): void;
     selectNote(noteKeyOrIndex: string | number): void;
-    selectNoteTextOffset(noteKeyOrIndex: string | number, utf16Offset: number): void;
+    selectNoteTextOffset(noteKeyOrIndex: string | number, utf16Offset: number, field?: "category"): void;
     setAnnotation(selection: AnnotationRange, type: string, id: string, callbacks?: {
         onClick?: TypedMarkOnClick;
         onRemove?: TypedMarkOnRemove;
