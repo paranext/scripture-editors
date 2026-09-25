@@ -7,6 +7,7 @@ import {
   $noteEditableCallerNode,
 } from "../usj/attributeDisplay.utils.js";
 import { $createChapterNode, ChapterNode } from "../usj/ChapterNode.js";
+import { $createCharNode, CharNode } from "../usj/CharNode.js";
 import { $syncDisplayRun } from "../usj/displayRunSync.utils.js";
 import { $createMilestoneNode, MilestoneNode } from "../usj/MilestoneNode.js";
 import { NBSP } from "../usj/node-constants.js";
@@ -879,6 +880,84 @@ describe("TypedMarkNode", () => {
         expect(chapter.getChildren().some($isTypedMarkNode)).toBe(false);
         const marks = para.getChildren().filter($isTypedMarkNode);
         expect(marks.map((mark) => mark.getTextContent())).toEqual(["In the"]);
+      });
+    });
+
+    describe("from a char span's opening glyph", () => {
+      /** Each child of `\nd <content>\nd*` as `[type, text]`, marks shown with their children's
+       * text, after wrapping `the \nd <content>\nd* made` from the front of `\nd` into ` made`. */
+      function wrapFromOpener(content: () => LexicalNode[]): (string | string[])[] {
+        const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+        let nd!: CharNode;
+        editor.update(
+          () => {
+            const opener = $createMarkerNode("nd");
+            nd = $createCharNode("nd").append(
+              opener,
+              ...content(),
+              $createMarkerNode("nd", "closing"),
+            );
+            const after = $createTextNode(" made");
+            $getRoot().append($createParaNode().append($createTextNode("the "), nd, after));
+            const selection = $createRangeSelection();
+            selection.anchor.set(opener.getKey(), 0, "text");
+            selection.focus.set(after.getKey(), 3, "text");
+            $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+          },
+          { discrete: true },
+        );
+        return editor.getEditorState().read(() =>
+          nd
+            .getLatest()
+            .getChildren()
+            .map((child) =>
+              $isTypedMarkNode(child)
+                ? child.getChildren().map((inner) => inner.getTextContent())
+                : child.getTextContent(),
+            ),
+        );
+      }
+
+      /** `\+wj God\+wj*`, a nested span. */
+      function $nestedWj(): CharNode {
+        return $createCharNode("wj").append(
+          $createMarkerNode("wj", "opening", true),
+          $createTextNode(`${NBSP}God`),
+          $createMarkerNode("wj", "closing", true),
+        );
+      }
+
+      it("keeps the spacer in front of a nested span out of the mark", () => {
+        expect(wrapFromOpener(() => [$createTextNode(NBSP), $nestedWj()])).toEqual([
+          "\\nd",
+          NBSP,
+          [`\\+wj${NBSP}God\\+wj*`],
+          "\\nd*",
+        ]);
+      });
+
+      it("keeps the separator prefix of the span's first text out of the mark", () => {
+        expect(wrapFromOpener(() => [$createTextNode(`${NBSP}LORD`)])).toEqual([
+          "\\nd",
+          NBSP,
+          ["LORD"],
+          "\\nd*",
+        ]);
+      });
+
+      it("still annotates an NBSP the user typed after the separator", () => {
+        expect(wrapFromOpener(() => [$createTextNode(`${NBSP}${NBSP}LORD`)])).toEqual([
+          "\\nd",
+          NBSP,
+          [`${NBSP}LORD`],
+          "\\nd*",
+        ]);
+      });
+
+      it("still annotates NBSP-only text that is not in the separator's place", () => {
+        expect(
+          wrapFromOpener(() => [$createTextNode(NBSP), $nestedWj(), $createTextNode(NBSP)]),
+        ).toEqual(["\\nd", NBSP, [`\\+wj${NBSP}God\\+wj*`, NBSP], "\\nd*"]);
       });
     });
 

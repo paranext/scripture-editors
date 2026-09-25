@@ -10,6 +10,7 @@ import { textTypeState } from "../collab/delta.state.js";
 import { $isAttributeRunNode } from "../usj/AttributeRunNode.js";
 import { $chapterGlyphTextNode, $noteEditableCallerNode } from "../usj/attributeDisplay.utils.js";
 import { $isChapterNode } from "../usj/ChapterNode.js";
+import { $charSeparatorPrefixLength } from "../usj/markerSeparators.utils.js";
 import { $isMilestoneNode } from "../usj/MilestoneNode.js";
 import { $isMarkerTrailingSeparator } from "../usj/node.utils.js";
 import { $isNoteNode } from "../usj/NoteNode.js";
@@ -111,7 +112,8 @@ export function $wrapSelectionInTypedMarkNode(
       //
       // The engine-owned separator after a `\p`, `\tr` or `\tc` glyph, and a collapsed note's
       // layout separators, are display bytes too. Moved into a mark, a separator no longer sits
-      // where its glyph expects it, so the glyph reads as missing one and gets a second.
+      // where its glyph expects it, so the glyph reads as missing one and gets a second. (A char
+      // span opener's separator is text, not a tagged node: the text case below leaves it out.)
       //
       // An attribute display run (`|grace`, `|who="Pilate"`) is the same kind of bytes and gets
       // the same treatment, never split or moved: a mark over part of it splits its text node,
@@ -132,9 +134,18 @@ export function $wrapSelectionInTypedMarkNode(
     if ($isTextNode(node)) {
       // Case 1: The node is a text node and we can split it
       const textContentSize = node.getTextContentSize();
-      const startTextOffset = isFirstNode ? startOffset : 0;
+      // A char span opener's separator is the first byte of the text right after the glyph —
+      // either the prefix of the span's first content text or, in front of a nested span, a
+      // standalone NBSP spacer. That byte is the glyph's display, so the mark starts after it; a
+      // spacer holds nothing else and stays out of the mark whole. Only that place qualifies: an
+      // NBSP anywhere else in the span is content.
+      const separatorLength = $charSeparatorPrefixLength(node);
+      const startTextOffset = Math.max(isFirstNode ? startOffset : 0, separatorLength);
       const endTextOffset = isLastNode ? endOffset : textContentSize;
-      if (startTextOffset === 0 && endTextOffset === 0) {
+      if (
+        (startTextOffset === 0 && endTextOffset === 0) ||
+        (separatorLength > 0 && endTextOffset <= separatorLength)
+      ) {
         continue;
       }
       const splitNodes = node.splitText(startTextOffset, endTextOffset);

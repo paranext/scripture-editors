@@ -13,11 +13,25 @@ import {
   propertyPath,
   twoParaUsj,
   typeOver,
+  $textContaining,
 } from "../positions/positions.test-helpers";
-import { Usj } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
-import { $isMarkerNode, $isTypedMarkNode, NBSP, TypedMarkNode } from "shared";
+import {
+  $createRangeSelection,
+  $getRoot,
+  $isElementNode,
+  LexicalEditor,
+  LexicalNode,
+} from "lexical";
+import {
+  $isMarkerNode,
+  $isTypedMarkNode,
+  $wrapSelectionInTypedMarkNode,
+  COMMENT_MARK_TYPE,
+  NBSP,
+  TypedMarkNode,
+} from "shared";
 import { AnnotationRange } from "shared-react";
 import { vi } from "vitest";
 
@@ -191,5 +205,53 @@ describe.each<[string, AnnotationRange, string[]]>([
     expect(mounted.ref.current?.getUsj()?.content?.[2]).toEqual(
       (noteUsj.content as Usj["content"])[2],
     );
+  });
+});
+
+describe("a comment starting at a char span's opening marker", () => {
+  /** `content` with every comment milestone (`zmsc`) left out and the text on either side of each
+   * rejoined, at every depth — the document as it reads without the comment. */
+  function withoutComments(content: MarkerContent[]): MarkerContent[] {
+    const out: MarkerContent[] = [];
+    content.forEach((item) => {
+      if (typeof item === "object" && item.marker?.startsWith("zmsc")) return;
+      const last = out[out.length - 1];
+      if (typeof item === "string" && typeof last === "string") out[out.length - 1] = last + item;
+      else if (typeof item === "object" && item.content)
+        out.push({ ...item, content: withoutComments(item.content) });
+      else out.push(item);
+    });
+    return out;
+  }
+
+  it.each<[string, MarkerContent, string]>([
+    [
+      "a nested span",
+      { type: "char", marker: "nd", content: [{ type: "char", marker: "wj", content: ["God"] }] },
+      `\\nd${NBSP}\\+wj${NBSP}God\\+wj*\\nd*`,
+    ],
+    ["text", { type: "char", marker: "nd", content: ["LORD"] }, `\\nd${NBSP}LORD\\nd*`],
+  ])("over %s keeps one separator after the opener", async (_label, nd, display) => {
+    const usj = twoParaUsj(["the ", nd, " made"]);
+    const mounted = await mountStandardViewEditor(usj);
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const selection = $createRangeSelection();
+        selection.anchor.set($textContaining("\\nd").getKey(), 0, "text");
+        selection.focus.set($textContaining(" made").getKey(), " ma".length, "text");
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      mounted.lexical
+        .getEditorState()
+        .read(() => $textContaining("\\nd").getParentOrThrow().getTextContent()),
+    ).toBe(display);
+    const para = mounted.ref.current?.getUsj()?.content[2];
+    if (typeof para !== "object" || !para.content) throw new Error("expected the first paragraph");
+    expect(withoutComments(para.content)).toEqual(["the ", nd, " made"]);
   });
 });

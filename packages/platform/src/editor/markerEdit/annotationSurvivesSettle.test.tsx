@@ -38,6 +38,7 @@ import {
 } from "lexical";
 import {
   $chapterGlyphTextNode,
+  $createTypedMarkNode,
   $isChapterNode,
   $isCharNode,
   $isNoteNode,
@@ -1256,36 +1257,41 @@ describe("a comment mark across a paragraph boundary", () => {
     expect(annotatedText(mounted.lexical)).toEqual(["charlie", "depart"]);
   });
 
-  it("reports both ends of a backward selection ending at a comment that opens on a spacer", async () => {
+  it("reports both ends of a backward selection ending at a comment that opens on presentation text", async () => {
     // `\nd \+wj God\+wj*\nd*`: the span's content starts with a nested span, so its opener is
-    // followed by a standalone NBSP spacer. A comment starting at `\nd` begins with that spacer,
-    // and a caret at the comment's start sits on presentation text that opens a mark.
+    // followed by a standalone NBSP spacer — presentation text. The wrap keeps that spacer out of
+    // a comment, but a mark can still arrive around it from elsewhere (a collaborator's update, a
+    // saved state), so the comment is built here directly: a caret at its start sits on
+    // presentation text that opens a mark.
     const wj: MarkerObject = { type: "char", marker: "wj", content: ["God"] };
     const nd: MarkerObject = { type: "char", marker: "nd", content: [wj] };
     const mounted = await mountStandardViewEditor(twoParaUsj(["the ", nd, " made"]));
     await act(async () => {
       mounted.lexical.update(() => {
-        const selection = $createRangeSelection();
-        selection.anchor.set($textContaining("\\nd").getKey(), 0, "text");
-        selection.focus.set($textContaining("depart here").getKey(), "depart".length, "text");
-        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+        const spacer = $textContaining("\\nd").getNextSibling();
+        const nested = spacer?.getNextSibling();
+        if (!spacer || !nested) throw new Error("expected the spacer and the nested span");
+        const comment = $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] });
+        spacer.insertBefore(comment);
+        comment.append(spacer, nested);
       });
       await Promise.resolve();
       await Promise.resolve();
     });
-    // Anchor in the second paragraph, focus on the first comment's opening spacer: backward.
+    // Anchor in the second paragraph, focus on the comment's opening spacer: backward.
     await act(async () => {
       mounted.lexical.update(() => {
-        const [firstComment] = $marks();
-        const spacer = firstComment.getFirstChildOrThrow();
+        const [comment] = $marks();
+        const spacer = comment.getFirstChildOrThrow();
         const selection = $createRangeSelection();
-        selection.anchor.set($textContaining(" here").getKey(), 2, "text");
+        selection.anchor.set($textContaining("depart here").getKey(), "depart h".length, "text");
         selection.focus.set(spacer.getKey(), 0, "text");
         $setSelection(selection);
       });
       await Promise.resolve();
     });
 
+    expect(annotatedText(mounted.lexical)).toEqual([`${NBSP}\\+wj${NBSP}God\\+wj*`]);
     // In front of the nested span is the nested span's own location.
     expect(mounted.ref.current?.getSelection()).toEqual({
       start: { jsonPath: contentPath([2, 1, 0]) },
