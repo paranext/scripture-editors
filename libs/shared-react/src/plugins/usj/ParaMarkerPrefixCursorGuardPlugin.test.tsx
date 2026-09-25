@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  $createRangeSelection,
   $createTextNode,
   $getRoot,
   $getSelection,
@@ -9,6 +10,7 @@ import {
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
   LexicalEditor,
+  RangeSelection,
   TextNode,
 } from "lexical";
 import {
@@ -793,6 +795,123 @@ describe("DELETE_WORD_COMMAND and DELETE_LINE_COMMAND refuse to remove the book'
     } finally {
       delete (Selection.prototype as { modify?: () => void }).modify;
     }
+  });
+});
+
+/**
+ * `RangeSelection` is a TYPE-only export of `lexical` — its class is never assigned to the
+ * package's runtime `exports`, only declared in its `.d.ts` — so `RangeSelection.prototype` is
+ * `undefined` at runtime and cannot be spied on directly. Every instance still shares the SAME
+ * prototype object, so creating one throwaway instance and reading its prototype off is how these
+ * tests reach the method every real selection instance will call.
+ */
+function $rangeSelectionPrototype(): RangeSelection {
+  return Object.getPrototypeOf($createRangeSelection()) as RangeSelection;
+}
+
+// A COLLAPSED caret already past the boundary $shouldRefuseBookPrefixDeletion refuses at — mid-
+// content, never at offset 0 — reaches DELETE_LINE_COMMAND's own clamp instead. Lexical's own
+// `deleteLine` extends the selection to the DOM's own visual line boundary
+// (`RangeSelection.modify('extend', isBackward, 'lineboundary')`) before removing it, and jsdom has
+// no `Selection.modify` for that extension to call. Each test here stubs the shared
+// `RangeSelection.prototype.modify` directly (not the native `Selection.modify` the other
+// DELETE_LINE_COMMAND tests stub) to reproduce a specific Chromium OUTCOME — where the extension
+// leaves the selection's focus — rather than the DOM mechanics that would produce it.
+describe("DELETE_LINE_COMMAND clamps a collapsed mid-content caret past the prefix", () => {
+  it("clamps to just past the prefix when the extended selection reaches (book, 0) — a short line", async () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        content = $createTextNode("Genesis");
+        book = $createBookLine("GEN", content);
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    // Collapsed mid-content caret: "Gene|sis" — not the offset-0 boundary case.
+    updateSelection(editor, content, 4);
+
+    let rangeSelectionProto!: RangeSelection;
+    editor.update(
+      () => {
+        rangeSelectionProto = $rangeSelectionPrototype();
+      },
+      { discrete: true },
+    );
+    const modifySpy = vi.spyOn(rangeSelectionProto, "modify").mockImplementation(function (
+      this: RangeSelection,
+    ) {
+      // The whole line fits on one visual line, so the native extension's far endpoint lands
+      // right at the book's own element point (book, 0) — the bug this clamp exists for.
+      this.focus.set(book.getKey(), 0, "element");
+    });
+    try {
+      editor.update(
+        () => {
+          editor.dispatchCommand(DELETE_LINE_COMMAND, true);
+        },
+        { discrete: true },
+      );
+    } finally {
+      modifySpy.mockRestore();
+    }
+
+    editor.getEditorState().read(() => {
+      const rootBook = $getRoot().getFirstChild();
+      if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
+      // The glyph survives; only the content before the caret ("Gene") is removed.
+      expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}sis`);
+    });
+  });
+
+  it("clamps to the wrapped visual line's own start, never the prefix, when the extended selection stays inside the content", async () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        content = $createTextNode("one two three");
+        book = $createBookLine("GEN", content);
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, content, 13); // caret at the very end ("one two three" is 13 chars)
+
+    let rangeSelectionProto!: RangeSelection;
+    editor.update(
+      () => {
+        rangeSelectionProto = $rangeSelectionPrototype();
+      },
+      { discrete: true },
+    );
+    const modifySpy = vi.spyOn(rangeSelectionProto, "modify").mockImplementation(function (
+      this: RangeSelection,
+    ) {
+      // A long description wraps the line onto a second visual line, so the native extension's
+      // far endpoint stops at THAT line's own start — mid-content, never the prefix.
+      this.focus.set(content.getKey(), 8, "text");
+    });
+    try {
+      editor.update(
+        () => {
+          editor.dispatchCommand(DELETE_LINE_COMMAND, true);
+        },
+        { discrete: true },
+      );
+    } finally {
+      modifySpy.mockRestore();
+    }
+
+    editor.getEditorState().read(() => {
+      const rootBook = $getRoot().getFirstChild();
+      if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
+      // Only "three" (the wrapped line's own content) is removed — "one two " survives, and so
+      // does the glyph, which the extension never reached.
+      expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}one two `);
+    });
   });
 });
 

@@ -8,6 +8,7 @@ import {
   CLICK_COMMAND,
   COMMAND_PRIORITY_EDITOR,
   COMMAND_PRIORITY_HIGH,
+  COMMAND_PRIORITY_NORMAL,
   DELETE_CHARACTER_COMMAND,
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
@@ -18,6 +19,7 @@ import {
 import { mergeRegister } from "@lexical/utils";
 import { useEffect } from "react";
 import {
+  $caretHostAtBoundary,
   $getNextNode,
   $getPreviousNode,
   $isBookNode,
@@ -28,6 +30,7 @@ import {
   $isSynthesizedMarkerNode,
   $isVisibleMarkerNode,
   $placeCaretAtBoundary,
+  BookNode,
   ImmutableTypedTextNode,
   NBSP,
   ParaLikeNode,
@@ -87,6 +90,82 @@ export function $shouldRefuseBookPrefixDeletion(isBackward: boolean): boolean {
 }
 
 /**
+ * The point just past `book`'s own immutable prefix — the boundary any selection endpoint that has
+ * landed ON or BEFORE the prefix should be clamped to. Follows the same hosting convention
+ * `$placeCaretAtBoundary` does (a TEXT point at the following content's own start, or the ELEMENT
+ * point when nothing hosts one yet), expressed as plain point pieces so a caller can move ONE
+ * endpoint of an existing selection without collapsing the other — `$placeCaretAtBoundary` itself
+ * replaces the whole active selection, which is only safe for a genuinely collapsed correction.
+ */
+function $pointJustPastBookPrefix(book: BookNode): {
+  key: string;
+  offset: number;
+  type: "element" | "text";
+} {
+  const host = $caretHostAtBoundary(book, 1);
+  return host
+    ? { key: host.getKey(), offset: 0, type: "text" }
+    : { key: book.getKey(), offset: 1, type: "element" };
+}
+
+/**
+ * The `BookNode` enclosing `node` — its top-level ancestor, when that ancestor is a book — covering
+ * a node nested inside the `\id` line's own character spans or notes, not only a direct child.
+ */
+function $getEnclosingBook(node: LexicalNode): BookNode | null {
+  const top = node.getTopLevelElement();
+  return $isBookNode(top) ? top : null;
+}
+
+/**
+ * `DELETE_LINE_COMMAND`'s own fix for the case {@link $shouldRefuseBookPrefixDeletion} does not
+ * catch: a COLLAPSED caret already past the boundary, mid-content, on the `\id` line. Lexical's own
+ * `RangeSelection.deleteLine` extends the selection to the DOM's own visual line boundary before
+ * removing it (`modify('extend', isBackward, 'lineboundary')`), and that extension steps the far
+ * endpoint past an adjacent inline, non-isolated decorator
+ * (`$modifySelectionAroundDecoratorsAndBlocks`'s trailing 'decorators' pass, run only for
+ * `'lineboundary'`) — landing it AT or BEFORE the prefix whenever the visual line boundary sits
+ * right past the glyph: the whole line for a short `\id` line, or a wrapped line's own start for a
+ * long one. Left alone, the deletion that follows removes the prefix along with the content.
+ *
+ * Runs the same extension Lexical would, then clamps whichever endpoint moved onto or past the
+ * prefix back to just past it, so the delete that follows only ever touches real content. Falls
+ * back to Lexical's own collapsed-selection handling (`deleteCharacter`) when the extension finds
+ * nothing to extend into, refusing instead if THAT would touch the prefix.
+ *
+ * `DELETE_WORD_COMMAND` needs no equivalent: `modify` with 'word' granularity never runs the
+ * trailing 'decorators' pass (gated on `granularity === 'lineboundary'` alone), so a genuinely
+ * mid-content collapsed caret cannot reach this stepping through it — only the boundary case
+ * {@link $shouldRefuseBookPrefixDeletion} already refuses.
+ *
+ * @param isBackward - `true` for Cmd+Backspace, `false` for the forward line delete.
+ */
+function $clampLineDeletionPastBookPrefix(isBackward: boolean): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+
+  const book = $getEnclosingBook(selection.anchor.getNode());
+  if (!book || !$isBookPrefixNode(book.getFirstChild())) return false;
+
+  selection.modify("extend", isBackward, "lineboundary");
+
+  if (selection.isCollapsed()) {
+    // Nothing to extend into: fall back to exactly what Lexical's own deleteLine would have done,
+    // refusing only if that fallback would itself remove the prefix.
+    if ($shouldRefuseBookPrefixDeletion(isBackward)) return true;
+    selection.deleteCharacter(isBackward);
+    return true;
+  }
+
+  if (selection.getNodes().some($isBookPrefixNode)) {
+    const target = $pointJustPastBookPrefix(book);
+    selection.focus.set(target.key, target.offset, target.type);
+  }
+  if (!selection.isCollapsed()) selection.removeText();
+  return true;
+}
+
+/**
  * Keeps the cursor out of the places a paragraph's structural prefix occupies but no caret may
  * rest in, correcting a click to the first content position in the same update cycle.
  *
@@ -101,14 +180,19 @@ export function $shouldRefuseBookPrefixDeletion(isBackward: boolean): boolean {
  * see only the corrected cursor, never the intermediate prefix position.
  *
  * Also refuses `DELETE_CHARACTER_COMMAND` (the command both Backspace and Delete fall through to),
- * `DELETE_WORD_COMMAND` (Ctrl/Alt+Backspace) and `DELETE_LINE_COMMAND` (Cmd+Backspace) whenever any
- * of them would remove the book's own prefix glyph. All three can reach the same fallback: a
- * collapsed word/line delete that finds nothing left to extend into falls back to
- * `RangeSelection.deleteCharacter`, and Lexical's default `deleteCharacter` removes an adjacent
- * `DecoratorNode` outright regardless of `isKeyboardSelectable()` (ImmutableTypedTextNode.ts) — so
- * without refusing all three, any of these keystrokes at the very start of the line's content
- * deletes the `\id GEN ` glyph from the screen while the file — which never stored the glyph as
- * its own node — is left unchanged, until the next reload silently brings it back.
+ * `DELETE_WORD_COMMAND` (Ctrl/Alt+Backspace) and `DELETE_LINE_COMMAND` (Cmd+Backspace) whenever a
+ * COLLAPSED caret sitting right at the prefix's own boundary would remove it. A collapsed word/line
+ * delete that finds nothing left to extend into falls back to `RangeSelection.deleteCharacter`, and
+ * Lexical's default `deleteCharacter` removes an adjacent `DecoratorNode` outright regardless of
+ * `isKeyboardSelectable()` (ImmutableTypedTextNode.ts) — so without refusing all three, any of
+ * these keystrokes at the very start of the line's content deletes the `\id GEN ` glyph from the
+ * screen while the file — which never stored the glyph as its own node — is left unchanged, until
+ * the next reload silently brings it back.
+ *
+ * A COLLAPSED caret already past that boundary, mid-content, gets its own fix for
+ * `DELETE_LINE_COMMAND` specifically ({@link $clampLineDeletionPastBookPrefix}): Cmd+Backspace
+ * extends to the visual line boundary before deleting, which can step onto or past the prefix the
+ * same way.
  */
 export function ParaMarkerPrefixCursorGuardPlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -140,6 +224,14 @@ export function ParaMarkerPrefixCursorGuardPlugin(): null {
         DELETE_LINE_COMMAND,
         $shouldRefuseBookPrefixDeletion,
         COMMAND_PRIORITY_HIGH,
+      ),
+      // Below the boundary refusal above (which still runs first and can refuse outright), and
+      // above Lexical's own default DELETE_LINE_COMMAND handling (COMMAND_PRIORITY_EDITOR) — the
+      // default is exactly what this replaces for a book line, so it must never run for one.
+      editor.registerCommand<boolean>(
+        DELETE_LINE_COMMAND,
+        $clampLineDeletionPastBookPrefix,
+        COMMAND_PRIORITY_NORMAL,
       ),
     );
   }, [editor]);
