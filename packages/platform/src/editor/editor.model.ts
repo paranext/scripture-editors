@@ -575,12 +575,30 @@ export interface EditorRef {
   insertNote(marker: string, caller?: string, selection?: SelectionRange): void;
   /**
    * EXPERIMENTAL: Select the note by editor key or at the given index in the editor, if any.
-   * @param noteKeyOrIndex - The note key or index, e.g. index=1 would select the second note in the
-   *   editor.
+   *
+   * @remarks
+   * A `noteKeyOrIndex` key is LIVE: it names a node in the editor's own tree directly. A
+   * `noteKeyOrIndex` index is SETTLED: it counts the notes of the document {@link EditorRef.getUsj}
+   * returns, in order (e.g. index=1 selects the second one), so a note still pending as a typed
+   * literal counts too — selecting it puts a collapsed caret at the literal's own `\`, since it is
+   * not a note yet in the live tree. Because of this, `getNoteOps(i)` and `selectNote(i)` can name
+   * DIFFERENT notes while a whole note literal is pending: `getNoteOps` always counts the LIVE
+   * notes, `selectNote`'s index counts the SETTLED ones.
+   *
+   * @param noteKeyOrIndex - The note key (LIVE) or index (SETTLED), e.g. index=1 would select the
+   *   second note of the settled document.
    */
   selectNote(noteKeyOrIndex: string | number): void;
   /**
    * EXPERIMENTAL: Get the note operations by editor key or at the given index in the editor, if any.
+   *
+   * @remarks
+   * Both a `noteKeyOrIndex` key and an index are LIVE: the index counts the notes of the editor's
+   * own tree, not the settled document, so its ops round-trip into
+   * {@link EditorRef.replaceEmbedUpdate} against the same tree they were read from. See
+   * {@link EditorRef.selectNote} for how this can name a different note than a `selectNote` call
+   * with the same index while a whole note literal is pending.
+   *
    * @param noteKeyOrIndex - The note key or index, e.g. index=1 would get the second note in the
    *   editor.
    */

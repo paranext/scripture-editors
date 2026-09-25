@@ -3,14 +3,17 @@
  * user edit right after `setSelection` reports, what a read-only editor reports for a placement, a
  * stylesheet that arrives while a scope is pending, `getSelection` in the same tick as an undo, a
  * caret at a paragraph's content start (which sits at the end of the space after the `\p` glyph),
- * and typing over a selection that ends where a footnote's text does.
+ * typing over a selection that ends where a footnote's text does, and `selectNote` counting the
+ * settled document's notes while one is still a typed literal.
  */
-import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $textContaining, contentPath, twoParaUsj, typeOver } from "./positions.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { $findMatchingParent } from "@lexical/utils";
 import { act } from "@testing-library/react";
 import { $getRoot, $getSelection, $isElementNode, $isRangeSelection, LexicalNode } from "lexical";
 import {
+  $isNoteNode,
   $isTypedMarkNode,
   defaultStyleInfo,
   getPendedDisplayOwners,
@@ -302,5 +305,109 @@ describe("getUsj after an annotation settles a pending paragraph", () => {
     expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBe(0);
 
     expect(ref.current?.getUsj()?.content?.slice(2)).toEqual(settled);
+  });
+});
+
+describe("selectNote(index) counts the settled document's notes", () => {
+  /** The literal typed in front of the paragraph's existing note — settles to the paragraph's
+   * FIRST note, ahead of the second, carried note the settle leaves untouched. */
+  const LITERAL = "\\f + \\fr 1.1 \\ft typed\\f*";
+
+  /** Whether the live selection's anchor sits inside (or on) a note whose text contains `needle`. */
+  function $selectionInsideNoteContaining(needle: string): boolean {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) return false;
+    const anchorNode = selection.anchor.getNode();
+    const note = $isNoteNode(anchorNode)
+      ? anchorNode
+      : $findMatchingParent(anchorNode, $isNoteNode);
+    return note ? note.getTextContent().includes(needle) : false;
+  }
+
+  /** A pending note literal typed in front of an existing note the paragraph already carries, so
+   * the settled document has two notes — the literal's (first) and the existing one (second) —
+   * while the live tree still spells the first as plain text. */
+  async function literalBeforeCarriedNote() {
+    const mounted = await mountExpandedNoteEditor(
+      twoParaUsj([
+        "head made text ",
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ type: "char", marker: "fr", content: ["1.1"] }, "existing body"],
+        },
+        " after",
+      ]),
+    );
+    await typeOver(mounted.lexical, "head made text ", `head ${LITERAL} text `);
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    return mounted;
+  }
+
+  it("selects the settled second note — the carried note — with the caret inside it", async () => {
+    const { ref, lexical } = await literalBeforeCarriedNote();
+
+    await act(async () => {
+      ref.current?.selectNote(1);
+      await Promise.resolve();
+    });
+
+    expect(
+      lexical.getEditorState().read(() => $selectionInsideNoteContaining("existing body")),
+    ).toBe(true);
+  });
+
+  it("puts a collapsed caret at the settled first note's `\\`, while it is still a typed literal", async () => {
+    const { ref, lexical } = await literalBeforeCarriedNote();
+    const literal = lexical.getEditorState().read(() => ({
+      key: $textContaining(LITERAL).getKey(),
+      offset: $textContaining(LITERAL).getTextContent().indexOf(LITERAL),
+    }));
+
+    await act(async () => {
+      ref.current?.selectNote(0);
+      await Promise.resolve();
+    });
+
+    const caret = lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+      return { key: selection.anchor.getNode().getKey(), offset: selection.anchor.offset };
+    });
+    expect(caret).toEqual(literal);
+  });
+
+  it("with nothing pending, selects the note at that index unchanged", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(
+      twoParaUsj([
+        "before ",
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ type: "char", marker: "fr", content: ["1.1"] }, "note body"],
+        },
+        " after",
+      ]),
+    );
+
+    await act(async () => {
+      ref.current?.selectNote(0);
+      await Promise.resolve();
+    });
+
+    // The default (collapsed) note mode selects the end of the node before the note, not its
+    // inside — `$selectNote`'s own collapsed behavior, unaffected by which document the index
+    // counted against when nothing is pending.
+    const caret = lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+      return {
+        text: selection.anchor.getNode().getTextContent(),
+        offset: selection.anchor.offset,
+      };
+    });
+    expect(caret).toEqual({ text: "before ", offset: "before ".length });
   });
 });

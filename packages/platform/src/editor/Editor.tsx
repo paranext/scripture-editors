@@ -47,7 +47,12 @@ import { $prepareSettleScopes } from "./positions/settledScopes.utils";
 import { ScriptureReferencePlugin } from "./ScriptureReferencePlugin";
 import TreeViewPlugin from "./TreeViewPlugin";
 import { ToolbarPlugin } from "./toolbar/ToolbarPlugin";
-import { Usj } from "@eten-tech-foundation/scripture-utilities";
+import {
+  ContentJsonPath,
+  MarkerContent,
+  Usj,
+  usjJsonPathFromIndexes,
+} from "@eten-tech-foundation/scripture-utilities";
 import { InitialConfigType, LexicalComposer } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -56,6 +61,7 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { $setBlocksType } from "@lexical/selection";
+import { $findMatchingParent } from "@lexical/utils";
 import { deepEqual } from "fast-equals";
 import {
   $addUpdateTag,
@@ -90,6 +96,7 @@ import {
 } from "react";
 import {
   $createParaNode,
+  $isNoteNode,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
@@ -110,6 +117,7 @@ import {
 } from "shared";
 import {
   $applyUpdate,
+  $getNodeFromLocation,
   $getNoteByKeyOrIndex,
   $getParticularNodeOps,
   $getRangeFromUsjSelection,
@@ -188,6 +196,21 @@ function $collapsedTextCaret(): LastKnownCaret | undefined {
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
   const node = selection.focus.getNode();
   return $isTextNode(node) ? { key: node.getKey(), offset: selection.focus.offset } : undefined;
+}
+
+/** The jsonPath of every note in `usj`, in document order — what `selectNote`'s index counts
+ * against, so a note still pending as a typed literal counts too. */
+function settledNotePaths(usj: Usj | undefined): ContentJsonPath[] {
+  const out: ContentJsonPath[] = [];
+  const walk = (content: MarkerContent[] | undefined, indexes: number[]) =>
+    content?.forEach((item, index) => {
+      if (typeof item !== "object") return;
+      const here = [...indexes, index];
+      if (item.type === "note") out.push(usjJsonPathFromIndexes(here));
+      walk(item.content, here);
+    });
+  walk(usj?.content, []);
+  return out;
 }
 
 /** Everything `readSettledUsj`'s settle depends on, compared by identity or value. */
@@ -1262,12 +1285,34 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       });
     },
     selectNote(noteKeyOrIndex) {
-      editorRef.current?.update(() => {
-        const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
-        if (noteNode) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const context = buildSettledPositionContext();
+      // A key already names a live node directly, and with nothing pending the settled and live
+      // documents count notes the same way either side — both share the live lookup below.
+      if (typeof noteKeyOrIndex === "string" || !context || isLiveSettledIdentical(context)) {
+        editor.update(() => {
+          const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+          if (!noteNode) return;
           $selectNote(noteNode, viewOptions);
           if (!noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
-        }
+        });
+        return;
+      }
+      // Otherwise the index counts the SETTLED document's notes: find the index-th one there, and
+      // carry its location to the live tree — where it lands inside an actual NoteNode when that
+      // note is settled already, or on the literal's own `\` when it is still pending as typed text.
+      const jsonPath = settledNotePaths(readSettledUsj())[noteKeyOrIndex];
+      const live = jsonPath ? liveSelectionFromSettled({ start: { jsonPath } }) : undefined;
+      if (!live) return;
+      editor.update(() => {
+        const [node, offset] = $getNodeFromLocation(live.start, viewOptions);
+        if (!node || offset === undefined) return;
+        const note = $isNoteNode(node) ? node : $findMatchingParent(node, $isNoteNode);
+        if ($isNoteNode(note)) {
+          $selectNote(note, viewOptions);
+          if (!note.getIsCollapsed()) expandedNoteKeyRef.current = note.getKey();
+        } else if ($isTextNode(node)) node.select(offset, offset);
       });
     },
     getNoteOps(noteKeyOrIndex) {
