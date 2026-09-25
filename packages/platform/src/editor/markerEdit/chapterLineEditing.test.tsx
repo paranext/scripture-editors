@@ -491,7 +491,7 @@ describe("a caret on the chapter line", () => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc, {
       structureProtectionMode: "protected",
     });
-    const flavors: Record<string, string> = {
+    const flavors: { [type: string]: string } = {
       "text/plain": "aa\nbb",
       "text/html": "<p>aa</p><p>bb</p>",
       "application/x-lexical-editor": JSON.stringify({
