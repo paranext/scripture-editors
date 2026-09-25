@@ -7,6 +7,7 @@ import {
   PARA_MARKER_SELECTED_CLASS_NAME,
   ParaMarkerSelectionPlugin,
 } from "./ParaMarkerSelectionPlugin";
+import { ParaMarkerPrefixCursorGuardPlugin } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
@@ -15,8 +16,11 @@ import { act } from "@testing-library/react";
 import {
   $createTextNode,
   $getRoot,
+  $createNodeSelection,
   $getSelection,
   $isRangeSelection,
+  $setSelection,
+  $setState,
   COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
@@ -34,12 +38,14 @@ import {
 import {
   $createGutterMarkerNode,
   $createImmutableChapterNode,
+  $createImmutableTypedTextNode,
   $createParaNode,
   $getSelectedParaMarker,
   $isGutterMarkerNode,
   $isParaNode,
   $selectParaMarker,
   createEmptyHistoryState,
+  gutterMarkerState,
   ImmutableTypedTextNode,
   NBSP,
   ParaNode,
@@ -640,3 +646,84 @@ describe.each(["guarded", "protected"] as const)(
     });
   },
 );
+
+// Power and Standard view build no gutter glyph: a paragraph's marker is inline, either as an
+// editable `MarkerNode` or as a marker glyph without `gutterMarkerState`. Whether a glyph can be
+// selected is decided by that state on the node, not by the view, so these tests build the same
+// paragraph both ways and flip only the state.
+describe.each([
+  ["a gutter marker (paragraph-structure view)", true],
+  ["an inline marker glyph (no gutter state)", false],
+] as const)("ParaMarkerSelectionPlugin — %s", (_name, isGutter) => {
+  async function glyphEnvironment({ withSelectionPlugin = true } = {}) {
+    let glyph!: ImmutableTypedTextNode;
+    let first!: TextNode;
+    let second!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        glyph = $setState(
+          $createImmutableTypedTextNode("marker", `\\li2${NBSP}`),
+          gutterMarkerState,
+          isGutter,
+        );
+        first = $createTextNode("first");
+        second = $createTextNode("second");
+        $getRoot().append(
+          $createParaNode("p").append(first),
+          $createParaNode("li2").append(glyph, second),
+        );
+      },
+      <>
+        <ParaMarkerPrefixCursorGuardPlugin />
+        {withSelectionPlugin && <ParaMarkerSelectionPlugin />}
+      </>,
+    );
+    return { editor, glyph, first, second };
+  }
+
+  it(isGutter ? "is selected by a click" : "is not selected by a click", async () => {
+    const { editor, glyph } = await glyphEnvironment();
+
+    await act(async () => {
+      editor
+        .getElementByKey(glyph.getKey())
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(selectedMarkerOf(editor)).toBe(isGutter ? "li2" : undefined);
+    expect(highlightedElements(editor)).toHaveLength(isGutter ? 1 : 0);
+  });
+
+  /** Presses `key` with the glyph node-selected, reporting what came of it. */
+  async function pressOnNodeSelectedGlyph(key: string, withSelectionPlugin = true) {
+    const { editor, glyph } = await glyphEnvironment({ withSelectionPlugin });
+    await sutUpdate(editor, () => {
+      const selection = $createNodeSelection();
+      selection.add(glyph.getKey());
+      $setSelection(selection);
+    });
+    const event = await pressKey(editor, key);
+    return { isPrevented: event.defaultPrevented, document: documentJson(editor) };
+  }
+
+  const keys = ["Backspace", "Delete", "ArrowLeft", "ArrowUp", "Enter", "a"];
+
+  if (isGutter) {
+    it.each(keys)("owns %s while selected", async (key) => {
+      const { isPrevented } = await pressOnNodeSelectedGlyph(key);
+
+      // Typing is redirected to the paragraph's text but never claimed.
+      expect(isPrevented).toBe(key !== "a");
+    });
+  } else {
+    it.each(keys)(
+      "leaves %s exactly as it is without the plugin, even when the glyph is node-selected",
+      async (key) => {
+        const withPlugin = await pressOnNodeSelectedGlyph(key);
+        const withoutPlugin = await pressOnNodeSelectedGlyph(key, false);
+
+        expect(withPlugin).toEqual(withoutPlugin);
+      },
+    );
+  }
+});
