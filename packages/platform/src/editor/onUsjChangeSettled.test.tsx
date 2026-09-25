@@ -1,6 +1,3 @@
-// Target: packages/platform/src/editor/onUsjChangeSettled.test.tsx
-// Probe-run against SE 41e67470: tests 1, 2, 3, 4 FAIL for the intended reasons; 5 and 6 pass
-// (regression guards).
 import Editor from "./Editor";
 import { EditorRef } from "./editor.model";
 import { mountStandardViewEditor } from "./settledGetUsj.test-helpers";

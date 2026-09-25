@@ -281,24 +281,47 @@ other top-level index. The rules live in `$boundaryLocation` and its helpers in
 document end is spelled on the SETTLED last token (`$settledDocumentEnd` in
 `packages/platform/src/editor/positions/settledPositions.utils.ts`).
 
-**Every caret has a location, pending edit or not.** The two directions of the settled-position
-layer (`packages/platform/src/editor/positions/`) are deliberately asymmetric:
+**Every caret has a location, pending edit or not.** A position names the byte in front of which
+it sits, and maps through whatever contains that byte on its own side. Where one side has bytes the
+other lacks, the position in front of them snaps LEFT to the nearest byte both sides share, and the
+position just past them is exact — one aligner (`packages/platform/src/editor/positions/`) serves
+BOTH directions, each end of a range resolved on its own; there is no separate
+outbound-snap/inbound-refuse split.
 
 - **Outbound** (`getSelection`, `onSelectionChange`) never answers `undefined` for a real caret —
-  `undefined` means there is no selection (or the layout has no USJ locations at all). Typed bytes the settle carries as an attribute
-  map exactly (a typed `\cat x\cat*` is the note's `category`, a figure's `|src="…"` its `file`), by
-  `UsjReaderWriter`'s locations. Bytes with no settled counterpart at all — a typed literal the
-  settle spells differently from how it was typed, or anything past where a scope's run pairing
-  stops holding — snap LEFT to the nearest translatable position at or before them, the same rule a
-  USFM byte with no USJ representation follows, each end of a range on its own.
-- **Inbound** (`setSelection`, `setAnnotation`, `insertNote`) still refuses a host location that
-  names nothing in the settled document, or one in a scope whose pairing holds only in part: a host
-  location is carried across exactly or not at all, never approximated. The editor logs the
-  refusal.
+  `undefined` means there is no selection (or the layout has no USJ locations at all). Typed bytes
+  the settle carries as an attribute map exactly (a typed `\cat x\cat*` is the note's `category`, a
+  figure's `|src="…"` its `file`), by `UsjReaderWriter`'s locations. Bytes with no settled
+  counterpart at all — a typed literal the settle spells differently from how it was typed — snap
+  LEFT to the nearest translatable position at or before them, the same rule a USFM byte with no
+  USJ representation follows.
+- **Inbound** (`setSelection`, `setAnnotation`, `insertNote`) refuses (and logs the refusal) ONLY a
+  host location that names nothing in the settled document at all. A location inside a scope the
+  editor can pair only in part is not a whole-scope refusal — it snaps LEFT the same as outbound. A
+  position basis the live tree has moved on from is rebuilt, and the rebuild logged as an error,
+  never refused.
 
-The one outbound refusal left is a backstop: a memoized plan whose live nodes the tree has moved on
-from. Snapping left there would answer from nodes that no longer mean what the plan paired them
-with.
+**`onUsjChange`'s `usj` payload is a SETTLED, synchronous snapshot.** It equals `getUsj()` at the
+moment of emission, fires synchronously within the commit's own listener pass, exactly once per
+content commit and in commit order — including once, not twice, after a `setUsj` reload. A
+selection-only commit emits nothing. `ops` stay a LIVE view of the same commit.
+
+**Notes are counted in the SETTLED document.** `selectNote(index)` counts and selects against
+`getUsj()`'s notes; a note still pending as a typed literal gets the caret placed at the literal's
+`\`, not at a note index that does not exist yet. `getNoteOps` stays LIVE for both key and index, so
+`getNoteOps(i)` and `selectNote(i)` can legitimately name different notes while a whole note literal
+is pending.
+
+**A typed table cell settles as `table:cell` under ParatextData parity.** The settle applies
+`UsfmParser.IsCell`'s own rule: a Character-typed or undeclared cell-named marker inside an open row
+is a cell; the same marker `+`-nested under another marker is never a cell; with no open row, it is
+an ordinary character marker. The position and note-counting rules above apply to a settled cell the
+same as to any other settled content.
+
+Recorded as-is, not position defects: `\c 2 made` settles to a chapter followed by a bare root
+string `"made"` — ParatextData produces the same USJ from that input. The settle keeps the space
+before a typed `\c`, `\tr`, `\esb` or `\esbe` that ParatextData trims on save; positions count only
+non-whitespace bytes, so the kept space never moves one.
 
 ---
 
