@@ -25,6 +25,8 @@ import {
 } from "lexical";
 import {
   $createBookNode,
+  $createMarkerNode,
+  $createMarkerTrailingSeparator,
   $createParaNode,
   $isBookNode,
   $isParaNode,
@@ -455,6 +457,69 @@ describe("StructureKeyboardPlugin — two-step delete (unprotected)", () => {
       expect($getRoot().getChildrenSize()).toBe(1);
       const merged = $getRoot().getChildren()[0];
       if (!$isBookNode(merged)) throw new Error("expected the BookNode to remain");
+      expect(merged.getTextContent()).toBe("firstsecond");
+    });
+  });
+
+  // markerMode "editable" renders a paragraph's marker as a leading [MarkerNode, trailing
+  // separator] prefix inside the paragraph itself (markerEditDeletion.utils.ts's
+  // `$createMarkerPrefix`). Unlike that file's own merge, guarded structure-protection mode's
+  // merge runs straight off the keystroke with no earlier pass to strip the marker text, so the
+  // prefix is still there to drop. The caret starts as an element point on the paragraph itself
+  // (offset 0, before the prefix) — the true structural start `$caretAtParaStart` arms on; the
+  // position right after the prefix has a previous sibling (the prefix) and does not arm.
+  it("paragraph Backspace at start drops the merging paragraph's own marker prefix, not just the separator", async () => {
+    let q: ParaNode;
+    const { editor } = await guardedEnvironment(() => {
+      q = $createParaNode("q");
+      $getRoot().append(
+        $createParaNode("p").append($createTextNode("first")),
+        q.append(
+          $createMarkerNode("q"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("second"),
+        ),
+      );
+    });
+    updateSelection(editor, q!, 0);
+
+    await pressKey(editor, "Backspace", 0);
+    await pressKey(editor, "Backspace", 0);
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildrenSize()).toBe(1);
+      const merged = $getRoot().getChildren()[0] as ParaNode;
+      expect(merged.getMarker()).toBe("p");
+      // No fused marker glyph (`\q`) or leftover separator between the two paragraphs' text.
+      expect(merged.getTextContent()).toBe("firstsecond");
+    });
+  });
+
+  it("paragraph Backspace at start drops the marker prefix when merging into the \\id line's BookNode", async () => {
+    let book: BookNode;
+    let q: ParaNode;
+    const { editor } = await guardedEnvironment(() => {
+      q = $createParaNode("h");
+      book = $createBookNode("GEN");
+      $getRoot().append(
+        book.append($createTextNode("first")),
+        q.append(
+          $createMarkerNode("h"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("second"),
+        ),
+      );
+    });
+    updateSelection(editor, q!, 0);
+
+    await pressKey(editor, "Backspace", 0);
+    await pressKey(editor, "Backspace", 0);
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildrenSize()).toBe(1);
+      const merged = $getRoot().getChildren()[0];
+      if (!$isBookNode(merged)) throw new Error("expected the BookNode to remain");
+      // No fused marker glyph (`\h`) or leftover separator between the line and the paragraph.
       expect(merged.getTextContent()).toBe("firstsecond");
     });
   });
