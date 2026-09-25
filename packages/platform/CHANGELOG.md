@@ -36,7 +36,11 @@ refused. The public surface grew substantially; nothing was removed.
   the note's CONTENT only: marker glyphs, attribute display runs, NBSP spacers, an opening glyph's
   separator prefix, and an expanded editable note's caller are all skipped. That makes the offset
   origin the note's USJ text, so a host that captured a position over its own rendering of the same
-  note resolves to the same character in any `markerMode`.
+  note resolves to the same character in any `markerMode`. An optional third argument, `"category"`,
+  addresses the note's `\cat` category value instead of its content.
+- `EditorRef.getNoteCaret` — where the caret is within an expanded note, in the terms
+  `selectNoteTextOffset` takes, so a host can hand that position to its own note editor. A caret in
+  the note's marker glyphs or caller reports the next position the user can type at.
 - `generateUsjCss` — builds a project stylesheet from `StyleInfo`.
 - `getMarkerMenuItems` / `getEnterMenuItems` / `filterAndRankItems` — the marker-menu item source and
   ranking a host needs to build its own marker palette.
@@ -121,6 +125,17 @@ refused. The public surface grew substantially; nothing was removed.
   removed.
 
 ### Fixed
+
+- `onUsjChange` reports `insertedNodeKey` only for a node the change added. An edit inside an
+  existing note (an unclosed note, which renders expanded) was reported as inserting that note.
+- Applying a note to an editor that shows it collapsed keeps text written directly in the note
+  (`\f + x\ft a\f*`); it was replaced by the collapsed layout's spacer.
+- A selection reaching into a protected note shell (`ViewOptions.isNoteShellEditable: false`) is
+  narrowed to the note's content, so typing or deleting over it can no longer remove the shell.
+- Clicking or arrowing past a collapsed note that ends an unclosed char span leaves a visible caret
+  after the note instead of losing it.
+- Deleting the backslash of a char marker the stylesheet does not declare turns it back into text,
+  as it does for a declared marker.
 
 - Typing into an EXPANDED note that holds no content at all (`\f + \f*`) makes what is typed the
   note's content (`\f + text\f*`, no run marker added), where the note's caller is protected from
