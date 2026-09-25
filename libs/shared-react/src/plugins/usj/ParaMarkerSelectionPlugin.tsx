@@ -1,4 +1,3 @@
-import { getEditorTextDirection, isMovingForward } from "./ArrowNavigationPlugin";
 import { isEditingKey } from "./OpaqueBlockGuardPlugin";
 import { $advancePastParaPrefixes } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { registerParaMarkerSelectionOwner } from "./paraMarkerSelectionOwner";
@@ -7,7 +6,6 @@ import { mergeRegister } from "@lexical/utils";
 import {
   $getNearestNodeFromDOMNode,
   $getSelection,
-  $isTextNode,
   COMMAND_PRIORITY_CRITICAL,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
@@ -22,7 +20,6 @@ import {
 } from "lexical";
 import { useEffect, useRef } from "react";
 import {
-  $findFirstAncestorNoteNode,
   $getSelectedParaMarker,
   $isSomeParaNode,
   $placeCaretAtBoundary,
@@ -55,8 +52,11 @@ const COMPOSITION_KEYS = new Set(["Process", "Dead", "Unidentified"]);
  *
  * A paragraph marker is selected by a `NodeSelection` of its gutter glyph
  * (`$getSelectedParaMarker`, shared). Nothing here creates one — a click on the glyph
- * (`ParaMarkerPrefixCursorGuardPlugin`) does — and everything here is inert unless one exists, so the plugin is mounted unconditionally: selection
- * targets only exist where gutter glyphs do.
+ * (`ParaMarkerPrefixCursorGuardPlugin`) does — and everything here is inert unless one exists, so
+ * the plugin is mounted unconditionally: selection targets only exist where gutter glyphs do.
+ *
+ * A marker is deliberately not reachable by keyboard: no arrow key stops on it. Keyboard selection
+ * is left to the arrow-navigation work, which owns how the caret moves between paragraphs.
  *
  * On every update it recomputes the owning paragraph — an undo, or a structural edit elsewhere, can
  * re-create the paragraph's node and element while the glyph keeps its key — and toggles
@@ -68,20 +68,18 @@ const COMPOSITION_KEYS = new Set(["Process", "Dead", "Unidentified"]);
  * so no browser caret stays drawn in the glyph.
  *
  * It also registers the editor as able to hold a marker selection
- * (`registerParaMarkerSelectionOwner`). The click guard and arrow navigation create one only in an
- * editor that has it, so a marker is never selected where nothing refuses its deletion. Nor in a
- * read-only editor, where Lexical drops keydown and a selected marker could not be left by keyboard;
- * if the editor turns read-only while one is selected, its highlight is hidden until it is editable
- * again.
+ * (`registerParaMarkerSelectionOwner`). The click guard creates one only in an editor that has
+ * it, so a marker is never selected where nothing refuses its deletion. Nor in a read-only editor,
+ * where Lexical drops keydown and a selected marker could not be left by keyboard; if the editor
+ * turns read-only while one is selected, its highlight is hidden until it is editable again.
  *
  * Registers its key handling at `COMMAND_PRIORITY_CRITICAL`, ahead of `ArrowNavigationPlugin`,
  * `StructureKeyboardPlugin` and `MarkerEditPlugin` (all HIGH), so a selected marker owns the key
- * before those plugins see it: arrows leave the marker for the text (mirrored for RTL via
- * {@link getEditorTextDirection}/{@link isMovingForward}), Enter and Alt+ArrowDown ask the host for
- * the marker menu, Escape returns the caret to the paragraph's content, and typing collapses to the
- * content and lets the keystroke proceed there. A Ctrl/Cmd/Alt arrow (other than Alt+ArrowDown) is a
- * word, line or document move with no meaning in the marker column, so it too collapses to the
- * content and proceeds from there; Shift is ignored, as a marker selection cannot be extended.
+ * before those plugins see it. Enter and Alt+ArrowDown ask the host for the marker menu. Every
+ * other arrow key, whatever its direction or modifiers, returns the caret to the start of the
+ * paragraph's content and stops there: the arrow's own movement does not follow, so the caret and
+ * the scripture reference land exactly where a click at that position would put them. Escape
+ * returns to the same place, and typing collapses there and lets the keystroke proceed.
  *
  * Deleting the marker is refused, visibly: the editor ships no user-facing strings, so a refused
  * Backspace/Delete publishes a transient signal on the editor root —
@@ -160,37 +158,21 @@ export function ParaMarkerSelectionPlugin({
       const para = glyph?.getParent();
       if (!glyph || !$isSomeParaNode(para)) return false;
 
-      if (
-        event.key.startsWith("Arrow") &&
-        (event.ctrlKey || event.metaKey || (event.altKey && event.key !== "ArrowDown"))
-      ) {
-        $selectParaContentStart(para, glyph);
-        return false;
-      }
-
       switch (event.key) {
         case "Enter":
           event.preventDefault();
           requestMenu();
           return true;
         case "ArrowDown":
+        case "ArrowUp":
+        case "ArrowLeft":
+        case "ArrowRight":
           event.preventDefault();
-          if (event.altKey) requestMenu();
+          // Alt+ArrowDown opens the marker menu; every other arrow, with any modifier, only returns
+          // to the paragraph's text — the arrow's own movement does not follow.
+          if (event.key === "ArrowDown" && event.altKey) requestMenu();
           else $selectParaContentStart(para, glyph);
           return true;
-        case "ArrowUp":
-          event.preventDefault();
-          $selectParaContentStart(para, glyph);
-          return true;
-        case "ArrowLeft":
-        case "ArrowRight": {
-          event.preventDefault();
-          const root = editor.getRootElement();
-          const direction = root ? getEditorTextDirection(root) : "ltr";
-          if (isMovingForward(direction, event.key)) $selectParaContentStart(para, glyph);
-          else $selectEndOfPreviousPara(para);
-          return true;
-        }
         case "Backspace":
         case "Delete":
           event.preventDefault();
@@ -321,46 +303,10 @@ function removeDomRangesInside(root: HTMLElement | null): void {
 }
 
 /**
- * The nearest root-level paragraph before `para` — where ← out of a selected marker puts the
- * caret. Any paragraph can hold a caret; chapter numbers, the book `\id` line and tables are
- * stepped over.
- *
- * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
- * command handler.
- */
-export function $findPreviousCaretPara(para: SomeParaNode): SomeParaNode | undefined {
-  for (let sibling = para.getPreviousSibling(); sibling; sibling = sibling.getPreviousSibling())
-    if ($isSomeParaNode(sibling)) return sibling;
-  return undefined;
-}
-
-/**
  * Mutating: the caret at `para`'s first content position — the placement
  * `$advancePastParaPrefixes` computes, so the marker and verse-skip rules stay in one place.
  */
 function $selectParaContentStart(para: SomeParaNode, glyph: ImmutableTypedTextNode): void {
   if (!$advancePastParaPrefixes(para))
     $placeCaretAtBoundary(para, glyph.getIndexWithinParent() + 1);
-}
-
-/** Mutating: the caret at the end of the nearest previous paragraph, or nothing when there is none. */
-function $selectEndOfPreviousPara(para: SomeParaNode): void {
-  const previous = $findPreviousCaretPara(para);
-  if (previous) $selectParaEnd(previous);
-}
-
-/**
- * Mutating: collapses the caret at the end of `para`'s content — the end of its last text, or the
- * element point past its last child when that text would be inside a note (a collapsed note's
- * content is hidden) or there is no text at all (an empty or verse-only paragraph).
- */
-function $selectParaEnd(para: SomeParaNode): void {
-  const last = para.getLastDescendant();
-  if ($isTextNode(last) && !$findFirstAncestorNoteNode(last)) {
-    const end = last.getTextContentSize();
-    last.select(end, end);
-    return;
-  }
-  const size = para.getChildrenSize();
-  para.select(size, size);
 }

@@ -302,11 +302,7 @@ export function getEditorTextDirection(rootElement: HTMLElement): string {
   return rootElement.dir || "ltr";
 }
 
-/**
- * Whether `key` moves forward in reading order for content that reads in `direction`: ArrowRight in
- * LTR, ArrowLeft in RTL. Exported for `ParaMarkerSelectionPlugin`, which mirrors RTL the same way.
- */
-export function isMovingForward(direction: string, key: string): boolean {
+function isMovingForward(direction: string, key: string): boolean {
   return (
     (direction === "ltr" && key === "ArrowRight") || (direction === "rtl" && key === "ArrowLeft")
   );

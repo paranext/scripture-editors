@@ -226,45 +226,37 @@ describe.each([
   ["ltr", "ArrowRight", "ArrowLeft"],
   ["rtl", "ArrowLeft", "ArrowRight"],
 ] as const)("ParaMarkerSelectionPlugin — horizontal keys (%s)", (direction, forward, backward) => {
-  it(`${forward} puts the caret at the paragraph's first content position`, async () => {
-    const { editor, li2, secondText } = await environment(direction);
-    await selectMarkerOf(editor, li2);
+  it.each([forward, backward])(
+    "%s puts the caret at the paragraph's first content position and moves no further",
+    async (key) => {
+      const { editor, li2, secondText } = await environment(direction);
+      await selectMarkerOf(editor, li2);
 
-    const event = await pressKey(editor, forward);
+      const event = await pressKey(editor, key);
 
-    expect(event.defaultPrevented).toBe(true);
-    editor.getEditorState().read(() => {
-      $expectSelectionToBe(secondText, 0);
-    });
-  });
+      expect(event.defaultPrevented).toBe(true);
+      editor.getEditorState().read(() => {
+        $expectSelectionToBe(secondText, 0);
+      });
+    },
+  );
 
-  it(`${backward} puts the caret at the end of the previous paragraph`, async () => {
-    const { editor, li2, firstText } = await environment(direction);
-    await selectMarkerOf(editor, li2);
-
-    const event = await pressKey(editor, backward);
-
-    expect(event.defaultPrevented).toBe(true);
-    editor.getEditorState().read(() => {
-      $expectSelectionToBe(firstText);
-    });
-  });
-
-  it(`${backward} with no previous paragraph keeps the marker selected`, async () => {
-    const { editor, p } = await environment(direction);
+  it(`${backward} on the first paragraph's marker returns to that paragraph's text`, async () => {
+    const { editor, p, firstText } = await environment(direction);
     await selectMarkerOf(editor, p);
 
-    const event = await pressKey(editor, backward);
+    await pressKey(editor, backward);
 
-    expect(event.defaultPrevented).toBe(true);
-    expect(selectedMarkerOf(editor)).toBe("p");
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(firstText, 0);
+    });
   });
 
-  it(`Shift+${forward} behaves like ${forward}`, async () => {
+  it(`Shift+${backward} behaves like ${backward}`, async () => {
     const { editor, li2, secondText } = await environment(direction);
     await selectMarkerOf(editor, li2);
 
-    await pressKeyWith(editor, { key: forward, shiftKey: true });
+    await pressKeyWith(editor, { key: backward, shiftKey: true });
 
     editor.getEditorState().read(() => {
       $expectSelectionToBe(secondText, 0);
@@ -305,20 +297,20 @@ describe("ParaMarkerSelectionPlugin — vertical keys return to the text", () =>
   });
 });
 
-describe("ParaMarkerSelectionPlugin — modified arrows proceed from the paragraph's content", () => {
+describe("ParaMarkerSelectionPlugin — modified arrows return to the text too", () => {
   it.each([
     [{ key: "ArrowUp", metaKey: true }],
     [{ key: "ArrowDown", ctrlKey: true }],
     [{ key: "ArrowUp", altKey: true }],
     [{ key: "ArrowRight", ctrlKey: true }],
     [{ key: "ArrowLeft", altKey: true }],
-  ])("%o collapses to content start without claiming the key", async (init) => {
+  ])("%o puts the caret at content start and claims the key", async (init) => {
     const { editor, li2, secondText } = await environment();
     await selectMarkerOf(editor, li2);
 
     const event = await pressKeyWith(editor, init);
 
-    expect(event.defaultPrevented).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
     editor.getEditorState().read(() => {
       $expectSelectionToBe(secondText, 0);
     });

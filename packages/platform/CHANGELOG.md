@@ -31,9 +31,10 @@ refused. The public surface grew substantially; nothing was removed.
   on/off toggles; the handler declines while a composition is active.
 - **A paragraph's marker can be selected** in the paragraph-structure view (`hasGutterParaMarkers`):
   click it in the gutter. Arrow keys do not stop on a marker; arrow movement is unchanged. The row
-  is highlighted (`psc-para-marker-selected`, with the editor root's
-  `aria-activedescendant` naming the marker), typing returns to the paragraph's text, and
-  Backspace/Delete are refused with a
+  is highlighted (`psc-para-marker-selected`, with the editor root's `aria-activedescendant` naming
+  the marker). Any arrow key on a selected marker returns the caret to the start of the paragraph's
+  text without moving further, typing goes into the paragraph's text, and Backspace/Delete are
+  refused with a
   `psc-para-marker-refused` / `data-para-marker-refused-intent` root signal for the host to render a
   hint from.
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.

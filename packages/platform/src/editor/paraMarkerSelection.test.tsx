@@ -220,14 +220,11 @@ describe("consumers of a selected paragraph marker", () => {
     expect(paraElementOf(lexical, "li2").classList.contains("psc-active-text")).toBe(true);
   });
 
-  it("does not move the scripture reference on select, and reports the content verse on the way out", async () => {
+  it("does not move the scripture reference on select, nor when an arrow returns to the text", async () => {
     const onScrRefChange = vi.fn();
     // Start settled in verse 2's own content, inside the paragraph whose marker gets selected. The
     // \li2 gutter glyph precedes \v 2, so without the $resolvePosition guard, selecting it would
-    // resolve to verse 1 — a real, detectable move away from where the caret already is. (Starting
-    // at verse 1, as an earlier version of this test did, could not distinguish the guard being
-    // present from it being absent: resolving the glyph to verse 1 is a no-op when verse 1 is
-    // already the reported reference.)
+    // resolve to verse 1 — a real, detectable move away from where the caret already is.
     const { lexical } = await mountParagraphStructure({
       scrRef: { book: "GEN", chapterNum: 1, verseNum: 2 },
       onScrRefChange,
@@ -243,14 +240,12 @@ describe("consumers of a selected paragraph marker", () => {
     expect(selectedMarker(lexical)).toBe("li2");
     expect(onScrRefChange).not.toHaveBeenCalled();
 
-    // Exit backward into the previous paragraph's content (verse 1) rather than forward — forward
-    // from \li2's marker lands back in verse 2, the same verse the caret already settled in, so it
-    // would report nothing either way and not exercise the "reports on the way out" half.
+    // ArrowLeft is the arrow whose ordinary movement would leave \li2 for verse 1. From a selected
+    // marker it only returns the caret to \li2's content, still in verse 2, so nothing is reported.
     await pressKeyOn(lexical, { key: "ArrowLeft" });
     await flushQueuedEvents();
-    expect(onScrRefChange).toHaveBeenCalledWith(
-      expect.objectContaining({ book: "GEN", chapterNum: 1, verseNum: 1 }),
-    );
+    expect(selectedMarker(lexical)).toBeUndefined();
+    expect(onScrRefChange).not.toHaveBeenCalled();
   });
 });
 
