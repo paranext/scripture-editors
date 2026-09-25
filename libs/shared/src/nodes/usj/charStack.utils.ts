@@ -34,7 +34,7 @@ import {
   $continuationCharAttributes,
 } from "./charGlyphs.utils.js";
 import { $createCharNode, $isCharNode, CharNode } from "./CharNode.js";
-import { $isSeparatorPrefixHostText } from "./markerSeparators.utils.js";
+import { $isSeparatorPrefixHostText, $separatorPrefixLength } from "./markerSeparators.utils.js";
 import { $isNestedCharNode } from "./nestedGlyphs.utils.js";
 import { canonicalAttributeText } from "./attributeDisplay.utils.js";
 import { textTypeState } from "../collab/delta.state.js";
@@ -320,7 +320,7 @@ export function $liftOutOfCharStack(node: LexicalNode, options: CharStackLiftOpt
  */
 export function $selectCharContentStart(node: LexicalNode): void {
   if ($isTextNode(node) && !$isMarkerNode(node)) {
-    const offset = node.getTextContent().startsWith(NBSP) ? 1 : 0;
+    const offset = $separatorPrefixLength(node);
     node.select(offset, offset);
     return;
   }

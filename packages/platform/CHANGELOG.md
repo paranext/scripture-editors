@@ -20,6 +20,27 @@ refused. The public surface grew substantially; nothing was removed.
 - `EditorRef` methods: `isFocused`, `commitPendingMarkerEdits`, `setTransientInput`,
   `getMarkerMenuContext`, `applyMarkerMenuSelection`, `splitParagraphWithMarker`,
   `commitTypedMarker`, `commitTypedCloser`.
+- `EditorRef.getNoteIndex` — the document-order index of the note with the given key, the
+  coordinate a USJ-built notes list (e.g. a footnotes pane) addresses notes by.
+- `EditorRef.getNoteKey` — the inverse: the key of the note at a document-order index, so a host
+  that addresses notes by index can hand the editor the key `replaceEmbedUpdate` needs.
+- `EditorRef.highlightNote` — applies PT9's selected-caller style (class `caller_highlight`: a
+  yellow fill with thin blue top and bottom borders) to one note's caller at a time, through
+  `NoteCallerHighlightPlugin`; purely presentational, and `undefined` clears it. A host that
+  vendors its own copy of `usj-nodes.css` needs that rule in it.
+- `EditorRef.selectAfterNote` — puts the caret immediately after a note (past its caller in a
+  collapsed note), where PT9 leaves it once the user is done with the note. Never pulls DOM focus
+  into an editor that does not already hold it, so a host can park the Scripture caret while the
+  user goes on typing in a note editor elsewhere.
+- `EditorRef.selectNoteTextOffset` — puts the caret at an offset within a note's own text, counting
+  the note's CONTENT only: marker glyphs, attribute display runs, NBSP spacers, an opening glyph's
+  separator prefix, and an expanded editable note's caller are all skipped. That makes the offset
+  origin the note's USJ text, so a host that captured a position over its own rendering of the same
+  note resolves to the same character in any `markerMode`. An optional third argument, `"category"`,
+  addresses the note's `\cat` category value instead of its content.
+- `EditorRef.getNoteCaret` — where the caret is within an expanded note, in the terms
+  `selectNoteTextOffset` takes, so a host can hand that position to its own note editor. A caret in
+  the note's marker glyphs or caller reports the next position the user can type at.
 - `generateUsjCss` — builds a project stylesheet from `StyleInfo`.
 - `getMarkerMenuItems` / `getEnterMenuItems` / `filterAndRankItems` — the marker-menu item source and
   ranking a host needs to build its own marker palette.
@@ -105,10 +126,28 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- `onUsjChange` reports `insertedNodeKey` only for a node the change added. An edit inside an
+  existing note (an unclosed note, which renders expanded) was reported as inserting that note.
+- Applying a note to an editor that shows it collapsed keeps text written directly in the note
+  (`\f + x\ft a\f*`); it was replaced by the collapsed layout's spacer.
+- A selection reaching into a protected note shell (`ViewOptions.isNoteShellEditable: false`) is
+  narrowed to the note's content, so typing or deleting over it can no longer remove the shell.
+- Clicking or arrowing past a collapsed note that ends an unclosed char span leaves a visible caret
+  after the note instead of losing it.
+- Deleting the backslash of a char marker the stylesheet does not declare turns it back into text,
+  as it does for a declared marker.
+
+- Typing into an EXPANDED note that holds no content at all (`\f + \f*`) makes what is typed the
+  note's content (`\f + text\f*`, no run marker added), where the note's caller is protected from
+  typing (`isNoteShellEditable: false`, as in a host's note editor). The keystroke used to land in
+  the closing glyph's bytes: shown, but never saved. `selectNote` on such a note puts the caret
+  there, instead of leaving it wherever it happened to be.
+- A caret-guard repair (an empty verse or note given a caret host, a caret moved past a trailing
+  note) no longer leaves its cursor-change tag pending, which made the next keystroke read as a
+  caret move and never reach `onUsjChange`.
 - In Standard view, the USJ positions the editor reports and accepts (selections, annotations)
   after a milestone, a verse's `\va`/`\vp`, or a chapter's `\ca` were one content item too far:
   the wrapper that carries the attribute display run was counted as content.
-
 - The attribute-run hover color resolves against the host's `--foreground` instead of a fixed
   near-black, which was all but invisible against a dark theme.
 - The in-editor marker menu no longer swallows modifier chords: a keystroke carrying Ctrl/Cmd/Alt
@@ -116,3 +155,58 @@ refused. The public surface grew substantially; nothing was removed.
   the filter.
 - A marker flagged as unknown or invalid now carries an accessible description and a tooltip naming
   the problem, rather than communicating it through color alone.
+- `applyUpdate` (and `replaceEmbedUpdate`, which goes through it) no longer pulls DOM focus into an
+  editor that does not hold focus. Lexical reconciles the DOM selection after every commit, and
+  setting a DOM selection inside a `contenteditable` focuses it, so a host editing a note in a
+  separate editor lost its caret to the main editor on each apply. A focused editor still
+  reconciles, and the explicit caret APIs (`focus`, `setSelection`, `selectNote`) are unchanged.
+- A caret parked by `selectAfterNote` while the editor was unfocused is where a later `focus()`
+  lands. The parking commit's skip-DOM-selection tag no longer outlives it (Lexical keeps a
+  selection-only commit's tags for the next commit, so `focus()` focused nothing), and the stale
+  DOM selection it left inside the editor is cleared rather than read back over the parked caret.
+- `commitPendingMarkerEdits` follows `applyUpdate`'s focus rule: called while another element holds
+  focus (a host settling this editor as the user leaves it), it no longer writes the DOM selection,
+  and with it focus, back into this editor.
+- `selectAfterNote` reports the parked caret through `onSelectionChange` when it writes no DOM
+  selection, so a host acting "at the selection" (inserting a comment) uses where the caret now is.
+- A caret before a verse number reports the verse the chapter actually has before it: `\v 1-2`
+  before `\v 3`, `\v 2a` before `\v 2b`, `\v 20` before `\v 22`, rather than the number minus
+  one. A scroll-reference navigation to the verse the caret already reports - including verse 0 for
+  a heading before verse 1 - no longer moves it.
+- `selectNote` on an expanded note whose last run is explicitly closed (`\ft a\ft*`) lands ahead
+  of the run's closing glyph, where typing extends the run.
+- `selectNoteTextOffset` counts text written directly in a note (outside any `\ft`-style run) and
+  never lands inside an unmatched closer's glyph.
+- `highlightNote` highlights the caller of a note built expanded (an unclosed note) too.
+- `getNoteIndex`, `getNoteKey` and `highlightNote` are safe to call from a callback that runs
+  inside one of the editor's own updates, such as `onSelectionChange`.
+- A scrRef-driven caret placement (an external navigation, or the caret's own mount-time placement)
+  no longer leaves its cursor-change tag pending on the next commit, which could make a marker
+  inserted (or a character typed) right after navigating to a new reference read as a caret move
+  and never reach `onUsjChange`.
+- `commitPendingMarkerEdits`, `applyUpdate`, and `selectAfterNote` no longer leave a stale
+  tag-release listener armed when their own update commits nothing at all (nothing pending to
+  settle, an empty `ops`, or a stale note key) - it stayed registered and could later strip a tag
+  from an unrelated commit.
+- A remote `applyUpdate` (while the editor is unfocused) no longer clears a DOM selection that
+  already matches what Lexical committed - a selection the user made just before the update lands
+  is left alone instead of being wiped with nothing to restore it.
+- `selectAfterNote`, called while unfocused, reports the new reference through `onScrRefChange` the
+  same way a live caret move would; parking the caret writes no DOM selection to drive that report
+  on its own.
+- `isFocused()` agrees with the internal focus check every other method here uses: a focused
+  decorator inside the editor (a collapsed note's caller button) counts as the user being in this
+  editor, not just the root element itself.
+- `selectNote` lands at the end of a closed run that holds a nested span, in a note loaded through
+  `applyUpdate`, instead of before the span or inside it.
+- The right-click menu claims the Escape that closes it (`preventDefault`), so a host listening
+  for Escape further along can tell it was spent closing the menu.
+- Typing right after an expanded note's editable caller (`\f + `, shell left editable — Standard
+  view's Markers view, or any unclosed note) saves what was typed as the note's own content,
+  instead of the whole diverged caller slot leaking into content while the caller itself stayed
+  `+` in the saved USJ.
+- `applyUpdate` keeps a nested char span that opens a run (`\ft \+nd LORD\+nd* said`): it builds
+  the nested span with its glyphs inside it, as it already did for one mid-run, and no longer
+  loses it. Text continuing a closed run lands inside the run's closing glyph.
+- The note-shell and trailing-note caret guards release their cursor-change tag after a
+  correction, so the keystroke right after it reaches `onUsjChange`.

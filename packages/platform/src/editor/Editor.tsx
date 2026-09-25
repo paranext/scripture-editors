@@ -46,9 +46,11 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { $setBlocksType } from "@lexical/selection";
+import { $findMatchingParent } from "@lexical/utils";
 import { deepEqual } from "fast-equals";
 import {
   $addUpdateTag,
+  $getNodeByKey,
   $getSelection,
   $isRangeSelection,
   $isTextNode,
@@ -57,6 +59,8 @@ import {
   LexicalEditor,
   HISTORIC_TAG,
   REDO_COMMAND,
+  SELECTION_CHANGE_COMMAND,
+  SKIP_DOM_SELECTION_TAG,
   UNDO_COMMAND,
 } from "lexical";
 import {
@@ -73,6 +77,7 @@ import {
 } from "react";
 import {
   $createParaNode,
+  $isNoteNode,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
@@ -81,6 +86,7 @@ import {
   externalTypedMarkType,
   getPendedDisplayOwners,
   LoggerBasic,
+  NoteNode,
   ParaNode,
   SELECTION_CHANGE_TAG,
   TypedMarkNode,
@@ -92,17 +98,23 @@ import {
 import {
   $applyUpdate,
   $getNoteByKeyOrIndex,
+  $getNoteIndex,
   $getParticularNodeOps,
   $getUsjSelectionFromEditor,
   $getRangeFromUsjSelection,
   $getReplaceEmbedOps,
   $insertNote,
+  $selectAfterNote,
+  $getNoteCaretOffset,
   $selectNote,
+  $selectNoteCategoryOffset,
+  $selectNoteTextOffset,
   AnnotationPlugin,
   AnnotationRange,
   AnnotationRef,
   ArrowNavigationPlugin,
   CharNodePlugin,
+  clearStaleDomSelection,
   ClipboardPlugin,
   CommandMenuPlugin,
   ContextMenuPlugin,
@@ -112,6 +124,8 @@ import {
   DeltaOnChangePlugin,
   DeltaOp,
   DisableHistoryShortcutsPlugin,
+  editorHoldsDomFocus,
+  EmptyNoteCaretGuardPlugin,
   EditableMarkerMenuHarness,
   EditablePlugin,
   EmptyVerseCaretGuardPlugin,
@@ -120,6 +134,8 @@ import {
   getViewClassList,
   isBlockVerseLayout,
   LoadStatePlugin,
+  NoteCallerHighlightHandle,
+  NoteCallerHighlightPlugin,
   NoteNodePlugin,
   NoteShellCaretGuardPlugin,
   OnSelectionChangePlugin,
@@ -128,6 +144,8 @@ import {
   ParaNodePlugin,
   pasteSelection,
   pasteSelectionAsPlainText,
+  readLatest,
+  releaseTagsAfterNextCommit,
   StateChangePlugin,
   StateChangeSnapshot,
   StructureKeyboardPlugin,
@@ -147,6 +165,18 @@ const defaultOptions: EditorOptions = {};
 
 function Placeholder(): ReactElement {
   return <div className="editor-placeholder">Enter some Scripture...</div>;
+}
+
+/**
+ * Records `noteNode`'s key in `expandedNoteKeyRef` when it is expanded, so `NoteNodePlugin` knows
+ * to collapse that note once the caret leaves it. No-op for a collapsed note or no note at all.
+ * Call inside `editor.update()`.
+ */
+function $rememberExpandedNote(
+  noteNode: NoteNode | null | undefined,
+  expandedNoteKeyRef: React.MutableRefObject<string | undefined>,
+): void {
+  if (noteNode && !noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
 }
 
 /**
@@ -180,6 +210,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
 ): ReactElement {
   const editorRef = useRef<LexicalEditor | null>(null);
   const annotationRef = useRef<AnnotationRef | null>(null);
+  const noteCallerHighlightRef = useRef<NoteCallerHighlightHandle | null>(null);
   const toolbarEndRef = useRef<HTMLDivElement>(null);
   const editedUsjRef = useRef(defaultUsj);
   const expandedNoteKeyRef = useRef<string>(undefined);
@@ -427,6 +458,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     if (effectiveIsReadonly) throw new Error(`Cannot ${operation} in readonly mode`);
   };
 
+  /** See {@link editorHoldsDomFocus}. */
+  const holdsDomFocus = () => !!editorRef.current && editorHoldsDomFocus(editorRef.current);
+
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
       namespace: "platformEditor",
@@ -492,9 +526,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     focus() {
       editorRef.current?.focus();
     },
+    // Delegates to `holdsDomFocus` (above), the same check every internal caller here uses,
+    // rather than comparing `activeElement` to the root directly: a focused decorator inside the
+    // editor - a collapsed note's caller button, say - is the user being in THIS editor, and a
+    // host gating a keyboard shortcut or a PDP-sync deferral on `isFocused()` needs that answer,
+    // not a narrower one that reads such a caret as unfocused.
     isFocused() {
-      const root = editorRef.current?.getRootElement();
-      return !!root && root.ownerDocument.activeElement === root;
+      return holdsDomFocus();
     },
     undo() {
       editorRef.current?.dispatchCommand(UNDO_COMMAND, undefined);
@@ -525,15 +563,30 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       return readSettledUsj();
     },
     commitPendingMarkerEdits() {
+      const editor = editorRef.current;
+      if (!editor) return;
+      // A host settles this editor on the user's way OUT of it (into a note editor elsewhere, say),
+      // so the settle follows the same focus rule as `applyUpdate`: it must not write the DOM
+      // selection, and with it focus, back into this editor.
+      const skipDomSelection = !holdsDomFocus();
+      const unregisterTagRelease = skipDomSelection
+        ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
+        : undefined;
       // Discrete so the settle commits synchronously: `DeltaOnChangePlugin` then refreshes
       // `editedUsjRef` before this method returns, letting callers read fresh USJ via
       // `getUsj()` immediately (the host save path depends on this ordering).
-      editorRef.current?.update(
+      editor.update(
         () => {
-          editorRef.current?.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
+          if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+          editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
         },
         { discrete: true },
       );
+      // With nothing pending, `COMMIT_PENDING_MARKERS_COMMAND` finds no work and the update above
+      // commits nothing - disarm the listener rather than leave it to strip the tag off whatever
+      // commit happens next.
+      unregisterTagRelease?.();
+      if (skipDomSelection) clearStaleDomSelection(editor);
     },
     setTransientInput(input) {
       if (!input) {
@@ -584,13 +637,24 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // would tear down the host's op loop for the same reason the remote branch above reports and
       // drops instead of throwing.
       assertNotBlockVerse("apply an update");
+      const holdsFocus = holdsDomFocus();
+      const unregisterTagRelease =
+        !holdsFocus && editorRef.current
+          ? releaseTagsAfterNextCommit(editorRef.current, SKIP_DOM_SELECTION_TAG)
+          : undefined;
       editorRef.current?.update(
         () => {
           if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
+          if (!holdsFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
           $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
         },
         { discrete: true },
       );
+      // An empty (or fully no-op) `ops` leaves `$applyUpdate` with nothing to change, and the
+      // update above then commits nothing - disarm rather than leave the listener armed for
+      // whatever commit happens next.
+      unregisterTagRelease?.();
+      if (!holdsFocus && editorRef.current) clearStaleDomSelection(editorRef.current);
       const editorState = editorRef.current?.getEditorState();
       if (!editorState) return;
 
@@ -916,8 +980,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             nodeOptions,
             stableLogger,
           );
-          if (noteNode && !noteNode.getIsCollapsed())
-            expandedNoteKeyRef.current = noteNode.getKey();
+          $rememberExpandedNote(noteNode, expandedNoteKeyRef);
         },
         { discrete: true },
       );
@@ -927,8 +990,91 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
         if (noteNode) {
           $selectNote(noteNode, viewOptions);
-          if (!noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
+          $rememberExpandedNote(noteNode, expandedNoteKeyRef);
         }
+      });
+    },
+    selectAfterNote(noteKeyOrIndex) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      // Placing a caret is a selection-only commit, so the focus rule matters more here than
+      // anywhere: a host putting the caret past a note it is showing elsewhere (a footnotes pane
+      // whose row editor holds focus) must not have that editor blurred underneath it. The skipped
+      // write must still leave the parked caret as the one a later `focus()` lands on: a
+      // selection-only commit does not retire its tag, and the stale DOM selection would be read
+      // back over the parked one.
+      const skipDomSelection = !holdsDomFocus();
+      const unregisterTagRelease = skipDomSelection
+        ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
+        : undefined;
+      editor.update(
+        () => {
+          if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+          const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+          if (noteNode) $selectAfterNote(noteNode);
+        },
+        { discrete: true },
+      );
+      // A stale `noteKeyOrIndex` leaves nothing to select, and the update above then commits
+      // nothing - disarm rather than leave the listener armed for whatever commit happens next.
+      unregisterTagRelease?.();
+      if (skipDomSelection) {
+        clearStaleDomSelection(editor);
+        // With no DOM selectionchange to fire, SELECTION_CHANGE_COMMAND never dispatches on its
+        // own, so ScriptureReferencePlugin (which reports scrRef only from that command) and
+        // OnSelectionChangePlugin (which drives `onSelectionChange`) never hear about this move.
+        // Dispatch it explicitly, the same way a live caret move would, so the host learns both.
+        // Wrapped in its own SKIP_DOM_SELECTION_TAG update, the same protection the placement
+        // update above carries: a caret-guard plugin reacting to this command (a trailing note
+        // host, say) can still correct the selection or even insert a node, and without the tag
+        // that correction's own DOM-selection reconcile would write a selection into this
+        // unfocused root and, as an intrinsic browser side effect, focus it - the exact steal this
+        // whole branch exists to avoid.
+        const unregisterDispatchTagRelease = releaseTagsAfterNextCommit(
+          editor,
+          SKIP_DOM_SELECTION_TAG,
+        );
+        editor.update(
+          () => {
+            $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+            editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+          },
+          { discrete: true },
+        );
+        unregisterDispatchTagRelease();
+      }
+    },
+    selectNoteTextOffset(noteKeyOrIndex, utf16Offset, field) {
+      editorRef.current?.update(() => {
+        const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+        if (!noteNode) return;
+        // A note that shows no category run has no category to land in; its content's start is
+        // the position that follows the category everywhere else.
+        const placed =
+          field === "category"
+            ? $selectNoteCategoryOffset(noteNode, utf16Offset) || $selectNoteTextOffset(noteNode, 0)
+            : $selectNoteTextOffset(noteNode, utf16Offset);
+        // A note with no content text has nowhere to put an offset; land where an offset-less
+        // request would, so the caret is always somewhere sensible inside the note.
+        if (!placed) $selectNote(noteNode, viewOptions);
+        $rememberExpandedNote(noteNode, expandedNoteKeyRef);
+      });
+    },
+    getNoteCaret() {
+      const editor = editorRef.current;
+      if (!editor) return undefined;
+      return readLatest(editor, () => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+        const node = selection.anchor.getNode();
+        const noteNode = $isNoteNode(node) ? node : $findMatchingParent(node, $isNoteNode);
+        // A collapsed note shows only its caller: nothing inside it is a place the user can be.
+        if (!$isNoteNode(noteNode) || noteNode.getIsCollapsed() !== false) return undefined;
+        const noteKey = noteNode.getKey();
+        const noteIndex = $getNoteIndex(noteKey);
+        if (noteIndex === undefined) return undefined;
+        const caret = $getNoteCaretOffset(noteNode, { node, offset: selection.anchor.offset });
+        return { noteKey, noteIndex, ...caret };
       });
     },
     getNoteOps(noteKeyOrIndex) {
@@ -938,6 +1084,19 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
 
         return $getParticularNodeOps(noteNode);
       });
+    },
+    getNoteIndex(noteKey) {
+      const editor = editorRef.current;
+      return editor ? readLatest(editor, () => $getNoteIndex(noteKey)) : undefined;
+    },
+    getNoteKey(noteIndex) {
+      const editor = editorRef.current;
+      return editor
+        ? readLatest(editor, () => $getNoteByKeyOrIndex(noteIndex)?.getKey())
+        : undefined;
+    },
+    highlightNote(noteKeyOrIndex) {
+      noteCallerHighlightRef.current?.setHighlightedNote(noteKeyOrIndex);
     },
     get toolbarEndRef() {
       return toolbarEndRef;
@@ -964,7 +1123,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   }, []);
 
   const handleChange = useCallback(
-    (editorState: EditorState, _editor: LexicalEditor, _tags: Set<string>, ops: DeltaOp[]) => {
+    (
+      editorState: EditorState,
+      _editor: LexicalEditor,
+      _tags: Set<string>,
+      ops: DeltaOp[],
+      prevEditorState: EditorState,
+    ) => {
       // No blacklisted-tag guard is needed here: `DeltaOnChangePlugin` is given
       // `ignoreTags={blackListedChangeTags}` and short-circuits before calling this handler, so
       // only local user edits (which carry no blacklisted tag) ever reach this point.
@@ -986,7 +1151,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           // `applyUpdate` never reach here - they emit `onUsjChange` with source "remote" directly.
           // Default "delta-doc" coordinates: these ops come from `DeltaOnChangePlugin`, whose
           // retains are doc-delta diff positions, so the reverse lookup must count the same way.
-          const insertedNodeKey = getInsertedNodeKey(ops, editorState);
+          // An edit inside an existing note diffs as that note replaced by its new self, so the
+          // ops alone read as an insertion of it. Only a node the previous state did not have is
+          // one: reporting an edited note as inserted is how a host comes to open a new-note editor
+          // on the note the user is typing in.
+          const opsNodeKey = getInsertedNodeKey(ops, editorState);
+          const insertedNodeKey =
+            opsNodeKey && !prevEditorState.read(() => $getNodeByKey(opsNodeKey))
+              ? opsNodeKey
+              : undefined;
           lastNotifiedUsjRef.current = newUsj;
           onUsjChange?.(newUsj, ops, "local", insertedNodeKey);
         }
@@ -1146,6 +1319,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
               normalization that keeps a point out of one is too. */}
           <DecoratorBoundarySelectionPlugin />
+          {/* Not gated on viewOptions: it acts only on an EXPANDED note with no content. */}
+          <EmptyNoteCaretGuardPlugin />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects
@@ -1170,6 +1345,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             viewOptions={viewOptions}
             logger={stableLogger}
           />
+          <NoteCallerHighlightPlugin ref={noteCallerHighlightRef} />
           <NoteNodePlugin
             expandedNoteKeyRef={expandedNoteKeyRef}
             nodeOptions={nodeOptions}

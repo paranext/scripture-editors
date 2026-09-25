@@ -45,6 +45,7 @@ import {
   $isCharNode,
   $isImmutableUnmatchedNode,
   $isImpliedParaNode,
+  $isCanonicalMarkerNode,
   $isMarkerNode,
   $isMilestoneNode,
   $isNoteNode,
@@ -424,7 +425,30 @@ export function $isRebuildSentinel(node: LexicalNode, getMarkerFn: MarkerLookup)
 function $charNeedsSentinel(char: CharNode, getMarkerFn: MarkerLookup): boolean {
   if ($hasUnrecoverableAttributes(char)) return true;
   const marker = char.getMarker();
-  return !isAttributeMarker(marker) && getMarkerFn(marker) === undefined;
+  if (isAttributeMarker(marker) || getMarkerFn(marker) !== undefined) return false;
+  // An undeclared marker is kept whole only while its own glyphs still spell it. Once the user has
+  // edited one (deleted the `\` to turn the marker back into text, say), those bytes are the
+  // instruction: preserved as a sentinel they never reach the tokenizer, the span survives the
+  // settle unchanged, and the damaged glyph is later healed back to the marker it no longer says.
+  return !$hasEditedOwnGlyph(char);
+}
+
+/**
+ * Whether one of `char`'s own marker glyphs no longer reads canonically, or its opener is gone
+ * while its closer remains - a span the user has started turning back into text.
+ *
+ * A span with no glyphs at all (markers hidden, or an unclosed span whose opener was deleted) is
+ * not counted: nothing on screen records an edit there.
+ */
+function $hasEditedOwnGlyph(char: CharNode): boolean {
+  const ownGlyphs = char
+    .getChildren()
+    .filter((child) => $isMarkerNode(child) && child.getMarker() === char.getMarker())
+    .filter($isMarkerNode);
+  if (ownGlyphs.some((glyph) => !$isCanonicalMarkerNode(glyph))) return true;
+  const hasOpener = ownGlyphs.some((glyph) => glyph.getMarkerSyntax() === "opening");
+  const hasCloser = ownGlyphs.some((glyph) => glyph.getMarkerSyntax() === "closing");
+  return !hasOpener && hasCloser;
 }
 
 /**

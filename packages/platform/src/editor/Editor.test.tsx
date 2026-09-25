@@ -1517,6 +1517,60 @@ describe("isFocused()", () => {
 
     document.body.removeChild(other);
   });
+
+  // A collapsed note renders its caller as a `<button>` decorator (ImmutableNoteCallerNode) - a
+  // focusable descendant of the root, never the root itself. `holdsDomFocus`/`editorHoldsDomFocus`
+  // count that as "the user is in this editor" on purpose (a focused decorator is how a host's
+  // keyboard-shortcut and PDP-sync-deferral gates stay scoped to the right editor instance), and
+  // `isFocused()` must agree rather than reading it as unfocused.
+  it("is true when a note caller decorator inside the root holds focus", async () => {
+    const usjWithNote: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+        { type: "chapter", marker: "c", number: "1" },
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            { type: "verse", marker: "v", number: "1" },
+            "before ",
+            {
+              type: "note",
+              marker: "f",
+              caller: "+",
+              content: [{ type: "char", marker: "ft", content: ["alpha"] }],
+            },
+            "after",
+          ],
+        },
+      ],
+    };
+    const ref = createRef<EditorRef>();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={usjWithNote}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        />,
+      );
+    });
+    const editor = ref.current;
+    if (!editor) throw new Error("Editor not mounted");
+    const root = document.querySelector<HTMLElement>(".editor-input");
+    if (!root) throw new Error("Editor root not found");
+    const caller = root.querySelector("button");
+    if (!caller) throw new Error("note caller button not found");
+
+    await act(async () => caller.focus());
+
+    expect(root.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(caller);
+    expect(document.activeElement).not.toBe(root);
+    expect(editor.isFocused()).toBe(true);
+  });
 });
 
 describe("insertMarker return value", () => {
@@ -1770,6 +1824,114 @@ describe("commitPendingMarkerEdits (abandonment window)", () => {
 
     // Synchronously fresh - the host save reads getUsj() right after committing.
     expect(paraMarkerOf(ref.current?.getUsj())).toBe("q1");
+  });
+});
+
+describe("commitPendingMarkerEdits after the user has moved to another editor", () => {
+  // A host settles this editor as the user leaves it for a note editor in the same document; the
+  // settle must not write the DOM selection, and with it focus, back here.
+  it("settles without taking the caret from where the user went", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+    await act(async () => {
+      lexical.update(() => {
+        const glyph = $getRoot()
+          .getAllTextNodes()
+          .find((node): node is MarkerNode => $isMarkerNode(node) && node.getMarker() === "p");
+        if (!glyph) throw new Error("para marker glyph not found");
+        glyph.setTextContent("\\q1");
+        glyph.select(3, 3);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const otherEditor = document.body.appendChild(document.createElement("div"));
+    otherEditor.contentEditable = "true";
+    otherEditor.tabIndex = -1;
+    otherEditor.textContent = "note text";
+    otherEditor.focus();
+    const domSelection = document.getSelection();
+    if (!domSelection || !otherEditor.firstChild) throw new Error("no DOM selection");
+    domSelection.collapse(otherEditor.firstChild, 4);
+
+    try {
+      act(() => {
+        ref.current?.commitPendingMarkerEdits();
+      });
+
+      lexical.getEditorState().read(() => {
+        expect($getRoot().getChildren().find($isParaNode)?.getMarker()).toBe("q1");
+      });
+      expect(document.activeElement).toBe(otherEditor);
+      expect(otherEditor.contains(domSelection.anchorNode)).toBe(true);
+    } finally {
+      otherEditor.remove();
+    }
+  });
+});
+
+describe("commitPendingMarkerEdits with nothing pending", () => {
+  // `commitPendingMarkerEdits` (unfocused) registers a `releaseTagsAfterNextCommit` listener
+  // before dispatching COMMIT_PENDING_MARKERS_COMMAND. With nothing pending the command finds no
+  // work: the update changes no nodes and no selection, so Lexical's own no-op branch never
+  // commits it at all - the listener would never fire on its own and would stay armed, ready to
+  // strip SKIP_DOM_SELECTION_TAG off whatever commit happens next. `commitPendingMarkerEdits`
+  // must disarm it itself right after the (uncommitted) update.
+  it("disarms the SKIP_DOM_SELECTION_TAG release listener instead of leaving it armed", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+    const rootElement = lexical.getRootElement();
+    if (!rootElement) throw new Error("editor root not found");
+    expect(rootElement.contains(rootElement.ownerDocument.activeElement)).toBe(false);
+
+    // Wrap every NEW registerUpdateListener call from this point on (every plugin's own mount-time
+    // registration already happened above) so the one `releaseTagsAfterNextCommit` makes can be
+    // told apart, and whether its OWN unregister has been called can be observed directly.
+    const calledFlags: boolean[] = [];
+    const originalRegister = lexical.registerUpdateListener.bind(lexical);
+    const registerSpy = vi
+      .spyOn(lexical, "registerUpdateListener")
+      .mockImplementation((listener) => {
+        const unregister = originalRegister(listener);
+        const index = calledFlags.push(false) - 1;
+        return () => {
+          calledFlags[index] = true;
+          unregister();
+        };
+      });
+
+    act(() => {
+      ref.current?.commitPendingMarkerEdits();
+    });
+
+    expect(registerSpy).toHaveBeenCalledTimes(1);
+    expect(calledFlags).toEqual([true]);
+
+    registerSpy.mockRestore();
   });
 });
 

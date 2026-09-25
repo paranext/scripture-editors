@@ -130,3 +130,35 @@ describe("ContextMenuPlugin mounted without ClipboardPlugin", () => {
     expect(execCommand).toHaveBeenCalledWith("copy");
   });
 });
+
+describe("ContextMenuPlugin — Escape", () => {
+  it("claims the Escape that closes the menu, so a host's own Escape handling can skip it", async () => {
+    const { editor } = await contextMenuEnvironment();
+    const target = editor.getRootElement()?.firstElementChild;
+    if (!target) throw new Error("expected the editor to have rendered content to right-click");
+    await act(async () => {
+      target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+
+    await act(async () => {
+      target.dispatchEvent(escape);
+    });
+
+    expect(escape.defaultPrevented).toBe(true);
+    expect(document.querySelector(".typeahead-popover")).toBeNull();
+  });
+
+  it("leaves an Escape alone while the menu is closed", async () => {
+    const { editor } = await contextMenuEnvironment();
+    const target = editor.getRootElement()?.firstElementChild;
+    if (!target) throw new Error("expected the editor to have rendered content");
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+
+    await act(async () => {
+      target.dispatchEvent(escape);
+    });
+
+    expect(escape.defaultPrevented).toBe(false);
+  });
+});

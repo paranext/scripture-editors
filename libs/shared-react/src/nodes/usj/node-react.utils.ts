@@ -220,16 +220,27 @@ export function $findLastVerse(nodes: LexicalNode[]) {
 }
 
 /**
- * Length of verse number prefix in verse text for BCV "before vs after" check.
- * If text doesn't start with the verse number (e.g. $createVerseNode("1", " verse one")
- * or node is non-VerseNode (e.g. ImmutableVerseNode), returns 0 — treats all positions
- * as "after" and shows the current verse.
+ * Offset just past the verse number within a verse node's own text, for the BCV "before vs after"
+ * check. Everything up to it is the marker rather than the verse's content, so a caret there
+ * belongs to the PRECEDING verse.
+ *
+ * The number does not always sit at offset 0: in views that render markers as editable text the
+ * verse node's text is the whole marker (`\v 3 `), and a caret at its offset 0 is the position
+ * just past whatever ends the previous verse — a note caller, most often, since a note on a
+ * verse's last word puts the next verse's marker directly after it.
+ *
+ * If the text doesn't contain the verse number (e.g. `$createVerseNode("1", " verse one")`) or the
+ * node is a non-VerseNode (e.g. ImmutableVerseNode, whose whole node is the number), returns 0 —
+ * treats all positions as "after" and shows the current verse.
  */
 function getVerseNumberPrefixLength(verseNode: SomeVerseNode): number {
   if (!$isVerseNode(verseNode)) return 0;
   const verseNumber = verseNode.getNumber();
-  const text = verseNode.getTextContent();
-  return text.startsWith(verseNumber) ? verseNumber.length : 0;
+  if (!verseNumber) return 0;
+  // Only the marker's own syntax can precede the number, and no digit appears in it, so the first
+  // occurrence is the number itself.
+  const numberIndex = verseNode.getTextContent().indexOf(verseNumber);
+  return numberIndex < 0 ? 0 : numberIndex + verseNumber.length;
 }
 
 /**
@@ -289,9 +300,25 @@ function currentVerseResult(verseNode: SomeVerseNode): { verseNum: number; verse
 }
 
 /**
+ * The verse node before `verseNode` in document order, within its chapter.
+ * @param verseNode - The verse node to look before.
+ * @returns the previous verse node, or `undefined` when `verseNode` is its chapter's first.
+ */
+function $findPreviousVerse(verseNode: SomeVerseNode): SomeVerseNode | undefined {
+  const previous = $findNearestPreviousNode(verseNode);
+  if (!previous || $isSomeChapterNode(previous)) return undefined;
+  if ($isSomeVerseNode(previous)) return previous;
+  return $findLastVerseInNode(previous) ?? $findThisVerse(previous);
+}
+
+/**
  * Returns the verse number (and optional verse range) for BCV display. When the cursor is
- * before the verse number, returns the previous verse so BCV only updates after the number.
- * For "previous" verse, only `verseNum` is set (no `verse` range); e.g. cursor before "2-3" → `{ verseNum: 1 }`.
+ * before the verse number, returns the verse before it - the actual previous verse node when the
+ * chapter has one, so a caret before `\v 3` after `\v 1-2` reports `{ verseNum: 1, verse: "1-2" }`
+ * and one before `\v 2b` reports `{ verseNum: 2, verse: "2a" }`. Only when no earlier verse exists
+ * in the chapter is it inferred from the number: e.g. cursor before a lone "2-3" → `{ verseNum: 1 }`.
+ *
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
  *
  * @param verseNode - The verse node that contains or precedes the cursor.
  * @param selection - The current editor selection.
@@ -312,7 +339,10 @@ export function $getEffectiveVerseForBcv(
   const prevNum = selectedVerseNum <= 1 ? 0 : selectedVerseNum - 1;
 
   // Anchor before verse number: show previous verse
-  if ($shouldShowPreviousVerseForBcv(verseNode, selection)) return { verseNum: prevNum };
+  if ($shouldShowPreviousVerseForBcv(verseNode, selection)) {
+    const previousVerse = $findPreviousVerse(verseNode);
+    return previousVerse ? currentVerseResult(previousVerse) : { verseNum: prevNum };
+  }
 
   return currentVerseResult(verseNode);
 }

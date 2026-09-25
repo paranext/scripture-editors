@@ -28,10 +28,12 @@ import {
 import {
   $isNoteNode,
   $createCharNode,
+  CharNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createNoteNode,
   $createParaNode,
+  CURSOR_CHANGE_TAG,
   CURSOR_PLACEHOLDER_CHAR,
   NoteNode,
   ParaNode,
@@ -770,6 +772,50 @@ describe("TrailingNoteCaretGuardPlugin", () => {
       });
     });
 
+    // Reusing the host only moves the caret, and Lexical keeps a selection-only commit's tags
+    // pending: the repair's cursor-change tag would then ride onto the user's next keystroke, which
+    // the host's change listener skips as a caret move.
+    it("does not tag the keystroke typed into a reused host as a caret move", async () => {
+      const { editor } = await baseTestEnvironment(
+        () => {
+          $getRoot().append(
+            $createParaNode("p").append(
+              $createTextNode("before "),
+              $createTrailingNote(),
+              $createTextNode(CURSOR_PLACEHOLDER_CHAR),
+            ),
+          );
+        },
+        <TrailingNoteCaretGuardPlugin />,
+      );
+      const dom = noteParagraphDom(editor);
+      await resolveDomPosition(editor, dom.noteDom, 2);
+      const contentCommitTags: string[][] = [];
+      const unregister = editor.registerUpdateListener(({ tags, dirtyLeaves }) => {
+        if (dirtyLeaves.size > 0) contentCommitTags.push([...tags]);
+      });
+
+      // The keystroke follows the click's commit directly: nothing (no `selectionchange`) gets in
+      // between to clear pending tags on the repair's behalf.
+      await act(async () => {
+        putDomCaret(dom.noteDom, 2);
+        dom.paraDom.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+        editor.update(
+          () => {
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) selection.insertText("x");
+          },
+          { discrete: true },
+        );
+      });
+      unregister();
+      releaseDomSelection();
+
+      expect(contentCommitTags.length).toBeGreaterThan(0);
+      for (const tags of contentCommitTags) expect(tags).not.toContain(CURSOR_CHANGE_TAG);
+    });
+
     it("leaves a caret put inside the note by anything but a click alone", async () => {
       // The marker menu puts a caret inside a collapsed footnote on purpose, to insert a char
       // marker into it. Only the click is a bid for the end of the line; a caret that arrived any
@@ -893,6 +939,61 @@ describe("TrailingNoteCaretGuardPlugin", () => {
         expect(note.getTextContent()).not.toContain(CURSOR_PLACEHOLDER_CHAR);
       });
       expect(allHosts(editor).length).toBe(1);
+    });
+
+    describe("when the note ends an unclosed char span", () => {
+      /** `\p before \wj stuff |note|` with no `\wj*`: nothing renders past the note in its line. */
+      async function unclosedSpanEnvironment(closed: boolean) {
+        let para: ParaNode;
+        let before: TextNode;
+        let wj: CharNode;
+        let note: NoteNode;
+        const { editor } = await baseTestEnvironment(
+          () => {
+            before = $createTextNode("before ");
+            note = $createTrailingNote();
+            wj = $createCharNode("wj", closed ? undefined : { closed: "false" }).append(
+              $createMarkerNode("wj", "opening"),
+              $createTextNode("stuff "),
+              note,
+            );
+            if (closed) wj.append($createMarkerNode("wj", "closing"));
+            para = $createParaNode("p");
+            $getRoot().append(para.append(before, wj));
+          },
+          <TrailingNoteCaretGuardPlugin />,
+        );
+        return { editor, para: para!, before: before!, wj: wj!, note: note! };
+      }
+
+      it("lands past the note, inside the span the note ends", async () => {
+        const { editor, before, wj, note } = await unclosedSpanEnvironment(false);
+        await giveEditorACaret(editor, before);
+        const { paraDom, callerDom } = noteParagraphDom(editor);
+
+        await clickIntoUnfocusedEditor(editor, paraDom, callerDom, 0);
+
+        editor.getEditorState().read(() => {
+          const host = wj.getLastChild();
+          if (!$isTextNode(host)) throw new Error("expected a text host past the note");
+          expect(host.getTextContent()).toBe(CURSOR_PLACEHOLDER_CHAR);
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+          expect(selection.anchor.key).toBe(host.getKey());
+          expect(note.getTextContent()).not.toContain(CURSOR_PLACEHOLDER_CHAR);
+        });
+        expect(allHosts(editor).length).toBe(1);
+      });
+
+      it("leaves a note alone when the span's closing glyph renders past it", async () => {
+        const { editor, before } = await unclosedSpanEnvironment(true);
+        await giveEditorACaret(editor, before);
+        const { paraDom, callerDom } = noteParagraphDom(editor);
+
+        await clickIntoUnfocusedEditor(editor, paraDom, callerDom, 0);
+
+        expect(allHosts(editor).length).toBe(0);
+      });
     });
 
     it("leaves a note that something in its block renders past alone", async () => {

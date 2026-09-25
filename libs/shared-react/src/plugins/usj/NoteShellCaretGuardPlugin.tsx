@@ -1,6 +1,9 @@
+import { releaseTagsAfterNextCommit } from "./editorUpdate.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { $findMatchingParent } from "@lexical/utils";
 import {
   $addUpdateTag,
+  $createPoint,
   $getPreviousSelection,
   $getSelection,
   $isRangeSelection,
@@ -8,6 +11,7 @@ import {
   COMMAND_PRIORITY_EDITOR,
   LexicalNode,
   PointType,
+  RangeSelection,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
@@ -153,7 +157,7 @@ export function $guardCaretOutOfNoteShell(isPointerGesture = false): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
 
-  if (!selection.isCollapsed()) return $expandSelectionPastShell(selection.anchor, selection.focus);
+  if (!selection.isCollapsed()) return $narrowSelectionOutOfShell(selection);
 
   const note = $shellAt(selection.anchor);
   if (!note) return false;
@@ -168,30 +172,99 @@ export function $guardCaretOutOfNoteShell(isPointerGesture = false): boolean {
 }
 
 /**
- * Push a RANGE's endpoints out of any shell they land in, away from the other endpoint, so the
- * shell ends up wholly inside the selection or wholly outside it.
- *
- * A range that stops partway through the shell is the other way a keystroke reaches it: replacing
- * such a selection edits the shell node the range clipped. Growing the range instead makes the
- * shell behave as the single unit it is drawn as — the same treatment `token` mode gives deletion.
+ * The shell's trailing edge as a point: the end of its last node, where a keystroke is redirected
+ * into the note's content rather than into the shell (see {@link $shellAt}).
  */
-function $expandSelectionPastShell(anchor: PointType, focus: PointType): boolean {
-  const anchorNote = $shellAt(anchor);
-  const focusNote = $shellAt(focus);
-  if (!anchorNote && !focusNote) return false;
-  // Which endpoint leads is the range's own direction; each offending one moves to the shell edge
-  // that is farther from the other, which is what grows rather than shrinks the selection.
-  const anchorLeads = anchor.isBefore(focus);
-  if (anchorNote) $movePointPastShell(anchor, anchorNote, anchorLeads);
-  if (focusNote) $movePointPastShell(focus, focusNote, !anchorLeads);
-  return true;
+function $shellTrailingEdge(note: NoteNode): PointType {
+  const shell = $noteShellNodes(note);
+  const last = shell[shell.length - 1];
+  return $isTextNode(last)
+    ? $createPoint(last.getKey(), last.getTextContentSize(), "text")
+    : $createPoint(note.getKey(), $contentStartIndex(note), "element");
 }
 
-/** Move `point` to the shell's leading edge (`toStart`) or to the start of the note's content. */
-function $movePointPastShell(point: PointType, note: NoteNode, toStart: boolean): void {
-  const parent = note.getParent();
-  if (toStart && parent) point.set(parent.getKey(), note.getIndexWithinParent(), "element");
-  else point.set(note.getKey(), $contentStartIndex(note), "element");
+/** The index of `note`'s own closing glyph, or its child count when it has none. */
+function $contentEndIndex(note: NoteNode): number {
+  const last = note.getLastChild();
+  const endsInCloser =
+    $isMarkerNode(last) &&
+    last.getMarkerSyntax() === "closing" &&
+    last.getMarker() === note.getMarker();
+  return endsInCloser ? note.getChildrenSize() - 1 : note.getChildrenSize();
+}
+
+/** Whether `point` is inside `note`'s closing glyph (anywhere but its leading edge). */
+function $isInClosingGlyph(note: NoteNode, point: PointType): boolean {
+  if (point.type !== "text") return false;
+  const node = point.getNode();
+  return (
+    note.is(node.getParent()) &&
+    node.getIndexWithinParent() === $contentEndIndex(note) &&
+    $isMarkerNode(node) &&
+    point.offset > 0
+  );
+}
+
+/** Every expanded note with a protected shell that the range reaches into. */
+function $protectedNotesIn(selection: RangeSelection): NoteNode[] {
+  const notes: NoteNode[] = [];
+  const add = (node: LexicalNode) => {
+    const note = $isNoteNode(node) ? node : $findMatchingParent(node, $isNoteNode);
+    if (!$isNoteNode(note) || notes.some((known) => known.is(note))) return;
+    if ($noteShellNodes(note).length > 0) notes.push(note);
+  };
+  add(selection.anchor.getNode());
+  add(selection.focus.getNode());
+  selection.getNodes().forEach(add);
+  return notes;
+}
+
+/**
+ * Narrow a RANGE so it holds nothing of a protected note but the note's own content: an endpoint in
+ * the shell or in the closing glyph moves to the content's near edge, and a range that crosses the
+ * shell or the closing glyph from outside the note stops at the content instead. A range left with
+ * nothing in it collapses to the start of the content.
+ *
+ * A range that reaches into the shell is the other way a keystroke gets at it - a double-click on
+ * the caller selects the whole `\f + `, and typing or deleting then replaces it, unwrapping the
+ * note. Taking the whole shell into the range would still let that edit remove it; narrowing keeps
+ * the edit to the content the note lets the user change. It is also what select-all means in a
+ * note editor: all the note's text, never its marker, caller, or closer.
+ */
+function $narrowSelectionOutOfShell(selection: RangeSelection): boolean {
+  const notes = $protectedNotesIn(selection);
+  if (notes.length === 0) return false;
+  const isBackward = selection.isBackward();
+  const copy = (point: PointType) => $createPoint(point.key, point.offset, point.type);
+  let start = copy(isBackward ? selection.focus : selection.anchor);
+  let end = copy(isBackward ? selection.anchor : selection.focus);
+  let changed = false;
+  for (const note of notes) {
+    const contentStart = $createPoint(note.getKey(), $contentStartIndex(note), "element");
+    const contentEnd = $createPoint(note.getKey(), $contentEndIndex(note), "element");
+    // The shell's trailing edge is the content's start too, just spelled as a text point.
+    const startsAtContent =
+      start.type === "text" && $isShellTrailingEdge(note, start.getNode(), start.offset);
+    const startsBeforeContent = start.isBefore(contentStart) && !startsAtContent;
+    if ($shellAt(start) || $isInClosingGlyph(note, start) || startsBeforeContent) {
+      if (!end.isBefore(contentStart) || $shellAt(end)) {
+        start = $isInClosingGlyph(note, start) ? contentEnd : $shellTrailingEdge(note);
+        changed = true;
+      }
+    }
+    if ($shellAt(end) || $isInClosingGlyph(note, end) || contentEnd.isBefore(end)) {
+      if (start.isBefore(contentEnd) || start.is(contentEnd)) {
+        end = $shellAt(end) ? $shellTrailingEdge(note) : contentEnd;
+        changed = true;
+      }
+    }
+  }
+  if (!changed) return false;
+  if (!start.isBefore(end)) end = start;
+  const [anchor, focus] = isBackward ? [end, start] : [start, end];
+  selection.anchor.set(anchor.key, anchor.offset, anchor.type);
+  selection.focus.set(focus.key, focus.offset, focus.type);
+  return true;
 }
 
 /**
@@ -257,8 +330,14 @@ export function NoteShellCaretGuardPlugin(): null {
       () => {
         // Command handlers already run inside an update, so the tag joins that commit rather than
         // opening a new one. Nothing here changes content, so tagging it costs nothing already
-        // excluded from saved Scripture and collaborative traffic.
-        if ($guardCaretOutOfNoteShell(isPointerDown.current)) $addUpdateTag(CURSOR_CHANGE_TAG);
+        // excluded from saved Scripture and collaborative traffic. The correction only moves the
+        // caret, and a selection-only commit keeps its tags pending for the next one - the user's
+        // next keystroke would then be taken for a caret move and never reach the host - so the
+        // tag is released once this commit is done.
+        if ($guardCaretOutOfNoteShell(isPointerDown.current)) {
+          $addUpdateTag(CURSOR_CHANGE_TAG);
+          releaseTagsAfterNextCommit(editor, CURSOR_CHANGE_TAG);
+        }
         return false;
       },
       COMMAND_PRIORITY_EDITOR,

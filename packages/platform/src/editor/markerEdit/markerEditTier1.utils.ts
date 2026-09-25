@@ -680,28 +680,34 @@ const CHAPTER_GLYPH_REGEXES = leadingAttributeGlyphRegexes("c");
 const SEPARATOR_RUN_ONLY_REGEX = /^[ \u00A0]*$/;
 
 /**
- * Insert `rest` — bytes extracted out of a verse glyph — as plain content directly after the
- * verse, merging into an existing following plain content node rather than always inserting a
- * fresh one. A fresh node fragments a literal the user is mid-typing across siblings — the
- * live failure: `\` typed at the verse's end split out alone, the next keystroke landed in
- * yet another node, and the resolve's caret shield (which covers the caret's contiguous
- * run) had nothing contiguous to cover, so `\vbut…` glued together in the rebuild fragment
- * and settled as a terminated unknown marker mid-word. Only an ordinary content node
- * qualifies: never a glyph (exact-type check), a token (the para-prefix separator), or an
- * attribute-run value riding beside the verse. Shared by BOTH extraction arms of
- * {@link $verseNodeTransform} so the merge behavior cannot drift between them.
+ * Insert `rest` — bytes extracted out of a glyph's own text (a verse's number, a note's caller) —
+ * as plain content directly after it, merging into an existing following plain content node
+ * rather than always inserting a fresh one. A fresh node fragments a literal the user is
+ * mid-typing across siblings — the live failure: `\` typed at the verse's end split out alone,
+ * the next keystroke landed in yet another node, and the resolve's caret shield (which covers the
+ * caret's contiguous run) had nothing contiguous to cover, so `\vbut…` glued together in the
+ * rebuild fragment and settled as a terminated unknown marker mid-word. Only an ordinary content
+ * node qualifies: never a glyph (exact-type check), a token (the para-prefix separator), or an
+ * attribute-run value riding beside the owner. Shared by both extraction arms of
+ * {@link $verseNodeTransform} and by {@link $noteCallerTextTransform} so the merge behavior
+ * cannot drift between them.
  *
  * `caretOffsetInRest` places the collapsed caret at that offset within the inserted rest
  * (clamped to the rest by the callers); `undefined` leaves the selection untouched (a
  * programmatic edit with no caret in the glyph).
  *
- * Mutating: call inside `editor.update()` (runs from {@link $verseNodeTransform}).
+ * @returns The node that now holds `rest` — either the merged-into sibling or the freshly
+ *   created one — so a caller that needs the result byte-exact (never re-merged by Lexical's own
+ *   simple-text normalization) can act on it; see {@link $noteCallerTextTransform}.
+ *
+ * Mutating: call inside `editor.update()` (runs from {@link $verseNodeTransform} and
+ * {@link $noteCallerTextTransform}).
  */
-function $insertRestAfterVerse(
-  node: VerseNode,
+function $insertRestAfterGlyph(
+  node: LexicalNode,
   rest: string,
   caretOffsetInRest: number | undefined,
-): void {
+): TextNode {
   const next = node.getNextSibling();
   if (
     $isTextNode(next) &&
@@ -711,11 +717,12 @@ function $insertRestAfterVerse(
   ) {
     next.setTextContent(rest + next.getTextContent());
     if (caretOffsetInRest !== undefined) next.select(caretOffsetInRest, caretOffsetInRest);
-    return;
+    return next;
   }
   const restNode = $createTextNode(rest);
   node.insertAfter(restNode);
   if (caretOffsetInRest !== undefined) restNode.select(caretOffsetInRest, caretOffsetInRest);
+  return restNode;
 }
 
 /**
@@ -789,7 +796,7 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
         caretOffset !== undefined && caretOffset >= prefix.length
           ? Math.min(caretOffset - prefix.length, rest.length)
           : undefined;
-      $insertRestAfterVerse(node, rest, target);
+      $insertRestAfterGlyph(node, rest, target);
       return;
     }
     // `\v` prefix broken: PT9 re-tokenizes and the token becomes plain text
@@ -831,15 +838,18 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
   }
   node.setNumber(numberToken); // PT9 GetNextWord: whole word, valid or not
   node.setTextContent(getVisibleOpenMarkerText("v", numberToken));
-  // The caret follows to the end of the extracted rest (see $insertRestAfterVerse for the
+  // The caret follows to the end of the extracted rest (see $insertRestAfterGlyph for the
   // merge-into-following behavior both arms share).
-  if (rest) $insertRestAfterVerse(node, rest, rest.length);
+  if (rest) $insertRestAfterGlyph(node, rest, rest.length);
 }
 
-// An expanded note's editable caller text: whitespace run, caller word, whitespace run
-// (canonical: one space, the caller, one NBSP — getEditableCallerText). The tokenization of
-// "word" beside the map's caller declaration, exactly as the verse regexes tokenize the number.
-const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+$/;
+// An expanded note's editable caller text: whitespace run, caller word, ONE trailing separator,
+// then whatever REST a keystroke past it lands there (canonical when REST is empty: one space,
+// the caller, one NBSP — getEditableCallerText). The tokenization of "word" beside the map's
+// caller declaration, exactly as the verse regexes tokenize the number — except the caller node
+// carries no marker prefix of its own (the note's opening glyph is a separate sibling MarkerNode),
+// so unlike leadingAttributeGlyphRegexes's valueAndRest this needs no marker name baked in.
+const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]([\s\S]*)$/;
 
 /**
  * Tier-1 arm for an expanded note's editable caller text — the note-marker family's leading
@@ -853,10 +863,20 @@ const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+$/;
  * (`$buildNoteFragment`), and serialization leaked the whole diverged caller text into note
  * content (the reverse adaptor only drops a byte-exact caller).
  *
+ * Bytes typed PAST the caller's trailing separator are the note's own content, not more of the
+ * caller — the same "displayed bytes are the document" rule a verse glyph's trailing rest follows
+ * ($verseNodeTransform, `$insertRestAfterGlyph`). This transform runs immediately on every commit
+ * that dirties the caller node (it is not deferred to a settle), so splitting the rest out here,
+ * in the same tick, keeps every USJ reported between keystrokes free of the caller leaking into
+ * content — there is no window where an intermediate `onUsjChange` sees the un-split shape.
+ *
  * Scope-guarded to shapes with BOTH flanking whitespace runs still present: a deleted flanking
  * separator is separator-deletion territory (the tokenize-identity rule), not whitespace
  * collapse, and falls through to the existing machinery untouched. Collapsed notes never reach
- * this arm — their caller is an atomic `ImmutableNoteCallerNode`, not editable text.
+ * this arm — their caller is an atomic `ImmutableNoteCallerNode`, not editable text. A host note
+ * editor with `isNoteShellEditable: false` renders the caller in `token` mode instead, where
+ * `NoteShellCaretGuardPlugin` keeps the caret from ever resting inside it to type — so this arm
+ * never needs to special-case that mode; its scope guard already excludes it.
  *
  * Mutating: call inside `editor.update()` (runs from the TextNode catch-all transform,
  * `$textNodeTier2Transform`).
@@ -886,10 +906,35 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
   }
   const match = NOTE_CALLER_TEXT_REGEX.exec(text);
   if (!match) return false; // other damage keeps today's behavior (literal machinery)
-  const [, caller] = match;
+  const [, caller, rest] = match;
+  // A caret inside the rest maps to its same character in the extracted node; a caret elsewhere
+  // (or none — a programmatic edit) is left untouched. Read BEFORE the mutations below move it.
+  const selection = $getSelection();
+  const caretOffset =
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === node.getKey()
+      ? selection.anchor.offset
+      : undefined;
   context.pendingKeys.delete(node.getKey());
-  note.setCaller(caller); // PT9 GetNextWord: whole word, valid or not
+  if (caller !== note.getCaller()) note.setCaller(caller); // PT9 GetNextWord: whole word, valid or not
   node.setTextContent(getEditableCallerText(caller));
+  if (rest) {
+    const prefixLength = text.length - rest.length;
+    const target =
+      caretOffset !== undefined && caretOffset >= prefixLength
+        ? caretOffset - prefixLength
+        : undefined;
+    // Both sides of this new seam are plain, normal-mode TextNodes — exactly what Lexical's own
+    // simple-text normalization (`$normalizeTextNode`) coalesces back into one on the very next
+    // commit, which re-triggers this arm on the re-merged text forever ("One or more transforms
+    // are endlessly triggering additional transforms"). `toggleUnmergeable` is Lexical's own
+    // opt-out for this ("prefer this method over setDetail"); a verse's glyph never needed it
+    // because a VerseNode is not itself simple text, so this arm is the first to hit it.
+    if (!node.isUnmergeable()) node.toggleUnmergeable();
+    const restNode = $insertRestAfterGlyph(node, rest, target);
+    if (!restNode.isUnmergeable()) restNode.toggleUnmergeable();
+  }
   return true;
 }
 

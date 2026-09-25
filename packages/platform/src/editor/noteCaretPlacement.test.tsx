@@ -1,0 +1,1085 @@
+/**
+ * `EditorRef.selectNoteTextOffset` and `EditorRef.selectAfterNote`: the two caret placements a
+ * host footnotes pane drives — landing in a note's text at a position the host captured over its
+ * OWN rendering of that note, and parking the Scripture caret just past a note's caller.
+ *
+ * These render under `STANDARD_VIEW_MODE`, i.e. `markerMode: "editable"`, deliberately: that is
+ * the mode where a note's opening glyphs are real editable text inside the char span and the
+ * span's first text child carries the NBSP display separator as a prefix. A host counting the
+ * note's CONTENT (`\fr 1:1 \ft alpha` reads as `1:1 alpha`) must not be charged for either.
+ *
+ * `STANDARD_VIEW_MODE` is also `noteMode: "collapsed"`, which is the Scripture text's own shape.
+ * A host's note editor renders the SAME note expanded, where the adaptor builds a materially
+ * different interior - the caller is a plain `TextNode` and a `\cat` category becomes an
+ * attribute display run - so the offset origin is pinned under both note modes, in the
+ * `expanded` describe block at the end.
+ */
+import Editorial from "../Editorial";
+import { EditorOptions, EditorRef } from "./editor.model";
+import { flushQueuedEvents } from "./editor-test.utils";
+import {
+  note,
+  noteKeys,
+  options,
+  renderEditor,
+  requireDefined,
+  tagsOfUpdatesDuring,
+} from "./noteEditorRef.test-helpers";
+import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { act, render } from "@testing-library/react";
+import { afterAll, beforeAll, vi } from "vitest";
+import { createRef } from "react";
+import {
+  $getRoot,
+  $getSelection,
+  $isRangeSelection,
+  $isTextNode,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  LexicalEditor,
+  SKIP_DOM_SELECTION_TAG,
+} from "lexical";
+import { $dfs, $findMatchingParent } from "@lexical/utils";
+import { $isNoteNode, $noteEditableCallerNode, getEditableCallerText } from "shared";
+import { DeltaOpInsertNoteEmbed, getViewOptions, UNFORMATTED_VIEW_MODE } from "shared-react";
+// Reaching inside only for tests.
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import { getEmbeddedLexicalEditor } from "../../../../libs/shared-react/src/plugins/usj/react-test.utils";
+
+// jsdom implements `getBoundingClientRect` on Element but not on Range, and Lexical measures the
+// selection through a Range whenever it scrolls a collapsed caret into view after a commit — so
+// the focused-editor cases below throw asynchronously, outside the test's own stack. Installed
+// HERE rather than in test-setup.ts: `markerMenuContext.utils.test.tsx` asserts that a missing
+// Range rect is what leaves `anchorRect` undefined headlessly, so this must not be global.
+const originalRangeRect = Range.prototype.getBoundingClientRect;
+beforeAll(() => {
+  Range.prototype.getBoundingClientRect = () =>
+    ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      width: 0,
+      height: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+});
+afterAll(() => {
+  Range.prototype.getBoundingClientRect = originalRangeRect;
+});
+
+const usj: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+    { type: "chapter", marker: "c", number: "1" },
+    {
+      type: "para",
+      marker: "p",
+      content: [{ type: "verse", marker: "v", number: "1" }, "before ", note("alpha"), "after"],
+    },
+  ],
+};
+
+/** The same paragraph, but with the note ending its verse so a VERSE GLYPH follows it. */
+const usjNoteBeforeVerse: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+    { type: "chapter", marker: "c", number: "1" },
+    {
+      type: "para",
+      marker: "p",
+      content: [
+        { type: "verse", marker: "v", number: "1" },
+        "before ",
+        note("alpha"),
+        { type: "verse", marker: "v", number: "2" },
+        "more",
+      ],
+    },
+  ],
+};
+
+/**
+ * The collapsed caret as `{ text, offset }` of the node it sits in — the text is what makes a
+ * failure readable ("landed in `\ft`" rather than "offset 3 of key 42").
+ */
+function caret(lexical: LexicalEditor): { text: string; offset: number } {
+  return lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+    expect(selection.isCollapsed()).toBe(true);
+    return { text: selection.focus.getNode().getTextContent(), offset: selection.focus.offset };
+  });
+}
+
+/** The Lexical node type the caret's focus sits in, for asserting WHAT it landed in. */
+function caretFocusType(lexical: LexicalEditor): string {
+  return lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+    expect(selection.isCollapsed()).toBe(true);
+    return selection.focus.getNode().getType();
+  });
+}
+
+/**
+ * The caret's focus offset paired with the note's own position among its parent's children, so a
+ * test can say the caret is at the child slot immediately AFTER the note rather than merely "not
+ * in the thing it used to land in".
+ */
+function caretOffsetAndNoteIndexInParent(lexical: LexicalEditor): {
+  focusOffset: number;
+  noteIndexInParent: number;
+} {
+  return lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+    expect(selection.isCollapsed()).toBe(true);
+    const noteNode = $dfs($getRoot())
+      .map(({ node }) => node)
+      .find($isNoteNode);
+    if (!noteNode) throw new Error("expected a note in the document");
+    return {
+      focusOffset: selection.focus.offset,
+      noteIndexInParent: noteNode.getIndexWithinParent(),
+    };
+  });
+}
+
+describe("EditorRef.selectNoteTextOffset", () => {
+  it("counts the note's content only, skipping the marker glyph and its NBSP separator", async () => {
+    const { editorRef, lexical } = await renderEditor(usj);
+
+    // 4 = length of the `\fr` run's content (`1:1 `), so this is the first character of `alpha`.
+    await act(async () => editorRef.selectNoteTextOffset(0, 4));
+
+    const { text, offset } = caret(lexical);
+    // The `\ft` span's text still carries its display separator, so the caret sits just past it.
+    expect(text.endsWith("alpha")).toBe(true);
+    expect(text.slice(offset)).toBe("alpha");
+  });
+
+  it("lands inside a run at an offset that falls within it", async () => {
+    const { editorRef, lexical } = await renderEditor(usj);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 6));
+
+    const { text, offset } = caret(lexical);
+    expect(text.slice(offset)).toBe("pha");
+  });
+
+  it("puts offset 0 at the first content character, not at the glyph", async () => {
+    const { editorRef, lexical } = await renderEditor(usj);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 0));
+
+    const { text, offset } = caret(lexical);
+    expect(text.slice(offset)).toBe("1:1 ");
+  });
+
+  it("clamps an offset past the end of the note's text to the end", async () => {
+    const { editorRef, lexical } = await renderEditor(usj);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 9999));
+
+    const { text, offset } = caret(lexical);
+    expect(offset).toBe(text.length);
+    expect(text.endsWith("alpha")).toBe(true);
+  });
+
+  it("accepts a note key as well as an index", async () => {
+    const { editorRef, lexical } = await renderEditor(usj);
+    const [key] = noteKeys(lexical);
+
+    await act(async () => editorRef.selectNoteTextOffset(key, 4));
+
+    expect(caret(lexical).text.endsWith("alpha")).toBe(true);
+  });
+});
+
+describe("EditorRef.selectAfterNote", () => {
+  it("puts the caret at the start of the text following the note", async () => {
+    const { editorRef, lexical } = await renderEditor(usj);
+
+    await act(async () => editorRef.selectAfterNote(0));
+
+    expect(caret(lexical)).toEqual({ text: "after", offset: 0 });
+  });
+
+  it("stays out of a glyph when the note is followed by one", async () => {
+    // A note that ends a verse is followed by the next verse's glyph, whose bytes are a picture of
+    // the verse's number rather than document text. Offset 0 of that node is INSIDE the picture,
+    // where the next keystroke splits the verse marker; the caret belongs before it instead.
+    const { editorRef, lexical } = await renderEditor(usjNoteBeforeVerse);
+
+    await act(async () => editorRef.selectAfterNote(0));
+
+    // Positively: the caret is an ELEMENT-anchored position at the child slot right after the
+    // note. `not.toBe("verse")` alone would also pass for a caret left before the note, or back
+    // in the preceding "before " text.
+    expect(caretFocusType(lexical)).toBe("para");
+    const { focusOffset, noteIndexInParent } = caretOffsetAndNoteIndexInParent(lexical);
+    expect(focusOffset).toBe(noteIndexInParent + 1);
+  });
+
+  it("does not pull DOM focus into an editor the user is not in", async () => {
+    const { editorRef, lexical } = await renderEditor(usj);
+    const rootElement = requireDefined(lexical.getRootElement(), "root element");
+    expect(rootElement.contains(rootElement.ownerDocument.activeElement)).toBe(false);
+
+    const tags = await tagsOfUpdatesDuring(lexical, () => editorRef.selectAfterNote(0));
+
+    expect(tags.has(SKIP_DOM_SELECTION_TAG)).toBe(true);
+  });
+
+  // Parked while the user is elsewhere, the caret must still be the one the host's later
+  // `focus()` lands on: neither the skipped DOM write's tag nor the DOM selection it left behind
+  // may outlive the commit.
+  it("leaves a caret parked while unfocused for a later focus() to land on", async () => {
+    const { editorRef, lexical } = await renderEditor(usj);
+    const rootElement = requireDefined(lexical.getRootElement(), "root element");
+    rootElement.setAttribute("tabindex", "-1");
+    const button = document.body.appendChild(document.createElement("button"));
+    button.focus();
+    // Focusing a button leaves a browser's document selection where it was - inside the editor.
+    // jsdom moves it, so put it back.
+    const domSelection = requireDefined(document.getSelection(), "document selection");
+    domSelection.collapse(rootElement, 0);
+
+    await act(async () => {
+      editorRef.selectAfterNote(0);
+    });
+    await act(async () => {
+      editorRef.focus();
+    });
+
+    expect(caret(lexical)).toEqual({ text: "after", offset: 0 });
+    // Writing the DOM selection into the root is what focuses it in a browser (jsdom does not
+    // model that side effect), so the write reaching the parked caret is the focus landing there.
+    expect(domSelection.anchorNode?.textContent).toBe("after");
+    expect(domSelection.anchorOffset).toBe(0);
+    button.remove();
+  });
+
+  // The move writes no DOM selection, which is what `onSelectionChange` normally follows, and the
+  // host acts "at the selection" (inserting a comment) from wherever the user is.
+  it("reports the parked caret to the host while unfocused", async () => {
+    const onSelectionChange = vi.fn();
+    const { editorRef } = await renderEditor(usj, options, onSelectionChange);
+    onSelectionChange.mockClear();
+
+    await act(async () => {
+      editorRef.selectAfterNote(0);
+    });
+
+    expect(onSelectionChange).toHaveBeenCalledTimes(1);
+    expect(onSelectionChange.mock.calls[0][0]).toEqual(editorRef.getSelection());
+  });
+
+  it("reconciles the DOM selection when the editor does hold focus", async () => {
+    const { editorRef, lexical } = await renderEditor(usj);
+    const rootElement = requireDefined(lexical.getRootElement(), "root element");
+    // jsdom only treats an element as focusable when it is explicitly in the tab order, so give
+    // the root a tabindex to reproduce what a real contenteditable does on its own.
+    rootElement.setAttribute("tabindex", "-1");
+    rootElement.focus();
+
+    const tags = await tagsOfUpdatesDuring(lexical, () => editorRef.selectAfterNote(0));
+
+    expect(tags.has(SKIP_DOM_SELECTION_TAG)).toBe(false);
+  });
+});
+
+/**
+ * The shape a host's own note editor renders: `markerMode: "editable"` with the note EXPANDED, so
+ * the adaptor builds the caller as a plain `TextNode` and folds a `\cat` category into an
+ * `attribute` display run. Both are display, not content, and the offset origin has to skip them
+ * exactly as it skips the marker glyphs under the collapsed shape above.
+ */
+const expandedOptions: EditorOptions = {
+  ...options,
+  view: requireDefined(getViewOptions(UNFORMATTED_VIEW_MODE), "unformatted view options"),
+};
+
+/** `\f + \cat People\cat* \fr 1:1 \ft alpha` — content text is still just `1:1 alpha`. */
+const categorizedNote: MarkerObject = { ...note("alpha"), category: "People" };
+
+const usjCategorizedNote: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+    { type: "chapter", marker: "c", number: "1" },
+    {
+      type: "para",
+      marker: "p",
+      content: [{ type: "verse", marker: "v", number: "1" }, "before ", categorizedNote, "after"],
+    },
+  ],
+};
+
+/**
+ * A note split across paragraphs by `\fp`, which the adaptor renders as further char runs the
+ * offset walk counts. Content text is `1:1 alpha` + `beta` = `1:1 alphabeta`, so an offset that
+ * crosses the `\fp` boundary is the shape most likely to expose an off-by-one between runs.
+ */
+const multiParagraphNote: MarkerObject = {
+  type: "note",
+  marker: "f",
+  caller: "+",
+  content: [
+    { type: "char", marker: "fr", content: ["1:1 "] },
+    { type: "char", marker: "ft", content: ["alpha"] },
+    { type: "char", marker: "fp", content: [] },
+    { type: "char", marker: "ft", content: ["beta"] },
+  ],
+};
+
+const usjMultiParagraphNote: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+    { type: "chapter", marker: "c", number: "1" },
+    {
+      type: "para",
+      marker: "p",
+      content: [
+        { type: "verse", marker: "v", number: "1" },
+        "before ",
+        multiParagraphNote,
+        "after",
+      ],
+    },
+  ],
+};
+
+/** A note with a caller and nothing else — the no-content-text fallback's input. */
+const usjEmptyNote: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+    { type: "chapter", marker: "c", number: "1" },
+    {
+      type: "para",
+      marker: "p",
+      content: [
+        { type: "verse", marker: "v", number: "1" },
+        "before ",
+        { type: "note", marker: "f", caller: "+", content: [] },
+        "after",
+      ],
+    },
+  ],
+};
+
+/** Whether the caret sits inside the note and ahead of the note's closing glyph. */
+function isCaretBeforeNoteCloser(lexical: LexicalEditor): boolean {
+  return lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+    expect(selection.isCollapsed()).toBe(true);
+    const focusNode = selection.focus.getNode();
+    const noteNode = $isNoteNode(focusNode)
+      ? focusNode
+      : $findMatchingParent(focusNode, $isNoteNode);
+    const closer = requireDefined(noteNode, "the caret is not in a note").getLastChild();
+    if (!closer) throw new Error("the note has no children");
+    if (focusNode.is(noteNode)) return selection.focus.offset <= closer.getIndexWithinParent();
+    if (focusNode.is(closer)) return selection.focus.offset === 0;
+    return focusNode.isBefore(closer);
+  });
+}
+
+describe("EditorRef.selectNote on a note with no content run", () => {
+  it.each(["editable", "visible"] as const)(
+    "lands ahead of the closing glyph with %s markers",
+    async (markerMode) => {
+      const { editorRef, lexical } = await renderEditor(usjEmptyNote, {
+        ...options,
+        view: { markerMode, noteMode: "expanded", hasSpacing: false, isFormattedFont: false },
+      });
+
+      await act(async () => editorRef.selectNote(0));
+
+      expect(isCaretBeforeNoteCloser(lexical)).toBe(true);
+    },
+  );
+});
+
+/**
+ * The shape a host's own note editor renders the note in: expanded, editable markers, and the
+ * note's opening marker and caller protected from typing (the host governs them with its own UI).
+ */
+const noteEditorOptions: EditorOptions = {
+  ...options,
+  view: {
+    markerMode: "editable",
+    noteMode: "expanded",
+    hasSpacing: true,
+    isFormattedFont: true,
+    isNoteShellEditable: false,
+  },
+};
+
+/**
+ * jsdom's `focus()` collapses the document selection to the start of the focused element, where a
+ * browser keeps it; Lexical focuses the root on reconciles here, and every keystroke reads the
+ * caret back from that selection. Keep it for the enclosing `describe`, as
+ * ScriptureReferencePlugin.test.tsx does.
+ */
+function keepDocumentSelectionAcrossFocus() {
+  const originalFocus = HTMLElement.prototype.focus;
+  beforeAll(() => {
+    HTMLElement.prototype.focus = function focus(focusOptions?: FocusOptions) {
+      const selection = document.getSelection();
+      const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
+      originalFocus.call(this, focusOptions);
+      if (range && selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    };
+  });
+  afterAll(() => {
+    HTMLElement.prototype.focus = originalFocus;
+  });
+}
+
+/** The first note's content as the editor would save it. */
+function savedNoteContent(editorRef: EditorRef): unknown {
+  const para = editorRef.getUsj()?.content[2];
+  if (!para || typeof para === "string" || !("content" in para)) return undefined;
+  const noteObject = para.content?.find(
+    (child): child is MarkerObject => typeof child !== "string" && child.type === "note",
+  );
+  return noteObject?.content ?? [];
+}
+
+/** Types `text` at the caret, the way the editor receives typed characters. */
+async function typeText(lexical: LexicalEditor, text: string) {
+  for (const character of text)
+    await act(async () => {
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, character);
+    });
+}
+
+/**
+ * Puts the document selection on the editor's caret, as a browser's reconcile leaves it. jsdom can
+ * leave it at the start of the editor, and every keystroke reads the caret back from it.
+ */
+async function syncDomSelection(lexical: LexicalEditor) {
+  const point = lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) return undefined;
+    const { key, offset, type } = selection.anchor;
+    return { key, offset, type };
+  });
+  if (!point) throw new Error("expected a range caret");
+  const element = requireDefined(lexical.getElementByKey(point.key), "caret element");
+  // A text point addresses the node's DOM text; an element point, its DOM children.
+  const domNode =
+    point.type === "text" ? requireDefined(element.firstChild, "caret text") : element;
+  await act(async () => {
+    document.getSelection()?.collapse(domNode, point.offset);
+  });
+}
+
+/**
+ * Lets the caret come to rest as it does in a browser: the document selection on the caret, then
+ * the `selectionchange` the editor's caret guards run from (jsdom delivers its own only sometimes),
+ * then the document selection on wherever the guards put the caret.
+ */
+async function restCaret(lexical: LexicalEditor) {
+  await syncDomSelection(lexical);
+  await act(async () => {
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  await syncDomSelection(lexical);
+}
+
+describe("typing into a note with no content (`\\f + \\f*`)", () => {
+  keepDocumentSelectionAcrossFocus();
+
+  it("makes what is typed the note's own content, with no run marker added", async () => {
+    const { editorRef, lexical } = await renderEditor(usjEmptyNote, noteEditorOptions);
+    await act(async () => editorRef.selectNote(0));
+    await restCaret(lexical);
+
+    await typeText(lexical, "xy");
+
+    expect(savedNoteContent(editorRef)).toEqual(["xy"]);
+  });
+
+  // A browser can report the boundary as the start of the closing glyph, which is where an
+  // unguarded keystroke used to land: inside the glyph's bytes, shown but never saved.
+  it("takes the text when the caret is reported at the start of the closing glyph", async () => {
+    const { editorRef, lexical } = await renderEditor(usjEmptyNote, noteEditorOptions);
+    await act(async () => {
+      lexical.update(
+        () => {
+          const noteNode = requireDefined(
+            $dfs($getRoot())
+              .map(({ node }) => node)
+              .find($isNoteNode),
+            "note",
+          );
+          const closer = requireDefined(noteNode.getLastChild(), "closing glyph");
+          if (!$isTextNode(closer)) throw new Error("expected the closing glyph to be text");
+          closer.select(0, 0);
+        },
+        { discrete: true },
+      );
+    });
+    await restCaret(lexical);
+
+    await typeText(lexical, "x");
+
+    expect(savedNoteContent(editorRef)).toEqual(["x"]);
+  });
+
+  it("leaves nothing behind when the caret moves on without typing", async () => {
+    const { editorRef, lexical } = await renderEditor(usjEmptyNote, noteEditorOptions);
+    await act(async () => editorRef.selectNote(0));
+
+    await act(async () => {
+      lexical.update(
+        () => {
+          const after = requireDefined(
+            $getRoot()
+              .getAllTextNodes()
+              .find((node) => node.getTextContent() === "after"),
+            "text after the note",
+          );
+          after.select(0, 0);
+        },
+        { discrete: true },
+      );
+    });
+
+    expect(savedNoteContent(editorRef)).toEqual([]);
+    const noteText = lexical.getEditorState().read(() =>
+      $dfs($getRoot())
+        .map(({ node }) => node)
+        .find($isNoteNode)
+        ?.getTextContent(),
+    );
+    expect(noteText).not.toContain("\u200b");
+  });
+});
+
+/** A document holding `noteObject` in verse 1's paragraph. */
+function usjWithNote(noteObject: MarkerObject): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+      { type: "chapter", marker: "c", number: "1" },
+      {
+        type: "para",
+        marker: "p",
+        content: [{ type: "verse", marker: "v", number: "1" }, "before ", noteObject, "after"],
+      },
+    ],
+  };
+}
+
+describe("EditorRef.selectNote in an expanded note", () => {
+  // `note`'s runs carry no `closed: "false"`, so each is explicitly closed and its `\ft*` glyph
+  // follows the run's text inside the span. Past that glyph is outside the run.
+  it("lands ahead of an explicitly closed last run's closing glyph", async () => {
+    const { editorRef, lexical } = await renderEditor(usj, expandedOptions);
+
+    await act(async () => editorRef.selectNote(0));
+
+    const { text, offset } = caret(lexical);
+    expect(text.trim()).toBe("alpha");
+    expect(offset).toBe(text.length);
+  });
+});
+
+describe("EditorRef.selectNoteTextOffset in an expanded note (a host's own note editor)", () => {
+  it("counts the note's content only, skipping the caller the expanded shape spells out", async () => {
+    const { editorRef, lexical } = await renderEditor(usj, expandedOptions);
+
+    // 4 = the `\fr` run's content (`1:1 `), so this is the first character of `alpha`. The
+    // expanded caller (`+`) sits ahead of it as ordinary text and must not be charged for.
+    await act(async () => editorRef.selectNoteTextOffset(0, 4));
+
+    const { text, offset } = caret(lexical);
+    expect(text.slice(offset)).toBe("alpha");
+  });
+
+  it("skips a \\cat category run, which is a field on the note rather than its content", async () => {
+    const { editorRef, lexical } = await renderEditor(usjCategorizedNote, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 4));
+
+    // `People` rides between the caller and the first content run; counting it would push the
+    // caret six characters past where the host clicked.
+    const { text, offset } = caret(lexical);
+    expect(text.slice(offset)).toBe("alpha");
+  });
+
+  it("carries the offset across a \\fp paragraph break", async () => {
+    const { editorRef, lexical } = await renderEditor(usjMultiParagraphNote, expandedOptions);
+
+    // 9 = `1:1 ` (4) + `alpha` (5), so this is the first character of the second paragraph's run.
+    await act(async () => editorRef.selectNoteTextOffset(0, 9));
+
+    const { text, offset } = caret(lexical);
+    expect(text.slice(offset)).toBe("beta");
+  });
+
+  it("counts text written directly in the note, outside any run", async () => {
+    const directTextNote: MarkerObject = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: ["direct ", { type: "char", marker: "ft", content: ["alpha"] }],
+    };
+    const { editorRef, lexical } = await renderEditor(usjWithNote(directTextNote), expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 2));
+    expect(caret(lexical)).toEqual({ text: "direct ", offset: 2 });
+
+    // 7 = `direct `, so this is the first character of the run after it.
+    await act(async () => editorRef.selectNoteTextOffset(0, 7));
+    const { text, offset } = caret(lexical);
+    expect(text.slice(offset)).toBe("alpha");
+  });
+
+  it("does not count an unmatched closer's glyph as text", async () => {
+    const noteWithUnmatched: MarkerObject = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [
+        {
+          type: "char",
+          marker: "ft",
+          content: ["alpha", { type: "unmatched", marker: "nd*" }, " beta"],
+        },
+      ],
+    };
+    const { editorRef, lexical } = await renderEditor(
+      usjWithNote(noteWithUnmatched),
+      expandedOptions,
+    );
+
+    // 7 = `alpha` + 2, so two characters into ` beta`.
+    await act(async () => editorRef.selectNoteTextOffset(0, 7));
+
+    expect(caret(lexical)).toEqual({ text: " beta", offset: 2 });
+  });
+
+  it("falls back to selecting the note when it has no content text at all", async () => {
+    const { editorRef, lexical } = await renderEditor(usjEmptyNote, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 3));
+
+    // Documented fallback: an offset into a note with nothing to offset into still leaves the
+    // caret somewhere inside that note rather than wherever it happened to be.
+    const insideNote = lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.isCollapsed()).toBe(true);
+      return !!$findMatchingParent(selection.focus.getNode(), $isNoteNode);
+    });
+    expect(insideNote).toBe(true);
+  });
+});
+
+describe("EditorRef.selectNoteTextOffset into a note's \\cat category", () => {
+  it("lands at the offset within the category value, past its display separator", async () => {
+    const { editorRef, lexical } = await renderEditor(usjCategorizedNote, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 3, "category"));
+
+    const { text, offset } = caret(lexical);
+    expect(text.trim()).toBe("People");
+    expect(text.slice(offset)).toBe("ple");
+  });
+
+  it("clamps an offset past the end of the category to its end", async () => {
+    const { editorRef, lexical } = await renderEditor(usjCategorizedNote, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 50, "category"));
+
+    const { text, offset } = caret(lexical);
+    expect(text.trim()).toBe("People");
+    expect(offset).toBe(text.length);
+  });
+
+  it("lands at the start of the content when the note has no category", async () => {
+    const { editorRef, lexical } = await renderEditor(usj, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 3, "category"));
+
+    const { text, offset } = caret(lexical);
+    expect(text.slice(offset)).toBe("1:1 ");
+  });
+});
+
+describe("EditorRef.getNoteCaret", () => {
+  /** Put the caret on `offset` of the first text node inside the note that `pick` accepts. */
+  async function caretOn(
+    lexical: LexicalEditor,
+    pick: (text: string) => boolean,
+    offset: (text: string) => number,
+  ) {
+    await act(async () => {
+      lexical.update(
+        () => {
+          const noteNode = requireDefined(
+            $dfs($getRoot())
+              .map(({ node }) => node)
+              .find($isNoteNode),
+            "note",
+          );
+          const target = requireDefined(
+            noteNode.getAllTextNodes().find((node) => pick(node.getTextContent())),
+            "text in the note",
+          );
+          const at = offset(target.getTextContent());
+          target.select(at, at);
+        },
+        { discrete: true },
+      );
+    });
+  }
+
+  it("reads back every content offset selectNoteTextOffset puts the caret at", async () => {
+    const { editorRef } = await renderEditor(usj, expandedOptions);
+    const contentLength = "1:1 alpha".length;
+
+    for (let offset = 0; offset <= contentLength; offset += 1) {
+      await act(async () => editorRef.selectNoteTextOffset(0, offset));
+      expect({ offset, caret: editorRef.getNoteCaret() }).toEqual({
+        offset,
+        caret: { noteKey: editorRef.getNoteKey(0), noteIndex: 0, utf16Offset: offset },
+      });
+    }
+  });
+
+  it("reads a caret in the note's shell as the start of its content", async () => {
+    const { editorRef, lexical } = await renderEditor(usj, expandedOptions);
+
+    await caretOn(
+      lexical,
+      (text) => text.includes("+"),
+      () => 1,
+    );
+
+    expect(editorRef.getNoteCaret()?.utf16Offset).toBe(0);
+  });
+
+  it("reads a caret in a run's opening glyph as the start of that run's text", async () => {
+    const { editorRef, lexical } = await renderEditor(usj, expandedOptions);
+
+    await caretOn(
+      lexical,
+      (text) => text.startsWith("\\ft"),
+      () => 2,
+    );
+
+    // `1:1 ` is the `\fr` run before it.
+    expect(editorRef.getNoteCaret()?.utf16Offset).toBe(4);
+  });
+
+  it("reads a caret in the category value as an offset into the category", async () => {
+    const { editorRef } = await renderEditor(usjCategorizedNote, expandedOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 2, "category"));
+
+    expect(editorRef.getNoteCaret()).toMatchObject({ utf16Offset: 2, field: "category" });
+  });
+
+  it("reports nothing for a caret outside every note or in a collapsed one", async () => {
+    const outside = await renderEditor(usj, expandedOptions);
+    await act(async () => outside.editorRef.selectAfterNote(0));
+    expect(outside.editorRef.getNoteCaret()).toBeUndefined();
+
+    // Standard view collapses a closed note to its caller.
+    const collapsed = await renderEditor(usj);
+    await act(async () => collapsed.editorRef.selectNote(0));
+    expect(collapsed.editorRef.getNoteCaret()).toBeUndefined();
+  });
+});
+
+describe("EditorRef.selectAfterNote reports the new reference while unfocused", () => {
+  const twoVerseUsjWithNote: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+      { type: "chapter", marker: "c", number: "1" },
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "verse", marker: "v", number: "1" },
+          "first verse text ",
+          { type: "verse", marker: "v", number: "2" },
+          "before ",
+          note("alpha"),
+          "after",
+        ],
+      },
+    ],
+  };
+
+  // Placing the caret is a selection-only commit that writes no DOM selection while unfocused, so
+  // no DOM selectionchange fires to drive SELECTION_CHANGE_COMMAND on its own -
+  // ScriptureReferencePlugin, which reports scrRef only from that command, would otherwise never
+  // hear about the move, and a host's footnotes pane would show a stale reference for a note it
+  // just parked the Scripture caret past.
+  it("calls onScrRefChange with the note's verse", async () => {
+    const ref = createRef<EditorRef>();
+    const onScrRefChange = vi.fn();
+    let container: HTMLElement | undefined;
+    await act(async () => {
+      const result = render(
+        <Editorial
+          ref={ref}
+          defaultUsj={twoVerseUsjWithNote}
+          scrRef={{ book: "GEN", chapterNum: 1, verseNum: 1 }}
+          onScrRefChange={onScrRefChange}
+          options={options}
+        />,
+      );
+      container = result.container;
+    });
+    // Let the mount-time caret placement (ScriptureReferencePlugin's own navigation window) fully
+    // settle before the test's own move, so this measures selectAfterNote's report and not an
+    // artifact of the mount sequence still being in flight.
+    await flushQueuedEvents();
+    const lexical = getEmbeddedLexicalEditor(container);
+    const rootElement = requireDefined(lexical.getRootElement(), "root element");
+    expect(rootElement.contains(rootElement.ownerDocument.activeElement)).toBe(false);
+    onScrRefChange.mockClear();
+
+    await act(async () => {
+      ref.current?.selectAfterNote(0);
+    });
+
+    expect(onScrRefChange).toHaveBeenCalledWith(
+      expect.objectContaining({ book: "GEN", chapterNum: 1, verseNum: 2 }),
+    );
+  });
+});
+
+describe("EditorRef.selectNote on a note loaded through applyUpdate (a host's note editor)", () => {
+  keepDocumentSelectionAcrossFocus();
+
+  /** The host's note editor starts from one empty paragraph and receives the note as an op. */
+  const noteEditorStartUsj: Usj = { type: "USJ", version: "3.1", content: [{ type: "para" }] };
+
+  /** Loads `noteObject` the way a host's note editor does, selects it, and types `Z`. */
+  async function typeAfterSelectingLoadedNote(noteObject: MarkerObject): Promise<unknown> {
+    const host = await renderEditor(usjWithNote(noteObject));
+    const noteOps = requireDefined(host.editorRef.getNoteOps(0), "host note ops");
+    const { editorRef, lexical } = await renderEditor(noteEditorStartUsj, noteEditorOptions);
+    await act(async () => editorRef.applyUpdate([noteOps[0]]));
+    await act(async () => editorRef.selectNote(0));
+    await restCaret(lexical);
+
+    await typeText(lexical, "Z");
+
+    const para = editorRef.getUsj()?.content[0];
+    if (!para || typeof para === "string") return undefined;
+    const noteNode = para.content?.find(
+      (child): child is MarkerObject => typeof child !== "string" && child.type === "note",
+    );
+    return noteNode?.content;
+  }
+
+  // The caret goes at the end of the run's content, past the nested span and ahead of the run's
+  // own closing glyph - not at the first closing glyph found, which can be the nested span's.
+  it("types at the end of a closed run that holds a nested span mid-run", async () => {
+    const content = await typeAfterSelectingLoadedNote({
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [
+        {
+          type: "char",
+          marker: "ft",
+          content: ["a ", { type: "char", marker: "nd", content: ["x"] }, " b"],
+        },
+      ],
+    });
+
+    expect(content).toEqual([
+      {
+        type: "char",
+        marker: "ft",
+        content: ["a ", { type: "char", marker: "nd", content: ["x"] }, " bZ"],
+      },
+    ]);
+  });
+
+  it("types at the end of a closed run that opens with a nested span", async () => {
+    const content = await typeAfterSelectingLoadedNote({
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [
+        {
+          type: "char",
+          marker: "ft",
+          content: [{ type: "char", marker: "nd", content: ["x"] }, " b"],
+        },
+      ],
+    });
+
+    expect(content).toEqual([
+      {
+        type: "char",
+        marker: "ft",
+        content: [{ type: "char", marker: "nd", content: ["x"] }, " bZ"],
+      },
+    ]);
+  });
+});
+
+/**
+ * Typing right after an expanded note's editable caller (` + ⍽`) must save what was typed as the
+ * note's own CONTENT, directly, with the caller staying byte-exact — never leaking the caller
+ * into content the way a diverged caller slot does. This is the shape a click on any unclosed
+ * note builds in Standard view, and the shape Unformatted view always builds for an expanded
+ * note whose shell is left editable (no `isNoteShellEditable: false`).
+ */
+describe("typing after an expanded note's caller", () => {
+  keepDocumentSelectionAcrossFocus();
+
+  /** `\f + \ft a\f*` — a caller followed by a run, so typed text lands ahead of existing content. */
+  const noteWithContent: MarkerObject = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "ft", content: ["a"] }],
+  };
+
+  /**
+   * Selects the end of the FIRST note's editable caller text specifically — not its content run's
+   * end, which `EditorRef.selectNote` lands on once the note already holds a `\ft` run.
+   */
+  async function selectCallerEnd(lexical: LexicalEditor) {
+    await act(async () => {
+      lexical.update(
+        () => {
+          const noteNode = requireDefined(
+            $dfs($getRoot())
+              .map(({ node }) => node)
+              .find($isNoteNode),
+            "note",
+          );
+          const caller = requireDefined($noteEditableCallerNode(noteNode), "editable caller");
+          caller.selectEnd();
+        },
+        { discrete: true },
+      );
+    });
+  }
+
+  /** The first note object in a document built by `usjWithNote`. */
+  function noteObjectOf(usj: Usj | undefined): MarkerObject | undefined {
+    const para = usj?.content[2];
+    if (!para || typeof para === "string" || !("content" in para)) return undefined;
+    return para.content?.find(
+      (child): child is MarkerObject => typeof child !== "string" && child.type === "note",
+    );
+  }
+
+  /** Every plain string anywhere in `content`, depth first — flattens char-span nesting so a
+   * caller leaked into any run (or direct content) is still found. */
+  function allContentStrings(content: MarkerContent[] | undefined): string[] {
+    const out: string[] = [];
+    for (const item of content ?? []) {
+      if (typeof item === "string") out.push(item);
+      else if ("content" in item) out.push(...allContentStrings(item.content));
+    }
+    return out;
+  }
+
+  it("keeps the caller intact and saves typed text as content, with no leak between keystrokes (Unformatted view)", async () => {
+    const notified: Usj[] = [];
+    const { editorRef, lexical } = await renderEditor(
+      usjWithNote(noteWithContent),
+      expandedOptions,
+      undefined,
+      (usj) => notified.push(usj),
+    );
+
+    await selectCallerEnd(lexical);
+    await restCaret(lexical);
+
+    await typeText(lexical, "xy");
+
+    // Every USJ reported DURING typing (not only the final one) already has the caller split
+    // from content — this transform runs immediately, not deferred to a settle.
+    expect(notified.length).toBeGreaterThan(0);
+    for (const usj of notified) {
+      const noteObject = noteObjectOf(usj);
+      if (!noteObject) continue; // a notification from before this note existed/changed
+      expect(noteObject.caller).toBe("+");
+      expect(allContentStrings(noteObject.content).join("")).not.toContain(
+        getEditableCallerText("+"),
+      );
+    }
+
+    const finalNote = noteObjectOf(editorRef.getUsj());
+    expect(finalNote?.caller).toBe("+");
+    expect(finalNote?.content).toEqual(["xy", { type: "char", marker: "ft", content: ["a"] }]);
+  });
+
+  it("does the same for an empty unclosed note in Standard view (expanded because unclosed)", async () => {
+    const unclosedEmptyNote = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [],
+      closed: "false",
+    } as MarkerObject & { closed?: string };
+    const { editorRef, lexical } = await renderEditor(usjWithNote(unclosedEmptyNote));
+
+    await selectCallerEnd(lexical);
+    await restCaret(lexical);
+
+    await typeText(lexical, "xy");
+
+    const finalNote = noteObjectOf(editorRef.getUsj());
+    expect(finalNote?.caller).toBe("+");
+    expect(finalNote?.content).toEqual(["xy"]);
+  });
+
+  it("keeps the note's collab ops free of the caller text after typing (getNoteOps)", async () => {
+    const { editorRef, lexical } = await renderEditor(
+      usjWithNote(noteWithContent),
+      expandedOptions,
+    );
+
+    await selectCallerEnd(lexical);
+    await restCaret(lexical);
+
+    await typeText(lexical, "xy");
+
+    const ops = requireDefined(editorRef.getNoteOps(0), "note ops") as DeltaOpInsertNoteEmbed[];
+    expect(ops).toHaveLength(1);
+    const contentsOps = requireDefined(ops[0].insert.note?.contents?.ops, "note contents ops");
+    const inserted = contentsOps
+      .map((op) => (typeof op.insert === "string" ? op.insert : ""))
+      .join("");
+    expect(inserted).not.toContain(getEditableCallerText("+"));
+    expect(inserted).toContain("xy");
+    expect(ops[0].insert.note?.caller).toBe("+");
+  });
+});

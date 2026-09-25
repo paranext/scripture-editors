@@ -11,7 +11,6 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $createRangeSelection,
-  $createTextNode,
   $getNodeByKey,
   $getSelection,
   $isRangeSelection,
@@ -20,6 +19,7 @@ import {
   COMMAND_PRIORITY_LOW,
   EditorState,
   LexicalEditor,
+  LexicalNode,
   NodeMutation,
   SELECTION_CHANGE_COMMAND,
   TextNode,
@@ -28,8 +28,10 @@ import { useEffect, useRef } from "react";
 import {
   $findFirstAncestorNoteNode,
   $getNoteCallerPreviewText,
+  $createMarkerTrailingSeparator,
   $isCharNode,
   $isMarkerNode,
+  $isMarkerTrailingSeparator,
   $isNoteNode,
   $isSomeParaNode,
   CharNode,
@@ -214,10 +216,35 @@ function $noteCharNodeTransform(node: CharNode): void {
   const previewText = $getNoteCallerPreviewText(children);
   if (noteCaller.getPreviewText() !== previewText) noteCaller.setPreviewText(previewText);
 
-  // Ensure NBSP after each note top-level CharNode
-  const nextSibling = node.getNextSibling();
-  if (!$isTextNode(nextSibling)) node.insertAfter($createTextNode(NBSP));
-  else if (nextSibling.getTextContent() !== NBSP) nextSibling.setTextContent(NBSP);
+  $ensureSpacerAfter(node);
+}
+
+/** Whether the caret (either end of the selection) is in `node`. */
+function $holdsCaret(node: TextNode): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return false;
+  const key = node.getKey();
+  return selection.anchor.key === key || selection.focus.key === key;
+}
+
+/**
+ * Ensure the NBSP spacer the note's layout puts after each of its top-level nodes follows `node`.
+ *
+ * Only a spacer is ever reset to NBSP. Text directly in the note that is NOT a spacer is the note's
+ * own content - text written directly in the note rather than in a `\ft`-style run, as a note
+ * editor's apply delivers it - and gets a spacer inserted after it instead. Text the caret is in is
+ * left to {@link $noteTextNodeTransform}, which decides whether it is typing into the collapsed note.
+ */
+function $ensureSpacerAfter(node: LexicalNode): void {
+  const next = node.getNextSibling();
+  if ($isTextNode(next) && !$isMarkerNode(next)) {
+    if (next.getTextContent() === NBSP || $holdsCaret(next)) return;
+    if ($isMarkerTrailingSeparator(next)) {
+      next.setTextContent(NBSP);
+      return;
+    }
+  }
+  node.insertAfter($createMarkerTrailingSeparator());
 }
 
 /**
@@ -232,8 +259,12 @@ function $noteTextNodeTransform(node: TextNode): void {
   const noteCaller = children?.find((child) => $isImmutableNoteCallerNode(child));
   if (!$isTextNode(node) || !$isNoteNode(noteNode) || !noteCaller || !children) return;
 
+  // Typing into a collapsed note's spacer, or into text the caret is in directly in the note, is
+  // refused: the note's content is hidden, so nothing typed there would be seen. Text directly in
+  // the note that no one is typing in is the note's own content (see `$ensureSpacerAfter`).
   const parent = node.getParent();
-  if (!$isMarkerNode(node) && $isNoteNode(parent)) {
+  const isSpacerOrTyping = $isMarkerTrailingSeparator(node) || $holdsCaret(node);
+  if (!$isMarkerNode(node) && $isNoteNode(parent) && isSpacerOrTyping) {
     if (node.getTextContent() !== NBSP) {
       node.setTextContent(NBSP);
       node.selectEnd();
@@ -259,10 +290,7 @@ function $noteTextNodeTransform(node: TextNode): void {
 function $noteCallerNodeTransform(node: ImmutableNoteCallerNode): void {
   if (!$isImmutableNoteCallerNode(node)) return;
 
-  const nextSibling = node.getNextSibling();
-  if (!$isTextNode(nextSibling) || $isMarkerNode(nextSibling))
-    node.insertAfter($createTextNode(NBSP));
-  else if (nextSibling.getTextContent() !== NBSP) nextSibling.setTextContent(NBSP);
+  $ensureSpacerAfter(node);
 }
 
 /**
