@@ -34,6 +34,7 @@ import {
 import { useEffect, useRef, useState, useCallback } from "react";
 import { $isSomeVerseNode } from "../../nodes/usj";
 import { $isSomeParaNode } from "shared";
+import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 
 /**
@@ -115,7 +116,12 @@ export function StructureKeyboardPlugin({
             else parent?.selectStart();
           }
         } else if (armed.kind === "selection") {
-          if ($isRangeSelection(selection)) selection.removeText(); // deletes the whole range, verse included
+          if ($isRangeSelection(selection)) {
+            // Straight off the keystroke, so the prefix guard's DELETE_CHARACTER_COMMAND narrowing
+            // never runs — keep a range that starts before the `\id` line's prefix off the glyph.
+            $narrowSelectionPastBookPrefix(selection);
+            selection.removeText(); // deletes the whole range, verse included
+          }
         } else if ($isSomeParaNode(node)) {
           // Only paragraphs merge into paragraphs; never merge some other ElementNode.
           $mergeParaIntoPrevious(node);

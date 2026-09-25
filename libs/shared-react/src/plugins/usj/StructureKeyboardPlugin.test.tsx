@@ -4,7 +4,13 @@
 import { $createImmutableVerseNode, ImmutableVerseNode } from "../../nodes/usj";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { HistoryPlugin } from "../History/HistoryPlugin";
-import { baseTestEnvironment, pressKey, updateSelection } from "./react-test.utils";
+import { $isBookPrefixNode } from "./ParaMarkerPrefixCursorGuardPlugin";
+import {
+  $createBookLine,
+  baseTestEnvironment,
+  pressKey,
+  updateSelection,
+} from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
   $getRoot,
@@ -711,6 +717,33 @@ describe("StructureKeyboardPlugin — two-step delete for range selections with 
       const para = $getRoot().getChildren()[0] as ParaNode;
       expect(para.getChildren().some((n) => n instanceof ImmutableVerseNode)).toBe(false); // verse gone
       expect(para.getTextContent()).toBe("ad"); // "b", verse, and "c" removed
+    });
+  });
+
+  // The armed range is deleted straight off the keystroke, not through DELETE_CHARACTER_COMMAND, so
+  // the prefix guard's own narrowing never sees it: a range starting before the `\id` line's
+  // immutable prefix (Ctrl+A normalizes to exactly that) must be narrowed here too, or the fire
+  // deletes the glyph along with the content.
+  it("second Backspace keeps the \\id line's prefix when the armed range starts before it", async () => {
+    let book: BookNode;
+    let t2: TextNode;
+    const { editor } = await guardedEnvironment(() => {
+      book = $createBookLine("GEN", $createTextNode("Genesis"));
+      t2 = $createTextNode("cd");
+      $getRoot().append(book, $createParaNode("p").append($createImmutableVerseNode("1"), t2));
+    });
+    updateSelection(editor, book!, 0, t2!, 1);
+
+    await pressKey(editor, "Backspace", 0); // arm
+    await pressKey(editor, "Backspace", 0); // fire
+
+    editor.getEditorState().read(() => {
+      const first = $getRoot().getFirstChild();
+      if (!$isBookNode(first)) throw new Error("expected the BookNode to remain");
+      expect($isBookPrefixNode(first.getFirstChild())).toBe(true);
+      expect(first.getTextContent()).not.toContain("Genesis");
+      expect($getRoot().getTextContent()).not.toContain("Genesis");
+      expect($getRoot().getTextContent()).toContain("d");
     });
   });
 
