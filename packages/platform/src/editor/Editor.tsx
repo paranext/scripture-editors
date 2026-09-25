@@ -50,13 +50,17 @@ import { $findMatchingParent } from "@lexical/utils";
 import { deepEqual } from "fast-equals";
 import {
   $addUpdateTag,
+  $createRangeSelection,
+  $getNodeByKey,
   $getSelection,
   $isRangeSelection,
   $isTextNode,
   $setSelection,
   EditorState,
   LexicalEditor,
+  LexicalNode,
   HISTORIC_TAG,
+  RangeSelection,
   REDO_COMMAND,
   UNDO_COMMAND,
 } from "lexical";
@@ -149,6 +153,33 @@ const defaultOptions: EditorOptions = {};
 
 function Placeholder(): ReactElement {
   return <div className="editor-placeholder">Enter some Scripture...</div>;
+}
+
+/**
+ * Retags every paragraph `selection` touches to `blockMarker`, keeping every paragraph's own
+ * text — the `EditorRef.formatPara` core, shared by its non-book path and (after splitting the
+ * `\id` line) its book path so the two cannot drift. `$setBlocksType` moves each affected block's
+ * children into a fresh `ParaNode` carrying the new marker state; it has no notion that a marker
+ * glyph is content it should rewrite, so it moves the OLD marker's visible prefix over unchanged —
+ * `$applyParaMarker` re-runs over every affected paragraph afterward to bring the glyph (editable
+ * marker mode) back into agreement with the new marker.
+ *
+ * Mutating: call inside `editor.update()`, with `selection` the live RangeSelection to retag.
+ */
+function $retagBlocksInSelection(
+  selection: RangeSelection,
+  blockMarker: string,
+  viewOptions: ViewOptions | undefined,
+): void {
+  $setBlocksType(selection, () => $createParaNode(blockMarker));
+  const updated = $getSelection();
+  if (!$isRangeSelection(updated)) return;
+  const affectedParas = new Set<ParaNode>();
+  updated.getNodes().forEach((node) => {
+    const block = node.getTopLevelElement();
+    if ($isParaNode(block)) affectedParas.add(block);
+  });
+  affectedParas.forEach((para) => $applyParaMarker(para, blockMarker, viewOptions));
 }
 
 /**
@@ -719,27 +750,71 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           // selection can run either direction, and a forward selection out of the `\id` line
           // leaves `focus` in the following paragraph while `anchor` is still in the book.
           const start = selection.isBackward() ? selection.focus : selection.anchor;
-          if ($findMatchingParent(start.getNode(), $isBookNode)) {
+          const book = $findMatchingParent(start.getNode(), $isBookNode);
+          if (book) {
+            // `$splitBookWithMarker` deletes a non-collapsed selection before splitting — correct
+            // for a marker-palette pick (which replaces the selection), wrong for a retag, which
+            // must never delete text. Collapse to the START point before calling it, then reapply
+            // the SAME retag the non-book path below runs, over whatever the original selection
+            // still reached past the split.
+            const endPoint = selection.isBackward() ? selection.anchor : selection.focus;
+            // A selection that never leaves the `\id` line is entirely absorbed by the split below
+            // (everything from the caret to the end of the line's content becomes ONE new,
+            // already-tagged paragraph) — there is no later paragraph left to retag. It also isn't
+            // safe to remember: splitting can `splitText()` the very node `endPoint` names, which
+            // reassigns the moved half a NEW key and leaves the original key's remaining text too
+            // short for the remembered offset. Only remember an end point that reaches OUTSIDE the
+            // book, where the split cannot touch the node it names.
+            const endsOutsideBook =
+              !selection.isCollapsed() &&
+              !book.is(endPoint.getNode()) &&
+              !book.isParentOf(endPoint.getNode());
+            const originalEnd = endsOutsideBook
+              ? { key: endPoint.key, offset: endPoint.offset, type: endPoint.type }
+              : undefined;
+            const collapsedAtStart = $createRangeSelection();
+            collapsedAtStart.anchor.set(start.key, start.offset, start.type);
+            collapsedAtStart.focus.set(start.key, start.offset, start.type);
+            $setSelection(collapsedAtStart);
             if (!$splitParagraphWithMarker(blockMarker, viewOptions)) {
               logger?.warn(
                 `formatPara refused: could not split the \\id line at the caret to retag with "${blockMarker}"`,
               );
+              return;
+            }
+            if (!originalEnd) return;
+            // Defensive: nothing in the split above is expected to detach the node the remembered
+            // end point named (it lives outside the book, which is all the split touches), but the
+            // retag below is meaningless against a point whose node is gone.
+            const endNode = $getNodeByKey(originalEnd.key);
+            if (!endNode?.isAttached()) return;
+            const endPara = $findMatchingParent(endNode, $isParaNode);
+            if (!endPara) return;
+            const newPara = book.getNextSibling();
+            if (!$isParaNode(newPara)) return;
+            // Retag every PARAGRAPH between the split's new paragraph and the one the original
+            // selection reached, one at a time — never as a single selection spanning the whole
+            // reach: a `\c` chapter marker sits between the book and its first paragraph as a
+            // root-level sibling like any of them, and `$setBlocksType` has no notion of "skip
+            // this sibling" — given a selection that merely passes over a chapter on its way to a
+            // later paragraph, it converts the chapter into a paragraph right along with them.
+            let sibling: LexicalNode | null = newPara.getNextSibling();
+            while (sibling) {
+              const isEndPara = sibling.is(endPara);
+              const next = sibling.getNextSibling();
+              if ($isParaNode(sibling)) {
+                const paraSelection = $createRangeSelection();
+                paraSelection.anchor.set(sibling.getKey(), 0, "element");
+                paraSelection.focus.set(sibling.getKey(), sibling.getChildrenSize(), "element");
+                $setSelection(paraSelection);
+                $retagBlocksInSelection(paraSelection, blockMarker, viewOptions);
+              }
+              if (isEndPara) break;
+              sibling = next;
             }
             return;
           }
-          $setBlocksType(selection, () => $createParaNode(blockMarker));
-          // `$setBlocksType` MOVES each old block's children into its fresh ParaNode, so in
-          // editable marker mode the old marker's prefix glyph migrates over still reading the
-          // old marker. Re-apply the marker on every affected paragraph so glyph text (or a
-          // missing prefix) is brought back into agreement with the new marker state.
-          const updated = $getSelection();
-          if (!$isRangeSelection(updated)) return;
-          const affectedParas = new Set<ParaNode>();
-          updated.getNodes().forEach((node) => {
-            const block = node.getTopLevelElement();
-            if ($isParaNode(block)) affectedParas.add(block);
-          });
-          affectedParas.forEach((para) => $applyParaMarker(para, blockMarker, viewOptions));
+          $retagBlocksInSelection(selection, blockMarker, viewOptions);
         },
         { discrete: true },
       );
