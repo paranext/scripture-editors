@@ -63,8 +63,9 @@ function $chapterLineAtCaret(): ChapterNode | undefined {
  * Handles a paragraph split requested at a chapter line: wherever the caret is on the line, a new
  * paragraph marked `marker` starts right after the chapter line, with the caret at its content
  * start. That is directly after the chapter even when a `\cp` paragraph follows it, as in Paratext
- * 9: a `\cp` can stand on its own, so the user may mean to put a paragraph between the two. With paragraph marker prefixes shown, the paragraph gets its visible prefix in the same
- * update, as a split paragraph does.
+ * 9: a `\cp` can stand on its own, so the user may mean to put a paragraph between the two. With
+ * paragraph marker prefixes shown, the paragraph gets its visible prefix in the same update, as a
+ * split paragraph does.
  *
  * Mutating: call from an `INSERT_PARAGRAPH_COMMAND` handler that runs before Lexical's own split,
  * and ahead of any split that bypasses that command.
