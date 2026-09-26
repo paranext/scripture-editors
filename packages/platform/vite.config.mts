@@ -54,6 +54,9 @@ export default defineConfig({
         "react/jsx-dev-runtime",
         ...Object.keys(packageData.peerDependencies ?? {}),
         ...Object.keys(packageData.dependencies ?? {}),
+        // Dependencies imported through a subpath, such as `unicode-segmenter/grapheme`, which the
+        // exact package names above don't match.
+        /^unicode-segmenter\//,
         // Exclude all Lexical packages and their sub-modules
         /^@lexical\/.*/,
         /^lexical.*/,

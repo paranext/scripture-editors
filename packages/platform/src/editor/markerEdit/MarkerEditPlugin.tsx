@@ -30,10 +30,12 @@ import {
   $displayWhitespaceTransform,
   $handleCopyForStandardView,
   $handlePasteForStandardView,
+  $selectionToUsfmText,
   normalizePastedNbsp,
   stripPastedChapterAndBookId,
   getPastePayload,
 } from "./whitespaceDisplay.plugin.utils";
+import { $fitOrBlock } from "../copyLimit/copyLimit.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
@@ -63,6 +65,7 @@ import {
   LexicalEditor,
   NodeKey,
   NodeMutation,
+  RangeSelection,
   TextNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
@@ -312,6 +315,9 @@ function registerDestroyedOwnerPend(editor: LexicalEditor, context: MarkerEditCo
   );
 }
 
+/** How much a Standard-view copy of `selection` writes: its USFM's length. */
+const $usfmLength = (selection: RangeSelection) => $selectionToUsfmText(selection).length;
+
 /**
  * Whether structure protection would refuse this gesture outright — the same predicates
  * `StructureKeyboardPlugin` decides with, asked before a handler that runs AHEAD of it commits to
@@ -543,6 +549,7 @@ export function MarkerEditPlugin({
   logger,
   markerSettleDelayMs,
   structureProtectionMode = "off",
+  copyLimit,
 }: {
   viewOptions: ViewOptions | undefined;
   /** Project StyleInfo-backed lookup; defaults to the bundled table. */
@@ -561,6 +568,11 @@ export function MarkerEditPlugin({
    * `MarkerEditContext.structureProtectionMode`.
    */
   structureProtectionMode?: StructureProtectionMode;
+  /**
+   * Mirrors `Editor`'s option of the same name: caps the UTF-16 code units a Standard-view copy
+   * writes.
+   */
+  copyLimit?: number;
 }): null {
   const [editor] = useLexicalComposerContext();
   const isEnabled = viewOptions?.markerMode === "editable";
@@ -589,19 +601,48 @@ export function MarkerEditPlugin({
   // suppression window), so `armIdleSettle` reads it through this ref at every arm — a change
   // takes effect on the next arm, never re-arming an already-ticking timer.
   const markerSettleDelayRef = useRef(markerSettleDelayMs);
+  // Wiring too, read by the Standard-view copy and cut claims at each copy or cut.
+  const copyLimitRef = useRef(copyLimit);
+  // Read by the copy-limit fit handlers below, which are registered once rather than with the
+  // view-dependent handlers further down.
+  const isStandardViewRef = useRef(isEnabled && isStandardView);
 
   // Refresh the wiring on the live context every render, without tearing the engine down. The
   // registration effect below deliberately does NOT depend on these values, so an identity-only
   // prop change reaches the transforms through this mutation instead of through a re-registration.
   useEffect(() => {
     markerSettleDelayRef.current = markerSettleDelayMs;
+    copyLimitRef.current = copyLimit;
+    isStandardViewRef.current = isEnabled && isStandardView;
     const context = contextRef.current;
     if (!context) return;
     if (viewOptions) context.viewOptions = viewOptions;
     context.getMarker = getMarker ?? bundledGetMarker;
     context.logger = logger;
     context.structureProtectionMode = structureProtectionMode;
-  }, [viewOptions, getMarker, logger, markerSettleDelayMs, structureProtectionMode]);
+  }, [
+    viewOptions,
+    getMarker,
+    logger,
+    markerSettleDelayMs,
+    structureProtectionMode,
+    copyLimit,
+    isEnabled,
+    isStandardView,
+  ]);
+
+  // Shortens a limited Standard-view copy or cut until its USFM fits, so what stays selected is
+  // exactly what is copied or cut; blocks it when nothing fits. Registered once, at mount, so a
+  // switch into Standard view never moves these behind the opaque-block and structure guards,
+  // which have to judge the fitted selection.
+  useEffect(() => {
+    const $fit = (event: ClipboardEvent | KeyboardEvent | null) =>
+      isStandardViewRef.current && $fitOrBlock(event, copyLimitRef.current, $usfmLength);
+    return mergeRegister(
+      editor.registerCommand(COPY_COMMAND, $fit, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(CUT_COMMAND, $fit, COMMAND_PRIORITY_CRITICAL),
+    );
+  }, [editor]);
 
   useEffect(() => {
     if (!isEnabled || !viewOptions) return;
@@ -930,6 +971,7 @@ export function MarkerEditPlugin({
                   event && typeof event === "object" && "clipboardData" in event ? event : null,
                   editor,
                   false,
+                  copyLimitRef.current,
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -944,6 +986,7 @@ export function MarkerEditPlugin({
                   event && typeof event === "object" && "clipboardData" in event ? event : null,
                   editor,
                   true,
+                  copyLimitRef.current,
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -973,14 +1016,20 @@ export function MarkerEditPlugin({
         () => {
           // Cutting a whole paragraph is the same whole-representation deletion as the delete
           // keys — arm the paragraph reap from the pre-cut selection. CRITICAL so it runs ahead
-          // of whichever handler performs the removal (the standard-view CUT claim at HIGH, or
-          // Lexical's own at EDITOR); never claims the event.
+          // of whichever handler performs the removal (the standard-view CUT claim at HIGH,
+          // `CopyLimitPlugin`'s plain-text cut at NORMAL when a copy limit is set, or Lexical's own
+          // at EDITOR); never claims the event.
           //
           // A refused cut deletes nothing, so it must arm nothing: nothing commits, the update
           // listener never resets the arm, and an unrelated later commit would read it as this
           // gesture's provenance. So ask each refusal that outranks or ties with this handler.
-          // Unlike the delete keys below, this arm cannot expire on a microtask: Lexical's own
-          // cut (the one Unformatted view uses) removes the range only after an `await`.
+          // Unlike the delete keys below, this arm cannot expire on a microtask: with no copy
+          // limit, Lexical's own cut (the one Unformatted view uses) removes the range only after
+          // an `await`; with one, `CopyLimitPlugin` removes it synchronously, which this arm
+          // handles the same way. Under a copy limit the selection is shortened first — by
+          // `CopyLimitPlugin` ahead of this handler, and until Standard view's USFM fits by the
+          // `$fitOrBlock`-based fit handlers registered once at mount — so the arm is taken from the
+          // range the cut actually removes.
           if (!$isRefusedByStructureProtection(context) && !$selectionReachesIntoOpaqueBlock())
             $armWholeParaDeletion(context);
           return false;

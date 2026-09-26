@@ -1,5 +1,6 @@
 import editorUsjAdaptor from "./adaptors/editor-usj.adaptor";
 import usjEditorAdaptor from "./adaptors/usj-editor.adaptor";
+import { $fitOrBlock } from "./copyLimit/copyLimit.utils";
 import {
   $selectionToUsfmText,
   $writeCopyPayload,
@@ -10,13 +11,14 @@ import { mergeRegister } from "@lexical/utils";
 import {
   $getSelection,
   $isRangeSelection,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   COPY_COMMAND,
   createEditor,
   CUT_COMMAND,
   LexicalEditor,
 } from "lexical";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { TypedMarkNode } from "shared";
 import {
   $getRangeFromUsjSelection,
@@ -84,17 +86,46 @@ export function $selectionToUsfmViaStandardView(
  * A cut in a read-only editor copies and removes nothing ({@link $writeCopyPayload} owns that
  * rule); Ctrl+X reaches the command there too.
  *
- * Registered at `COMMAND_PRIORITY_HIGH`, above the empty-copy guard and Lexical's own copy. Mount it
- * only for `markerMode: "visible"`. A range it cannot map is left to Lexical's own copy.
+ * `copyLimit` caps the UTF-16 code units written, as `Editor`'s option of the same name does: the
+ * selection is shortened until the USFM it writes fits, so what stays selected is exactly what is
+ * copied ({@link $writeCopyPayload} shortens the payload as a backstop).
+ *
+ * Registered at `COMMAND_PRIORITY_HIGH`, above the empty-copy guard and Lexical's own copy, once, at
+ * mount; it acts only while `viewOptions` is the Markers view (`markerMode: "visible"`), so it can
+ * stay mounted in every view. A range it cannot map is left to Lexical's own copy, or, when a
+ * copy limit is set, to `CopyLimitPlugin`'s plain-text copy.
  */
-export function MarkersViewCopyPlugin({ viewOptions }: { viewOptions: ViewOptions }): null {
+export function MarkersViewCopyPlugin({
+  viewOptions,
+  copyLimit,
+}: {
+  viewOptions: ViewOptions | undefined;
+  copyLimit?: number;
+}): null {
   const [editor] = useLexicalComposerContext();
+  // Read at each copy or cut, so a changed limit, view or view option never re-registers the
+  // handlers: re-registering would move them behind the opaque-block guard's, which has to judge
+  // the fitted selection.
+  const copyLimitRef = useRef(copyLimit);
+  const viewOptionsRef = useRef(viewOptions);
 
   useEffect(() => {
+    copyLimitRef.current = copyLimit;
+    viewOptionsRef.current = viewOptions;
+  }, [copyLimit, viewOptions]);
+
+  useEffect(() => {
+    /** The Markers view's options while it is showing; `undefined` in any other view. */
+    const markersView = () => {
+      const current = viewOptionsRef.current;
+      return current?.markerMode === "visible" ? current : undefined;
+    };
     const $copy = (event: ClipboardEvent | KeyboardEvent | null, isCut: boolean): boolean => {
+      const view = markersView();
+      if (!view) return false;
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-      const usfm = $selectionToUsfmViaStandardView(editor, viewOptions);
+      const usfm = $selectionToUsfmViaStandardView(editor, view);
       if (usfm === undefined) return false;
       return $writeCopyPayload(
         // COPY_COMMAND's payload is `ClipboardEvent | KeyboardEvent | null`, and jsdom (our test
@@ -106,13 +137,33 @@ export function MarkersViewCopyPlugin({ viewOptions }: { viewOptions: ViewOption
         selection,
         { "text/plain": usfm, "text/html": usfmToClipboardHtml(usfm) },
         isCut,
+        {
+          copyLimit: copyLimitRef.current,
+          $payloadFor: () => {
+            const current = $selectionToUsfmViaStandardView(editor, view) ?? "";
+            return { "text/plain": current, "text/html": usfmToClipboardHtml(current) };
+          },
+        },
       );
     };
+    // Shortens a limited copy or cut until the USFM it writes fits, so what stays selected is
+    // exactly what is copied; `CopyLimitPlugin` has already shortened it by its text. Blocks it
+    // when nothing fits, or the browser would copy the whole selection it still shows.
+    const $fit = (event: ClipboardEvent | KeyboardEvent | null): boolean => {
+      const view = markersView();
+      if (!view) return false;
+      return $fitOrBlock(event, copyLimitRef.current, (selection) => {
+        const usfm = $selectionToUsfmViaStandardView(editor, view);
+        return usfm === undefined ? selection.getTextContent().length : usfm.length;
+      });
+    };
     return mergeRegister(
+      editor.registerCommand(COPY_COMMAND, $fit, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(CUT_COMMAND, $fit, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(COPY_COMMAND, (event) => $copy(event, false), COMMAND_PRIORITY_HIGH),
       editor.registerCommand(CUT_COMMAND, (event) => $copy(event, true), COMMAND_PRIORITY_HIGH),
     );
-  }, [editor, viewOptions]);
+  }, [editor]);
 
   return null;
 }

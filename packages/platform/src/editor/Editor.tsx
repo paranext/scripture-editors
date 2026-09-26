@@ -11,6 +11,7 @@ import {
 import { EditorOptions, EditorProps, EditorRef } from "./editor.model";
 import editorTheme from "./editor.theme";
 import { ActiveTextPlugin } from "./ActiveTextPlugin";
+import { CopyLimitPlugin } from "./copyLimit/CopyLimitPlugin";
 import {
   getEnterMenuItems,
   getMarkerMenuItems,
@@ -222,6 +223,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     contextMenu,
     styleInfo,
     markerSettleDelayMs,
+    copyLimit,
   } = options ?? defaultOptions;
 
   // Stabilize the destructured option objects so plugin props don't churn when the parent passes
@@ -1143,6 +1145,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               or pasted `\` and `/` - only guards the non-editable views. */}
           {viewOptions?.markerMode !== "editable" && <CommandMenuPlugin logger={stableLogger} />}
           <ContextMenuPlugin options={contextMenuOptions} />
+          <CopyLimitPlugin limit={copyLimit} />
           {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
               normalization that keeps a point out of one is too. */}
           <DecoratorBoundarySelectionPlugin />
@@ -1159,12 +1162,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             logger={stableLogger}
             markerSettleDelayMs={markerSettleDelayMs}
             structureProtectionMode={structureProtectionMode}
+            copyLimit={copyLimit}
           />
           {/* Standard view writes its own USFM copy (MarkerEditPlugin); the read-only Markers view
-              needs one too, since its display text is not USFM. The hidden-marker views copy prose. */}
-          {viewOptions?.markerMode === "visible" && (
-            <MarkersViewCopyPlugin viewOptions={viewOptions} />
-          )}
+              needs one too, since its display text is not USFM. The hidden-marker views copy prose.
+              Mounted in every view and acting only in the Markers view, so switching into it never
+              registers its copy-limit fit behind the opaque-block guard. */}
+          <MarkersViewCopyPlugin viewOptions={viewOptions} copyLimit={copyLimit} />
           <MarkerValidationPlugin
             styleInfo={styleInfo}
             viewOptions={viewOptions}

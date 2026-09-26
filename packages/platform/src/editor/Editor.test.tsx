@@ -6,9 +6,14 @@ import { EditorOptions, EditorProps, EditorRef } from "./editor.model";
 import { MarkerMenuItem } from "./markerMenu/markerItemSource";
 import Editorial from "../Editorial";
 import { flushQueuedEvents } from "./editor-test.utils";
+import {
+  $selectionToUsfmText,
+  usfmToClipboardHtml,
+} from "./markerEdit/whitespaceDisplay.plugin.utils";
 import { ContentJsonPath, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
+import { IS_APPLE } from "@lexical/utils";
 // Deep import: the marker-menu list component isn't exposed from shared-react's package entry.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { NodeSelectionMenu, OptionItem } from "../../../../libs/shared-react/src/plugins/NodesMenu";
@@ -27,6 +32,8 @@ import {
   $setSelection,
   CAN_UNDO_COMMAND,
   COMMAND_PRIORITY_CRITICAL,
+  COPY_COMMAND,
+  CUT_COMMAND,
   LexicalEditor,
   LexicalNode,
   TextNode,
@@ -1998,5 +2005,728 @@ describe("marker-menu ref methods (standard view)", () => {
     expect(() => editor.splitParagraphWithMarker("q1")).toThrow(
       "Cannot split paragraph in readonly mode",
     );
+  });
+});
+
+describe("options.copyLimit", () => {
+  /** Matches `CopyLimitPlugin`'s own test stub (a fake `ClipboardData` so the eventual write lands
+   * somewhere observable), but as a real `ClipboardEvent` rather than a plain `Event` cast to one:
+   * going through the full `<Editor>` (unlike `CopyLimitPlugin`'s own isolated test) reaches
+   * `@lexical/rich-text`'s default `COPY_COMMAND` handler too, which only trusts the event's
+   * `clipboardData` for a genuine `ClipboardEvent` instance — anything else it treats as absent and
+   * falls back to a DOM-selection-and-`document.execCommand` dance that jsdom can't complete. */
+  function copyEvent(): ClipboardEvent {
+    const store = new Map<string, string>();
+    const clipboardData = {
+      getData: (type: string) => store.get(type) ?? "",
+      setData: vi.fn((type: string, data: string) => {
+        store.set(type, data);
+      }),
+    };
+    const event = new ClipboardEvent("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: clipboardData });
+    return event;
+  }
+
+  let originalExecCommand: Document["execCommand"];
+
+  beforeEach(() => {
+    originalExecCommand = document.execCommand;
+    document.execCommand = vi.fn();
+  });
+
+  afterEach(() => {
+    document.execCommand = originalExecCommand;
+  });
+
+  async function renderWithCopyLimit(
+    copyLimit: number | undefined,
+    { usj = sampleUsj, ...options }: EditorOptions & { usj?: Usj } = { isReadonly: true },
+  ): Promise<LexicalEditor> {
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor defaultUsj={usj} options={{ ...options, copyLimit }}>
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    return capture.get();
+  }
+
+  /**
+   * Selects the whole document and copies it, returning what reached the clipboard and how many
+   * characters the selection held.
+   */
+  async function copyWholeDocument(lexical: LexicalEditor) {
+    await act(async () =>
+      lexical.update(() => {
+        const root = $getRoot();
+        root.select(0, root.getChildrenSize());
+      }),
+    );
+    const selectedLength = selectedTextLength(lexical);
+    const event = copyEvent();
+    await act(async () => {
+      lexical.dispatchCommand(COPY_COMMAND, event);
+    });
+    const getData = (type: string) => event.clipboardData?.getData(type) ?? "";
+    return {
+      selectedLength,
+      plain: getData("text/plain"),
+      html: getData("text/html"),
+      lexicalFlavor: getData("application/x-lexical-editor"),
+    };
+  }
+
+  /** A footnote with a category, which a collapsed note copies but does not show. */
+  const categorizedNoteUsj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          "Text ",
+          {
+            type: "note",
+            marker: "f",
+            caller: "-",
+            category: "People",
+            content: [
+              { type: "char", marker: "fr", content: ["1:1 "], closed: "false" },
+              { type: "char", marker: "ft", content: ["A note."], closed: "false" },
+            ],
+          },
+          " more.",
+        ],
+      },
+    ],
+  } as unknown as Usj;
+
+  /** The categorized footnote's paragraph, then a second paragraph of plain text. */
+  const twoParagraphsUsj = {
+    ...categorizedNoteUsj,
+    content: [...categorizedNoteUsj.content, { type: "para", marker: "q1", content: ["Second."] }],
+  } as unknown as Usj;
+
+  /** Two verses, the first holding a categorized footnote, which copies more than it shows. */
+  const noteThenVerseUsj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "verse", marker: "v", number: "1" },
+          "First ",
+          {
+            type: "note",
+            marker: "f",
+            caller: "-",
+            category: "People",
+            content: [{ type: "char", marker: "ft", content: ["A note."], closed: "false" }],
+          },
+          " verse. ",
+          { type: "verse", marker: "v", number: "2" },
+          "Second verse.",
+        ],
+      },
+    ],
+  } as unknown as Usj;
+
+  /** One paragraph holding two verses. */
+  const twoVersesUsj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "verse", marker: "v", number: "1" },
+          "First verse. ",
+          { type: "verse", marker: "v", number: "2" },
+          "Second verse.",
+        ],
+      },
+    ],
+  } as unknown as Usj;
+
+  /** One paragraph of plain text. */
+  const plainParagraphUsj = {
+    type: "USJ",
+    version: "3.1",
+    content: [{ type: "para", marker: "p", content: ["abcdefghij"] }],
+  } as unknown as Usj;
+
+  /** A figure, which the Markers view copies as USFM but shows no characters for. */
+  const figureUsj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          "Text ",
+          { type: "figure", marker: "fig", file: "a.jpg", size: "col", content: ["Cap"] },
+          " more.",
+        ],
+      },
+    ],
+  } as unknown as Usj;
+
+  it.each([
+    ["Standard view", { view: getViewOptions(STANDARD_VIEW_MODE), usj: categorizedNoteUsj }],
+    [
+      "the Markers view",
+      {
+        isReadonly: true,
+        view: { markerMode: "visible", hasSpacing: true, isFormattedFont: false },
+        usj: figureUsj,
+      },
+    ],
+  ] as const)(
+    "puts at most the limit on the clipboard in %s, where the copy holds more than the selection shows",
+    async (_viewName, options) => {
+      const unlimited = await copyWholeDocument(await renderWithCopyLimit(undefined, options));
+      // The limit is exactly what the selection shows, so only the clipboard write can apply it.
+      const limit = unlimited.selectedLength;
+      expect(unlimited.plain.length).toBeGreaterThan(limit);
+
+      const limited = await copyWholeDocument(await renderWithCopyLimit(limit, options));
+
+      expect(limited.plain.length).toBeGreaterThan(0);
+      expect(limited.plain.length).toBeLessThanOrEqual(limit);
+      expect(unlimited.plain.startsWith(limited.plain)).toBe(true);
+      expect(limited.html).toBe(usfmToClipboardHtml(limited.plain));
+    },
+  );
+
+  /** Renders `options` with `copyLimit` set to what a whole-document selection shows. */
+  async function renderLimitedToSelectedLength(options: EditorOptions & { usj?: Usj }) {
+    const { selectedLength } = await copyWholeDocument(
+      await renderWithCopyLimit(undefined, options),
+    );
+    const lexical = await renderWithCopyLimit(selectedLength, options);
+    await act(async () => lexical.update($selectWholeDocument));
+    return lexical;
+  }
+
+  function $selectWholeDocument(): void {
+    const root = $getRoot();
+    root.select(0, root.getChildrenSize());
+  }
+
+  const rootText = (lexical: LexicalEditor) =>
+    lexical.getEditorState().read(() => $getRoot().getTextContent());
+
+  /** The whole document as the USFM a Standard-view copy of it writes. */
+  const documentUsfm = (lexical: LexicalEditor) =>
+    lexical.getEditorState().read(() => {
+      const root = $getRoot();
+      const selection = $createRangeSelection();
+      selection.anchor.set(root.getKey(), 0, "element");
+      selection.focus.set(root.getKey(), root.getChildrenSize(), "element");
+      return $selectionToUsfmText(selection);
+    });
+
+  const paraMarkers = (lexical: LexicalEditor) =>
+    lexical.getEditorState().read(() =>
+      $getRoot()
+        .getChildren()
+        .filter($isParaNode)
+        .map((para) => para.getMarker()),
+    );
+
+  /** Cuts with a clipboard event and returns what reached the clipboard. */
+  async function cut(lexical: LexicalEditor): Promise<string> {
+    const event = copyEvent();
+    await act(async () => {
+      lexical.dispatchCommand(CUT_COMMAND, event);
+    });
+    return event.clipboardData?.getData("text/plain") ?? "";
+  }
+
+  it("cuts in Standard view exactly the USFM it copies, within the limit", async () => {
+    // The limit is exactly what the selection shows, so only the USFM, which is longer, is over it.
+    const options = { view: getViewOptions(STANDARD_VIEW_MODE), usj: twoParagraphsUsj };
+    const { selectedLength: limit } = await copyWholeDocument(
+      await renderWithCopyLimit(undefined, options),
+    );
+    const lexical = await renderWithCopyLimit(limit, options);
+    await act(async () => lexical.update($selectWholeDocument));
+    const usfmBefore = documentUsfm(lexical);
+    const clipboard = await cut(lexical);
+
+    expect(clipboard).not.toBe("");
+    expect(clipboard.length).toBeLessThanOrEqual(limit);
+    expect(usfmBefore.startsWith(clipboard)).toBe(true);
+    // What was removed is exactly what was copied. The first paragraph keeps its `\p`: removing
+    // a paragraph's leading content leaves the paragraph itself in place.
+    expect(clipboard + documentUsfm(lexical).slice("\\p ".length)).toBe(usfmBefore);
+    expect(rootText(lexical)).not.toBe("");
+  });
+
+  it("cuts in Formatted view exactly the text it copies, within the limit", async () => {
+    const lexical = await renderWithCopyLimit(8, { usj: categorizedNoteUsj });
+    await act(async () => lexical.update($selectWholeDocument));
+    const before = rootText(lexical);
+    const clipboard = await cut(lexical);
+
+    expect(clipboard.length).toBeGreaterThan(0);
+    expect(clipboard.length).toBeLessThanOrEqual(8);
+    expect(before.startsWith(clipboard)).toBe(true);
+    expect(rootText(lexical)).toBe(before.slice(clipboard.length));
+  });
+
+  it("copies at most the limit and removes nothing on a Markers-view cut, which is read-only", async () => {
+    const lexical = await renderWithCopyLimit(8, {
+      isReadonly: true,
+      view: { markerMode: "visible", hasSpacing: true, isFormattedFont: false },
+      usj: figureUsj,
+    });
+    await act(async () => lexical.update($selectWholeDocument));
+    const before = rootText(lexical);
+    const clipboard = await cut(lexical);
+
+    expect(clipboard.length).toBeGreaterThan(0);
+    expect(clipboard.length).toBeLessThanOrEqual(8);
+    expect(rootText(lexical)).toBe(before);
+  });
+
+  it.each([
+    ["without a cut", false],
+    ["after an over-limit cut", true],
+  ])("keeps a paragraph that a later commit empties (%s)", async (_label, cutFirst) => {
+    const lexical = await renderLimitedToSelectedLength({
+      view: getViewOptions(STANDARD_VIEW_MODE),
+      usj: twoParagraphsUsj,
+    });
+    if (cutFirst) await cut(lexical);
+    // Emptying a paragraph, as a rebuild does, is not deleting it: only a delete gesture's own
+    // arm reaps one, and a cut arms only the paragraphs it removes.
+    await act(async () =>
+      lexical.update(() => {
+        $getRoot()
+          .getChildren()
+          .filter($isParaNode)
+          .find((para) => para.getMarker() === "q1")
+          ?.clear();
+      }),
+    );
+    expect(paraMarkers(lexical)).toContain("q1");
+  });
+
+  it("shortens a Standard-view cut sent with no clipboard event the same way", async () => {
+    const options = { view: getViewOptions(STANDARD_VIEW_MODE), usj: twoParagraphsUsj };
+    const withEvent = await renderLimitedToSelectedLength(options);
+    await cut(withEvent);
+    const withoutEvent = await renderLimitedToSelectedLength(options);
+    await act(async () => {
+      withoutEvent.dispatchCommand(CUT_COMMAND, null);
+    });
+    expect(document.execCommand).toHaveBeenCalled();
+    expect(rootText(withoutEvent)).toBe(rootText(withEvent));
+  });
+
+  it("copies the shortened text and removes nothing on a read-only Standard-view cut", async () => {
+    const options = {
+      isReadonly: true,
+      view: getViewOptions(STANDARD_VIEW_MODE),
+      usj: categorizedNoteUsj,
+    };
+    const unlimited = await copyWholeDocument(await renderWithCopyLimit(undefined, options));
+    const lexical = await renderLimitedToSelectedLength(options);
+    const before = rootText(lexical);
+    const event = copyEvent();
+    await act(async () => {
+      lexical.dispatchCommand(CUT_COMMAND, event);
+    });
+    const clipboard = event.clipboardData?.getData("text/plain") ?? "";
+    expect(clipboard.length).toBeGreaterThan(0);
+    expect(clipboard.length).toBeLessThanOrEqual(unlimited.selectedLength);
+    expect(unlimited.plain.startsWith(clipboard)).toBe(true);
+    expect(rootText(lexical)).toBe(before);
+  });
+
+  it("cuts a Standard-view selection within the limit", async () => {
+    const lexical = await renderWithCopyLimit(4, {
+      view: getViewOptions(STANDARD_VIEW_MODE),
+      usj: plainParagraphUsj,
+    });
+    await act(async () =>
+      lexical.update(() => {
+        const textNode = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === "abcdefghij");
+        if (!textNode) throw new Error("paragraph text node not found");
+        textNode.select(0, 4);
+      }),
+    );
+    const clipboard = await cut(lexical);
+    expect(clipboard).toBe("abcd");
+    expect(rootText(lexical)).not.toContain("abcd");
+    expect(rootText(lexical)).toContain("efghij");
+  });
+
+  it.each([
+    [
+      "Standard view",
+      { isReadonly: false, view: getViewOptions(STANDARD_VIEW_MODE), usj: noteThenVerseUsj },
+    ],
+    [
+      "the Markers view",
+      {
+        isReadonly: true,
+        view: { markerMode: "visible", hasSpacing: true, isFormattedFont: false },
+        usj: noteThenVerseUsj,
+      },
+    ],
+  ] as const)(
+    "stops a copy in %s before a marker the limit falls inside, copying exactly the selection",
+    async (_viewName, options) => {
+      const unlimited = await copyWholeDocument(await renderWithCopyLimit(undefined, options));
+      // A limit that runs out one character into the second verse's marker.
+      const limit = unlimited.plain.lastIndexOf("\\v") + 1;
+      expect(limit).toBeGreaterThan(0);
+
+      const lexical = await renderWithCopyLimit(limit, options);
+      const limited = await copyWholeDocument(lexical);
+
+      expect(limited.plain.length).toBeLessThanOrEqual(limit);
+      expect(limited.plain.length).toBeGreaterThan(0);
+      expect(limited.plain.endsWith("\\")).toBe(false);
+      expect(unlimited.plain.startsWith(limited.plain)).toBe(true);
+      expect(limited.html).toBe(usfmToClipboardHtml(limited.plain));
+      if (!options.isReadonly) {
+        // What stays selected is exactly what was copied.
+        const selectedUsfm = lexical.getEditorState().read(() => {
+          const selection = $getSelection();
+          return $isRangeSelection(selection) ? $selectionToUsfmText(selection) : "";
+        });
+        expect(selectedUsfm).toBe(limited.plain);
+      }
+    },
+  );
+
+  it("stops a Standard-view cut before a marker the limit falls inside", async () => {
+    const options = { view: getViewOptions(STANDARD_VIEW_MODE), usj: twoVersesUsj };
+    const unlimited = await renderWithCopyLimit(undefined, options);
+    await act(async () => unlimited.update($selectWholeDocument));
+    const selected = unlimited.getEditorState().read(() => {
+      const selection = $getSelection();
+      return $isRangeSelection(selection) ? selection.getTextContent() : "";
+    });
+    // A limit that runs out one character into the second verse's marker.
+    const limit = selected.lastIndexOf("\\v") + 1;
+    expect(limit).toBeGreaterThan(0);
+
+    const lexical = await renderWithCopyLimit(limit, options);
+    await act(async () => lexical.update($selectWholeDocument));
+    const usfmBefore = documentUsfm(lexical);
+    const clipboard = await cut(lexical);
+
+    expect(clipboard.length).toBeLessThanOrEqual(limit);
+    expect(clipboard.endsWith("\\")).toBe(false);
+    expect(usfmBefore.startsWith(clipboard)).toBe(true);
+    expect(rootText(lexical)).toContain("\\v");
+    // What was removed is exactly what was copied. The first paragraph keeps its `\p`: removing
+    // a paragraph's leading content leaves the paragraph itself in place.
+    expect(clipboard + documentUsfm(lexical).slice("\\p ".length)).toBe(usfmBefore);
+    expect(rootText(lexical)).toContain("Second verse.");
+  });
+
+  it("fits a Standard-view cut ahead of other cut guards after the editor switches into that view", async () => {
+    const standard = getViewOptions(STANDARD_VIEW_MODE);
+    const { selectedLength: limit } = await copyWholeDocument(
+      await renderWithCopyLimit(undefined, { view: standard, usj: categorizedNoteUsj }),
+    );
+    const capture = lexicalCapture();
+    let rerender!: (ui: ReactElement) => void;
+    await act(async () => {
+      ({ rerender } = render(
+        <Editor defaultUsj={categorizedNoteUsj} options={{ copyLimit: limit }}>
+          {capture.plugin}
+        </Editor>,
+      ));
+    });
+    const lexical = capture.get();
+    // Stands in for a guard mounted after the Standard-view plugin, such as the opaque-block and
+    // structure guards: it must see the selection as the cut will take it.
+    let usfmSeenByGuard = -1;
+    const unregister = lexical.registerCommand(
+      CUT_COMMAND,
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) usfmSeenByGuard = $selectionToUsfmText(selection).length;
+        return false;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    );
+    await act(async () => {
+      rerender(
+        <Editor defaultUsj={categorizedNoteUsj} options={{ copyLimit: limit, view: standard }}>
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    await act(async () => lexical.update($selectWholeDocument));
+    await cut(lexical);
+    unregister();
+
+    expect(usfmSeenByGuard).toBeGreaterThan(0);
+    expect(usfmSeenByGuard).toBeLessThanOrEqual(limit);
+  });
+
+  it("keeps a table whole on a limited cut after the editor switches into Standard view", async () => {
+    const tableUsj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "para", marker: "p", content: ["Before."] },
+        {
+          type: "table",
+          content: [
+            {
+              type: "table:row",
+              marker: "tr",
+              content: [
+                { type: "table:cell", marker: "tc1", align: "start", content: ["cell one"] },
+              ],
+            },
+          ],
+        },
+        { type: "para", marker: "p", content: ["After."] },
+      ],
+    } as unknown as Usj;
+    const standard = getViewOptions(STANDARD_VIEW_MODE);
+    const unlimited = await renderWithCopyLimit(undefined, { view: standard, usj: tableUsj });
+    await act(async () => unlimited.update($selectWholeDocument));
+    const selected = unlimited.getEditorState().read(() => {
+      const selection = $getSelection();
+      return $isRangeSelection(selection) ? selection.getTextContent() : "";
+    });
+    // A limit that runs out partway through the cell's text.
+    const limit = selected.indexOf("cell one") + 4;
+    expect(limit).toBeGreaterThan(4);
+
+    // Mounted outside Standard view, then switched into it: the same editor stays mounted.
+    const capture = lexicalCapture();
+    let rerender!: (ui: ReactElement) => void;
+    await act(async () => {
+      ({ rerender } = render(
+        <Editor defaultUsj={tableUsj} options={{ copyLimit: limit }}>
+          {capture.plugin}
+        </Editor>,
+      ));
+    });
+    await act(async () => {
+      rerender(
+        <Editor defaultUsj={tableUsj} options={{ copyLimit: limit, view: standard }}>
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+    await act(async () => lexical.update($selectWholeDocument));
+    const usfmBefore = documentUsfm(lexical);
+    const clipboard = await cut(lexical);
+
+    expect(clipboard).not.toBe("");
+    expect(clipboard.length).toBeLessThanOrEqual(limit);
+    expect(clipboard).not.toContain("cell");
+    expect(usfmBefore.startsWith(clipboard)).toBe(true);
+    expect(rootText(lexical)).toContain("cell one");
+  });
+
+  describe("a Markers-view cut into a table", () => {
+    const markersView = {
+      markerMode: "visible",
+      hasSpacing: true,
+      isFormattedFont: false,
+    } as const;
+    const tableUsj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        // The figure copies as USFM but shows no characters here, so the copy is longer than the
+        // selected text.
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            "Before ",
+            { type: "figure", marker: "fig", file: "a.jpg", size: "col", content: ["Cap"] },
+            ".",
+          ],
+        },
+        {
+          type: "table",
+          content: [
+            {
+              type: "table:row",
+              marker: "tr",
+              content: [
+                { type: "table:cell", marker: "tc1", align: "start", content: ["cell one"] },
+              ],
+            },
+          ],
+        },
+        { type: "para", marker: "p", content: ["After."] },
+      ],
+    } as unknown as Usj;
+
+    /** Selects from the start of the document to partway through the table's cell. */
+    function $selectIntoTable(): void {
+      const root = $getRoot();
+      const cell = root.getAllTextNodes().find((node) => node.getTextContent() === "cell one");
+      if (!cell) throw new Error("table cell text not found");
+      const selection = $createRangeSelection();
+      selection.anchor.set(root.getKey(), 0, "element");
+      selection.focus.set(cell.getKey(), 4, "text");
+      $setSelection(selection);
+    }
+
+    /** The selection's text length: a limit its text fits but its USFM does not. */
+    async function textFittingLimit(): Promise<number> {
+      const lexical = await renderWithCopyLimit(undefined, {
+        isReadonly: true,
+        view: markersView,
+        usj: tableUsj,
+      });
+      await act(async () => lexical.update($selectIntoTable));
+      return lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        return $isRangeSelection(selection) ? selection.getTextContent().length : 0;
+      });
+    }
+
+    it.each([
+      ["with no change", markersView, markersView],
+      [
+        "after the Markers view's options change",
+        markersView,
+        { ...markersView, isFormattedFont: true },
+      ],
+      ["after switching into the Markers view", undefined, markersView],
+    ] as const)("copies what fits %s", async (_label, firstView, secondView) => {
+      const limit = await textFittingLimit();
+      const capture = lexicalCapture();
+      const editorWith = (view: typeof firstView | typeof secondView) => (
+        <Editor defaultUsj={tableUsj} options={{ isReadonly: true, copyLimit: limit, view }}>
+          {capture.plugin}
+        </Editor>
+      );
+      let rerender!: (ui: ReactElement) => void;
+      await act(async () => {
+        ({ rerender } = render(editorWith(firstView)));
+      });
+      const lexical = capture.get();
+      await act(async () => {
+        rerender(editorWith(secondView));
+      });
+      await act(async () => lexical.update($selectIntoTable));
+      const clipboard = await cut(lexical);
+
+      expect(clipboard).not.toBe("");
+      expect(clipboard.length).toBeLessThanOrEqual(limit);
+      expect(clipboard).not.toContain("cell");
+    });
+  });
+
+  it("blocks the Select All shortcut in a read-only editor when copyLimit is set", async () => {
+    await renderWithCopyLimit(3);
+    const event = selectAllKeyDown();
+    document.body.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("allows the Select All shortcut in a read-only editor when copyLimit is unset", async () => {
+    await renderWithCopyLimit(undefined);
+    const event = selectAllKeyDown();
+    document.body.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  function selectFullVerseText(lexical: LexicalEditor): void {
+    lexical.update(() => {
+      const textNode = $getRoot()
+        .getAllTextNodes()
+        .find((node) => node.getTextContent().includes("first verse text"));
+      if (!textNode || !$isTextNode(textNode)) throw new Error("verse text node not found");
+      textNode.select(0, textNode.getTextContentSize());
+    });
+  }
+
+  function selectAllKeyDown(): KeyboardEvent {
+    return new KeyboardEvent("keydown", {
+      key: "a",
+      code: "KeyA",
+      ctrlKey: !IS_APPLE,
+      metaKey: IS_APPLE,
+      bubbles: true,
+      cancelable: true,
+    });
+  }
+
+  function selectedTextLength(lexical: LexicalEditor): number {
+    return lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      return $isRangeSelection(selection) ? selection.getTextContent().length : -1;
+    });
+  }
+
+  it("shortens the copied selection to the limit", async () => {
+    const lexical = await renderWithCopyLimit(3);
+    act(() => selectFullVerseText(lexical));
+    const event = copyEvent();
+
+    await act(async () => {
+      lexical.dispatchCommand(COPY_COMMAND, event);
+    });
+
+    expect(selectedTextLength(lexical)).toBe(3);
+    expect(event.clipboardData?.getData("text/plain")).toBe("fir");
+  });
+
+  it("copies exactly the shortened selection's text in Standard view", async () => {
+    const lexical = await renderWithCopyLimit(4, {
+      view: getViewOptions(STANDARD_VIEW_MODE),
+      usj: plainParagraphUsj,
+    });
+    await act(async () =>
+      lexical.update(() => {
+        const textNode = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === "abcdefghij");
+        if (!textNode) throw new Error("paragraph text node not found");
+        textNode.select(0, textNode.getTextContentSize());
+      }),
+    );
+    const event = copyEvent();
+    await act(async () => {
+      lexical.dispatchCommand(COPY_COMMAND, event);
+    });
+    const selected = lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      return $isRangeSelection(selection) ? selection.getTextContent() : "";
+    });
+    expect(selected).toBe("abcd");
+    expect(event.clipboardData?.getData("text/plain")).toBe(selected);
+  });
+
+  it("keeps the full selection when copyLimit is unset", async () => {
+    const lexical = await renderWithCopyLimit(undefined);
+    act(() => selectFullVerseText(lexical));
+
+    await act(async () => {
+      lexical.dispatchCommand(COPY_COMMAND, copyEvent());
+    });
+
+    expect(selectedTextLength(lexical)).toBe(verseTextLength);
   });
 });

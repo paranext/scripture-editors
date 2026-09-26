@@ -14,6 +14,7 @@ import {
   $getStandardViewClipboardData,
   $handleCopyForStandardView,
   $handlePasteForStandardView,
+  $writeCopyPayload,
   getPastePayload,
   htmlPasteText,
   normalizePastedNbsp,
@@ -30,10 +31,13 @@ import { Usj, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
 import { $dfs, mergeRegister } from "@lexical/utils";
 import {
   $createNodeSelection,
+  $createParagraphNode,
   $createPoint,
   $createRangeSelection,
   $createTextNode,
   $getRoot,
+  $getSelection,
+  $isRangeSelection,
   $isTextNode,
   $setSelection,
   $setState,
@@ -42,6 +46,7 @@ import {
   CUT_COMMAND,
   LexicalEditor,
   PASTE_COMMAND,
+  RangeSelection,
   TextNode,
 } from "lexical";
 import {
@@ -2044,5 +2049,151 @@ describe("multi-line paste carrying an NBSP", () => {
       expect($usfmBytes(paras[1])).toBe("\\p c");
       expect($noTextNodeHoldsANewline()).toBe(true);
     });
+  });
+});
+
+describe("$writeCopyPayload with a copy limit", () => {
+  it("removes exactly what it writes when it has to shorten a cut's payload itself", async () => {
+    let text!: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      text = $createTextNode("abcdefghij");
+      $getRoot().append($createParagraphNode().append(text));
+    });
+    await act(async () => editor.update(() => text.select(0, 10)));
+    const { event, getData } = copyEvent();
+    await act(async () =>
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        // A caller that did not fit the selection first: the payload is over the limit.
+        $writeCopyPayload(
+          event,
+          editor,
+          selection,
+          { "text/plain": selection.getTextContent() },
+          true,
+          {
+            copyLimit: 4,
+            $payloadFor: (current) => ({ "text/plain": current.getTextContent() }),
+          },
+        );
+      }),
+    );
+    expect(getData("text/plain")).toBe("abcd");
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe("efghij");
+  });
+
+  /** An editor holding "abcdefghij", all of it selected; `editable` false makes it read-only. */
+  async function selectedTenCharacters(editable = true) {
+    let text!: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      text = $createTextNode("abcdefghij");
+      $getRoot().append($createParagraphNode().append(text));
+    });
+    await act(async () => {
+      editor.update(() => text.select(0, 10));
+      editor.setEditable(editable);
+    });
+    return editor;
+  }
+
+  const rootText = (editor: LexicalEditor) =>
+    editor.getEditorState().read(() => $getRoot().getTextContent());
+
+  const liveSelectedText = (editor: LexicalEditor) =>
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      return $isRangeSelection(selection) ? selection.getTextContent() : "";
+    });
+
+  it.each([
+    ["a copy", false, true],
+    ["a read-only cut", true, false],
+  ])(
+    "fits the selection to what it writes for %s it has to shorten",
+    async (_label, isCut, editable) => {
+      const editor = await selectedTenCharacters(editable);
+      const { event, getData } = copyEvent();
+      await act(async () =>
+        editor.update(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+          $writeCopyPayload(
+            event,
+            editor,
+            selection,
+            { "text/plain": selection.getTextContent() },
+            isCut,
+            { copyLimit: 4 },
+          );
+        }),
+      );
+      expect(getData("text/plain")).toBe("abcd");
+      expect(liveSelectedText(editor)).toBe("abcd");
+      expect(rootText(editor)).toBe("abcdefghij");
+    },
+  );
+
+  it("builds the payload once when a measure is given", async () => {
+    const editor = await selectedTenCharacters();
+    const { event } = copyEvent();
+    const $payloadFor = vi.fn((current: RangeSelection) => ({
+      "text/plain": current.getTextContent(),
+    }));
+    await act(async () =>
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        $writeCopyPayload(
+          event,
+          editor,
+          selection,
+          { "text/plain": selection.getTextContent() },
+          true,
+          {
+            copyLimit: 4,
+            $payloadFor,
+            $measure: (current) => current.getTextContent().length,
+          },
+        );
+      }),
+    );
+    expect($payloadFor).toHaveBeenCalledTimes(1);
+    expect(rootText(editor)).toBe("efghij");
+  });
+
+  it("fits the selection it is given, even when it is not the live one", async () => {
+    const editor = await selectedTenCharacters();
+    const { event, getData } = copyEvent();
+    await act(async () =>
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        const copy = selection.clone();
+        $writeCopyPayload(event, editor, copy, { "text/plain": copy.getTextContent() }, true, {
+          copyLimit: 4,
+        });
+      }),
+    );
+    expect(getData("text/plain")).toBe("abcd");
+    expect(rootText(editor)).toBe("efghij");
+  });
+
+  it("keeps a plain-text-only payload plain when it has to trim it", async () => {
+    const editor = await selectedTenCharacters(false);
+    const { event, getData } = copyEvent();
+    await act(async () =>
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        // A builder that always overshoots, so fitting the selection can't avoid the trim.
+        $writeCopyPayload(event, editor, selection, { "text/plain": "abcdefghij" }, false, {
+          copyLimit: 4,
+          $payloadFor: () => ({ "text/plain": "abcdefghij" }),
+        });
+      }),
+    );
+    expect(getData("text/plain")).toBe("abcd");
+    expect(getData("text/html")).toBe("");
   });
 });

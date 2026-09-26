@@ -292,6 +292,29 @@ export declare interface EditorOptions {
    */
   styleInfo?: StyleInfo;
   /**
+   * Maximum amount of text that may be copied or cut from the editor at once, as a non-negative
+   * integer (a fraction rounds down; a negative or `NaN` value counts as `0`). It is counted in
+   * UTF-16 code units, as JavaScript's `String.length` counts: most characters count as one, a
+   * character outside the Basic Multilingual Plane counts as two, and each combining mark counts
+   * on its own.
+   *
+   * When undefined, copying, cutting and the Select All keyboard shortcut behave normally.
+   *
+   * When set, a copy or cut over the limit is shortened silently: the selection keeps its start and
+   * loses its end, then is copied or cut, so a cut removes exactly what it copies. The end never
+   * falls partway through a character, between a letter and its marks, or inside a marker, and a
+   * note, table, figure or sidebar the selection runs into is kept whole or left out (one the
+   * selection starts inside keeps its start). A selected marker is copied or cut whole, or not at
+   * all. Where the copied text is longer than the text shown (Standard view and the Markers view
+   * copy USFM), the selection is shortened until its copied text fits. So a copy or cut may take
+   * less than the limit, possibly nothing. In a read-only editor a cut removes nothing and copies
+   * like a copy. The Select All keyboard shortcut is blocked on the page unless focus is in another
+   * text field. Select All from the macOS Edit menu is a native menu command and is not blocked,
+   * but a copy after it is still shortened. `0` blocks all three: nothing can be copied or cut, and
+   * the Select All shortcut is blocked.
+   */
+  copyLimit?: number;
+  /**
    * EXPERIMENTAL: Delay in milliseconds before pending marker edits settle in place while the
    * user is idle (Paratext 9's debounced-reformat cadence), in editable marker modes. Defaults
    * to 1000 when undefined. `0` settles on the first tick after each edit; `-1` disables the
