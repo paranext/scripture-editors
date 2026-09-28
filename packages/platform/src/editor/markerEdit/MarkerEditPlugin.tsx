@@ -7,6 +7,7 @@ import {
   $armCollapsedParaDeletion,
   $armWholeParaDeletion,
   $charNodeDeletionTransform,
+  $deleteLastOpenerGlyphCharForward,
   $noteDeletionTransform,
   $paraMarkerDeletionTransform,
   $prepareReplaceSelection,
@@ -52,6 +53,7 @@ import {
   COPY_COMMAND,
   createCommand,
   CUT_COMMAND,
+  DELETE_CHARACTER_COMMAND,
   EditorState,
   HISTORIC_TAG,
   HISTORY_MERGE_TAG,
@@ -997,6 +999,16 @@ export function MarkerEditPlugin({
           if (editor.isComposing()) return false;
           $prepareReplaceSelection(context);
           return false;
+        },
+        COMMAND_PRIORITY_NORMAL,
+      ),
+      editor.registerCommand(
+        DELETE_CHARACTER_COMMAND,
+        (isBackward: boolean) => {
+          // NORMAL priority: below the HIGH refusals (structure protection, opaque blocks), which
+          // must see the delete first, and above the rich-text delete at EDITOR.
+          if (isBackward || editor.isComposing()) return false;
+          return $deleteLastOpenerGlyphCharForward();
         },
         COMMAND_PRIORITY_NORMAL,
       ),
