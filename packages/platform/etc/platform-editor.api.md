@@ -178,6 +178,7 @@ export interface EditorRef {
     getNoteIndex(noteKey: string): number | undefined;
     getNoteKey(noteIndex: number): string | undefined;
     getNoteOps(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
+    getOpsAfterNote(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
     getSelection(): SelectionRange | undefined;
     getUsj(): Usj | undefined;
     highlightNote(noteKeyOrIndex: string | number | undefined): void;
