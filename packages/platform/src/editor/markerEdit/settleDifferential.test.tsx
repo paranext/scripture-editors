@@ -598,8 +598,9 @@ describe("differential settle — a comment inside a typed footnote literal", ()
       expect(bytes(live)).toContain('"type":"note","marker":"f","caller":"+"');
       expect(bytes(live)).not.toContain('"c1"');
       // The typed `+` is kept as the note's caller, so the caller holds the comment itself: the
-      // collapsed view's caller decorator whole, the expanded view's editable caller text.
-      expect(Object.keys(displayAnnotated(editor))).toEqual(["c1"]);
+      // collapsed view's caller decorator whole (a decorator spells no text of its own), the
+      // expanded view's editable caller text.
+      expect(displayAnnotated(editor)).toEqual(view === "standard" ? { c1: [""] } : { c1: ["+"] });
     },
   );
 });

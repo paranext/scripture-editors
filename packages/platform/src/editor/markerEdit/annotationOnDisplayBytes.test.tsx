@@ -7,12 +7,36 @@
  * Standard view.
  */
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
-import { contentPath, propertyPath, twoParaUsj } from "../positions/positions.test-helpers";
+import {
+  $textContaining,
+  contentPath,
+  propertyPath,
+  twoParaUsj,
+  typeOver,
+} from "../positions/positions.test-helpers";
 import { $carrierHolding, displayAnnotated } from "./displayAnnotations.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, $isElementNode, LexicalEditor, LexicalNode, UNDO_COMMAND } from "lexical";
-import { $isTypedMarkNode, $isVerseNode, TypedMarkOnRemove } from "shared";
+import {
+  $createRangeSelection,
+  $getRoot,
+  $isElementNode,
+  LexicalEditor,
+  LexicalNode,
+  UNDO_COMMAND,
+} from "lexical";
+import {
+  $chapterGlyphTextNode,
+  $isChapterNode,
+  $isCharNode,
+  $isTypedMarkNode,
+  $isVerseNode,
+  $ownerOfRunPiece,
+  $wrapSelectionInTypedMarkNode,
+  COMMENT_MARK_TYPE,
+  NBSP,
+  TypedMarkOnRemove,
+} from "shared";
 import { AnnotationRange } from "shared-react";
 import { Mock, vi } from "vitest";
 
@@ -188,5 +212,300 @@ describe("a display-only annotation dropped by a whole-state replacement", () =>
     await annotate(mounted, lemmaRange, "1", onRemove);
     await act(async () => mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined));
     expect(onRemove).not.toHaveBeenCalled();
+  });
+});
+
+/** Settle the scope the way an abandoned edit does: blur, then commit the pending literal. */
+function settle(mounted: Mounted): void {
+  const rootElement = mounted.lexical.getRootElement();
+  if (!rootElement) throw new Error("editor root not found");
+  act(() => rootElement.blur());
+  act(() => mounted.ref.current?.commitPendingMarkerEdits());
+}
+
+/** One display-byte kind: the document, the settled range naming its bytes, what the carrier
+ * then holds, and the paragraph an unrelated literal is typed into to force a settle. */
+interface Kind {
+  name: string;
+  usj: Usj;
+  range: AnnotationRange;
+  held: string[];
+  /** Text in the first paragraph to type a literal after. */
+  literalHost: string;
+}
+
+/** A `qt-s` milestone as USJ carries it: `who` is one of its attributes, which `MarkerObject`
+ * leaves untyped. */
+type QuoteMilestone = MarkerObject & { who?: string };
+
+const verse2: MarkerObject = { type: "verse", marker: "v", number: "2", altnumber: "3" };
+const quote: QuoteMilestone = { type: "ms", marker: "qt-s", who: "Pilate" };
+const nd: MarkerObject = { type: "char", marker: "nd", content: ["LORD"] };
+const verseUsj = twoParaUsj(["in the beginning ", verse2, "and the earth"]);
+/** `2`, the verse's number. */
+const verseNumberRange: AnnotationRange = {
+  start: { jsonPath: propertyPath([2, 1], "number"), propertyOffset: 0 },
+  end: { jsonPath: propertyPath([2, 1], "number"), propertyOffset: 1 },
+};
+/** `3`, the verse's alternate number. */
+const altnumberRange: AnnotationRange = {
+  start: { jsonPath: propertyPath([2, 1], "altnumber"), propertyOffset: 0 },
+  end: { jsonPath: propertyPath([2, 1], "altnumber"), propertyOffset: 1 },
+};
+/** `1`, the chapter's number. */
+const chapterNumberRange: AnnotationRange = {
+  start: { jsonPath: propertyPath([1], "number"), propertyOffset: 0 },
+  end: { jsonPath: propertyPath([1], "number"), propertyOffset: 1 },
+};
+
+const KINDS: Kind[] = [
+  {
+    name: "a char span's attribute value",
+    usj: lemmaUsj,
+    range: lemmaRange,
+    held: ["grace"],
+    literalHost: " of God made",
+  },
+  {
+    name: "a verse number",
+    usj: verseUsj,
+    range: verseNumberRange,
+    held: ["2"],
+    literalHost: "and the earth",
+  },
+  {
+    name: "a verse's alternate number",
+    usj: verseUsj,
+    range: altnumberRange,
+    held: ["3"],
+    literalHost: "and the earth",
+  },
+  {
+    name: "a milestone's attribute",
+    usj: twoParaUsj(["said to him ", quote, " What is truth?"]),
+    range: {
+      start: { jsonPath: propertyPath([2, 1], "who"), propertyOffset: 0 },
+      end: { jsonPath: propertyPath([2, 1], "who"), propertyOffset: "Pilate".length },
+    },
+    held: ["Pilate"],
+    literalHost: " What is truth?",
+  },
+  {
+    name: "a chapter number",
+    usj: twoParaUsj(["In the beginning"]),
+    range: chapterNumberRange,
+    held: ["1"],
+    literalHost: "In the beginning",
+  },
+  {
+    name: "a char span's opening marker",
+    usj: twoParaUsj(["the ", nd, " made"]),
+    range: {
+      start: { jsonPath: contentPath([2, 1]) },
+      end: { jsonPath: propertyPath([2, 1], "marker"), propertyOffset: "nd".length },
+    },
+    held: ["\\nd"],
+    literalHost: " made",
+  },
+];
+
+describe.each(KINDS)("an annotation on $name", ({ usj, range, held, literalHost }) => {
+  it("is held on the display bytes and leaves the document and every mark alone", async () => {
+    const mounted = await mountStandardViewEditor(usj);
+    const displayBefore = paraText(mounted);
+    await annotate(mounted, range);
+
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": held });
+    expect(markCount(mounted.lexical)).toBe(0);
+    expect(paraText(mounted)).toBe(displayBefore);
+    expect(mounted.ref.current?.getUsj()).toEqual(usj);
+  });
+
+  it("reports a selection inside it exactly as it does without the annotation", async () => {
+    const plain = await mountStandardViewEditor(usj);
+    const annotated = await mountStandardViewEditor(usj);
+    await annotate(annotated, range);
+    for (const mounted of [plain, annotated])
+      await act(async () => {
+        mounted.ref.current?.setSelection({ start: range.end });
+        await Promise.resolve();
+      });
+    expect(plain.ref.current?.getSelection()).toEqual({ start: range.end });
+    expect(annotated.ref.current?.getSelection()).toEqual(plain.ref.current?.getSelection());
+  });
+
+  it("survives the display-run sync re-running on its owner", async () => {
+    const mounted = await mountStandardViewEditor(usj);
+    await annotate(mounted, range);
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const carrier = $carrierHolding("1");
+        // A run's owner is found through the registry's owner walk (a value inside an
+        // `AttributeRunNode` sits two levels below it); a glyph, verse or chapter text is owned by
+        // itself or its parent.
+        const owner = $ownerOfRunPiece(carrier)?.owner ?? carrier.getParent() ?? carrier;
+        owner.markDirty();
+        carrier.markDirty();
+      });
+      await Promise.resolve();
+    });
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": held });
+    expect(mounted.ref.current?.getUsj()).toEqual(usj);
+  });
+
+  it("is carried through a settle of its paragraph", async () => {
+    const mounted = await mountStandardViewEditor(usj);
+    await annotate(mounted, range);
+    await typeOver(mounted.lexical, literalHost, `${literalHost} \\wj x\\wj*`);
+    settle(mounted);
+
+    expect(JSON.stringify(mounted.ref.current?.getUsj())).toContain('"marker":"wj"');
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": held });
+  });
+});
+
+describe("a collapsed note's caller", () => {
+  it("holds the annotation on its caller decorator", async () => {
+    const note: MarkerObject = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [{ type: "char", marker: "ft", content: ["note body"] }],
+    };
+    const usj = twoParaUsj(["before ", note, " after"]);
+    const mounted = await mountStandardViewEditor(usj);
+    await annotate(mounted, {
+      start: { jsonPath: propertyPath([2, 1], "caller"), propertyOffset: 0 },
+      end: { jsonPath: propertyPath([2, 1], "caller"), propertyOffset: 1 },
+    });
+    expect(Object.keys(displayAnnotated(mounted.lexical))).toEqual(["1"]);
+    expect(mounted.ref.current?.getUsj()).toEqual(usj);
+  });
+});
+
+describe("an annotated chapter number", () => {
+  it("is carried through a settle of its chapter", async () => {
+    const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning"]));
+    await annotate(mounted, chapterNumberRange);
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const chapter = $getRoot().getChildren().find($isChapterNode);
+        const glyph = chapter && $chapterGlyphTextNode(chapter);
+        if (!glyph) throw new Error("no chapter glyph");
+        glyph.setTextContent(`${glyph.getTextContent()}\\ca 5\\ca*`);
+        glyph.select(glyph.getTextContentSize(), glyph.getTextContentSize());
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mounted.ref.current?.getUsj()?.content[1]).toEqual({
+      type: "chapter",
+      marker: "c",
+      number: "1",
+      altnumber: "5",
+    });
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["1"] });
+  });
+});
+
+describe("typing inside an annotated alternate number", () => {
+  it("sends the same ops as it would without the annotation", async () => {
+    const plainChange = vi.fn();
+    const annotatedChange = vi.fn();
+    const plain = await mountStandardViewEditor(verseUsj, { onUsjChange: plainChange });
+    const annotated = await mountStandardViewEditor(verseUsj, { onUsjChange: annotatedChange });
+    await annotate(annotated, altnumberRange);
+    for (const mounted of [plain, annotated])
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const value = $getRoot()
+            .getAllTextNodes()
+            .find((node) => node.getTextContent() === `${NBSP}3`);
+          if (!value) throw new Error("no \\va value");
+          value.setTextContent(`${NBSP}34`);
+          value.select(3, 3);
+        });
+        await Promise.resolve();
+      });
+    // An alternate number's bytes are display bytes, which the delta excludes, so the edit is
+    // announced with no ops; the annotation must not add any.
+    expect(plainChange).toHaveBeenCalledTimes(1);
+    expect(annotatedChange).toHaveBeenCalledTimes(1);
+    expect(annotatedChange.mock.calls.at(-1)?.[0]).toEqual(plainChange.mock.calls.at(-1)?.[0]);
+    expect(annotatedChange.mock.calls.at(-1)?.[1]).toEqual(plainChange.mock.calls.at(-1)?.[1]);
+    expect(displayAnnotated(annotated.lexical)).toEqual({ "1": ["3"] });
+  });
+});
+
+describe("typing content after an annotated verse", () => {
+  it("sends the same ops as it would without the annotation", async () => {
+    const plainChange = vi.fn();
+    const annotatedChange = vi.fn();
+    const plain = await mountStandardViewEditor(verseUsj, { onUsjChange: plainChange });
+    const annotated = await mountStandardViewEditor(verseUsj, { onUsjChange: annotatedChange });
+    await annotate(annotated, verseNumberRange);
+    await annotate(annotated, altnumberRange, "2");
+    for (const mounted of [plain, annotated])
+      await typeOver(mounted.lexical, "and the earth", "and all the earth", "and all".length);
+
+    const ops = plainChange.mock.calls.at(-1)?.[1];
+    expect(ops?.length).toBeGreaterThan(0);
+    expect(annotatedChange.mock.calls.at(-1)?.[1]).toEqual(ops);
+    expect(displayAnnotated(annotated.lexical)).toEqual({ "1": ["2"], "2": ["3"] });
+  });
+});
+
+describe("a comment mark that the settle leaves on display bytes alone", () => {
+  it("reports its removal through its marks only, never through the carrier", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const bareWord: MarkerObject = { type: "char", marker: "w", content: ["grace"] };
+    const mounted = await mountStandardViewEditor(twoParaUsj(["In the ", bareWord, " of God"]));
+    const typed = '|lemma="grace"';
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const word = $textContaining("grace");
+        word.setTextContent(`grace${typed}`);
+        word.select(word.getTextContentSize(), word.getTextContentSize());
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const text = $textContaining(typed);
+        const start = text.getTextContent().indexOf('|lemma="');
+        const selection = $createRangeSelection();
+        selection.anchor.set(text.getKey(), start, "text");
+        selection.focus.set(text.getKey(), start + '|lemma="'.length, "text");
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1", undefined, onRemove);
+        $textContaining("depart here").select(1, 1);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // The settle re-spells `|lemma="grace"` as `|grace`: of the marked bytes only the `|` is kept,
+    // so the comment is left on the run's `|` with no mark.
+    settle(mounted);
+    expect(markCount(mounted.lexical)).toBe(0);
+    expect(displayAnnotated(mounted.lexical)).toEqual({ c1: ["|"] });
+    const callsBefore = onRemove.mock.calls.length;
+
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const word = $carrierHolding("c1").getParent();
+        if (!$isCharNode(word)) throw new Error("no \\w span");
+        word.remove();
+      });
+      await Promise.resolve();
+    });
+
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(onRemove.mock.calls.slice(callsBefore)).toEqual([]);
   });
 });
