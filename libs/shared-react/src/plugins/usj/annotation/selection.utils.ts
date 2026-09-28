@@ -471,7 +471,12 @@ function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLoc
   //
   // Annotation wrappers are walked out of rather than handed back: a mark contributes no content,
   // so asking it for the child at this node's index returns this same node and the two call each
-  // other forever. The position wanted is the outermost wrapper's own place in the block.
+  // other forever. The position reported is the outermost wrapper's own place in the block.
+  //
+  // Known approximation, the same one the mark branch above documents: that is exact only while the
+  // placeholder leads its mark, which is the shape Lexical leaves since it merges adjacent plain
+  // text. For a mark whose placeholder TRAILS other content, the point snaps to the mark's front
+  // edge instead of sitting after that content — a valid nearby point in the correct text run.
   if ($isCursorPlaceholderOnlyText(node)) {
     let child: LexicalNode = node;
     let parent = child.getParent();

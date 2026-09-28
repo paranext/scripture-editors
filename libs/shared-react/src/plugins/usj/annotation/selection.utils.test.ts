@@ -21,19 +21,19 @@ import {
 import {
   $createChapterNode,
   $createCharNode,
+  $createCursorPlaceholderNode,
   $createImmutableChapterNode,
   $createImmutableTypedTextNode,
   $createMarkerNode,
   $createMilestoneNode,
   $createParaNode,
   $createTypedMarkNode,
-  $createCursorPlaceholderNode,
-  CURSOR_PLACEHOLDER_CHAR,
   $createVerseBlockNode,
   $createVerseNode,
   ChapterNode,
   CharNode,
   closingMarkerText,
+  CURSOR_PLACEHOLDER_CHAR,
   ImmutableChapterNode,
   ImmutableTypedTextNode,
   MarkerNode,
@@ -1751,34 +1751,6 @@ describe("$getUsjSelectionFromEditor with a transient caret host", () => {
   // A caret host is presentation, absent from the USJ the host application sees, so a caret
   // resting in one has to report the position the host stands in for — the boundary just past the
   // verse marker — and not fall back to the paragraph's start.
-  it("reports a position for a zero-width-space run inside an annotation mark", () => {
-    // A mark contributes no content of its own, so asking it for the location of the child at some
-    // index hands that same child straight back. Reporting the raw parent therefore cycles between
-    // the two. It has to be the mark's own position in the block instead.
-    //
-    // Reachable without any caret host: a lone zero-width space is a Thai/Khmer/Lao line break, and
-    // splitting text at a comment boundary can leave one as a mark's only child. This runs on the
-    // hot path, from the selection-change listener, so a cycle here takes the editor down.
-    let zwsp: TextNode;
-    const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode], () => {
-      zwsp = $createTextNode(CURSOR_PLACEHOLDER_CHAR);
-      $getRoot().append(
-        $createParaNode("p").append(
-          $createTextNode("before "),
-          $createTypedMarkNode({ comment: ["comment-1"] }).append(zwsp),
-          $createTextNode(" after"),
-        ),
-      );
-    });
-    // Non-null assertion is safe: zwsp is assigned during setup.
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    updateSelection(editor, zwsp!, 0);
-
-    editor.getEditorState().read(() => {
-      expect(() => $getUsjSelectionFromEditor()).not.toThrow();
-    });
-  });
-
   it("reports the empty verse's own position, not the paragraph start", () => {
     let host: TextNode;
     const { editor } = createBasicTestEnvironment([ParaNode, ImmutableVerseNode], () => {
@@ -1803,6 +1775,66 @@ describe("$getUsjSelectionFromEditor with a transient caret host", () => {
       expect($getUsjSelectionFromEditor()).toEqual({
         start: { jsonPath: "$.content[0]", offset: 3 },
       });
+    });
+  });
+});
+
+// A lone zero-width space is not always a caret host: it is a Thai/Khmer/Lao line break, and
+// splitting text at a comment boundary can leave one as a mark's only child. Either way it carries
+// no USJ, so a caret in one has to report the boundary it stands at.
+describe("$getUsjSelectionFromEditor with a zero-width space inside an annotation mark", () => {
+  /** `before |mark[ZWSP]| after` with the caret in the mark's zero-width space. */
+  function createMarkedZwsp() {
+    let zwsp: TextNode | undefined;
+    const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode], () => {
+      zwsp = $createTextNode(CURSOR_PLACEHOLDER_CHAR);
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("before "),
+          $createTypedMarkNode({ comment: ["comment-1"] }).append(zwsp),
+          $createTextNode(" after"),
+        ),
+      );
+    });
+    if (!zwsp) throw new Error("expected the zero-width space to be created");
+    updateSelection(editor, zwsp, 0);
+    return editor;
+  }
+
+  // A mark contributes no content of its own, so asking it for the location of the child at some
+  // index hands that same child straight back — reporting the raw parent cycles between the two.
+  // This runs on the hot path, from the selection-change listener, so a cycle takes the editor down.
+  it("reports the boundary the mark sits at, not the end of the block", () => {
+    const editor = createMarkedZwsp();
+
+    // The mark contributes nothing, so "before " and " after" coalesce into one USJ text item and
+    // the boundary is the seam between them — offset 7, where "before " ends.
+    expect(editor.getEditorState().read($getUsjSelectionFromEditor)).toEqual({
+      start: { jsonPath: "$.content[0].content[0]", offset: 7 },
+    });
+  });
+
+  // The control: a caret at the same seam with no mark in the way reports the same location, so the
+  // test above is about the boundary being right and not about any location being produced.
+  it("reports the same location for the same seam reached without the mark", () => {
+    let before: TextNode | undefined;
+    const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode], () => {
+      before = $createTextNode("before ");
+      $getRoot().append(
+        $createParaNode("p").append(
+          before,
+          $createTypedMarkNode({ comment: ["comment-1"] }).append(
+            $createTextNode(CURSOR_PLACEHOLDER_CHAR),
+          ),
+          $createTextNode(" after"),
+        ),
+      );
+    });
+    if (!before) throw new Error("expected the leading text to be created");
+    updateSelection(editor, before, "before ".length);
+
+    expect(editor.getEditorState().read($getUsjSelectionFromEditor)).toEqual({
+      start: { jsonPath: "$.content[0].content[0]", offset: 7 },
     });
   });
 });

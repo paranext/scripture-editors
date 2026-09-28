@@ -73,20 +73,6 @@ export function DeltaOnChangePlugin({
   return null;
 }
 
-/**
- * Drops zero-length inserts from a document delta so it can be diffed.
- *
- * An empty char span (`\w \w*` with no content) is emitted as `{ insert: "", attributes: … }`,
- * which carries the span but no characters. `Delta.diff` cannot represent it: it builds a string
- * from each side and an op contributing no characters has nothing to align against, so the patch
- * it returns re-inserts the tail and deletes past the end — a peer applying it ends up with the
- * trailing run duplicated. Zero-length ops contribute nothing to any OT coordinate system, so
- * removing them from both sides shifts no position and the diff becomes the minimal correct patch.
- */
-function $withoutEmptyInserts(doc: Delta): Delta {
-  return new Delta(doc.ops.filter((op) => op.insert !== ""));
-}
-
 function $getUpdateOps(
   editor: LexicalEditor,
   { dirtyLeaves, prevEditorState }: UpdateListenerPayload,
@@ -107,31 +93,15 @@ function $getUpdateOps(
     // Scripture and every later offset would shift. $isFastPathContentText derives eligibility
     // from the same delta-doc counting instead of re-listing the exclusions; anything ineligible
     // falls to the full diff, whose $handleTextNodes applies the one authoritative list.
-    // The PREVIOUS state has to clear the same bar, and for the same reason: the diff below takes
-    // the previous node's RAW bytes while the retain is counted in delta-doc coordinates. For any
-    // node those coordinates give a length its bytes do not — a bare caret host, an empty char
-    // span's placeholder — the two currencies disagree, and the diff settles the difference with a
-    // delete the document never earned. Emitted after typing into an emptied verse, that delete
-    // lands on the next verse's marker at the peer. A newly created node has no previous bytes to
-    // disagree with, so it stays eligible; everything else falls to the full diff, which counts
-    // both sides the same way.
-    //
-    // Both states are looked up by node key, so a host Lexical MERGES into an adjacent plain text
-    // node escapes this: the surviving key's previous text was not placeholder-only. Neither guard
-    // rule places a host next to plain text today, and closing it for good needs the host's
-    // identity to live in editor state rather than in its content.
-    const prevIsFastPathSafe = prevEditorState.read(() => {
-      const previousNode = $getNodeByKey(nodeKey);
-      return (
-        previousNode === null || ($isTextNode(previousNode) && $isFastPathContentText(previousNode))
-      );
-    });
+    // The PREVIOUS state has to clear the same bar; see $isPreviousStateFastPathSafe below.
     if (
       dirtyLeaves.size === 1 &&
       $isTextNode(dirtyNode) &&
       !isInsideNote &&
-      prevIsFastPathSafe &&
-      $isFastPathContentText(dirtyNode)
+      $isFastPathContentText(dirtyNode) &&
+      // Last in the chain on purpose: it reads a second editor state and runs the same owner walk
+      // and OT-contribution count again, so the cheap disqualifiers get to answer first.
+      $isPreviousStateFastPathSafe(prevEditorState, nodeKey)
     ) {
       // Handle the most common case of text changing in a single text node.
       // Default "delta-doc" coordinates (NOT "apply"): this fast path and the `getEditorDelta`
@@ -152,10 +122,57 @@ function $getUpdateOps(
         update = update.concat(nodePositionRetain).concat(prevTextDoc.diff(textDoc));
       }
     } else {
-      const prevDoc = $withoutEmptyInserts(getEditorDelta(prevEditorState));
-      const currentDoc = $withoutEmptyInserts(getEditorDelta(editor.getEditorState()));
+      const prevDoc = withoutEmptyInserts(getEditorDelta(prevEditorState));
+      const currentDoc = withoutEmptyInserts(getEditorDelta(editor.getEditorState()));
       update = prevDoc.diff(currentDoc);
     }
   });
   return update.ops;
+}
+
+/**
+ * Whether the node `nodeKey` identified in `prevEditorState` clears the same bar the fast path
+ * holds the current node to.
+ *
+ * The fast path emits the previous node's RAW bytes while its retain is counted in delta-doc
+ * coordinates. For any node those coordinates give a length its bytes do not — a bare caret host,
+ * an empty char span's placeholder — the two currencies disagree by that difference, and the diff
+ * settles it with a delete the document never earned. Emitted after typing into an emptied verse,
+ * that delete lands on the next verse's marker at the peer. A newly created node has no previous
+ * bytes to disagree with, so it stays eligible; everything else falls to the full diff, which
+ * counts both sides the same way.
+ *
+ * Keyed by node key, like the rest of the fast path, so a caret host that Lexical MERGES into an
+ * adjacent plain text node escapes it: the surviving key's previous text was not placeholder-only.
+ * No guard rule places a host next to plain text today, and closing it for good needs the host's
+ * identity to live in editor state rather than be read off its content.
+ */
+function $isPreviousStateFastPathSafe(prevEditorState: EditorState, nodeKey: string): boolean {
+  return prevEditorState.read(() => {
+    const previousNode = $getNodeByKey(nodeKey);
+    return (
+      previousNode === null || ($isTextNode(previousNode) && $isFastPathContentText(previousNode))
+    );
+  });
+}
+
+/**
+ * Drops zero-length inserts from a document delta so it can be diffed.
+ *
+ * An empty char span (`\w \w*` with no content) is emitted as `{ insert: "", attributes: … }`,
+ * which carries the span but no characters. `Delta.diff` cannot represent that: it builds a string
+ * from each side, and an op contributing no characters has nothing to align against — so the patch
+ * it returns re-inserts the tail and deletes past the end, leaving a peer with the trailing run
+ * duplicated. Zero-length ops contribute nothing to any OT coordinate system, so removing them
+ * from both sides shifts no position and every edit that is representable at all diffs minimally.
+ *
+ * The edits that are NOT representable become silent rather than corrupting: creating, removing or
+ * restyling an EMPTY char span now emits no ops. That is inherent to the channel, not a choice
+ * made here — `Delta#insert("")` is a no-op and `compose` drops zero-length ops, so an empty span
+ * cannot be carried however it is encoded. The local document keeps the span and the peer never
+ * hears about it, so saves from the two sides differ by it — a silent gap where the old ops were
+ * a loud one, and not something this function can close.
+ */
+function withoutEmptyInserts(doc: Delta): Delta {
+  return new Delta(doc.ops.filter((op) => op.insert !== ""));
 }

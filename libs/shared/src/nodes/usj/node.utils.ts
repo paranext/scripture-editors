@@ -1209,7 +1209,13 @@ export function $getLogicalPointFromElementPoint(
       }
     }
   }
-  return { type: "index", index: items.length };
+
+  // The child contributes no content items of its own — a mark holding only presentation text, say,
+  // which is not itself ignorable but whose every descendant is. It shares the boundary with the
+  // next content child. Without this, such a child falls off the loop and reports the END of the
+  // block, which is nowhere near the caret. The `!child` guard above ends the walk at the last
+  // child, so the genuine end-of-block answer is unchanged.
+  return $getLogicalPointFromElementPoint(parent, elementOffset + 1);
 }
 
 /**

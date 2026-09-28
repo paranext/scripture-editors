@@ -4,8 +4,8 @@ import {
   $isImmutableVerseNode,
   ImmutableVerseNode,
 } from "../../../nodes/usj/ImmutableVerseNode";
-import { EmptyVerseCaretGuardPlugin } from "../EmptyVerseCaretGuardPlugin";
 import { CharNodePlugin } from "../CharNodePlugin";
+import { EmptyVerseCaretGuardPlugin } from "../EmptyVerseCaretGuardPlugin";
 import { TextSpacingPlugin } from "../TextSpacingPlugin";
 import {
   $typeTextAtSelection,
@@ -20,29 +20,29 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  $getState,
   $isRangeSelection,
   $isTextNode,
+  $setState,
   EditorState,
   LexicalEditor,
   SELECTION_CHANGE_COMMAND,
   TextNode,
-  $setState,
-  $getState,
 } from "lexical";
 import {
   $createBookNode,
   $createCharNode,
-  $createNoteNode,
   $createImmutableChapterNode,
   $createImpliedParaNode,
+  $createNoteNode,
+  $createParaNode,
   $isImmutableChapterNode,
   $isImpliedParaNode,
+  $isParaNode,
   blackListedChangeTags,
   charIdState,
   CURSOR_CHANGE_TAG,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
-  $createParaNode,
-  $isParaNode,
   EXTERNAL_USJ_MUTATION_TAG,
   ImmutableChapterNode,
   ImpliedParaNode,
@@ -475,8 +475,9 @@ describe("typing into a transient caret host", () => {
     });
 
     expect(calls).toHaveLength(1);
-    // Nothing was removed, so no op may claim otherwise: a delete here lands on verse 4's marker.
-    expect(calls[0].some((op) => "delete" in op)).toBe(false);
+    // The host is invisible to delta-doc coordinates, so the retain counts v2(1) + text(15) + v3(1)
+    // and the insert is exactly what was typed. A delete here would land on verse 4's marker.
+    expect(calls[0]).toEqual([{ retain: 17 }, { insert: "X " }]);
   });
 });
 
@@ -524,8 +525,32 @@ describe("typing into an empty char span", () => {
     await typeTextAtSelection(editor, "a", placeholder, EMPTY_CHAR_PLACEHOLDER_TEXT.length);
 
     expect(calls).toHaveLength(1);
-    // Nothing was removed, so no op may claim otherwise: a delete here eats the "L" of "Light.".
-    expect(calls[0].some((op) => "delete" in op)).toBe(false);
+    // The peer holds zero characters at the span, so the whole edit is the one typed character,
+    // carrying the span's own attributes. A delete here eats the "L" of "Light.".
+    expect(calls[0]).toEqual([
+      { retain: 16 },
+      { insert: "a", attributes: { char: { style: "w" } } },
+    ]);
+  });
+
+  // Emptying the span goes the other way through the same zero-length op: the PREVIOUS document
+  // holds the one character and the current one holds `{ insert: "" }`. Without the filter the
+  // diff re-inserted the tail and deleted eight characters past the edit.
+  it("emits a single-character delete when the span is emptied", async () => {
+    const { editor, calls, placeholder } = await setup();
+    await typeTextAtSelection(editor, "a", placeholder, EMPTY_CHAR_PLACEHOLDER_TEXT.length);
+    calls.length = 0;
+
+    // The end state a backspace leaves: the span survives and `$charTextNodeTransform` restores its
+    // placeholder. Set directly rather than via `deleteCharacter`, which needs `Selection.modify` —
+    // a DOM API jsdom does not implement — and rather than via a range replacement, which removes
+    // the whole span and so never produces the zero-length op this is about.
+    await sutUpdate(editor, () => {
+      placeholder.getLatest().setTextContent(EMPTY_CHAR_PLACEHOLDER_TEXT);
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual([{ retain: 16 }, { delete: 1 }]);
   });
 });
 
