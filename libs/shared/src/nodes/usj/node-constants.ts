@@ -37,6 +37,13 @@ export const HIDDEN_NOTE_CALLER = "-";
  */
 export const IMMUTABLE_NOTE_CALLER_NODE_TYPE = "immutable-note-caller";
 
+/**
+ * Registered type name of the decorator node a verse renders as outside editable marker mode
+ * (shared-react's `ImmutableVerseNode`), declared here for the same reason as
+ * {@link IMMUTABLE_NOTE_CALLER_NODE_TYPE}. The class returns this constant from `getType()`.
+ */
+export const IMMUTABLE_VERSE_NODE_TYPE = "immutable-verse";
+
 export const CHAPTER_CLASS_NAME = "chapter";
 export const VERSE_CLASS_NAME = "verse";
 export const INVALID_CLASS_NAME = "invalid";

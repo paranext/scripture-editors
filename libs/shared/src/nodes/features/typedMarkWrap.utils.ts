@@ -6,15 +6,12 @@
  * (`attributeDisplay.utils.ts`), which itself imports `TypedMarkNode.ts`.
  */
 
-import { textTypeState } from "../collab/delta.state.js";
 import { $isAttributeRunNode } from "../usj/AttributeRunNode.js";
-import { $chapterGlyphTextNode, $noteEditableCallerNode } from "../usj/attributeDisplay.utils.js";
-import { $isChapterNode } from "../usj/ChapterNode.js";
 import { $charSeparatorPrefixLength } from "../usj/markerSeparators.utils.js";
 import { $isMilestoneNode } from "../usj/MilestoneNode.js";
 import { $isMarkerTrailingSeparator } from "../usj/node.utils.js";
-import { $isNoteNode } from "../usj/NoteNode.js";
 import { $isVerseNode } from "../usj/VerseNode.js";
+import { $isAttributeDisplayRun, $isElementOwnerRunAnchor } from "./displayAnnotations.utils.js";
 import { $isMarkerNode } from "./MarkerNode.js";
 import {
   $createTypedMarkNode,
@@ -26,29 +23,7 @@ import {
   TypedMarkOnRemove,
 } from "./TypedMarkNode.js";
 import type { LexicalNode, RangeSelection } from "lexical";
-import { $getState, $isElementNode, $isTextNode } from "lexical";
-
-/** Whether `node` is the text of an attribute display run — engine-owned display bytes, never
- * annotated content. */
-function $isAttributeDisplayRun(node: LexicalNode): boolean {
-  return $isTextNode(node) && $getState(node, textTypeState) === "attribute";
-}
-
-/**
- * Whether `node` is the text an element owner's attribute display run is anchored after: a note's
- * editable caller (its `\cat` run follows it) or a chapter's `\c N` glyph text (its `\ca` run
- * follows it, and its `\cp` run follows that). Both runs are found beside the anchor, so an
- * anchor moved into a mark without its run reads as the run being missing, and the sync writes a
- * second one.
- */
-function $isElementOwnerRunAnchor(node: LexicalNode): boolean {
-  if (!$isTextNode(node)) return false;
-  let owner = node.getParent();
-  while ($isTypedMarkNode(owner)) owner = owner.getParent();
-  if ($isNoteNode(owner)) return $noteEditableCallerNode(owner)?.is(node) ?? false;
-  if ($isChapterNode(owner)) return $chapterGlyphTextNode(owner)?.is(node) ?? false;
-  return false;
-}
+import { $isElementNode, $isTextNode } from "lexical";
 
 /**
  * Whether `node` is part of a display owner's unit: the owner's `AttributeRunNode` wrapper(s) and

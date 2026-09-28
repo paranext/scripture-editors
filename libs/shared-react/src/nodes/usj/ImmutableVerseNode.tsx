@@ -19,6 +19,7 @@ import { useLexicalNodeSelection } from "@lexical/react/useLexicalNodeSelection"
 import { ReactElement } from "react";
 import {
   getVisibleOpenMarkerText,
+  IMMUTABLE_VERSE_NODE_TYPE,
   isSelectionStartNodeExpectedError,
   UnknownAttributes,
   VERSE_CLASS_NAME,
@@ -79,7 +80,7 @@ export class ImmutableVerseNode extends DecoratorNode<ReactElement> {
   }
 
   static override getType(): string {
-    return "immutable-verse";
+    return IMMUTABLE_VERSE_NODE_TYPE;
   }
 
   static override clone(node: ImmutableVerseNode): ImmutableVerseNode {
