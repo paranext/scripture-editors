@@ -36,8 +36,11 @@ refused. The public surface grew substantially; nothing was removed.
   the note's CONTENT only: marker glyphs, attribute display runs, NBSP spacers, an opening glyph's
   separator prefix, and an expanded editable note's caller are all skipped. That makes the offset
   origin the note's USJ text, so a host that captured a position over its own rendering of the same
-  note resolves to the same character in any `markerMode`. An optional third argument, `"category"`,
-  addresses the note's `\cat` category value instead of its content.
+  note resolves to the same character in any `markerMode`. An optional third argument addresses
+  the note's `\cat` category value instead of its content (`field: "category"`), or puts the caret
+  inside a marker glyph (`glyph: { index, offset }`: the glyph's order among those at that offset,
+  and how far into its text) - a run's `\ft`, `\ft*` or `\+nd`, an unmatched marker, or `\cat` /
+  `\cat*`.
 - `generateUsjCss` — builds a project stylesheet from `StyleInfo`.
 - `getMarkerMenuItems` / `getEnterMenuItems` / `filterAndRankItems` — the marker-menu item source and
   ranking a host needs to build its own marker palette.

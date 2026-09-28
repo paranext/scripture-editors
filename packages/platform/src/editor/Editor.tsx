@@ -1041,16 +1041,18 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         unregisterDispatchTagRelease();
       }
     },
-    selectNoteTextOffset(noteKeyOrIndex, utf16Offset, field) {
+    selectNoteTextOffset(noteKeyOrIndex, utf16Offset, options) {
       editorRef.current?.update(() => {
         const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
         if (!noteNode) return;
+        const glyph = options?.glyph;
         // A note that shows no category run has no category to land in; its content's start is
         // the position that follows the category everywhere else.
         const placed =
-          field === "category"
-            ? $selectNoteCategoryOffset(noteNode, utf16Offset) || $selectNoteTextOffset(noteNode, 0)
-            : $selectNoteTextOffset(noteNode, utf16Offset);
+          options?.field === "category"
+            ? $selectNoteCategoryOffset(noteNode, utf16Offset, glyph) ||
+              $selectNoteTextOffset(noteNode, 0)
+            : $selectNoteTextOffset(noteNode, utf16Offset, glyph);
         // A note with no content text has nowhere to put an offset; land where an offset-less
         // request would, so the caret is always somewhere sensible inside the note.
         if (!placed) $selectNote(noteNode, viewOptions);

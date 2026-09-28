@@ -602,14 +602,26 @@ export interface EditorRef {
    *   {@link EditorRef.getNoteIndex}).
    * @param utf16Offset - Offset into the note's content text, in UTF-16 code units (the unit DOM
    *   Selection APIs and Lexical text nodes both count in).
-   * @param field - `"category"` to address the note's `\cat` category value instead of its content
-   *   (the value's display separator excluded). A note that shows no category run takes the caret
-   *   at the start of its content instead.
+   * @param options - Where else the offset may point.
+   *
+   *   - `field: "category"` addresses the note's `\cat` category value instead of its content (the
+   *     value's display separator excluded). A note that shows no category run takes the caret at
+   *     the start of its content instead.
+   *   - `glyph` puts the caret inside a marker glyph rather than in text: the `glyph.index`-th glyph
+   *     (from 0) among those at `utf16Offset` - `\ft*\fr` puts two between the same two
+   *     characters - at `glyph.offset` into the glyph's own text (`\ft`, `\+nd*`; its display
+   *     separator excluded). The glyphs counted are a run's opening and closing glyphs, a nested
+   *     span's, and unmatched markers - in the category, `\cat` at offset 0 and `\cat*` at the
+   *     value's end - never the note's own opening glyph, caller, or closing glyph. Offset 0 of a
+   *     glyph that directly follows text the user can type in (content, or the caller) lands at that
+   *     text's end instead. A glyph the note does not have falls back to the offset alone. Counting
+   *     glyphs from the offset rather than into it keeps every content offset the same whether or
+   *     not the host's own rendering shows markers.
    */
   selectNoteTextOffset(
     noteKeyOrIndex: string | number,
     utf16Offset: number,
-    field?: "category",
+    options?: { field?: "category"; glyph?: { index: number; offset: number } },
   ): void;
   /**
    * EXPERIMENTAL: Get the note operations by editor key or at the given index in the editor, if any.

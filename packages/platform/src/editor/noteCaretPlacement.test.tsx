@@ -39,7 +39,7 @@ import {
   SKIP_DOM_SELECTION_TAG,
 } from "lexical";
 import { $dfs, $findMatchingParent } from "@lexical/utils";
-import { $isNoteNode, $noteEditableCallerNode, getEditableCallerText } from "shared";
+import { $isMarkerNode, $isNoteNode, $noteEditableCallerNode, getEditableCallerText } from "shared";
 import { DeltaOpInsertNoteEmbed, getViewOptions, UNFORMATTED_VIEW_MODE } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
@@ -701,7 +701,7 @@ describe("EditorRef.selectNoteTextOffset into a note's \\cat category", () => {
   it("lands at the offset within the category value, past its display separator", async () => {
     const { editorRef, lexical } = await renderEditor(usjCategorizedNote, expandedOptions);
 
-    await act(async () => editorRef.selectNoteTextOffset(0, 3, "category"));
+    await act(async () => editorRef.selectNoteTextOffset(0, 3, { field: "category" }));
 
     const { text, offset } = caret(lexical);
     expect(text.trim()).toBe("People");
@@ -711,7 +711,7 @@ describe("EditorRef.selectNoteTextOffset into a note's \\cat category", () => {
   it("clamps an offset past the end of the category to its end", async () => {
     const { editorRef, lexical } = await renderEditor(usjCategorizedNote, expandedOptions);
 
-    await act(async () => editorRef.selectNoteTextOffset(0, 50, "category"));
+    await act(async () => editorRef.selectNoteTextOffset(0, 50, { field: "category" }));
 
     const { text, offset } = caret(lexical);
     expect(text.trim()).toBe("People");
@@ -721,10 +721,135 @@ describe("EditorRef.selectNoteTextOffset into a note's \\cat category", () => {
   it("lands at the start of the content when the note has no category", async () => {
     const { editorRef, lexical } = await renderEditor(usj, expandedOptions);
 
-    await act(async () => editorRef.selectNoteTextOffset(0, 3, "category"));
+    await act(async () => editorRef.selectNoteTextOffset(0, 3, { field: "category" }));
 
     const { text, offset } = caret(lexical);
     expect(text.slice(offset)).toBe("1:1 ");
+  });
+});
+
+describe("EditorRef.selectNoteTextOffset into a marker glyph (a host's note editor)", () => {
+  /** `\\f + \\cat People\\cat*\\fr 1:1 \\fr*\\ft a \\+nd x\\+nd* b\\ft*\\f*` */
+  const glyphNote = (category?: string): MarkerObject => ({
+    type: "note",
+    marker: "f",
+    caller: "+",
+    ...(category ? { category } : {}),
+    content: [
+      { type: "char", marker: "fr", content: ["1:1 "] },
+      {
+        type: "char",
+        marker: "ft",
+        content: ["a ", { type: "char", marker: "nd", content: ["x"] }, " b"],
+      },
+    ],
+  });
+
+  /** The caret's node text and offset, and whether that node is a marker glyph. */
+  function glyphCaret(lexical: LexicalEditor) {
+    return lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.isCollapsed()).toBe(true);
+      const node = selection.anchor.getNode();
+      return {
+        text: node.getTextContent(),
+        offset: selection.anchor.offset,
+        glyph: $isMarkerNode(node),
+      };
+    });
+  }
+
+  it("lands inside a run's opening glyph", async () => {
+    const { editorRef, lexical } = await renderEditor(usjWithNote(glyphNote()), noteEditorOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 0, { glyph: { index: 0, offset: 2 } }));
+
+    expect(glyphCaret(lexical)).toEqual({ text: "\\fr", offset: 2, glyph: true });
+  });
+
+  it("tells apart two glyphs that sit between the same two characters", async () => {
+    const { editorRef, lexical } = await renderEditor(usjWithNote(glyphNote()), noteEditorOptions);
+
+    // `1:1 ` is 4 characters; `\\fr*` then `\\ft` both sit at offset 4.
+    await act(async () => editorRef.selectNoteTextOffset(0, 4, { glyph: { index: 0, offset: 3 } }));
+    expect(glyphCaret(lexical)).toEqual({ text: "\\fr*", offset: 3, glyph: true });
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 4, { glyph: { index: 1, offset: 1 } }));
+    expect(glyphCaret(lexical)).toEqual({ text: "\\ft", offset: 1, glyph: true });
+  });
+
+  it("lands inside a nested span's glyph, `+` included", async () => {
+    const { editorRef, lexical } = await renderEditor(usjWithNote(glyphNote()), noteEditorOptions);
+
+    // `1:1 ` + `a ` = 6.
+    await act(async () => editorRef.selectNoteTextOffset(0, 6, { glyph: { index: 0, offset: 2 } }));
+
+    expect(glyphCaret(lexical)).toEqual({ text: "\\+nd", offset: 2, glyph: true });
+  });
+
+  it("puts the start of a glyph that follows content at that content's end", async () => {
+    const { editorRef, lexical } = await renderEditor(usjWithNote(glyphNote()), noteEditorOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 6, { glyph: { index: 0, offset: 0 } }));
+
+    const { text, offset, glyph } = glyphCaret(lexical);
+    expect(glyph).toBe(false);
+    expect(text.trim()).toBe("a");
+    expect(offset).toBe(text.length);
+  });
+
+  it.each([
+    ["the first run's glyph", undefined, {}],
+    ["the category's \\cat glyph", "People", { field: "category" as const }],
+  ])(
+    "puts the start of %s, right after the caller, at the caller's end",
+    async (_label, category, field) => {
+      const { editorRef, lexical } = await renderEditor(
+        usjWithNote(glyphNote(category)),
+        noteEditorOptions,
+      );
+
+      await act(async () =>
+        editorRef.selectNoteTextOffset(0, 0, { ...field, glyph: { index: 0, offset: 0 } }),
+      );
+
+      const caller = lexical.getEditorState().read(() =>
+        $noteEditableCallerNode(
+          requireDefined(
+            $dfs($getRoot())
+              .map(({ node }) => node)
+              .find($isNoteNode),
+            "note",
+          ),
+        )?.getTextContent(),
+      );
+      const { text, offset } = glyphCaret(lexical);
+      expect(text).toBe(caller);
+      expect(offset).toBe(text.length);
+    },
+  );
+
+  it("lands inside the category's closing glyph", async () => {
+    const { editorRef, lexical } = await renderEditor(
+      usjWithNote(glyphNote("People")),
+      noteEditorOptions,
+    );
+
+    await act(async () =>
+      editorRef.selectNoteTextOffset(0, 6, { field: "category", glyph: { index: 0, offset: 5 } }),
+    );
+
+    expect(glyphCaret(lexical)).toEqual({ text: "\\cat*", offset: 5, glyph: true });
+  });
+
+  it("falls back to the content offset for a glyph the note does not have", async () => {
+    const { editorRef, lexical } = await renderEditor(usjWithNote(glyphNote()), noteEditorOptions);
+
+    await act(async () => editorRef.selectNoteTextOffset(0, 2, { glyph: { index: 0, offset: 1 } }));
+
+    const { text, offset } = glyphCaret(lexical);
+    expect(text.slice(offset)).toBe("1 ");
   });
 });
 

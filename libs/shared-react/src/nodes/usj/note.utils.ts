@@ -39,6 +39,7 @@ import {
   $createMarkerTrailingSeparator,
   $createNoteNode,
   $getNoteCallerPreviewText,
+  $isAttributeRunNode,
   $isCharNode,
   $isGlyphTextNode,
   $isImmutableTypedTextNode,
@@ -405,12 +406,11 @@ export function $createWholeNote(
   // category input on the insert path. A category acquired later heals its run through the
   // shared display-run sync.
   if (viewOptions?.markerMode === "editable" && !isCollapsed) {
-    if (caller === "") note.append(...contentNodes);
-    else {
-      callerNode = $createTextNode(getEditableCallerText(note.__caller));
-      if (isShellAtomic) callerNode.setMode("token");
-      note.append(callerNode, ...contentNodes);
-    }
+    // An empty caller keeps its slot: the two separators Paratext 9 leaves where a deleted caller
+    // was (`\f  \fr …`), as the load path (`createNote`) builds it.
+    callerNode = $createTextNode(getEditableCallerText(note.__caller));
+    if (isShellAtomic) callerNode.setMode("token");
+    note.append(callerNode, ...contentNodes);
   } else {
     // The engine-owned NBSP separators of a collapsed note's layout, in the same tagged token
     // shape as the para-marker prefix separator (and as the load path's `createNote` builds
@@ -562,6 +562,30 @@ export function $selectAfterNote(noteNode: NoteNode) {
 }
 
 /**
+ * A caret inside one of a note's marker glyphs (`\ft`, `\ft*`, `\+nd`, `\cat`), which an editable
+ * marker mode renders as text the user can edit. Glyphs are addressed relative to the note's
+ * content offset they sit at, so a host whose own rendering of the note shows no glyphs still
+ * agrees on every content offset.
+ */
+export interface NoteGlyphCaret {
+  /**
+   * Which glyph, counting from 0, among those that sit at the same content offset - `\ft*\fr` puts
+   * two glyphs between the same two content characters.
+   */
+  index: number;
+  /** Offset into the glyph's own text (its display separator excluded), in UTF-16 code units. */
+  offset: number;
+}
+
+/** One stop on the walk a note offset is counted along: content text, or a marker glyph. */
+interface NoteTextStop {
+  node: TextNode;
+  isGlyph: boolean;
+  /** Where the stop's own text starts - past a content node's display separator prefix. */
+  dataStart: number;
+}
+
+/**
  * Puts the caret at `utf16Offset` within a note's own text, counting the note's CONTENT only and
  * skipping every display artifact the view adds around it: marker glyphs (editable and visible),
  * attribute display runs, engine-owned NBSP spacers, an opening glyph's NBSP separator prefix,
@@ -573,26 +597,37 @@ export function $selectAfterNote(noteNode: NoteNode) {
  * Text the source wrote directly inside the note rather than inside a `\ft`-style run counts too,
  * as it does in the note's USJ.
  *
+ * With `glyph`, the caret goes inside the marker glyph that position names instead (see
+ * {@link NoteGlyphCaret}): a run's opening or closing glyph, a nested span's, or an unmatched
+ * marker - never the note's own opening glyph, caller, or closing glyph. The start of a glyph that
+ * follows text the user can type in (content, or the caller) is that text's end, where typing
+ * extends it rather than rewriting the glyph. A glyph position the note does not have falls back to
+ * the content offset.
+ *
  * Offsets past the end of the note's text clamp to the end.
  *
  * Mutating: call inside `editor.update()`.
  *
  * @param noteNode - The note node whose text to place the caret in.
  * @param utf16Offset - Offset into the note's content text, in UTF-16 code units.
+ * @param glyph - The marker glyph at that offset to put the caret in, if any.
  * @returns `true` when a caret was placed, `false` when the note holds no content text to place
  *   one in (the caller should fall back to {@link $selectNote}).
  */
-export function $selectNoteTextOffset(noteNode: NoteNode, utf16Offset: number): boolean {
+export function $selectNoteTextOffset(
+  noteNode: NoteNode,
+  utf16Offset: number,
+  glyph?: NoteGlyphCaret,
+): boolean {
+  const caller = $noteEditableCallerNode(noteNode);
+  const stops = $noteTextStops(noteNode, caller);
+  if (glyph && $selectGlyphStop(stops, utf16Offset, glyph, $isTypingTextBefore(noteNode, caller)))
+    return true;
+
   let remaining = Math.max(utf16Offset, 0);
   let lastDataNode: TextNode | undefined;
-
-  const caller = $noteEditableCallerNode(noteNode);
-  for (const { node } of $dfs(noteNode)) {
-    if (!$isNoteContentText(node, caller)) continue;
-
-    // An opening glyph's display separator rides as an NBSP prefix of the text after it; it is
-    // display, never content, so the offset origin starts past it.
-    const dataStart = $separatorPrefixLength(node);
+  for (const { node, isGlyph, dataStart } of stops) {
+    if (isGlyph) continue;
     const dataLength = node.getTextContentSize() - dataStart;
     // Strictly `<`: an offset that lands exactly on a run boundary belongs to the run it starts,
     // not to the one it ends. The two are the same caret on screen but not the same place to type
@@ -614,21 +649,132 @@ export function $selectNoteTextOffset(noteNode: NoteNode, utf16Offset: number): 
 }
 
 /**
+ * The note's content text and its runs' marker glyphs, in document order. Excluded: the note's own
+ * opening glyph, caller, and closing glyph (its shell, which a note editor governs through its own
+ * controls), the `\cat` category run and every other attribute display run, and the view's NBSP
+ * spacers.
+ */
+function $noteTextStops(noteNode: NoteNode, caller: TextNode | undefined): NoteTextStop[] {
+  const stops: NoteTextStop[] = [];
+  for (const { node } of $dfs(noteNode)) {
+    if (!$isTextNode(node) || $findMatchingParent(node, $isAttributeRunNode)) continue;
+    if ($isNoteContentText(node, caller))
+      stops.push({ node, isGlyph: false, dataStart: $separatorPrefixLength(node) });
+    else if ($isNoteRunGlyph(node, noteNode)) stops.push({ node, isGlyph: true, dataStart: 0 });
+  }
+  return stops;
+}
+
+/** Whether `node` is a marker glyph of one of the note's runs, or an unmatched marker in it. */
+function $isNoteRunGlyph(node: TextNode, noteNode: NoteNode): boolean {
+  if ($isImmutableUnmatchedNode(node)) return true;
+  // The note's own opening and closing glyphs are its children; a run's are its span's.
+  return $isMarkerNode(node) && !noteNode.is(node.getParent());
+}
+
+/**
+ * Text the user can type into that `node` directly follows, if any: note content, or the caller
+ * (the shell's end, where typing goes into the note's content). Its end is the same place on screen
+ * as the glyph's start.
+ */
+function $isTypingTextBefore(
+  noteNode: NoteNode,
+  caller: TextNode | undefined,
+): (node: TextNode) => TextNode | undefined {
+  return (node) => {
+    let cursor: LexicalNode = node;
+    while (!cursor.getPreviousSibling()) {
+      const parent = cursor.getParent();
+      if (!parent || parent.is(noteNode)) return undefined;
+      cursor = parent;
+    }
+    const before = cursor.getPreviousSibling();
+    const last = $isElementNode(before) ? before.getLastDescendant() : before;
+    if (!$isTextNode(last)) return undefined;
+    if (caller?.is(last) || $isNoteContentText(last, caller)) return last;
+    return undefined;
+  };
+}
+
+/**
+ * Put the caret in the glyph `glyph` names at content offset `utf16Offset` among `stops`.
+ * @returns Whether that glyph exists and got the caret.
+ */
+function $selectGlyphStop(
+  stops: NoteTextStop[],
+  utf16Offset: number,
+  glyph: NoteGlyphCaret,
+  typingTextBefore: (node: TextNode) => TextNode | undefined,
+): boolean {
+  let contentOffset = 0;
+  let glyphIndex = 0;
+  for (const { node, isGlyph, dataStart } of stops) {
+    if (!isGlyph) {
+      const dataLength = node.getTextContentSize() - dataStart;
+      contentOffset += dataLength;
+      if (dataLength > 0) glyphIndex = 0;
+      if (contentOffset > utf16Offset) return false;
+      continue;
+    }
+    if (contentOffset === utf16Offset && glyphIndex === glyph.index) {
+      $selectInGlyph(node, glyph.offset, typingTextBefore);
+      return true;
+    }
+    glyphIndex += 1;
+  }
+  return false;
+}
+
+/** Put the caret `offset` characters into `glyphNode` (see {@link $selectNoteTextOffset}). */
+function $selectInGlyph(
+  glyphNode: TextNode,
+  offset: number,
+  typingTextBefore: (node: TextNode) => TextNode | undefined,
+) {
+  const size = glyphNode.getTextContentSize();
+  // An atomic glyph (an unmatched marker outside an editable marker mode) takes no caret inside.
+  const at = glyphNode.isToken() ? size : Math.min(Math.max(offset, 0), size);
+  const before = at === 0 ? typingTextBefore(glyphNode) : undefined;
+  if (before) {
+    const end = before.getTextContentSize();
+    before.select(end, end);
+  } else glyphNode.select(at, at);
+}
+
+/**
  * Puts the caret at `utf16Offset` within a note's `\cat` category value - the category a
  * study-Bible note carries as a field rather than as content, which an expanded editable note shows
  * as its own run right after the caller. The value's display separator is skipped, so offset 0 is
  * the start of the category itself. Offsets past the end clamp to the end.
  *
+ * With `glyph`, the caret goes inside the run's `\cat` or `\cat*` glyph instead, addressed as
+ * {@link $selectNoteTextOffset} addresses a run's glyphs: `\cat` sits at value offset 0 and
+ * `\cat*` at the value's end.
+ *
  * Mutating: call inside `editor.update()`.
  *
  * @param noteNode - The note whose category to place the caret in.
  * @param utf16Offset - Offset into the category value, in UTF-16 code units.
+ * @param glyph - The category run's glyph at that offset to put the caret in, if any.
  * @returns `true` when a caret was placed, `false` when the note shows no category run.
  */
-export function $selectNoteCategoryOffset(noteNode: NoteNode, utf16Offset: number): boolean {
-  const { value } = $noteCategoryRunPieces(noteNode);
+export function $selectNoteCategoryOffset(
+  noteNode: NoteNode,
+  utf16Offset: number,
+  glyph?: NoteGlyphCaret,
+): boolean {
+  const { opener, value, closer } = $noteCategoryRunPieces(noteNode);
   if (!value) return false;
   const start = $categoryValueStart(value);
+  if (glyph) {
+    const stops: NoteTextStop[] = [];
+    if (opener) stops.push({ node: opener, isGlyph: true, dataStart: 0 });
+    stops.push({ node: value, isGlyph: false, dataStart: start });
+    if (closer) stops.push({ node: closer, isGlyph: true, dataStart: 0 });
+    const caller = $noteEditableCallerNode(noteNode);
+    if ($selectGlyphStop(stops, utf16Offset, glyph, $isTypingTextBefore(noteNode, caller)))
+      return true;
+  }
   const at = Math.min(start + Math.max(utf16Offset, 0), value.getTextContentSize());
   value.select(at, at);
   return true;
