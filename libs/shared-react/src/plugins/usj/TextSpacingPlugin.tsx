@@ -25,6 +25,7 @@ import {
   $syncDisplayRun,
   CharNode,
   displayRunDescriptor,
+  isCursorPlaceholderOnly,
   NoteNode,
   textTypeState,
   VerseNode,
@@ -87,7 +88,8 @@ function useTextSpacing(editor: LexicalEditor) {
  *
  * The exemption early-returns keep the transform away from contexts that own their own spacing:
  * non-editable nodes, already-spaced text, note/char/typed-mark adjacency, unknown-node content,
- * adjacent same-run text nodes, inline unknowns (optbreak, ref), and attribute display runs.
+ * adjacent same-run text nodes, inline unknowns (optbreak, ref), attribute display runs, and a
+ * transient caret host.
  *
  * @param node - TextNode that might need updating.
  */
@@ -120,6 +122,11 @@ function $textNodeTrailingSpaceTransform(node: TextNode): void {
     // already applied to notes, chars, and typed marks. Block-level unknowns (figures, sidebars)
     // keep the existing spacing behavior.
     ($isUnknownNode(nextSibling) && nextSibling.isInlineTag()) ||
+    // A transient caret host (a lone zero-width space) must stay bare. Padding it makes the node no
+    // longer placeholder-only, so the host's own strip-on-edit transform reads that as typing and
+    // removes the space's reason to exist, and the empty-verse clause below clears what is left —
+    // stranding the caret on a boundary that renders nothing.
+    isCursorPlaceholderOnly(text) ||
     // An attribute display run (char/milestone/verse — attributeDisplay.utils.ts) is engine-owned
     // presentation, not paragraph prose: it must never gain a trailing space of its own, even
     // when it sits directly in a paragraph (a verse's \va/\vp value has no CharNode parent to

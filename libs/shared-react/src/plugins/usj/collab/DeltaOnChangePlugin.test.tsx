@@ -1,37 +1,48 @@
+import { act } from "@testing-library/react";
 import {
   $createImmutableVerseNode,
   $isImmutableVerseNode,
   ImmutableVerseNode,
 } from "../../../nodes/usj/ImmutableVerseNode";
+import { CharNodePlugin } from "../CharNodePlugin";
+import { EmptyVerseCaretGuardPlugin } from "../EmptyVerseCaretGuardPlugin";
+import { TextSpacingPlugin } from "../TextSpacingPlugin";
 import {
   $typeTextAtSelection,
   baseTestEnvironment,
   sutUpdate,
   typeTextAtSelection,
+  updateSelection,
 } from "../react-test.utils";
 import { DeltaOp } from "./delta-common.utils";
 import { DeltaOnChangePlugin } from "./DeltaOnChangePlugin";
 import {
   $createTextNode,
   $getRoot,
+  $getSelection,
+  $getState,
+  $isRangeSelection,
   $isTextNode,
+  $setState,
   EditorState,
   LexicalEditor,
+  SELECTION_CHANGE_COMMAND,
   TextNode,
-  $setState,
-  $getState,
 } from "lexical";
 import {
   $createBookNode,
   $createCharNode,
-  $createNoteNode,
   $createImmutableChapterNode,
   $createImpliedParaNode,
+  $createNoteNode,
+  $createParaNode,
   $isImmutableChapterNode,
   $isImpliedParaNode,
+  $isParaNode,
   blackListedChangeTags,
   charIdState,
   CURSOR_CHANGE_TAG,
+  EMPTY_CHAR_PLACEHOLDER_TEXT,
   EXTERNAL_USJ_MUTATION_TAG,
   ImmutableChapterNode,
   ImpliedParaNode,
@@ -407,6 +418,139 @@ describe("OnChangePlugin", () => {
       await sutUpdate(editor, $makeMultiNodeChange, { tag: CURSOR_CHANGE_TAG });
       expect(calls).toHaveLength(0);
     });
+  });
+});
+
+describe("typing into a transient caret host", () => {
+  // The host's OWN mutations are tagged and never reach this handler. The keystroke that follows is
+  // the user's own edit, untagged, and it goes through the single-changed-node fast path — whose
+  // insert is raw bytes while its retain is counted in delta-doc coordinates, which exclude a bare
+  // host. The two currencies disagree by the host's one character, and the diff pays for it with a
+  // delete the document never earned.
+  async function setup() {
+    const calls: DeltaOp[][] = [];
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createImmutableVerseNode("2"),
+            $createTextNode("And the earth. "),
+            $createImmutableVerseNode("3"),
+            $createImmutableVerseNode("4"),
+            $createTextNode("Light."),
+          ),
+        );
+      },
+      <>
+        <EmptyVerseCaretGuardPlugin />
+        <TextSpacingPlugin />
+        <DeltaOnChangePlugin
+          onChange={(_editorState, _editor, _tags, ops) => calls.push(ops)}
+          ignoreSelectionChange
+          ignoreHistoryMergeTagChange
+          ignoreTags={blackListedChangeTags}
+        />
+      </>,
+    );
+    // Arrive in the empty verse the way an arrow press does: the element point past its marker.
+    const para = editor.getEditorState().read(() => {
+      const first = $getRoot().getFirstChild();
+      if (!$isParaNode(first)) throw new Error("expected a paragraph");
+      return first;
+    });
+    updateSelection(editor, para, 3);
+    await act(async () => {
+      editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+    calls.length = 0;
+    return { editor, calls };
+  }
+
+  it("emits no delete for a keystroke that only inserts", async () => {
+    const { editor, calls } = await setup();
+
+    await sutUpdate(editor, () => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) selection.insertText("X");
+    });
+
+    expect(calls).toHaveLength(1);
+    // The host is invisible to delta-doc coordinates, so the retain counts v2(1) + text(15) + v3(1)
+    // and the insert is exactly what was typed. A delete here would land on verse 4's marker.
+    expect(calls[0]).toEqual([{ retain: 17 }, { insert: "X " }]);
+  });
+});
+
+describe("typing into an empty char span", () => {
+  // An empty `\w \w*` span shows as a CharNode holding one NBSP, which the peer holds as zero
+  // characters. The keystroke that fills it goes through the single-changed-node fast path, and
+  // `$charTextNodeTransform` strips the NBSP in the same update — so the previous state's raw bytes
+  // are one longer than the delta-doc length the retain is counted in, and the diff pays the
+  // difference with a delete that eats the following run.
+  async function setup() {
+    const calls: DeltaOp[][] = [];
+    let placeholder: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        placeholder = $createTextNode(EMPTY_CHAR_PLACEHOLDER_TEXT);
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createImmutableVerseNode("2"),
+            $createTextNode("And the earth. "),
+            $createCharNode("w").append(placeholder),
+            $createTextNode("Light."),
+          ),
+        );
+      },
+      <>
+        <CharNodePlugin />
+        <DeltaOnChangePlugin
+          onChange={(_editorState, _editor, _tags, ops) => calls.push(ops)}
+          ignoreSelectionChange
+          ignoreHistoryMergeTagChange
+          ignoreTags={blackListedChangeTags}
+        />
+      </>,
+    );
+    calls.length = 0;
+    // Defined by the test environment.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    return { editor, calls, placeholder: placeholder! };
+  }
+
+  it("emits no delete for a keystroke that only inserts", async () => {
+    const { editor, calls, placeholder } = await setup();
+
+    // Past the structural NBSP, which is where the caret sits in an empty span.
+    await typeTextAtSelection(editor, "a", placeholder, EMPTY_CHAR_PLACEHOLDER_TEXT.length);
+
+    expect(calls).toHaveLength(1);
+    // The peer holds zero characters at the span, so the whole edit is the one typed character,
+    // carrying the span's own attributes. A delete here eats the "L" of "Light.".
+    expect(calls[0]).toEqual([
+      { retain: 16 },
+      { insert: "a", attributes: { char: { style: "w" } } },
+    ]);
+  });
+
+  // Emptying the span goes the other way through the same zero-length op: the PREVIOUS document
+  // holds the one character and the current one holds `{ insert: "" }`. Without the filter the
+  // diff re-inserted the tail and deleted eight characters past the edit.
+  it("emits a single-character delete when the span is emptied", async () => {
+    const { editor, calls, placeholder } = await setup();
+    await typeTextAtSelection(editor, "a", placeholder, EMPTY_CHAR_PLACEHOLDER_TEXT.length);
+    calls.length = 0;
+
+    // The end state a backspace leaves: the span survives and `$charTextNodeTransform` restores its
+    // placeholder. Set directly rather than via `deleteCharacter`, which needs `Selection.modify` —
+    // a DOM API jsdom does not implement — and rather than via a range replacement, which removes
+    // the whole span and so never produces the zero-length op this is about.
+    await sutUpdate(editor, () => {
+      placeholder.getLatest().setTextContent(EMPTY_CHAR_PLACEHOLDER_TEXT);
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual([{ retain: 16 }, { delete: 1 }]);
   });
 });
 

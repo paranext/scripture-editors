@@ -3,7 +3,8 @@
 
 import { $createImmutableVerseNode, ImmutableVerseNode } from "../../nodes/usj";
 import { EmptyVerseCaretGuardPlugin } from "./EmptyVerseCaretGuardPlugin";
-import { baseTestEnvironment, deleteTextAtSelection } from "./react-test.utils";
+import { TextSpacingPlugin } from "./TextSpacingPlugin";
+import { baseTestEnvironment, deleteTextAtSelection, updateSelection } from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
@@ -201,6 +202,101 @@ describe("EmptyVerseCaretGuardPlugin", () => {
       expect($isRangeSelection(selection) ? selection.getTextContent() : "").not.toContain(
         CURSOR_PLACEHOLDER_CHAR,
       );
+    });
+  });
+});
+
+describe("EmptyVerseCaretGuardPlugin alongside the editor's other plugins", () => {
+  /**
+   * The guard does not run alone in the editor. `TextSpacingPlugin` owns the structural space
+   * before a verse marker and transforms every `TextNode`, so a caret host that lands where it is
+   * looking has to survive it. Mounting the guard by itself cannot show that.
+   */
+  async function sharedEnvironment($initialEditorState?: () => void) {
+    return baseTestEnvironment(
+      $initialEditorState,
+      <>
+        <EmptyVerseCaretGuardPlugin />
+        <TextSpacingPlugin />
+      </>,
+    );
+  }
+
+  /** `[v2, "...", v3, v4, "..."]` — an empty verse 3 between two verses in one paragraph. */
+  function $emptyVerseBetweenVerses(): ParaNode {
+    const para = $createParaNode("p");
+    $getRoot().append(
+      para.append(
+        $createImmutableVerseNode("2"),
+        $createTextNode("And the earth was without form. "),
+        $createImmutableVerseNode("3"),
+        $createImmutableVerseNode("4"),
+        $createTextNode("And there was light."),
+      ),
+    );
+    return para;
+  }
+
+  it("keeps a caret host in an empty verse between two verses", async () => {
+    let para: ParaNode;
+    const { editor } = await sharedEnvironment(() => {
+      para = $emptyVerseBetweenVerses();
+    });
+
+    // Where the browser parks the caret when arrowing across the empty verse: the element point
+    // between verse 3's marker and verse 4's, which renders no caret of its own.
+    updateSelection(editor, para!, 3);
+    await dispatchSelectionChange(editor);
+
+    editor.getEditorState().read(() => {
+      const children = ($getRoot().getFirstChild() as ParaNode).getChildren();
+      const host = children[3];
+      expect($isTextNode(host)).toBe(true);
+      expect(host.getTextContent()).toBe(CURSOR_PLACEHOLDER_CHAR);
+
+      // The caret rests IN the host, so the browser has a text node to draw it in.
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.anchor.type).toBe("text");
+      expect(selection.anchor.key).toBe(host.getKey());
+    });
+  });
+
+  it("lands typed text in the empty verse, not the next one", async () => {
+    let para: ParaNode;
+    const { editor } = await sharedEnvironment(() => {
+      para = $emptyVerseBetweenVerses();
+    });
+
+    updateSelection(editor, para!, 3);
+    await dispatchSelectionChange(editor);
+
+    // The node the caret is visibly resting in before anything is typed.
+    let hostKey: string | undefined;
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection) && selection.anchor.type === "text")
+        hostKey = selection.anchor.key;
+    });
+
+    await act(async () => {
+      editor.update(() => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertText("X");
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      const children = ($getRoot().getFirstChild() as ParaNode).getChildren();
+      // The typed text landed in the very node that was showing the caret — the promise the user
+      // story makes — and that node is verse 3's content, between the two verse markers.
+      expect(hostKey).toBeDefined();
+      expect(children[3].getKey()).toBe(hostKey);
+      expect(children[2]).toBeInstanceOf(ImmutableVerseNode);
+      expect(children[3].getTextContent()).toBe("X ");
+      expect(children[4]).toBeInstanceOf(ImmutableVerseNode);
+      // Verse 4's own text is untouched.
+      expect(children[5].getTextContent()).toBe("And there was light.");
     });
   });
 });
