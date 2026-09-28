@@ -107,6 +107,11 @@ export interface EditorRef {
    * touching the editor, so the user's edit stays pending on screen and their caret and undo
    * history are untouched. Settling is uniform: a half-typed `|stuf` settles to literal content,
    * because that is what those bytes mean to anything that parses them.
+   *
+   * Annotations are never part of it; a comment's `zmsc` milestones cover only the text it holds,
+   * never display bytes (an attribute value is a string, and a glyph or verse number has no place
+   * for a milestone). A host that needs such an annotation again after `setUsj` re-applies it from
+   * its own anchor.
    */
   getUsj(): Usj | undefined;
   /**
@@ -234,6 +239,19 @@ export interface EditorRef {
    * pending marker edits count as already settled. See {@link EditorRef.getSelection} for the
    * full mapping contract, including the inbound refusal rule.
    *
+   * A range may cover display bytes as well as text: a marker glyph, a verse or chapter number, a
+   * note caller, or an attribute run's text (`|lemma="grace"`, `\va 3\va*`, a milestone's
+   * `|who="Pilate"`). Text is wrapped in a `<mark>`; display bytes keep their own element, which
+   * holds the annotation and gets the same class names (`<typedMark>-<type>`, `annotationId-<id>`)
+   * plus `display-annotation`, painted whole even where the range covers only part of it. The
+   * whitespace the editor shows between a marker and its content is never annotated. Setting an
+   * annotation never changes the document, a position, or what `getSelection` reports.
+   *
+   * `onRemove`: an annotation that holds any text reports removal through its marks, as before —
+   * one call per `<mark>`. One held only on display bytes reports `"removed"` once when removed or
+   * set again, and `"destroyed"` once when its last display byte leaves the document, including
+   * when a settle discards those bytes.
+   *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.
    * @param type - Type of the annotation.
@@ -260,7 +278,8 @@ export interface EditorRef {
    *
    * @remarks **Settled**: positions and indexes refer to the document `getUsj()` returns at that
    *   moment — pending marker edits count as already settled. See {@link EditorRef.getSelection}
-   *   for the full mapping contract.
+   *   for the full mapping contract. See {@link EditorRef.setAnnotation} for the display-byte
+   *   carrier and removal-semantics contract.
    *
    * @param selection - An annotation range containing the start and end location.
    * @param type - Type of the annotation.
@@ -276,7 +295,7 @@ export interface EditorRef {
     onRemove?: TypedMarkOnRemove,
   ): void;
   /**
-   * Remove an ephemeral annotation.
+   * Remove an ephemeral annotation. Removes it from text and display bytes alike.
    * @param type - Type of the annotation.
    * @param id - ID of the annotation.
    */

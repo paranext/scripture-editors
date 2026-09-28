@@ -166,6 +166,17 @@ text before it), and at the seam between the glyph and the caller it inserts bet
 Consequence for tests: asserting that the mode is `token` proves nothing about whether the shell is
 protected. Assert what the DOCUMENT does under a keystroke.
 
+### Annotations never restructure display bytes
+
+An annotation covers content text with a `TypedMarkNode` and covers display bytes — marker glyphs,
+attribute-run text, a verse, a note caller, a chapter glyph, read-only glyph decorators — by state
+held on the node itself (`displayAnnotationsState`, `libs/shared/src/nodes/features/`). A display
+node is never moved into a mark and never split by one: display runs are found by position and read
+as single nodes, so either would read as the run being deleted, and the sync would rebuild or remove
+it. Separators hold nothing — they have no position of their own. The settle carries both
+representations by bytes: kept or re-spelled bytes carry their annotation to the settled
+counterpart, discarded bytes drop it. `getUsj()` carries no display-byte annotation.
+
 ### `\cat` is the attribute marker the stylesheet does not declare
 
 `ATTRIBUTE_MARKERS` holds `ca`, `cp`, `va`, `vp`, and `cat`. All but `cat` are also usfm.sty

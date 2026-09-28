@@ -165,6 +165,12 @@ Annotations are added with a specific `type` via the editor's reference API (see
 
 For example, if an annotation of type _"grammar"_ is overlapping it will have both CSS classnames `editor-typed-mark-external-grammar` and `editor-typed-markOverlap-external-grammar`. If it's not overlapping it still has the first classname. Annotations and comments are the same when considering if it's overlapping.
 
+The same class names are applied to the element of any display bytes an annotation covers — a
+marker glyph, a verse or chapter number, a note caller, an attribute run such as `|lemma="grace"`
+— which additionally carries `display-annotation`. Such an element is painted whole, and gets the
+overlap class whenever two annotations of one type are on it, even if the parts of it they name
+do not overlap. Style annotations by class, never by the `mark` element name.
+
 ### Comment Styles
 
 These follow a similar patter to [Annotation Styles](#annotation-styles). If a comment is overlapping it will have both CSS classnames `editor-typed-mark-internal-comment` and `editor-typed-markOverlap-internal-comment`. If it's not overlapping it still has the first classname. Annotations and comments are the same when considering if it's overlapping.
