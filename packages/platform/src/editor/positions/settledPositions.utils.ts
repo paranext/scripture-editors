@@ -60,6 +60,7 @@ import {
   usjJsonPathFromIndexes,
 } from "@eten-tech-foundation/scripture-utilities";
 import {
+  $createPoint,
   $getNodeByKey,
   $getRoot,
   $getSelection,
@@ -68,6 +69,7 @@ import {
   $isRootNode,
   $isTextNode,
   LexicalNode,
+  PointType,
 } from "lexical";
 import { LoggerBasic } from "shared";
 import {
@@ -937,12 +939,66 @@ function $liveLocationFromSettled(
   return node ? $getLocationFromNode(node, point.offset, prepared.viewOptions) : undefined;
 }
 
+/** A resolved `[node, offset]` as a point of the tree being read; a leaf that is neither text nor
+ * an element stands as the boundary in front of it (offset 0) or past it. */
+function $pointOf([node, offset]: [LexicalNode | undefined, number | undefined]):
+  | PointType
+  | undefined {
+  if (!node || offset === undefined) return undefined;
+  if ($isTextNode(node)) return $createPoint(node.getKey(), offset, "text");
+  if ($isElementNode(node)) return $createPoint(node.getKey(), offset, "element");
+  const parent = node.getParent();
+  if (!parent) return undefined;
+  const index = node.getIndexWithinParent() + (offset > 0 ? 1 : 0);
+  return $createPoint(parent.getKey(), index, "element");
+}
+
+/** Whether `start` sits past `end` in the tree being read, both resolved there; `false` when
+ * either names nothing in it. */
+function $isPastEnd(
+  start: UsjDocumentLocation,
+  end: UsjDocumentLocation,
+  viewOptions: ViewOptions,
+): boolean {
+  const from = $pointOf($getNodeFromLocation(start, viewOptions));
+  const to = $pointOf($getNodeFromLocation(end, viewOptions));
+  return !!from && !!to && to.isBefore(from);
+}
+
+/**
+ * Whether two SETTLED locations in the same rebuilt scope run backward in the settled document —
+ * compared in that scope's settled tree — or `undefined` when they are not in one scope. Each end
+ * of a range crosses the settle on its own, and a settle can reorder bytes only inside one scope
+ * (an attribute a repeated name moves), so only ends in the same scope can cross out of order.
+ *
+ * Call inside a read of the LIVE editor state, with `prepared` from the same read.
+ */
+function $settledEndsBackward(
+  prepared: PreparedScopes,
+  start: UsjDocumentLocation,
+  end: UsjDocumentLocation,
+): boolean | undefined {
+  const from = $settledTarget(prepared, start);
+  const to = $settledTarget(prepared, end);
+  if (from?.kind !== "scope" || to?.kind !== "scope" || from.plan !== to.plan) return undefined;
+  return from.plan.scratch
+    .getEditorState()
+    .read(() =>
+      $isPastEnd(
+        withContentIndexes(from.location, from.scratchIndexes),
+        withContentIndexes(to.location, to.scratchIndexes),
+        prepared.viewOptions,
+      ),
+    );
+}
+
 /**
  * `settled` restated in LIVE coordinates, so the editor's existing resolvers
  * (`$getRangeFromUsjSelection`, the annotation plugin, `$insertNote`) consume it unchanged — or
  * `undefined` when an endpoint names nothing in the settled document, which a caller must treat as
  * "refuse", never as "resolve it anyway". Every other endpoint has a live position: its own bytes'
- * counterpart, or where the bytes in front of it snap LEFT to while an edit is pending.
+ * counterpart, or where the bytes in front of it snap LEFT to while an edit is pending. A range
+ * keeps the direction it was given, even where the settle moved an attribute its ends sit in.
  *
  * Call inside a read of the LIVE editor state, with `prepared` from the same read.
  */
@@ -959,7 +1015,12 @@ export function $liveSelectionFromSettled<T extends SelectionRange | AnnotationR
   if (!settled.end) return { ...settled, start };
   const end = $liveLocationFromSettled(context, prepared, settled.end);
   if (!end) return undefined;
-  return { ...settled, start, end };
+  // The two ends cross on their own, so inside an attribute the settle moves they can come out in
+  // the other order; keep the direction the host gave.
+  const backward = $settledEndsBackward(prepared, settled.start, settled.end);
+  const reversed =
+    backward !== undefined && $isPastEnd(start, end, prepared.viewOptions) !== backward;
+  return reversed ? { ...settled, start: end, end: start } : { ...settled, start, end };
 }
 
 /** `location`'s top-level index restated in settled coordinates. Nothing below the top level
@@ -1454,7 +1515,8 @@ function $settledDocumentEnd(
  * The editor's current selection in SETTLED coordinates — `undefined` only when there is no
  * selection to report. An endpoint in front of bytes that
  * have no settled counterpart while an edit is pending snaps LEFT, each end of a range on its own
- * ({@link $settledLocationFromLivePoint}).
+ * ({@link $settledLocationFromLivePoint}); the range still runs forward in the settled document,
+ * even where the settle moved an attribute its ends sit in.
  *
  * Call inside a read of the LIVE editor state, with `prepared` from the same read.
  */
@@ -1477,5 +1539,9 @@ export function $settledSelectionFromLive(prepared: PreparedScopes): SelectionRa
   const last = backward ? selection.anchor : selection.focus;
   const end = $settledLocationFromLivePoint(prepared, last.getNode(), last.offset);
   if (!end) return undefined;
-  return { start, end };
+  // The two ends cross on their own, so inside an attribute the settle moves they can come out in
+  // the other order.
+  return $settledEndsBackward(prepared, start, end) === true
+    ? { start: end, end: start }
+    : { start, end };
 }

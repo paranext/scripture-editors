@@ -12,33 +12,31 @@ const nows = (s: string) => s.replace(/\s/g, "");
 
 /**
  * Every alignment must cover each side exactly once, with no gaps, overlaps, or reversed sides.
- * The two sides need not ascend together: inside an attribute section the settle reorders, a
- * surviving attribute's segment sits at its live place on one side and its settled place on the
- * other.
+ * The segments run in settled order, so the settled side is contiguous in list order; the live
+ * side need not be: inside an attribute section the settle reorders, a surviving attribute's
+ * segment sits at its live place on one side and its settled place on the other.
  */
 function expectTiles(alignment: ByteAlignment, liveLength: number, settledLength: number): void {
+  let settled = 0;
   for (const segment of alignment.segments) {
+    expect(segment.settledStart).toBe(settled);
     expect(segment.liveEnd).toBeGreaterThanOrEqual(segment.liveStart);
     expect(segment.settledEnd).toBeGreaterThanOrEqual(segment.settledStart);
     if (segment.same)
       expect(segment.liveEnd - segment.liveStart).toBe(segment.settledEnd - segment.settledStart);
+    expect(segment.liveEnd).toBeLessThanOrEqual(liveLength);
+    settled = segment.settledEnd;
   }
-  const sides = [
-    ["liveStart", "liveEnd", liveLength],
-    ["settledStart", "settledEnd", settledLength],
-  ] as const;
-  for (const [startKey, endKey, length] of sides) {
-    const covering = alignment.segments
-      .filter((segment) => segment[endKey] > segment[startKey])
-      .sort((a, b) => a[startKey] - b[startKey]);
-    let covered = 0;
-    for (const segment of covering) {
-      expect(segment[startKey]).toBe(covered);
-      covered = segment[endKey];
-    }
-    expect(covered).toBe(length);
-    for (const segment of alignment.segments) expect(segment[endKey]).toBeLessThanOrEqual(length);
+  expect(settled).toBe(settledLength);
+  const covering = alignment.segments
+    .filter((segment) => segment.liveEnd > segment.liveStart)
+    .sort((a, b) => a.liveStart - b.liveStart);
+  let live = 0;
+  for (const segment of covering) {
+    expect(segment.liveStart).toBe(live);
+    live = segment.liveEnd;
   }
+  expect(live).toBe(liveLength);
 }
 
 describe("alignUsfmBytes", () => {
@@ -306,6 +304,28 @@ describe("an attribute section the settle reorders", () => {
     expectRoundTrips(a, live.length, settled.length);
     for (let count = 0; count <= settled.length; count += 1)
       expect(mapCount(a, count, "settled")).toBeDefined();
+  });
+
+  it("snaps a discarded duplicate's bytes, and maps the survivor's name, when nothing moves", () => {
+    // The survivor keeps the discarded one's slot, so no attribute moves; the discarded bytes
+    // still have no counterpart, even though they spell the same name as the survivor's.
+    const inOrderLive = nows('\\w a|lemma="a" lemma="b" strong="s"\\w*');
+    const inOrderSettled = nows('\\w a|lemma="b" strong="s"\\w*');
+    const inOrder = alignUsfmBytes(inOrderLive, inOrderSettled);
+    expectTiles(inOrder, inOrderLive.length, inOrderSettled.length);
+    const inOrderBar = inOrderLive.indexOf("|");
+    for (let count = inOrderBar + 1; count < inOrderBar + 1 + 'lemma="a"'.length; count += 1) {
+      expect(mapCount(inOrder, count, "live")).toBeUndefined();
+      expect(mapCountSnapped(inOrder, count, "live")).toBe(inOrderBar + 1);
+    }
+    for (const survivor of ['lemma="b"', 'strong="s"'])
+      expectExact(
+        inOrder,
+        inOrderLive.indexOf(survivor),
+        inOrderSettled.indexOf(survivor),
+        survivor.length,
+      );
+    expectRoundTrips(inOrder, inOrderLive.length, inOrderSettled.length);
   });
 
   it("snaps a caret in the discarded duplicate LEFT, to just past the settled `|`", () => {

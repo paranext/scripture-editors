@@ -10,7 +10,7 @@
  * byte maps exactly, however many such literals the paragraph holds. Every settled coordinate is
  * read from the document `getUsj()` returned.
  */
-import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { mountStandardViewEditor, requireStandardViewOptions } from "../settledGetUsj.test-helpers";
 import { $prepareSettleScopes, PreparedScopes } from "./settledScopes.utils";
 import {
   $livePointFromSettledLocation,
@@ -32,6 +32,7 @@ import { MarkerObject, UsjDocumentLocation } from "@eten-tech-foundation/scriptu
 import { act } from "@testing-library/react";
 import { $createRangeSelection, $setSelection } from "lexical";
 import { getPendedDisplayOwners } from "shared";
+import { $getNodeFromLocation } from "shared-react";
 
 /** The first paragraph's top-level content index in every fixture here (book, chapter, para). */
 const PARA_TOP_INDEX = 2;
@@ -244,6 +245,85 @@ describe("two typed literals the settle spells differently, in one paragraph", (
     );
 
     expect(range).toEqual({ start: { jsonPath: contentPath([PARA_TOP_INDEX, 0]), offset: 1 } });
+  });
+});
+
+describe("a range across an attribute the settle moves behind a repeated name", () => {
+  // The repeated `lemma` keeps its first slot with its last value, so the settled span spells
+  // `lemma="b"` ahead of `strong="G5485"`: a range from inside `strong` to inside the surviving
+  // `lemma` runs forward live and backward settled, end for end.
+  const TYPED = '|lemma="a" strong="G5485" lemma="b"';
+  const SPAN = [PARA_TOP_INDEX, 1];
+
+  async function pendingReorder() {
+    const mounted = await mountStandardViewEditor(
+      twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God made"]),
+    );
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const word = $textContaining("grace");
+        const text = `${word.getTextContent()}${TYPED}`;
+        word.setTextContent(text);
+        word.select(text.length, text.length);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    const para = settledPara(mounted.ref.current?.getUsj(), PARA_TOP_INDEX);
+    expect(para.content?.[1]).toMatchObject({ marker: "w", lemma: "b", strong: "G5485" });
+    const live = mounted.lexical
+      .getEditorState()
+      .read(() => $textContaining(TYPED).getTextContent());
+    return {
+      ...mounted,
+      context: settledPositionContext(mounted.lexical),
+      /** In the typed text: between `G54` and `85`, and in front of the surviving value `b`. */
+      inStrong: live.indexOf("G5485") + 3,
+      inLemma: live.lastIndexOf('"b"') + 1,
+    };
+  }
+
+  const settledLemma = { jsonPath: propertyPath(SPAN, "lemma"), propertyOffset: 0 };
+  const settledStrong = { jsonPath: propertyPath(SPAN, "strong"), propertyOffset: 3 };
+
+  it("reports the range with its ends in settled order", async () => {
+    const { lexical, context, inStrong, inLemma } = await pendingReorder();
+    await act(async () => {
+      lexical.update(() => {
+        const node = $textContaining(TYPED);
+        const selection = $createRangeSelection();
+        selection.anchor.set(node.getKey(), inStrong, "text");
+        selection.focus.set(node.getKey(), inLemma, "text");
+        $setSelection(selection);
+      });
+      await Promise.resolve();
+    });
+
+    const selection = lexical
+      .getEditorState()
+      .read(() => $settledSelectionFromLive($prepareSettleScopes(context)));
+
+    expect(selection).toEqual({ start: settledLemma, end: settledStrong });
+  });
+
+  it("places a settled range with its ends in live order", async () => {
+    const { lexical, context, inStrong, inLemma } = await pendingReorder();
+
+    const offsets = lexical.getEditorState().read(() => {
+      const range = $liveSelectionFromSettled(context, $prepareSettleScopes(context), {
+        start: settledLemma,
+        end: settledStrong,
+      });
+      if (!range?.end) return undefined;
+      const node = $textContaining(TYPED);
+      return [range.start, range.end].map((location) => {
+        const [at, offset] = $getNodeFromLocation(location, requireStandardViewOptions());
+        return at?.is(node) ? offset : undefined;
+      });
+    });
+
+    expect(offsets).toEqual([inStrong, inLemma]);
   });
 });
 
