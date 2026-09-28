@@ -50,7 +50,7 @@ describe("mapRangeThroughEdit", () => {
     // kept and discarded bytes together: the kept ones stay
     ['|lemma="grace"', "|grace", 0, 10, [0, 3]],
     // a replaced value is dropped, never moved onto its replacement
-    [" 3", " 4", 1, 2, undefined],
+    [`${NBSP}3`, `${NBSP}4`, 1, 2, undefined],
     // an attribute the re-spelling moves keeps its value
     ['|lemma="a" strong="G5485" lemma="b"', '|lemma="b" strong="G5485"', 19, 24, [19, 24]],
   ])("%j -> %j maps [%i, %i) to %j", (before, after, start, end, expected) => {
