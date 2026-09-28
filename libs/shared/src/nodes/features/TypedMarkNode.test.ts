@@ -1085,6 +1085,123 @@ describe("TypedMarkNode", () => {
       });
     });
 
+    describe("a range that touches a text node only at its edge", () => {
+      /** Wraps `in the beginning \v 2 and the earth` from `start` to `end` (`[text, offset]` on the
+       * text before or after the verse); returns the marks' text, what the verse holds and the
+       * paragraph's text. */
+      function wrapAroundVerse(
+        start: ["before" | "after", number],
+        end: ["before" | "after", number],
+      ): { marks: string[]; verseHeld: [number, number][]; paraText: string } {
+        const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+        let verse!: VerseNode;
+        let para!: ParaNode;
+        editor.update(
+          () => {
+            const texts = {
+              before: $createTextNode("in the beginning "),
+              after: $createTextNode("and the earth"),
+            };
+            verse = $createVerseNode("2", getVisibleOpenMarkerText("v", "2"));
+            para = $createParaNode().append(texts.before, verse, texts.after);
+            $getRoot().append(para);
+            const selection = $createRangeSelection();
+            selection.anchor.set(texts[start[0]].getKey(), start[1], "text");
+            selection.focus.set(texts[end[0]].getKey(), end[1], "text");
+            $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+          },
+          { discrete: true },
+        );
+        return editor.getEditorState().read(() => ({
+          marks: para
+            .getLatest()
+            .getChildren()
+            .filter($isTypedMarkNode)
+            .map((mark) => mark.getTextContent()),
+          verseHeld: $held(verse.getLatest()),
+          paraText: para.getLatest().getTextContent(),
+        }));
+      }
+
+      it("marks none of the text a range starts at the end of, in front of a verse", () => {
+        const { marks, verseHeld, paraText } = wrapAroundVerse(
+          ["before", "in the beginning ".length],
+          ["after", "and".length],
+        );
+        expect(marks).toEqual(["and"]);
+        expect(verseHeld).toEqual([[0, getVisibleOpenMarkerText("v", "2").length]]);
+        expect(paraText).toBe(
+          `in the beginning ${getVisibleOpenMarkerText("v", "2")}and the earth`,
+        );
+      });
+
+      it("marks none of the text a range ends at the start of, after a verse", () => {
+        const { marks, verseHeld } = wrapAroundVerse(["before", "in the ".length], ["after", 0]);
+        expect(marks).toEqual(["beginning "]);
+        expect(verseHeld).toEqual([[0, getVisibleOpenMarkerText("v", "2").length]]);
+      });
+
+      /** Wraps `the \nd LORD\nd* made` from `start` (an offset in the span's text, `NBSP` + `LORD`)
+       * to `end` (an offset in ` made`); returns the text of each of the span's children (a mark
+       * shown as its children's text), what the closing glyph holds, and the paragraph's marks. */
+      function wrapAroundCloser(
+        start: number,
+        end: number,
+      ): { spanChildren: (string | string[])[]; closerHeld: [number, number][]; marks: string[] } {
+        const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+        let nd!: CharNode;
+        let para!: ParaNode;
+        editor.update(
+          () => {
+            const content = $createTextNode(`${NBSP}LORD`);
+            nd = $createCharNode("nd").append(
+              $createMarkerNode("nd"),
+              content,
+              $createMarkerNode("nd", "closing"),
+            );
+            const after = $createTextNode(" made");
+            para = $createParaNode().append($createTextNode("the "), nd, after);
+            $getRoot().append(para);
+            const selection = $createRangeSelection();
+            selection.anchor.set(content.getKey(), start, "text");
+            selection.focus.set(after.getKey(), end, "text");
+            $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+          },
+          { discrete: true },
+        );
+        return editor.getEditorState().read(() => {
+          const children = nd.getLatest().getChildren();
+          return {
+            spanChildren: children.map((child) =>
+              $isTypedMarkNode(child)
+                ? child.getChildren().map((inner) => inner.getTextContent())
+                : child.getTextContent(),
+            ),
+            closerHeld: $held(children.at(-1)),
+            marks: para
+              .getLatest()
+              .getChildren()
+              .filter($isTypedMarkNode)
+              .map((mark) => mark.getTextContent()),
+          };
+        });
+      }
+
+      it("marks none of the text a range starts at the end of, in front of a closing glyph", () => {
+        const { spanChildren, closerHeld, marks } = wrapAroundCloser(`${NBSP}LORD`.length, 3);
+        expect(spanChildren).toEqual(["\\nd", `${NBSP}LORD`, "\\nd*"]);
+        expect(closerHeld).toEqual([[0, "\\nd*".length]]);
+        expect(marks).toEqual([" ma"]);
+      });
+
+      it("marks none of the text a range ends at the start of, after a closing glyph", () => {
+        const { spanChildren, closerHeld, marks } = wrapAroundCloser(1 + "LO".length, 0);
+        expect(spanChildren).toEqual(["\\nd", `${NBSP}LO`, ["RD"], "\\nd*"]);
+        expect(closerHeld).toEqual([[0, "\\nd*".length]]);
+        expect(marks).toEqual([]);
+      });
+    });
+
     it("registers nothing for a range over content alone", () => {
       const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
       editor.update(

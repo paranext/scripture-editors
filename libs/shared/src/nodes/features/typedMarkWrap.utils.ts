@@ -159,12 +159,11 @@ export function $wrapSelectionInTypedMarkNode(
       const separatorLength = $charSeparatorPrefixLength(node);
       const startTextOffset = Math.max(isFirstNode ? startOffset : 0, separatorLength);
       const endTextOffset = isLastNode ? endOffset : textContentSize;
-      if (
-        (startTextOffset === 0 && endTextOffset === 0) ||
-        (separatorLength > 0 && endTextOffset <= separatorLength)
-      ) {
-        continue;
-      }
+      // A text node the range covers no byte of stays out of the mark: the range starts at its end
+      // (a position in front of a verse or a closing glyph names the text before it), ends at its
+      // start, or covers only the separator prefix. `splitText` never returns an empty piece, so
+      // wrapping here would mark the whole node.
+      if (startTextOffset >= endTextOffset) continue;
       const splitNodes = node.splitText(startTextOffset, endTextOffset);
       targetNode =
         splitNodes.length > 1 &&

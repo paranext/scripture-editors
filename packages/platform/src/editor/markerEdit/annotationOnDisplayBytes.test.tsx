@@ -78,6 +78,18 @@ function markCount(lexical: LexicalEditor): number {
   });
 }
 
+function markTexts(lexical: LexicalEditor): string[] {
+  return lexical.getEditorState().read(() => {
+    const texts: string[] = [];
+    const walk = (node: LexicalNode): void => {
+      if ($isTypedMarkNode(node)) texts.push(node.getTextContent());
+      if ($isElementNode(node)) node.getChildren().forEach(walk);
+    };
+    walk($getRoot());
+    return texts;
+  });
+}
+
 function paraText(mounted: Mounted): string {
   return mounted.lexical
     .getEditorState()
@@ -135,6 +147,18 @@ describe("an annotation across content and a verse number", () => {
     start: { jsonPath: contentPath([2, 0]), offset: "in the ".length },
     end: { jsonPath: contentPath([2, 0]), offset: "in the beginning".length },
   };
+
+  it("marks none of the text in front of the verse when the range starts at that text's end", async () => {
+    const mounted = await mountStandardViewEditor(usj);
+    await annotate(mounted, {
+      start: { jsonPath: contentPath([2, 0]), offset: "in the beginning ".length },
+      end: { jsonPath: contentPath([2, 2]), offset: "and".length },
+    });
+
+    expect(markTexts(mounted.lexical)).toEqual(["and"]);
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["\\v 2 "] });
+    expect(mounted.ref.current?.getUsj()).toEqual(usj);
+  });
 
   it("reports its removal no more often than its marks do", async () => {
     const mixed: Mock<TypedMarkOnRemove> = vi.fn();
