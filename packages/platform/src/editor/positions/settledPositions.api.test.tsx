@@ -17,6 +17,7 @@
 import { mountStandardViewEditor, requireStandardViewOptions } from "../settledGetUsj.test-helpers";
 import {
   contentPath,
+  propertyPath,
   settledPara,
   twoParaUsj,
   typeOver,
@@ -888,4 +889,130 @@ describe("a declared transient literal while the editor has no selection", () =>
       lexical.getEditorState().read(() => $marks().map((mark) => mark.getTextContent())),
     ).toEqual(["made"]);
   });
+});
+
+/**
+ * The end of a document's last text is a location like any other: it names the end of a string in
+ * `getUsj()`, so it resolves onto that text and reports back as itself. The shape is a chapter's
+ * last paragraph ending in verse text (John 2:25 in a chapter-at-a-time document), with the same
+ * paragraph followed by another one as the control, and a paragraph ending in a verse marker —
+ * where the last token is the verse's number — as the other control.
+ */
+describe("the end of the last text in a document", () => {
+  const verseText = "for he himself knew what was in man.";
+
+  function chapterEndUsj(trailing: MarkerObject[]): Usj {
+    return {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "JHN", content: ["JHN"] },
+        { type: "chapter", marker: "c", number: "2" },
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            { type: "verse", marker: "v", number: "24" },
+            "But Jesus didn't entrust himself to them, ",
+            { type: "verse", marker: "v", number: "25" },
+            verseText,
+          ],
+        },
+        ...trailing,
+      ],
+    };
+  }
+
+  const shapes: [string, MarkerObject[]][] = [
+    ["the last root child", []],
+    ["a paragraph with another after it", [{ type: "para", marker: "p", content: ["depart"] }]],
+  ];
+  const end = { jsonPath: contentPath([2, 3]), offset: verseText.length };
+
+  it.each(shapes)("setSelection puts the caret at the end of that text in %s", async (_, rest) => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterEndUsj(rest));
+    expect(settledPara(ref.current?.getUsj(), 2).content?.[3]).toBe(verseText);
+
+    await act(async () => {
+      ref.current?.setSelection({ start: end, end });
+      await Promise.resolve();
+    });
+
+    const caret = lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) return undefined;
+      const { anchor, focus } = selection;
+      return {
+        text: anchor.getNode().getTextContent(),
+        offset: anchor.offset,
+        type: anchor.type,
+        collapsed: anchor.is(focus),
+      };
+    });
+    expect(caret).toEqual({
+      text: verseText,
+      offset: verseText.length,
+      type: "text",
+      collapsed: true,
+    });
+  });
+
+  it.each(shapes)("getSelection reports a caret at the end of that text in %s", async (_, rest) => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterEndUsj(rest));
+
+    await act(async () => {
+      lexical.update(() => {
+        const text = $textContaining(verseText);
+        text.select(verseText.length, verseText.length);
+      });
+      await Promise.resolve();
+    });
+
+    expect(ref.current?.getSelection()).toEqual({ start: end });
+  });
+
+  it.each(shapes)("the location round-trips through setSelection in %s", async (_, rest) => {
+    const { ref } = await mountStandardViewEditor(chapterEndUsj(rest));
+
+    await act(async () => {
+      ref.current?.setSelection({ start: end, end });
+      await Promise.resolve();
+    });
+
+    expect(ref.current?.getSelection()).toEqual({ start: end });
+  });
+
+  it.each([
+    ["the paragraph's end, after the number", "26".length],
+    ["the document's end, one past the final newline", "26".length + 1],
+  ])(
+    "a document ending in a verse marker round-trips %s on the number",
+    async (_, propertyOffset) => {
+      const { ref } = await mountStandardViewEditor({
+        type: "USJ",
+        version: "3.1",
+        content: [
+          { type: "book", marker: "id", code: "JHN", content: ["JHN"] },
+          { type: "chapter", marker: "c", number: "2" },
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "verse", marker: "v", number: "25" },
+              verseText,
+              { type: "verse", marker: "v", number: "26" },
+            ],
+          },
+        ],
+      });
+      const location = { jsonPath: propertyPath([2, 2], "number"), propertyOffset };
+
+      await act(async () => {
+        ref.current?.setSelection({ start: location, end: location });
+        await Promise.resolve();
+      });
+
+      expect(ref.current?.getSelection()).toEqual({ start: location });
+    },
+  );
 });
