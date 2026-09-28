@@ -1,6 +1,6 @@
 import { releaseTagsAfterNextCommit } from "./editorUpdate.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $findMatchingParent } from "@lexical/utils";
+import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createPoint,
@@ -8,10 +8,20 @@ import {
   $getSelection,
   $isRangeSelection,
   $isTextNode,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_EDITOR,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  CUT_COMMAND,
+  DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
+  INSERT_LINE_BREAK_COMMAND,
+  INSERT_PARAGRAPH_COMMAND,
   LexicalNode,
+  PASTE_COMMAND,
   PointType,
   RangeSelection,
+  REMOVE_TEXT_COMMAND,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
@@ -322,6 +332,37 @@ export function NoteShellCaretGuardPlugin(): null {
       current?.addEventListener("pointerup", markUp, true);
       current?.addEventListener("pointercancel", markUp, true);
     });
+  }, [editor]);
+
+  // A drag is still under way when the user types or deletes over it (the mouse button still
+  // down): the browser owns the DOM selection until then, and Lexical re-reads the range from it
+  // for the edit, undoing the narrowing the selection change made. So the edit itself narrows the
+  // range again, first, before anything acts on it. A range that held nothing but the shell is
+  // left with nothing to delete.
+  useEffect(() => {
+    const narrowBeforeEdit = (isDeletion: boolean) => () => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+      if (!$narrowSelectionOutOfShell(selection)) return false;
+      return isDeletion && selection.isCollapsed();
+    };
+    const insertion = narrowBeforeEdit(false);
+    const deletion = narrowBeforeEdit(true);
+    return mergeRegister(
+      editor.registerCommand(
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        insertion,
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(PASTE_COMMAND, insertion, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(INSERT_PARAGRAPH_COMMAND, insertion, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(INSERT_LINE_BREAK_COMMAND, insertion, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(DELETE_CHARACTER_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(DELETE_WORD_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(DELETE_LINE_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(REMOVE_TEXT_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(CUT_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
+    );
   }, [editor]);
 
   useEffect(() => {

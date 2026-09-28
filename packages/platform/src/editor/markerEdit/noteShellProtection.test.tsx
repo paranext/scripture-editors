@@ -39,6 +39,8 @@ import {
   $getSelection,
   $isRangeSelection,
   $isTextNode,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  DELETE_CHARACTER_COMMAND,
   KEY_DOWN_COMMAND,
   LexicalEditor,
   SELECTION_CHANGE_COMMAND,
@@ -334,6 +336,55 @@ describe("expanded note shell", () => {
 
       const note = expectShellIntact(editor);
       expect(note.content).toEqual(["Z"]);
+    });
+
+    describe("when the edit comes while a drag still owns the selection", () => {
+      /**
+       * Set a range the way the browser leaves it mid-drag: no selection change has been handled
+       * for it yet, so nothing has narrowed it before the edit reads it.
+       */
+      async function unnarrowedRange(editor: LexicalEditor) {
+        await act(async () => {
+          editor.update(() => {
+            const note = findOnlyNote($getRoot());
+            const content = $contentText(note);
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection)) content.select(0, 0);
+            const range = $getSelection();
+            if (!$isRangeSelection(range)) throw new Error("expected a range selection");
+            range.anchor.set(content.getKey(), content.getTextContent().indexOf("note"), "text");
+            range.focus.set($opener(note).getKey(), 1, "text");
+          });
+        });
+      }
+
+      it("keeps the shell when the user types over the range", async () => {
+        const { editor } = await mount(protectedShell);
+        await unnarrowedRange(editor);
+
+        await act(async () => {
+          editor.update(() => {
+            editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "Z");
+          });
+        });
+
+        const note = expectShellIntact(editor);
+        expect(note.content).toEqual(["Znote"]);
+      });
+
+      it("keeps the shell when the user deletes the range", async () => {
+        const { editor } = await mount(protectedShell);
+        await unnarrowedRange(editor);
+
+        await act(async () => {
+          editor.update(() => {
+            editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+          });
+        });
+
+        const note = expectShellIntact(editor);
+        expect(JSON.stringify(note.content)).toContain("note");
+      });
     });
 
     it("narrows a backward range that starts in the content and ends in the shell", async () => {
