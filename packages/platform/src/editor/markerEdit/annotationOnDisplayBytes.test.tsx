@@ -467,6 +467,79 @@ describe("typing inside an annotated alternate number", () => {
   });
 });
 
+describe("the display-run sync rewriting an annotated run to a new owner value", () => {
+  /** Set the `\w` span's `lemma`, which the display-run sync writes into its run. */
+  async function setLemma(mounted: Mounted, lemma: string): Promise<void> {
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const word = $carrierHolding("1").getParent();
+        if (!$isCharNode(word)) throw new Error("no \\w span");
+        word.setUnknownAttributes({ ...word.getUnknownAttributes(), lemma });
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  /** Set the verse's alternate number, which the display-run sync writes into its `\va` run. */
+  async function setAltnumber(mounted: Mounted, altnumber: string): Promise<void> {
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const verse = $getRoot().getAllTextNodes().find($isVerseNode);
+        if (!verse) throw new Error("no verse");
+        verse.setAltnumber(altnumber);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  function $annotatedRunText(mounted: Mounted): string {
+    return mounted.lexical.getEditorState().read(() => $carrierHolding("1").getTextContent());
+  }
+
+  it("keeps the annotation on the value's surviving bytes, change after change", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(lemmaUsj);
+    await annotate(mounted, lemmaRange, "1", onRemove);
+
+    await setLemma(mounted, "gracious");
+    expect($annotatedRunText(mounted)).toBe("|gracious");
+    // `gracious` keeps `grac` of `grace`; its new bytes stay outside the range.
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["grac"] });
+
+    // The range is measured against `|gracious` after the first change, so the `e` written back is
+    // a new byte at its edge, outside it, as text typed beside a mark is.
+    await setLemma(mounted, "grace");
+    expect($annotatedRunText(mounted)).toBe("|grace");
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["grac"] });
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it("keeps the annotation on the surviving digit when a verse's alternate number changes", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(verseUsj);
+    await annotate(mounted, altnumberRange, "1", onRemove);
+
+    await setAltnumber(mounted, "34");
+    expect($annotatedRunText(mounted)).toBe(`${NBSP}34`);
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["3"] });
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it("does not bring back an annotation whose bytes a rewrite dropped", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(verseUsj);
+    await annotate(mounted, altnumberRange, "1", onRemove);
+
+    await setAltnumber(mounted, "4");
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    await setAltnumber(mounted, "3");
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(onRemove.mock.calls).toEqual([["external-test", "1", "destroyed", "3"]]);
+  });
+});
+
 describe("typing content after an annotated verse", () => {
   it("sends the same ops as it would without the annotation", async () => {
     const plainChange = vi.fn();
