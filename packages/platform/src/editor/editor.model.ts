@@ -173,7 +173,9 @@ export interface EditorRef {
    *   milestone nodes, note nodes, and unmatched nodes.
    *
    * @param embedNodeKey - The editor key of the embed node to replace.
-   * @param insertEmbedOps - The delta operations that insert the new embed node.
+   * @param insertEmbedOps - The delta operations that insert the new embed node. Any operations
+   *   after the first are inserted right after the new embed (the old one is deleted first) - how a
+   *   host's note editor hands back text that left its note (see {@link EditorRef.getOpsAfterNote}).
    */
   replaceEmbedUpdate(embedNodeKey: string, insertEmbedOps: DeltaOp[]): void;
   /**
@@ -629,6 +631,22 @@ export interface EditorRef {
    *   editor.
    */
   getNoteOps(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
+  /**
+   * EXPERIMENTAL: The operations for whatever follows a note in its paragraph, up to (not
+   * including) the paragraph's end.
+   *
+   * A host's own note editor holds the note alone in a paragraph, so anything found after it there
+   * has left the note: typing the note's closer (`\f*`) in the middle of an unclosed note closes
+   * the note at that point, and the rest of what was typed in the note belongs after it. Appending
+   * these ops after the note op in {@link EditorRef.replaceEmbedUpdate} puts that text after the
+   * note in the editor the note is applied to.
+   *
+   * @param noteKeyOrIndex - The note key or document-order index (see
+   *   {@link EditorRef.getNoteIndex}).
+   * @returns The operations (empty when nothing follows the note), or `undefined` when there is no
+   *   such note.
+   */
+  getOpsAfterNote(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
   /**
    * EXPERIMENTAL: Document-order index of the note with the given key — the coordinate a USJ-built
    * notes list (e.g. a footnotes pane) addresses notes by, and the same index `noteCallerOnClick`

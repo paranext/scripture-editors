@@ -24,6 +24,11 @@ refused. The public surface grew substantially; nothing was removed.
   coordinate a USJ-built notes list (e.g. a footnotes pane) addresses notes by.
 - `EditorRef.getNoteKey` — the inverse: the key of the note at a document-order index, so a host
   that addresses notes by index can hand the editor the key `replaceEmbedUpdate` needs.
+- `EditorRef.getOpsAfterNote` — the operations for whatever follows a note in its paragraph. A host's
+  own note editor holds the note alone, so text found after it there has left the note (a `\f*`
+  typed mid-note in an unclosed note); passed after the note op to `replaceEmbedUpdate`, it lands
+  after the note in the editor the note is applied to. `replaceEmbedUpdate` inserts any ops after
+  the first right after the new embed, once the old one is deleted.
 - `EditorRef.highlightNote` — applies PT9's selected-caller style (class `caller_highlight`: a
   yellow fill with thin blue top and bottom borders) to one note's caller at a time, through
   `NoteCallerHighlightPlugin`; purely presentational, and `undefined` clears it. A host that

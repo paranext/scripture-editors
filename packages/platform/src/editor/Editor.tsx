@@ -51,6 +51,7 @@ import {
   $addUpdateTag,
   $getNodeByKey,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $isTextNode,
   $setSelection,
@@ -1065,6 +1066,18 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         if (!noteNode) return undefined;
 
         return $getParticularNodeOps(noteNode);
+      });
+    },
+    getOpsAfterNote(noteKeyOrIndex) {
+      return editorRef.current?.read(() => {
+        const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+        if (!noteNode) return undefined;
+        const following = noteNode.getNextSiblings();
+        const first = following.at(0);
+        const last = following.at(-1);
+        if (!first || !last) return [];
+        const end = $isElementNode(last) ? (last.getLastDescendant() ?? last) : last;
+        return $getParticularNodeOps(first, end);
       });
     },
     getNoteIndex(noteKey) {
