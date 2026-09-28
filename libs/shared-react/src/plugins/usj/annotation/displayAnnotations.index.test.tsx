@@ -10,6 +10,7 @@ import {
   $getRoot,
   $getSelection,
   $setState,
+  COMMAND_PRIORITY_HIGH,
   createEditor,
   HISTORIC_TAG,
   LexicalEditor,
@@ -252,6 +253,29 @@ describe("the display-annotation index", () => {
       },
       { discrete: true },
     );
+    release();
+  });
+
+  it("strips them even when a higher-priority handler handles the paste", () => {
+    const { editor, release } = setup();
+    const unregister = editor.registerCommand(
+      SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+      () => true,
+      COMMAND_PRIORITY_HIGH,
+    );
+    editor.update(
+      () => {
+        const pasted = $setState($createTextNode("|grace"), textTypeState, "attribute");
+        $addDisplayAnnotation(pasted, "external-spelling", "a", 1, 6);
+        editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+          nodes: [pasted],
+          selection: $getSelection() ?? $createRangeSelection(),
+        });
+        expect($displayAnnotationsOf(pasted)).toEqual([]);
+      },
+      { discrete: true },
+    );
+    unregister();
     release();
   });
 });

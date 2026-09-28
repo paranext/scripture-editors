@@ -17,7 +17,7 @@ import { useEffect, useMemo, useRef } from "react";
 import {
   $getNearestNodeFromDOMNode,
   $getNodeByKey,
-  COMMAND_PRIORITY_LOW,
+  COMMAND_PRIORITY_CRITICAL,
   HISTORIC_TAG,
   Klass,
   LexicalEditor,
@@ -224,7 +224,9 @@ function createIndex(editor: LexicalEditor): Entry {
         nodes.forEach($stripDisplayAnnotations);
         return false;
       },
-      COMMAND_PRIORITY_LOW,
+      // Critical, and never handling the command, so a handler that does handle it cannot skip the
+      // strip.
+      COMMAND_PRIORITY_CRITICAL,
     ),
   );
 
