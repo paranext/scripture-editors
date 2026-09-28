@@ -44,14 +44,14 @@ import { createPortal } from "react-dom";
 
 import {
   $createTypedMarkNode,
-  $getMarkIDs,
   $isTypedMarkNode,
-  $unwrapTypedMarkNode,
   $wrapSelectionInTypedMarkNode,
   COMMENT_MARK_TYPE,
   LoggerBasic,
   TypedMarkNode,
 } from "shared";
+import { DisplayAnnotationIndex, useDisplayAnnotationIndex } from "shared-react";
+import { $commentIdsAt, $removeCommentAnnotation } from "./commentAnnotations.utils";
 import {
   CommentBase,
   Comments,
@@ -515,6 +515,7 @@ function CommentsPanelList({
   activeIDs,
   comments,
   deleteCommentOrThread,
+  displayIndex,
   listRef,
   submitAddComment,
   markNodeMap,
@@ -522,6 +523,7 @@ function CommentsPanelList({
   activeIDs: string[];
   comments: Comments;
   deleteCommentOrThread: (commentOrThread: CommentBase | Thread, thread?: Thread) => void;
+  displayIndex: DisplayAnnotationIndex;
   listRef: { current: null | HTMLUListElement };
   markNodeMap: Map<string, Set<NodeKey>>;
   submitAddComment: (
@@ -559,6 +561,7 @@ function CommentsPanelList({
       {comments.map((commentOrThread) => {
         const id = commentOrThread.id;
         if (commentOrThread.type === "thread") {
+          // Mark-only: a comment held only on display bytes has no mark start to select.
           const handleClickThread = () => {
             const markNodeKeys = markNodeMap.get(id);
             if (
@@ -593,7 +596,9 @@ function CommentsPanelList({
               key={id}
               onClick={handleClickThread}
               className={`CommentPlugin_CommentsPanel_List_Thread ${
-                markNodeMap.has(id) ? "interactive" : ""
+                markNodeMap.has(id) || displayIndex.keysFor(COMMENT_MARK_TYPE, id).size > 0
+                  ? "interactive"
+                  : ""
               } ${activeIDs.indexOf(id) === -1 ? "" : "active"}`}
             >
               <div className="CommentPlugin_CommentsPanel_List_Thread_QuoteBox">
@@ -658,10 +663,12 @@ function CommentsPanel({
   comments,
   submitAddComment,
   markNodeMap,
+  displayIndex,
 }: {
   activeIDs: string[];
   comments: Comments;
   deleteCommentOrThread: (commentOrThread: CommentBase | Thread, thread?: Thread) => void;
+  displayIndex: DisplayAnnotationIndex;
   markNodeMap: Map<string, Set<NodeKey>>;
   submitAddComment: (
     commentOrThread: CommentBase | Thread,
@@ -682,6 +689,7 @@ function CommentsPanel({
           activeIDs={activeIDs}
           comments={comments}
           deleteCommentOrThread={deleteCommentOrThread}
+          displayIndex={displayIndex}
           listRef={listRef}
           submitAddComment={submitAddComment}
           markNodeMap={markNodeMap}
@@ -724,6 +732,7 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
   const markNodeMap = useMemo<Map<string, Set<NodeKey>>>(() => {
     return new Map();
   }, []);
+  const displayIndex = useDisplayAnnotationIndex(editor);
   const [activeAnchorKey, setActiveAnchorKey] = useState<NodeKey | null>();
   const [activeIDs, setActiveIDs] = useState<string[]>([]);
   const [showCommentInput, setShowCommentInput] = useState(false);
@@ -760,28 +769,21 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
         commentStore.addComment(markedComment, thread, index);
       } else {
         commentStore.deleteCommentOrThread(comment);
-        // Remove ids from associated marks
+        // Remove ids from associated marks and display bytes
         const id = thread !== undefined ? thread.id : comment.id;
         const markNodeKeys = markNodeMap.get(id);
-        if (markNodeKeys !== undefined) {
+        const displayKeys = displayIndex.keysFor(COMMENT_MARK_TYPE, id);
+        if ((markNodeKeys !== undefined && markNodeKeys.size > 0) || displayKeys.size > 0) {
           // Do async to avoid causing a React infinite loop
           setTimeout(() => {
             editor.update(() => {
-              for (const key of markNodeKeys) {
-                const node: TypedMarkNode | null = $getNodeByKey(key);
-                if ($isTypedMarkNode(node)) {
-                  node.deleteID(COMMENT_MARK_TYPE, id);
-                  if (node.hasNoIDsForEveryType()) {
-                    $unwrapTypedMarkNode(node);
-                  }
-                }
-              }
+              $removeCommentAnnotation(id, markNodeKeys ?? [], displayKeys);
             });
           });
         }
       }
     },
-    [commentStore, editor, markNodeMap],
+    [commentStore, displayIndex, editor, markNodeMap],
   );
 
   const submitAddComment = useCallback(
@@ -795,6 +797,9 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
       if (isInlineComment) {
         editor.update(() => {
           if ($isRangeSelection(selection)) {
+            // A comment on display bytes alone (a verse number, a glyph, an attribute value) is
+            // allowed, but getUsj() carries no zmsc for display bytes, so a reload leaves its
+            // thread without an anchor.
             $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, commentOrThread.id);
           }
         });
@@ -809,17 +814,15 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
     let showCommentsTimeoutId: number | undefined;
 
     for (const id of activeIDs) {
-      const keys = markNodeMap.get(id);
-      if (keys !== undefined) {
-        for (const key of keys) {
-          const elem = editor.getElementByKey(key);
-          if (elem !== null) {
-            elem.classList.add("selected");
-            changedElems.push(elem);
-            showCommentsTimeoutId = window.setTimeout(() => {
-              setShowComments(true);
-            }, 0);
-          }
+      const keys = markNodeMap.get(id) ?? [];
+      for (const key of [...keys, ...displayIndex.keysFor(COMMENT_MARK_TYPE, id)]) {
+        const elem = editor.getElementByKey(key);
+        if (elem !== null) {
+          elem.classList.add("selected");
+          changedElems.push(elem);
+          showCommentsTimeoutId = window.setTimeout(() => {
+            setShowComments(true);
+          }, 0);
         }
       }
     }
@@ -832,7 +835,7 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
         changedElem.classList.remove("selected");
       }
     };
-  }, [activeIDs, editor, markNodeMap]);
+  }, [activeIDs, displayIndex, editor, markNodeMap]);
 
   useEffect(() => {
     if (!editor.hasNodes([TypedMarkNode]))
@@ -906,12 +909,9 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
             const anchorNode = selection.anchor.getNode();
 
             if ($isTextNode(anchorNode)) {
-              const commentIDs =
-                $getMarkIDs(anchorNode, COMMENT_MARK_TYPE, selection.anchor.offset) ?? [];
-              if (commentIDs !== null) {
-                setActiveIDs(commentIDs);
-                hasActiveIds = true;
-              }
+              const commentIDs = $commentIdsAt(anchorNode, selection.anchor.offset);
+              setActiveIDs(commentIDs);
+              hasActiveIds = true;
               if (!selection.isCollapsed()) {
                 setActiveAnchorKey(anchorNode.getKey());
                 hasAnchorKey = true;
@@ -991,6 +991,7 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
             deleteCommentOrThread={deleteCommentOrThread}
             activeIDs={activeIDs}
             markNodeMap={markNodeMap}
+            displayIndex={displayIndex}
           />,
           commentContainerRef?.current ?? document.body,
         )}
