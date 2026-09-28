@@ -15,6 +15,7 @@
  * leave the document PENDING (asserted, so a shape that resolves inline fails loudly instead of
  * passing vacuously).
  */
+import { displayAnnotated } from "./displayAnnotations.test-helpers";
 import { $pendGlyphEdit } from "./markerEdit.test-helpers";
 import { COMMIT_PENDING_MARKERS_COMMAND, MarkerEditPlugin } from "./MarkerEditPlugin";
 import { $rebuildParas, Tier2Context } from "./tier2Rebuild.utils";
@@ -573,7 +574,7 @@ describe("differential settle — a comment inside a typed footnote literal", ()
       },
       { discrete: true },
     );
-    return { mirror, live: usjOf(editor, viewOptions) };
+    return { mirror, live: usjOf(editor, viewOptions), editor };
   }
 
   it.each(["standard", "standard-expanded"] as const)(
@@ -589,13 +590,16 @@ describe("differential settle — a comment inside a typed footnote literal", ()
   );
 
   it.each(["standard", "standard-expanded"] as const)(
-    "drops a comment on the literal's caller rather than wrap the note's own bytes [%s]",
+    "carries a comment on the literal's caller onto the note's caller, never into its USJ [%s]",
     async (view) => {
-      const { mirror, live } = await settleBothWays(view, "+");
+      const { mirror, live, editor } = await settleBothWays(view, "+");
 
       expect(JSON.stringify(mirror)).toBe(JSON.stringify(live));
       expect(bytes(live)).toContain('"type":"note","marker":"f","caller":"+"');
       expect(bytes(live)).not.toContain('"c1"');
+      // The typed `+` is kept as the note's caller, so the caller holds the comment itself: the
+      // collapsed view's caller decorator whole, the expanded view's editable caller text.
+      expect(Object.keys(displayAnnotated(editor))).toEqual(["c1"]);
     },
   );
 });

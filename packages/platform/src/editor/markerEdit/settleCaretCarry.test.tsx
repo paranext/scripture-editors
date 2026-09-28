@@ -12,10 +12,12 @@
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import {
   contentPath,
+  propertyPath,
   twoParaUsj,
   typeOver,
   $textContaining,
 } from "../positions/positions.test-helpers";
+import { displayAnnotated } from "./displayAnnotations.test-helpers";
 import { IDLE_SETTLE_DELAY_MS } from "./MarkerEditPlugin";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -312,9 +314,9 @@ describe("an attribute the settle moves behind a repeated name", () => {
     expect(liveComments(mounted.lexical)).toEqual({ c1: "In", c2: "of", c3: "God" });
   });
 
-  it("drops a comment over the moved value rather than moving it, and keeps the caret", async () => {
-    // An attribute run never holds a mark, so a comment over attribute bytes is dropped by the
-    // settle that makes them one; what matters is that it lands nowhere else.
+  it("carries a comment over the moved value onto its settled bytes, and keeps the caret", async () => {
+    // The value survives the settle — moved behind the repeated name, but kept — so the comment
+    // is carried onto the settled attribute run, which holds it as a display-byte annotation.
     const mounted = await mountStandardViewEditor(graceUsj());
     await inOneUpdate(mounted.lexical, () => {
       const word = $textContaining("grace");
@@ -328,6 +330,7 @@ describe("an attribute the settle moves behind a repeated name", () => {
     expect(settledWord(mounted)).toMatchObject({ lemma: "b", strong: "G5485" });
     expect(caretText(mounted.lexical)).toContain(`|lemma="b" strong="G54${CARET}85"\\w*`);
     expect(liveMarkTexts(mounted.lexical)).toEqual([]);
+    expect(displayAnnotated(mounted.lexical)).toEqual({ c1: ["G5485"] });
   });
 });
 
@@ -457,6 +460,7 @@ describe('a comment mark over the `|lemma="` of a typed attribute section', () =
     expect(liveParaText(mounted.lexical)).toBe("\\p In the \\w grace|grace\\w* of God made");
     expect(caretText(mounted.lexical)).toContain(`|grace${CARET}\\w*`);
     expect(liveComments(mounted.lexical)).toEqual({});
+    expect(displayAnnotated(mounted.lexical)).toEqual({ c1: ["|"] });
   });
 
   it("settles the attribute exactly once with the caret in another paragraph", async () => {
@@ -468,6 +472,7 @@ describe('a comment mark over the `|lemma="` of a typed attribute section', () =
     expect(settledWord(mounted)).toEqual(settledGrace);
     expect(liveParaText(mounted.lexical)).toBe("\\p In the \\w grace|grace\\w* of God made");
     expect(liveComments(mounted.lexical)).toEqual({});
+    expect(displayAnnotated(mounted.lexical)).toEqual({ c1: ["|"] });
   });
 
   it("keeps covering the word in front of the attribute and settles the attribute once", async () => {
@@ -488,6 +493,7 @@ describe('a comment mark over the `|lemma="` of a typed attribute section', () =
     expect(settledWord(mounted)).toMatchObject({ lemma: "grace" });
     expect(liveParaText(mounted.lexical)).toBe("\\p In the \\w grace|grace\\w* of God made");
     expect(liveComments(mounted.lexical)).toEqual({ c1: "ace" });
+    expect(displayAnnotated(mounted.lexical)).toEqual({ c1: ["|"] });
   });
 });
 
@@ -511,6 +517,7 @@ describe("an annotation mark wrapped over an attribute display run", () => {
     expect(settledWord(mounted)).toMatchObject({ lemma: "grace" });
     expect(liveParaText(mounted.lexical)).toBe("\\p In the \\w grace|grace\\w* of God made");
     expect(liveComments(mounted.lexical)).toEqual({ c1: "ace" });
+    expect(displayAnnotated(mounted.lexical)).toEqual({ c1: ["|gr"] });
   });
 
   it("leaves the run whole when a mark that begins with the span is carried through a settle", async () => {
@@ -544,6 +551,9 @@ describe("an annotation mark wrapped over an attribute display run", () => {
     expect(settledWord(mounted)).toMatchObject({ lemma: "grace" });
     expect(liveParaText(mounted.lexical)).toContain("name|grace\\w* end");
     expect(liveMarkTexts(mounted.lexical).join("")).not.toContain("|");
+    // The mark held the whole span, glyphs included, so the settle carries its glyphs and its run
+    // as display-byte annotations: the carried start is the span's opener, not its first content.
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["\\w", "|grace", "\\w*"] });
   });
 });
 
@@ -585,6 +595,7 @@ describe("an annotation mark that begins with a whole char span", () => {
     });
     expect(liveParaText(mounted.lexical)).toContain("st\\nd name\\nd* end words");
     expect(liveMarkTexts(mounted.lexical)).toEqual(["name"]);
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["\\nd", "\\nd*"] });
   });
 });
 
@@ -650,5 +661,80 @@ describe("an element-point caret in a paragraph whose literal settles", () => {
     const mounted = await elementCaretAfterLiteral(["lord ", footnote], () => 0);
 
     expect(caretText(mounted.lexical)).toMatch(new RegExp(`^${CARET}`));
+  });
+});
+
+describe("an annotation on attribute bytes carried through a re-spelling settle", () => {
+  it("lands a comment over a typed value on the settled value", async () => {
+    const mounted = await mountStandardViewEditor(graceUsj());
+    await appendToWord(mounted.lexical, TYPED_ATTRIBUTE);
+    await inOneUpdate(mounted.lexical, () => {
+      const text = $textContaining(TYPED_ATTRIBUTE);
+      const value = text.getTextContent().lastIndexOf("grace");
+      const selection = $createRangeSelection();
+      selection.anchor.set(text.getKey(), value, "text");
+      selection.focus.set(text.getKey(), value + "grace".length, "text");
+      $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+      $textContaining("depart here").select(1, 1);
+    });
+
+    await idleSettle();
+
+    expect(settledWord(mounted)).toMatchObject({ lemma: "grace" });
+    expect(liveParaText(mounted.lexical)).toBe("\\p In the \\w grace|grace\\w* of God made");
+    expect(liveMarkTexts(mounted.lexical)).toEqual([]);
+    expect(displayAnnotated(mounted.lexical)).toEqual({ c1: ["grace"] });
+  });
+
+  it("keeps the kept bytes of a comment over kept and discarded ones", async () => {
+    const mounted = await mountStandardViewEditor(graceUsj());
+    await appendToWord(mounted.lexical, TYPED_ATTRIBUTE);
+    await inOneUpdate(mounted.lexical, () => {
+      const text = $textContaining(TYPED_ATTRIBUTE);
+      const content = text.getTextContent();
+      const selection = $createRangeSelection();
+      selection.anchor.set(text.getKey(), content.indexOf("|lemma"), "text");
+      selection.focus.set(text.getKey(), content.lastIndexOf("grace") + "gr".length, "text");
+      $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+      $textContaining("depart here").select(1, 1);
+    });
+
+    await idleSettle();
+
+    expect(liveParaText(mounted.lexical)).toBe("\\p In the \\w grace|grace\\w* of God made");
+    expect(displayAnnotated(mounted.lexical)).toEqual({ c1: ["|gr"] });
+  });
+
+  it("keeps an annotation on a settled value while the user re-spells the attribute", async () => {
+    const mounted = await mountStandardViewEditor(graceUsj({ lemma: "grace" }));
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 0 },
+          end: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: "grace".length },
+        },
+        "test",
+        "1",
+      );
+      await Promise.resolve();
+    });
+    // Re-spell `|grace` as `|lemma="grace"` in place with the caret in the value, the way typing
+    // into the run does (the shape `a caret held in an attribute run…` above uses): a user edit
+    // the engine pends, not drift the sync would heal.
+    await inOneUpdate(mounted.lexical, () => {
+      const run = $getRoot()
+        .getAllTextNodes()
+        .find((node) => !$isMarkerNode(node) && $getState(node, textTypeState) === "attribute");
+      if (!run) throw new Error("no attribute run");
+      run.setTextContent('|lemma="grace"');
+      const caret = '|lemma="gr'.length;
+      run.select(caret, caret);
+    });
+
+    await idleSettle();
+
+    expect(settledWord(mounted)).toMatchObject({ lemma: "grace" });
+    expect(liveParaText(mounted.lexical)).toBe("\\p In the \\w grace|grace\\w* of God made");
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["grace"] });
   });
 });

@@ -22,6 +22,7 @@ import {
   typeOver,
   $textContaining,
 } from "../positions/positions.test-helpers";
+import { displayAnnotated } from "./displayAnnotations.test-helpers";
 import { $pendGlyphEdit } from "./markerEdit.test-helpers";
 import { $rebuildParas } from "./tier2Rebuild.utils";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -208,11 +209,10 @@ describe("an annotation inside a settling paragraph", () => {
     expect(annotatedIDSets(mounted.lexical)).toEqual([{ [markType("test")]: ["1", "2"] }]);
   });
 
-  it("drops an annotation whose own bytes became a marker glyph", async () => {
-    // The literal is typed OVER the annotated word, so the annotated bytes ARE the bytes the
-    // settle restructures: `\nd` and `\nd*` become the char span's glyphs and nothing of the
-    // annotated range is document content any more. Re-wrapping from inside a glyph would tear
-    // the span out of its own opener, so the carry refuses and the span is built intact.
+  it("carries an annotation whose bytes became a char span onto its glyphs and its content", async () => {
+    // The literal is typed OVER the annotated word, so the settle turns the annotated bytes into
+    // `\nd`, `LORD` and `\nd*`. Every one of those bytes is kept, so the annotation is carried:
+    // the content in a mark, the glyphs holding it themselves.
     const mounted = await mountStandardViewEditor(twoParaUsj([body]));
     await annotate(mounted, bravoRange, "1");
     await typeOver(mounted.lexical, "bravo", "\\nd LORD\\nd*");
@@ -220,7 +220,8 @@ describe("an annotation inside a settling paragraph", () => {
     settle(mounted);
 
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
-    expect(annotatedText(mounted.lexical)).toEqual([]);
+    expect(annotatedText(mounted.lexical)).toEqual(["LORD"]);
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["\\nd", "\\nd*"] });
   });
 
   it("drops an annotation whose bytes the re-tokenization collapses away", async () => {
@@ -498,6 +499,7 @@ describe("a comment mark over typed attribute bytes the settle re-spells away", 
       ],
     });
     expect(annotatedText(mounted.lexical)).toEqual([]);
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
   });
 
   it("is dropped rather than re-wrapped onto the text span in front of it", async () => {
@@ -548,6 +550,7 @@ describe("a comment mark over typed attribute bytes the settle re-spells away", 
     const usj = JSON.stringify(mounted.ref.current?.getUsj());
     expect(usj).toContain('"c1"');
     expect(usj).not.toContain('"c2"');
+    expect(displayAnnotated(mounted.lexical)).toEqual({ c1: ["|"] });
   });
 });
 

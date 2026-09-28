@@ -15,6 +15,7 @@ import {
   typeOver,
   $textContaining,
 } from "../positions/positions.test-helpers";
+import { displayAnnotated } from "./displayAnnotations.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -194,13 +195,15 @@ describe.each<[string, AnnotationRange, string[]]>([
     },
     ["body"],
   ],
-])("an annotation that %s", (_label, range, expectedAnnotated) => {
+])("an annotation that %s", (label, range, expectedAnnotated) => {
   it("keeps the footnote", async () => {
     const mounted = await mountStandardViewEditor(noteUsj);
     await annotate(mounted, range);
     await editSecondParagraph(mounted);
 
     expect(annotatedText(mounted.lexical)).toEqual(expectedAnnotated);
+    if (label === "spans the note's caller value")
+      expect(Object.keys(displayAnnotated(mounted.lexical))).toEqual(["1"]);
     expect(markHoldsGlyph(mounted.lexical)).toBe(false);
     expect(mounted.ref.current?.getUsj()?.content?.[2]).toEqual(
       (noteUsj.content as Usj["content"])[2],

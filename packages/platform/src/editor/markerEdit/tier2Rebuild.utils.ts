@@ -41,6 +41,7 @@ import {
 import { registerNestedElementResolver } from "@lexical/utils";
 import {
   $createRangeSelection,
+  $getEditor,
   $getNodeByKey,
   $getRoot,
   $getSelection,
@@ -54,6 +55,7 @@ import {
   $setSelection,
   createEditor,
   ElementNode,
+  LexicalEditor,
   LexicalNode,
   NodeKey,
   PointType,
@@ -79,8 +81,11 @@ import {
   $verseAttributeRunPieces,
   $createImpliedParaNode,
   $createTypedMarkNode,
+  $displayAnnotationsOf,
+  $registerDisplayAnnotation,
   $wrapSelectionInTypedMarkNode,
   closingMarkerText,
+  getDisplayAnnotationRegistration,
   getEditableCallerText,
   getMarker as bundledGetMarker,
   isAttributeMarker,
@@ -1611,6 +1616,8 @@ interface CarriedAnnotation {
   onRemove?: TypedMarkOnRemove;
   onMouseEnter?: TypedMarkOnMouseEnter;
   onMouseLeave?: TypedMarkOnMouseLeave;
+  /** The range came from a mark, so the annotation has held one. */
+  fromMark?: boolean;
 }
 
 /**
@@ -1633,8 +1640,11 @@ type MarkStart =
   | { kind: "preserved"; anchor: CaretByteAnchor; run: number };
 
 /**
- * One annotation mark lifted out of a settle scope before the scope's bytes are re-tokenized: the
- * annotations it carries, and the two positions bracketing the text it wraps.
+ * One annotated range lifted out of a settle scope before the scope's bytes are re-tokenized: the
+ * annotations it carries, and the two positions bracketing the bytes it covers. The range comes
+ * either from an annotation mark, over the text the mark wraps, or from a display-byte carrier
+ * (`displayAnnotationsState`), over the `[start, end)` bytes the carrier holds the annotation on.
+ * A carrier is rebuilt as a fresh node, so its state needs carrying just as a mark does.
  *
  * A `TypedMarkNode` is TRANSPARENT in the fragment ({@link $appendNodesFragment}) — its text bytes
  * belong to its children's spans and the wrapper contributes none of its own — so re-tokenization
@@ -1706,15 +1716,20 @@ interface CapturedMarks {
 }
 
 /**
- * Every annotation mark in `scope`, as byte ranges over `fragment`. Read BEFORE the splice, since
- * the marks live on nodes the splice destroys.
+ * Every annotation mark in `scope`, and every range a display-byte carrier in it holds, as byte
+ * ranges over `fragment`. Read BEFORE the splice, since the marks and carriers live on nodes the
+ * splice destroys.
  *
- * A mark whose bytes are not in the fragment at all is skipped rather than guessed at: that is a
- * mark inside a preserved node (a note, an unrecoverable char span), which the splice moves across
- * whole and which therefore needs no carry.
+ * A mark or carrier whose bytes are not in the fragment at all is skipped rather than guessed at:
+ * that is one inside a preserved node (a note, an unrecoverable char span), which the splice moves
+ * across whole and which therefore needs no carry.
  *
  * `carried` lists, per run of `fragment.sentinels`, the members the rebuild carries into its
  * output — every member, for a mutating rebuild, which moves each preserved run across whole.
+ *
+ * `callbacksFrom` is the editor whose display-annotation registrations supply a carrier range's
+ * host callbacks, which a carrier has no mark node to hold. A read-only caller leaves it out, and
+ * the ranges it captures carry no callbacks.
  *
  * Read-only: walks live nodes, so call inside `editor.update()` or an editor-state read.
  */
@@ -1722,28 +1737,20 @@ function $captureMarkByteRanges(
   scope: LexicalNode[],
   fragment: FragmentAccumulator,
   carried: readonly (readonly LexicalNode[])[] = fragment.sentinels,
+  callbacksFrom?: LexicalEditor,
 ): CapturedMarks {
   const ranges: MarkByteRange[] = [];
   for (const mark of $collectTypedMarks(scope)) {
     const owners = $subtreeKeys(mark);
     const covered = fragment.spans.filter((span) => owners.has(span.key));
-    // A mark that begins with a whole char span starts on the span's opening glyph, and a glyph
-    // point is never re-wrapped (see `$isGlyphPoint`), so anchor on the first CONTENT byte instead
-    // — past the whitespace that separates the glyph from the content (the NBSP a char's content
-    // text starts with), which is display too: a start in front of it re-wraps it into the mark,
-    // where the span no longer reads it as its separator, grows a new one, and settles the
-    // wrapped one as a content byte the user never typed.
-    const first =
-      covered.find((span) => span.isSentinel || !$isMarkerNode($getNodeByKey(span.key))) ??
-      covered[0];
+    // A mark's carried start is its first covered byte, a char span's opener glyph included: the
+    // wrap holds a glyph's annotation on the glyph and keeps the opener's separator out on its own
+    // (`$charSeparatorPrefixLength`), so starting on the glyph neither tears the span nor takes
+    // the separator.
+    const first = covered[0];
     const last = covered[covered.length - 1];
     if (!first || !last) continue;
-    const firstText = fragment.text.slice(first.start, first.end);
-    const pastSeparator =
-      first === covered[0] || first.isSentinel
-        ? 0
-        : firstText.length - firstText.trimStart().length;
-    const start = $markStartAt(fragment, first, pastSeparator);
+    const start = $markStartAt(fragment, first, 0);
     const end = $caretSpanByteAnchor(fragment, last.key, last.end - last.start);
     if (!start || !end) continue;
     const onClicks = mark.getTypedOnClicks();
@@ -1758,10 +1765,42 @@ function $captureMarkByteRanges(
         onRemove: onRemoves[type]?.[id],
         onMouseEnter: onMouseEnters[type]?.[id],
         onMouseLeave: onMouseLeaves[type]?.[id],
+        fromMark: true,
       })),
     );
     if (annotations.length > 0) ranges.push({ annotations, start, end });
   }
+  // Display bytes hold their annotations themselves (`displayAnnotationsState`), each range
+  // captured like a mark's. A carrier with no span of its own is inside a preserved node, whose
+  // state rides across on the same node. A whole-decorator range `(0, 0)` names no bytes to carry;
+  // in Standard view such decorators only sit inside preserved notes.
+  const $collect = (node: LexicalNode): void => {
+    const key = node.getKey();
+    for (const held of $displayAnnotationsOf(node)) {
+      if (held.start === held.end || !spanFor(fragment, key, held.start)) continue;
+      const start = $caretSpanByteAnchor(fragment, key, held.start);
+      const end = $caretSpanByteAnchor(fragment, key, held.end);
+      if (!start || !end) continue;
+      const registration =
+        callbacksFrom && getDisplayAnnotationRegistration(callbacksFrom, held.type, held.id);
+      ranges.push({
+        annotations: [
+          {
+            type: held.type,
+            id: held.id,
+            onClick: registration?.onClick,
+            onRemove: registration?.onRemove,
+            onMouseEnter: registration?.onMouseEnter,
+            onMouseLeave: registration?.onMouseLeave,
+          },
+        ],
+        start: { kind: "byte", anchor: start },
+        end,
+      });
+    }
+    if ($isElementNode(node)) node.getChildren().forEach($collect);
+  };
+  scope.forEach($collect);
   return { ranges, live: ranges.length > 0 ? $liveRunSide(fragment, carried) : undefined };
 }
 
@@ -1832,23 +1871,6 @@ function $preservedRunAt(key: NodeKey): LexicalNode[] | undefined {
 }
 
 /**
- * Whether a resolved end of a mark lands inside a marker GLYPH — engine-owned display bytes rather
- * than document content.
- *
- * It means the annotated bytes themselves became part of a marker: text the host annotated as a
- * literal (`\nd LORD\nd*`) re-tokenized into a char span's opening and closing glyphs. There is no
- * content range left to re-wrap, and wrapping from inside a glyph would tear the construct the
- * glyph belongs to out of its own span, so the carry is refused instead — preserve-or-refuse, the
- * same stance the rebuild takes everywhere else.
- *
- * Read-only: resolves the point's node key, so call inside `editor.update()` or an editor-state
- * read.
- */
-function $isGlyphPoint(point: FragmentPoint): boolean {
-  return point.type === "text" && $isMarkerNode($getNodeByKey(point.key));
-}
-
-/**
  * Where one end of a carried mark lands in the rebuilt fragment: the point, and the non-whitespace
  * byte count it landed at (in the rebuilt fragment, or in the literal's spelling), plus — for an
  * end INSIDE a node the settle made from typed literal bytes — which of the rebuilt fragment's runs
@@ -1862,33 +1884,13 @@ interface ResolvedMarkEnd {
 }
 
 /**
- * Whether a point inside a preserved run's own spelling sits in the run's CONTENT — the text a
- * mark can wrap — rather than in the bytes the node spells for itself: a marker glyph, an
- * attribute display run, or a note's caller (a decorator when the note is collapsed, and the
- * first child after the opening glyphs when it is expanded).
- *
- * Read-only: resolves the point's node key, so call inside `editor.update()` or an editor-state
- * read.
- */
-function $isRunContentPoint(point: FragmentPoint): boolean {
-  const node = $getNodeByKey(point.key);
-  if (!$isTextNode(node) || $isMarkerNode(node)) return false;
-  if ($getState(node, textTypeState) === "attribute") return false;
-  const parent = node.getParent();
-  if (!$isNoteNode(parent)) return true;
-  const callerSlot = parent
-    .getChildren()
-    .find((child) => !$isMarkerNode(child) || child.getMarkerSyntax() !== "opening");
-  return !node.is(callerSlot);
-}
-
-/**
  * Where a mark end captured as `anchor` lands in `fragment`, the rebuilt scope's bytes. `pairing`
  * lines the captured bytes up with `fragment`'s: an anchor outside every literal the settle turned
  * into a preserved node is restated through the byte alignment, snapping LEFT when the byte it
  * sits in front of has no rebuilt counterpart (a re-spelled attribute's name); one inside such a
- * literal is resolved in that node's own spelling — or refused when the settle re-spelled the byte
- * it names, which has no counterpart there.
+ * literal is resolved in that node's own spelling, on whichever byte of it the anchor names, a
+ * marker glyph or an attribute run included — or refused when the settle re-spelled the byte it
+ * names, which has no counterpart there.
  *
  * `isStart` selects byte addressing, since a start names the first byte a mark covers (see
  * {@link $restoreMarkByteRanges}).
@@ -1907,7 +1909,7 @@ function $resolveMarkEnd(
   if (inside) {
     if (!inside.within) return undefined;
     const point = $resolveFragmentByteAnchor(inside.run.spelling, inside.within, options);
-    if (!point || !$isRunContentPoint(point)) return undefined;
+    if (!point) return undefined;
     return { point, at: inside.within.nonWsBefore, literalRun: inside.run.sentinelIndex };
   }
   // A mark that starts on a literal's first byte starts on the node the literal became, which
@@ -1945,6 +1947,25 @@ function $resolveMarkStart(
 }
 
 /**
+ * `point` as a boundary a selection can hold. A fragment span can belong to a leaf that is neither
+ * text nor an element — a collapsed note's caller decorator, which spells the caller's bytes —
+ * and a text point on such a leaf is refused by Lexical, so it stands as the boundary in front of
+ * the leaf (offset 0) or past it. The wrap then holds the annotation on the whole decorator.
+ *
+ * Read-only: resolves the point's node key, so call inside `editor.update()` or an editor-state
+ * read.
+ */
+function $selectablePoint(point: FragmentPoint): FragmentPoint | undefined {
+  if (point.type !== "text") return point;
+  const node = $getNodeByKey(point.key);
+  if ($isTextNode(node)) return point;
+  const parent = node?.getParent();
+  if (!node || !parent) return undefined;
+  const index = node.getIndexWithinParent() + (point.offset > 0 ? 1 : 0);
+  return { key: parent.getKey(), offset: index, type: "element" };
+}
+
+/**
  * Re-wrap the annotations {@link $captureMarkByteRanges} lifted out, over whatever the rebuilt
  * nodes now spell at the same byte positions. `$freshFragment` re-derives the spliced tree's
  * spans; it is called again for every wrap because wrapping SPLITS the text nodes it covers, so
@@ -1965,12 +1986,17 @@ function $resolveMarkStart(
  * rather than `remove()`d, and `TypedMarkNode.remove` is the only source of a "destroyed"
  * notification.
  *
+ * An end inside a marker glyph or an attribute run is carried like any other byte: the wrap
+ * holds the annotation on such a node (`displayAnnotationsState`) and never moves or splits it,
+ * so a construct cannot be torn apart by a carried end. The rule is by bytes: an annotation over
+ * bytes the settle keeps or re-spells is carried to their settled counterpart; one over bytes it
+ * discards is dropped, never moved.
+ *
  * An anchor that no longer resolves is skipped, in the rebuild's own preserve-or-refuse spirit: a
  * dropped annotation is recoverable by the host re-applying it, one re-wrapped over the wrong
  * bytes is not. So is every wrap when `$freshFragment` cannot describe the rebuilt nodes at all,
  * and a mark whose resolved range names no bytes it covered:
  *
- * - an end inside a marker glyph (see {@link $isGlyphPoint});
  * - two ends that land at the same byte count, where the mark's own ends did not — a mark over
  *   nothing but bytes the settle re-spelled (a typed `lemma="` that settles away). Comparing the
  *   points is not enough: the start is resolved with byte addressing and the end with caret
@@ -2016,9 +2042,10 @@ function $restoreMarkByteRanges(
         !resolvedStart.preservedKey
       )
         continue;
-      const { point: start, preservedKey } = resolvedStart;
-      const { point: end } = resolvedEnd;
-      if ($isGlyphPoint(start) || $isGlyphPoint(end)) continue;
+      const { preservedKey } = resolvedStart;
+      const start = $selectablePoint(resolvedStart.point);
+      const end = $selectablePoint(resolvedEnd.point);
+      if (!start || !end) continue;
       // A collapsed range covers no bytes, and wrapping one splits a text node at the same offset
       // twice, which marks everything IN FRONT of it: a mark over the wrong bytes is worse than a
       // dropped mark, so refuse. (Offset 0 collapses to a no-op inside the wrap itself.) The one
@@ -2039,6 +2066,13 @@ function $restoreMarkByteRanges(
         annotation.onMouseEnter,
         annotation.onMouseLeave,
       );
+      // An annotation a mark held stays reported through marks only, even when the settle leaves
+      // nothing of it but display bytes.
+      if (
+        annotation.fromMark &&
+        getDisplayAnnotationRegistration($getEditor(), annotation.type, annotation.id)
+      )
+        $registerDisplayAnnotation(annotation.type, annotation.id, {}, true);
       if (preservedKey) $extendMarkOverPreservedRun(preservedKey, annotation.type, annotation.id);
     }
   }
@@ -2429,7 +2463,7 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
   }
   // Annotation marks anchor the same way, two points each — they live on nodes the splice
   // destroys and are transparent to re-tokenization, so nothing else would bring them back.
-  const markRanges = $captureMarkByteRanges(paras, combined);
+  const markRanges = $captureMarkByteRanges(paras, combined, undefined, $getEditor());
 
   const content: MarkerContent[] = usfmFragmentToUsjContent(combined.text, {
     getMarker: getMarkerFn,
@@ -2649,7 +2683,7 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   // Annotations inside the note's content anchor the same way — mirror `$rebuildParas`. A
   // note's content is reachable by USJ location, so `setAnnotation` can put a mark in an
   // expanded note exactly as it can in a paragraph.
-  const markRanges = $captureMarkByteRanges(contentNodes, out);
+  const markRanges = $captureMarkByteRanges(contentNodes, out, undefined, $getEditor());
 
   const content: MarkerContent[] = usfmFragmentToUsjContent(out.text, {
     getMarker: getMarkerFn,
@@ -3016,7 +3050,7 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
 
   // The adjacent spans and `\cp` paragraph hold content a mark can cover, and the splice below
   // destroys them — carried the way `$rebuildParas` carries a paragraph's.
-  const markRanges = $captureMarkByteRanges(region, out);
+  const markRanges = $captureMarkByteRanges(region, out, undefined, $getEditor());
 
   const content: MarkerContent[] = usfmFragmentToUsjContent(out.text, { getMarker: getMarkerFn });
   const [freshChapter] = content;
