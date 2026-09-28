@@ -429,6 +429,11 @@ export function $isRebuildSentinel(node: LexicalNode, getMarkerFn: MarkerLookup)
  * Two shapes are not text-recoverable. A span carrying attribute bytes with nowhere visible to
  * re-derive them from ({@link $hasUnrecoverableAttributes}), and a span whose marker the
  * stylesheet does not declare — a custom.sty marker the tokenizer would degrade to literal text.
+ * Inside a note it does not: in note context the tokenizer reads an undeclared marker as a
+ * character span, so such a span re-tokenizes like any other there, unless it carries attributes
+ * (the tokenizer does not extract those for a marker it has no definition of). Re-tokenizing it
+ * is also what keeps it where it is: its placeholder would read as text of an unclosed run before
+ * it (`\ft asdf ` then `\df`), and splice it back INSIDE that run, nested (`\+df`).
  *
  * An ATTRIBUTE marker is exempt from the stylesheet test, because for those the stylesheet is
  * not the authority: the tokenizer's own table folds them onto their host, so the round trip is
@@ -442,11 +447,25 @@ function $charNeedsSentinel(char: CharNode, getMarkerFn: MarkerLookup): boolean 
   if ($hasUnrecoverableAttributes(char)) return true;
   const marker = char.getMarker();
   if (isAttributeMarker(marker) || getMarkerFn(marker) !== undefined) return false;
+  if ($isInsideNote(char) && !$hasAttributesBesidesClosed(char)) return false;
   // An undeclared marker is kept whole only while its own glyphs still spell it. Once the user has
   // edited one (deleted the `\` to turn the marker back into text, say), those bytes are the
   // instruction: preserved as a sentinel they never reach the tokenizer, the span survives the
   // settle unchanged, and the damaged glyph is later healed back to the marker it no longer says.
   return !$hasEditedOwnGlyph(char);
+}
+
+/** Whether `node` is inside a note's content. */
+function $isInsideNote(node: LexicalNode): boolean {
+  for (let parent = node.getParent(); parent; parent = parent.getParent())
+    if ($isNoteNode(parent)) return true;
+  return false;
+}
+
+/** Whether a char span carries attributes other than the derived `closed` flag. */
+function $hasAttributesBesidesClosed(char: CharNode): boolean {
+  const attributes = char.getUnknownAttributes();
+  return !!attributes && Object.keys(attributes).some((name) => name !== "closed");
 }
 
 /**
