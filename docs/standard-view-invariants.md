@@ -291,9 +291,12 @@ end of a range resolved on its own; there is no separate outbound-snap/inbound-r
 - **Outbound** (`getSelection`, `onSelectionChange`) never answers `undefined` for a real caret —
   `undefined` means there is no selection. Typed bytes the settle carries as an attribute map
   exactly (a typed `\cat x\cat*` is the note's `category`, a figure's `|src="…"` its `file`), by
-  `UsjReaderWriter`'s locations. Bytes with no settled counterpart at all — a typed literal the
-  settle spells differently from how it was typed — snap LEFT to the nearest translatable position
-  at or before them, the same rule a USFM byte with no USJ representation follows.
+  `UsjReaderWriter`'s locations. So does an attribute the settle moves: a repeated name keeps its
+  first slot with its last value, and every attribute that survives maps byte for byte wherever it
+  lands, while the overridden duplicate's bytes snap LEFT. Bytes with no settled counterpart at
+  all — a typed literal the settle spells differently from how it was typed — snap LEFT to the
+  nearest translatable position at or before them, the same rule a USFM byte with no USJ
+  representation follows.
 - **Inbound** (`setSelection`, `setAnnotation`, `insertNote`) refuses (and logs the refusal) ONLY a
   host location that names nothing in the settled document at all. A location inside a scope the
   editor can pair only in part is not a whole-scope refusal — it snaps LEFT the same as outbound. A

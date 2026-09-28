@@ -10,21 +10,35 @@ import {
 
 const nows = (s: string) => s.replace(/\s/g, "");
 
-/** Every alignment must tile both strings, in order, with no gaps, overlaps, or reversed sides. */
+/**
+ * Every alignment must cover each side exactly once, with no gaps, overlaps, or reversed sides.
+ * The two sides need not ascend together: inside an attribute section the settle reorders, a
+ * surviving attribute's segment sits at its live place on one side and its settled place on the
+ * other.
+ */
 function expectTiles(alignment: ByteAlignment, liveLength: number, settledLength: number): void {
-  let live = 0;
-  let settled = 0;
   for (const segment of alignment.segments) {
-    expect(segment.liveStart).toBe(live);
-    expect(segment.settledStart).toBe(settled);
     expect(segment.liveEnd).toBeGreaterThanOrEqual(segment.liveStart);
     expect(segment.settledEnd).toBeGreaterThanOrEqual(segment.settledStart);
     if (segment.same)
       expect(segment.liveEnd - segment.liveStart).toBe(segment.settledEnd - segment.settledStart);
-    live = segment.liveEnd;
-    settled = segment.settledEnd;
   }
-  expect([live, settled]).toEqual([liveLength, settledLength]);
+  const sides = [
+    ["liveStart", "liveEnd", liveLength],
+    ["settledStart", "settledEnd", settledLength],
+  ] as const;
+  for (const [startKey, endKey, length] of sides) {
+    const covering = alignment.segments
+      .filter((segment) => segment[endKey] > segment[startKey])
+      .sort((a, b) => a[startKey] - b[startKey]);
+    let covered = 0;
+    for (const segment of covering) {
+      expect(segment[startKey]).toBe(covered);
+      covered = segment[endKey];
+    }
+    expect(covered).toBe(length);
+    for (const segment of alignment.segments) expect(segment[endKey]).toBeLessThanOrEqual(length);
+  }
 }
 
 describe("alignUsfmBytes", () => {
@@ -230,6 +244,141 @@ describe("alignUsfmBytes edge cases", () => {
     expectTiles(a, live.length, settled.length);
     expect(mapCount(a, live.indexOf("qq") + 1, "live")).toBe(settled.indexOf("qq") + 1);
     expect(mapCount(a, live.length, "live")).toBe(settled.length);
+  });
+});
+
+/** Every count in front of one of the `length` bytes from `liveAt` maps exactly to the same offset
+ * from `settledAt`, and back. */
+function expectExact(
+  alignment: ByteAlignment,
+  liveAt: number,
+  settledAt: number,
+  length: number,
+): void {
+  for (let offset = 0; offset < length; offset += 1) {
+    expect(mapCount(alignment, liveAt + offset, "live")).toBe(settledAt + offset);
+    expect(mapCount(alignment, settledAt + offset, "settled")).toBe(liveAt + offset);
+  }
+}
+
+/** Every count that maps exactly maps back to itself, from either side. */
+function expectRoundTrips(alignment: ByteAlignment, liveLength: number, settledLength: number) {
+  const sides = [
+    ["live", "settled", liveLength],
+    ["settled", "live", settledLength],
+  ] as const;
+  for (const [from, to, length] of sides)
+    for (let count = 0; count <= length; count += 1) {
+      const mapped = mapCount(alignment, count, from);
+      if (mapped !== undefined) expect(mapCount(alignment, mapped, to)).toBe(count);
+    }
+}
+
+describe("an attribute section the settle reorders", () => {
+  // A repeated name keeps its FIRST slot with its LAST value, so `strong` moves behind `lemma="b"`.
+  const live = nows('\\w grace|lemma="a" strong="G5485" lemma="b"\\w* of');
+  const settled = nows('\\w grace|lemma="b" strong="G5485"\\w* of');
+  const a = alignUsfmBytes(live, settled);
+  const bar = live.indexOf("|");
+
+  it("covers both sides exactly once", () => {
+    expectTiles(a, live.length, settled.length);
+  });
+
+  it("maps every byte of an attribute that moved, name, quotes and value, exactly both ways", () => {
+    const strong = 'strong="G5485"';
+    expectExact(a, live.indexOf(strong), settled.indexOf(strong), strong.length);
+  });
+
+  it("maps the surviving duplicate exactly both ways", () => {
+    const lemma = 'lemma="b"';
+    expectExact(a, live.indexOf(lemma), settled.indexOf(lemma), lemma.length);
+  });
+
+  it("maps the `|` and the section's end exactly both ways", () => {
+    expectExact(a, bar, bar, 1);
+    expectExact(a, live.indexOf("\\w*"), settled.indexOf("\\w*"), "\\w*of".length);
+    expect(mapCount(a, live.length, "live")).toBe(settled.length);
+    expect(mapCount(a, settled.length, "settled")).toBe(live.length);
+  });
+
+  it("maps every paired byte back to itself", () => {
+    expectRoundTrips(a, live.length, settled.length);
+    for (let count = 0; count <= settled.length; count += 1)
+      expect(mapCount(a, count, "settled")).toBeDefined();
+  });
+
+  it("snaps a caret in the discarded duplicate LEFT, to just past the settled `|`", () => {
+    for (let count = bar + 1; count < bar + 1 + 'lemma="a"'.length; count += 1) {
+      expect(mapCount(a, count, "live")).toBeUndefined();
+      expect(mapCountSnapped(a, count, "live")).toBe(bar + 1);
+    }
+  });
+
+  // A discarded value as long as the survivor's leaves every moved byte at its own offset; a longer
+  // one shifts them, so an identity mapping cannot pass.
+  it.each(["1", "1111"])(
+    "maps every survivor of a three-attribute reorder exactly (discarded value %s)",
+    (discarded) => {
+      const threeLive = nows(`\\w a|x="${discarded}" y="2" z="3" x="4"\\w*`);
+      const threeSettled = nows('\\w a|x="4" y="2" z="3"\\w*');
+      const three = alignUsfmBytes(threeLive, threeSettled);
+      expectTiles(three, threeLive.length, threeSettled.length);
+      for (const survivor of ['x="4"', 'y="2"', 'z="3"'])
+        expectExact(
+          three,
+          threeLive.indexOf(survivor),
+          threeSettled.indexOf(survivor),
+          survivor.length,
+        );
+      expectExact(three, threeLive.indexOf("\\w*"), threeSettled.indexOf("\\w*"), 3);
+      expect(mapCountSnapped(three, threeLive.indexOf(`x="${discarded}"`) + 2, "live")).toBe(
+        threeSettled.indexOf("|") + 1,
+      );
+      expectRoundTrips(three, threeLive.length, threeSettled.length);
+    },
+  );
+
+  it("maps a reorder with a dropped reserved key and a re-spelled figure file", () => {
+    const figLive = nows('\\fig a|file="p.jpg" type="t" size="col" file="q.jpg"\\fig*');
+    const figSettled = nows('\\fig a|src="q.jpg" size="col"\\fig*');
+    const fig = alignUsfmBytes(figLive, figSettled);
+    expectTiles(fig, figLive.length, figSettled.length);
+    expectExact(fig, figLive.indexOf('size="col"'), figSettled.indexOf('size="col"'), 10);
+    expectExact(fig, figLive.indexOf('="q.jpg"'), figSettled.indexOf('="q.jpg"'), 8);
+    expectExact(fig, figLive.indexOf("\\fig*"), figSettled.indexOf("\\fig*"), 5);
+    // The survivor's re-spelled name maps only its ends.
+    const liveFile = figLive.lastIndexOf("file");
+    const settledSrc = figSettled.indexOf("src");
+    expect(mapCount(fig, liveFile + 1, "live")).toBeUndefined();
+    expect(mapCountSnapped(fig, liveFile + 1, "live")).toBe(settledSrc);
+    expect(mapCountSnapped(fig, settledSrc + 1, "settled")).toBe(liveFile);
+    // The discarded file and the dropped key both snap to just past the settled `|`.
+    for (const discarded of ['file="p.jpg"', 'type="t"']) {
+      const at = figLive.indexOf(discarded);
+      expect(mapCount(fig, at + 2, "live")).toBeUndefined();
+      expect(mapCountSnapped(fig, at + 2, "live")).toBe(figSettled.indexOf("|") + 1);
+    }
+    expectRoundTrips(fig, figLive.length, figSettled.length);
+  });
+
+  it("finds a literal whose spelling reorders an attribute section, and maps within it", () => {
+    const liveNote = nows('\\f + \\ft see \\w w|lemma="a" strong="s" lemma="b"\\w*\\f*');
+    const spelling = nows('\\f + \\ft see \\w w|lemma="b" strong="s"\\w*\\f*');
+    const scopeLive = nows(`In ${liveNote} made`);
+    const scopeSettled = nows(`In ${PLACEHOLDER} made`);
+    const index = scopeSettled.indexOf(PLACEHOLDER);
+    const r = alignScopeBytes(scopeLive, scopeSettled, new Map([[index, spelling]]));
+    expectTiles(r.alignment, scopeLive.length, scopeSettled.length);
+    const literal = r.literals.get(index);
+    if (!literal) throw new Error("no literal");
+    expect(scopeLive.slice(literal.liveStart, literal.liveEnd)).toBe(liveNote);
+    expectTiles(literal.inner, literal.liveEnd - literal.liveStart, spelling.length);
+    expectExact(literal.inner, liveNote.indexOf('strong="s"'), spelling.indexOf('strong="s"'), 10);
+    expectExact(literal.inner, liveNote.indexOf('lemma="b"'), spelling.indexOf('lemma="b"'), 9);
+    expect(mapCount(r.alignment, scopeLive.indexOf("made") + 1, "live")).toBe(
+      scopeSettled.indexOf("made") + 1,
+    );
   });
 });
 

@@ -3,10 +3,11 @@
  *
  * Both sides are the same USFM except where the settle re-spells an attribute section — a lone
  * default attribute written by name collapses to its bare value, a reserved key or an overridden
- * duplicate name is dropped, a figure's `file` is written `src` — and where the settled side spells
- * a preserved node as one placeholder byte that the live side spells out as the literal it came
- * from. Everything here is built from those two facts rather than guessed from a text diff, so a
- * repeated word can never be matched to the wrong occurrence.
+ * duplicate name is dropped, a duplicate name's survivor takes the first duplicate's slot (so it
+ * can move ahead of attributes typed before it), a figure's `file` is written `src` — and where the
+ * settled side spells a preserved node as one placeholder byte that the live side spells out as the
+ * literal it came from. Everything here is built from those two facts rather than guessed from a
+ * text diff, so a repeated word can never be matched to the wrong occurrence.
  *
  * Inputs are NON-WHITESPACE bytes: a byte anchor counts only those, and the settle is free to move
  * whitespace.
@@ -25,7 +26,12 @@ export interface AlignedSegment {
   readonly same: boolean;
 }
 
-/** Segments that tile both sides in order: each starts where the one before it ended. */
+/**
+ * Segments that tile each side exactly once, with no gaps or overlaps. They run in settled order,
+ * and their live sides ascend too everywhere except inside an attribute section the settle
+ * reorders. A differing segment's other-side start is where a count in front of its bytes snaps to
+ * ({@link mapCountSnapped}).
+ */
 export interface ByteAlignment {
   readonly segments: readonly AlignedSegment[];
 }
@@ -108,6 +114,9 @@ function sectionEnd(text: string, start: number): number {
 
 interface ParsedAttribute {
   readonly name: string | undefined;
+  /** Where the attribute's bytes sit in the section: all of `name="value"`, or a bare value. */
+  readonly start: number;
+  readonly end: number;
   readonly valueStart: number;
   readonly valueEnd: number;
   readonly value: string;
@@ -122,21 +131,38 @@ function parseSection(section: string): ParsedAttribute[] | undefined {
     if (pairs.map((pair) => pair[0]).join("") !== body) return undefined;
     if (pairs.some((pair) => pair[2] === "")) return undefined;
     return pairs.map((pair) => {
-      const valueStart = 1 + (pair.index ?? 0) + pair[1].length + 2;
-      return { name: pair[1], valueStart, valueEnd: valueStart + pair[2].length, value: pair[2] };
+      const start = 1 + (pair.index ?? 0);
+      const valueStart = start + pair[1].length + 2;
+      return {
+        name: pair[1],
+        start,
+        end: start + pair[0].length,
+        valueStart,
+        valueEnd: valueStart + pair[2].length,
+        value: pair[2],
+      };
     });
   }
   return body
-    ? [{ name: undefined, valueStart: 1, valueEnd: section.length, value: body }]
+    ? [
+        {
+          name: undefined,
+          start: 1,
+          end: section.length,
+          valueStart: 1,
+          valueEnd: section.length,
+          value: body,
+        },
+      ]
     : undefined;
 }
 
 /**
  * Which live attribute each settled attribute's value came from, as `[live, settled]` index pairs
- * increasing on both sides. A live attribute can only be the source when the settle keeps it: its
- * name is not dropped, and no later attribute of the same name overrides it. A settled attribute
- * whose source would break the order (a duplicate name keeps its FIRST slot with its LAST value) is
- * left unpaired, so its bytes map only as the ends of what differs.
+ * in settled order. A live attribute can only be the source when the settle keeps it: its name is
+ * not dropped, and no later attribute of the same name overrides it. The pairs need not increase on
+ * the live side: a duplicate name keeps its FIRST slot with its LAST value, so the survivor's
+ * settled place can come before attributes that were typed ahead of it.
  */
 function matchAttributes(live: ParsedAttribute[], settled: ParsedAttribute[]): [number, number][] {
   const isKept = live.map(
@@ -150,19 +176,51 @@ function matchAttributes(live: ParsedAttribute[], settled: ParsedAttribute[]): [
     (wanted.name === undefined ||
       candidate.name === wanted.name ||
       (candidate.name !== undefined && RESPELLED_NAMES.get(candidate.name) === wanted.name));
+  const used = new Set<number>();
   const matches: [number, number][] = [];
-  let floor = -1;
   settled.forEach((wanted, settledIndex) => {
     const source = live.findIndex(
-      (candidate, index) => isKept[index] && isSource(candidate, wanted),
+      (candidate, index) => isKept[index] && !used.has(index) && isSource(candidate, wanted),
     );
-    if (source <= floor) return;
+    if (source < 0) return;
+    used.add(source);
     matches.push([source, settledIndex]);
-    floor = source;
   });
   return matches;
 }
 
+/**
+ * Where bytes on side `from` that have no counterpart snap to on the other side: just past the
+ * other side's counterpart of the nearest byte in front of them that both sides spell the same.
+ * In an attribute section that is never missing: the `|` both sides start with is one.
+ */
+function snapTarget(
+  segments: readonly AlignedSegment[],
+  start: number,
+  from: "live" | "settled",
+): number {
+  let target = 0;
+  let nearest = -1;
+  for (const segment of segments) {
+    if (!segment.same) continue;
+    const { end, otherEnd } = sides(segment, from);
+    if (end <= start && end > nearest) {
+      nearest = end;
+      target = otherEnd;
+    }
+  }
+  return target;
+}
+
+/**
+ * Line up one attribute section (`|…`) of each side. Each settled attribute's bytes line up with
+ * the live attribute its value came from — `name="value"` one for one, a re-spelled name or a
+ * collapsed default mapping only its ends — wherever the two sit in their sections, so an
+ * attribute the settle moves keeps every byte exact. A live attribute the settle drops, and a
+ * settled one no live attribute accounts for, map to nothing and snap LEFT ({@link snapTarget}).
+ * The segments are emitted in settled order; inside a section the settle reorders, their live
+ * sides do not ascend.
+ */
 function alignAttributeSection(
   live: string,
   settled: string,
@@ -174,40 +232,60 @@ function alignAttributeSection(
     out.push(liveAt, liveAt + live.length, settledAt, settledAt + settled.length, true);
     return;
   }
-  out.push(liveAt, liveAt + 1, settledAt, settledAt + 1, true); // the `|`
   const liveAttributes = parseSection(live);
   const settledAttributes = parseSection(settled);
   if (!liveAttributes || !settledAttributes) {
+    out.push(liveAt, liveAt + 1, settledAt, settledAt + 1, true); // the `|`
     out.pushStretch(live.slice(1), liveAt + 1, settled.slice(1), settledAt + 1);
     return;
   }
-  let liveCursor = 1;
-  let settledCursor = 1;
-  for (const [l, s] of matchAttributes(liveAttributes, settledAttributes)) {
-    const liveValue = liveAttributes[l];
-    const settledValue = settledAttributes[s];
-    out.pushStretch(
-      live.slice(liveCursor, liveValue.valueStart),
-      liveAt + liveCursor,
-      settled.slice(settledCursor, settledValue.valueStart),
-      settledAt + settledCursor,
+  const section = new SegmentList();
+  section.push(0, 1, 0, 1, true); // the `|`
+  const matches = matchAttributes(liveAttributes, settledAttributes);
+  for (const [l, s] of matches) {
+    const from = liveAttributes[l];
+    const to = settledAttributes[s];
+    section.pushStretch(
+      live.slice(from.start, from.valueStart),
+      from.start,
+      settled.slice(to.start, to.valueStart),
+      to.start,
     );
-    out.push(
-      liveAt + liveValue.valueStart,
-      liveAt + liveValue.valueEnd,
-      settledAt + settledValue.valueStart,
-      settledAt + settledValue.valueEnd,
-      true,
+    section.push(from.valueStart, from.valueEnd, to.valueStart, to.valueEnd, true);
+    section.pushStretch(
+      live.slice(from.valueEnd, from.end),
+      from.valueEnd,
+      settled.slice(to.valueEnd, to.end),
+      to.valueEnd,
     );
-    liveCursor = liveValue.valueEnd;
-    settledCursor = settledValue.valueEnd;
   }
-  out.pushStretch(
-    live.slice(liveCursor),
-    liveAt + liveCursor,
-    settled.slice(settledCursor),
-    settledAt + settledCursor,
-  );
+  const paired = [...section.segments];
+  const pairedLive = new Set(matches.map(([l]) => l));
+  liveAttributes.forEach((attribute, index) => {
+    if (pairedLive.has(index)) return;
+    const at = snapTarget(paired, attribute.start, "live");
+    section.push(attribute.start, attribute.end, at, at, false);
+  });
+  const pairedSettled = new Set(matches.map(([, s]) => s));
+  settledAttributes.forEach((attribute, index) => {
+    if (pairedSettled.has(index)) return;
+    const at = snapTarget(paired, attribute.start, "settled");
+    section.push(at, at, attribute.start, attribute.end, false);
+  });
+  section.segments
+    .sort(
+      (a, b) =>
+        a.settledStart - b.settledStart || a.settledEnd - b.settledEnd || a.liveStart - b.liveStart,
+    )
+    .forEach((segment) =>
+      out.push(
+        liveAt + segment.liveStart,
+        liveAt + segment.liveEnd,
+        settledAt + segment.settledStart,
+        settledAt + segment.settledEnd,
+        segment.same,
+      ),
+    );
 }
 
 /**
@@ -338,12 +416,17 @@ function containing(
   });
 }
 
-/** Both sides' lengths, `from` side first. */
+/** Both sides' lengths, `from` side first: where each side's last byte ends, whichever segment
+ * holds it. */
 function lengths(alignment: ByteAlignment, from: "live" | "settled"): [number, number] {
-  const last = alignment.segments[alignment.segments.length - 1];
-  if (!last) return [0, 0];
-  const { end, otherEnd } = sides(last, from);
-  return [end, otherEnd];
+  let fromLength = 0;
+  let otherLength = 0;
+  for (const segment of alignment.segments) {
+    const { end, otherEnd } = sides(segment, from);
+    fromLength = Math.max(fromLength, end);
+    otherLength = Math.max(otherLength, otherEnd);
+  }
+  return [fromLength, otherLength];
 }
 
 /**
@@ -368,8 +451,15 @@ export function mapCount(
   return count === fromLength ? otherLength : undefined;
 }
 
-/** {@link mapCount}, with a count in front of differing bytes snapped LEFT to where the other
- * side's differing bytes start, and a count past the end to the other side's length. */
+/**
+ * {@link mapCount}, with a count in front of differing bytes snapped LEFT to where the other side's
+ * differing bytes start, and a count past the end to the other side's length. Where the bytes pair
+ * with differently spelled ones (a re-spelled name), that is the start of those; where they have no
+ * counterpart at all (a dropped attribute), it is the count just past the other side's counterpart
+ * of the nearest byte in front of them, on their own side, that both sides spell the same. In an
+ * attribute section the settle reorders, that counterpart can sit anywhere in the other side's
+ * section: the snap follows the order of the side the count is on.
+ */
 export function mapCountSnapped(
   alignment: ByteAlignment,
   count: number,

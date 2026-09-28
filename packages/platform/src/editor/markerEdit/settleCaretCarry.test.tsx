@@ -287,6 +287,50 @@ describe("the caret carried across a typed attribute the settle re-spells", () =
   });
 });
 
+describe("an attribute the settle moves behind a repeated name", () => {
+  // The repeated `lemma` keeps its first slot with its last value, so `strong` settles behind it.
+  const REORDERED = '|lemma="a" strong="G5485" lemma="b"';
+
+  /** Settle with the caret still in the span. The idle clock defers this settle while the caret
+   * holds the scope, because it discards the typed `lemma="a"`
+   * (`$idleSettleWouldDiscardCaretHeldBytes`); a forced commit settles it in place. */
+  function commit(mounted: Mounted): void {
+    act(() => mounted.ref.current?.commitPendingMarkerEdits());
+  }
+
+  it("keeps the caret on the moved value's byte, and every comment on its word", async () => {
+    const mounted = await mountStandardViewEditor(graceUsj());
+    await commentOnThreeWords(mounted.lexical);
+    await appendToWord(mounted.lexical, REORDERED, '85" lemma="b"'.length);
+    expect(caretText(mounted.lexical)).toContain(`strong="G54${CARET}85" lemma="b"`);
+
+    commit(mounted);
+
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBe(0);
+    expect(settledWord(mounted)).toMatchObject({ lemma: "b", strong: "G5485" });
+    expect(caretText(mounted.lexical)).toContain(`|lemma="b" strong="G54${CARET}85"\\w*`);
+    expect(liveComments(mounted.lexical)).toEqual({ c1: "In", c2: "of", c3: "God" });
+  });
+
+  it("drops a comment over the moved value rather than moving it, and keeps the caret", async () => {
+    // An attribute run never holds a mark, so a comment over attribute bytes is dropped by the
+    // settle that makes them one; what matters is that it lands nowhere else.
+    const mounted = await mountStandardViewEditor(graceUsj());
+    await inOneUpdate(mounted.lexical, () => {
+      const word = $textContaining("grace");
+      word.setTextContent(`${word.getTextContent()}${REORDERED}`);
+      $commentOver("G5485", "c1");
+      $textContaining("G5485").select(3, 3);
+    });
+    commit(mounted);
+
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBe(0);
+    expect(settledWord(mounted)).toMatchObject({ lemma: "b", strong: "G5485" });
+    expect(caretText(mounted.lexical)).toContain(`|lemma="b" strong="G54${CARET}85"\\w*`);
+    expect(liveMarkTexts(mounted.lexical)).toEqual([]);
+  });
+});
+
 describe("a caret held in an attribute run whose section is deleted", () => {
   /** The span's attribute display run. */
   function $attributeRun(): TextNode {

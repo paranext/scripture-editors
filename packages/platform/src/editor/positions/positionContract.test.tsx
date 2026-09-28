@@ -4,6 +4,7 @@ import {
   contractMismatches,
   PositionScenario,
   specMapSnapped,
+  specSettledText,
 } from "./positionContract.test-helpers";
 import {
   $textContaining,
@@ -231,6 +232,25 @@ const RESPELLINGS: PositionScenario[] = [
         ['"', ""],
         ["\\w* of God made", "\\w* of God made"],
       ],
+    },
+  },
+  {
+    // The duplicate keeps its first slot with its last value, so `strong` settles behind the
+    // surviving `lemma="b"`: every byte of both maps exactly, wherever it moved.
+    name: "w-duplicate-name-strong-exact",
+    usj: spanUsj("w", "grace"),
+    pend: appended("grace", '|lemma="a" strong="G5485" lemma="b"'),
+    liveNeedle: "God",
+    settledNeedle: "God",
+    alignment: {
+      segments: [
+        ["\\p In the \\w grace|", "\\p In the \\w grace|"],
+        ['lemma="a" ', ""],
+        ['strong="G5485" ', 'strong="G5485"'],
+        ['lemma="b"', 'lemma="b" '],
+        ["\\w* of God made", "\\w* of God made"],
+      ],
+      settledOrder: [0, 1, 3, 2, 4],
     },
   },
   {
@@ -480,6 +500,29 @@ describe("position contract — scopes that settle into several top-level items"
 });
 
 describe("specMapSnapped", () => {
+  it("maps a stretch the settle moves to its settled place, and snaps a dropped one left", () => {
+    // `|lemma="a" x="12" lemma="b"` settles as `|lemma="b" x="12"`.
+    const spec: AlignmentSpec = {
+      segments: [
+        ["|", "|"],
+        ['lemma="a"', ""],
+        ['x="12"', 'x="12"'],
+        ['lemma="b"', 'lemma="b"'],
+      ],
+      settledOrder: [0, 1, 3, 2],
+    };
+    expect(specSettledText(spec)).toBe('|lemma="b"x="12"');
+    const liveX = '|lemma="a"'.length;
+    const liveLemma = '|lemma="a"x="12"'.length;
+    const settledX = '|lemma="b"'.length;
+    expect(specMapSnapped(spec, liveX + 3, "live→settled")).toBe(settledX + 3);
+    expect(specMapSnapped(spec, settledX + 3, "settled→live")).toBe(liveX + 3);
+    expect(specMapSnapped(spec, liveLemma + 2, "live→settled")).toBe(3);
+    expect(specMapSnapped(spec, 3, "settled→live")).toBe(liveLemma + 2);
+    expect(specMapSnapped(spec, 4, "live→settled")).toBe(1); // inside the dropped `lemma="a"`
+    expect(specMapSnapped(spec, liveLemma + 9, "live→settled")).toBe(settledX + 6); // the end
+  });
+
   it("maps a count through the stretch holding the byte in front of it, snapping left", () => {
     // A named default attribute (`lemma="grace"`) collapsing to a bare `grace` on settle — the
     // same alignment shape as the `w-named-default-appended` contract scenario, used here to

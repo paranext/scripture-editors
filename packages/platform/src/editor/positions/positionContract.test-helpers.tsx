@@ -43,13 +43,32 @@ import {
 import { expect } from "vitest";
 
 export interface AlignmentSpec {
-  /** `[live, settled]` stretches, in order, whose concatenations are the two paragraphs' texts
-   * (whitespace is ignored). A count names the byte in front of which it sits and maps through
-   * the stretch whose side holds that byte: one for one where the sides are equal, and to the
-   * other side's start where they differ (snap left). A stretch with no bytes on the counting side
-   * holds none, so it is never the one; the count past the last byte maps to the other side's
-   * length. */
+  /** `[live, settled]` stretches, in live order, whose concatenations are the two paragraphs'
+   * texts (whitespace is ignored) — the settled sides in {@link AlignmentSpec.settledOrder}. A
+   * count names the byte in front of which it sits and maps through the stretch whose side holds
+   * that byte: one for one where the sides are equal, and to the other side's start where they
+   * differ (snap left). A stretch with no bytes on the counting side holds none, so it is never the
+   * one; the count past the last byte maps to the other side's length. */
   segments: readonly (readonly [live: string, settled: string])[];
+  /** The stretches' indexes in the order their settled sides run, for a paragraph whose settle
+   * reorders attributes; in live order when omitted. A stretch with no settled bytes still has a
+   * place: it is where a count in front of its live bytes snaps to. */
+  settledOrder?: readonly number[];
+}
+
+/** `spec`'s settled sides, in {@link AlignmentSpec.settledOrder}. */
+export function specSettledText(spec: AlignmentSpec): string {
+  return settledOrderOf(spec)
+    .map((index) => spec.segments[index][1])
+    .join("");
+}
+
+function settledOrderOf(spec: AlignmentSpec): readonly number[] {
+  const indexes = spec.segments.map((_, index) => index);
+  const order = spec.settledOrder ?? indexes;
+  if ([...order].sort((a, b) => a - b).join() !== indexes.join())
+    throw new Error(`settledOrder ${JSON.stringify(order)} is not an order of every stretch`);
+  return order;
 }
 
 export interface PositionScenario {
@@ -94,19 +113,30 @@ export function specMapSnapped(
   count: number,
   direction: "live→settled" | "settled→live",
 ): number {
-  let from = 0;
-  let to = 0;
-  for (const [live, settled] of spec.segments) {
-    const [fromText, toText] =
-      direction === "live→settled"
-        ? [stripWs(live), stripWs(settled)]
-        : [stripWs(settled), stripWs(live)];
+  // Where each stretch starts on each side: live in list order, settled in `settledOrder`.
+  const liveStarts: number[] = [];
+  let liveLength = 0;
+  spec.segments.forEach(([live], index) => {
+    liveStarts[index] = liveLength;
+    liveLength += stripWs(live).length;
+  });
+  const settledStarts: number[] = [];
+  let settledLength = 0;
+  settledOrderOf(spec).forEach((index) => {
+    settledStarts[index] = settledLength;
+    settledLength += stripWs(spec.segments[index][1]).length;
+  });
+  const toSettled = direction === "live→settled";
+  for (let index = 0; index < spec.segments.length; index += 1) {
+    const [live, settled] = spec.segments[index].map(stripWs);
+    const [fromText, toText] = toSettled ? [live, settled] : [settled, live];
+    const [from, to] = toSettled
+      ? [liveStarts[index], settledStarts[index]]
+      : [settledStarts[index], liveStarts[index]];
     if (count >= from && count < from + fromText.length)
       return fromText === toText ? to + (count - from) : to;
-    from += fromText.length;
-    to += toText.length;
   }
-  return to;
+  return toSettled ? settledLength : liveLength;
 }
 
 /** A paragraph's USFM bytes, spelled leaf by leaf, with where each node starts in them: text nodes
@@ -211,10 +241,9 @@ export async function checkContract(scenario: PositionScenario): Promise<Contrac
     stripWs(scenario.alignment.segments.map(([l]) => l).join("")),
     "live side of the spec",
   ).toBe(stripWs(live.text));
-  expect(
-    stripWs(scenario.alignment.segments.map(([, s]) => s).join("")),
-    "settled side of the spec",
-  ).toBe(stripWs(ref.text));
+  expect(stripWs(specSettledText(scenario.alignment)), "settled side of the spec").toBe(
+    stripWs(ref.text),
+  );
 
   // Every reference caret's own (canonical) location, counted where the reference resolves it.
   const inboundLocations: { settledNonWs: number; location: UsjDocumentLocation }[] =
