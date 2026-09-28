@@ -126,6 +126,14 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- The caller of an unclosed note (which renders expanded, its caller as text) can be deleted; the
+  note keeps an empty caller and shows both separators (`\f  \fr …`), as Paratext 9 does.
+- Typing a note's own closer (`\f*`) into an unclosed note closes it there; what followed the
+  closer moves after the note.
+- After typing an undeclared marker (`\df `) the caret stays where it was typed instead of landing
+  in the next closing glyph.
+- A drag across a protected note shell that is typed or deleted over leaves the shell intact.
+
 - `onUsjChange` reports `insertedNodeKey` only for a node the change added. An edit inside an
   existing note (an unclosed note, which renders expanded) was reported as inserting that note.
 - Applying a note to an editor that shows it collapsed keeps text written directly in the note
