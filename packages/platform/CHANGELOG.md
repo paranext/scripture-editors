@@ -38,9 +38,6 @@ refused. The public surface grew substantially; nothing was removed.
   origin the note's USJ text, so a host that captured a position over its own rendering of the same
   note resolves to the same character in any `markerMode`. An optional third argument, `"category"`,
   addresses the note's `\cat` category value instead of its content.
-- `EditorRef.getNoteCaret` — where the caret is within an expanded note, in the terms
-  `selectNoteTextOffset` takes, so a host can hand that position to its own note editor. A caret in
-  the note's marker glyphs or caller reports the next position the user can type at.
 - `generateUsjCss` — builds a project stylesheet from `StyleInfo`.
 - `getMarkerMenuItems` / `getEnterMenuItems` / `filterAndRankItems` — the marker-menu item source and
   ranking a host needs to build its own marker palette.

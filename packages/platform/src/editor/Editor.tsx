@@ -46,7 +46,6 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { $setBlocksType } from "@lexical/selection";
-import { $findMatchingParent } from "@lexical/utils";
 import { deepEqual } from "fast-equals";
 import {
   $addUpdateTag,
@@ -77,7 +76,6 @@ import {
 } from "react";
 import {
   $createParaNode,
-  $isNoteNode,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
@@ -105,7 +103,6 @@ import {
   $getReplaceEmbedOps,
   $insertNote,
   $selectAfterNote,
-  $getNoteCaretOffset,
   $selectNote,
   $selectNoteCategoryOffset,
   $selectNoteTextOffset,
@@ -1058,23 +1055,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         // request would, so the caret is always somewhere sensible inside the note.
         if (!placed) $selectNote(noteNode, viewOptions);
         $rememberExpandedNote(noteNode, expandedNoteKeyRef);
-      });
-    },
-    getNoteCaret() {
-      const editor = editorRef.current;
-      if (!editor) return undefined;
-      return readLatest(editor, () => {
-        const selection = $getSelection();
-        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
-        const node = selection.anchor.getNode();
-        const noteNode = $isNoteNode(node) ? node : $findMatchingParent(node, $isNoteNode);
-        // A collapsed note shows only its caller: nothing inside it is a place the user can be.
-        if (!$isNoteNode(noteNode) || noteNode.getIsCollapsed() !== false) return undefined;
-        const noteKey = noteNode.getKey();
-        const noteIndex = $getNoteIndex(noteKey);
-        if (noteIndex === undefined) return undefined;
-        const caret = $getNoteCaretOffset(noteNode, { node, offset: selection.anchor.offset });
-        return { noteKey, noteIndex, ...caret };
       });
     },
     getNoteOps(noteKeyOrIndex) {

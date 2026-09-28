@@ -640,69 +640,6 @@ function $categoryValueStart(value: TextNode): number {
 }
 
 /**
- * Where a caret sits within a note, in the same terms {@link $selectNoteTextOffset} and
- * {@link $selectNoteCategoryOffset} take: an offset into the note's content text, or into its
- * `\cat` category value when `field` is `"category"`.
- */
-export interface NoteCaretOffset {
-  utf16Offset: number;
-  field?: "category";
-}
-
-/**
- * The inverse of {@link $selectNoteTextOffset}: where `point` sits in `noteNode`'s own text.
- *
- * A point in display the view adds around the content - the opening glyph, the caller, a run's
- * marker glyphs, the `\cat` closer - resolves to the next position the user can type at, which is
- * where a caret put there is headed: past the shell is the content's start, and past a run's
- * opener is that run's text. A point in the `\cat` opener or value resolves into the category.
- *
- * Read-only: call inside `editor.read()` or an update.
- *
- * @param noteNode - The note the point is inside.
- * @param point - The caret, as a node and an offset in it (a text offset for a text node, a child
- *   index for an element).
- */
-export function $getNoteCaretOffset(
-  noteNode: NoteNode,
-  point: { node: LexicalNode; offset: number },
-): NoteCaretOffset {
-  let { node: anchor, offset } = point;
-  // An element point sits between two children; it is the start of whatever follows it.
-  while ($isElementNode(anchor)) {
-    const child = anchor.getChildAtIndex(offset);
-    if (child) {
-      anchor = child;
-      offset = 0;
-    } else {
-      const last = anchor.getLastDescendant();
-      if (!last) break;
-      anchor = last;
-      offset = last.getTextContentSize();
-    }
-  }
-
-  const { opener: categoryOpener, value: categoryValue } = $noteCategoryRunPieces(noteNode);
-  if (categoryValue?.is(anchor))
-    return {
-      utf16Offset: Math.max(0, offset - $categoryValueStart(categoryValue)),
-      field: "category",
-    };
-  if (categoryOpener?.is(anchor)) return { utf16Offset: 0, field: "category" };
-
-  const caller = $noteEditableCallerNode(noteNode);
-  let accumulated = 0;
-  for (const { node } of $dfs(noteNode)) {
-    if ($isNoteContentText(node, caller)) {
-      const dataStart = $separatorPrefixLength(node);
-      if (node.is(anchor)) return { utf16Offset: accumulated + Math.max(0, offset - dataStart) };
-      accumulated += node.getTextContentSize() - dataStart;
-    } else if (node.is(anchor)) return { utf16Offset: accumulated };
-  }
-  return { utf16Offset: accumulated };
-}
-
-/**
  * Whether `node`, somewhere inside a note, is text of the note's CONTENT rather than display the
  * view adds around it (see {@link $selectNoteTextOffset} for the list).
  * @param node - A node inside the note.
