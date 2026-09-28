@@ -9,6 +9,7 @@ import { addClassNamesToElement, removeClassNamesFromElement } from "@lexical/ut
 import type {
   BaseSelection,
   EditorConfig,
+  EditorThemeClasses,
   LexicalEditor,
   LexicalNode,
   LexicalUpdateJSON,
@@ -218,15 +219,7 @@ export class TypedMarkNode extends ElementNode {
 
   override createDOM(config: EditorConfig, editor: LexicalEditor): HTMLElement {
     const element = document.createElement("mark");
-    for (const [type, ids] of Object.entries(this.__typedIDs)) {
-      addClassNamesToElement(element, getTypedClassName(config.theme.typedMark, type));
-      if (ids.length > 1) {
-        addClassNamesToElement(element, getTypedClassName(config.theme.typedMarkOverlap, type));
-      }
-      for (const id of ids) {
-        addClassNamesToElement(element, getTypedClassName("annotationId", id));
-      }
-    }
+    addClassNamesToElement(element, ...typedMarkClassNames(config.theme, this.__typedIDs));
     const clickListener = this.getOrCreateDOMClickListener(editor);
     element.addEventListener("click", clickListener);
     const mouseEnterListener = this.getOrCreateDOMMouseEnterListener(editor);
@@ -1289,6 +1282,23 @@ function mergeTypedOnMouseLeaveMaps(
 
 function getTypedClassName(className: string, type: string): string {
   return `${className}-${type}`;
+}
+
+/**
+ * The CSS class names an annotation carrying `typedIDs` is painted with: per type
+ * `<theme.typedMark>-<type>`, `<theme.typedMarkOverlap>-<type>` whenever two ids of the type are on
+ * the element — for a display-byte node even when their ranges on it do not overlap, since the
+ * node is painted whole — and `annotationId-<id>` per id. A `<mark>` and a display-byte node an
+ * annotation is held on are painted with the same names, so one host stylesheet styles both.
+ */
+export function typedMarkClassNames(theme: EditorThemeClasses, typedIDs: TypedIDs): string[] {
+  const names: string[] = [];
+  for (const [type, ids] of Object.entries(typedIDs)) {
+    names.push(getTypedClassName(theme.typedMark, type));
+    if (ids.length > 1) names.push(getTypedClassName(theme.typedMarkOverlap, type));
+    for (const id of ids) names.push(getTypedClassName("annotationId", id));
+  }
+  return names;
 }
 
 /**
