@@ -11,7 +11,13 @@ import { $charSeparatorPrefixLength } from "../usj/markerSeparators.utils.js";
 import { $isMilestoneNode } from "../usj/MilestoneNode.js";
 import { $isMarkerTrailingSeparator } from "../usj/node.utils.js";
 import { $isVerseNode } from "../usj/VerseNode.js";
-import { $isAttributeDisplayRun, $isElementOwnerRunAnchor } from "./displayAnnotations.utils.js";
+import {
+  $addDisplayAnnotation,
+  $isAttributeDisplayRun,
+  $isDisplayAnnotationCarrier,
+  $isElementOwnerRunAnchor,
+  $registerDisplayAnnotation,
+} from "./displayAnnotations.utils.js";
 import { $isMarkerNode } from "./MarkerNode.js";
 import {
   $createTypedMarkNode,
@@ -22,7 +28,7 @@ import {
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
 } from "./TypedMarkNode.js";
-import type { LexicalNode, RangeSelection } from "lexical";
+import type { LexicalNode, PointType, RangeSelection } from "lexical";
 import { $isElementNode, $isTextNode } from "lexical";
 
 /**
@@ -44,6 +50,24 @@ function $isDisplayOwnerUnit(node: LexicalNode): boolean {
   );
 }
 
+/**
+ * The `[start, end)` bytes of carrier `node` a selection from `start` to `end` covers, or
+ * `undefined` when it covers none. A decorator is covered whole (`[0, 0]`). An end point on
+ * another node leaves this node covered to that side's edge.
+ */
+function $coveredCarrierRange(
+  node: LexicalNode,
+  start: PointType,
+  end: PointType,
+): [number, number] | undefined {
+  if (!$isDisplayAnnotationCarrier(node)) return undefined;
+  if (!$isTextNode(node)) return [0, 0];
+  const from = start.type === "text" && start.key === node.getKey() ? start.offset : 0;
+  const to =
+    end.type === "text" && end.key === node.getKey() ? end.offset : node.getTextContentSize();
+  return to > from ? [from, to] : undefined;
+}
+
 export function $wrapSelectionInTypedMarkNode(
   selection: RangeSelection,
   type: string,
@@ -58,6 +82,17 @@ export function $wrapSelectionInTypedMarkNode(
   const focusOffset = selection.focus.offset;
   const nodesLength = nodes.length;
   const isBackward = selection.isBackward();
+  const [startPoint, endPoint] = isBackward
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  let markCreated = false;
+  let carrierAnnotated = false;
+  const $annotateCarrier = (node: LexicalNode) => {
+    const covered = $coveredCarrierRange(node, startPoint, endPoint);
+    if (!covered) return;
+    $addDisplayAnnotation(node, type, id, covered[0], covered[1]);
+    carrierAnnotated = true;
+  };
   const startOffset = isBackward ? focusOffset : anchorOffset;
   const endOffset = isBackward ? anchorOffset : focusOffset;
   let currentNodeParent;
@@ -78,6 +113,9 @@ export function $wrapSelectionInTypedMarkNode(
       $isAttributeDisplayRun(node) ||
       $isDisplayOwnerUnit(node)
     ) {
+      // A display-byte node — a marker glyph, a separator, an attribute run's text, a display
+      // owner or the text its run is anchored after — is never moved into a mark or split by one.
+      //
       // A marker glyph is display bytes its construct owns, never annotated content: moving one
       // into a mark takes it out of the construct's own children, which the marker-edit engine
       // reads as the marker having been deleted (a char span or note loses its closer, a note its
@@ -98,6 +136,10 @@ export function $wrapSelectionInTypedMarkNode(
       // A display owner (or a run's anchor text) and its run wrapper are one unit: the selection
       // lists the wrapper ELEMENT before its children, so the glyph guard alone never sees it.
       // Neither half is ever moved or split, so the unit stays together outside the mark.
+      //
+      // The annotation is held ON the node instead (`displayAnnotationsState`), for the bytes the
+      // selection covers on it; a separator holds nothing (see `$isDisplayAnnotationCarrier`).
+      $annotateCarrier(node);
       currentNodeParent = node.getParent();
       lastCreatedMarkNode = undefined;
       continue;
@@ -163,17 +205,28 @@ export function $wrapSelectionInTypedMarkNode(
         lastCreatedMarkNode = $createTypedMarkNode();
         lastCreatedMarkNode.addID(type, id, onClick, onRemove, onMouseEnter, onMouseLeave);
         targetNode.insertBefore(lastCreatedMarkNode);
+        markCreated = true;
       }
 
       // Add the target node to be wrapped in the latest created mark node
       lastCreatedMarkNode.append(targetNode);
     } else {
+      // A decorator or block element is never wrapped; a display-byte decorator holds the
+      // annotation instead.
+      $annotateCarrier(node);
       // If we don't have a target node to wrap we can clear our state and continue on with the next
       // node
       currentNodeParent = undefined;
       lastCreatedMarkNode = undefined;
     }
   }
+  if (carrierAnnotated)
+    $registerDisplayAnnotation(
+      type,
+      id,
+      { onClick, onRemove, onMouseEnter, onMouseLeave },
+      markCreated,
+    );
   // Make selection collapsed at the end for comments.
   if (type === COMMENT_MARK_TYPE && $isElementNode(lastCreatedMarkNode)) {
     if (isBackward) lastCreatedMarkNode.selectStart();

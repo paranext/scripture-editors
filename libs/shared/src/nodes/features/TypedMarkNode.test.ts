@@ -12,12 +12,21 @@ import { $syncDisplayRun } from "../usj/displayRunSync.utils.js";
 import { $createMilestoneNode, MilestoneNode } from "../usj/MilestoneNode.js";
 import { NBSP } from "../usj/node-constants.js";
 import { $createNoteNode, NoteNode } from "../usj/NoteNode.js";
-import { getEditableCallerText, getVisibleOpenMarkerText } from "../usj/node.utils.js";
+import {
+  $createMarkerTrailingSeparator,
+  getEditableCallerText,
+  getVisibleOpenMarkerText,
+} from "../usj/node.utils.js";
 import { $createParaNode, ParaNode } from "../usj/ParaNode.js";
 import { usjBaseNodes } from "../usj/index.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
 import { $createVerseNode, VerseNode } from "../usj/VerseNode.js";
 import { textTypeState } from "../collab/delta.state.js";
+import type { DisplayAnnotation } from "./displayAnnotations.state.js";
+import {
+  $displayAnnotationsOf,
+  getDisplayAnnotationRegistration,
+} from "./displayAnnotations.utils.js";
 import { $createMarkerNode } from "./MarkerNode.js";
 import {
   $createTypedMarkNode,
@@ -700,6 +709,14 @@ describe("TypedMarkNode", () => {
   });
 
   describe("$wrapSelectionInTypedMarkNode()", () => {
+    /** What `node` holds for testType1/testID1, as `[start, end]` pairs. */
+    function $held(node: LexicalNode | null | undefined): [number, number][] {
+      if (!node) throw new Error("expected a node");
+      return $displayAnnotationsOf(node)
+        .filter((annotation: DisplayAnnotation) => annotation.id === testID1)
+        .map((annotation) => [annotation.start, annotation.end]);
+    }
+
     it("never splits or moves an attribute display run", () => {
       const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode]);
       editor.update(
@@ -724,7 +741,9 @@ describe("TypedMarkNode", () => {
         const run = children.find((child) => child.getTextContent() === "|grace");
         expect(run?.getParent()?.is(para)).toBe(true);
         expect(para.getTextContent()).toBe("grace|grace of God");
+        expect($held(run)).toEqual([[0, 6]]);
       });
+      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)?.hadMarks).toBe(true);
     });
 
     /** The attribute-tagged value text inside `wrapper`, the display run's `|…` bytes. */
@@ -769,6 +788,10 @@ describe("TypedMarkNode", () => {
         expect(marks.every((mark) => mark.hasID(testType1, testID1))).toBe(true);
         expect(milestone.getMarker()).toBe("qt-s");
         expect(milestone.getUnknownAttributes()).toEqual({ who: "Pilate" });
+        expect($held(pieces.opener)).toEqual([[0, pieces.opener?.getTextContentSize() ?? -1]]);
+        expect($held(pieces.value)).toEqual([[0, pieces.value?.getTextContentSize() ?? -1]]);
+        expect($held(pieces.closer)).toEqual([[0, pieces.closer?.getTextContentSize() ?? -1]]);
+        expect($displayAnnotationsOf(milestone)).toEqual([]);
       });
     });
 
@@ -800,6 +823,11 @@ describe("TypedMarkNode", () => {
         expect(wrapper?.getParent()?.is(para)).toBe(true);
         const marks = para.getChildren().filter($isTypedMarkNode);
         expect(marks.map((mark) => mark.getTextContent())).toEqual(["beginning ", "and"]);
+        expect($held(verse)).toEqual([[0, verseText.length]]);
+        if (!$isAttributeRunNode(wrapper)) throw new Error("expected the `\\va` run wrapper");
+        wrapper
+          .getChildren()
+          .forEach((piece) => expect($held(piece)).toEqual([[0, piece.getTextContentSize()]]));
       });
     });
 
@@ -846,6 +874,7 @@ describe("TypedMarkNode", () => {
         expect(pieces.value?.getTextContent()).toBe(`${NBSP}People`);
         const marks = note.getChildren().filter($isTypedMarkNode);
         expect(marks.map((mark) => mark.getTextContent())).toEqual(["note"]);
+        expect($held(caller)).toEqual([[1, getEditableCallerText("+").length]]);
       });
     });
 
@@ -880,13 +909,18 @@ describe("TypedMarkNode", () => {
         expect(chapter.getChildren().some($isTypedMarkNode)).toBe(false);
         const marks = para.getChildren().filter($isTypedMarkNode);
         expect(marks.map((mark) => mark.getTextContent())).toEqual(["In the"]);
+        expect($held(glyph)).toEqual([[1, glyphText.length]]);
       });
     });
 
     describe("from a char span's opening glyph", () => {
-      /** Each child of `\nd <content>\nd*` as `[type, text]`, marks shown with their children's
-       * text, after wrapping `the \nd <content>\nd* made` from the front of `\nd` into ` made`. */
-      function wrapFromOpener(content: () => LexicalNode[]): (string | string[])[] {
+      /** After wrapping `the \nd <content>\nd* made` from the front of `\nd` into ` made`: the text
+       * of each child of `\nd <content>\nd*` (a mark shown as its children's text), and what each
+       * child holds, in the same shape. */
+      function wrapFromOpener(content: () => LexicalNode[]): {
+        children: (string | string[])[];
+        held: ([number, number][] | [number, number][][])[];
+      } {
         const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
         let nd!: CharNode;
         editor.update(
@@ -906,16 +940,19 @@ describe("TypedMarkNode", () => {
           },
           { discrete: true },
         );
-        return editor.getEditorState().read(() =>
-          nd
-            .getLatest()
-            .getChildren()
-            .map((child) =>
+        return editor.getEditorState().read(() => {
+          const children = nd.getLatest().getChildren();
+          return {
+            children: children.map((child) =>
               $isTypedMarkNode(child)
                 ? child.getChildren().map((inner) => inner.getTextContent())
                 : child.getTextContent(),
             ),
-        );
+            held: children.map((child) =>
+              $isTypedMarkNode(child) ? child.getChildren().map($held) : $held(child),
+            ),
+          };
+        });
       }
 
       /** `\+wj God\+wj*`, a nested span. */
@@ -928,7 +965,7 @@ describe("TypedMarkNode", () => {
       }
 
       it("keeps the spacer in front of a nested span out of the mark", () => {
-        expect(wrapFromOpener(() => [$createTextNode(NBSP), $nestedWj()])).toEqual([
+        expect(wrapFromOpener(() => [$createTextNode(NBSP), $nestedWj()]).children).toEqual([
           "\\nd",
           NBSP,
           [`\\+wj${NBSP}God\\+wj*`],
@@ -937,16 +974,14 @@ describe("TypedMarkNode", () => {
       });
 
       it("keeps the separator prefix of the span's first text out of the mark", () => {
-        expect(wrapFromOpener(() => [$createTextNode(`${NBSP}LORD`)])).toEqual([
-          "\\nd",
-          NBSP,
-          ["LORD"],
-          "\\nd*",
-        ]);
+        const { children, held } = wrapFromOpener(() => [$createTextNode(`${NBSP}LORD`)]);
+        expect(children).toEqual(["\\nd", NBSP, ["LORD"], "\\nd*"]);
+        // The glyphs hold the annotation; the separator and the content hold none of it.
+        expect(held).toEqual([[[0, 3]], [], [[]], [[0, 4]]]);
       });
 
       it("still annotates an NBSP the user typed after the separator", () => {
-        expect(wrapFromOpener(() => [$createTextNode(`${NBSP}${NBSP}LORD`)])).toEqual([
+        expect(wrapFromOpener(() => [$createTextNode(`${NBSP}${NBSP}LORD`)]).children).toEqual([
           "\\nd",
           NBSP,
           [`${NBSP}LORD`],
@@ -956,7 +991,8 @@ describe("TypedMarkNode", () => {
 
       it("still annotates NBSP-only text that is not in the separator's place", () => {
         expect(
-          wrapFromOpener(() => [$createTextNode(NBSP), $nestedWj(), $createTextNode(NBSP)]),
+          wrapFromOpener(() => [$createTextNode(NBSP), $nestedWj(), $createTextNode(NBSP)])
+            .children,
         ).toEqual(["\\nd", NBSP, [`\\+wj${NBSP}God\\+wj*`, NBSP], "\\nd*"]);
       });
     });
@@ -984,10 +1020,108 @@ describe("TypedMarkNode", () => {
         const wrapper = milestone.getNextSibling();
         expect($isAttributeRunNode(wrapper)).toBe(true);
         expect(wrapper?.getParent()?.is(para)).toBe(true);
-        expect($attributeTextIn(wrapper).getTextContent()).toContain("|Pilate");
+        const value = $attributeTextIn(wrapper);
+        expect(value.getTextContent()).toContain("|Pilate");
         const marks = para.getChildren().filter($isTypedMarkNode);
         expect(marks.map((mark) => mark.getTextContent())).toEqual([" What"]);
+        expect($held(value)).toEqual([
+          [value.getTextContent().indexOf("late"), value.getTextContentSize()],
+        ]);
       });
+    });
+
+    it("annotates a range inside an attribute value on the run itself, and changes nothing else", () => {
+      const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+      let char!: CharNode;
+      let run!: TextNode;
+      editor.update(
+        () => {
+          run = $setState($createTextNode("|grace"), textTypeState, "attribute");
+          char = $createCharNode("w").append(
+            $createMarkerNode("w"),
+            $createTextNode(`${NBSP}grace`),
+            run,
+            $createMarkerNode("w", "closing"),
+          );
+          $getRoot().append($createParaNode().append($createTextNode("In the "), char));
+          const selection = $createRangeSelection();
+          selection.anchor.set(run.getKey(), 1, "text");
+          selection.focus.set(run.getKey(), 6, "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        expect(char.getLatest().getTextContent()).toBe(`\\w${NBSP}grace|grace\\w*`);
+        expect(char.getLatest().getChildren().some($isTypedMarkNode)).toBe(false);
+        expect($held(run.getLatest())).toEqual([[1, 6]]);
+      });
+      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)?.hadMarks).toBe(false);
+    });
+
+    it("annotates only the number when the range covers a verse's number", () => {
+      const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+      let verse!: VerseNode;
+      const verseText = getVisibleOpenMarkerText("v", "12");
+      editor.update(
+        () => {
+          verse = $createVerseNode("12", verseText);
+          $getRoot().append($createParaNode().append(verse, $createTextNode("and the earth")));
+          const selection = $createRangeSelection();
+          selection.anchor.set(verse.getKey(), 3, "text");
+          selection.focus.set(verse.getKey(), 5, "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        expect(verse.getLatest().getTextContent()).toBe(verseText);
+        expect($held(verse.getLatest())).toEqual([[3, 5]]);
+        expect(
+          $getRoot().getFirstChildOrThrow<ParaNode>().getChildren().some($isTypedMarkNode),
+        ).toBe(false);
+      });
+    });
+
+    it("registers nothing for a range over content alone", () => {
+      const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+      editor.update(
+        () => {
+          const text = $createTextNode("In the beginning");
+          $getRoot().append($createParaNode().append(text));
+          const selection = $createRangeSelection();
+          selection.anchor.set(text.getKey(), 0, "text");
+          selection.focus.set(text.getKey(), 2, "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1, undefined, vi.fn());
+        },
+        { discrete: true },
+      );
+      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)).toBeUndefined();
+    });
+
+    it("annotates nothing, and registers nothing, for a range over a separator alone", () => {
+      const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+      let separator!: TextNode;
+      editor.update(
+        () => {
+          separator = $createMarkerTrailingSeparator();
+          $getRoot().append(
+            $createParaNode().append($createMarkerNode("p"), separator, $createTextNode("text")),
+          );
+          const selection = $createRangeSelection();
+          selection.anchor.set(separator.getKey(), 0, "text");
+          selection.focus.set(separator.getKey(), separator.getTextContentSize(), "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        expect($displayAnnotationsOf(separator.getLatest())).toEqual([]);
+      });
+      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)).toBeUndefined();
     });
   });
 });
