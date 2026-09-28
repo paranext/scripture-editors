@@ -247,10 +247,16 @@ export interface EditorRef {
    * whitespace the editor shows between a marker and its content is never annotated. Setting an
    * annotation never changes the document, a position, or what `getSelection` reports.
    *
-   * `onRemove`: an annotation that holds any text reports removal through its marks, as before —
-   * one call per `<mark>`. One held only on display bytes reports `"removed"` once when removed or
-   * set again, and `"destroyed"` once when its last display byte leaves the document, including
-   * when a settle discards those bytes.
+   * `onRemove`: each `<mark>` reports its own removal — one call per `<mark>`. Display bytes report
+   * only for an annotation no `<mark>` reports:
+   * - `"removed"`, once, when `removeAnnotation` or setting the same id again takes it off display
+   *   bytes while no `<mark>` holds it.
+   * - `"destroyed"`, once, when its last display byte leaves the document (an edit, a
+   *   collaborator's edit, or a settle that discards those bytes) — but only for an annotation that
+   *   has never held a `<mark>` since it was set. One that held a `<mark>` at any moment reports
+   *   destruction through its marks alone: once they are gone, nothing reports the later loss of
+   *   its display bytes. That includes a range set over a pending edit (`|lemma="grace"` still
+   *   typed as text, so wrapped in a `<mark>`) that the settle then carries onto display bytes.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.
