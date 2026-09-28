@@ -33,7 +33,12 @@ import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
 import { TransientInput } from "../editor.model";
 import { BARE_OPENER_REGEX } from "./markerName.pattern";
 import { $unknownSplitRejoinScope } from "./markerEditTier1.utils";
-import { $serializeExpandedNoteContent, ATOMIC_SENTINEL } from "./settleShared.utils";
+import {
+  $serializeExpandedNoteContent,
+  $serializeNoteClosedAtOwnCloser,
+  ATOMIC_SENTINEL,
+  splitUnclosedNoteAtOwnCloser,
+} from "./settleShared.utils";
 import {
   $buildChapterFragment,
   $buildNoteFragment,
@@ -601,6 +606,9 @@ function $settledNoteContent(
        * note's current state — the caller patches the serialized note's own field on change. */
       category: string | undefined;
       categoryChanged: boolean;
+      /** The note closed at a closer typed into it, then what followed the closer - replacing the
+       * note itself rather than its content (see `splitUnclosedNoteAtOwnCloser`). */
+      closedAs?: SerializedLexicalNode[];
     }
   | undefined {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
@@ -635,6 +643,31 @@ function $settledNoteContent(
   const noteContent = tokenizedWrapper.content ?? [];
   const foldedCategory = extractLeadingCategoryFold(noteContent);
   const categoryChanged = note.getCategory() !== foldedCategory;
+  // Mirrors `$rebuildNoteContent`'s `$closeNoteAtOwnCloser`.
+  const closedAt = splitUnclosedNoteAtOwnCloser(note, noteContent);
+  if (closedAt) {
+    const closedAs = $serializeNoteClosedAtOwnCloser(
+      note,
+      closedAt.before,
+      closedAt.after,
+      foldedCategory,
+      viewOptions,
+    );
+    if (!closedAs || countSerializedSentinels(closedAs) !== out.sentinels.length) {
+      logger?.warn("[MarkerEdit] Settled note USJ skipped: the closed note lost its content");
+      return undefined;
+    }
+    const closedRuns = serializedRunsOf(out, sites, huskKeys);
+    if (!closedRuns) return undefined;
+    replaceSerializedSentinels(closedAs, closedRuns);
+    return {
+      rebuilt: undefined,
+      contentNodes,
+      category: foldedCategory,
+      categoryChanged: false,
+      closedAs,
+    };
+  }
   const unwrapped = $serializeExpandedNoteContent(note, noteContent, foldedCategory, viewOptions);
   if (unwrapped.failure !== undefined) {
     // An "empty" unwrap is silent here, matching this module's other content-less skips.
@@ -1032,6 +1065,17 @@ export function $settledUsj(
     if (!site || !noteChildren) continue;
     const built = $settledNoteContent(note, sites, context, huskKeys, transient);
     if (!built) continue;
+    if (built.closedAs) {
+      const index = site.siblings.indexOf(site.node);
+      if (index < 0) continue;
+      const [closedNote, ...following] = built.closedAs;
+      // Rewritten in place, so a paragraph settling around this note substitutes the closed note.
+      const target = site.node as unknown as { [key: string]: unknown };
+      for (const key of Object.keys(target)) Reflect.deleteProperty(target, key);
+      Object.assign(target, closedNote);
+      site.siblings.splice(index + 1, 0, ...following);
+      continue;
+    }
     // The category fold's result patches the serialized note's OWN field — the settled USJ a
     // consumer reads must carry the category the displayed bytes fold to, not the stale state.
     if (built.categoryChanged) {

@@ -14,8 +14,10 @@ import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
 import { UNTERMINATED_MARKER_TAIL } from "./markerName.pattern";
 import {
   $serializeExpandedNoteContent,
+  $serializeNoteClosedAtOwnCloser,
   ATOMIC_SENTINEL,
   charOwnChildSignatureText,
+  splitUnclosedNoteAtOwnCloser,
 } from "./settleShared.utils";
 import {
   MarkerContent,
@@ -35,6 +37,7 @@ import {
   $parseSerializedNode,
   ElementNode,
   LexicalNode,
+  NodeKey,
   SerializedLexicalNode,
   TextNode,
 } from "lexical";
@@ -74,7 +77,13 @@ import {
   usfmFragmentToUsjContent,
   VerseNode,
 } from "shared";
-import { $isImmutableNoteCallerNode, hasStandardViewWhitespace, ViewOptions } from "shared-react";
+import {
+  $isImmutableNoteCallerNode,
+  $selectAfterNote,
+  $selectNote,
+  hasStandardViewWhitespace,
+  ViewOptions,
+} from "shared-react";
 
 /**
  * Everything a Tier-2 rebuild needs that is not the nodes themselves: the active view options
@@ -116,6 +125,13 @@ export interface FragmentAccumulator {
   spans: FragmentSpan[];
   /** One entry per U+FFFC, in fragment order; each entry is a node RUN to re-insert. */
   sentinels: LexicalNode[][];
+  /**
+   * Set only when measuring a REBUILT region to put the caret back: the keys of the nodes the
+   * rebuild preserved. A span that would otherwise be a sentinel but is not among them was just
+   * built by the tokenizer from bytes the caret's anchor counted one by one - an unknown marker
+   * the user typed - so its bytes are counted the same way here rather than as one placeholder.
+   */
+  preservedKeys?: ReadonlySet<NodeKey>;
 }
 
 function pushText(out: FragmentAccumulator, node: LexicalNode, text: string): void {
@@ -1005,7 +1021,8 @@ function $appendNodesFragment(
       // run (if any) is ordinary text among its children — it re-tokenizes and re-derives via
       // `extractAttributes` like the rest of the span's content. `$charNeedsSentinel` is the
       // shared authority, so this branch and `$isRebuildSentinel` cannot drift apart.
-      if ($charNeedsSentinel(node, getMarkerFn)) pushSentinel(out, [node]);
+      const isPreserved = !out.preservedKeys || out.preservedKeys.has(node.getKey());
+      if (isPreserved && $charNeedsSentinel(node, getMarkerFn)) pushSentinel(out, [node]);
       else $appendChildrenFragment(node, out, getMarkerFn, viewOptions, { pending: true });
     } else if ($isLineBreakNode(node)) {
       consumeCharLead();
@@ -1154,8 +1171,9 @@ function $spansForNodes(
   nodes: LexicalNode[],
   getMarkerFn: MarkerLookup,
   viewOptions: ViewOptions | undefined,
+  preservedKeys?: ReadonlySet<NodeKey>,
 ): { text: string; spans: FragmentSpan[] } {
-  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [], preservedKeys };
   for (const node of nodes) {
     if (out.text.length > 0) out.text += " ";
     if ($isElementNode(node)) $appendChildrenFragment(node, out, getMarkerFn, viewOptions);
@@ -1462,6 +1480,7 @@ function $restoreSelectionAtOffset(
   anchorInParas: boolean,
   getMarkerFn: MarkerLookup,
   viewOptions: ViewOptions | undefined,
+  preservedKeys?: ReadonlySet<NodeKey>,
 ): void {
   // The caret was somewhere else entirely (the primary completion flow: the user
   // typed a mid-edit marker, then clicked/arrowed into another paragraph, which is
@@ -1472,7 +1491,11 @@ function $restoreSelectionAtOffset(
     newNodes.find($isElementNode)?.selectStart();
     return;
   }
-  $selectAtFragmentByteAnchor($spansForNodes(newNodes, getMarkerFn, viewOptions), anchor, newNodes);
+  $selectAtFragmentByteAnchor(
+    $spansForNodes(newNodes, getMarkerFn, viewOptions, preservedKeys),
+    anchor,
+    newNodes,
+  );
 }
 
 /**
@@ -1486,13 +1509,14 @@ function $restoreSelectionInNoteContent(
   anchorInNote: boolean,
   getMarkerFn: MarkerLookup,
   viewOptions: ViewOptions | undefined,
+  preservedKeys?: ReadonlySet<NodeKey>,
 ): void {
   if (!anchorInNote) return;
   if (anchor === undefined) {
     newNodes.find($isElementNode)?.selectStart();
     return;
   }
-  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [], preservedKeys };
   $appendNodesFragment(newNodes, out, getMarkerFn, viewOptions);
   $selectAtFragmentByteAnchor({ text: out.text, spans: out.spans }, anchor, newNodes);
 }
@@ -1640,7 +1664,14 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
     if (newVerses[i].getNumber() === oldVerseSids[i].number)
       newVerses[i].setSid(oldVerseSids[i].sid);
   }
-  $restoreSelectionAtOffset(newNodes, caretAnchor, anchorInParas, getMarkerFn, viewOptions);
+  $restoreSelectionAtOffset(
+    newNodes,
+    caretAnchor,
+    anchorInParas,
+    getMarkerFn,
+    viewOptions,
+    new Set(combined.sentinels.flat().map((node) => node.getKey())),
+  );
   return true;
 }
 
@@ -1805,6 +1836,18 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   // instead of the sync resurrecting it from stale state.
   const foldedCategory = extractLeadingCategoryFold(noteContent);
 
+  // A closer the user typed into an unclosed note ends the note right there.
+  const closedAt = splitUnclosedNoteAtOwnCloser(note, noteContent);
+  if (closedAt)
+    return $closeNoteAtOwnCloser(
+      note,
+      closedAt,
+      foldedCategory,
+      out.sentinels,
+      context,
+      anchorInNote,
+    );
+
   // The fresh content children come from serializing the WHOLE note expanded and unwrapping its
   // shell; `$serializeExpandedNoteContent` (settleShared.utils.ts) states why, and is shared with
   // the read-only settle so the two can never unwrap the same shell differently. Parse the
@@ -1888,7 +1931,62 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   contentNodes.forEach((node) => {
     if (!preservedKeys.has(node.getKey())) node.remove();
   });
-  $restoreSelectionInNoteContent(newNodes, caretAnchor, anchorInNote, getMarkerFn, viewOptions);
+  $restoreSelectionInNoteContent(
+    newNodes,
+    caretAnchor,
+    anchorInNote,
+    getMarkerFn,
+    viewOptions,
+    preservedKeys,
+  );
+  return true;
+}
+
+/**
+ * Replaces `note` with itself closed at the closer the user typed into it (see
+ * `splitUnclosedNoteAtOwnCloser`), rebuilt in the view's own note mode - so a view that collapses
+ * its closed notes now shows this one as its caller - followed by whatever came after the closer,
+ * as paragraph content. The caret, when it was in the note, goes where the user was typing: past
+ * the note when it collapsed, else at the end of its content. Preserve-or-refuse: `false` with the
+ * note untouched when the rebuilt shape cannot carry every preserved node.
+ */
+function $closeNoteAtOwnCloser(
+  note: NoteNode,
+  { before, after }: { before: MarkerContent[]; after: MarkerContent[] },
+  foldedCategory: string | undefined,
+  sentinels: LexicalNode[][],
+  context: Tier2Context,
+  anchorInNote: boolean,
+): boolean {
+  const { viewOptions, logger } = context;
+  const serialized = $serializeNoteClosedAtOwnCloser(
+    note,
+    before,
+    after,
+    foldedCategory,
+    viewOptions,
+  );
+  if (!serialized || countSerializedSentinels(serialized) !== sentinels.length) {
+    logger?.warn("[MarkerEdit] Note close aborted: the closed note does not carry its content");
+    return false;
+  }
+  const newNodes = serialized.map((child) => $parseSerializedNode(child));
+  const [closedNote] = newNodes;
+  if (!$isNoteNode(closedNote) || countSentinelNodes(newNodes) !== sentinels.length) {
+    logger?.warn("[MarkerEdit] Note close aborted: the closed note does not carry its content");
+    return false;
+  }
+  let previous: LexicalNode = note;
+  for (const node of newNodes) {
+    previous.insertAfter(node);
+    previous = node;
+  }
+  $replaceSentinels(newNodes, sentinels);
+  note.remove();
+  if (anchorInNote) {
+    if (closedNote.getIsCollapsed() === true) $selectAfterNote(closedNote);
+    else $selectNote(closedNote, viewOptions);
+  }
   return true;
 }
 
