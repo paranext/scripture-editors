@@ -40,7 +40,14 @@ import {
   $setSelection,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
-import { $isParaNode, $isTypedMarkNode, getPendedDisplayOwners, NBSP, TypedMarkNode } from "shared";
+import {
+  $isParaNode,
+  $isTypedMarkNode,
+  $isVerseNode,
+  getPendedDisplayOwners,
+  NBSP,
+  TypedMarkNode,
+} from "shared";
 import { $getUsjSelectionFromEditor, SelectionRange } from "shared-react";
 
 /** Every `TypedMarkNode` in the tree, depth-first. */
@@ -982,29 +989,131 @@ describe("the end of the last text in a document", () => {
     expect(ref.current?.getSelection()).toEqual({ start: end });
   });
 
-  it.each([
-    ["the paragraph's end, after the number", "26".length],
-    ["the document's end, one past the final newline", "26".length + 1],
-  ])(
-    "a document ending in a verse marker round-trips %s on the number",
-    async (_, propertyOffset) => {
-      const { ref } = await mountStandardViewEditor({
-        type: "USJ",
-        version: "3.1",
-        content: [
-          { type: "book", marker: "id", code: "JHN", content: ["JHN"] },
-          { type: "chapter", marker: "c", number: "2" },
-          {
-            type: "para",
-            marker: "p",
-            content: [
-              { type: "verse", marker: "v", number: "25" },
-              verseText,
-              { type: "verse", marker: "v", number: "26" },
-            ],
-          },
-        ],
+  describe("a document ending in a verse marker", () => {
+    const verseEndingUsj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "JHN", content: ["JHN"] },
+        { type: "chapter", marker: "c", number: "2" },
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            { type: "verse", marker: "v", number: "25" },
+            verseText,
+            { type: "verse", marker: "v", number: "26" },
+          ],
+        },
+      ],
+    };
+
+    /** The last verse's glyph (`\v 26 `), which renders the number and its trailing separator. */
+    function $lastVerseGlyph(): LexicalNode {
+      const glyph = $getRoot()
+        .getAllTextNodes()
+        .find((node) => $isVerseNode(node) && node.getNumber() === "26");
+      if (!glyph) throw new Error("expected the verse 26 glyph");
+      return glyph;
+    }
+
+    /** Where the live caret sits, named by what it is rather than by node key. */
+    function liveCaret(lexical: LexicalEditor) {
+      return lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return undefined;
+        const { anchor, focus } = selection;
+        const node = anchor.getNode();
+        return {
+          on: node.is($getRoot())
+            ? "root"
+            : node.is($lastVerseGlyph())
+              ? "verse 26 glyph"
+              : "other",
+          type: anchor.type,
+          offset: anchor.offset,
+          collapsed: anchor.is(focus),
+        };
       });
+    }
+
+    /** The two ends a location on the verse's number can name, each with the live point it is.
+     * The paragraph's end is after the number, in front of the glyph's trailing separator; the
+     * document's end is one past the final newline, the root's own end. */
+    const ends: [string, number, () => { on: string; type: string; offset: number }][] = [
+      [
+        "the paragraph's end, after the number",
+        "26".length,
+        () => ({
+          on: "verse 26 glyph",
+          type: "text",
+          offset: $lastVerseGlyph().getTextContentSize() - 1,
+        }),
+      ],
+      [
+        "the document's end, one past the final newline",
+        "26".length + 1,
+        () => ({ on: "root", type: "element", offset: $getRoot().getChildrenSize() }),
+      ],
+    ];
+
+    it.each(ends)("setSelection places %s at its live point", async (_, propertyOffset, $live) => {
+      const { ref, lexical } = await mountStandardViewEditor(verseEndingUsj);
+      const location = { jsonPath: propertyPath([2, 2], "number"), propertyOffset };
+
+      await act(async () => {
+        ref.current?.setSelection({ start: location, end: location });
+        await Promise.resolve();
+      });
+
+      const expected = lexical.getEditorState().read($live);
+      expect(liveCaret(lexical)).toEqual({ ...expected, collapsed: true });
+    });
+
+    it("getSelection reports the paragraph's end on the number when the caret is in front of the glyph's separator", async () => {
+      const { ref, lexical } = await mountStandardViewEditor(verseEndingUsj);
+
+      await act(async () => {
+        lexical.update(() => {
+          const glyph = $lastVerseGlyph();
+          const beforeSeparator = glyph.getTextContentSize() - 1;
+          if (!$isTextNode(glyph)) throw new Error("expected a text glyph");
+          glyph.select(beforeSeparator, beforeSeparator);
+        });
+        await Promise.resolve();
+      });
+
+      expect(ref.current?.getSelection()).toEqual({
+        start: { jsonPath: propertyPath([2, 2], "number"), propertyOffset: "26".length },
+      });
+    });
+
+    it("getSelection reports the document's end on the number when the editor puts the caret at the paragraph's end", async () => {
+      const { ref, lexical } = await mountStandardViewEditor(verseEndingUsj);
+
+      await act(async () => {
+        lexical.update(() => {
+          const para = $getRoot().getLastChild();
+          if (!$isElementNode(para)) throw new Error("expected the last paragraph");
+          para.selectEnd();
+        });
+        await Promise.resolve();
+      });
+
+      // Lexical's own end-of-paragraph placement lands after the `\v 26 ` glyph's separator.
+      expect(liveCaret(lexical)).toEqual({
+        on: "verse 26 glyph",
+        type: "text",
+        offset: lexical.getEditorState().read(() => $lastVerseGlyph().getTextContentSize()),
+        collapsed: true,
+      });
+      expect(ref.current?.getSelection()).toEqual({
+        start: { jsonPath: propertyPath([2, 2], "number"), propertyOffset: "26".length + 1 },
+      });
+    });
+
+    it.each(ends)("%s round-trips through setSelection", async (_, propertyOffset) => {
+      const { ref } = await mountStandardViewEditor(verseEndingUsj);
       const location = { jsonPath: propertyPath([2, 2], "number"), propertyOffset };
 
       await act(async () => {
@@ -1013,6 +1122,6 @@ describe("the end of the last text in a document", () => {
       });
 
       expect(ref.current?.getSelection()).toEqual({ start: location });
-    },
-  );
+    });
+  });
 });
