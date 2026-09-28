@@ -248,13 +248,13 @@ describe("registerDisplayAnnotationBasis", () => {
     let value!: TextNode;
     editor.update(
       () => {
-        value = $setState($createTextNode(" 3"), textTypeState, "attribute");
+        value = $setState($createTextNode(`${NBSP}3`), textTypeState, "attribute");
         $getRoot().append($createParaNode().append(value));
         $addDisplayAnnotation(value, "spelling", "a", 1, 2);
       },
       { discrete: true },
     );
-    editor.update(() => value.getLatest().setTextContent(" 4"), { discrete: true });
+    editor.update(() => value.getLatest().setTextContent(`${NBSP}4`), { discrete: true });
 
     editor.getEditorState().read(() => {
       expect($getState(value.getLatest(), displayAnnotationsState)).toBeUndefined();
