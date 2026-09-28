@@ -7,7 +7,12 @@
 
 import { ImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { ImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
-import { $dfsIterator, mergeRegister } from "@lexical/utils";
+import {
+  $dfsIterator,
+  addClassNamesToElement,
+  mergeRegister,
+  removeClassNamesFromElement,
+} from "@lexical/utils";
 import { useEffect, useMemo, useRef } from "react";
 import {
   $getNearestNodeFromDOMNode,
@@ -123,13 +128,18 @@ function createIndex(editor: LexicalEditor): Entry {
   function paint(key: NodeKey, annotations: DisplayAnnotation[]): void {
     const element = editor.getElementByKey(key);
     if (!element) return;
+    // Split into tokens as `addClassNamesToElement` does for a `<mark>`: an id or a theme name
+    // may hold whitespace, and `painted` must record exactly the tokens that were added.
     const next =
       annotations.length > 0
-        ? [...typedMarkClassNames(theme, typedIdsOf(annotations)), DISPLAY_ANNOTATION_CLASS_NAME]
+        ? [
+            ...typedMarkClassNames(theme, typedIdsOf(annotations)),
+            DISPLAY_ANNOTATION_CLASS_NAME,
+          ].flatMap((name) => name.match(/\S+/g) ?? [])
         : [];
     const previous = painted.get(element) ?? [];
-    element.classList.remove(...previous.filter((name) => !next.includes(name)));
-    if (next.length > 0) element.classList.add(...next);
+    removeClassNamesFromElement(element, ...previous.filter((name) => !next.includes(name)));
+    addClassNamesToElement(element, ...next);
     painted.set(element, next);
     if (next.length > 0 && !wired.has(element)) {
       wired.add(element);

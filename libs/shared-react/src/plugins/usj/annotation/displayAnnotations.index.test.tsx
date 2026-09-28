@@ -20,6 +20,7 @@ import {
   $addDisplayAnnotation,
   $createMarkerNode,
   $createParaNode,
+  $createTypedMarkNode,
   $displayAnnotationsOf,
   $removeDisplayAnnotation,
   $wrapSelectionInTypedMarkNode,
@@ -118,6 +119,27 @@ describe("the display-annotation index", () => {
     });
     expect(classesOf(editor, run)).toContain("annotationId-b");
     expect(classesOf(editor, run)).not.toContain("editor-typed-markOverlap-external-spelling");
+    release();
+  });
+
+  it("paints an id containing a space with the tokens a mark gets, and unpaints them all", () => {
+    const { editor, run, release } = setup();
+    let markTokens: string[] = [];
+    editor.update(
+      () => {
+        const mark = $createTypedMarkNode({ "external-spelling": ["a b"] });
+        markTokens = [...mark.createDOM(editor._config, editor).classList];
+      },
+      { discrete: true },
+    );
+    wrap(editor, run, 1, 6, "external-spelling", "a b");
+    expect(classesOf(editor, run)).toEqual(
+      expect.arrayContaining([...markTokens, DISPLAY_ANNOTATION_CLASS_NAME]),
+    );
+    editor.update(() => $removeDisplayAnnotation(run.getLatest(), "external-spelling", "a b"), {
+      discrete: true,
+    });
+    expect(classesOf(editor, run)).toEqual([]);
     release();
   });
 
