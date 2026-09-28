@@ -194,7 +194,13 @@ export interface EditorRef {
     replaceEmbedUpdate(embedNodeKey: string, insertEmbedOps: DeltaOp[]): void;
     selectAfterNote(noteKeyOrIndex: string | number): void;
     selectNote(noteKeyOrIndex: string | number): void;
-    selectNoteTextOffset(noteKeyOrIndex: string | number, utf16Offset: number, field?: "category"): void;
+    selectNoteTextOffset(noteKeyOrIndex: string | number, utf16Offset: number, options?: {
+        field?: "category";
+        glyph?: {
+            index: number;
+            offset: number;
+        };
+    }): void;
     setAnnotation(selection: AnnotationRange, type: string, id: string, callbacks?: {
         onClick?: TypedMarkOnClick;
         onRemove?: TypedMarkOnRemove;
