@@ -16,7 +16,7 @@ import {
 } from "../usj/node-constants.js";
 import { $isMarkerTrailingSeparator } from "../usj/node.utils.js";
 import { $isNoteNode } from "../usj/NoteNode.js";
-import { $isVerseNode } from "../usj/VerseNode.js";
+import { $isVerseNode, VerseNode } from "../usj/VerseNode.js";
 import {
   DisplayAnnotation,
   DisplayAnnotations,
@@ -25,7 +25,7 @@ import {
   alignCharacters,
 } from "./displayAnnotations.state.js";
 import { ImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
-import { $isMarkerNode } from "./MarkerNode.js";
+import { $isMarkerNode, MarkerNode } from "./MarkerNode.js";
 import type {
   TypedMarkOnClick,
   TypedMarkOnMouseEnter,
@@ -33,8 +33,8 @@ import type {
   TypedMarkOnRemove,
 } from "./TypedMarkNode.js";
 import { $isTypedMarkNode } from "./TypedMarkNode.js";
-import type { LexicalEditor, LexicalNode, TextNode } from "lexical";
-import { $getEditor, $getState, $isDecoratorNode, $isTextNode, $setState } from "lexical";
+import type { Klass, LexicalEditor, LexicalNode } from "lexical";
+import { $getEditor, $getState, $isDecoratorNode, $isTextNode, $setState, TextNode } from "lexical";
 
 /** Decorators whose DOM is their display bytes, annotated as a whole node. */
 const DISPLAY_ANNOTATION_DECORATOR_TYPES: ReadonlySet<string> = new Set([
@@ -243,4 +243,18 @@ export function deleteDisplayAnnotationRegistration(
   id: string,
 ): void {
   registrations.get(editor)?.delete(registrationKey(type, id));
+}
+
+/**
+ * Keep every carrier's ranges measured against its current text, so an annotation follows its
+ * bytes the way a mark follows its text. `TextNode` covers attribute runs, a note's caller and a
+ * chapter's glyph; `MarkerNode` and `VerseNode` register their own transforms. Returns the
+ * unregister function.
+ */
+export function registerDisplayAnnotationBasis(editor: LexicalEditor): () => void {
+  const klasses: Klass<TextNode>[] = [TextNode, MarkerNode, VerseNode];
+  const unregisters = klasses
+    .filter((klass) => editor.hasNodes([klass]))
+    .map((klass) => editor.registerNodeTransform(klass, $syncDisplayAnnotationBasis));
+  return () => unregisters.forEach((unregister) => unregister());
 }

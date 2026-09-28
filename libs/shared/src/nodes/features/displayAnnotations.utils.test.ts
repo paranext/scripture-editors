@@ -8,7 +8,7 @@ import { $createParaNode } from "../usj/ParaNode.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
 import { $createVerseNode } from "../usj/VerseNode.js";
 import { textTypeState } from "../collab/delta.state.js";
-import { mapRangeThroughEdit } from "./displayAnnotations.state.js";
+import { displayAnnotationsState, mapRangeThroughEdit } from "./displayAnnotations.state.js";
 import {
   $addDisplayAnnotation,
   $coveredDisplayText,
@@ -19,11 +19,12 @@ import {
   $removeDisplayAnnotation,
   deleteDisplayAnnotationRegistration,
   getDisplayAnnotationRegistration,
+  registerDisplayAnnotationBasis,
 } from "./displayAnnotations.utils.js";
 import { $createImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
 import { $createMarkerNode } from "./MarkerNode.js";
 import { TypedMarkNode } from "./TypedMarkNode.js";
-import { $createTextNode, $getRoot, $setState, TextNode } from "lexical";
+import { $createTextNode, $getRoot, $getState, $setState, TextNode } from "lexical";
 import { vi } from "vitest";
 
 describe("mapRangeThroughEdit", () => {
@@ -206,5 +207,94 @@ describe("display-annotation registration", () => {
     expect(getDisplayAnnotationRegistration(other, "spelling", "a")).toBeUndefined();
     deleteDisplayAnnotationRegistration(editor, "spelling", "a");
     expect(getDisplayAnnotationRegistration(editor, "spelling", "a")).toBeUndefined();
+  });
+});
+
+describe("registerDisplayAnnotationBasis", () => {
+  it("re-measures a carrier's ranges when its text changes, so they follow their bytes", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    const unregister = registerDisplayAnnotationBasis(editor);
+    let run!: TextNode;
+    editor.update(
+      () => {
+        run = $setState($createTextNode("|grace"), textTypeState, "attribute");
+        $getRoot().append($createParaNode().append(run));
+        $addDisplayAnnotation(run, "spelling", "a", 1, 6);
+      },
+      { discrete: true },
+    );
+    editor.update(() => run.getLatest().setTextContent('|lemma="grace"'), { discrete: true });
+
+    editor.getEditorState().read(() => {
+      expect($getState(run.getLatest(), displayAnnotationsState)).toEqual({
+        basis: '|lemma="grace"',
+        annotations: [{ type: "spelling", id: "a", start: 8, end: 13 }],
+      });
+    });
+    // And back: the re-spelling the settle writes keeps the value's bytes, so the range follows.
+    editor.update(() => run.getLatest().setTextContent("|grace"), { discrete: true });
+    editor.getEditorState().read(() => {
+      expect($getState(run.getLatest(), displayAnnotationsState)).toEqual({
+        basis: "|grace",
+        annotations: [{ type: "spelling", id: "a", start: 1, end: 6 }],
+      });
+    });
+    unregister();
+  });
+
+  it("drops a range whose bytes were all replaced", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    const unregister = registerDisplayAnnotationBasis(editor);
+    let value!: TextNode;
+    editor.update(
+      () => {
+        value = $setState($createTextNode(" 3"), textTypeState, "attribute");
+        $getRoot().append($createParaNode().append(value));
+        $addDisplayAnnotation(value, "spelling", "a", 1, 2);
+      },
+      { discrete: true },
+    );
+    editor.update(() => value.getLatest().setTextContent(" 4"), { discrete: true });
+
+    editor.getEditorState().read(() => {
+      expect($getState(value.getLatest(), displayAnnotationsState)).toBeUndefined();
+    });
+    unregister();
+  });
+
+  it("re-measures a marker glyph and a verse too", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    const unregister = registerDisplayAnnotationBasis(editor);
+    const verseText = getVisibleOpenMarkerText("v", "2");
+    let glyph!: TextNode;
+    let verse!: TextNode;
+    editor.update(
+      () => {
+        glyph = $createMarkerNode("nd");
+        verse = $createVerseNode("2", verseText);
+        $getRoot().append($createParaNode().append(glyph, verse));
+        $addDisplayAnnotation(glyph, "spelling", "a", 1, 3);
+        $addDisplayAnnotation(verse, "spelling", "b", 3, 4);
+      },
+      { discrete: true },
+    );
+    editor.update(
+      () => {
+        glyph.getLatest().setTextContent("\\ndx");
+        // `1` typed in front of the annotated `2`: at the range's front edge, so outside it.
+        verse.getLatest().setTextContent(`${verseText.slice(0, 3)}1${verseText.slice(3)}`);
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      expect($getState(glyph.getLatest(), displayAnnotationsState)?.annotations).toEqual([
+        { type: "spelling", id: "a", start: 1, end: 3 },
+      ]);
+      expect($getState(verse.getLatest(), displayAnnotationsState)?.annotations).toEqual([
+        { type: "spelling", id: "b", start: 4, end: 5 },
+      ]);
+    });
+    unregister();
   });
 });
