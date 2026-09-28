@@ -610,7 +610,10 @@ function recurseNodes(
           // usj-editor.adaptor's `addCharAttributes`) carry no NBSP prefix to strip against, so
           // the prefix check above can't catch them; the textType state tag is the only signal.
           serializedTextNode[NODE_STATE_KEY]?.textType !== "attribute" &&
-          (!noteCaller || serializedTextNode.text !== getEditableCallerText(noteCaller))
+          // An EMPTY caller still has its slot (the two separators Paratext 9 leaves where a
+          // deleted caller was), so the test is for a note context, not for a caller value.
+          (noteCaller === undefined ||
+            serializedTextNode.text !== getEditableCallerText(noteCaller))
         ) {
           let text = createTextMarker(serializedTextNode);
           // Standard view stores display text; invert and normalize on serialization. A

@@ -1546,7 +1546,7 @@ function $insertEmbedAtCurrentIndex(
   } else if (isInsertEmbedOpOfType("ms", op)) {
     newNodeToInsert = $createMilestone(op.insert.ms);
   } else if (isInsertEmbedOpOfType("note", op)) {
-    newNodeToInsert = $createNote(op, viewOptions, nodeOptions, logger);
+    newNodeToInsert = $createNote(op, viewOptions, nodeOptions);
   } else if (isInsertEmbedOpOfType("unknown", op)) {
     newNodeToInsert = $createUnknown(op, viewOptions, nodeOptions, logger);
   } else if (isInsertEmbedOpOfType("unmatched", op)) {
@@ -1834,15 +1834,12 @@ function $createNote(
   op: DeltaOpInsertNoteEmbed,
   viewOptions: ViewOptions,
   nodeOptions: UsjNodeOptions,
-  logger: LoggerBasic | undefined,
 ) {
   const noteEmbed = op.insert;
   if (!noteEmbed.note) return;
 
   const { style, caller, category, contents } = noteEmbed.note;
   if (!style || caller == null) return;
-
-  if (caller === "") logger?.warn("Note has empty caller. Only use for note editing.");
 
   const unknownAttributes = getUnknownAttributes(noteEmbed.note, OT_NOTE_PROPS);
   // An unclosed note (closed="false") materializes without a closer glyph and renders
@@ -1956,7 +1953,7 @@ function $createInlineNodesFromOps(
     }
 
     if (isInsertEmbedOpOfType("note", childOp)) {
-      const nestedNote = $createNote(childOp, viewOptions, nodeOptions, logger);
+      const nestedNote = $createNote(childOp, viewOptions, nodeOptions);
       if (nestedNote) nodes.push(nestedNote);
       continue;
     }

@@ -5,6 +5,7 @@
  */
 
 import { isCharKindMarker, isParaKindMarker } from "./markerKind.utils";
+import { $isNoteCallerSlot } from "./noteCallerSlot.utils";
 import {
   BARE_OPENER_REGEX,
   CLOSER_FORM_REGEX,
@@ -849,7 +850,11 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
 // caller declaration, exactly as the verse regexes tokenize the number — except the caller node
 // carries no marker prefix of its own (the note's opening glyph is a separate sibling MarkerNode),
 // so unlike leadingAttributeGlyphRegexes's valueAndRest this needs no marker name baked in.
-const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]([\s\S]*)$/;
+//
+// The word may be EMPTY: deleting the caller leaves just the two separators, which Paratext 9
+// keeps on screen (`\f  \fr …`) and reads back from its file (`\f \fr …`) as a note with no
+// caller — its tokenizer takes the next word after `\f` and stops at the `\`.
+const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]*)[ \u00A0]([\s\S]*)$/;
 
 /**
  * Tier-1 arm for an expanded note's editable caller text — the note-marker family's leading
@@ -885,20 +890,10 @@ const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]([\s\S]*)$/;
  *   edit (including the nothing-to-do canonical case).
  */
 export function $noteCallerTextTransform(node: TextNode, context: MarkerEditContext): boolean {
+  // The same slot scan $buildNoteFragment uses to find the caller.
+  if (!$isNoteCallerSlot(node)) return false;
   const note = node.getParent();
-  if (!$isNoteNode(note) || note.getIsCollapsed() !== false) return false;
-  // The map, never a local list, decides which note markers carry a leading caller.
-  if (!leadingAttributeNames(note.getMarker())?.includes("caller")) return false;
-  // The caller slot: the first child after the opening glyph(s) — the same scan
-  // $buildNoteFragment uses to find it.
-  const children = note.getChildren();
-  let slot = 0;
-  while (slot < children.length) {
-    const child = children[slot];
-    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
-    slot++;
-  }
-  if (!node.is(children[slot])) return false;
+  if (!$isNoteNode(note)) return false;
   const text = node.getTextContent();
   if (text === getEditableCallerText(note.getCaller())) {
     context.pendingKeys.delete(node.getKey());

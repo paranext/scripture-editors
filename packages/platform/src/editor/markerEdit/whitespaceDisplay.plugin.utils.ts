@@ -50,6 +50,7 @@ import {
   $shouldBlockSelectionReplacement,
 } from "shared-react";
 import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
+import { $isNoteCallerSlot } from "./noteCallerSlot.utils";
 import { paratext9HtmlToUsfm } from "./paratext9Clipboard.utils";
 
 /** Spaces in runs display as NBSP so they are visible while typing. */
@@ -58,6 +59,10 @@ export function $displayWhitespaceTransform(node: TextNode): void {
   if (!text.includes(" ")) return;
   const textType = $getState(node, textTypeState);
   if (textType === "attribute" || textType === MARKER_TRAILING_SPACE_TEXT_TYPE) return;
+  // An expanded note's caller slot is a structural space, the caller, and a structural NBSP -
+  // with the caller deleted, just the two separators, which this mapping would turn into two
+  // NBSPs and the caller's own transform straight back, forever. The caller's transform owns it.
+  if ($isNoteCallerSlot(node)) return;
   for (let parent = node.getParent(); parent; parent = parent.getParent()) {
     // Note content displays space runs as NBSP like any other content;
     // books/chapters/unknowns keep literal text (degradation property) — same skip-list
