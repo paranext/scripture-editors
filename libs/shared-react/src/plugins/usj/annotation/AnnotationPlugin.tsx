@@ -1,4 +1,5 @@
 import { ViewOptions } from "../../../views/view-options.utils";
+import { useDisplayAnnotationIndex } from "./displayAnnotations.index";
 import { AnnotationRange } from "./selection.model";
 import { $getRangeFromUsjSelection } from "./selection.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -6,11 +7,16 @@ import { mergeRegister, registerNestedElementResolver } from "@lexical/utils";
 import { $getNodeByKey, LexicalEditor, NodeKey } from "lexical";
 import { ForwardedRef, forwardRef, useEffect, useImperativeHandle, useMemo } from "react";
 import {
+  $coveredDisplayText,
   $createTypedMarkNode,
+  $displayAnnotationsOf,
   $isTypedMarkNode,
+  $removeDisplayAnnotation,
   $unwrapTypedMarkNode,
   $wrapSelectionInTypedMarkNode,
   ANNOTATION_CHANGE_TAG,
+  deleteDisplayAnnotationRegistration,
+  getDisplayAnnotationRegistration,
   LoggerBasic,
   TypedIDs,
   TypedMarkNode,
@@ -147,28 +153,40 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
     return new Map();
   }, []);
   useAnnotations(editor, markNodeMap);
+  const displayIndex = useDisplayAnnotationIndex(editor);
 
   /**
-   * Removes all mark nodes associated with the given type/id pair.
-   *
-   * @param type - Annotation type to remove.
-   * @param id - Annotation ID to remove.
-   * @param nodeKeys - Optional set of known node keys for this type/id. When omitted, keys are
-   *   computed from the shared mark node map.
+   * Removes every mark and every display-byte range for the type/id pair. An annotation a mark
+   * ever held reports its removal through its marks (`deleteID`, one call per mark); one held only
+   * on display bytes reports it here, once.
    */
-  const $removeMarkNodesForTypeID = (type: string, id: string, nodeKeys?: Set<NodeKey>) => {
-    const keys = Array.from(nodeKeys ?? markNodeMap.get(getTypeIDMapKey(type, id)) ?? []);
-    if (keys.length === 0) return;
-
-    for (const key of keys) {
+  const $removeAnnotationNodes = (type: string, id: string, nodeKeys?: Set<NodeKey>) => {
+    const markKeys = Array.from(nodeKeys ?? markNodeMap.get(getTypeIDMapKey(type, id)) ?? []);
+    for (const key of markKeys) {
       const node: TypedMarkNode | null = $getNodeByKey(key);
       if ($isTypedMarkNode(node)) {
         node.deleteID(type, id);
-        if (node.hasNoIDsForEveryType()) {
-          $unwrapTypedMarkNode(node);
-        }
+        if (node.hasNoIDsForEveryType()) $unwrapTypedMarkNode(node);
       }
     }
+    const covered: string[] = [];
+    for (const key of Array.from(displayIndex.keysFor(type, id))) {
+      const node = $getNodeByKey(key);
+      if (!node) continue;
+      const held = $displayAnnotationsOf(node).filter(
+        (annotation) => annotation.type === type && annotation.id === id,
+      );
+      if ($removeDisplayAnnotation(node, type, id))
+        covered.push(...held.map((annotation) => $coveredDisplayText(node, annotation)));
+    }
+    const registration = getDisplayAnnotationRegistration(editor, type, id);
+    deleteDisplayAnnotationRegistration(editor, type, id);
+    // `hadMarks` governs only "destroyed". An annotation that began as a mark but settled into
+    // display bytes alone has no mark left to report through, so "removed" fires whenever the
+    // carriers were the only thing holding it — otherwise a host's removeAnnotation on such an
+    // annotation would report nothing and core would never call the extension's interactionCommand.
+    if (covered.length > 0 && registration && markKeys.length === 0)
+      registration.onRemove?.(type, id, "removed", covered.join(""));
   };
 
   useImperativeHandle(ref, () => ({
@@ -196,7 +214,7 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
             return;
           }
 
-          $removeMarkNodesForTypeID(type, id);
+          $removeAnnotationNodes(type, id);
 
           $wrapSelectionInTypedMarkNode(
             editorSelection,
@@ -220,11 +238,12 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
         );
 
       const markNodeKeys = markNodeMap.get(getTypeIDMapKey(type, id));
-      if (markNodeKeys === undefined || markNodeKeys.size === 0) return;
+      const noMarks = markNodeKeys === undefined || markNodeKeys.size === 0;
+      if (noMarks && displayIndex.keysFor(type, id).size === 0) return;
 
       editor.update(
         () => {
-          $removeMarkNodesForTypeID(type, id, markNodeKeys);
+          $removeAnnotationNodes(type, id, markNodeKeys);
         },
         { tag: ANNOTATION_CHANGE_TAG },
       );
