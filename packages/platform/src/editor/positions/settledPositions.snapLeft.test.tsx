@@ -327,6 +327,129 @@ describe("a range across an attribute the settle moves behind a repeated name", 
   });
 });
 
+describe("a range's direction over attribute bytes", () => {
+  type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
+
+  /** The settled range for a live range over the text node holding `needle`, from `anchor` to
+   * `focus`. */
+  async function reported(mounted: Mounted, needle: string, anchor: number, focus: number) {
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const node = $textContaining(needle);
+        const selection = $createRangeSelection();
+        selection.anchor.set(node.getKey(), anchor, "text");
+        selection.focus.set(node.getKey(), focus, "text");
+        $setSelection(selection);
+      });
+      await Promise.resolve();
+    });
+    const context = settledPositionContext(mounted.lexical);
+    return mounted.lexical
+      .getEditorState()
+      .read(() => $settledSelectionFromLive($prepareSettleScopes(context)));
+  }
+
+  /** Where each end of `range`, placed live, lands in the text node holding `needle`. */
+  function placed(
+    mounted: Mounted,
+    needle: string,
+    range: { start: UsjDocumentLocation; end: UsjDocumentLocation },
+  ) {
+    const context = settledPositionContext(mounted.lexical);
+    return mounted.lexical.getEditorState().read(() => {
+      const live = $liveSelectionFromSettled(context, $prepareSettleScopes(context), range);
+      if (!live?.end) return undefined;
+      const node = $textContaining(needle);
+      return [live.start, live.end].map((location) => {
+        const [at, offset] = $getNodeFromLocation(location, requireStandardViewOptions());
+        return at?.is(node) ? offset : undefined;
+      });
+    });
+  }
+
+  describe("on a typed figure whose repeated `src` moves `size` behind the survivor", () => {
+    // The figure keeps the first `src` slot with the last value, so it settles as `file: "y.jpg"`
+    // ahead of `size: "col"`, and its attribute list displays as one decorator.
+    const LIVE = 'In \\fig a|src="x.jpg" size="col" src="y.jpg"\\fig* made';
+    const FIGURE = [PARA_TOP_INDEX, 1];
+    const settledFile = { jsonPath: propertyPath(FIGURE, "file"), propertyOffset: 0 };
+    const settledSize = { jsonPath: propertyPath(FIGURE, "size"), propertyOffset: 1 };
+
+    async function pendingFigure() {
+      const mounted = await pending(LIVE);
+      expect(mounted.para.content?.[1]).toMatchObject({ file: "y.jpg", size: "col" });
+      return mounted;
+    }
+
+    it("reports a forward range with its ends in settled order", async () => {
+      const mounted = await pendingFigure();
+
+      const range = await reported(mounted, LIVE, LIVE.indexOf("col") + 1, LIVE.indexOf("y.jpg"));
+
+      expect(range).toEqual({ start: settledFile, end: settledSize });
+    });
+
+    it("places a settled range in the direction the host gave it", async () => {
+      const mounted = await pendingFigure();
+      const inSize = LIVE.indexOf("col") + 1;
+      const beforeY = LIVE.indexOf("y.jpg");
+
+      expect(placed(mounted, LIVE, { start: settledFile, end: settledSize })).toEqual([
+        inSize,
+        beforeY,
+      ]);
+      expect(placed(mounted, LIVE, { start: settledSize, end: settledFile })).toEqual([
+        beforeY,
+        inSize,
+      ]);
+    });
+  });
+
+  describe("where the settle moves nothing", () => {
+    it("keeps a host's backward range backward on a typed figure's attributes", async () => {
+      const live = 'In \\fig a|src="x.jpg" size="col"\\fig* made';
+      const mounted = await pending(live);
+      const figure = [PARA_TOP_INDEX, 1];
+
+      const range = placed(mounted, live, {
+        start: { jsonPath: propertyPath(figure, "size"), propertyOffset: 1 },
+        end: { jsonPath: propertyPath(figure, "file"), propertyOffset: 1 },
+      });
+
+      expect(range).toEqual([live.indexOf("col") + 1, live.indexOf("x.jpg") + 1]);
+    });
+
+    it("keeps a host's backward range backward on a typed `\\w` attribute section", async () => {
+      const typed = '|lemma="a" strong="G5485"';
+      const mounted = await mountStandardViewEditor(
+        twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God made"]),
+      );
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const word = $textContaining("grace");
+          const text = `${word.getTextContent()}${typed}`;
+          word.setTextContent(text);
+          word.select(text.length, text.length);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+      const text = mounted.lexical
+        .getEditorState()
+        .read(() => $textContaining(typed).getTextContent());
+      const span = [PARA_TOP_INDEX, 1];
+
+      const range = placed(mounted, typed, {
+        start: { jsonPath: propertyPath(span, "strong"), propertyOffset: 3 },
+        end: { jsonPath: propertyPath(span, "lemma"), propertyOffset: 0 },
+      });
+
+      expect(range).toEqual([text.indexOf("G5485") + 3, text.indexOf('"a"') + 1]);
+    });
+  });
+});
+
 describe("two typed literals the settle spells differently, after a note the paragraph has", () => {
   // The note is carried through the paragraph's rebuild as the same node, so a position in it
   // crosses by the note's own path in both directions.

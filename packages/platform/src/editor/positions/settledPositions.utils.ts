@@ -954,14 +954,21 @@ function $pointOf([node, offset]: [LexicalNode | undefined, number | undefined])
 }
 
 /** Whether `start` sits past `end` in the tree being read, both resolved there; `false` when
- * either names nothing in it. */
+ * either names nothing in it. Two ends on one node compare by offset: a decorator that displays
+ * bytes (a figure's attribute run) has offsets no Lexical point can tell apart. */
 function $isPastEnd(
   start: UsjDocumentLocation,
   end: UsjDocumentLocation,
   viewOptions: ViewOptions,
 ): boolean {
-  const from = $pointOf($getNodeFromLocation(start, viewOptions));
-  const to = $pointOf($getNodeFromLocation(end, viewOptions));
+  const startAt = $getNodeFromLocation(start, viewOptions);
+  const endAt = $getNodeFromLocation(end, viewOptions);
+  const [startNode, startOffset] = startAt;
+  const [endNode, endOffset] = endAt;
+  if (startNode && endNode && startNode.is(endNode))
+    return startOffset !== undefined && endOffset !== undefined && startOffset > endOffset;
+  const from = $pointOf(startAt);
+  const to = $pointOf(endAt);
   return !!from && !!to && to.isBefore(from);
 }
 
