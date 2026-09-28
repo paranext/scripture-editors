@@ -175,12 +175,6 @@ export interface EditorRef {
             height: number;
         };
     }) | undefined;
-    getNoteCaret(): {
-        noteKey: string;
-        noteIndex: number;
-        utf16Offset: number;
-        field?: "category";
-    } | undefined;
     getNoteIndex(noteKey: string): number | undefined;
     getNoteKey(noteIndex: number): string | undefined;
     getNoteOps(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
