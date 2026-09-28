@@ -4,6 +4,7 @@ import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createPoint,
+  $createRangeSelection,
   $getPreviousSelection,
   $getSelection,
   $isRangeSelection,
@@ -17,6 +18,7 @@ import {
   DELETE_WORD_COMMAND,
   INSERT_LINE_BREAK_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
+  LexicalEditor,
   LexicalNode,
   PASTE_COMMAND,
   PointType,
@@ -277,6 +279,77 @@ function $narrowSelectionOutOfShell(selection: RangeSelection): boolean {
   return true;
 }
 
+/** The note with a protected shell that `node` is, or sits inside, or `undefined`. */
+function $protectedNoteOf(node: LexicalNode): NoteNode | undefined {
+  const note = $isNoteNode(node) ? node : $findMatchingParent(node, $isNoteNode);
+  return $isNoteNode(note) && $noteShellNodes(note).length > 0 ? note : undefined;
+}
+
+/** The text between two points of the document, `from` before `to`. */
+function $textBetween(from: PointType, to: PointType): string {
+  const range = $createRangeSelection();
+  range.anchor.set(from.key, from.offset, from.type);
+  range.focus.set(to.key, to.offset, to.type);
+  return range.getTextContent();
+}
+
+/** Where `point` is drawn, as the top of its line box, or `undefined` when it cannot be measured. */
+function lineTopOf(editor: LexicalEditor, point: PointType): number | undefined {
+  const element = editor.getElementByKey(point.key);
+  if (!element) return undefined;
+  const range = element.ownerDocument.createRange();
+  const container = point.type === "text" ? element.firstChild : element;
+  if (!container) return undefined;
+  const size =
+    container.nodeType === 3 ? (container.textContent?.length ?? 0) : container.childNodes.length;
+  range.setStart(container, Math.min(point.offset, size));
+  range.collapse(true);
+  if (typeof range.getClientRects !== "function") return undefined;
+  const [rect] = Array.from(range.getClientRects());
+  return rect?.top;
+}
+
+/**
+ * Decides a DELETE of a COLLAPSED caret in a note whose shell is protected: `true` when the delete is
+ * handled here (refused, or narrowed and done), `false` to let it run.
+ *
+ * A caret is never inside the shell, but it rests at the shell's trailing edge - the start of the
+ * note's content, where the caret guard itself puts it - and a backward delete from there takes the
+ * whole caller, a `token` node deleted as one. So a backward delete with no text between the shell
+ * and the caret is refused. A word or line delete that would run on past the content into the shell
+ * (nothing but separators and punctuation before the caret, or a caret on the shell's own line)
+ * deletes back to the shell's edge instead. Everything else, and every forward delete from the
+ * content, is the ordinary delete.
+ */
+function $guardCollapsedDeletion(
+  editor: LexicalEditor,
+  selection: RangeSelection,
+  isBackward: boolean,
+  granularity: "character" | "word" | "line",
+): boolean {
+  const caret = selection.anchor;
+  const note = $protectedNoteOf(caret.getNode());
+  if (!note) return false;
+  if ($shellAt(caret)) return true;
+  const edge = $shellTrailingEdge(note);
+  const caretIsPastShell = edge.isBefore(caret) && !edge.is(caret);
+  if (!caretIsPastShell) return true;
+  if (!isBackward) return false;
+  const between = $textBetween(edge, caret);
+  if (between === "") return true;
+  if (granularity === "character") return false;
+  if (granularity === "word" && /[\p{L}\p{N}]/u.test(between)) return false;
+  if (granularity === "line") {
+    const edgeTop = lineTopOf(editor, edge);
+    const caretTop = lineTopOf(editor, caret);
+    if (edgeTop !== undefined && caretTop !== undefined && Math.abs(edgeTop - caretTop) >= 1)
+      return false;
+  }
+  selection.anchor.set(edge.key, edge.offset, edge.type);
+  selection.removeText();
+  return true;
+}
+
 /**
  * Keeps the caret out of an expanded note's shell — the opening glyph and caller a host governs
  * through its own UI rather than as text (`ViewOptions.isNoteShellEditable: false`; Paratext 10's
@@ -348,6 +421,13 @@ export function NoteShellCaretGuardPlugin(): null {
     };
     const insertion = narrowBeforeEdit(false);
     const deletion = narrowBeforeEdit(true);
+    const collapsedDeletion =
+      (granularity: "character" | "word" | "line") => (isBackward: boolean) => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return false;
+        if (!selection.isCollapsed()) return deletion();
+        return $guardCollapsedDeletion(editor, selection, isBackward, granularity);
+      };
     return mergeRegister(
       editor.registerCommand(
         CONTROLLED_TEXT_INSERTION_COMMAND,
@@ -357,9 +437,21 @@ export function NoteShellCaretGuardPlugin(): null {
       editor.registerCommand(PASTE_COMMAND, insertion, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(INSERT_PARAGRAPH_COMMAND, insertion, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(INSERT_LINE_BREAK_COMMAND, insertion, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(DELETE_CHARACTER_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(DELETE_WORD_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(DELETE_LINE_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(
+        DELETE_CHARACTER_COMMAND,
+        collapsedDeletion("character"),
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
+        DELETE_WORD_COMMAND,
+        collapsedDeletion("word"),
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
+        DELETE_LINE_COMMAND,
+        collapsedDeletion("line"),
+        COMMAND_PRIORITY_CRITICAL,
+      ),
       editor.registerCommand(REMOVE_TEXT_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(CUT_COMMAND, deletion, COMMAND_PRIORITY_CRITICAL),
     );
