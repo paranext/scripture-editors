@@ -42,13 +42,13 @@ describe.skipIf(!process.env.ANNOTATION_ORACLE_2SA)(
         async ({ signal }) => {
           const { universe } = built;
           if (!universe) throw new Error("the universe was not built");
-          const failures = await runOracle("2SA", usj2Sa, name, view, {
+          const run = await runOracle("2SA", usj2Sa, name, view, {
             universe,
             sample: STRIDE,
             usjEvery: 1,
             signal,
           });
-          expectOracleMatchesList(LIST, "2SA", name, failures, { stride: STRIDE });
+          expectOracleMatchesList(LIST, "2SA", name, run, { stride: STRIDE });
         },
       );
   },

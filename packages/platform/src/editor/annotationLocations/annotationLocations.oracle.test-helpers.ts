@@ -11,7 +11,9 @@
  *
  * The failures that exist are recorded per corpus and view in a committed expected-failure list;
  * {@link expectOracleMatchesList} fails on a failure the list does not name, on a listed entry that
- * no longer fails, and on a listed entry that fails with a class it was not listed with.
+ * no longer fails or fails with fewer classes, and on a listed entry that fails with a class it
+ * was not listed with. Each section also pins the run's operation count, its walk anomalies and
+ * the bytes it exempts, so a list cannot shrink by running fewer operations or by exempting more.
  *
  * Environment switches: `ANNOTATION_ORACLE_WRITE=1` rewrites the list sections the run completed,
  * `ANNOTATION_ORACLE_SUMMARY=1` prints per-class counts, `ANNOTATION_ORACLE_VIEW=<name>` runs one
@@ -35,6 +37,7 @@ import {
 } from "./annotationLocations.test-helpers";
 import { Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
+import { createHash } from "crypto";
 import { readFileSync, writeFileSync } from "fs";
 import { $isElementNode, $isTextNode, LexicalNode, PointType } from "lexical";
 import { $getRangeFromUsjSelection, ViewOptions } from "shared-react";
@@ -161,6 +164,19 @@ export interface OracleFailure {
   detail: string;
 }
 
+/** What one run produced: its failures, and the facts the list pins beside them so that a list
+ * cannot shrink by losing operations or by exempting more bytes. */
+export interface OracleRun {
+  failures: OracleFailure[];
+  /** How many operations ran. */
+  ops: number;
+  /** Bytes and carets whose labels the universe could not place, in walk order. */
+  anomalies: string[];
+  /** The description of every byte no range is required to hold (separators and soft bytes), in
+   * document order. */
+  exempt: string[];
+}
+
 /** How the oracle samples one run. */
 export interface OracleRunOptions {
   universe: OracleUniverse;
@@ -193,14 +209,15 @@ function failureKey(failure: OracleFailure): string {
   return `${failure.view}|${failure.tier}|${failure.shape}|${failure.start}|${failure.end}`;
 }
 
-/** Runs every range of `view` over `usj` and returns the operations that failed. */
+/** Runs every range of `view` over `usj`; returns the operations that failed and what the run
+ * covered. */
 export async function runOracle(
   corpusName: string,
   usj: Usj,
   viewName: string,
   view: ViewOptions,
   options: OracleRunOptions,
-): Promise<OracleFailure[]> {
+): Promise<OracleRun> {
   const { universe } = options;
   const started = Date.now();
   let mounted: MountedInView = await mountInView(usj, view);
@@ -238,12 +255,15 @@ export async function runOracle(
     const seen = new Set<number>();
     for (const caret of $caretWalk(view)) {
       const rank = universe.rank.get(caret.label);
-      if (caret.label === "THREW") anomalies.push(`caret threw: ${caret.where}`);
+      // Node keys depend on what ran before in the fork, so they are left out of the record.
+      if (caret.label === "THREW")
+        anomalies.push(`caret threw: ${caret.where.replace(/#\d+/g, "")}`);
       else if (rank === undefined) anomalies.push(`caret label not in universe: ${caret.label}`);
       else seen.add(rank);
     }
     return { producible: [...seen].sort((x, y) => x - y), signature: $flatSignature() };
   });
+  if (producible.length === 0) throw new Error(`${corpusName} ${viewName}: no settled locations`);
   const usj0 = JSON.stringify(mounted.ref.current?.getUsj());
   const holdable = (i: number): boolean => !info[i].separator && !info[i].soft;
   /** Byte indexes of each inline element, by key. */
@@ -288,6 +308,7 @@ export async function runOracle(
 
   const failures: OracleFailure[] = [];
   let opIndex = 0;
+  let remounts = 0;
   try {
     for (const range of ranges) {
       if (options.signal?.aborted) throw new Error("oracle run aborted");
@@ -341,24 +362,27 @@ export async function runOracle(
           .map((log) => `log:${log.slice(0, 160)}`),
       );
       let held = new Map<number, "mark" | "carrier">();
+      let touched: number[] = [];
+      /** The first byte in a window around `touched` whose outbound label moved, as a flag. */
+      const $movedLabel = (prefix: string): string | undefined => {
+        if (touched.length === 0) return undefined;
+        const nodes = $byteNodes();
+        const from = Math.max(0, Math.min(...touched) - 2);
+        const to = Math.min(nodes.length - 1, Math.max(...touched) + 2);
+        for (let i = from; i <= to; i++) {
+          const [node, offset] = nodes[i];
+          const label = locKey($byteLoc(node, offset, false, view));
+          if (label !== info[i]?.label) return `${prefix}:${i}:${info[i]?.label}->${label}`;
+        }
+        return undefined;
+      };
       m.lexical.getEditorState().read(() => {
         held = $heldIndexes(HELD_TYPE, id);
         if ($flatSignature() !== signature) flags.push("bytes-changed");
         // Outbound labels in a window around the range must not move.
-        const touched = [...expected, ...held.keys()];
-        if (touched.length > 0) {
-          const nodes = $byteNodes();
-          const from = Math.max(0, Math.min(...touched) - 2);
-          const to = Math.min(nodes.length - 1, Math.max(...touched) + 2);
-          for (let i = from; i <= to; i++) {
-            const [node, offset] = nodes[i];
-            const label = locKey($byteLoc(node, offset, false, view));
-            if (label !== info[i]?.label) {
-              flags.push(`label-moved:${i}:${info[i]?.label}->${label}`);
-              break;
-            }
-          }
-        }
+        touched = [...expected, ...held.keys()];
+        const moved = $movedLabel("label-moved");
+        if (moved) flags.push(moved);
       });
       if (opIndex % options.usjEvery === 0) {
         const now = JSON.stringify(m.ref.current?.getUsj());
@@ -399,15 +423,21 @@ export async function runOracle(
         m.ref.current?.removeAnnotation(ORACLE_TYPE, id);
         await Promise.resolve();
       });
+      const flagsBeforeRemove = flags.length;
       m.lexical.getEditorState().read(() => {
         if ($anyTrace(id) > 0) flags.push("remove-left-trace");
         if ($flatSignature() !== signature) flags.push("bytes-changed-after-remove");
+        const moved = $movedLabel("remove-left-label-moved");
+        if (moved) flags.push(moved);
       });
+      // Any residue of this operation would shape the next one: start it from a fresh mount.
       if (
+        flags.length > flagsBeforeRemove ||
         flags.some((flag) => flag.startsWith("usj-changed") || flag.startsWith("bytes-changed"))
       ) {
         m.unmount();
         mounted = await mountInView(usj, view);
+        remounts++;
       }
       if (missing.length === 0 && extra.length === 0 && flags.length === 0) continue;
       const missingDescs = missing.map((i) => info[i]?.desc ?? `#${i}`);
@@ -440,9 +470,11 @@ export async function runOracle(
     // eslint-disable-next-line no-console -- ANNOTATION_ORACLE_SUMMARY asks for this output.
     console.info(
       `oracle ${corpusName} ${viewName}: ${ranges.length} ops, ${failures.length} failing, ` +
-        `${Date.now() - started} ms${anomalies.length ? `, anomalies ${JSON.stringify(anomalies)}` : ""}`,
+        `${remounts} remounts, ${Date.now() - started} ms` +
+        `${anomalies.length ? `, anomalies ${JSON.stringify(anomalies)}` : ""}`,
     );
-  return failures;
+  const exempt = info.filter((_, i) => !holdable(i)).map((byte) => byte.desc);
+  return { failures, ops: ranges.length, anomalies, exempt };
 }
 
 /** Decorators a range end inside of can drop. */
@@ -476,7 +508,7 @@ export function classifyOracleFailure(f: OracleFailure): string[] {
   if (!(f.missing.length || f.extra.length || fl.length)) return ["NOISE-ONLY"];
   if (anyFlag("usj-changed") || anyFlag("bytes-changed")) c.push("R6-CORRUPT-figure-split");
   if (anyFlag("threw")) c.push("THREW");
-  if (anyFlag("remove-left-trace")) c.push("REMOVE-TRACE");
+  if (anyFlag("remove-left")) c.push("REMOVE-TRACE");
   if (
     inbound === "unresolved" ||
     fl.some((flag) => flag.includes("Failed to find") || flag.includes("refused"))
@@ -531,9 +563,24 @@ export function classifyOracleFailure(f: OracleFailure): string[] {
   return c;
 }
 
-/** One list section: failure key → its classes. */
+/** Up to this many exempt bytes are pinned by name; a longer list is pinned by count and hash. */
+const EXEMPT_LIST_LIMIT = 2000;
+
+/** The pinned form of a run's exempt bytes. */
+type OracleExempt = string[] | { count: number; sha256: string };
+
+function exemptSignature(exempt: string[]): OracleExempt {
+  if (exempt.length <= EXEMPT_LIST_LIMIT) return exempt;
+  const sha256 = createHash("sha256").update(JSON.stringify(exempt)).digest("hex");
+  return { count: exempt.length, sha256 };
+}
+
+/** One list section: what the run covered, and each failure key → its classes. */
 interface OracleSection {
-  [key: string]: string[];
+  ops: number;
+  anomalies: string[];
+  exempt: OracleExempt;
+  failures: { [key: string]: string[] };
 }
 
 /** An expected-failure list file: an optional sampling stride, then corpus → view → section. */
@@ -550,30 +597,43 @@ function isRecord(value: unknown): value is { [key: string]: unknown } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function readExempt(value: unknown, where: string): OracleExempt {
+  if (isStringArray(value)) return value;
+  if (isRecord(value) && typeof value.count === "number" && typeof value.sha256 === "string")
+    return { count: value.count, sha256: value.sha256 };
+  throw new Error(`${where}.exempt is neither a string array nor { count, sha256 }`);
+}
+
+function readSection(value: unknown, where: string): OracleSection {
+  if (!isRecord(value)) throw new Error(`${where} is not an object`);
+  const { ops, anomalies, exempt, failures } = value;
+  if (typeof ops !== "number") throw new Error(`${where}.ops is not a number`);
+  if (!isStringArray(anomalies)) throw new Error(`${where}.anomalies is not a string array`);
+  if (!isRecord(failures)) throw new Error(`${where}.failures is not an object`);
+  const entries: OracleSection["failures"] = {};
+  for (const [key, classes] of Object.entries(failures)) {
+    if (!isStringArray(classes))
+      throw new Error(`${where}.failures["${key}"] is not a string array`);
+    entries[key] = classes;
+  }
+  return { ops, anomalies, exempt: readExempt(exempt, where), failures: entries };
+}
+
 function readOracleList(listFile: URL): OracleList {
   const raw: unknown = JSON.parse(readFileSync(listFile, "utf-8"));
-  if (!isRecord(raw)) throw new Error(`${listFile.pathname}: not a JSON object`);
+  const path = listFile.pathname;
+  if (!isRecord(raw)) throw new Error(`${path}: not a JSON object`);
   const list: OracleList = { corpora: {} };
   for (const [corpus, views] of Object.entries(raw)) {
     if (corpus === "stride") {
-      if (typeof views !== "number") throw new Error(`${listFile.pathname}: stride not a number`);
+      if (typeof views !== "number") throw new Error(`${path}: stride not a number`);
       list.stride = views;
       continue;
     }
-    if (!isRecord(views)) throw new Error(`${listFile.pathname}: ${corpus} is not an object`);
+    if (!isRecord(views)) throw new Error(`${path}: ${corpus} is not an object`);
     list.corpora[corpus] = {};
-    for (const [view, section] of Object.entries(views)) {
-      if (!isRecord(section)) throw new Error(`${listFile.pathname}: ${corpus}.${view} malformed`);
-      const entries: OracleSection = {};
-      for (const [key, classes] of Object.entries(section)) {
-        if (!isStringArray(classes))
-          throw new Error(
-            `${listFile.pathname}: ${corpus}.${view}["${key}"] is not a string array`,
-          );
-        entries[key] = classes;
-      }
-      list.corpora[corpus][view] = entries;
-    }
+    for (const [view, section] of Object.entries(views))
+      list.corpora[corpus][view] = readSection(section, `${path}: ${corpus}.${view}`);
   }
   return list;
 }
@@ -604,42 +664,56 @@ function keyedFailures(failures: OracleFailure[]): Map<string, OracleFailure> {
   return keyed;
 }
 
+const sameClasses = (a: string[], b: string[]): boolean =>
+  a.length === b.length && a.every((name) => b.includes(name));
+
 /**
- * Compares a run's failures with the `[corpusName][viewName]` section of `listFile`, or, with
- * `ANNOTATION_ORACLE_WRITE=1`, records them as that section (written by {@link flushOracleLists}).
- * Call it last in the `it`, after the run completed.
+ * Compares a run with the `[corpusName][viewName]` section of `listFile`, or, in write mode,
+ * records it as that section (written by {@link flushOracleLists}). Call it last in the `it`, after
+ * the run completed.
+ *
+ * The comparison fails on a changed operation count, walk anomalies or exempt bytes; on a failure
+ * the list does not name (`unexpected`); on a listed entry that no longer fails or fails with
+ * fewer classes (`fixed` — rewrite the list); and on a listed entry that fails with a class it was
+ * not listed with (`worse`).
  *
  * @param options.stride - The sampling stride of a sampled run. A list records the stride it was
  *   written at, and a run at another stride fails instead of comparing.
+ * @param options.write - Record instead of comparing; defaults to `ANNOTATION_ORACLE_WRITE=1`.
  */
 export function expectOracleMatchesList(
   listFile: URL,
   corpusName: string,
   viewName: string,
-  failures: OracleFailure[],
-  options: { stride?: number } = {},
+  run: OracleRun,
+  options: { stride?: number; write?: boolean } = {},
 ): void {
-  const keyed = keyedFailures(failures);
-  const current: OracleSection = {};
+  const keyed = keyedFailures(run.failures);
+  const current: OracleSection = {
+    ops: run.ops,
+    anomalies: run.anomalies,
+    exempt: exemptSignature(run.exempt),
+    failures: {},
+  };
   [...keyed.keys()]
     .sort((x, y) => x.localeCompare(y))
     .forEach((key) => {
       const failure = keyed.get(key);
-      if (failure) current[key] = classifyOracleFailure(failure);
+      if (failure) current.failures[key] = classifyOracleFailure(failure);
     });
   if (SUMMARY) {
     const counts: { [name: string]: number } = {};
-    Object.values(current).forEach((classes) =>
+    Object.values(current.failures).forEach((classes) =>
       classes.forEach((name) => (counts[name] = (counts[name] ?? 0) + 1)),
     );
     const sorted = Object.entries(counts).sort(([a], [b]) => a.localeCompare(b));
     // eslint-disable-next-line no-console -- ANNOTATION_ORACLE_SUMMARY asks for this output.
     console.info(
-      `oracle classes ${corpusName} ${viewName}: ${failures.length} failing ${JSON.stringify(Object.fromEntries(sorted))}`,
+      `oracle classes ${corpusName} ${viewName}: ${run.failures.length} failing ${JSON.stringify(Object.fromEntries(sorted))}`,
     );
   }
 
-  if (WRITE) {
+  if (options.write ?? WRITE) {
     const path = listFile.pathname;
     const list = pendingLists.get(path)?.list ?? readOracleList(listFile);
     if (list.stride !== options.stride) {
@@ -660,21 +734,40 @@ export function expectOracleMatchesList(
     { stride: list.stride },
     "the list was recorded at another sampling stride; regenerate it",
   ).toEqual({ stride: options.stride });
-  const listed = list.corpora[corpusName]?.[viewName] ?? {};
-  const unexpected = Object.keys(current).filter((key) => !(key in listed));
-  const fixed = Object.keys(listed).filter((key) => !(key in current));
+  const section = list.corpora[corpusName]?.[viewName];
+  expect(section, `no list section for ${corpusName} ${viewName}; record one`).toBeDefined();
+  if (!section) return;
+  const listed = section.failures;
+  const now = current.failures;
+  const unexpected = Object.keys(now).filter((key) => !(key in listed));
   const worse = Object.keys(listed).filter(
-    (key) => key in current && current[key].some((name) => !listed[key].includes(name)),
+    (key) => key in now && now[key].some((name) => !listed[key].includes(name)),
+  );
+  const fixed = Object.keys(listed).filter(
+    (key) => !(key in now) || (!worse.includes(key) && !sameClasses(now[key], listed[key])),
   );
   expect({
+    ops: current.ops,
+    anomalies: current.anomalies,
+    exempt: current.exempt,
     unexpected: unexpected.map((key) => {
       const failure = keyed.get(key);
-      return `${key} :: ${JSON.stringify(current[key])} :: ${failure?.detail ?? ""}`;
+      return `${key} :: ${JSON.stringify(now[key])} :: ${failure?.detail ?? ""}`;
     }),
-    fixed,
-    worse: worse.map(
-      (key) =>
-        `${key} :: listed ${JSON.stringify(listed[key])} now ${JSON.stringify(current[key])}`,
+    fixed: fixed.map((key) =>
+      key in now
+        ? `${key} :: listed ${JSON.stringify(listed[key])} now ${JSON.stringify(now[key])}`
+        : key,
     ),
-  }).toEqual({ unexpected: [], fixed: [], worse: [] });
+    worse: worse.map(
+      (key) => `${key} :: listed ${JSON.stringify(listed[key])} now ${JSON.stringify(now[key])}`,
+    ),
+  }).toEqual({
+    ops: section.ops,
+    anomalies: section.anomalies,
+    exempt: section.exempt,
+    unexpected: [],
+    fixed: [],
+    worse: [],
+  });
 }

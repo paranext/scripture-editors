@@ -28,7 +28,7 @@ for (const [corpus, usj] of [
     const built: { universe?: OracleUniverse } = {};
     beforeAll(async () => {
       built.universe = await buildOracleUniverse(usj);
-    });
+    }, 120_000);
 
     for (const { name, view } of ORACLE_VIEWS.filter((v) => !ONLY_VIEW || v.name === ONLY_VIEW))
       it(
@@ -37,13 +37,13 @@ for (const [corpus, usj] of [
         async ({ signal }) => {
           const { universe } = built;
           if (!universe) throw new Error("the universe was not built");
-          const failures = await runOracle(corpus, usj, name, view, {
+          const run = await runOracle(corpus, usj, name, view, {
             universe,
             sample: 1,
             usjEvery: 1,
             signal,
           });
-          expectOracleMatchesList(LIST, corpus, name, failures);
+          expectOracleMatchesList(LIST, corpus, name, run);
         },
       );
   });
