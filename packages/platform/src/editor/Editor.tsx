@@ -11,6 +11,7 @@ import {
 import { EditorOptions, EditorProps, EditorRef } from "./editor.model";
 import editorTheme from "./editor.theme";
 import { ActiveTextPlugin } from "./ActiveTextPlugin";
+import { CopyLimitPlugin } from "./copyLimit/CopyLimitPlugin";
 import {
   getEnterMenuItems,
   getMarkerMenuItems,
@@ -222,6 +223,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     contextMenu,
     styleInfo,
     markerSettleDelayMs,
+    copyLimit,
   } = options ?? defaultOptions;
 
   // Stabilize the destructured option objects so plugin props don't churn when the parent passes
@@ -1143,6 +1145,12 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               or pasted `\` and `/` - only guards the non-editable views. */}
           {viewOptions?.markerMode !== "editable" && <CommandMenuPlugin logger={stableLogger} />}
           <ContextMenuPlugin options={contextMenuOptions} />
+          {/* Must mount before every plugin with a CRITICAL cut handler (MarkerEditPlugin,
+              OpaqueBlockGuardPlugin, StructureKeyboardPlugin). Its CRITICAL fit shortens the
+              selection of a limited copy or cut, and at equal priority handlers run in the order
+              they were registered: the guards and the whole-paragraph cut arm have to judge the
+              selection the cut will actually take. */}
+          <CopyLimitPlugin limit={copyLimit} viewOptions={viewOptions} />
           {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
               normalization that keeps a point out of one is too. */}
           <DecoratorBoundarySelectionPlugin />
@@ -1159,11 +1167,12 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             logger={stableLogger}
             markerSettleDelayMs={markerSettleDelayMs}
             structureProtectionMode={structureProtectionMode}
+            copyLimit={copyLimit}
           />
           {/* Standard view writes its own USFM copy (MarkerEditPlugin); the read-only Markers view
               needs one too, since its display text is not USFM. The hidden-marker views copy prose. */}
           {viewOptions?.markerMode === "visible" && (
-            <MarkersViewCopyPlugin viewOptions={viewOptions} />
+            <MarkersViewCopyPlugin viewOptions={viewOptions} copyLimit={copyLimit} />
           )}
           <MarkerValidationPlugin
             styleInfo={styleInfo}

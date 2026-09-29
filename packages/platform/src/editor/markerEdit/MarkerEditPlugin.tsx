@@ -543,6 +543,7 @@ export function MarkerEditPlugin({
   logger,
   markerSettleDelayMs,
   structureProtectionMode = "off",
+  copyLimit,
 }: {
   viewOptions: ViewOptions | undefined;
   /** Project StyleInfo-backed lookup; defaults to the bundled table. */
@@ -561,6 +562,8 @@ export function MarkerEditPlugin({
    * `MarkerEditContext.structureProtectionMode`.
    */
   structureProtectionMode?: StructureProtectionMode;
+  /** `EditorOptions.copyLimit`, which `CopyLimitPlugin` fits a Standard-view copy to. */
+  copyLimit?: number;
 }): null {
   const [editor] = useLexicalComposerContext();
   const isEnabled = viewOptions?.markerMode === "editable";
@@ -589,19 +592,22 @@ export function MarkerEditPlugin({
   // suppression window), so `armIdleSettle` reads it through this ref at every arm — a change
   // takes effect on the next arm, never re-arming an already-ticking timer.
   const markerSettleDelayRef = useRef(markerSettleDelayMs);
+  // Wiring too, read by the Standard-view copy and cut claims at each copy or cut.
+  const copyLimitRef = useRef(copyLimit);
 
   // Refresh the wiring on the live context every render, without tearing the engine down. The
   // registration effect below deliberately does NOT depend on these values, so an identity-only
   // prop change reaches the transforms through this mutation instead of through a re-registration.
   useEffect(() => {
     markerSettleDelayRef.current = markerSettleDelayMs;
+    copyLimitRef.current = copyLimit;
     const context = contextRef.current;
     if (!context) return;
     if (viewOptions) context.viewOptions = viewOptions;
     context.getMarker = getMarker ?? bundledGetMarker;
     context.logger = logger;
     context.structureProtectionMode = structureProtectionMode;
-  }, [viewOptions, getMarker, logger, markerSettleDelayMs, structureProtectionMode]);
+  }, [viewOptions, getMarker, logger, markerSettleDelayMs, structureProtectionMode, copyLimit]);
 
   useEffect(() => {
     if (!isEnabled || !viewOptions) return;
@@ -930,6 +936,7 @@ export function MarkerEditPlugin({
                   event && typeof event === "object" && "clipboardData" in event ? event : null,
                   editor,
                   false,
+                  copyLimitRef.current,
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -944,6 +951,7 @@ export function MarkerEditPlugin({
                   event && typeof event === "object" && "clipboardData" in event ? event : null,
                   editor,
                   true,
+                  copyLimitRef.current,
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -973,14 +981,16 @@ export function MarkerEditPlugin({
         () => {
           // Cutting a whole paragraph is the same whole-representation deletion as the delete
           // keys — arm the paragraph reap from the pre-cut selection. CRITICAL so it runs ahead
-          // of whichever handler performs the removal (the standard-view CUT claim at HIGH, or
-          // Lexical's own at EDITOR); never claims the event.
+          // of whichever handler performs the removal (the standard-view CUT claim at HIGH,
+          // `CopyLimitPlugin`'s plain-text cut at NORMAL, or Lexical's own at EDITOR); never
+          // claims the event.
           //
           // A refused cut deletes nothing, so it must arm nothing: nothing commits, the update
           // listener never resets the arm, and an unrelated later commit would read it as this
           // gesture's provenance. So ask each refusal that outranks or ties with this handler.
-          // Unlike the delete keys below, this arm cannot expire on a microtask: Lexical's own
-          // cut (the one Unformatted view uses) removes the range only after an `await`.
+          // Unlike the delete keys below, this arm cannot expire on a microtask: Lexical's own cut
+          // (the one Unformatted view uses) removes the range only after an `await`. A copy limit
+          // has already shortened the selection by now, so the arm covers what the cut removes.
           if (!$isRefusedByStructureProtection(context) && !$selectionReachesIntoOpaqueBlock())
             $armWholeParaDeletion(context);
           return false;
