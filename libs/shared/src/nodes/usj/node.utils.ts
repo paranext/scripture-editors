@@ -681,11 +681,11 @@ export function $getSelectedParaMarker(
  * @param selection - The selection to inspect, e.g. `$getSelection()`.
  * @returns the paragraph, or `undefined` when no paragraph marker is selected.
  */
-export function $getSelectedParaMarkerOwner(
+export function $getSelectedParaMarkerPara(
   selection: BaseSelection | null | undefined,
 ): ParaNode | undefined {
-  const owner = $getSelectedParaMarker(selection)?.getParent();
-  return $isParaNode(owner) ? owner : undefined;
+  const para = $getSelectedParaMarker(selection)?.getParent();
+  return $isParaNode(para) ? para : undefined;
 }
 
 /**

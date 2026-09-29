@@ -1,6 +1,7 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import {
+  $getEditor,
   $getNearestNodeFromDOMNode,
   $getNodeByKey,
   $getSelection,
@@ -10,14 +11,16 @@ import {
   CLICK_COMMAND,
   COMMAND_PRIORITY_EDITOR,
   COMMAND_PRIORITY_LOW,
+  createCommand,
   isDOMNode,
+  LexicalCommand,
   LexicalEditor,
   LexicalNode,
   RangeSelection,
 } from "lexical";
 import { useEffect } from "react";
 import {
-  $getSelectedParaMarkerOwner,
+  $getSelectedParaMarkerPara,
   $isGutterMarkerNode,
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
@@ -32,10 +35,8 @@ import { $isImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
  * Keeps the cursor out of the places a paragraph's structural prefix occupies but no caret may
  * rest in. WHICH marker is caret territory is decided one node at a time, never per view — see
  * `gutterMarkerState` (shared). A click that selects a paragraph's gutter marker never reaches this
- * plugin: `ParaMarkerSelectionPlugin` claims it first.
- *
- * Two registrations, because the two corrections need different places in the click chain — see
- * {@link registerParaMarkerPrefixCursorGuard}.
+ * plugin: `ParaMarkerSelectionPlugin` claims it first. See
+ * {@link registerParaMarkerPrefixCursorGuard} for the click policy.
  */
 export function ParaMarkerPrefixCursorGuardPlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -48,12 +49,11 @@ export function ParaMarkerPrefixCursorGuardPlugin(): null {
 /**
  * Registers the click policy on `editor`. Exported so tests register exactly what the plugin does.
  *
- * - A click ON a gutter glyph is answered at `COMMAND_PRIORITY_LOW` by
- *   {@link $guardGutterMarkerClick}, which moves the cursor past it.
- * - Everything else is judged at EDITOR priority from where the selection came to rest
- *   ({@link $guardCursorOnClick}). Using `CLICK_COMMAND` instead of `registerUpdateListener` +
- *   `editor.update` commits the correction in the click's own update, so other listeners (e.g.
- *   `OnSelectionChangePlugin`) never see the intermediate prefix position.
+ * A click ON a gutter glyph is answered at LOW, ahead of rich-text's EDITOR-priority handler, which
+ * would otherwise clear a selected marker and claim the click before the caret moves. Every other
+ * click is judged at EDITOR priority, from where the selection came to rest. Both correct the
+ * caret inside the click's own update, so other listeners (e.g. `OnSelectionChangePlugin`) never
+ * see the intermediate prefix position.
  *
  * @param editor - The editor to guard.
  * @returns a function that unregisters both listeners.
@@ -77,12 +77,9 @@ export function registerParaMarkerPrefixCursorGuard(editor: LexicalEditor): () =
 }
 
 /**
- * The LOW-priority half of the click policy: a click that landed ON a gutter marker glyph.
+ * The LOW-priority half of the click policy, for a click ON a gutter glyph. Mutating: runs inside
+ * the click's update.
  *
- * Mutating: runs inside the click's update; registered by
- * {@link registerParaMarkerPrefixCursorGuard}.
- *
- * @param event - The click that Lexical dispatched through `CLICK_COMMAND`.
  * @returns always `false`, so the rest of the click chain runs as before.
  */
 function $guardGutterMarkerClick(event: MouseEvent): boolean {
@@ -91,12 +88,8 @@ function $guardGutterMarkerClick(event: MouseEvent): boolean {
 }
 
 /**
- * The EDITOR-priority half of the click policy: everything that did not land on a gutter glyph,
- * judged from where the selection came to rest. A click ON a gutter glyph was already answered at
- * LOW by {@link $guardGutterMarkerClick}, so it is left alone here.
- *
- * Mutating: runs inside the click's update; registered by
- * {@link registerParaMarkerPrefixCursorGuard}.
+ * The EDITOR-priority half of the click policy, for every click not on a gutter glyph. Mutating:
+ * runs inside the click's update.
  *
  * @param event - The click that Lexical dispatched through `CLICK_COMMAND`.
  */
@@ -167,6 +160,16 @@ export function $advancePastParaPrefixes(para: SomeParaNode): boolean {
 }
 
 /**
+ * Collapses the caret to `para`'s first content position ({@link $advancePastParaPrefixes}), or to
+ * its start when nothing leads its content.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+export function $placeCaretAtParaContentStart(para: SomeParaNode): void {
+  if (!$advancePastParaPrefixes(para)) para.selectStart();
+}
+
+/**
  * Answers a click that landed ON a gutter marker glyph, which is never a caret position: the
  * cursor moves to the first place past it that is one — past a paragraph's whole structural prefix
  * (its glyph and any leading verse, see {@link $advancePastParaPrefixes}), or just past the glyph
@@ -206,14 +209,28 @@ export function $guardCursorAtGutterMarker(target: EventTarget | null): boolean 
  *
  * Mutating: call inside `editor.update()`.
  *
+ * A marker selection a remote edit orphaned (its paragraph removed) is repaired the same way the
+ * next key would repair it, through {@link REPAIR_PARA_MARKER_SELECTION_COMMAND}.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
  * @returns `true` if a marker was selected and is now collapsed, `false` if nothing changed.
  */
 export function $collapseParaMarkerSelection(): boolean {
-  const owner = $getSelectedParaMarkerOwner($getSelection());
-  if (!owner) return false;
-  if (!$advancePastParaPrefixes(owner)) owner.selectStart();
+  if ($getEditor().dispatchCommand(REPAIR_PARA_MARKER_SELECTION_COMMAND, undefined)) return true;
+  const para = $getSelectedParaMarkerPara($getSelection());
+  if (!para) return false;
+  $placeCaretAtParaContentStart(para);
   return true;
 }
+
+/**
+ * Asks `ParaMarkerSelectionPlugin` to collapse a marker selection whose paragraph a remote edit
+ * removed. Handlers return `true` if they repaired one. Dispatched from inside an update.
+ */
+export const REPAIR_PARA_MARKER_SELECTION_COMMAND: LexicalCommand<void> = createCommand(
+  "REPAIR_PARA_MARKER_SELECTION_COMMAND",
+);
 
 /**
  * The node a selected paragraph marker counts as selecting for location purposes (which verse,
@@ -229,10 +246,10 @@ export function $collapseParaMarkerSelection(): boolean {
 export function $getParaMarkerSelectionLocationNode(
   selection: BaseSelection | null | undefined,
 ): LexicalNode | undefined {
-  const owner = $getSelectedParaMarkerOwner(selection);
-  if (!owner) return undefined;
-  const index = $paraContentStartIndex(owner);
-  return owner.getChildAtIndex(index) ?? owner.getChildAtIndex(index - 1) ?? owner;
+  const para = $getSelectedParaMarkerPara(selection);
+  if (!para) return undefined;
+  const index = $paraContentStartIndex(para);
+  return para.getChildAtIndex(index) ?? para.getChildAtIndex(index - 1) ?? para;
 }
 
 /**

@@ -200,4 +200,27 @@ describe("ParaMarkerPrefixGuardPlugin enablement", () => {
       expect(paras[1].getTextContent()).toBe(`\\li2${NBSP} two`);
     });
   });
+
+  it("moves the paragraph's own glyph back to the front when text lands before it, rather than adding another", async () => {
+    let para: ParaNode;
+    let glyph: ImmutableTypedTextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("q2");
+        glyph = $createGutterMarkerNode(`\\q2${NBSP}`);
+        $getRoot().append(para.append(glyph, $createTextNode("a poetry line")));
+      },
+      <ParaMarkerPrefixGuardPlugin viewOptions={getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE)} />,
+    );
+
+    // Typing at the paragraph's very start, before its glyph (an element point at offset 0).
+    await act(async () => editor.update(() => glyph.insertBefore($createTextNode("Z"))));
+
+    editor.getEditorState().read(() => {
+      const children = para.getChildren();
+      expect(children.filter($isGutterMarkerNode)).toHaveLength(1);
+      expect(children[0].is(glyph)).toBe(true);
+      expect(para.getTextContent()).toBe(`\\q2${NBSP}Za poetry line`);
+    });
+  });
 });

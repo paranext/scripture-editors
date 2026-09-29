@@ -12,7 +12,7 @@ import {
 import { useRef, useEffect, useState, useCallback } from "react";
 import {
   $getCommonAncestorCompatible,
-  $getSelectedParaMarkerOwner,
+  $getSelectedParaMarkerPara,
   $isBookNode,
   $isParaNode,
   $isImmutableChapterNode,
@@ -55,7 +55,7 @@ export function StateChangePlugin({ onStateChange }: { onStateChange?: OnStateCh
     // A selected paragraph marker names its block outright: the paragraph that owns it. Not while
     // read-only, where the marker selection is inert.
     const selectedMarkerOwner = activeEditor.isEditable()
-      ? $getSelectedParaMarkerOwner(selection)
+      ? $getSelectedParaMarkerPara(selection)
       : undefined;
     if (
       selectedMarkerOwner &&

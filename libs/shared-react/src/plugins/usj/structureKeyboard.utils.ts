@@ -1,5 +1,5 @@
 import { $isSomeVerseNode, SomeVerseNode } from "../../nodes/usj";
-import { $advancePastParaPrefixes } from "./ParaMarkerPrefixCursorGuardPlugin";
+import { $placeCaretAtParaContentStart } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { $findMatchingParent } from "@lexical/utils";
 import {
   $createTextNode,
@@ -11,7 +11,13 @@ import {
   LexicalNode,
   NodeKey,
 } from "lexical";
-import { $isGutterMarkerNode, $isSomeChapterNode, $isSomeParaNode, SomeParaNode } from "shared";
+import {
+  $isGutterMarkerNode,
+  $isSomeChapterNode,
+  $isSomeParaNode,
+  $placeCaretAtBoundary,
+  SomeParaNode,
+} from "shared";
 
 /** Editing operations that can alter block structure. */
 export type EditIntent = "insertParagraph" | "deleteBackward" | "deleteForward" | "insertText";
@@ -98,21 +104,43 @@ export function $selectionContainsVerseMarker(selection: BaseSelection): boolean
   return selection.getNodes().some((n) => $isSomeVerseNode(n));
 }
 
-/** True when a collapsed caret sits at the very start of its paragraph. */
+/**
+ * True when a collapsed caret sits at the very start of its paragraph. A paragraph's own gutter
+ * marker glyph is not content, so a caret just past it counts as the start too.
+ */
 export function $caretAtParaStart(selection: BaseSelection): boolean {
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   const { anchor } = selection;
   const node = anchor.getNode();
   const para = $getParaAncestor(node);
-  if (!para) return false;
+  if (!para || !$isElementNode(para)) return false;
+  const leadingGlyphs = $isGutterMarkerNode(para.getFirstChild()) ? 1 : 0;
+  if (node.is(para)) return anchor.offset <= leadingGlyphs;
   if (anchor.offset !== 0) return false;
   // No content between the caret and the paragraph start.
   let current: LexicalNode | null = node;
   while (current && current.getKey() !== para.getKey()) {
-    if (current.getPreviousSibling()) return false;
+    const previous = current.getPreviousSibling();
+    if (previous && !(leadingGlyphs && previous.is(para.getFirstChild()))) return false;
     current = current.getParent();
   }
   return true;
+}
+
+/**
+ * The paragraph a Backspace from `selection` would remove the gutter marker of: one led by a gutter
+ * glyph, with a collapsed caret at its start (see {@link $caretAtParaStart}) — past the glyph, or
+ * before it.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ */
+export function $getGutterParaWithCaretAtStart(
+  selection: BaseSelection | null,
+): SomeParaNode | undefined {
+  if (!selection || !$caretAtParaStart(selection) || !$isRangeSelection(selection)) return;
+  const para = $getParaAncestor(selection.anchor.getNode());
+  return $isSomeParaNode(para) && $isGutterMarkerNode(para.getFirstChild()) ? para : undefined;
 }
 
 /** True when a collapsed caret sits at the very end of its paragraph. */
@@ -326,10 +354,25 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   const moved = para.getChildren();
   prev.append(...moved);
   para.remove();
-  // When `prev` had content, the junction is the end of its last child; when it was empty the
-  // junction is its start — so the caret lands where the two paragraphs joined, not at the end.
-  if (junction) $placeCaretAtEnd(junction);
-  else if (!$advancePastParaPrefixes(prev)) prev.selectStart();
+  // The caret lands where the two paragraphs joined, not at the end.
+  $placeCaretAfterParaChild(prev, junction);
+}
+
+/**
+ * Collapses the caret just past `child` of `para`: the end of its text when it is a text node, or
+ * the boundary after it otherwise — never inside it, so never inside a collapsed note's hidden
+ * body. With no `child`, or only the paragraph's gutter glyph, the paragraph has no content before
+ * that point, and the caret goes to its content start.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @param para - The paragraph to place the caret in.
+ * @param child - The child of `para` the caret follows.
+ */
+export function $placeCaretAfterParaChild(para: SomeParaNode, child: LexicalNode | null): void {
+  if (!child || $isGutterMarkerNode(child)) $placeCaretAtParaContentStart(para);
+  else if ($isTextNode(child)) $placeCaretAtEnd(child);
+  else $placeCaretAtBoundary(para, child.getIndexWithinParent() + 1);
 }
 
 /**

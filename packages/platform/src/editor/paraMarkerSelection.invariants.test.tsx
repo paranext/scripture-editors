@@ -114,25 +114,16 @@ it("selecting and leaving a marker changes no USJ, emits no ops, and never passe
   expect(ref.current?.getUsj()).toEqual(before);
   expect(onUsjChange).not.toHaveBeenCalled();
 
-  // Positive control, so the "never named the glyph" check below cannot pass vacuously: a marker
-  // selection makes no spied call, while a caret in the paragraph's text makes one through the
-  // public `getMarkerMenuContext()`. Checkpointed, not cleared, so the earlier calls stay covered.
+  // Positive control, so the "never named the glyph" check below cannot pass vacuously: the public
+  // `getMarkerMenuContext()` reads a marker selection through the spied helpers, as the caret at
+  // its paragraph's content start. Checkpointed, not cleared, so the earlier calls stay covered.
   await act(async () => {
     glyphElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   expect(ref.current?.getSelectedParaMarker()).toBe("li2");
-  const callsWithMarkerSelected = glyphHelperCalls.length;
-  expect(ref.current?.getMarkerMenuContext()).toBeUndefined();
-  expect(glyphHelperCalls.length).toBe(callsWithMarkerSelected);
-
-  await act(async () => {
-    lexical.update(() => {
-      $getRoot().getChildren().find($isParaNode)?.selectEnd();
-    });
-  });
-  const context = ref.current?.getMarkerMenuContext();
-  expect(context).toBeDefined();
-  expect(glyphHelperCalls.length).toBeGreaterThan(callsWithMarkerSelected);
+  const callsBeforeMenuContext = glyphHelperCalls.length;
+  expect(ref.current?.getMarkerMenuContext()).toMatchObject({ paraMarker: "li2" });
+  expect(glyphHelperCalls.length).toBeGreaterThan(callsBeforeMenuContext);
 
   lexical.getEditorState().read(() => {
     for (const rawArg of glyphHelperCalls.flat()) {

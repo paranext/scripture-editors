@@ -1,7 +1,7 @@
 /**
  * A paragraph's gutter marker as a selection target, end to end on the real platform `<Editor>`
- * in the paragraph-structure view: the click (through rich-text's own CLICK_COMMAND handling),
- * the consumers that read the selection, and the public API.
+ * in the paragraph-structure view: the click (which `ParaMarkerSelectionPlugin` claims at
+ * CRITICAL), the consumers that read the selection, and the public API.
  */
 import Editor from "./Editor";
 import { EditorProps, EditorRef } from "./editor.model";
@@ -10,7 +10,14 @@ import { flushQueuedEvents } from "./editor-test.utils";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
 import { act, render } from "@testing-library/react";
-import { $getRoot, $getSelection, KEY_DOWN_COMMAND, LexicalEditor } from "lexical";
+import {
+  $getRoot,
+  $getSelection,
+  $isTextNode,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  KEY_DOWN_COMMAND,
+  LexicalEditor,
+} from "lexical";
 import { createRef, ReactElement, RefObject } from "react";
 import {
   $getSelectedParaMarker,
@@ -56,6 +63,7 @@ interface Mounted {
 
 async function mountParagraphStructure(
   props: Omit<EditorProps<LoggerBasic>, "defaultUsj"> = {},
+  usj: Usj = paragraphStructureUsj,
 ): Promise<Mounted> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
@@ -63,7 +71,7 @@ async function mountParagraphStructure(
     render(
       <Editor
         ref={ref}
-        defaultUsj={paragraphStructureUsj}
+        defaultUsj={usj}
         {...props}
         options={{
           ...props.options,
@@ -224,8 +232,8 @@ describe("consumers of a selected paragraph marker", () => {
   it("does not move the scripture reference on select, nor when an arrow returns to the text", async () => {
     const onScrRefChange = vi.fn();
     // Start settled in verse 2's own content, inside the paragraph whose marker gets selected. The
-    // \li2 gutter glyph precedes \v 2, so without the $resolvePosition guard, selecting it would
-    // resolve to verse 1 — a real, detectable move away from where the caret already is.
+    // \li2 gutter glyph precedes \v 2, so if a marker selection were located by its glyph rather
+    // than by its content, selecting it would resolve to verse 1 — a real, detectable move away.
     const { lexical } = await mountParagraphStructure({
       scrRef: { book: "GEN", chapterNum: 1, verseNum: 2 },
       onScrRefChange,
@@ -301,6 +309,31 @@ describe("clicking gutter markers on the real editor", () => {
   });
 });
 
+describe("a real mouse click on a gutter marker", () => {
+  // The press fires `selectionchange` with the browser's caret inside the glyph before the click
+  // arrives. Snapping that caret to the glyph's boundary would report verse 1, then verse 2.
+  it("does not move the scripture reference in the selectionchange before the click", async () => {
+    const onScrRefChange = vi.fn();
+    const { lexical } = await mountParagraphStructure({
+      scrRef: { book: "GEN", chapterNum: 1, verseNum: 2 },
+      onScrRefChange,
+    });
+    const glyph = glyphElementOf(lexical, "li2");
+    act(() => {
+      glyph.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    onScrRefChange.mockClear();
+
+    placeDomCaretIn(glyph);
+    await flushQueuedEvents();
+    await clickElement(glyph);
+    await flushQueuedEvents();
+
+    expect(selectedMarker(lexical)).toBe("li2");
+    expect(onScrRefChange).not.toHaveBeenCalled();
+  });
+});
+
 describe("clicking gutter markers in a read-only editor", () => {
   // There is nothing to change a marker to in a read-only editor, so the click places a caret at
   // the start of the paragraph's text — past its leading verse number — instead.
@@ -351,6 +384,17 @@ describe("EditorRef edits with a selected paragraph marker", () => {
     expect(JSON.stringify(li2)).toContain(`"marker":"${marker}"`);
     lexical.getEditorState().read(() => {
       expect($isGutterMarkerNode($paraOf("li2").getFirstChild())).toBe(true);
+    });
+  });
+
+  it("getMarkerMenuContext reads the selection where applyMarkerMenuSelection acts", async () => {
+    const { ref, lexical } = await mountParagraphStructure({ scrRef });
+    await selectMarker(lexical, "li2");
+
+    expect(ref.current?.getMarkerMenuContext()).toMatchObject({
+      source: "character",
+      paraMarker: "li2",
+      hasTextSelection: false,
     });
   });
 
@@ -574,5 +618,136 @@ describe("Backspace/Delete on a selected paragraph marker", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(ref.current?.getUsj()).toEqual(before);
     expect(ref.current?.getSelectedParaMarker()).toBe("li2");
+  });
+});
+
+describe("the caret a merge leaves", () => {
+  const view = getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE);
+  const footnote = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "ft", content: ["note"] }],
+  };
+
+  /** `usj` with the first paragraph's content replaced by `content`. */
+  function withFirstParaContent(content: Usj["content"]): Usj {
+    const [book, chapter, first, ...rest] = paragraphStructureUsj.content;
+    return {
+      ...paragraphStructureUsj,
+      content: [
+        book,
+        chapter,
+        { ...(first as object), content } as Usj["content"][number],
+        ...rest,
+      ],
+    };
+  }
+
+  /** Types `text` at the caret, the way a keystroke's controlled insertion does. */
+  async function typeAtCaret(lexical: LexicalEditor, text: string): Promise<void> {
+    await act(async () => {
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+    });
+    await flushQueuedEvents();
+  }
+
+  it("rests past a footnote ending the previous paragraph, never in its hidden body", async () => {
+    const usj = withFirstParaContent([
+      { type: "verse", marker: "v", number: "1" },
+      "first text",
+      footnote,
+    ]);
+    const { ref, lexical } = await mountParagraphStructure({ options: { view } }, usj);
+    await clickElement(glyphElementOf(lexical, "li2"));
+    await pressKeyOn(lexical, { key: "Backspace" });
+    await flushQueuedEvents();
+
+    await typeAtCaret(lexical, "X");
+
+    expect(ref.current?.getUsj()?.content.slice(2)).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "verse", marker: "v", number: "1" },
+          "first text",
+          footnote,
+          // The editor's usual spacing before a verse that follows text.
+          "X ",
+          { type: "verse", marker: "v", number: "2" },
+          "second verse text",
+        ],
+      },
+    ]);
+  });
+
+  it("rests past the verse number when the previous paragraph was empty", async () => {
+    const { ref, lexical } = await mountParagraphStructure(
+      { options: { view } },
+      withFirstParaContent([]),
+    );
+    await clickElement(glyphElementOf(lexical, "li2"));
+    await pressKeyOn(lexical, { key: "Backspace" });
+    await flushQueuedEvents();
+
+    await typeAtCaret(lexical, "X");
+
+    expect(ref.current?.getUsj()?.content.slice(2)).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [{ type: "verse", marker: "v", number: "2" }, "Xsecond verse text"],
+      },
+    ]);
+  });
+});
+
+describe("Backspace from the start of a line with no verse", () => {
+  const view = getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE);
+  const withPoetryLine: Usj = {
+    ...paragraphStructureUsj,
+    content: [
+      ...paragraphStructureUsj.content,
+      { type: "para", marker: "q2", content: ["poetry line"] },
+    ],
+  };
+
+  it("merges the line into the previous paragraph, in one undo step", async () => {
+    const onStateChange = vi.fn();
+    const { ref, lexical } = await mountParagraphStructure(
+      { options: { view }, onStateChange },
+      withPoetryLine,
+    );
+    await act(async () => {
+      lexical.update(() => {
+        const text = $paraOf("q2").getLastChild();
+        if (!$isTextNode(text)) throw new Error("no poetry text");
+        text.select(0, 0);
+      });
+    });
+    await flushQueuedEvents();
+
+    await act(async () => {
+      lexical
+        .getRootElement()
+        ?.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }),
+        );
+    });
+    await flushQueuedEvents();
+
+    expect(ref.current?.getUsj()?.content.slice(3)).toEqual([
+      {
+        type: "para",
+        marker: "li2",
+        content: [{ type: "verse", marker: "v", number: "2" }, "second verse textpoetry line"],
+      },
+    ]);
+    await act(async () => {
+      ref.current?.undo();
+    });
+    await flushQueuedEvents();
+    expect(ref.current?.getUsj()).toEqual(withPoetryLine);
   });
 });

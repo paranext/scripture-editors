@@ -604,19 +604,13 @@ button.toolbar-item:disabled .chevron-down {
   }
 }
 
-/* Paragraph marker selected (paragraph-structure view): ParaMarkerSelectionPlugin puts
-   `psc-para-marker-selected` on the paragraph whose gutter marker is the selection. The row is
-   highlighted on its own visual channel, distinct from the `psc-active-text` focus box: a tint on
-   the paragraph plus a same-coloured box-shadow offset across the gutter (the marker glyph is
-   absolutely positioned into the gutter, outside the paragraph's box; an outer box-shadow is
-   clipped under the box itself, so the two never double up), and a stronger accent on the glyph.
-   The focus box and book code use pseudo-elements on the element itself, but not on this class.
-   The tint is a demo placeholder; the platform app binds its own token. Lives here
-   (not usj-nodes.css) because that file will be generated per-project by core.
-   The offset spans the gutter the ROOT lays out, so it must not be sized in the paragraph's own
-   `em` (a `\mt1` would overshoot the editor's edge). An unregistered custom property inherits as
-   the bare token `4em`, which resolves wherever it is used; this registered twin computes to a
-   length on the root and inherits that. */
+/* Paragraph marker selected (paragraph-structure view), set by ParaMarkerSelectionPlugin: a tint
+   on the paragraph, distinct from the `psc-active-text` focus box, carried across the gutter by an
+   offset box-shadow, since the glyph sits outside the paragraph's box. The gutter width is a
+   registered length so it computes once on the root; an unregistered `4em` would resolve in each
+   paragraph's own font size, and a `\mt1` would overshoot the editor's edge. The tint is a demo
+   placeholder the platform app overrides; it lives here, not in usj-nodes.css, which core
+   generates per project. */
 @property --psc-para-marker-gutter-width {
   syntax: "<length>";
   inherits: true;

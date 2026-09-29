@@ -30,30 +30,39 @@ refused. The public surface grew substantially; nothing was removed.
   ⌘Space, which is Spotlight. It can collide with the macOS input-source switcher and with some IME
   on/off toggles; the handler declines while a composition is active.
 - **A paragraph's marker can be selected** in the paragraph-structure view (`hasGutterParaMarkers`):
-  click it in the gutter. Arrow keys do not stop on a marker; arrow movement is unchanged. The row
-  is highlighted (`psc-para-marker-selected`, with the editor root's `aria-activedescendant` naming
-  the marker, which carries `role="option"` and `aria-selected`). Everywhere else a selected marker
-  counts as a caret at the start of its paragraph's text: the scripture reference reports the verse
-  that text starts in, and `insertMarker`, `insertNote`, `applyMarkerMenuSelection`,
-  `splitParagraphWithMarker`, `commitTypedMarker` and `commitTypedCloser` act there. Any arrow key
-  returns the caret to that position without moving further, and typing, dictation, pasting and
-  the emoji picker insert there. Enter and Alt+↓ go to `onParaMarkerMenuRequest` when it is set, and
-  otherwise act as they would at that position. Backspace or Delete — or any other deletion, such
-  as macOS ⌃H/⌃D or a virtual keyboard's — merges the paragraph into the one before it in a single
-  undo step, as removing a paragraph marker does; nothing happens on the first paragraph of a book
-  or chapter, and `"protected"` `structureProtectionMode` refuses the merge. Cut, copy and drag are
-  refused, since the marker is not content, unless the browser's selection has moved to other text
-  (a right-click, say), which they then use.
-- **Paragraphs the editor creates in the paragraph-structure view get their gutter marker.** An
-  Enter split or a multi-line paste used to create a paragraph with no marker glyph, which the
-  marker-prefix guard then reset to `\p`; the new paragraph now keeps its marker (an Enter in a `\li2`
-  makes another `\li2`) and shows it in the gutter, where it can be selected.
+  click it in the gutter. Arrow keys do not stop on a marker; arrow movement is unchanged.
+  - The row is highlighted (`psc-para-marker-selected`), and the editor root's
+    `aria-activedescendant` names the marker, which carries `role="option"` and `aria-selected`.
+  - Everywhere else a selected marker counts as a caret at the start of its paragraph's text. The
+    scripture reference reports the verse that text starts in, and `insertMarker`, `insertNote`,
+    `applyMarkerMenuSelection`, `splitParagraphWithMarker`, `commitTypedMarker` and
+    `commitTypedCloser` act there.
+  - Any arrow key returns the caret to that position without moving further. Typing, dictation,
+    pasting and the emoji picker insert there. A spellcheck replacement or a drop acts where it
+    was aimed.
+  - Enter and Alt+↓ call `onParaMarkerMenuRequest` when it is set. Without it, Enter splits at that
+    position and Alt+↓ acts like any other arrow.
+  - Backspace or Delete, or any other deletion such as macOS ⌃H/⌃D or a virtual keyboard's, merges
+    the paragraph into the one before it in a single undo step, as removing a paragraph marker
+    does. Nothing happens on the first paragraph of a book or chapter, and `"protected"`
+    `structureProtectionMode` refuses the merge. Under `"guarded"`, selecting the marker is the
+    arming step, so one press merges.
+  - Cut, copy and drag are refused, since the marker is not content, unless the browser's selection
+    has moved to other text (a right-click, say), which they then use.
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
 - `EditorProps.onParaMarkerMenuRequest` — fired on Enter or Alt+↓ while a paragraph marker is
   selected, so the host can open its paragraph dropdown.
 
 ### Changed
 
+- **Paragraphs the editor creates in the paragraph-structure view get their gutter marker.** An
+  Enter split or a multi-line paste used to create a paragraph with no marker glyph, which the
+  marker-prefix guard then reset to `\p`; the new paragraph now keeps its marker (an Enter in a `\li2`
+  makes another `\li2`) and shows it in the gutter, where it can be selected.
+- **Backspace at the start of a line with no verse number merges it into the paragraph before**, in
+  the paragraph-structure view, as removing its selected marker does. It used to delete the line's
+  gutter glyph and reset its marker to `\p`. `"guarded"` asks for a second press, and
+  `"protected"` refuses it.
 - **`EditorRef.copy()` and `EditorRef.cut()` with nothing selected now leave the clipboard alone.**
   Previously either one, called at a collapsed caret or with no selection, still wrote to the system
   clipboard — it put a lone `#` there, because `@lexical/clipboard` synthesizes a copy event by

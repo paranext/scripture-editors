@@ -1,10 +1,19 @@
 import { isEditingKey } from "./OpaqueBlockGuardPlugin";
-import { $advancePastParaPrefixes } from "./ParaMarkerPrefixCursorGuardPlugin";
+import {
+  $advancePastParaPrefixes,
+  $placeCaretAtParaContentStart,
+  REPAIR_PARA_MARKER_SELECTION_COMMAND,
+} from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
-import { $mergeParaIntoPrevious } from "./structureKeyboard.utils";
+import {
+  $getGutterParaWithCaretAtStart,
+  $mergeParaIntoPrevious,
+  $placeCaretAfterParaChild,
+} from "./structureKeyboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
 import {
+  $createRangeSelection,
   $createRangeSelectionFromDom,
   $getNearestNodeFromDOMNode,
   $getNodeByKey,
@@ -16,6 +25,7 @@ import {
   BEFORE_INPUT_COMMAND,
   CLICK_COMMAND,
   COMMAND_PRIORITY_CRITICAL,
+  COMPOSITION_START_COMMAND,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
   CUT_COMMAND,
@@ -35,13 +45,14 @@ import {
 import { useEffect, useRef } from "react";
 import {
   $getSelectedParaMarker,
-  $getSelectedParaMarkerOwner,
+  $getSelectedParaMarkerPara,
   $isGutterMarkerNode,
   $isSomeParaNode,
   $placeCaretAtBoundary,
   $selectParaMarker,
   ParaNode,
   registerParaMarkerSelectionOwner,
+  SomeParaNode,
 } from "shared";
 
 /**
@@ -52,39 +63,54 @@ export const PARA_MARKER_SELECTED_CLASS_NAME = "psc-para-marker-selected";
 
 /**
  * Keys that begin text input without announcing a character: an IME's first composition keystroke
- * (`Process`), a dead key, and the `Unidentified` some platforms report while composing.
+ * (`Process`) and a dead key.
  */
-const COMPOSITION_KEYS = new Set(["Process", "Dead", "Unidentified"]);
+const COMPOSITION_KEYS = new Set(["Process", "Dead"]);
+
+/**
+ * Input types whose event carries the range they act on — a spellcheck suggestion's word, a drop
+ * point — rather than acting at the selection.
+ */
+const TARGETED_INPUT_TYPES = new Set([
+  "insertReplacementText",
+  "insertFromDrop",
+  "insertFromYank",
+  "insertFromPaste",
+  "insertFromPasteAsQuotation",
+]);
 
 /**
  * Owns a selected paragraph marker: how it is selected, its highlight and accessibility state, and
  * every key and command that reaches it.
  *
  * A marker is selected by a `NodeSelection` of its gutter glyph (`$getSelectedParaMarker`, shared),
- * made only by a click on the glyph — no arrow key stops on it; keyboard selection is left to the
- * arrow-navigation work. Mounting registers the editor as an owner
- * (`registerParaMarkerSelectionOwner`), which is what lets `$selectParaMarker` select at all.
+ * made only by clicking the glyph; arrow keys never stop on it. Mounting registers the editor with
+ * `registerParaMarkerSelectionOwner`, which is what lets `$selectParaMarker` select at all.
  * Everywhere else a selected marker counts as a caret at the start of its paragraph's content.
  *
- * - Highlight: {@link PARA_MARKER_SELECTED_CLASS_NAME} on the owning paragraph, recomputed every
- *   update, plus the root's `aria-activedescendant` naming the glyph, which carries
- *   `role="option"` and `aria-selected` while selected. Hidden while read-only.
- * - Keys (CRITICAL): Enter and Alt+↓ call `onParaMarkerMenuRequest`, or without one act as they
- *   would at the content start; every other arrow, Escape, typing and text input collapse to the
- *   content start. Backspace/Delete, by key, command or input event, merge the paragraph into the
- *   one before (`$mergeParaIntoPrevious`) — a no-op with nothing before it, refused where
- *   structure is protected.
+ * - Highlight: {@link PARA_MARKER_SELECTED_CLASS_NAME} on the selected marker's paragraph,
+ *   recomputed every update, plus the root's `aria-activedescendant` naming the glyph, which
+ *   carries `role="option"` and `aria-selected` while selected. Hidden while read-only.
+ * - Keys (CRITICAL): Enter and Alt+↓ call `onParaMarkerMenuRequest` when it is set; without it,
+ *   Enter splits at the content start and Alt+↓ acts like any other arrow. Every arrow, Escape,
+ *   typing and text input collapse to the content start; an input aimed at a range of its own (a
+ *   spellcheck replacement, a drop) acts there instead.
+ * - Removing the marker (Backspace/Delete, by key, command or input event, or a Backspace from the
+ *   start of the text of a paragraph with no leading verse) merges its paragraph into the one
+ *   before (`$mergeParaIntoPrevious`) — a no-op with nothing before it, and refused under
+ *   `"protected"`, as `StructureKeyboardPlugin` refuses the same merge from a caret. Under
+ *   `"guarded"`, selecting the marker is the arming step, so one press merges.
  * - Pointer and clipboard: a click elsewhere, or a cut, copy or paste after the browser's selection
  *   moved elsewhere, uses that selection; otherwise paste lands at the content start and cut, copy
- *   and drag-start are refused (the glyph is not content). A drop is refused only onto the glyph.
- * - Recovery: a selection whose glyph is removed or stops being selectable (a remote edit) collapses
- *   on the next key or input to the paragraph's content, or to a neighbour when the paragraph is
- *   gone too.
+ *   and drag-start are refused (the glyph is not content). A drop lands at its drop point, and is
+ *   refused only onto the glyph.
+ * - Recovery: if a remote edit removes the paragraph, the selection collapses to a neighbour on the
+ *   next key, input or `$collapseParaMarkerSelection`.
  *
  * @param onParaMarkerMenuRequest - Called when the user asks, by keyboard, to change the selected
  *   marker.
  * @param structureProtectionMode - The editor's structure protection; `"protected"` refuses the
- *   merge that Backspace/Delete would perform. Defaults to `"off"`.
+ *   merge that removing the marker would perform. Defaults to `"off"`.
  * @returns Always `null`; the highlight is published to the DOM.
  */
 export function ParaMarkerSelectionPlugin({
@@ -105,11 +131,13 @@ export function ParaMarkerSelectionPlugin({
   }, [structureProtectionMode]);
 
   useEffect(() => {
-    let highlightedOwnerKey: NodeKey | undefined;
+    let highlightedParaKey: NodeKey | undefined;
     let activeDescendantKey: NodeKey | undefined;
-    // The last committed marker selection and the paragraphs beside its owner, so a selection
+    // The last committed marker selection and the paragraphs beside its own, so a selection
     // orphaned by a later update (a remote delete, say) knows where to collapse to.
     let lastSelected: SelectedMarkerKeys | undefined;
+    // Set while a pointer is pressed on the root: the focus that press brings places its own caret.
+    let isPointerPressed = false;
 
     /** Hands the request to the host outside this update, so its work never runs mid-commit. */
     const requestMenu = () => {
@@ -117,13 +145,13 @@ export function ParaMarkerSelectionPlugin({
     };
 
     /** The selected marker's paragraph, while it can be acted on. */
-    const $getActiveOwner = (): ParaNode | undefined =>
-      editor.isEditable() ? $getSelectedParaMarkerOwner($getSelection()) : undefined;
+    const $getActivePara = (): ParaNode | undefined =>
+      editor.isEditable() ? $getSelectedParaMarkerPara($getSelection()) : undefined;
 
-    // Both keys remove the marker, which merges its paragraph into the one before — the paragraph
-    // is the operand, never the glyph. Refused where structure is protected, as
-    // `StructureKeyboardPlugin` refuses the same merge from a caret.
-    const $removeMarker = (para: ParaNode) => {
+    // Removing the marker merges its paragraph into the previous one — the paragraph is the
+    // operand, never the glyph. Refused under "protected", as `StructureKeyboardPlugin` refuses
+    // the same merge from a caret.
+    const $removeMarker = (para: SomeParaNode) => {
       if (structureProtectionModeRef.current !== "protected") $mergeParaIntoPrevious(para);
     };
 
@@ -145,6 +173,21 @@ export function ParaMarkerSelectionPlugin({
       return true;
     };
 
+    /**
+     * Makes `domRange` the editor's selection, if it lies in the editor and off the glyph.
+     *
+     * @returns `true` if the editor's selection is now `domRange`.
+     */
+    const $adoptDomRange = (domRange: StaticRange | undefined, glyphKey: NodeKey): boolean => {
+      const container = domRange?.startContainer;
+      if (!domRange || !container || !editor.getRootElement()?.contains(container)) return false;
+      if (editor.getElementByKey(glyphKey)?.contains(container)) return false;
+      const range = $createRangeSelection();
+      range.applyDOMRange(domRange);
+      $setSelection(range);
+      return true;
+    };
+
     const $handleClick = (event: MouseEvent): boolean => {
       const target = isDOMNode(event.target) ? $getNearestNodeFromDOMNode(event.target) : null;
       if ($isGutterMarkerNode(target)) return $selectParaMarker(target);
@@ -152,11 +195,14 @@ export function ParaMarkerSelectionPlugin({
       // Lexical does not rebuild the selection from a press on a decorator (a verse or chapter
       // number), and rich-text would then clear the marker selection and leave none at all.
       const glyph = $getSelectedParaMarker($getSelection());
-      if (!glyph || !target) return false;
-      if ($adoptDomSelectionElsewhere(glyph.getKey())) return false;
+      const para = glyph?.getParent();
+      if (!glyph || !$isSomeParaNode(para) || !target) return false;
+      if ($adoptDomSelectionElsewhere(glyph.getKey()) || !$isDecoratorNode(target)) return false;
+      // Just past a verse number in its paragraph; a chapter number has no paragraph to hold the
+      // caret, so the selection collapses as it would for any other edit.
       const parent = target.getParent();
-      if ($isDecoratorNode(target) && parent)
-        $placeCaretAtBoundary(parent, target.getIndexWithinParent() + 1);
+      if ($isSomeParaNode(parent)) $placeCaretAtBoundary(parent, target.getIndexWithinParent() + 1);
+      else $placeCaretAtParaContentStart(para);
       return false;
     };
 
@@ -164,7 +210,7 @@ export function ParaMarkerSelectionPlugin({
       if (typeof event.key !== "string") return false;
       // The key then acts from the repaired caret, as it would from any other.
       if ($repairOrphanedSelection()) return false;
-      const para = $getActiveOwner();
+      const para = $getActivePara();
       if (!para) return false;
 
       const hasMenu = onMenuRequestRef.current !== undefined;
@@ -189,6 +235,9 @@ export function ParaMarkerSelectionPlugin({
           event.preventDefault();
           $removeMarker(para);
           return true;
+        // A virtual keyboard names no key; the `beforeinput` that follows says what it does.
+        case "Unidentified":
+          return false;
         default:
           if (!isTypingKey(event)) return false;
       }
@@ -198,32 +247,47 @@ export function ParaMarkerSelectionPlugin({
       return false;
     };
 
-    // Deletion that arrives without a Backspace/Delete keydown: a mapped shortcut (macOS Ctrl+H /
-    // Ctrl+D), a programmatic dispatch, or a virtual keyboard's `beforeinput`.
-    const $handleDeleteCharacter = (): boolean => {
-      const para = $getActiveOwner();
+    // Deletion that arrives without a Backspace/Delete keydown (a mapped shortcut such as macOS
+    // Ctrl+H / Ctrl+D, or a programmatic dispatch) removes a selected marker. So does a backward
+    // delete from the start of the text of a paragraph with no leading verse (a `\q2` line, say),
+    // which would otherwise delete the gutter glyph before the caret.
+    const $handleDeleteCharacter = (isBackward: boolean): boolean => {
+      const para =
+        $getActivePara() ??
+        (isBackward ? $getGutterParaWithCaretAtStart($getSelection()) : undefined);
       if (!para) return false;
       $removeMarker(para);
       return true;
     };
 
-    // Input with no ordinary keydown (dictation, the emoji picker, IME commits) lands in the
-    // paragraph's text, like typing; a delete input removes the marker.
+    // Input with no ordinary keydown (dictation, the emoji picker, a virtual keyboard) lands in the
+    // paragraph's text, like typing, unless it is aimed at a range of its own; a delete input
+    // removes the marker.
     const $handleBeforeInput = (event: InputEvent): boolean => {
       if ($repairOrphanedSelection()) return false;
-      const para = $getActiveOwner();
+      const para = $getActivePara();
       if (!para) return false;
-      if (event.inputType.startsWith("delete")) {
+      const { inputType } = event;
+      if (inputType.startsWith("delete")) {
         event.preventDefault();
         $removeMarker(para);
         return true;
       }
-      if (event.inputType.startsWith("insert")) $advancePastParaPrefixes(para);
+      if (!inputType.startsWith("insert")) return false;
+      const glyphKey = para.getFirstChildOrThrow().getKey();
+      const isAimed =
+        TARGETED_INPUT_TYPES.has(inputType) &&
+        ($adoptDomRange(event.getTargetRanges?.()[0], glyphKey) ||
+          $adoptDomSelectionElsewhere(glyphKey));
+      if (!isAimed) $advancePastParaPrefixes(para);
       return false;
     };
 
+    // Text inserted by command, and an IME composition starting, land in the paragraph's text.
+    // A composition (Android's keyboards compose ordinary typing) needs its own hook:
+    // `insertCompositionText` never reaches BEFORE_INPUT_COMMAND.
     const $handleTextInsertion = (): boolean => {
-      const para = $getActiveOwner();
+      const para = $getActivePara();
       if (para) $advancePastParaPrefixes(para);
       return false;
     };
@@ -231,10 +295,10 @@ export function ParaMarkerSelectionPlugin({
     // Paste lands where the browser's selection moved to, or else in the paragraph's text; it is
     // never claimed, so the paste itself is left to whichever handler would run from a caret.
     const $handlePaste = (): boolean => {
-      const glyph = editor.isEditable() ? $getSelectedParaMarker($getSelection()) : undefined;
-      const para = glyph?.getParent();
-      if (!glyph || !$isSomeParaNode(para)) return false;
-      if (!$adoptDomSelectionElsewhere(glyph.getKey())) $advancePastParaPrefixes(para);
+      const para = $getActivePara();
+      if (!para) return false;
+      if (!$adoptDomSelectionElsewhere(para.getFirstChildOrThrow().getKey()))
+        $advancePastParaPrefixes(para);
       return false;
     };
 
@@ -251,63 +315,81 @@ export function ParaMarkerSelectionPlugin({
     // DROP is judged by the drop TARGET, not the live selection, mirroring
     // `OpaqueBlockGuardPlugin`'s DROP_COMMAND handler: Lexical dispatches DROP_COMMAND straight
     // from the DOM handler with no selection update, so at drop time `$getSelection()` still
-    // holds whatever was selected before the drag. Only a drop ONTO the selected glyph is refused.
-    const $refuseDropOnMarker = (event: DragEvent): boolean => {
+    // holds whatever was selected before the drag. A drop ONTO the selected glyph is refused; any
+    // other drop moves the selection to its drop point, so the handlers after this one (protected
+    // structure's sanitizing insert, say) act there rather than at the marker.
+    const $handleDrop = (event: DragEvent): boolean => {
       if (!isDOMNode(event.target)) return false;
       const glyph = $getSelectedParaMarker($getSelection());
       if (!glyph) return false;
-      if (!$getNearestNodeFromDOMNode(event.target)?.is(glyph)) return false;
-      event.preventDefault();
-      return true;
+      if ($getNearestNodeFromDOMNode(event.target)?.is(glyph)) {
+        event.preventDefault();
+        return true;
+      }
+      const document = editor.getRootElement()?.ownerDocument;
+      $adoptDomRange(
+        document && domRangeFromPoint(document, event.clientX, event.clientY),
+        glyph.getKey(),
+      );
+      return false;
     };
 
     // Escape arrives as its own command only when no KEY_DOWN handler claimed it. Claimed here so
     // the editor's blur-on-Escape default never runs, but neither prevented nor stopped, so host
     // dismiss listeners still see the key.
     const $handleEscape = (): boolean => {
-      const para = $getActiveOwner();
+      const para = $getActivePara();
       if (!para) return false;
       $advancePastParaPrefixes(para);
       return true;
     };
 
+    const isMarkerSelected = () =>
+      editor.getEditorState().read(() => $getSelectedParaMarker($getSelection()) !== undefined);
+
     // Focus that returns without a click (Tab, or a host's `root.focus()` when its dropdown
     // closes) makes the browser draw a caret of its own, usually at the document start, while the
-    // marker stays selected. Remove it so the only thing on screen is the marker highlight.
+    // marker stays selected. Remove it so the only thing on screen is the marker highlight. Focus
+    // a pointer press brings is left alone: that press is placing the caret the user asked for.
     const handleFocus = (): boolean => {
-      const isSelected = editor
-        .getEditorState()
-        .read(() => $getSelectedParaMarker($getSelection()) !== undefined);
-      if (isSelected && editor.isEditable()) {
-        const root = editor.getRootElement();
-        removeDomRangesInside(root);
-        // The browser can place its caret after the focus event has been dispatched.
-        root?.ownerDocument.defaultView?.setTimeout(() => removeDomRangesInside(root));
-      }
+      if (isPointerPressed || !editor.isEditable() || !isMarkerSelected()) return false;
+      const root = editor.getRootElement();
+      removeDomRangesInside(root);
+      // The browser can place its caret after the focus event has been dispatched; by then the
+      // marker may no longer be selected.
+      root?.ownerDocument.defaultView?.setTimeout(() => {
+        if (!isPointerPressed && isMarkerSelected()) removeDomRangesInside(root);
+      });
       return false;
     };
 
+    const handlePointerDown = () => {
+      isPointerPressed = true;
+    };
+    const handlePointerUp = () => {
+      isPointerPressed = false;
+    };
+
     /**
-     * Collapses a marker selection whose glyph is gone or no longer selectable — after a remote
-     * delete, say. Run when the user next acts rather than in the update that orphaned it: Lexical
-     * runs no transform for a parent made dirty only by a child's removal.
+     * Collapses a marker selection whose paragraph a remote edit removed (or whose glyph stopped
+     * being selectable). Run when the user next acts rather than in the update that orphaned it:
+     * Lexical runs no transform for a parent made dirty only by a child's removal.
      *
      * @returns `true` if an orphaned selection was collapsed.
      */
     const $repairOrphanedSelection = (): boolean => {
       const selection = $getSelection();
       if (!lastSelected || !$isOrphanedFrom(selection, lastSelected.glyphKey)) return false;
-      const { ownerKey, previousKey, nextKey } = lastSelected;
+      const { paraKey, previousKey, nextKey } = lastSelected;
       lastSelected = undefined;
-      const owner = $getNodeByKey(ownerKey);
+      const para = $getNodeByKey(paraKey);
       const previous = previousKey ? $getNodeByKey(previousKey) : null;
       const next = nextKey ? $getNodeByKey(nextKey) : null;
-      if ($isSomeParaNode(owner) && owner.isAttached()) {
-        if (!$advancePastParaPrefixes(owner)) owner.selectStart();
-      } else if (previous?.isAttached()) previous.selectEnd();
-      else if ($isSomeParaNode(next) && next.isAttached()) {
-        if (!$advancePastParaPrefixes(next)) next.selectStart();
-      } else $setSelection(null);
+      if ($isSomeParaNode(para) && para.isAttached()) $placeCaretAtParaContentStart(para);
+      else if ($isSomeParaNode(previous) && previous.isAttached())
+        $placeCaretAfterParaChild(previous, previous.getLastChild());
+      else if ($isSomeParaNode(next) && next.isAttached()) $placeCaretAtParaContentStart(next);
+      else $setSelection(null);
       return true;
     };
 
@@ -315,31 +397,43 @@ export function ParaMarkerSelectionPlugin({
     const syncHighlight = (keys: SelectedMarkerKeys | undefined) => {
       // Hidden while read-only: nothing can be done with the marker there.
       const visible = editor.isEditable() ? keys : undefined;
-      const ownerKey = visible?.ownerKey;
-      if (highlightedOwnerKey !== ownerKey) setOwnerHighlight(editor, highlightedOwnerKey, false);
-      highlightedOwnerKey = ownerKey;
+      const paraKey = visible?.paraKey;
+      if (highlightedParaKey !== paraKey) setParaHighlight(editor, highlightedParaKey, false);
+      highlightedParaKey = paraKey;
       // Re-applied on every update, not only on change: an idempotent add keeps a re-created
       // element highlighted too.
-      setOwnerHighlight(editor, ownerKey, true);
+      setParaHighlight(editor, paraKey, true);
       activeDescendantKey = setActiveDescendant(editor, activeDescendantKey, visible?.glyphKey);
     };
 
     const readSelectedKeys = (editorState = editor.getEditorState()) =>
       editorState.read((): SelectedMarkerKeys | undefined => {
         const glyph = $getSelectedParaMarker($getSelection());
-        const owner = glyph?.getParent();
-        if (!glyph || !owner) return undefined;
+        const para = glyph?.getParent();
+        if (!glyph || !para) return undefined;
         return {
           glyphKey: glyph.getKey(),
-          ownerKey: owner.getKey(),
-          previousKey: owner.getPreviousSibling()?.getKey(),
-          nextKey: owner.getNextSibling()?.getKey(),
+          paraKey: para.getKey(),
+          previousKey: para.getPreviousSibling()?.getKey(),
+          nextKey: para.getNextSibling()?.getKey(),
         };
       });
 
     const unregister = mergeRegister(
       registerParaMarkerSelectionOwner(editor),
       editor.registerEditableListener(() => syncHighlight(readSelectedKeys())),
+      editor.registerRootListener((root, previousRoot) => {
+        previousRoot?.removeEventListener("pointerdown", handlePointerDown, true);
+        root?.addEventListener("pointerdown", handlePointerDown, true);
+        // On the document, so a release outside the editor still ends the press.
+        previousRoot?.ownerDocument.removeEventListener("pointerup", handlePointerUp, true);
+        root?.ownerDocument.addEventListener("pointerup", handlePointerUp, true);
+      }),
+      () => {
+        const root = editor.getRootElement();
+        root?.removeEventListener("pointerdown", handlePointerDown, true);
+        root?.ownerDocument.removeEventListener("pointerup", handlePointerUp, true);
+      },
       editor.registerCommand(CLICK_COMMAND, $handleClick, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(KEY_DOWN_COMMAND, $handleKeyDown, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(KEY_ESCAPE_COMMAND, $handleEscape, COMMAND_PRIORITY_CRITICAL),
@@ -350,6 +444,11 @@ export function ParaMarkerSelectionPlugin({
       ),
       editor.registerCommand(BEFORE_INPUT_COMMAND, $handleBeforeInput, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(
+        COMPOSITION_START_COMMAND,
+        $handleTextInsertion,
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
         CONTROLLED_TEXT_INSERTION_COMMAND,
         $handleTextInsertion,
         COMMAND_PRIORITY_CRITICAL,
@@ -358,8 +457,13 @@ export function ParaMarkerSelectionPlugin({
       editor.registerCommand(CUT_COMMAND, $refuseUnlessElsewhere, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(COPY_COMMAND, $refuseUnlessElsewhere, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(DRAGSTART_COMMAND, $refuseUnlessElsewhere, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(DROP_COMMAND, $refuseDropOnMarker, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(DROP_COMMAND, $handleDrop, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(FOCUS_COMMAND, handleFocus, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(
+        REPAIR_PARA_MARKER_SELECTION_COMMAND,
+        $repairOrphanedSelection,
+        COMMAND_PRIORITY_CRITICAL,
+      ),
       editor.registerUpdateListener(({ editorState }) => {
         const keys = readSelectedKeys(editorState);
         // Kept past an update that orphans the selection, so the repair knows where it was.
@@ -371,7 +475,7 @@ export function ParaMarkerSelectionPlugin({
 
     return () => {
       unregister();
-      setOwnerHighlight(editor, highlightedOwnerKey, false);
+      setParaHighlight(editor, highlightedParaKey, false);
       setActiveDescendant(editor, activeDescendantKey, undefined);
     };
   }, [editor]);
@@ -399,7 +503,7 @@ function isOrphaned(editorState: EditorState, glyphKey: NodeKey | undefined): bo
 /** The keys of a selected marker's glyph and paragraph, and of the paragraph's siblings. */
 interface SelectedMarkerKeys {
   glyphKey: NodeKey;
-  ownerKey: NodeKey;
+  paraKey: NodeKey;
   previousKey: NodeKey | undefined;
   nextKey: NodeKey | undefined;
 }
@@ -430,7 +534,7 @@ function isPreventable(payload: unknown): payload is { preventDefault(): void } 
 }
 
 /** Toggles the selected-marker highlight on the element of the paragraph `key` names, if rendered. */
-function setOwnerHighlight(
+function setParaHighlight(
   editor: LexicalEditor,
   key: NodeKey | undefined,
   isSelected: boolean,
@@ -486,4 +590,20 @@ function removeDomRangesInside(root: HTMLElement | null | undefined): void {
   if (!domSelection || domSelection.rangeCount === 0) return;
   if (domSelection.anchorNode && root.contains(domSelection.anchorNode))
     domSelection.removeAllRanges();
+}
+
+/**
+ * The collapsed DOM range at viewport point (`x`, `y`) — where a drop there lands — or `undefined`
+ * where the browser offers no way to ask.
+ */
+function domRangeFromPoint(document: Document, x: number, y: number): StaticRange | undefined {
+  if (typeof document.caretRangeFromPoint === "function")
+    return document.caretRangeFromPoint(x, y) ?? undefined;
+  if (typeof document.caretPositionFromPoint !== "function") return undefined;
+  const position = document.caretPositionFromPoint(x, y);
+  if (!position) return undefined;
+  const range = document.createRange();
+  range.setStart(position.offsetNode, position.offset);
+  range.collapse(true);
+  return range;
 }

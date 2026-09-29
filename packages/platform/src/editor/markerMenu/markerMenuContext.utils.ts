@@ -16,7 +16,14 @@
  */
 import { MarkerMenuContext } from "./markerItemSource";
 import { $findMatchingParent } from "@lexical/utils";
-import { $getRoot, $getSelection, $isElementNode, $isRangeSelection, LexicalNode } from "lexical";
+import {
+  $getRoot,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  BaseSelection,
+  LexicalNode,
+} from "lexical";
 import {
   $findFirstAncestorNoteNode,
   $isBookNode,
@@ -28,6 +35,7 @@ import {
   $isSynthesizedMarkerNode,
   ParaNode,
 } from "shared";
+import { $getParaMarkerSelectionLocationNode } from "shared-react";
 
 /**
  * `MarkerMenuContext` plus the caret's viewport rect for palette anchoring. `undefined` in
@@ -169,23 +177,38 @@ function getAnchorRect(): MarkerMenuContextSnapshot["anchorRect"] {
 }
 
 /**
+ * Where the marker menu reads the selection from: its FOCUS point, "the node the caret is in" —
+ * the live cursor end, correct even for a backward range selection. (Reading the anchor put half
+ * of all drags on the wrong end: dragging leftward out of a `\nd` span still offered its close-tag
+ * for a cursor that had left the span.) A selected paragraph marker is a caret at its paragraph's
+ * content start.
+ */
+function $getMenuFocus(
+  selection: BaseSelection | null,
+): { node: LexicalNode; offset: number; hasTextSelection: boolean } | undefined {
+  const markerLocation = $getParaMarkerSelectionLocationNode(selection);
+  if (markerLocation) return { node: markerLocation, offset: 0, hasTextSelection: false };
+  if (!$isRangeSelection(selection)) return undefined;
+  const { focus } = selection;
+  return {
+    node: focus.getNode(),
+    offset: focus.offset,
+    hasTextSelection: !selection.isCollapsed(),
+  };
+}
+
+/**
  * Builds a `MarkerMenuContext` snapshot from the current selection. Call inside
  * `editor.getEditorState().read(...)` — NOT `editor.read(...)`, which force-flushes an in-flight
  * update when dispatched mid-update (see the module doc above; this hazard class caused real
- * frozen-state crashes, fixed for `OnSelectionChangePlugin`). Returns `undefined` when there is no
- * range selection (e.g. a `NodeSelection`, or none at all).
+ * frozen-state crashes, fixed for `OnSelectionChangePlugin`). A selected paragraph marker reads as
+ * a caret at its paragraph's content start, where `applyMarkerMenuSelection` acts. Returns
+ * `undefined` for any other non-range selection (another `NodeSelection`, or none at all).
  */
 export function $getMarkerMenuContext(): MarkerMenuContextSnapshot | undefined {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection)) return undefined;
-
-  // The FOCUS point is "the node the caret is in" — the live cursor end, correct even for a
-  // backward range selection. Reading the anchor put half of all drags on the wrong end:
-  // dragging leftward out of a `\nd` span still offered its close-tag for a cursor that had
-  // left the span.
-  const focusNode = selection.focus.getNode();
-  const offset = selection.focus.offset;
-  const hasTextSelection = !selection.isCollapsed();
+  const focus = $getMenuFocus($getSelection());
+  if (!focus) return undefined;
+  const { node: focusNode, offset, hasTextSelection } = focus;
 
   const para = $findMatchingParent(focusNode, $isParaNode);
   // A collapsed caret with NO paragraph around it at all is the book/header region — `\id` is a

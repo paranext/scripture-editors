@@ -199,11 +199,10 @@ export class ImmutableTypedTextNode extends DecoratorNode<null> {
   // Mutation
 
   /**
-   * Stays `false` even though a paragraph's gutter glyph can be selected: it is selected only by a
-   * click (`ParaMarkerSelectionPlugin`, shared-react), and reaching it by keyboard is left to the
-   * arrow-navigation work. Returning `true` would also change Lexical's native
-   * Backspace-beside-a-decorator behavior at every paragraph start, where `StructureKeyboardPlugin`
-   * arms paragraph merges.
+   * Stays `false` even though a paragraph's gutter glyph can be selected: it is selected only by
+   * clicking it (`ParaMarkerSelectionPlugin`, shared-react), and arrow keys never stop on it.
+   * Returning `true` would also change Lexical's native Backspace-beside-a-decorator behavior at
+   * every paragraph start, where `StructureKeyboardPlugin` arms paragraph merges.
    */
   override isKeyboardSelectable(): false {
     return false;

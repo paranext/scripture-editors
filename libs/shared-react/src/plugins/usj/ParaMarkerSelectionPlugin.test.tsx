@@ -7,11 +7,20 @@ import {
   PARA_MARKER_SELECTED_CLASS_NAME,
   ParaMarkerSelectionPlugin,
 } from "./ParaMarkerSelectionPlugin";
-import { ParaMarkerPrefixCursorGuardPlugin } from "./ParaMarkerPrefixCursorGuardPlugin";
+import {
+  $collapseParaMarkerSelection,
+  ParaMarkerPrefixCursorGuardPlugin,
+} from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
-import { baseTestEnvironment, pressKey, sutUpdate, updateSelection } from "./react-test.utils";
+import {
+  baseTestEnvironment,
+  pressKey,
+  pressKeyThroughDom,
+  sutUpdate,
+  updateSelection,
+} from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
   $createTextNode,
@@ -23,6 +32,7 @@ import {
   $setState,
   COMMAND_PRIORITY_LOW,
   BEFORE_INPUT_COMMAND,
+  COMPOSITION_START_COMMAND,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
   CUT_COMMAND,
@@ -122,7 +132,7 @@ async function environment(
   return { editor, ...doc };
 }
 
-/** Selects `para`'s gutter marker the way the click guard does. */
+/** Selects `para`'s gutter marker the way a click on it does. */
 async function selectMarkerOf(editor: LexicalEditor, para: ParaNode): Promise<void> {
   await sutUpdate(editor, () => {
     const glyph = para.getFirstChild();
@@ -455,7 +465,7 @@ describe("ParaMarkerSelectionPlugin — typing collapses to the content, then pr
     });
   });
 
-  it.each(["Process", "Dead", "Unidentified"])(
+  it.each(["Process", "Dead"])(
     "a %s keydown (IME composition or dead key) collapses before composing",
     async (key) => {
       const { editor, li2, secondText } = await environment();
@@ -469,6 +479,30 @@ describe("ParaMarkerSelectionPlugin — typing collapses to the content, then pr
       });
     },
   );
+
+  // A virtual keyboard's keydown names no key: the `beforeinput` after it says what it does.
+  it("an Unidentified keydown leaves the marker selected for the input that follows", async () => {
+    const { editor, li2 } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    const event = await pressKeyWith(editor, { key: "Unidentified", keyCode: 229 });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(selectedMarkerOf(editor)).toBe("li2");
+  });
+
+  it("an IME composition starting collapses, since its input never reaches beforeinput", async () => {
+    const { editor, li2, secondText } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    await act(async () => {
+      editor.dispatchCommand(COMPOSITION_START_COMMAND, new CompositionEvent("compositionstart"));
+    });
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(secondText, 0);
+    });
+  });
 
   it("a character outside the BMP (an emoji) collapses too", async () => {
     const { editor, li2, secondText } = await environment();
@@ -652,6 +686,21 @@ describe("ParaMarkerSelectionPlugin — deletion without a Backspace/Delete keyd
     expect(paragraphsOf(editor)).toEqual(merged);
   });
 
+  it("a virtual keyboard's Backspace, keydown then input in the order it sends them, merges the paragraph", async () => {
+    const { editor, li2 } = await deletionEnvironment("off");
+    await selectMarkerOf(editor, li2);
+
+    await pressKeyWith(editor, { key: "Unidentified", keyCode: 229 });
+    await act(async () => {
+      editor.dispatchCommand(
+        BEFORE_INPUT_COMMAND,
+        new InputEvent("beforeinput", { inputType: "deleteContentBackward", cancelable: true }),
+      );
+    });
+
+    expect(paragraphsOf(editor)).toEqual(merged);
+  });
+
   it("an insertText input with no keydown (dictation, the emoji picker) lands in the text", async () => {
     const { editor, li2, secondText } = await environment();
     await selectMarkerOf(editor, li2);
@@ -676,6 +725,75 @@ describe("ParaMarkerSelectionPlugin — deletion without a Backspace/Delete keyd
     unregister();
 
     expect(isCollapsedWhenHandled).toBe(true);
+  });
+});
+
+/** The range of `text`'s characters from `start` to `end`, in its rendered DOM. */
+function domRangeIn(editor: LexicalEditor, text: TextNode, start: number, end = start): Range {
+  const range = document.createRange();
+  const domText = editor.getElementByKey(text.getKey())!.firstChild!;
+  range.setStart(domText, start);
+  range.setEnd(domText, end);
+  return range;
+}
+
+/** Where the selection is when a LOW-priority handler of `command` runs, as anchor and focus. */
+function captureSelectionAt<T>(editor: LexicalEditor, command: LexicalCommand<T>) {
+  const landing: { at?: [string, number, number] } = {};
+  const unregister = editor.registerCommand(
+    command,
+    () => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection))
+        landing.at = [selection.anchor.key, selection.anchor.offset, selection.focus.offset];
+      return true;
+    },
+    COMMAND_PRIORITY_LOW,
+  );
+  return { landing, unregister };
+}
+
+describe("ParaMarkerSelectionPlugin — input aimed at a range of its own", () => {
+  // A spellcheck suggestion, picked after right-clicking a word, which moves no selection.
+  it("a replacement acts on the word it names, not at the selected paragraph", async () => {
+    const { editor, li2, firstText } = await environment();
+    await selectMarkerOf(editor, li2);
+    const { landing, unregister } = captureSelectionAt(editor, BEFORE_INPUT_COMMAND);
+    const event = new InputEvent("beforeinput", {
+      inputType: "insertReplacementText",
+      cancelable: true,
+    });
+    const targetRange = domRangeIn(editor, firstText, 0, "first".length);
+    Object.defineProperty(event, "getTargetRanges", { value: () => [targetRange] });
+
+    await act(async () => {
+      editor.dispatchCommand(BEFORE_INPUT_COMMAND, event);
+    });
+    unregister();
+
+    expect(landing.at).toEqual([firstText.getKey(), 0, "first".length]);
+  });
+
+  it("a drop lands at its drop point, not at the selected paragraph", async () => {
+    const { editor, li2, thirdText } = await environment();
+    await selectMarkerOf(editor, li2);
+    const { landing, unregister } = captureSelectionAt(editor, DROP_COMMAND);
+    const dropPoint = domRangeIn(editor, thirdText, 2);
+    Object.defineProperty(document, "caretRangeFromPoint", {
+      value: () => dropPoint,
+      configurable: true,
+    });
+
+    try {
+      await act(async () => {
+        editor.dispatchCommand(DROP_COMMAND, dropEventOn(dropPoint.startContainer));
+      });
+    } finally {
+      unregister();
+      Reflect.deleteProperty(document, "caretRangeFromPoint");
+    }
+
+    expect(landing.at).toEqual([thirdText.getKey(), 2, 2]);
   });
 });
 
@@ -797,6 +915,67 @@ describe("ParaMarkerSelectionPlugin — clicks", () => {
       $expectSelectionToBe(firstText, 0);
     });
   });
+
+  // A chapter number sits in the root, where no caret can rest.
+  it("a click on a chapter number collapses to the selected paragraph's text", async () => {
+    const { editor, li2, secondText } = await deletionEnvironment("off", { afterChapter: true });
+    await selectMarkerOf(editor, li2);
+    const chapterKey = editor.getEditorState().read(() => $getRoot().getFirstChild()!.getKey());
+
+    await act(async () => {
+      editor.getElementByKey(chapterKey)?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(selectedMarkerOf(editor)).toBeUndefined();
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(secondText, 0);
+    });
+  });
+});
+
+/** Stands in for the caret the browser draws at the start of `text` when focus arrives. */
+function placeDomCaretAtStartOf(editor: LexicalEditor, text: TextNode): void {
+  document.getSelection()?.removeAllRanges();
+  document.getSelection()?.addRange(domRangeIn(editor, text, 0));
+}
+
+/** Lets the timer the focus handler sets run. */
+async function flushTimers(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+describe("ParaMarkerSelectionPlugin — focus a pointer press brings", () => {
+  it("keeps the caret the press placed", async () => {
+    const { editor, li2, thirdText } = await environment();
+    await selectMarkerOf(editor, li2);
+    const root = editor.getRootElement()!;
+
+    root.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    placeDomCaretAtStartOf(editor, thirdText);
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, new FocusEvent("focus"));
+    });
+    await flushTimers();
+    document.dispatchEvent(new Event("pointerup", { bubbles: true }));
+
+    expect(document.getSelection()?.rangeCount).toBe(1);
+  });
+
+  it("keeps a caret placed after focus once the marker is no longer selected", async () => {
+    const { editor, li2, thirdText } = await environment();
+    await selectMarkerOf(editor, li2);
+
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, new FocusEvent("focus"));
+    });
+    updateSelection(editor, thirdText, 0);
+    placeDomCaretAtStartOf(editor, thirdText);
+    await flushTimers();
+
+    expect(document.getSelection()?.rangeCount).toBe(1);
+  });
 });
 
 describe("ParaMarkerSelectionPlugin — focus returning without a click", () => {
@@ -831,6 +1010,67 @@ describe("ParaMarkerSelectionPlugin — a selection whose marker goes away", () 
     editor.getEditorState().read(() => {
       $expectSelectionToBe(firstText, "first".length);
     });
+  });
+
+  it("collapses to the next paragraph's text when a chapter number is all that precedes it", async () => {
+    const { editor, p, secondText } = await deletionEnvironment("off", { afterChapter: true });
+    await selectMarkerOf(editor, p);
+    await sutUpdate(editor, () => p.remove());
+
+    await pressKey(editor, "a");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(secondText, 0);
+    });
+  });
+
+  it("is repaired by an edit that collapses the selection first, as the EditorRef edits do", async () => {
+    const { editor, li2, firstText } = await environment();
+    await selectMarkerOf(editor, li2);
+    await sutUpdate(editor, () => li2.remove());
+
+    let isCollapsed = false;
+    await sutUpdate(editor, () => {
+      isCollapsed = $collapseParaMarkerSelection();
+    });
+
+    expect(isCollapsed).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(firstText, "first".length);
+    });
+  });
+});
+
+describe("ParaMarkerSelectionPlugin — Backspace from the start of a line with no verse", () => {
+  // `\q1 third` has no leading verse, so a caret at its text's start has the glyph before it.
+  it.each(["off", "guarded"] as const)(
+    "merges the line into the previous paragraph (%s), as removing its selected marker does",
+    async (structureProtectionMode) => {
+      const { editor, secondText, thirdText } = await deletionEnvironment(structureProtectionMode);
+      updateSelection(editor, thirdText, 0);
+
+      // Guarded arms first, from a caret, and merges on the second press.
+      await pressKeyThroughDom(editor, "Backspace");
+      if (structureProtectionMode === "guarded") await pressKeyThroughDom(editor, "Backspace");
+
+      expect(paragraphsOf(editor)).toEqual([
+        { marker: "p", glyphs: 1, text: "first" },
+        { marker: "li2", glyphs: 1, text: "secondthird" },
+      ]);
+      editor.getEditorState().read(() => {
+        $expectSelectionToBe(secondText, "second".length);
+      });
+    },
+  );
+
+  it("changes nothing where structure is protected", async () => {
+    const { editor, thirdText } = await deletionEnvironment("protected");
+    updateSelection(editor, thirdText, 0);
+    const before = documentJson(editor);
+
+    await pressKeyThroughDom(editor, "Backspace");
+
+    expect(documentJson(editor)).toBe(before);
   });
 });
 
@@ -980,10 +1220,11 @@ describe.each([
   const keys = ["Backspace", "Delete", "ArrowLeft", "ArrowUp", "Enter", "a"];
 
   if (isGutter) {
-    it.each(keys)("owns %s while selected", async (key) => {
+    it.each(keys)("claims %s while selected", async (key) => {
       const { isPrevented } = await pressOnNodeSelectedGlyph(key);
 
-      // Typing is redirected to the paragraph's text but never claimed.
+      // Typing is redirected to the paragraph's text but never claimed. Enter, with no marker menu,
+      // is claimed by rich-text's split at the content start rather than by this plugin.
       expect(isPrevented).toBe(key !== "a");
     });
   } else {

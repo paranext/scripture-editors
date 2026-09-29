@@ -3,6 +3,7 @@ import { $getSelection, $isRangeSelection } from "lexical";
 import { useEffect } from "react";
 import {
   $createGutterMarkerNode,
+  $isGutterMarkerNode,
   $isSynthesizedMarkerNode,
   LoggerBasic,
   NBSP,
@@ -15,22 +16,13 @@ import { showParaMarkerPrefix, ViewOptions } from "shared-react";
 /**
  * Keeps a paragraph's visible USFM-marker label (e.g. `\s2`, `\q1`) in agreement with its marker.
  *
- * In the gutter view every paragraph carries its marker's glyph, including one the editor creates
- * (an Enter split, a multi-line paste): a paragraph found without one is given it. The user cannot
- * delete a gutter glyph — removing a selected marker merges its paragraph instead — so a missing
- * one is never a request to change the marker. Elsewhere (markerMode "visible") the plugin reverts
- * a paragraph back to the default `\p` marker when the user deletes the label.
+ * - Gutter view (`hasGutterParaMarkers`): every paragraph leads with its marker's glyph, so one
+ *   found without it (an Enter split, a multi-line paste) is given one.
+ * - markerMode "visible": the inline label is the only direct handle on the paragraph's type, so
+ *   deleting it resets the marker to `\p`.
  *
- * In views that render a paragraph's marker as a visible node — either inline (markerMode
- * "editable"/"visible") or in the gutter (`hasGutterParaMarkers`) — the adaptor injects that
- * marker as the first child of every non-`\p` paragraph. That visible marker is the only
- * thing the user can directly select and delete to act on the paragraph's type, so when it
- * disappears we read that as "make this a plain paragraph" and rewrite the paragraph's
- * marker to `\p`. The plugin is a no-op in views that don't render the marker (markerMode
- * "hidden" without a gutter), since the user never has the affordance to delete one.
- *
- * In editable marker mode the MarkerEditPlugin owns marker-deletion semantics (merge into
- * the previous paragraph), so this guard stands down there.
+ * A no-op where no label is rendered, and in editable marker mode, where `MarkerEditPlugin` owns
+ * marker deletion.
  */
 export function ParaMarkerPrefixGuardPlugin({
   viewOptions,
@@ -92,7 +84,9 @@ export function $resetMarkerIfPrefixDeleted(para: ParaNode, logger?: LoggerBasic
 
 /**
  * Gives `para` its gutter marker glyph if its first child is not one — see
- * {@link ParaMarkerPrefixGuardPlugin}. Shaped as the adaptor builds it (`createPara`,
+ * {@link ParaMarkerPrefixGuardPlugin}. When content has landed in front of the paragraph's own glyph
+ * (text typed at the paragraph's very start, say), that glyph is moved back to the front rather than
+ * a second one created. Otherwise a new glyph is shaped as the adaptor builds it (`createPara`,
  * usj-editor.adaptor.ts): the opening marker text plus NBSP, flagged as a gutter glyph.
  *
  * Mutating: call inside `editor.update()` (a node transform already runs inside one).
@@ -100,7 +94,12 @@ export function $resetMarkerIfPrefixDeleted(para: ParaNode, logger?: LoggerBasic
 export function $restoreGutterMarkerIfMissing(para: ParaNode): void {
   const first = para.getFirstChild();
   if ($isSynthesizedMarkerNode(first)) return;
-  const glyph = $createGutterMarkerNode(openingMarkerText(para.getMarker()) + NBSP);
+  const text = openingMarkerText(para.getMarker()) + NBSP;
+  const glyph =
+    para
+      .getChildren()
+      .find((child) => $isGutterMarkerNode(child) && child.getTextContent() === text) ??
+    $createGutterMarkerNode(text);
   if (first) first.insertBefore(glyph);
   else para.append(glyph);
   // A caret at the paragraph's start would now sit before the glyph, which is no caret position.

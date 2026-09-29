@@ -74,7 +74,7 @@ import {
 } from "react";
 import {
   $createParaNode,
-  $getSelectedParaMarkerOwner,
+  $getSelectedParaMarkerPara,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
@@ -649,7 +649,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       if (!editor?.isEditable()) return undefined;
       return editor
         .getEditorState()
-        .read(() => $getSelectedParaMarkerOwner($getSelection())?.getMarker());
+        .read(() => $getSelectedParaMarkerPara($getSelection())?.getMarker());
     },
     setSelection(selection) {
       if (isBlockVerse) {
@@ -726,7 +726,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           // no `$setBlocksType`, which would swap in a fresh ParaNode and drop the paragraph's
           // attributes and identity. The glyph is rewritten in place too, so the selection stays
           // on it.
-          const owner = $getSelectedParaMarkerOwner(selection);
+          const owner = $getSelectedParaMarkerPara(selection);
           if (owner) {
             $applyParaMarker(owner, blockMarker, viewOptions);
             return;

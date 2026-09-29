@@ -15,12 +15,7 @@ import {
   LexicalNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import {
-  $getSelectedParaMarkerOwner,
-  $isImmutableTypedTextNode,
-  $isMarkerNode,
-  ZWSP,
-} from "shared";
+import { $getSelectedParaMarkerPara, $isImmutableTypedTextNode, $isMarkerNode, ZWSP } from "shared";
 import { $isSomeVerseNode, $paraContentStartIndex, ViewOptions } from "shared-react";
 
 const ACTIVE_CLASS = "psc-active-text";
@@ -151,7 +146,7 @@ export function $getActiveVerseKey(): string | undefined {
   // type into — is the active one, so its ellipsis stays hidden like a caret's would.
   // `$paraContentStartIndex` is the same measure of that paragraph's prefix the caret uses on the
   // way out, so the two cannot disagree about which verse the content starts in.
-  const markerPara = $getSelectedParaMarkerOwner(selection);
+  const markerPara = $getSelectedParaMarkerPara(selection);
   if (markerPara) {
     const prefix = markerPara.getChildren().slice(0, $paraContentStartIndex(markerPara));
     return prefix.findLast($isSomeVerseNode)?.getKey();
@@ -201,7 +196,7 @@ export function $getActiveVerseKey(): string | undefined {
 export function $getParaFromSelection(
   selection: BaseSelection | undefined,
 ): ElementNode | undefined {
-  const markerPara = $getSelectedParaMarkerOwner(selection);
+  const markerPara = $getSelectedParaMarkerPara(selection);
   if (markerPara) return markerPara.getTopLevelElement() ?? markerPara;
   if (!$isRangeSelection(selection)) return undefined;
   return selection.anchor.getNode().getTopLevelElement() ?? undefined;
