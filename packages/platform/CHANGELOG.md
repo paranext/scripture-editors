@@ -31,8 +31,9 @@ refused. The public surface grew substantially; nothing was removed.
   normal copy. One over the limit is shortened silently, keeping its start and never splitting a
   character, marker, note or construct, so it may take less than the limit or nothing; Standard
   and Markers views fit the USFM they copy, and other views write plain text of what they show. A
-  limited cut removes only what it copied. The Select All shortcut is blocked, except in other
-  text fields, and `0` blocks copy and cut.
+  limited cut removes only what it copied, except that in Standard view a cut ending inside a
+  character style also removes the style's closing marker, as any Standard-view cut does. The
+  Select All shortcut is blocked, except in other text fields, and `0` blocks copy and cut.
 - Dependency on `unicode-segmenter` (`^0.17.3`), which keeps a shortened copy on grapheme cluster
   boundaries whatever the runtime's own segmenter does. It is imported, not bundled.
 - **Ctrl+Space removes character formatting from the selection.** On macOS this is ⌃Space rather than
