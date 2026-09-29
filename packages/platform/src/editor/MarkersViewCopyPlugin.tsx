@@ -1,6 +1,5 @@
 import editorUsjAdaptor from "./adaptors/editor-usj.adaptor";
 import usjEditorAdaptor from "./adaptors/usj-editor.adaptor";
-import { $fitOrBlock } from "./copyLimit/copyLimit.utils";
 import {
   $selectionToUsfmText,
   $writeCopyPayload,
@@ -11,14 +10,14 @@ import { mergeRegister } from "@lexical/utils";
 import {
   $getSelection,
   $isRangeSelection,
-  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   COPY_COMMAND,
   createEditor,
   CUT_COMMAND,
+  EditorState,
   LexicalEditor,
 } from "lexical";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { TypedMarkNode } from "shared";
 import {
   $getRangeFromUsjSelection,
@@ -38,7 +37,8 @@ import {
  * (verse and chapter numbers in decorators, no separator after a char marker, a note caller with
  * no text, layout spacers in notes, no glyphs at all for a figure). So the selection is mapped to
  * USJ locations, the document is rebuilt as Standard view in a throwaway editor, and the walker
- * runs over the same USJ range there.
+ * runs over the same USJ range there. The rebuild is kept for the editor state it was built from,
+ * so measuring several selections of one document during one copy rebuilds it once.
  *
  * `undefined` when there is no range to copy or the range cannot be mapped (the block verse layout
  * has no USJ locations).
@@ -50,10 +50,55 @@ export function $selectionToUsfmViaStandardView(
   editor: LexicalEditor,
   viewOptions: ViewOptions,
 ): string | undefined {
-  const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
   const range = $getUsjSelectionFromEditor();
-  if (!standardViewOptions || !range?.end) return undefined;
-  const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions);
+  if (!range?.end) return undefined;
+  const standardView = standardViewOf(editor, viewOptions);
+  if (!standardView) return undefined;
+  return standardView.state.read(
+    () => {
+      const selection = $getRangeFromUsjSelection(range);
+      return selection ? $selectionToUsfmText(selection) : undefined;
+    },
+    { editor: standardView.editor },
+  );
+}
+
+/** A document rebuilt as Standard view, and the view options it was read under. */
+interface StandardViewRebuild {
+  viewOptions: ViewOptions;
+  editor: LexicalEditor;
+  state: EditorState;
+}
+
+/**
+ * Standard-view rebuilds, keyed by the editor state each was built from. An editor state is
+ * immutable, so a rebuild stays valid for as long as its key is the editor's state; a commit makes
+ * a new key and leaves the old entry to be collected.
+ */
+const standardViewRebuilds = new WeakMap<EditorState, StandardViewRebuild | undefined>();
+
+/** `editor`'s document rebuilt as Standard view, reusing the rebuild of its current state. */
+function standardViewOf(
+  editor: LexicalEditor,
+  viewOptions: ViewOptions,
+): StandardViewRebuild | undefined {
+  const source = editor.getEditorState();
+  if (standardViewRebuilds.has(source)) {
+    const cached = standardViewRebuilds.get(source);
+    if (!cached || cached.viewOptions === viewOptions) return cached;
+  }
+  const rebuild = rebuildAsStandardView(source, viewOptions);
+  standardViewRebuilds.set(source, rebuild);
+  return rebuild;
+}
+
+function rebuildAsStandardView(
+  source: EditorState,
+  viewOptions: ViewOptions,
+): StandardViewRebuild | undefined {
+  const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
+  if (!standardViewOptions) return undefined;
+  const usj = editorUsjAdaptor.deserializeEditorState(source, viewOptions);
   if (!usj) return undefined;
   const standardEditor = createEditor({
     namespace: "markers-view-copy",
@@ -62,16 +107,10 @@ export function $selectionToUsfmViaStandardView(
       throw error;
     },
   });
-  const standardState = standardEditor.parseEditorState(
+  const state = standardEditor.parseEditorState(
     usjEditorAdaptor.serializeEditorState(usj, standardViewOptions),
   );
-  return standardState.read(
-    () => {
-      const selection = $getRangeFromUsjSelection(range);
-      return selection ? $selectionToUsfmText(selection) : undefined;
-    },
-    { editor: standardEditor },
-  );
+  return { viewOptions, editor: standardEditor, state };
 }
 
 /**
@@ -86,46 +125,26 @@ export function $selectionToUsfmViaStandardView(
  * A cut in a read-only editor copies and removes nothing ({@link $writeCopyPayload} owns that
  * rule); Ctrl+X reaches the command there too.
  *
- * `copyLimit` caps the UTF-16 code units written, as `Editor`'s option of the same name does: the
- * selection is shortened until the USFM it writes fits, so what stays selected is exactly what is
- * copied ({@link $writeCopyPayload} shortens the payload as a backstop).
+ * `copyLimit` is `EditorOptions.copyLimit`; `CopyLimitPlugin` has already fitted the selection to
+ * it.
  *
- * Registered at `COMMAND_PRIORITY_HIGH`, above the empty-copy guard and Lexical's own copy, once, at
- * mount; it acts only while `viewOptions` is the Markers view (`markerMode: "visible"`), so it can
- * stay mounted in every view. A range it cannot map is left to Lexical's own copy, or, when a
- * copy limit is set, to `CopyLimitPlugin`'s plain-text copy.
+ * Registered at `COMMAND_PRIORITY_HIGH`, above the empty-copy guard and Lexical's own copy. Mount it
+ * only for `markerMode: "visible"`. A range it cannot map is left to the handlers below it.
  */
 export function MarkersViewCopyPlugin({
   viewOptions,
   copyLimit,
 }: {
-  viewOptions: ViewOptions | undefined;
+  viewOptions: ViewOptions;
   copyLimit?: number;
 }): null {
   const [editor] = useLexicalComposerContext();
-  // Read at each copy or cut, so a changed limit, view or view option never re-registers the
-  // handlers: re-registering would move them behind the opaque-block guard's, which has to judge
-  // the fitted selection.
-  const copyLimitRef = useRef(copyLimit);
-  const viewOptionsRef = useRef(viewOptions);
 
   useEffect(() => {
-    copyLimitRef.current = copyLimit;
-    viewOptionsRef.current = viewOptions;
-  }, [copyLimit, viewOptions]);
-
-  useEffect(() => {
-    /** The Markers view's options while it is showing; `undefined` in any other view. */
-    const markersView = () => {
-      const current = viewOptionsRef.current;
-      return current?.markerMode === "visible" ? current : undefined;
-    };
     const $copy = (event: ClipboardEvent | KeyboardEvent | null, isCut: boolean): boolean => {
-      const view = markersView();
-      if (!view) return false;
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-      const usfm = $selectionToUsfmViaStandardView(editor, view);
+      const usfm = $selectionToUsfmViaStandardView(editor, viewOptions);
       if (usfm === undefined) return false;
       return $writeCopyPayload(
         // COPY_COMMAND's payload is `ClipboardEvent | KeyboardEvent | null`, and jsdom (our test
@@ -137,33 +156,14 @@ export function MarkersViewCopyPlugin({
         selection,
         { "text/plain": usfm, "text/html": usfmToClipboardHtml(usfm) },
         isCut,
-        {
-          copyLimit: copyLimitRef.current,
-          $payloadFor: () => {
-            const current = $selectionToUsfmViaStandardView(editor, view) ?? "";
-            return { "text/plain": current, "text/html": usfmToClipboardHtml(current) };
-          },
-        },
+        copyLimit,
       );
     };
-    // Shortens a limited copy or cut until the USFM it writes fits, so what stays selected is
-    // exactly what is copied; `CopyLimitPlugin` has already shortened it by its text. Blocks it
-    // when nothing fits, or the browser would copy the whole selection it still shows.
-    const $fit = (event: ClipboardEvent | KeyboardEvent | null): boolean => {
-      const view = markersView();
-      if (!view) return false;
-      return $fitOrBlock(event, copyLimitRef.current, (selection) => {
-        const usfm = $selectionToUsfmViaStandardView(editor, view);
-        return usfm === undefined ? selection.getTextContent().length : usfm.length;
-      });
-    };
     return mergeRegister(
-      editor.registerCommand(COPY_COMMAND, $fit, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(CUT_COMMAND, $fit, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(COPY_COMMAND, (event) => $copy(event, false), COMMAND_PRIORITY_HIGH),
       editor.registerCommand(CUT_COMMAND, (event) => $copy(event, true), COMMAND_PRIORITY_HIGH),
     );
-  }, [editor]);
+  }, [editor, viewOptions, copyLimit]);
 
   return null;
 }

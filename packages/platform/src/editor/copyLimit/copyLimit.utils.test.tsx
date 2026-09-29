@@ -379,6 +379,13 @@ describe("$limitSelectionLength with a selection starting inside a construct", (
     expect(text).toContain("Before");
   });
 
+  it("keeps a note whole when the selection starts at the note's first character", async () => {
+    const editor = await renderStandardView(noteUsj);
+    await selectFrom(editor, "\\f");
+    await act(async () => editor.update(() => $limitSelectionLength(4)));
+    expect(selectedText(editor)).toBe("");
+  });
+
   it("keeps the start of a selection that starts inside a table", async () => {
     const editor = await renderStandardView(tableUsj);
     await selectFrom(editor, "cell one");
@@ -394,6 +401,85 @@ describe("$limitSelectionLength with a selection starting inside a construct", (
     expect(limit).toBeGreaterThan(2);
     await act(async () => editor.update(() => $limitSelectionLength(limit)));
     expect(selectedText(editor)).toBe(whole.slice(0, limit));
+  });
+});
+
+describe("$limitSelectionLength with Standard-view glyph text", () => {
+  /** Renders `usj` in Standard view with the whole document selected, and returns its text. */
+  async function selectWholeStandardView(usj: Usj) {
+    initializeSerialize(undefined, undefined);
+    reset();
+    const state = usjEditorAdaptor.serializeEditorState(usj, getViewOptions(STANDARD_VIEW_MODE));
+    const { editor } = await baseTestEnvironment(JSON.stringify({ root: state.root }));
+    await act(async () =>
+      editor.update(() => {
+        const root = $getRoot();
+        root.select(0, root.getChildrenSize());
+      }),
+    );
+    return { editor, whole: selectedText(editor) };
+  }
+
+  it("does not end inside a chapter line", async () => {
+    const { editor, whole } = await selectWholeStandardView({
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "chapter", marker: "c", number: "12", sid: "GEN 12" },
+        { type: "para", marker: "p", content: ["abc"] },
+      ],
+    } as unknown as Usj);
+    // Standard view shows the spaces as no-break spaces.
+    expect(whole).toMatch(/^\\c\s12\s/);
+    await act(async () => editor.update(() => $limitSelectionLength(4)));
+    expect(selectedText(editor)).toBe("");
+  });
+
+  it("does not end inside a character span's attribute", async () => {
+    const { editor, whole } = await selectWholeStandardView({
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "para",
+          marker: "p",
+          content: [{ type: "char", marker: "w", content: ["word"], gloss: "abcdefgh" }, " tail"],
+        },
+      ],
+    } as unknown as Usj);
+    const attributeStart = whole.indexOf("|gloss");
+    expect(attributeStart).toBeGreaterThan(0);
+    await act(async () => editor.update(() => $limitSelectionLength(attributeStart + 5)));
+    expect(selectedText(editor)).toBe(whole.slice(0, attributeStart));
+  });
+
+  it("does not step back into a note when the text after it starts with a mark", async () => {
+    const { editor, whole } = await selectWholeStandardView({
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            "Before ",
+            {
+              type: "note",
+              marker: "f",
+              caller: "+",
+              content: [{ type: "char", marker: "ft", content: ["note"] }],
+            },
+            "\u05BCafter",
+          ],
+        },
+      ],
+    } as unknown as Usj);
+    // The limit runs out exactly at the end of the note, and the next character is a mark that
+    // joins the note's last character.
+    const noteEnd = whole.indexOf("\u05BC");
+    expect(noteEnd).toBeGreaterThan(0);
+    await act(async () => editor.update(() => $limitSelectionLength(noteEnd)));
+    expect(selectedText(editor)).toBe(whole.slice(0, whole.indexOf("\\f")));
   });
 });
 
@@ -506,8 +592,11 @@ describe("normalizeCopyLimit", () => {
     [3.7, 3],
     [-2, 0],
     [Number.NaN, 0],
-    [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY],
+    [Number.POSITIVE_INFINITY, 0],
+    ["5,000", 0],
+    ["12.5", 12],
+    [null, 0],
   ])("turns %s into %s", (limit, expected) => {
-    expect(normalizeCopyLimit(limit)).toBe(expected);
+    expect(normalizeCopyLimit(limit as number | undefined)).toBe(expected);
   });
 });

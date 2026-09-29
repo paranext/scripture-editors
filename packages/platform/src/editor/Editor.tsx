@@ -1145,7 +1145,12 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
               or pasted `\` and `/` - only guards the non-editable views. */}
           {viewOptions?.markerMode !== "editable" && <CommandMenuPlugin logger={stableLogger} />}
           <ContextMenuPlugin options={contextMenuOptions} />
-          <CopyLimitPlugin limit={copyLimit} />
+          {/* Must mount before every plugin with a CRITICAL cut handler (MarkerEditPlugin,
+              OpaqueBlockGuardPlugin, StructureKeyboardPlugin). Its CRITICAL fit shortens the
+              selection of a limited copy or cut, and at equal priority handlers run in the order
+              they were registered: the guards and the whole-paragraph cut arm have to judge the
+              selection the cut will actually take. */}
+          <CopyLimitPlugin limit={copyLimit} viewOptions={viewOptions} />
           {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
               normalization that keeps a point out of one is too. */}
           <DecoratorBoundarySelectionPlugin />
@@ -1165,10 +1170,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             copyLimit={copyLimit}
           />
           {/* Standard view writes its own USFM copy (MarkerEditPlugin); the read-only Markers view
-              needs one too, since its display text is not USFM. The hidden-marker views copy prose.
-              Mounted in every view and acting only in the Markers view, so switching into it never
-              registers its copy-limit fit behind the opaque-block guard. */}
-          <MarkersViewCopyPlugin viewOptions={viewOptions} copyLimit={copyLimit} />
+              needs one too, since its display text is not USFM. The hidden-marker views copy prose. */}
+          {viewOptions?.markerMode === "visible" && (
+            <MarkersViewCopyPlugin viewOptions={viewOptions} copyLimit={copyLimit} />
+          )}
           <MarkerValidationPlugin
             styleInfo={styleInfo}
             viewOptions={viewOptions}

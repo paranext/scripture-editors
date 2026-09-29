@@ -52,11 +52,11 @@ export default defineConfig({
         // Also externalize the dev JSX runtime so a dev-mode build can never bundle a
         // second React copy (its React-18 variant reads internals removed in React 19).
         "react/jsx-dev-runtime",
-        ...Object.keys(packageData.peerDependencies ?? {}),
-        ...Object.keys(packageData.dependencies ?? {}),
-        // Dependencies imported through a subpath, such as `unicode-segmenter/grapheme`, which the
-        // exact package names above don't match.
-        /^unicode-segmenter\//,
+        // Every peer dependency and dependency, with any subpath imported from it, such as
+        // `unicode-segmenter/grapheme`.
+        ...Object.keys({ ...packageData.peerDependencies, ...packageData.dependencies }).map(
+          (name) => new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(/|$)`),
+        ),
         // Exclude all Lexical packages and their sub-modules
         /^@lexical\/.*/,
         /^lexical.*/,

@@ -640,26 +640,19 @@ export interface EditorOptions {
    */
   styleInfo?: StyleInfo;
   /**
-   * Maximum amount of text that may be copied or cut from the editor at once, as a non-negative
-   * integer (a fraction rounds down; a negative or `NaN` value counts as `0`). It is counted in
-   * UTF-16 code units, as JavaScript's `String.length` counts: most characters count as one, a
-   * character outside the Basic Multilingual Plane counts as two, and each combining mark counts
-   * on its own.
+   * Most text one copy or cut may take, in UTF-16 code units (`String.length`). Fractions round
+   * down; negative or `NaN` means `0`; `undefined` means no limit.
    *
-   * When undefined, copying, cutting and the Select All keyboard shortcut behave normally.
-   *
-   * When set, a copy or cut over the limit is shortened silently: the selection keeps its start and
-   * loses its end, then is copied or cut, so a cut removes exactly what it copies. The end never
-   * falls partway through a character, between a letter and its marks, or inside a marker, and a
-   * note, table, figure or sidebar the selection runs into is kept whole or left out (one the
-   * selection starts inside keeps its start). A selected marker is copied or cut whole, or not at
-   * all. Where the copied text is longer than the text shown (Standard view and the Markers view
-   * copy USFM), the selection is shortened until its copied text fits. So a copy or cut may take
-   * less than the limit, possibly nothing. In a read-only editor a cut removes nothing and copies
-   * like a copy. The Select All keyboard shortcut is blocked on the page unless focus is in another
-   * text field. Select All from the macOS Edit menu is a native menu command and is not blocked,
-   * but a copy after it is still shortened. `0` blocks all three: nothing can be copied or cut, and
-   * the Select All shortcut is blocked.
+   * While set:
+   * - A copy or cut that fits the limit is a normal copy or cut, except that Standard view leaves
+   *   out the editor's own `application/x-lexical-editor` clipboard format.
+   * - One over the limit is shortened silently. It keeps the selection's start and never splits a
+   *   character, marker, note or construct (a table, figure or sidebar), so it may take less than
+   *   the limit, or nothing. Standard view and the Markers view fit the USFM they copy; other views
+   *   write plain text of what they show.
+   * - A limited cut removes only what it copied.
+   * - The Select All shortcut is blocked, except in other text fields.
+   * - `0` blocks copy and cut.
    */
   copyLimit?: number;
   /**

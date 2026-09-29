@@ -26,16 +26,14 @@ refused. The public surface grew substantially; nothing was removed.
 - `defaultStyleInfo` and the `StyleInfo` / `MarkerStyleInfo` / `StyleType` types.
 - `EditorOptions.styleInfo`, `EditorOptions.markerSettleDelayMs`,
   `ViewOptions.showParaMarkerPrefixes`, and the caller/separator fields on `UsjNodeOptions`.
-- `EditorOptions.copyLimit`: limit how much text can be copied or cut at once, counted in UTF-16
-  code units. A copy or cut over the limit shortens the selection, keeping its start and dropping
-  its end, then copies or cuts it, so a cut removes exactly what it copies. The end never falls
-  inside a character or a marker; a note, table, figure or sidebar the selection runs into is kept
-  whole or left out (one it starts inside keeps its start); and a selected marker is copied or cut
-  whole or not at all. So a copy or cut may take less than the limit, possibly nothing. While the
-  limit is set, the Select All keyboard shortcut is blocked unless focus is in another text field.
-  Select All from the macOS Edit menu is not blocked, but a copy after it is still shortened. `0`
-  blocks copying and cutting; undefined leaves copying, cutting and Select All unchanged.
-- Dependency on `unicode-segmenter` (`^0.17.3`), which keeps a shortened copy on character
+- `EditorOptions.copyLimit`: the most text one copy or cut may take, in UTF-16 code units
+  (fractions round down, negative or `NaN` is `0`, `undefined` is no limit). A copy that fits is a
+  normal copy. One over the limit is shortened silently, keeping its start and never splitting a
+  character, marker, note or construct, so it may take less than the limit or nothing; Standard
+  and Markers views fit the USFM they copy, and other views write plain text of what they show. A
+  limited cut removes only what it copied. The Select All shortcut is blocked, except in other
+  text fields, and `0` blocks copy and cut.
+- Dependency on `unicode-segmenter` (`^0.17.3`), which keeps a shortened copy on grapheme cluster
   boundaries whatever the runtime's own segmenter does. It is imported, not bundled.
 - **Ctrl+Space removes character formatting from the selection.** On macOS this is ⌃Space rather than
   ⌘Space, which is Spotlight. It can collide with the macOS input-source switcher and with some IME
