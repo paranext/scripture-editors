@@ -190,6 +190,15 @@ export interface OracleRunOptions {
 
 const INLINE_TYPES = new Set(["char", "note", "unknown"]);
 
+/** `text` with every character outside printable ASCII written as a backslash-u escape of its
+ * hex code point, so the committed lists hold no invisible bytes such as an NBSP separator. */
+function asciiOnly(text: string): string {
+  return text.replace(
+    /[^\x20-\x7e]/gu,
+    (char) => `\\u${(char.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`,
+  );
+}
+
 function $inlineAncestors(node: LexicalNode): string[] {
   const keys: string[] = [];
   for (let parent = node.getParent(); parent; parent = parent.getParent())
@@ -241,7 +250,7 @@ export async function runOracle(
       const e = Math.max(after ?? s + 1, s + 1);
       const marks = `${byte.carrier ? "*" : ""}${byte.separator ? "(sep)" : ""}${byte.soft ? "(soft)" : ""}`;
       info.push({
-        desc: `${byte.nodeType}${marks}:${JSON.stringify(byte.ch)}@${byte.label}`,
+        desc: asciiOnly(`${byte.nodeType}${marks}:${JSON.stringify(byte.ch)}@${byte.label}`),
         separator: byte.separator,
         soft: byte.soft,
         s,
@@ -474,7 +483,7 @@ export async function runOracle(
         `${anomalies.length ? `, anomalies ${JSON.stringify(anomalies)}` : ""}`,
     );
   const exempt = info.filter((_, i) => !holdable(i)).map((byte) => byte.desc);
-  return { failures, ops: ranges.length, anomalies, exempt };
+  return { failures, ops: ranges.length, anomalies: anomalies.map(asciiOnly), exempt };
 }
 
 /** Decorators a range end inside of can drop. */
