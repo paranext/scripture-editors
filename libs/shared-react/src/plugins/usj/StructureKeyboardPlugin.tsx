@@ -22,6 +22,7 @@ import {
   $isRangeSelection,
   $isTextNode,
   $setSelection,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   CUT_COMMAND,
@@ -42,7 +43,8 @@ import { StructureProtectionMode } from "./structure-protection.model";
  * character formatting, and notes are kept. In `"guarded"` mode, makes deletion a deliberate
  * two-step gesture instead: first press selects the marker/section, second press deletes it.
  * In `"off"` mode, no handlers are registered and editing is fully native.
- * Registers a KEY_DOWN handler at COMMAND_PRIORITY_HIGH, mirroring ArrowNavigationPlugin.
+ * Registers a KEY_DOWN handler at COMMAND_PRIORITY_HIGH, mirroring ArrowNavigationPlugin, and
+ * the CUT refusal at COMMAND_PRIORITY_CRITICAL so it outranks the handlers that perform a cut.
  *
  * The armed state is published to the DOM (rather than rendered here) so the host app owns the
  * user-facing hint: the root element carries the `verse-delete-armed` class plus
@@ -225,7 +227,14 @@ export function StructureKeyboardPlugin({
 
     return mergeRegister(
       editor.registerCommand(KEY_DOWN_COMMAND, $handleKeyDown, COMMAND_PRIORITY_HIGH),
-      editor.registerCommand(CUT_COMMAND, $blockUnsafeSelection, COMMAND_PRIORITY_HIGH),
+      // CUT at CRITICAL, unlike KEY_DOWN above: a refusal has to outrank the actor it refuses,
+      // not tie with it. The handlers that PERFORM a cut (the Standard-view and Markers-view
+      // clipboard claims) register at HIGH, and at equal rank the winner is mount order — an
+      // incidental property of where a plugin sits in the JSX, which would silently invert if a
+      // plugin were added between them. `OpaqueBlockGuardPlugin` states the same rule for the same
+      // reason. KEY_DOWN stays at HIGH: it has no same-priority actor to outrank, and
+      // `MarkerEditPlugin`'s KEY_DOWN handler must keep running ahead of it on every keystroke.
+      editor.registerCommand(CUT_COMMAND, $blockUnsafeSelection, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(PASTE_COMMAND, $handlePaste, COMMAND_PRIORITY_HIGH),
       editor.registerCommand(DRAGSTART_COMMAND, $blockUnsafeSelection, COMMAND_PRIORITY_HIGH),
       editor.registerCommand(DROP_COMMAND, $handleDrop, COMMAND_PRIORITY_HIGH),

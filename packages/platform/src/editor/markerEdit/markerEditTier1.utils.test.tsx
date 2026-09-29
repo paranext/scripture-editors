@@ -945,6 +945,7 @@ describe("$resolvePendingMarkers attribute-run re-pend guard", () => {
       pendingKeys: new Set<NodeKey>(),
       splitExpected: { current: false },
       rebuildAttempted: new Set<string>(),
+      structureProtectionMode: "off",
     };
   }
 
@@ -1019,6 +1020,7 @@ describe("$settlePendedDisplayOwner AttributeRunNode husk arm (dual-read)", () =
       pendingKeys: new Set<NodeKey>(),
       splitExpected: { current: false },
       rebuildAttempted: new Set<string>(),
+      structureProtectionMode: "off",
     };
   }
 
@@ -1147,6 +1149,7 @@ describe("$resolvePendingMarkers folds a husk-only settle's mutation", () => {
       pendingKeys: new Set<NodeKey>(),
       splitExpected: { current: false },
       rebuildAttempted: new Set<string>(),
+      structureProtectionMode: "off",
     };
   }
 
@@ -1209,6 +1212,7 @@ describe("$settlePendedDisplayOwner verse migration + fallthrough interaction", 
       pendingKeys: new Set<NodeKey>(),
       splitExpected: { current: false },
       rebuildAttempted: new Set<string>(),
+      structureProtectionMode: "off",
     };
   }
 
@@ -1399,6 +1403,7 @@ describe("$resolvePendingMarkers routes a pended run PIECE through its owner's g
       pendingKeys: new Set<NodeKey>(),
       splitExpected: { current: false },
       rebuildAttempted: new Set<string>(),
+      structureProtectionMode: "off",
     };
   }
 

@@ -2,9 +2,14 @@
  * Adapted from https://github.com/facebook/lexical/blob/main/packages/lexical-playground/src/plugins/ContextMenuPlugin/index.tsx
  */
 
-import { pasteSelection, pasteSelectionAsPlainText } from "./clipboard.utils";
+import {
+  copySelection,
+  cutSelection,
+  pasteSelection,
+  pasteSelectionAsPlainText,
+  registerEmptyCopyGuard,
+} from "./clipboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { COPY_COMMAND, CUT_COMMAND } from "lexical";
 import {
   ReactElement,
   useCallback,
@@ -134,15 +139,20 @@ export function ContextMenuPlugin({
 
   const options = useMemo(() => {
     const builtIn = [
+      // Cut/Copy with nothing selected leave the clipboard alone rather than writing a placeholder
+      // over it — `registerEmptyCopyGuard` (mounted below) claims the command, so no selection
+      // check is needed here. They are not disabled in that case, because this option list is
+      // built once per editor rather than per menu opening, so its `isDisabled` flags cannot track
+      // the live selection.
       new ContextMenuOption(`Cut`, {
         onSelect: () => {
-          editor.dispatchCommand(CUT_COMMAND, null);
+          cutSelection(editor);
         },
         isDisabled: isReadonly,
       }),
       new ContextMenuOption(`Copy`, {
         onSelect: () => {
-          editor.dispatchCommand(COPY_COMMAND, null);
+          copySelection(editor);
         },
       }),
       new ContextMenuOption(`Paste`, {
@@ -169,6 +179,14 @@ export function ContextMenuPlugin({
     setMenuState((prev) => ({ ...prev, isOpen: false }));
     setSelectedIndex(undefined);
   }, []);
+
+  // This plugin is exported on its own, so a host can mount it without `ClipboardPlugin` — and its
+  // Cut/Copy options would then hit the unguarded synthesized-copy path, overwriting whatever the
+  // clipboard already held with `@lexical/clipboard`'s hidden placeholder character. Registering
+  // the guard here keeps the plugin self-sufficient; a second registration alongside
+  // `ClipboardPlugin`'s is harmless, since both listeners sit at the same priority and the first
+  // one to claim an empty selection stops propagation before the other runs.
+  useEffect(() => registerEmptyCopyGuard(editor), [editor]);
 
   // Register context menu event on editor root
   useEffect(() => {

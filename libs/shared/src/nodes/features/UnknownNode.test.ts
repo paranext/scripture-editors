@@ -1,7 +1,9 @@
+import { $createImmutableTypedTextNode, ImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
 import { $createParaNode, ParaNode } from "../usj/ParaNode.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
 import { $createUnknownNode, UnknownNode } from "./UnknownNode.js";
 import {
+  $createNodeSelection,
   $createPoint,
   $createRangeSelection,
   $createTextNode,
@@ -339,6 +341,187 @@ describe("UnknownNode", () => {
       expect(JSON.stringify(editor.getEditorState().toJSON().root.children[1])).toBe(
         serializedUnknown,
       );
+    });
+  });
+
+  // The predicate behind the same-namespace `application/x-lexical-editor` copy path:
+  // @lexical/clipboard's `$appendNodesToJSON` computes node exclusion from
+  // `excludeFromCopy('html')` for EVERY copy-out format it handles, not only
+  // actual `text/html` generation (see `excludeFromCopy`'s own doc comment). A direct unit pin on
+  // the predicate here — independent of the integration-level clipboard pins in
+  // `optbreakClipboardFidelity.test.tsx` and `unknownClipboardFidelity.test.tsx` — catches a
+  // regression to this method locally, without needing the full editor/selection/clipboard-event
+  // machinery those pins exercise.
+  describe("excludeFromCopy()", () => {
+    it("does NOT exclude a CHILD-BEARING optbreak — what lets a copied optbreak survive the lexical-flavor paste path", () => {
+      const { editor } = createBasicTestEnvironment([UnknownNode, ImmutableTypedTextNode]);
+      editor.update(() => {
+        const optbreak = $createUnknownNode("optbreak");
+        optbreak.append($createImmutableTypedTextNode("marker", "//"));
+        expect(optbreak.excludeFromCopy("html")).toBe(false);
+      });
+    });
+
+    it('excludes a CHILDLESS optbreak — a genuinely empty live husk stays excluded, matching text/plain\'s own "nothing here" for that shape', () => {
+      const { editor } = createBasicTestEnvironment([UnknownNode]);
+      editor.update(() => {
+        const optbreak = $createUnknownNode("optbreak");
+        expect(optbreak.getChildrenSize()).toBe(0);
+        expect(optbreak.excludeFromCopy("html")).toBe(true);
+      });
+    });
+
+    it("does NOT exclude a child-bearing figure either — the rule is the node's own child count, not its kind, because every kind's display bytes are the same content-free decorators that get stranded by a hoist", () => {
+      const { editor } = createBasicTestEnvironment([UnknownNode, ImmutableTypedTextNode]);
+      editor.update(() => {
+        const figure = $createUnknownNode("figure", "fig");
+        figure.append($createImmutableTypedTextNode("marker", "\\fig "));
+        expect(figure.excludeFromCopy("html")).toBe(false);
+      });
+    });
+
+    it("excludes a CHILDLESS figure — nothing of it would survive the copy anyway, and a childless placeholder in the lexical flavor has no counterpart in text/plain", () => {
+      const { editor } = createBasicTestEnvironment([UnknownNode]);
+      editor.update(() => {
+        const figure = $createUnknownNode("figure", "fig");
+        expect(figure.excludeFromCopy("html")).toBe(true);
+      });
+    });
+  });
+
+  // The override answers on CHILD membership, which is the right test for the range selections the
+  // clipboard pins exercise but blind to a `NodeSelection` — that marks a node by its OWN key and
+  // never puts the children in `getNodes()` at all. Paired with `excludeFromCopy` above, a false
+  // answer there would make `$appendNodesToJSON` hoist the (also unselected) children, so a
+  // construct selected outright would copy as nothing.
+  describe("isSelected()", () => {
+    function $figureInDocument() {
+      const figure = $createUnknownNode("figure", "fig");
+      figure.append($createImmutableTypedTextNode("marker", "\\fig "));
+      $getRoot().append($createParaNode("p").append(figure));
+      return figure;
+    }
+
+    it("answers true for a node a NodeSelection holds by its own key, whose children are NOT in the selection", () => {
+      const { editor } = createBasicTestEnvironment([
+        UnknownNode,
+        ImmutableTypedTextNode,
+        ParaNode,
+      ]);
+      editor.update(() => {
+        const figure = $figureInDocument();
+        const selection = $createNodeSelection();
+        selection.add(figure.getKey());
+        $setSelection(selection);
+
+        expect(selection.getNodes().some((node) => node.is(figure.getFirstChild()))).toBe(false);
+        expect(figure.isSelected()).toBe(true);
+      });
+    });
+
+    it("answers false for a NodeSelection holding some other node — the key test does not over-claim", () => {
+      const { editor } = createBasicTestEnvironment([
+        UnknownNode,
+        ImmutableTypedTextNode,
+        ParaNode,
+      ]);
+      editor.update(() => {
+        const figure = $figureInDocument();
+        const other = $createTextNode("elsewhere");
+        $getRoot().append($createParaNode("p").append(other));
+        const selection = $createNodeSelection();
+        selection.add(other.getKey());
+        $setSelection(selection);
+
+        expect(figure.isSelected()).toBe(false);
+      });
+    });
+
+    // The RANGE branch — the shape the override exists for, and the one Lexical's default gets
+    // wrong. A copy walks `$appendNodesToJSON` (`@lexical/clipboard`), which asks `isSelected()`
+    // for `shouldInclude`: a true answer at a boundary that covers none of the node's content
+    // serializes a CHILDLESS placeholder into `application/x-lexical-editor` for a node that HAS
+    // children, disagreeing with `text/plain`, whose walker emits nothing there.
+    //
+    // Asserted on the predicate rather than through a Standard-view copy, deliberately. That path
+    // cannot see this: a boundary ON the construct is also a selection reaching INTO an opaque
+    // block, so `$getStandardViewClipboardData` omits the internal flavor outright
+    // (`optbreakClipboardFidelity.test.tsx`, `unknownClipboardFidelity.test.tsx`) and every
+    // assertion about its contents would hold vacuously against an empty string. The flavor IS
+    // written by Lexical's own copy in the views that do not register that handler, which is where
+    // this predicate does its work.
+    function $figureAfterTextInDocument() {
+      const before = $createTextNode("before ");
+      const figure = $createUnknownNode("figure", "fig");
+      figure.append($createImmutableTypedTextNode("marker", "\\fig "));
+      $getRoot().append($createParaNode("p").append(before, figure));
+      return { before, figure };
+    }
+
+    it("answers false for a RANGE ending at an ELEMENT point ON the node, which covers none of its children", () => {
+      const { editor } = createBasicTestEnvironment([
+        UnknownNode,
+        ImmutableTypedTextNode,
+        ParaNode,
+      ]);
+      editor.update(() => {
+        const { before, figure } = $figureAfterTextInDocument();
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(before.getKey(), 0, "text");
+        selection.focus = $createPoint(figure.getKey(), 0, "element");
+        $setSelection(selection);
+
+        // Falsifiable: the node IS in `getNodes()`, so the inherited `ElementNode.isSelected` —
+        // key membership in exactly that list — answers true here. Only the child-membership
+        // override answers false.
+        const selectedNodes = selection.getNodes();
+        expect(selectedNodes.some((node) => node.is(figure))).toBe(true);
+        expect(selectedNodes.some((node) => node.is(figure.getFirstChild()))).toBe(false);
+        expect(figure.isSelected(selection)).toBe(false);
+      });
+    });
+
+    it("answers true for a RANGE that reaches over one of the node's own children", () => {
+      const { editor } = createBasicTestEnvironment([
+        UnknownNode,
+        ImmutableTypedTextNode,
+        ParaNode,
+      ]);
+      editor.update(() => {
+        const { before, figure } = $figureAfterTextInDocument();
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(before.getKey(), 0, "text");
+        // One past the `\fig ` glyph: the child itself is now inside the range, so both carriers
+        // have bytes for it and the construct must ride along whole.
+        selection.focus = $createPoint(figure.getKey(), 1, "element");
+        $setSelection(selection);
+
+        expect(selection.getNodes().some((node) => node.is(figure.getFirstChild()))).toBe(true);
+        expect(figure.isSelected(selection)).toBe(true);
+      });
+    });
+
+    it("answers false for a collapsed caret resting inside one of the node's own children", () => {
+      // A caret selects nothing. Its one point puts the child in `getNodes()`, so child membership
+      // alone would call the construct selected — unlike Lexical's own answer for any element at a
+      // collapsed range.
+      const { editor } = createBasicTestEnvironment([
+        UnknownNode,
+        ImmutableTypedTextNode,
+        ParaNode,
+      ]);
+      editor.update(() => {
+        const { figure } = $figureAfterTextInDocument();
+        const caption = $createTextNode("caption");
+        figure.append(caption);
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(caption.getKey(), 2, "text");
+        selection.focus = $createPoint(caption.getKey(), 2, "text");
+        $setSelection(selection);
+
+        expect(selection.getNodes().some((node) => node.is(caption))).toBe(true);
+        expect(figure.isSelected(selection)).toBe(false);
+      });
     });
   });
 });

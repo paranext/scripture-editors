@@ -27,7 +27,13 @@ import {
   StyleInfo,
   TypedMarkNode,
 } from "shared";
-import { getViewOptions, STANDARD_VIEW_MODE, usjReactNodes, ViewOptions } from "shared-react";
+import {
+  getViewOptions,
+  STANDARD_VIEW_MODE,
+  StructureProtectionMode,
+  usjReactNodes,
+  ViewOptions,
+} from "shared-react";
 import { expect } from "vitest";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
@@ -88,6 +94,12 @@ interface MountOptions {
   logger?: LoggerBasic;
   isReadonly?: boolean;
   styleInfo?: StyleInfo;
+  /**
+   * `EditorOptions.structureProtectionMode` — the host option the real `Editor` must hand down to
+   * `MarkerEditPlugin` (and to `StructureKeyboardPlugin`) for a protected document's paste to
+   * reach the sanitizer.
+   */
+  structureProtectionMode?: StructureProtectionMode;
 }
 
 export function requireStandardViewOptions(): ViewOptions {
@@ -146,6 +158,7 @@ async function mountEditor(
     logger,
     isReadonly,
     styleInfo,
+    structureProtectionMode,
   }: MountOptions = {},
 ): Promise<MountedEditor> {
   const ref = createRef<EditorRef>();
@@ -158,7 +171,7 @@ async function mountEditor(
       defaultUsj={usj}
       scrRef={currentScrRef}
       onScrRefChange={onScrRefChange}
-      options={{ view, isReadonly, styleInfo: currentStyleInfo }}
+      options={{ view, isReadonly, styleInfo: currentStyleInfo, structureProtectionMode }}
       onUsjChange={onUsjChange}
       onSelectionChange={onSelectionChange}
       logger={logger}
