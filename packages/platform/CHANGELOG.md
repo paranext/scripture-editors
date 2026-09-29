@@ -29,9 +29,40 @@ refused. The public surface grew substantially; nothing was removed.
 - **Ctrl+Space removes character formatting from the selection.** On macOS this is ⌃Space rather than
   ⌘Space, which is Spotlight. It can collide with the macOS input-source switcher and with some IME
   on/off toggles; the handler declines while a composition is active.
+- **A paragraph's marker can be selected** in the paragraph-structure view (`hasGutterParaMarkers`):
+  click it in the gutter. Arrow keys do not stop on a marker; arrow movement is unchanged.
+  - The row is highlighted (`psc-para-marker-selected`), and the editor root's
+    `aria-activedescendant` names the marker, which carries `role="option"` and `aria-selected`.
+  - Everywhere else a selected marker counts as a caret at the start of its paragraph's text. The
+    scripture reference reports the verse that text starts in, and `insertMarker`, `insertNote`,
+    `applyMarkerMenuSelection`, `splitParagraphWithMarker`, `commitTypedMarker` and
+    `commitTypedCloser` act there.
+  - Any arrow key returns the caret to that position without moving further. Typing, dictation,
+    pasting and the emoji picker insert there. A spellcheck replacement or a drop acts where it
+    was aimed.
+  - Enter and Alt+↓ call `onParaMarkerMenuRequest` when it is set. Without it, Enter splits at that
+    position and Alt+↓ acts like any other arrow.
+  - Backspace or Delete, or any other deletion such as macOS ⌃H/⌃D or a virtual keyboard's, merges
+    the paragraph into the one before it in a single undo step, as removing a paragraph marker
+    does. Nothing happens on the first paragraph of a book or chapter, and `"protected"`
+    `structureProtectionMode` refuses the merge. Under `"guarded"`, selecting the marker is the
+    arming step, so one press merges.
+  - Cut, copy and drag are refused, since the marker is not content, unless the browser's selection
+    has moved to other text (a right-click, say), which they then use.
+- `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
+- `EditorProps.onParaMarkerMenuRequest` — fired on Enter or Alt+↓ while a paragraph marker is
+  selected, so the host can open its paragraph dropdown.
 
 ### Changed
 
+- **Paragraphs the editor creates in the paragraph-structure view get their gutter marker.** An
+  Enter split or a multi-line paste used to create a paragraph with no marker glyph, which the
+  marker-prefix guard then reset to `\p`; the new paragraph now keeps its marker (an Enter in a `\li2`
+  makes another `\li2`) and shows it in the gutter, where it can be selected.
+- **Backspace at the start of a line with no verse number merges it into the paragraph before**, in
+  the paragraph-structure view, as removing its selected marker does. It used to delete the line's
+  gutter glyph and reset its marker to `\p`. `"guarded"` asks for a second press, and
+  `"protected"` refuses it.
 - **`EditorRef.copy()` and `EditorRef.cut()` with nothing selected now leave the clipboard alone.**
   Previously either one, called at a collapsed caret or with no selection, still wrote to the system
   clipboard — it put a lone `#` there, because `@lexical/clipboard` synthesizes a copy event by
@@ -76,6 +107,19 @@ refused. The public surface grew substantially; nothing was removed.
 - `getUsj()` returns the settled document in editable marker modes. When nothing is pending and no
   transient input is declared it short-circuits to the previous behavior, so the other view modes are
   unaffected.
+- A click on a paragraph's gutter marker selects the marker instead of moving the caret to the
+  paragraph's text. Book (`\id`) and table markers still move the caret, and so does any click in a
+  read-only editor, which puts it past the paragraph's leading verse number.
+- **While a paragraph marker is selected there is no text range.** Every marker selection fires
+  `onSelectionChange(undefined)`, and `EditorRef.getSelection()` returns `undefined` where it used to
+  return a caret. A host that derives the current paragraph from them must also read
+  `EditorRef.getSelectedParaMarker()` (or `onStateChange`'s `blockMarker`), or its paragraph controls
+  will act on a stale caret. `getSelectedParaMarker()` reads the committed state, so call it after
+  `onSelectionChange` returns rather than inside it.
+- `EditorRef.focus()` returns keyboard focus to the editor while a paragraph marker is selected;
+  Lexical's own focus handling did so only for a text range.
+- `EditorRef.formatPara` accepts a selected paragraph marker: it retags that paragraph in place —
+  keeping its attributes and identity — and keeps the marker selected.
 - **A Standard-view copy whose selection cuts through an opaque construct — a figure, sidebar,
   periph, ref, table or optbreak — no longer writes the private `application/x-lexical-editor`
   flavor.** That flavor carries a construct WHOLE and cannot carry part of one: a construct's text is
@@ -104,6 +148,9 @@ refused. The public surface grew substantially; nothing was removed.
   removed.
 
 ### Fixed
+
+- In the paragraph-structure view, a guarded two-step paragraph merge no longer leaves the merged
+  paragraph's gutter marker in the middle of the paragraph it joined.
 
 - In Standard view, the USJ positions the editor reports and accepts (selections, annotations)
   after a milestone, a verse's `\va`/`\vp`, or a chapter's `\ca` were one content item too far:

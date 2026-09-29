@@ -6,13 +6,18 @@
 import { $expectSelectionToBe } from "../../../../../libs/shared/src/nodes/usj/test.utils";
 import { $createImmutableNoteCallerNode, $createImmutableVerseNode } from "../../nodes/usj";
 import { getDefaultViewOptions, getViewOptions } from "../../views/view-options.utils";
-import { STANDARD_VIEW_MODE, UNFORMATTED_VIEW_MODE } from "../../views/view-mode.model";
+import {
+  PARAGRAPH_STRUCTURE_VIEW_MODE,
+  STANDARD_VIEW_MODE,
+  UNFORMATTED_VIEW_MODE,
+} from "../../views/view-mode.model";
 import {
   ArrowNavigationPlugin,
   getEditorTextDirection,
   hasVisualLineBeyondCaret,
 } from "./ArrowNavigationPlugin";
 import { $opaqueBlockAncestor } from "./OpaqueBlockGuardPlugin";
+import { ParaMarkerSelectionPlugin } from "./ParaMarkerSelectionPlugin";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
 import {
   baseTestEnvironment,
@@ -39,6 +44,7 @@ import {
 import {
   $createAttributeRunNode,
   $createCharNode,
+  $createGutterMarkerNode,
   $createImmutableTableCellNode,
   $createImmutableTableNode,
   $createImmutableTableRowNode,
@@ -51,11 +57,13 @@ import {
   $createNoteNode,
   $createParaNode,
   $createVerseNode,
+  $getSelectedParaMarker,
   AttributeRunNode,
   CharNode,
   getVisibleOpenMarkerText,
   ImpliedParaNode,
   MarkerNode,
+  NBSP,
   NoteNode,
   ParaNode,
   textTypeState,
@@ -2594,6 +2602,139 @@ describe("a collapsed note at a paragraph's end offers no text position after it
       const lastChild = para.getLastChild();
       expect($isTextNode(lastChild) && lastChild.getTextContent()).toBe("X");
       expect(note.getTextContent()).not.toContain("X");
+    });
+  });
+});
+
+// A paragraph's gutter marker can be selected by clicking it, but it is not a keyboard stop: with
+// the plugin that owns a selected marker mounted, arrows move exactly as they do without it.
+describe("paragraph gutter markers are not arrow stops", () => {
+  const paragraphStructureView = getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE);
+
+  /** A paragraph as the paragraph-structure view builds it: its gutter marker glyph, then content. */
+  function $createGutterParaNode(marker: string, ...content: LexicalNode[]): ParaNode {
+    return $createParaNode(marker).append(
+      $createGutterMarkerNode(`\\${marker}${NBSP}`),
+      ...content,
+    );
+  }
+
+  /** Arrow navigation, with or without the plugin that lets a marker be selected. */
+  async function gutterEnvironment(
+    $initialEditorState: () => void,
+    { canSelectMarker = true, textDirection = "ltr" as "ltr" | "rtl" } = {},
+  ) {
+    return baseTestEnvironment(
+      $initialEditorState,
+      <>
+        <ArrowNavigationPlugin viewOptions={paragraphStructureView} />
+        {canSelectMarker && <ParaMarkerSelectionPlugin />}
+        <TextDirectionPlugin textDirection={textDirection} />
+      </>,
+    );
+  }
+
+  /** `\p first`, `\li2 \v 2 second`, `\q1 third`, with the caret placed by `place`. */
+  async function selectionAfterPress(
+    key: string,
+    place: (texts: { first: TextNode; second: TextNode }) => [TextNode, number?],
+    options: { canSelectMarker?: boolean; textDirection?: "ltr" | "rtl" } = {},
+  ) {
+    const texts = {} as { first: TextNode; second: TextNode };
+    const { editor } = await gutterEnvironment(() => {
+      texts.first = $createTextNode("first");
+      texts.second = $createTextNode("second");
+      $getRoot().append(
+        $createGutterParaNode("p", texts.first),
+        $createGutterParaNode("li2", $createImmutableVerseNode("2"), texts.second),
+        $createGutterParaNode("q1", $createTextNode("third")),
+      );
+    }, options);
+    const [node, offset] = place(texts);
+    updateSelection(editor, node, offset);
+    await pressKey(editor, key);
+    return editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      return {
+        selectedMarker: $getSelectedParaMarker(selection)?.getTextContent(),
+        isRange: $isRangeSelection(selection),
+        // Described by content rather than key, so runs in two editors compare.
+        anchor: $isRangeSelection(selection)
+          ? {
+              node: selection.anchor.getNode().getType(),
+              text: selection.anchor.getNode().getTextContent(),
+              offset: selection.anchor.offset,
+              type: selection.anchor.type,
+            }
+          : undefined,
+      };
+    });
+  }
+
+  it.each([
+    ["ltr", "ArrowLeft"],
+    ["rtl", "ArrowRight"],
+  ] as const)(
+    "backward (%s %s) at a paragraph's first content position moves as it does with no selectable marker",
+    async (textDirection, key) => {
+      const place = ({ second }: { second: TextNode }): [TextNode, number] => [second, 0];
+
+      const actual = await selectionAfterPress(key, place, { textDirection });
+      const unselectable = await selectionAfterPress(key, place, {
+        textDirection,
+        canSelectMarker: false,
+      });
+
+      expect(actual.selectedMarker).toBeUndefined();
+      expect(actual.isRange).toBe(true);
+      expect(actual.anchor).toEqual(unselectable.anchor);
+    },
+  );
+
+  it.each([
+    ["ltr", "ArrowRight"],
+    ["rtl", "ArrowLeft"],
+  ] as const)(
+    "forward (%s %s) at a paragraph's end moves as it does with no selectable marker",
+    async (textDirection, key) => {
+      const place = ({ first }: { first: TextNode }): [TextNode] => [first];
+
+      const actual = await selectionAfterPress(key, place, { textDirection });
+      const unselectable = await selectionAfterPress(key, place, {
+        textDirection,
+        canSelectMarker: false,
+      });
+
+      expect(actual.selectedMarker).toBeUndefined();
+      expect(actual.isRange).toBe(true);
+      expect(actual.anchor).toEqual(unselectable.anchor);
+    },
+  );
+
+  it("ArrowRight before a collapsed note that ends its paragraph hops to the next paragraph's content", async () => {
+    let one: TextNode;
+    let two: TextNode;
+    const { editor } = await gutterEnvironment(() => {
+      one = $createTextNode("one");
+      two = $createTextNode("two");
+      $getRoot().append(
+        $createGutterParaNode(
+          "p",
+          one,
+          $createNoteNode("f", "+").append(
+            $createImmutableNoteCallerNode("+", "note preview"),
+            $createCharNode("ft").append($createTextNode("note body")),
+          ),
+        ),
+        $createGutterParaNode("q1", two),
+      );
+    });
+    updateSelection(editor, one!);
+
+    await pressKey(editor, "ArrowRight");
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(two!, 0);
     });
   });
 });

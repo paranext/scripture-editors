@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { act } from "@testing-library/react";
-import { $createTextNode, $getRoot, LexicalNode } from "lexical";
 import {
+  $createTextNode,
+  $getRoot,
+  $getSelection,
+  $isRangeSelection,
+  LexicalNode,
+  TextNode,
+} from "lexical";
+import {
+  $createGutterMarkerNode,
   $createImmutableTypedTextNode,
   $createMarkerNode,
   $createParaNode,
+  $isGutterMarkerNode,
+  $isParaNode,
   CharNode,
   ImmutableTypedTextNode,
   MarkerNode,
@@ -140,7 +150,7 @@ describe("ParaMarkerPrefixGuardPlugin enablement", () => {
     });
   });
 
-  it("still resets the marker in the gutter-hidden mode (Paragraph Structure view)", async () => {
+  it("restores a missing glyph for the paragraph's own marker in the gutter view (Paragraph Structure view)", async () => {
     let para: ParaNode;
     const { editor } = await baseTestEnvironment(
       () => {
@@ -156,7 +166,61 @@ describe("ParaMarkerPrefixGuardPlugin enablement", () => {
     );
     await act(async () => editor.update(() => para.getFirstChild()?.remove()));
     editor.getEditorState().read(() => {
-      expect(para.getMarker()).toBe("p");
+      expect(para.getMarker()).toBe("q1");
+      const glyph = para.getFirstChild();
+      expect($isGutterMarkerNode(glyph)).toBe(true);
+      expect(glyph?.getTextContent()).toBe(`\\q1${NBSP}`);
+    });
+  });
+
+  it("gives a paragraph the editor creates (an Enter split) its gutter glyph", async () => {
+    let para: ParaNode;
+    let text: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("li2");
+        text = $createTextNode("one two");
+        $getRoot().append(para.append($createGutterMarkerNode(`\\li2${NBSP}`), text));
+      },
+      <ParaMarkerPrefixGuardPlugin viewOptions={getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE)} />,
+    );
+
+    await act(async () =>
+      editor.update(() => {
+        text.select(3, 3);
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertParagraph();
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const paras = $getRoot().getChildren().filter($isParaNode);
+      expect(paras.map((p) => p.getMarker())).toEqual(["li2", "li2"]);
+      expect(paras.map((p) => $isGutterMarkerNode(p.getFirstChild()))).toEqual([true, true]);
+      expect(paras[1].getTextContent()).toBe(`\\li2${NBSP} two`);
+    });
+  });
+
+  it("moves the paragraph's own glyph back to the front when text lands before it, rather than adding another", async () => {
+    let para: ParaNode;
+    let glyph: ImmutableTypedTextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("q2");
+        glyph = $createGutterMarkerNode(`\\q2${NBSP}`);
+        $getRoot().append(para.append(glyph, $createTextNode("a poetry line")));
+      },
+      <ParaMarkerPrefixGuardPlugin viewOptions={getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE)} />,
+    );
+
+    // Typing at the paragraph's very start, before its glyph (an element point at offset 0).
+    await act(async () => editor.update(() => glyph.insertBefore($createTextNode("Z"))));
+
+    editor.getEditorState().read(() => {
+      const children = para.getChildren();
+      expect(children.filter($isGutterMarkerNode)).toHaveLength(1);
+      expect(children[0].is(glyph)).toBe(true);
+      expect(para.getTextContent()).toBe(`\\q2${NBSP}Za poetry line`);
     });
   });
 });

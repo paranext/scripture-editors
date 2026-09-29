@@ -202,7 +202,7 @@ describe("USJ Editor Adaptor", () => {
     expect(pFirst.textType).toBe("marker");
     expect(pFirst.text).toBe(`${openingMarkerText("p")}${NBSP}`);
     // This glyph renders INLINE among the words, so it is not flagged as a gutter marker: the flag
-    // is what makes a marker unclickable, and it belongs only to the glyphs in the gutter.
+    // is what makes a marker never a caret position, and it belongs only to the glyphs in the gutter.
     expect(isGutterMarker(pFirst)).toBe(false);
 
     // Verse is immutable with showMarker flag

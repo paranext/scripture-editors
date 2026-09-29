@@ -924,9 +924,9 @@ function createText(
  * A read-only glyph run.
  *
  * `isGutterMarker` marks a marker glyph the view renders in the GUTTER rather than inline among the
- * words — the fact that makes it unclickable ({@link gutterMarkerState}, shared). It is a property
- * of the glyph, not of the mode: the same node class renders both flavors, and a document can carry
- * both at once. This is the serialized twin of `$createGutterMarkerNode`.
+ * words — the fact that makes it never a caret position ({@link gutterMarkerState}, shared). It is
+ * a property of the glyph, not of the mode: the same node class renders both flavors, and a
+ * document can carry both at once. This is the serialized twin of `$createGutterMarkerNode`.
  */
 function createImmutableTypedText(
   textType: string,

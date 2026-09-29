@@ -143,6 +143,7 @@ export interface EditorOptions {
 export interface EditorProps<TLogger extends LoggerBasic> {
     defaultUsj?: Usj;
     logger?: TLogger;
+    onParaMarkerMenuRequest?: () => void;
     onScrRefChange?: (scrRef: SerializedVerseRef) => void;
     onSelectionChange?: (selection: SelectionRange | undefined) => void;
     onStateChange?: (input: StateChangeSnapshot) => void;
@@ -176,6 +177,7 @@ export interface EditorRef {
         };
     }) | undefined;
     getNoteOps(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
+    getSelectedParaMarker(): string | undefined;
     getSelection(): SelectionRange | undefined;
     getUsj(): Usj | undefined;
     insertMarker(marker: string): string | undefined;

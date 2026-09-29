@@ -161,6 +161,9 @@ const Marginal = forwardRef(function Marginal<TLogger extends LoggerBasic>(
     getSelection() {
       return editorRef.current?.getSelection();
     },
+    getSelectedParaMarker() {
+      return editorRef.current?.getSelectedParaMarker();
+    },
     setSelection(selection) {
       editorRef.current?.setSelection(selection);
     },

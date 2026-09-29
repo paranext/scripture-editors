@@ -50,6 +50,7 @@ import { deepEqual } from "fast-equals";
 import {
   $addUpdateTag,
   $getSelection,
+  $isNodeSelection,
   $isRangeSelection,
   $isTextNode,
   $setSelection,
@@ -73,6 +74,7 @@ import {
 } from "react";
 import {
   $createParaNode,
+  $getSelectedParaMarkerPara,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
@@ -95,6 +97,7 @@ import {
   $getParticularNodeOps,
   $getUsjSelectionFromEditor,
   $getRangeFromUsjSelection,
+  $collapseParaMarkerSelection,
   $getReplaceEmbedOps,
   $insertNote,
   $selectNote,
@@ -125,6 +128,7 @@ import {
   OnSelectionChangePlugin,
   OpaqueBlockGuardPlugin,
   ParaMarkerPrefixCursorGuardPlugin,
+  ParaMarkerSelectionPlugin,
   ParaNodePlugin,
   pasteSelection,
   pasteSelectionAsPlainText,
@@ -160,6 +164,8 @@ function Placeholder(): ReactElement {
  *   changes in the editor as the cursor moves.
  * @param onSelectionChange - Callback function when the cursor selection changes.
  * @param onUsjChange - Callback function when USJ Scripture data has changed.
+ * @param onParaMarkerMenuRequest - Callback function when the user asks, by keyboard, to change
+ *   the selected paragraph marker.
  * @param options - Options to configure the editor.
  * @param logger - Logger instance.
  * @returns the editor element.
@@ -172,6 +178,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     onSelectionChange,
     onUsjChange,
     onStateChange,
+    onParaMarkerMenuRequest,
     options,
     logger,
     children,
@@ -490,7 +497,16 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // for exactly the no-ref consumer the mirror exists to serve.
   const editorApi: EditorRef = {
     focus() {
-      editorRef.current?.focus();
+      const editor = editorRef.current;
+      if (!editor) return;
+      editor.focus();
+      // Lexical's `focus()` focuses the root only for a range selection, so a selected paragraph
+      // marker (a node selection) would leave keyboard focus wherever the host put it — its marker
+      // dropdown, say.
+      const hasNodeSelection = editor
+        .getEditorState()
+        .read(() => $isNodeSelection($getSelection()));
+      if (hasNodeSelection) editor.getRootElement()?.focus({ preventScroll: true });
     },
     isFocused() {
       const root = editorRef.current?.getRootElement();
@@ -626,6 +642,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       }
       return editorRef.current?.read($getUsjSelectionFromEditor);
     },
+    getSelectedParaMarker() {
+      // `getEditorState().read`, NOT `editor.read` — a host reads this from its own selection
+      // handlers, which can run mid-dispatch.
+      const editor = editorRef.current;
+      if (!editor?.isEditable()) return undefined;
+      return editor
+        .getEditorState()
+        .read(() => $getSelectedParaMarkerPara($getSelection())?.getMarker());
+    },
     setSelection(selection) {
       if (isBlockVerse) {
         reportUsjLocationsUnavailable("set the selection");
@@ -697,14 +722,23 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       editorRef.current?.update(
         () => {
           const selection = $getSelection();
+          // A selected paragraph marker names the paragraph outright, so it is retagged in place —
+          // no `$setBlocksType`, which would swap in a fresh ParaNode and drop the paragraph's
+          // attributes and identity. The glyph is rewritten in place too, so the selection stays
+          // on it.
+          const owner = $getSelectedParaMarkerPara(selection);
+          if (owner) {
+            $applyParaMarker(owner, blockMarker, viewOptions);
+            return;
+          }
           // A caller with no live selection has nothing to retag. Say so rather than returning
           // quietly: this is the toolbar's paragraph-marker path, and the popover that drives it
           // takes focus off the editor — whose blur processing can null the editor-state selection
           // — so an unheard refusal here looks exactly like a dropdown that does not work.
           if (!$isRangeSelection(selection)) {
             logger?.warn(
-              `formatPara refused: no range selection to retag with "${blockMarker}" ` +
-                "(restore the caret before applying, as the marker palettes do)",
+              `formatPara refused: no range selection or selected paragraph marker to retag with ` +
+                `"${blockMarker}" (restore the caret before applying, as the marker palettes do)`,
             );
             return;
           }
@@ -807,6 +841,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       if (!isUsjMarkerSupported(marker, nodeOptions.extraValidMarkers))
         throw new Error(`Unsupported marker '${marker}'`);
 
+      // Every edit below is written for a caret; a selected paragraph marker counts as one at its
+      // paragraph's content start, so collapse to there first rather than act on the glyph.
+      editorRef.current.update($collapseParaMarkerSelection, { discrete: true });
       const markerAction = getUsjMarkerAction(
         marker,
         expandedNoteKeyRef,
@@ -850,6 +887,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       let insertedNoteKey: string | undefined;
       const editor = editorRef.current;
       editor.update(() => {
+        $collapseParaMarkerSelection();
         insertedNoteKey = $applyMarkerMenuSelection(item, opts, scrRef, {
           expandedNoteKeyRef,
           viewOptions,
@@ -865,6 +903,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       if (!editorRef.current) return;
 
       editorRef.current.update(() => {
+        $collapseParaMarkerSelection();
         $splitParagraphWithMarker(marker, viewOptions);
       });
     },
@@ -876,6 +915,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // terminating separator); this handle only supplies the update and the refusal warning.
       let committed = false;
       editorRef.current.update(() => {
+        $collapseParaMarkerSelection();
         committed = $commitTypedMarker(typedMarker, options);
         if (!committed)
           logger?.warn(
@@ -894,6 +934,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // the refusal warning, matching `commitTypedMarker`.
       let committed = false;
       editorRef.current.update(() => {
+        $collapseParaMarkerSelection();
         committed = $commitTypedCloser(typedMarker);
         if (!committed)
           logger?.warn(
@@ -907,6 +948,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // `discrete` for the same reason `formatPara` above uses it.
       editorRef.current?.update(
         () => {
+          $collapseParaMarkerSelection();
           const noteNode = $insertNote(
             marker,
             caller,
@@ -1184,6 +1226,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <OpaqueBlockGuardPlugin />
           <ParaMarkerPrefixCursorGuardPlugin />
           <ParaMarkerPrefixGuardPlugin viewOptions={viewOptions} logger={stableLogger} />
+          <ParaMarkerSelectionPlugin
+            onParaMarkerMenuRequest={onParaMarkerMenuRequest}
+            structureProtectionMode={structureProtectionMode}
+          />
           <ParaNodePlugin />
           <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
           <TextDirectionPlugin textDirection={textDirection} />

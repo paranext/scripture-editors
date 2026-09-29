@@ -3,14 +3,18 @@
 import { MARKER_OBJECT_PROPS, MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import { $findMatchingParent } from "@lexical/utils";
 import {
+  $createNodeSelection,
   $createTextNode,
   $getCommonAncestor,
+  $getEditor,
   $getSelection,
   $getState,
   $isElementNode,
   $isLineBreakNode,
+  $isNodeSelection,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   $setState,
   BaseSelection,
   ElementNode,
@@ -29,6 +33,7 @@ import {
   textTypeState,
 } from "../collab/delta.state.js";
 import {
+  $isGutterMarkerNode,
   $isImmutableTypedTextNode,
   ImmutableTypedTextNode,
   isSerializedImmutableTypedTextNode,
@@ -638,6 +643,126 @@ export function $isVisibleMarkerNode(
  */
 export function $isSynthesizedMarkerNode(node: LexicalNode | null | undefined): boolean {
   return $isMarkerNode(node) || $isVisibleMarkerNode(node);
+}
+
+/**
+ * The paragraph marker a selection has selected, if it has one.
+ *
+ * A paragraph's gutter glyph (see `gutterMarkerState`) is never a caret position, but clicking it
+ * selects it: a Lexical `NodeSelection` of the glyph alone, which carries no offsets. This is the
+ * one definition every consumer uses to recognize that selection, and it qualifies the same glyph
+ * {@link $getSelectableParaMarker} does.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ *
+ * @param selection - The selection to inspect, e.g. `$getSelection()`.
+ * @returns the selected glyph, or `undefined` for any other selection — a range, a node selection
+ *   of some other node, or of more than one node.
+ */
+export function $getSelectedParaMarker(
+  selection: BaseSelection | null | undefined,
+): ImmutableTypedTextNode | undefined {
+  if (!$isNodeSelection(selection)) return undefined;
+  const nodes = selection.getNodes();
+  if (nodes.length !== 1) return undefined;
+  const [node] = nodes;
+  const glyph = $getSelectableParaMarker(node.getParent());
+  return glyph?.is(node) ? glyph : undefined;
+}
+
+/**
+ * The paragraph whose marker a selection has selected — the parent of
+ * {@link $getSelectedParaMarker}'s glyph.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ *
+ * @param selection - The selection to inspect, e.g. `$getSelection()`.
+ * @returns the paragraph, or `undefined` when no paragraph marker is selected.
+ */
+export function $getSelectedParaMarkerPara(
+  selection: BaseSelection | null | undefined,
+): ParaNode | undefined {
+  const para = $getSelectedParaMarker(selection)?.getParent();
+  return $isParaNode(para) ? para : undefined;
+}
+
+/**
+ * The marker glyph `node` would offer as a selection target: its leading gutter marker, when
+ * `node` is a `ParaNode` that renders one. An implied paragraph has no marker to retag, and a
+ * paragraph inside an `UnknownNode` (a sidebar or periph the view hides) is not offered either.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
+ *
+ * @param node - The node to inspect — typically the parent of a clicked gutter glyph.
+ * @returns the paragraph's gutter marker glyph, or `undefined`.
+ */
+export function $getSelectableParaMarker(
+  node: LexicalNode | null | undefined,
+): ImmutableTypedTextNode | undefined {
+  if (!$isParaNode(node)) return undefined;
+  const glyph = node.getFirstChild();
+  if (!$isGutterMarkerNode(glyph)) return undefined;
+  return $findMatchingParent(node, $isUnknownNode) ? undefined : glyph;
+}
+
+/**
+ * How many owners (`ParaMarkerSelectionPlugin`, shared-react) are mounted on each editor. A count
+ * rather than a set so a remount that registers before the previous instance unregisters (React
+ * strict mode, a re-keyed plugin) never leaves the editor looking unowned.
+ */
+const paraMarkerSelectionOwnerCounts = new WeakMap<LexicalEditor, number>();
+
+/**
+ * Records that `editor` has an owner for a selected paragraph marker — the plugin that handles
+ * every key and command reaching it. {@link $selectParaMarker} selects only in an editor that has
+ * one, so rich-text's default handling (Backspace deleting the glyph) never sees the selection.
+ *
+ * @param editor - The editor the owner is mounted on.
+ * @returns a function that withdraws this registration.
+ */
+export function registerParaMarkerSelectionOwner(editor: LexicalEditor): () => void {
+  paraMarkerSelectionOwnerCounts.set(editor, (paraMarkerSelectionOwnerCounts.get(editor) ?? 0) + 1);
+  return () => {
+    const count = (paraMarkerSelectionOwnerCounts.get(editor) ?? 1) - 1;
+    if (count > 0) paraMarkerSelectionOwnerCounts.set(editor, count);
+    else paraMarkerSelectionOwnerCounts.delete(editor);
+  };
+}
+
+/**
+ * Whether the active editor may select a paragraph marker: it is editable, and an owner is
+ * registered ({@link registerParaMarkerSelectionOwner}). A read-only editor never selects one:
+ * there is nothing to change the marker to.
+ *
+ * Read-only, but needs an active editor: call inside `editor.update()` or a command handler (a
+ * bare `editorState.read()` has no editor to ask).
+ */
+export function $canSelectParaMarker(): boolean {
+  const editor = $getEditor();
+  return editor.isEditable() && (paraMarkerSelectionOwnerCounts.get(editor) ?? 0) > 0;
+}
+
+/**
+ * Selects a paragraph's gutter marker glyph, replacing the current selection — see
+ * {@link $getSelectedParaMarker} for what that selection means. The single gate for creating one:
+ * it selects only a glyph {@link $getSelectableParaMarker} offers, in an editor that
+ * {@link $canSelectParaMarker}.
+ *
+ * Mutating: call inside `editor.update()` (a command handler already runs inside one).
+ *
+ * @param glyph - The paragraph's gutter marker glyph.
+ * @returns `true` if the glyph is now selected, `false` if it was refused (nothing changed).
+ */
+export function $selectParaMarker(glyph: ImmutableTypedTextNode): boolean {
+  if (!$getSelectableParaMarker(glyph.getParent())?.is(glyph) || !$canSelectParaMarker())
+    return false;
+  const selection = $createNodeSelection();
+  selection.add(glyph.getKey());
+  $setSelection(selection);
+  return true;
 }
 
 /**

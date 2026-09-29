@@ -192,6 +192,26 @@ export interface EditorRef {
    */
   getSelection(): SelectionRange | undefined;
   /**
+   * The selected paragraph marker's name (e.g. `"li2"`), if a paragraph's gutter marker is
+   * selected.
+   *
+   * @remarks
+   * In the paragraph-structure view (`ViewOptions.hasGutterParaMarkers`) the user can select a
+   * paragraph's marker itself — by clicking it in the gutter — rather than placing a caret in its
+   * text. That selection names a paragraph, not a text range, so {@link EditorRef.getSelection}
+   * reports `undefined` for it; this method reports it instead.
+   * {@link EditorRef.formatPara} retags that paragraph. Always returns `undefined` in the block
+   * verse layout, which renders no gutter markers, and while the editor is read-only.
+   *
+   * Reads the committed editor state. {@link EditorProps.onSelectionChange} fires before a
+   * selection change commits, so a read inside that callback still reports the selection being
+   * replaced; defer it (e.g. `queueMicrotask`), or use `onStateChange`'s `blockMarker`, which is
+   * reported after the commit.
+   *
+   * @returns the selected paragraph marker's name, or `undefined`.
+   */
+  getSelectedParaMarker(): string | undefined;
+  /**
    * Set the selection location or range.
    *
    * @remarks
@@ -254,7 +274,9 @@ export interface EditorRef {
    */
   removeAnnotation(type: string, id: string): void;
   /**
-   * Format the paragraph at the current cursor position with the given block marker.
+   * Format the paragraph at the current cursor position — or the paragraph whose marker is
+   * selected (see {@link EditorRef.getSelectedParaMarker}) — with the given block marker. A
+   * selected marker stays selected on the retagged paragraph.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
    */
@@ -585,6 +607,13 @@ export interface EditorProps<TLogger extends LoggerBasic> {
   onUsjChange?: (usj: Usj, ops?: DeltaOp[], source?: DeltaSource, insertedNodeKey?: string) => void;
   /** Callback function when state changes. */
   onStateChange?: ({ canUndo, canRedo, blockMarker, contextMarker }: StateChangeSnapshot) => void;
+  /**
+   * Callback function when the user asks, by keyboard, to change the selected paragraph marker
+   * (Enter or Alt+ArrowDown while a paragraph marker is selected — see
+   * {@link EditorRef.getSelectedParaMarker}). The marker stays selected; apply the choice with
+   * {@link EditorRef.formatPara}. Not called in a read-only editor.
+   */
+  onParaMarkerMenuRequest?: () => void;
   /** Options to configure the editor. */
   options?: EditorOptions;
   /** Logger instance. */

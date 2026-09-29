@@ -31,13 +31,16 @@ import {
 import {
   $createChapterNode,
   $createCharNode,
+  $createGutterMarkerNode,
   $createNoteNode,
   $createParaNode,
   $createImpliedParaNode,
   $createVerseNode,
   $isCharNode,
   $isNoteNode,
+  $isGutterMarkerNode,
   $isSomeParaNode,
+  NBSP,
   ParaNode,
 } from "shared";
 
@@ -547,6 +550,40 @@ describe("$mergeParaIntoPrevious", () => {
       expect(merged.getKey()).toBe(p!.getKey());
       expect(merged.getMarker()).toBe("p"); // previous block's marker kept; "q" gone
       expect(merged.getTextContent()).toBe("firstsecond");
+    });
+  });
+
+  // In the paragraph-structure view each paragraph leads with its marker glyph in the gutter. The
+  // merged paragraph's marker is the one being removed, so its glyph goes with it.
+  it("drops the merged paragraph's gutter marker glyph instead of moving it into the previous one", async () => {
+    let li1: ParaNode;
+    let q1: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      li1 = $createParaNode("li1");
+      q1 = $createParaNode("q1");
+      $getRoot().append(
+        li1.append($createGutterMarkerNode(`\\li1${NBSP}`), $createTextNode("first")),
+        q1.append(
+          $createGutterMarkerNode(`\\q1${NBSP}`),
+          $createImmutableVerseNode("2"),
+          $createTextNode("second"),
+        ),
+      );
+    });
+
+    await sutUpdate(editor, () => {
+      $mergeParaIntoPrevious(q1!);
+    });
+
+    editor.getEditorState().read(() => {
+      const merged = li1!.getChildren();
+      expect(merged.filter($isGutterMarkerNode).map((n) => n.getTextContent())).toEqual([
+        `\\li1${NBSP}`,
+      ]);
+      expect(merged[0].getTextContent()).toBe(`\\li1${NBSP}`);
+      expect(li1!.getTextContent()).toContain("first");
+      expect(merged.some($isSomeVerseNode)).toBe(true);
+      expect(li1!.getTextContent()).toContain("second");
     });
   });
 
