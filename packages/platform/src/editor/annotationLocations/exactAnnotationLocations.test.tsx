@@ -167,8 +167,8 @@ function figureAndFollowing(usj: Usj | undefined): {
 }
 
 describe("an annotation inside a figure caption", () => {
-  /** In front of the `\fig` marker through the caption's first letter — the audit's own repro for
-   * a range that starts or ends inside a figure caption. */
+  /** In front of the `\fig` marker through the caption's first letter — a range that starts or
+   * ends inside a figure caption. */
   const intoCaptionRange: AnnotationRange = {
     start: { jsonPath: "$.content[4].content[2]" },
     end: { jsonPath: "$.content[4].content[2].content[0]", offset: 1 },

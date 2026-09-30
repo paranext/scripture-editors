@@ -14,6 +14,7 @@ import {
 } from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
+  $createRangeSelection,
   $createTextNode,
   $getRoot,
   $isTextNode,
@@ -41,6 +42,7 @@ import {
   $isUnknownNode,
   $isVisibleMarkerNode,
   $verseAttributeRunPieces,
+  $wrapSelectionInTypedMarkNode,
   displayRunDescriptor,
   NBSP,
   openingMarkerText,
@@ -544,6 +546,55 @@ describe("TextSpacingPlugin", () => {
     const untagged = await splitAndMarkFirstPiece();
     expect(untagged.figureText).toBe("c");
     expect(untagged.paraChildCount).toBe(3); // [UnknownNode, TextNode("aption"), VerseNode]
+  });
+
+  it("a wrap call covering no byte does not leave its tag for the next commit's real typing", async () => {
+    let unknownNode: UnknownNode;
+    let elsewhereText: TextNode;
+    const { editor } = await testEnvironment(() => {
+      elsewhereText = $createTextNode("elsewhere");
+      unknownNode = $createUnknownNode("figure", "fig"); // Pre-existing, empty — no caption yet.
+      $getRoot().append(
+        $createParaNode().append(elsewhereText),
+        $createParaNode().append(unknownNode, $createImmutableVerseNode("1")),
+      );
+    });
+
+    // A zero-width range on unrelated text: nothing for the wrap to split or move. The commit
+    // still goes through because `$setSelection` leaves the selection dirty, even though no node
+    // is.
+    await act(async () => {
+      editor.update(() => {
+        const selection = $createRangeSelection();
+        selection.anchor.set(elsewhereText.getKey(), 0, "text");
+        selection.focus.set(elsewhereText.getKey(), 0, "text");
+        $setSelection(selection);
+        $wrapSelectionInTypedMarkNode(selection, "test", "m1");
+      });
+    });
+
+    // A later, separate commit plants the figure's first caption text — a genuinely new node
+    // with no existing sibling to land beside, the shape `$textNodeInUnknownTransform`'s
+    // `wasNodeCreated` check exists for.
+    await act(async () => {
+      editor.update(() => {
+        unknownNode.append($createTextNode("d"));
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      const para = $getRoot().getChildAtIndex(1);
+      if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+      // Handled exactly as it would be without the earlier wrap call: [UnknownNode (still
+      // empty), TextNode("d "), VerseNode].
+      expect(para.getChildren()).toHaveLength(3);
+      const typedTextNode = para.getChildAtIndex(1);
+      if (!$isTextNode(typedTextNode)) throw new Error("Expected a TextNode");
+      expect(typedTextNode.getTextContent()).toBe("d ");
+      const originalUnknownNode = para.getChildAtIndex(0);
+      expect(originalUnknownNode?.getKey()).toBe(unknownNode.getKey());
+      expect(originalUnknownNode?.getTextContent()).toBe("");
+    });
   });
 
   it("should insert a space before a verse if preceded by a CharNode", async () => {

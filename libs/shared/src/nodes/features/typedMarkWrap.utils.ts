@@ -78,7 +78,6 @@ export function $wrapSelectionInTypedMarkNode(
   onMouseEnter?: TypedMarkOnMouseEnter,
   onMouseLeave?: TypedMarkOnMouseLeave,
 ): void {
-  $addUpdateTag(TYPED_MARK_WRAP_TAG);
   const nodes = selection.getNodes();
   const anchorOffset = selection.anchor.offset;
   const focusOffset = selection.focus.offset;
@@ -92,6 +91,12 @@ export function $wrapSelectionInTypedMarkNode(
   const $annotateCarrier = (node: LexicalNode) => {
     const covered = $coveredCarrierRange(node, startPoint, endPoint);
     if (!covered) return;
+    // Tagged here, at the wrap's first actual mutation, never unconditionally at the top of the
+    // function: an update's tags survive only as long as the commit that carries them changes a
+    // node (see `CURSOR_CHANGE_TAG` in `node-constants.ts`), so a call that ends up covering no
+    // byte must never add this tag, or it rides into the update's own selection-only commit and
+    // then onto whatever the user's NEXT edit turns out to be.
+    $addUpdateTag(TYPED_MARK_WRAP_TAG);
     $addDisplayAnnotation(node, type, id, covered[0], covered[1]);
     carrierAnnotated = true;
   };
@@ -166,6 +171,9 @@ export function $wrapSelectionInTypedMarkNode(
       // start, or covers only the separator prefix. `splitText` never returns an empty piece, so
       // wrapping here would mark the whole node.
       if (startTextOffset >= endTextOffset) continue;
+      // Tagged here, at the split that is about to happen — see the tag's other call site below
+      // for why it is never added unconditionally.
+      $addUpdateTag(TYPED_MARK_WRAP_TAG);
       const splitNodes = node.splitText(startTextOffset, endTextOffset);
       targetNode =
         splitNodes.length > 1 &&
@@ -193,6 +201,9 @@ export function $wrapSelectionInTypedMarkNode(
         // here.
         continue;
       }
+      // Tagged here too, for Case 3's whole-element move (Case 1 already tagged its own split
+      // above; adding the tag again here is a no-op).
+      $addUpdateTag(TYPED_MARK_WRAP_TAG);
       const parentNode = targetNode.getParent();
       if (parentNode == null || !parentNode.is(currentNodeParent)) {
         // If the parent node is not the current node's parent node, we can clear the last created
