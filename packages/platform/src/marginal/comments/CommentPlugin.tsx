@@ -22,6 +22,7 @@ import { mergeRegister, registerNestedElementResolver } from "@lexical/utils";
 import {
   $getNodeByKey,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $isTextNode,
   CLEAR_EDITOR_COMMAND,
@@ -51,7 +52,11 @@ import {
   TypedMarkNode,
 } from "shared";
 import { DisplayAnnotationIndex, useDisplayAnnotationIndex } from "shared-react";
-import { $commentIdsAt, $removeCommentAnnotation } from "./commentAnnotations.utils";
+import {
+  $commentIdsAt,
+  $removeCommentAnnotation,
+  $selectFirstCommentCarrier,
+} from "./commentAnnotations.utils";
 import {
   CommentBase,
   Comments,
@@ -561,14 +566,15 @@ function CommentsPanelList({
       {comments.map((commentOrThread) => {
         const id = commentOrThread.id;
         if (commentOrThread.type === "thread") {
-          // Mark-only: a comment held only on display bytes has no mark start to select.
+          const alreadyActive = activeIDs !== null && activeIDs.indexOf(id) !== -1;
+          // A mark holds the id: move the caret to its start. Held only on display bytes (a
+          // verse number, a glyph, a decorator): move it to the start of the first carrier
+          // instead, in document order, since there is no mark to start from.
           const handleClickThread = () => {
+            if (alreadyActive) return;
             const markNodeKeys = markNodeMap.get(id);
-            if (
-              markNodeKeys !== undefined &&
-              (activeIDs === null || activeIDs.indexOf(id) === -1)
-            ) {
-              const activeElement = document.activeElement;
+            const activeElement = document.activeElement;
+            if (markNodeKeys !== undefined) {
               // Move selection to the start of the mark, so that we
               // update the UI with the selected thread.
               editor.update(
@@ -588,9 +594,27 @@ function CommentsPanelList({
                   },
                 },
               );
+              return;
             }
+            const carrierKeys = displayIndex.keysFor(COMMENT_MARK_TYPE, id);
+            if (carrierKeys.size === 0) return;
+            editor.update(
+              () => {
+                $selectFirstCommentCarrier(carrierKeys);
+              },
+              {
+                onUpdate() {
+                  if (activeElement !== null) {
+                    (activeElement as HTMLElement).focus();
+                  }
+                },
+              },
+            );
           };
 
+          // "interactive"/"active" are read during render, like `markNodeMap`: a carrier change
+          // shows on the panel's next render, which every comment-store and selection change
+          // triggers.
           return (
             <li
               key={id}
@@ -906,15 +930,30 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
           let hasAnchorKey = false;
 
           if ($isRangeSelection(selection)) {
-            const anchorNode = selection.anchor.getNode();
+            const { anchor } = selection;
+            const anchorNode = anchor.getNode();
 
             if ($isTextNode(anchorNode)) {
-              const commentIDs = $commentIdsAt(anchorNode, selection.anchor.offset);
+              const commentIDs = $commentIdsAt(anchorNode, anchor.offset);
               setActiveIDs(commentIDs);
               hasActiveIds = true;
               if (!selection.isCollapsed()) {
                 setActiveAnchorKey(anchorNode.getKey());
                 hasAnchorKey = true;
+              }
+            } else if (anchor.type === "element" && $isElementNode(anchorNode)) {
+              // An element point sits between two children; a decorator carrier on either side
+              // (the caret directly in front of, or just after, a collapsed one) can hold an id no
+              // text point names.
+              const children = anchorNode.getChildren();
+              const commentIDs = new Set<string>();
+              for (const child of [children[anchor.offset - 1], children[anchor.offset]]) {
+                if (child)
+                  $commentIdsAt(child, 0).forEach((commentID) => commentIDs.add(commentID));
+              }
+              if (commentIDs.size > 0) {
+                setActiveIDs([...commentIDs]);
+                hasActiveIds = true;
               }
             }
           }

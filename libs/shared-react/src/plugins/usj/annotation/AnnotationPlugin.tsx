@@ -12,7 +12,7 @@ import {
   $displayAnnotationsOf,
   $isTypedMarkNode,
   $removeDisplayAnnotation,
-  $unwrapTypedMarkNode,
+  $removeTypedMarkId,
   $wrapSelectionInTypedMarkNode,
   ANNOTATION_CHANGE_TAG,
   deleteDisplayAnnotationRegistration,
@@ -159,16 +159,13 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
    * Removes every mark and every display-byte range for the type/id pair. Each mark reports its
    * removal itself (`deleteID`, one call per mark); an annotation no mark holds reports it here,
    * once.
+   *
+   * @param nodeKeys - The caller's own snapshot of the mark keys, when it already has one (from
+   *   `markNodeMap`); omitted, this looks the keys up itself.
    */
   const $removeAnnotationNodes = (type: string, id: string, nodeKeys?: Set<NodeKey>) => {
     const markKeys = Array.from(nodeKeys ?? markNodeMap.get(getTypeIDMapKey(type, id)) ?? []);
-    for (const key of markKeys) {
-      const node: TypedMarkNode | null = $getNodeByKey(key);
-      if ($isTypedMarkNode(node)) {
-        node.deleteID(type, id);
-        if (node.hasNoIDsForEveryType()) $unwrapTypedMarkNode(node);
-      }
-    }
+    $removeTypedMarkId(type, id, markKeys);
     const covered: string[] = [];
     for (const key of Array.from(displayIndex.keysFor(type, id))) {
       const node = $getNodeByKey(key);

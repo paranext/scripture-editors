@@ -23,6 +23,7 @@ import {
   $createParaNode,
   $createTypedMarkNode,
   $displayAnnotationsOf,
+  $registerDisplayAnnotation,
   $removeDisplayAnnotation,
   $wrapSelectionInTypedMarkNode,
   DELTA_CHANGE_TAG,
@@ -49,7 +50,7 @@ function setup() {
   const container = document.createElement("div");
   document.body.appendChild(container);
   editor.setRootElement(container);
-  const { release } = acquireDisplayAnnotationIndex(editor);
+  const { index, release } = acquireDisplayAnnotationIndex(editor);
   let run!: TextNode;
   editor.update(
     () => {
@@ -58,7 +59,7 @@ function setup() {
     },
     { discrete: true },
   );
-  return { editor, run, release };
+  return { editor, run, index, release };
 }
 
 function classesOf(editor: LexicalEditor, node: TextNode): string[] {
@@ -161,6 +162,119 @@ describe("the display-annotation index", () => {
     editor.update(() => $getRoot().clear(), { discrete: true });
     expect(onRemove).toHaveBeenCalledTimes(1);
     expect(onRemove).toHaveBeenCalledWith("external-spelling", "a", "destroyed", "grace");
+    release();
+  });
+
+  it("reports the full covered text of every carrier, joined in document order, once the last one leaves", () => {
+    const { editor, release } = setup();
+    const onRemove = vi.fn();
+    let first!: TextNode;
+    let second!: TextNode;
+    editor.update(
+      () => {
+        first = $setState($createTextNode("|first"), textTypeState, "attribute");
+        second = $setState($createTextNode("|second"), textTypeState, "attribute");
+        $getRoot().append($createParaNode().append(first, second));
+        $addDisplayAnnotation(first, "external-spelling", "b", 0, first.getTextContentSize());
+        $addDisplayAnnotation(second, "external-spelling", "b", 0, second.getTextContentSize());
+        $registerDisplayAnnotation("external-spelling", "b", { onRemove });
+      },
+      { discrete: true },
+    );
+    editor.update(() => $getRoot().clear(), { discrete: true });
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(onRemove).toHaveBeenCalledWith("external-spelling", "b", "destroyed", "|first|second");
+    release();
+  });
+
+  it("keeps a type and an id apart even when both contain the NUL character", () => {
+    const { editor, release } = setup();
+    const nul = String.fromCharCode(0);
+    const onRemoveA = vi.fn();
+    const onRemoveB = vi.fn();
+    let nodeA!: TextNode;
+    let nodeB!: TextNode;
+    editor.update(
+      () => {
+        nodeA = $setState($createTextNode("|alpha"), textTypeState, "attribute");
+        nodeB = $setState($createTextNode("|beta"), textTypeState, "attribute");
+        $getRoot().append($createParaNode().append(nodeA, nodeB));
+        $addDisplayAnnotation(nodeA, "t", `a${nul}b`, 0, nodeA.getTextContentSize());
+        $addDisplayAnnotation(nodeB, `t${nul}a`, "b", 0, nodeB.getTextContentSize());
+        $registerDisplayAnnotation("t", `a${nul}b`, { onRemove: onRemoveA });
+        $registerDisplayAnnotation(`t${nul}a`, "b", { onRemove: onRemoveB });
+      },
+      { discrete: true },
+    );
+    editor.update(() => $getRoot().clear(), { discrete: true });
+    expect(onRemoveA).toHaveBeenCalledTimes(1);
+    expect(onRemoveA).toHaveBeenCalledWith("t", `a${nul}b`, "destroyed", "|alpha");
+    expect(onRemoveB).toHaveBeenCalledTimes(1);
+    expect(onRemoveB).toHaveBeenCalledWith(`t${nul}a`, "b", "destroyed", "|beta");
+    release();
+  });
+
+  it("still reports the second annotation, and re-throws, when the first's onRemove throws", () => {
+    const { editor, release } = setup();
+    const error = new Error("boom");
+    const onRemoveA = vi.fn(() => {
+      throw error;
+    });
+    const onRemoveB = vi.fn();
+    let nodeA!: TextNode;
+    let nodeB!: TextNode;
+    editor.update(
+      () => {
+        nodeA = $setState($createTextNode("|alpha"), textTypeState, "attribute");
+        nodeB = $setState($createTextNode("|beta"), textTypeState, "attribute");
+        $getRoot().append($createParaNode().append(nodeA, nodeB));
+        $addDisplayAnnotation(nodeA, "external-spelling", "a", 0, nodeA.getTextContentSize());
+        $addDisplayAnnotation(nodeB, "external-spelling", "b", 0, nodeB.getTextContentSize());
+        $registerDisplayAnnotation("external-spelling", "a", { onRemove: onRemoveA });
+        $registerDisplayAnnotation("external-spelling", "b", { onRemove: onRemoveB });
+      },
+      { discrete: true },
+    );
+    expect(() => {
+      editor.update(() => $getRoot().clear(), { discrete: true });
+    }).toThrow(error);
+    expect(onRemoveA).toHaveBeenCalledTimes(1);
+    expect(onRemoveB).toHaveBeenCalledTimes(1);
+    release();
+  });
+
+  it("carries the new carrier's text, not a stale one, when the same id is set again elsewhere", () => {
+    const { editor, index, release } = setup();
+    const onRemove = vi.fn();
+    let first!: TextNode;
+    editor.update(
+      () => {
+        first = $setState($createTextNode("|first"), textTypeState, "attribute");
+        $getRoot().append($createParaNode().append(first));
+        $addDisplayAnnotation(first, "external-spelling", "a", 0, first.getTextContentSize());
+        $registerDisplayAnnotation("external-spelling", "a", { onRemove });
+      },
+      { discrete: true },
+    );
+    editor.update(() => first.getLatest().remove(), { discrete: true });
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(onRemove).toHaveBeenLastCalledWith("external-spelling", "a", "destroyed", "|first");
+
+    // A fresh `setAnnotation` on the same id starts a new report lifecycle.
+    index.noteSet("external-spelling", "a");
+    let second!: TextNode;
+    editor.update(
+      () => {
+        second = $setState($createTextNode("|second"), textTypeState, "attribute");
+        $getRoot().append($createParaNode().append(second));
+        $addDisplayAnnotation(second, "external-spelling", "a", 0, second.getTextContentSize());
+        $registerDisplayAnnotation("external-spelling", "a", { onRemove });
+      },
+      { discrete: true },
+    );
+    editor.update(() => second.getLatest().remove(), { discrete: true });
+    expect(onRemove).toHaveBeenCalledTimes(2);
+    expect(onRemove).toHaveBeenLastCalledWith("external-spelling", "a", "destroyed", "|second");
     release();
   });
 

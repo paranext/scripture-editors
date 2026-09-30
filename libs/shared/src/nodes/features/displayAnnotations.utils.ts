@@ -216,8 +216,10 @@ export type DisplayAnnotationRegistration = DisplayAnnotationCallbacks;
 
 const registrations = new WeakMap<LexicalEditor, Map<string, DisplayAnnotationRegistration>>();
 
+/** A type or id may itself contain the NUL character a delimiter join would use, so the key is
+ * JSON, not a joined string. */
 function registrationKey(type: string, id: string): string {
-  return `${type}\u0000${id}`;
+  return JSON.stringify([type, id]);
 }
 
 /**
@@ -264,6 +266,10 @@ export function deleteDisplayAnnotationRegistration(
  * bytes the way a mark follows its text. `TextNode` covers attribute runs, a note's caller and a
  * chapter's glyph; `MarkerNode` and `VerseNode` register their own transforms. Returns the
  * unregister function.
+ *
+ * Registering a transform marks every existing node of the class dirty once, so each mount runs
+ * one extra pass over them; `$syncDisplayAnnotationBasis` reads no state for a node without
+ * carrier state and writes nothing, so the pass costs a tree walk and nothing more.
  */
 export function registerDisplayAnnotationBasis(editor: LexicalEditor): () => void {
   const klasses: Klass<TextNode>[] = [TextNode, MarkerNode, VerseNode];

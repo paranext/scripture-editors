@@ -9,7 +9,7 @@
 import { ImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { ImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
 import { addClassNamesToElement, mergeRegister, removeClassNamesFromElement } from "@lexical/utils";
-import { useEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import {
   $getNearestNodeFromDOMNode,
   $getNodeByKey,
@@ -78,7 +78,24 @@ const CARRIER_KLASSES: Klass<LexicalNode>[] = [
 const EMPTY: ReadonlySet<NodeKey> = new Set();
 
 function indexKey(type: string, id: string): string {
-  return `${type}\u0000${id}`;
+  return JSON.stringify([type, id]);
+}
+
+function isTypeIdPair(value: unknown): value is [string, string] {
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    typeof value[0] === "string" &&
+    typeof value[1] === "string"
+  );
+}
+
+/** The `type`/`id` an {@link indexKey} was built from. A type or id may itself contain the NUL
+ * character a naive delimiter join would use, so the key is JSON, not a joined string. */
+function parseIndexKey(key: string): [string, string] {
+  const parsed: unknown = JSON.parse(key);
+  if (!isTypeIdPair(parsed)) throw new Error(`not an annotation index key: ${key}`);
+  return parsed;
 }
 
 function typedIdsOf(annotations: DisplayAnnotation[]): TypedIDs {
@@ -112,7 +129,9 @@ function createIndex(editor: LexicalEditor): Entry {
   const annotationsByMark = new Map<NodeKey, string[]>();
   /** A mark's `onRemove` per annotation, which an annotation held only by marks has nowhere else. */
   const markOnRemove = new Map<string, TypedMarkOnRemove>();
-  const lastText = new Map<string, string>();
+  /** Each annotation's covered text: a mark's own text, or every carrier's text joined in document
+   * order, as of the last commit that touched a holder while one was still attached. */
+  const coveredText = new Map<string, string>();
   // The maps above keep an entry for an annotation whose holders an undo took away, for the redo
   // that brings them back; the history stack gives no word when that redo is gone for good, so
   // they hold at most one entry per annotation set since the last `setUsj` load, which clears
@@ -153,7 +172,24 @@ function createIndex(editor: LexicalEditor): Entry {
   function $noteMarkText(mark: TypedMarkNode): void {
     const text = mark.getTextContent();
     for (const [type, ids] of Object.entries(mark.getTypedIDs()))
-      for (const id of ids) lastText.set(indexKey(type, id), text);
+      for (const id of ids) coveredText.set(indexKey(type, id), text);
+  }
+
+  /** `type`/`id`'s current carriers, in document order, each read for its own covered text and
+   * joined. */
+  function $joinedCoveredText(keys: ReadonlySet<NodeKey>, type: string, id: string): string {
+    const carriers = Array.from(keys, (key) => $getNodeByKey(key)).filter(
+      (node): node is LexicalNode => node !== null,
+    );
+    carriers.sort((a, b) => (a.isBefore(b) ? -1 : 1));
+    return carriers
+      .map((node) => {
+        const annotation = $displayAnnotationsOf(node).find(
+          (candidate) => candidate.type === type && candidate.id === id,
+        );
+        return annotation ? $coveredDisplayText(node, annotation) : "";
+      })
+      .join("");
   }
 
   function dispatch(
@@ -204,27 +240,43 @@ function createIndex(editor: LexicalEditor): Entry {
   }
 
   function onMutations(mutations: Map<NodeKey, NodeMutation>): void {
-    editor.getEditorState().read(() => {
-      for (const [key, mutation] of mutations) {
-        const node = mutation === "destroyed" ? null : $getNodeByKey(key);
-        const after = node ? $displayAnnotationsOf(node) : [];
-        const before = annotationsByKey.get(key) ?? [];
-        for (const { type, id } of before)
-          if (!after.some((kept) => kept.type === type && kept.id === id))
-            dropHolder(keysByAnnotation, indexKey(type, id), key);
-        for (const annotation of after) {
-          const annotationKey = indexKey(annotation.type, annotation.id);
-          addHolder(keysByAnnotation, annotationKey, key);
-          if (node) lastText.set(annotationKey, $coveredDisplayText(node, annotation));
+    editor.getEditorState().read(
+      () => {
+        const touched = new Set<string>();
+        for (const [key, mutation] of mutations) {
+          const node = mutation === "destroyed" ? null : $getNodeByKey(key);
+          const after = node ? $displayAnnotationsOf(node) : [];
+          const before = annotationsByKey.get(key) ?? [];
+          for (const { type, id } of before) {
+            const annotationKey = indexKey(type, id);
+            touched.add(annotationKey);
+            if (!after.some((kept) => kept.type === type && kept.id === id))
+              dropHolder(keysByAnnotation, annotationKey, key);
+          }
+          for (const annotation of after) {
+            const annotationKey = indexKey(annotation.type, annotation.id);
+            touched.add(annotationKey);
+            addHolder(keysByAnnotation, annotationKey, key);
+          }
+          if (after.length > 0) annotationsByKey.set(key, after);
+          else annotationsByKey.delete(key);
+          // Nothing was, or is now, painted on this element: skip the element lookup entirely.
+          if (node && (after.length > 0 || before.length > 0)) paint(key, after);
+          // A mark's own mutations miss an edit of the text inside it.
+          for (let parent = node?.getParent(); parent; parent = parent.getParent())
+            if ($isTypedMarkNode(parent)) $noteMarkText(parent);
         }
-        if (after.length > 0) annotationsByKey.set(key, after);
-        else annotationsByKey.delete(key);
-        if (node) paint(key, after);
-        // A mark's own mutations miss an edit of the text inside it.
-        for (let parent = node?.getParent(); parent; parent = parent.getParent())
-          if ($isTypedMarkNode(parent)) $noteMarkText(parent);
-      }
-    });
+        // Every carrier of a touched annotation is now attached, or none is: re-join the text of
+        // the ones still holding it, so a later loss of the last one reports the full text.
+        for (const annotationKey of touched) {
+          const keys = keysByAnnotation.get(annotationKey);
+          if (!keys || keys.size === 0) continue;
+          const [type, id] = parseIndexKey(annotationKey);
+          coveredText.set(annotationKey, $joinedCoveredText(keys, type, id));
+        }
+      },
+      { editor },
+    );
   }
 
   function onMarkMutations(mutations: Map<NodeKey, NodeMutation>): void {
@@ -258,7 +310,7 @@ function createIndex(editor: LexicalEditor): Entry {
   function forget(annotationKey: string, type: string, id: string): void {
     deleteDisplayAnnotationRegistration(editor, type, id);
     markOnRemove.delete(annotationKey);
-    lastText.delete(annotationKey);
+    coveredText.delete(annotationKey);
   }
 
   /** Take the removals marks have reported since the last take as heard. */
@@ -275,9 +327,9 @@ function createIndex(editor: LexicalEditor): Entry {
   function forgetAll(): void {
     reported.clear();
     clearTypedMarkRemovalSilences(editor);
-    for (const annotationKey of new Set([...markOnRemove.keys(), ...lastText.keys()])) {
+    for (const annotationKey of new Set([...markOnRemove.keys(), ...coveredText.keys()])) {
       if (holderCount(annotationKey) > 0) continue;
-      const [type, id] = annotationKey.split("\u0000");
+      const [type, id] = parseIndexKey(annotationKey);
       forget(annotationKey, type, id);
     }
   }
@@ -307,20 +359,30 @@ function createIndex(editor: LexicalEditor): Entry {
       return;
     }
     if (tags.has(HISTORIC_TAG)) return;
+    let firstError: unknown;
+    let hasError = false;
     for (const annotationKey of candidates) {
       if (holderCount(annotationKey) > 0) continue;
-      const [type, id] = annotationKey.split("\u0000");
+      const [type, id] = parseIndexKey(annotationKey);
       const onRemove =
         getDisplayAnnotationRegistration(editor, type, id)?.onRemove ??
         markOnRemove.get(annotationKey);
-      const text = lastText.get(annotationKey) ?? "";
+      const text = coveredText.get(annotationKey) ?? "";
       forget(annotationKey, type, id);
       if (!onRemove || reported.has(annotationKey) || heard.has(annotationKey)) continue;
       reported.add(annotationKey);
       setTypedMarkRemovalSilenced(editor, type, id, true);
       for (const key of dropped.get(annotationKey) ?? []) forgetTypedMarkCallbacks(key, type, id);
-      onRemove(type, id, "destroyed", text);
+      try {
+        onRemove(type, id, "destroyed", text);
+      } catch (error) {
+        if (!hasError) {
+          firstError = error;
+          hasError = true;
+        }
+      }
     }
+    if (hasError) throw firstError;
   }
 
   /** `setAnnotation` begins a new lifecycle: its loss is reported afresh. */
@@ -392,13 +454,13 @@ export function acquireDisplayAnnotationIndex(editor: LexicalEditor): {
 }
 
 /**
- * {@link acquireDisplayAnnotationIndex} for a component's lifetime. Acquired in an effect (safe
- * under StrictMode's double effects); the returned index is stable and reads empty until then,
- * which no caller can observe — annotations are set through a ref after mount.
+ * {@link acquireDisplayAnnotationIndex} for a component's lifetime. Acquired in a layout effect
+ * (safe under StrictMode's double effects), so it is already attached by the time any passive
+ * effect — where a host sets its first annotation through a ref — runs.
  */
 export function useDisplayAnnotationIndex(editor: LexicalEditor): DisplayAnnotationIndex {
   const current = useRef<DisplayAnnotationIndex | undefined>(undefined);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const acquired = acquireDisplayAnnotationIndex(editor);
     current.current = acquired.index;
     return () => {

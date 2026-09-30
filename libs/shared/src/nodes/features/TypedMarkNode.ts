@@ -23,6 +23,7 @@ import type {
 import {
   $applyNodeReplacement,
   $getEditor,
+  $getNodeByKey,
   $isRangeSelection,
   $isTextNode,
   ElementNode,
@@ -1425,6 +1426,22 @@ export function isSerializedTypedMarkNode(
   node: SerializedLexicalNode | null | undefined,
 ): node is SerializedTypedMarkNode {
   return node?.type === TypedMarkNode.getType();
+}
+
+/**
+ * Remove `type`/`id` from every mark in `markKeys` still holding it (`deleteID`), unwrapping any
+ * mark `deleteID` leaves holding no id of any type. Returns how many marks held it.
+ */
+export function $removeTypedMarkId(type: string, id: string, markKeys: Iterable<NodeKey>): number {
+  let count = 0;
+  for (const key of markKeys) {
+    const node = $getNodeByKey(key);
+    if (!$isTypedMarkNode(node) || !node.hasID(type, id)) continue;
+    count++;
+    node.deleteID(type, id);
+    if (node.hasNoIDsForEveryType()) $unwrapTypedMarkNode(node);
+  }
+  return count;
 }
 
 // #region adapted from https://github.com/facebook/lexical/blob/92c47217244f9d3c22a59728633fb41a10420724/packages/lexical-mark/src/index.ts
