@@ -208,7 +208,9 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
       editor.update(
         () => {
           // Apply the annotation to the selected range.
-          const editorSelection = $getRangeFromUsjSelection(selection, viewOptions);
+          const editorSelection = $getRangeFromUsjSelection(selection, viewOptions, {
+            forAnnotation: true,
+          });
           if (editorSelection === undefined) {
             logger?.error("Failed to find start or end node of the annotation.");
             return;

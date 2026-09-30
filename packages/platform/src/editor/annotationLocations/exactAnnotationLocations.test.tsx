@@ -6,6 +6,7 @@
  */
 import {
   $heldBytes,
+  edgesUsj,
   HELD_TYPE,
   MountedInView,
   mountInView,
@@ -56,6 +57,7 @@ import {
 } from "shared";
 import {
   $getRangeFromUsjSelection,
+  $isImmutableVerseNode,
   AnnotationRange,
   DISPLAY_ANNOTATION_CLASS_NAME,
   StructureProtectionMode,
@@ -69,7 +71,8 @@ type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
 type WordChar = MarkerObject & { lemma?: string };
 
 const lemmaWord: WordChar = { type: "char", marker: "w", lemma: "grace", content: ["grace"] };
-/** `\p In the \w grace|lemma="grace"\w* of God`. */
+/** `\p In the \w grace|lemma="grace"\w* of God`. `lemma` alone is the `\w` default attribute, so
+ * the display is the bare `|grace` run and the key is never spelled. */
 const lemmaUsj: Usj = twoParaUsj(["In the ", lemmaWord, " of God"]);
 /** `grace`, the `\w` span's `lemma` value. */
 const lemmaRange: AnnotationRange = {
@@ -655,6 +658,135 @@ describe("display bytes the design holds whole", () => {
     const held = mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "u1"));
     expect(held).toBe("\\*");
     expect(mounted.ref.current?.getUsj()).toEqual(before);
+  });
+});
+
+describe("inbound resolution for annotations", () => {
+  /** Sets `range` in `view` over `usj` and returns what holds it and what the logger reported. */
+  async function annotateInView(
+    usj: Usj,
+    viewName: string,
+    range: AnnotationRange,
+  ): Promise<{ held: string; logs: string[] }> {
+    const mounted = await mountInView(usj, oracleView(viewName));
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, "in");
+      await Promise.resolve();
+    });
+    const held = mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "in"));
+    return { held, logs: mounted.logs };
+  }
+
+  it.each<{ name: string; view: string; usj: Usj; range: AnnotationRange; held: string }>([
+    {
+      name: "a milestone's closer, which the view does not display",
+      view: "formatted",
+      usj: richUsj,
+      range: {
+        start: { jsonPath: "$.content[3].content[2]['who']", propertyOffset: 5 },
+        end: { jsonPath: "$.content[3].content[2]", closingMarkerOffset: 0 },
+      },
+      held: "",
+    },
+    {
+      name: "a milestone's closer, over the glyphs the view displays for it",
+      view: "visible",
+      usj: richUsj,
+      range: {
+        start: { jsonPath: "$.content[3].content[1]", offset: 4 },
+        end: { jsonPath: "$.content[3].content[2]", closingMarkerOffset: 0 },
+      },
+      held: " [immutable-typed-text][immutable-typed-text]",
+    },
+    {
+      name: "a default attribute's unspelled key through its value's start",
+      view: "standard",
+      usj: lemmaUsj,
+      range: {
+        start: { jsonPath: "$.content[2].content[1]", keyName: "lemma", keyOffset: 0 },
+        end: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 0 },
+      },
+      held: "",
+    },
+    {
+      name: "an undisplayed attribute key through its undisplayed value",
+      view: "formatted",
+      usj: lemmaUsj,
+      range: {
+        start: { jsonPath: "$.content[2].content[1]", keyName: "lemma", keyOffset: 4 },
+        end: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 0 },
+      },
+      held: "",
+    },
+    {
+      name: "a paragraph's marker through the backslash a verse decorator displays",
+      view: "hidden+expanded",
+      usj: richUsj,
+      range: {
+        start: { jsonPath: "$.content[2]['marker']", propertyOffset: 0 },
+        end: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 0 },
+      },
+      held: "[immutable-verse]",
+    },
+    {
+      name: "a verse's trailing separator through the backslash of the span after it",
+      view: "visible",
+      usj: edgesUsj,
+      range: {
+        start: { jsonPath: "$.content[1].content[0]['number']", propertyOffset: 1 },
+        end: { jsonPath: "$.content[1].content[1]['marker']", propertyOffset: 0 },
+      },
+      // The verse's own bytes end before the range starts: only the `\wj` glyph is named.
+      held: "[immutable-typed-text]",
+    },
+  ])("resolves $name ($view)", async ({ view, usj, range, held }) => {
+    const result = await annotateInView(usj, view, range);
+
+    expect(result.logs.filter((log) => log.includes("Failed to find"))).toEqual([]);
+    expect(result.held).toBe(held);
+  });
+
+  it("puts a caret at a paragraph's marker at the paragraph's start", async () => {
+    const mounted = await mountInView(lemmaUsj, oracleView("formatted"));
+
+    await act(async () => {
+      mounted.ref.current?.setSelection({
+        start: { jsonPath: "$.content[2]['marker']", propertyOffset: 0 },
+      });
+      await Promise.resolve();
+    });
+
+    mounted.lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection");
+      expect(selection.isCollapsed()).toBe(true);
+      expect(selection.anchor.getNode().getTextContent()).toBe("In the ");
+      expect(selection.anchor.offset).toBe(0);
+    });
+    expect(mounted.ref.current?.getSelection()).toEqual({
+      start: { jsonPath: "$.content[2].content[0]", offset: 0 },
+    });
+  });
+
+  it("puts a caret inside a verse decorator's bytes in front of it", async () => {
+    const mounted = await mountInView(richUsj, oracleView("hidden+expanded"));
+
+    await act(async () => {
+      mounted.ref.current?.setSelection({
+        start: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 0 },
+      });
+      await Promise.resolve();
+    });
+
+    mounted.lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection");
+      expect(selection.isCollapsed()).toBe(true);
+      const verse = $firstOfType($getRoot(), $isImmutableVerseNode);
+      if (!verse) throw new Error("expected a verse decorator");
+      expect(selection.anchor.getNode().is(verse.getParent())).toBe(true);
+      expect(selection.anchor.offset).toBe(verse.getIndexWithinParent());
+    });
   });
 });
 

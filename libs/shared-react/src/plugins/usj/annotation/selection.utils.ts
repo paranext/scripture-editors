@@ -1,3 +1,4 @@
+import { $isImmutableVerseNode, ImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
 import { $isSomeVerseNode } from "../../../nodes/usj/node-react.utils";
 import { hasStandardViewWhitespace, ViewOptions } from "../../../views/view-options.utils";
 import { $blockToUsj, $getBlockUnits, $usjToBlock } from "./blockVerseLocations.utils";
@@ -44,9 +45,12 @@ import {
   $getLogicalPointFromElementPoint,
   $getLogicalTextLocation,
   $getTextNodeAtLogicalOffset,
+  $isAttributeDisplayRun,
+  $isAttributeRunNode,
   $isBookNode,
   $isChapterNode,
   $isCharNode,
+  $isImmutableChapterNode,
   $isImmutableTableCellNode,
   $isImmutableTableRowNode,
   $isImmutableTypedTextNode,
@@ -70,6 +74,7 @@ import {
   displayRunDescriptor,
   type DisplayRunKind,
   IMMUTABLE_NOTE_CALLER_NODE_TYPE,
+  ImmutableChapterNode,
   ImmutableTypedTextNode,
   type LogicalContentItem,
   type LogicalPoint,
@@ -92,6 +97,11 @@ import {
  *   AnnotationRange.
  * @param viewOptions - The editor's view options, which decide how its text maps to USJ offsets
  *   (see {@link $getNodeFromLocation}).
+ * @param options - `forAnnotation`: resolve the range an annotation holds rather than a selection.
+ *   A read-only decorator is held whole or not at all, so an annotation's end inside one takes the
+ *   whole decorator, its start there keeps it unless only the decorator's trailing separator
+ *   follows, and a range between two of its separators holds nothing. Without it, each end
+ *   resolves as a caret at that location does ({@link $getNodeFromLocation}).
  * @returns A new editor RangeSelection object if the conversion is successful, or `undefined` if
  *   the required nodes or offsets cannot be found.
  *
@@ -108,6 +118,7 @@ import {
 export function $getRangeFromUsjSelection(
   selection: SelectionRange | AnnotationRange,
   viewOptions: ViewOptions | undefined,
+  options?: { forAnnotation?: boolean },
 ): RangeSelection | undefined {
   let { start } = selection;
   let end = selection.end ?? start;
@@ -125,30 +136,103 @@ export function $getRangeFromUsjSelection(
   }
 
   // Find the start and end nodes with offsets based on the location.
-  let [startNode, startOffset] = $getNodeFromLocation(start, viewOptions);
-  let [endNode, endOffset] = $getNodeFromLocation(end, viewOptions);
+  const startAt = $getPointFromLocation(start, viewOptions);
+  const endAt = end === start ? startAt : $getPointFromLocation(end, viewOptions);
+  const [startNode, startOffset] = startAt.point;
+  const [endNode, endOffset] = endAt.point;
   if (!startNode || !endNode || startOffset === undefined || endOffset === undefined)
     return undefined;
 
-  [startNode, startOffset] = $normalizeDecoratorPoint(startNode, startOffset);
-  [endNode, endOffset] = $normalizeDecoratorPoint(endNode, endOffset);
+  let startEdge = $normalizeDecoratorPoint(startNode, startOffset);
+  let endEdge = $normalizeDecoratorPoint(endNode, endOffset);
   // A range that ends where a closing marker begins ends with the content before it. Standard view
   // can show presentation-only text between the two (the space before a note's `\f*` when its last
   // char span has no closer of its own), and a range reaching over that text would let typing over
   // the selection delete it — which the marker-edit engine settles by losing the text after the
   // note. A caret there is left alone: it names the closer, and nothing is replaced.
   if (end !== start && isUsjClosingMarkerLocation(end) && end.closingMarkerOffset === 0)
-    [endNode, endOffset] = $pointBeforePresentationText(
-      endNode,
-      endOffset,
+    endEdge = $pointBeforePresentationText(
+      endEdge[0],
+      endEdge[1],
       hasStandardViewWhitespace(viewOptions),
+    );
+  if (options?.forAnnotation && end !== start)
+    [startEdge, endEdge] = $annotationEdges(
+      { edge: startEdge, inside: startAt.insideDecorator },
+      { edge: endEdge, inside: endAt.insideDecorator },
     );
 
   // Create selection range.
   const editorSelection = $createRangeSelection();
-  editorSelection.anchor = $createPoint(startNode.getKey(), startOffset, $getPointType(startNode));
-  editorSelection.focus = $createPoint(endNode.getKey(), endOffset, $getPointType(endNode));
+  editorSelection.anchor = $createPoint(
+    startEdge[0].getKey(),
+    startEdge[1],
+    $getPointType(startEdge[0]),
+  );
+  editorSelection.focus = $createPoint(endEdge[0].getKey(), endEdge[1], $getPointType(endEdge[0]));
   return editorSelection;
+}
+
+/** One end of a range: its live edge, and where it falls among a read-only decorator's bytes. */
+interface RangeEnd {
+  edge: [LexicalNode, number];
+  inside: DecoratorBytePosition | undefined;
+}
+
+/**
+ * The edges of an annotation's range. A read-only decorator is held whole or not at all, so an end
+ * inside one decides by the bytes it names: the range's first end is in front of the decorator
+ * unless nothing but its trailing separator follows, its last end is behind it unless nothing but
+ * separators precede, and two ends inside the same decorator with no byte between them name
+ * nothing. Ends not inside a decorator keep their edges; the range keeps its direction.
+ */
+function $annotationEdges(
+  start: RangeEnd,
+  end: RangeEnd,
+): [[LexicalNode, number], [LexicalNode, number]] {
+  const { inside: startInside } = start;
+  const { inside: endInside } = end;
+  if (!startInside && !endInside) return [start.edge, end.edge];
+  const sameDecorator =
+    !!startInside && !!endInside && startInside.decorator.is(endInside.decorator);
+  const reversed =
+    startInside && endInside && sameDecorator
+      ? endInside.before < startInside.before
+      : $isBeforeInDocument(end, start);
+  const [first, last] = reversed ? [end, start] : [start, end];
+  const firstEdge = first.inside
+    ? $edgeBeside(first.inside, first.inside.before >= first.inside.total, first.edge)
+    : first.edge;
+  if (sameDecorator && startInside.before === endInside.before) return [firstEdge, firstEdge];
+  const lastEdge = last.inside
+    ? $edgeBeside(last.inside, last.inside.before > 0, last.edge)
+    : last.edge;
+  return reversed ? [lastEdge, firstEdge] : [firstEdge, lastEdge];
+}
+
+/** The element point in front of the decorator, or behind it when `after`; `fallback` when it has
+ * no parent to point in. */
+function $edgeBeside(
+  inside: DecoratorBytePosition,
+  after: boolean,
+  fallback: [LexicalNode, number],
+): [LexicalNode, number] {
+  const [parent, index] = $pointBeside(inside.decorator, after);
+  return parent && index !== undefined ? [parent, index] : fallback;
+}
+
+/** Whether `a` comes strictly before `b` in the document. An end inside a decorator counts from the
+ * decorator's front, just past an edge that sits there. */
+function $isBeforeInDocument(a: RangeEnd, b: RangeEnd): boolean {
+  const $orderPoint = ({ edge, inside }: RangeEnd) => {
+    const [node, offset] = inside ? $edgeBeside(inside, false, edge) : edge;
+    return $createPoint(node.getKey(), offset, $getPointType(node));
+  };
+  const aPoint = $orderPoint(a);
+  const bPoint = $orderPoint(b);
+  if (aPoint.isBefore(bPoint)) return true;
+  if (bPoint.isBefore(aPoint)) return false;
+  return !a.inside && !!b.inside;
 }
 
 /**
@@ -715,6 +799,15 @@ function $displayByteCarriers(owner: LexicalNode): LexicalNode[] {
         carriers.push(child);
     }
   }
+  // markerMode "visible" renders a milestone's glyphs and attribute display as loose read-only
+  // siblings after it, up to the next thing that is not one.
+  if ($isMilestoneNode(owner))
+    for (
+      let next = owner.getNextSibling();
+      next && $isDisplayByteDecorator(next);
+      next = next.getNextSibling()
+    )
+      if (!$isVisibleMarkerNode(next) || $glyphOwner(next).is(owner)) carriers.push(next);
   for (const kind of BYTE_CARRYING_RUN_KINDS) {
     const descriptor = displayRunDescriptor(kind);
     if (!descriptor.ownerPredicate(owner)) continue;
@@ -938,7 +1031,7 @@ export function $getNodeFromLocation(
       : $pointFromDisplayBytes(node, { kind: "attributeMarker", keyName }, 0);
     if (point) return point;
 
-    return $nearestPointAfterContent(node);
+    return $bareValueStart(node, keyName) ?? $nearestPointAfterContent(node);
   }
 
   // Handle UsjClosingAttributeMarkerLocation BEFORE UsjMarkerLocation/UsjClosingMarkerLocation.
@@ -988,7 +1081,9 @@ export function $getNodeFromLocation(
     const closingLength = $closingMarkerLength(node);
     if (closingLength !== undefined && location.closingMarkerOffset >= closingLength)
       return $pointBeside(node, true);
-    if (!$isElementNode(node)) return [undefined, undefined];
+    // A leaf owner (a milestone) has no content before its closer: in front of the leaf, or past
+    // it from the character after the closer on — the leaf-property rule.
+    if (!$isElementNode(node)) return $pointBeside(node, false);
     const lastChild = node.getLastChild();
     if (lastChild && $isTextNode(lastChild)) return [lastChild, lastChild.getTextContent().length];
     return [node, node.getChildrenSize()];
@@ -996,22 +1091,23 @@ export function $getNodeFromLocation(
 
   // Handle UsjPropertyValueLocation - position within a property value (e.g., marker name)
   if (isUsjPropertyValueLocation(location)) {
-    // Extract the property name from the jsonPath (e.g., "$.content[0]['marker']" -> "marker")
-    const propertyMatch = location.jsonPath.match(/\.(\w+)$|^\$\.(\w+)$|\['([^']+)'\]$/);
-    const propertyName = propertyMatch?.[1] ?? propertyMatch?.[2] ?? propertyMatch?.[3];
-
+    const propertyName = propertyNameOf(location.jsonPath);
     const node = $navigateToNode(location.jsonPath, collapsesSpaceRuns);
     if (!node || propertyName === undefined) return [undefined, undefined];
 
-    const point = $pointFromDisplayBytes(
-      node,
-      { kind: "property", property: propertyName },
-      location.propertyOffset,
-    );
+    const wanted: DisplayByteKind = { kind: "property", property: propertyName };
+    const point = $pointFromDisplayBytes(node, wanted, location.propertyOffset);
     if (point) return point;
+    // Past the bytes a read-only decorator displays of the value (a collapsed caller shows the
+    // caller, not the space after it): the end of those bytes.
+    const pastDisplayed = $endOfDecoratorBytes(node, wanted, location.propertyOffset);
+    if (pastDisplayed) return pastDisplayed;
 
-    // Fallback: the property has no bytes on screen, so position at the element's start.
     if ($isElementNode(node)) {
+      // An attribute the view does not display is placed where USFM spells it — after the
+      // content — so both ends of a range inside it meet; the marker and the other properties
+      // USFM writes first stay at the start.
+      if (!PROPERTIES_BEFORE_CONTENT.has(propertyName)) return $nearestPointAfterContent(node);
       const firstChild = node.getFirstChild();
       if (firstChild && $isTextNode(firstChild)) return [firstChild, 0];
       return [node, 0];
@@ -1030,6 +1126,164 @@ export function $getNodeFromLocation(
       "UsjAttributeKeyLocation, UsjAttributeMarkerLocation, and" +
       `UsjClosingAttributeMarkerLocation. Received: ${JSON.stringify(location)}`,
   );
+}
+
+/** The property a property-value location's path names (`$.content[0]['marker']` → `marker`). */
+function propertyNameOf(jsonPath: string): string | undefined {
+  const propertyMatch = /\.(\w+)$|^\$\.(\w+)$|\['([^']+)'\]$/.exec(jsonPath);
+  return propertyMatch?.[1] ?? propertyMatch?.[2] ?? propertyMatch?.[3];
+}
+
+/** The properties USFM spells in front of an element's content; every other property is an
+ * attribute, spelled after it. */
+const PROPERTIES_BEFORE_CONTENT: ReadonlySet<string> = new Set([
+  "marker",
+  "code",
+  "caller",
+  "category",
+]);
+
+/**
+ * Where a location falls among the bytes one read-only decorator displays, counted in the
+ * decorator's non-whitespace bytes: a separator names nothing an annotation can hold.
+ */
+interface DecoratorBytePosition {
+  decorator: LexicalNode;
+  /** How many of the decorator's non-whitespace bytes are in front of the location. */
+  before: number;
+  /** How many non-whitespace bytes the decorator displays in all. */
+  total: number;
+}
+
+/** A location's live point, and where it falls inside a read-only decorator when it names one of
+ * that decorator's bytes past its first. */
+interface LocatedPoint {
+  point: [LexicalNode | undefined, number | undefined];
+  insideDecorator?: DecoratorBytePosition;
+}
+
+/** How many of `text`'s bytes before `end` are not whitespace. */
+function nonWhitespaceCount(text: string, end = text.length): number {
+  return text.slice(0, end).replace(/\s/gu, "").length;
+}
+
+/**
+ * {@link $getNodeFromLocation}'s point, and where the location falls among a read-only decorator's
+ * bytes when it names one past the decorator's first: a byte of a glyph, attribute or collapsed
+ * caller decorator, measured in the bytes the decorator displays; or any byte of a verse or
+ * chapter decorator other than its marker's backslash, since such a decorator displays its owner
+ * whole ({@link $wholeDecoratorPosition}).
+ */
+function $getPointFromLocation(
+  location: UsjDocumentLocation,
+  viewOptions: ViewOptions | undefined,
+): LocatedPoint {
+  const point = $getNodeFromLocation(location, viewOptions);
+  const [node, offset] = point;
+  if (node && offset !== undefined && offset > 0 && $isDisplayByteDecorator(node)) {
+    const text = $decoratorDisplayText(node);
+    return {
+      point,
+      insideDecorator: {
+        decorator: node,
+        before: nonWhitespaceCount(text, offset),
+        total: nonWhitespaceCount(text),
+      },
+    };
+  }
+  if (isUsjTextContentLocation(location)) return { point };
+  const owner = $navigateToNode(location.jsonPath, hasStandardViewWhitespace(viewOptions));
+  if (!$isImmutableVerseNode(owner) && !$isImmutableChapterNode(owner)) return { point };
+  const insideDecorator = $wholeDecoratorPosition(owner, location);
+  return insideDecorator && insideDecorator.before > 0 ? { point, insideDecorator } : { point };
+}
+
+/** The text a display-byte decorator shows: a collapsed caller shows its note's caller. */
+function $decoratorDisplayText(node: LexicalNode): string {
+  if (node.getType() !== IMMUTABLE_NOTE_CALLER_NODE_TYPE) return node.getTextContent();
+  const note = node.getParent();
+  return $isNoteNode(note) ? note.getCaller() : "";
+}
+
+/**
+ * Where `location` falls among the bytes of `decorator`'s owner, which a verse or chapter decorator
+ * displays whole: `\v 1 \va 1a\va* \vp 1b\vp*`, `\c 1 \ca 2\ca* \cp A`. The separators between
+ * its tokens are not counted; the space inside `\v 1` is. `undefined` for a location that names
+ * none of those tokens.
+ */
+function $wholeDecoratorPosition(
+  decorator: ImmutableVerseNode | ImmutableChapterNode,
+  location: UsjDocumentLocation,
+): DecoratorBytePosition | undefined {
+  const named = wholeDecoratorByteOf(location);
+  if (!named) return undefined;
+  const tokens = $wholeDecoratorTokens(decorator);
+  const index = tokens.findIndex((token) => isSameByteKind(token.bytes, named.bytes));
+  if (index < 0) return undefined;
+  const total = tokens.reduce((sum, token) => sum + token.length, 0);
+  const before =
+    tokens.slice(0, index).reduce((sum, token) => sum + token.length, 0) +
+    Math.min(Math.max(named.offset, 0), tokens[index].length);
+  return { decorator, before, total };
+}
+
+/** The bytes `location` names and its offset into them, for a location on a verse or chapter. */
+function wholeDecoratorByteOf(
+  location: UsjDocumentLocation,
+): { bytes: DisplayByteKind; offset: number } | undefined {
+  if (isUsjAttributeKeyLocation(location))
+    return {
+      bytes: { kind: "attributeKey", keyName: location.keyName },
+      offset: location.keyOffset,
+    };
+  if (isUsjAttributeMarkerLocation(location))
+    return { bytes: { kind: "attributeMarker", keyName: location.keyName }, offset: 0 };
+  if (isUsjClosingAttributeMarkerLocation(location))
+    return {
+      bytes: { kind: "closingAttributeMarker", keyName: location.keyName },
+      offset: location.keyClosingMarkerOffset,
+    };
+  if (isUsjMarkerLocation(location)) return { bytes: { kind: "marker" }, offset: 0 };
+  if (isUsjPropertyValueLocation(location)) {
+    const property = propertyNameOf(location.jsonPath);
+    if (property === undefined) return undefined;
+    return { bytes: { kind: "property", property }, offset: location.propertyOffset };
+  }
+  return undefined;
+}
+
+/** The tokens a verse or chapter decorator displays, in USFM order, with how many bytes each
+ * spells. A chapter's `\cp` is a line of its own, with no closer. */
+function $wholeDecoratorTokens(
+  decorator: ImmutableVerseNode | ImmutableChapterNode,
+): { bytes: DisplayByteKind; length: number }[] {
+  const tokens: { bytes: DisplayByteKind; length: number }[] = [
+    { bytes: { kind: "marker" }, length: 1 },
+    // The space after the marker name is inside the glyph Standard view spells, so it counts.
+    { bytes: { kind: "property", property: "marker" }, length: decorator.getMarker().length + 1 },
+    { bytes: { kind: "property", property: "number" }, length: decorator.getNumber().length },
+  ];
+  const isChapter = $isImmutableChapterNode(decorator);
+  const runs = isChapter
+    ? [ATTRIBUTE_MARKER_RUNS.ca, ATTRIBUTE_MARKER_RUNS.cp]
+    : [ATTRIBUTE_MARKER_RUNS.va, ATTRIBUTE_MARKER_RUNS.vp];
+  for (const run of runs) {
+    if (!run) continue;
+    const { markerName, keyName } = run;
+    const value = keyName === "altnumber" ? decorator.getAltnumber() : decorator.getPubnumber();
+    if (value === undefined) continue;
+    tokens.push(
+      { bytes: { kind: "attributeMarker", keyName }, length: 1 },
+      { bytes: { kind: "attributeKey", keyName }, length: markerName.length },
+      { bytes: { kind: "property", property: keyName }, length: value.length },
+    );
+    if (!(isChapter && keyName === "pubnumber"))
+      tokens.push({
+        bytes: { kind: "closingAttributeMarker", keyName },
+        length: closingMarkerText(markerName).length,
+      });
+  }
+  return tokens;
 }
 
 /**
@@ -1538,13 +1792,24 @@ function $markerOf(node: LexicalNode): string | undefined {
 /**
  * The closest point to bytes the current view does not render at all: the end of the node's
  * content, since USFM attribute bytes come after it. The answer for markerMode "visible" and
- * "hidden", where attribute markers and their values have no nodes of their own.
+ * "hidden", where attribute markers and their values have no nodes of their own, and for an
+ * attribute an editable view's run does not spell.
  */
 function $nearestPointAfterContent(
   node: LexicalNode,
 ): [LexicalNode | undefined, number | undefined] {
   if ($isElementNode(node)) {
+    // USFM spells attributes after the content and before the closer, so bytes the view does not
+    // display sit in front of the closer and the run, not behind them.
     const lastChild = node.getLastChild();
+    let content = lastChild;
+    while (content && $isAttributeDisplayOrCloserOf(content, node))
+      content = content.getPreviousSibling();
+    if (content !== lastChild) {
+      if ($isTextNode(content) && !$displayBytesOf(content))
+        return [content, content.getTextContentSize()];
+      return [node, content ? content.getIndexWithinParent() + 1 : 0];
+    }
     if (lastChild && $isTextNode(lastChild)) return [lastChild, lastChild.getTextContent().length];
   }
 
@@ -1554,6 +1819,61 @@ function $nearestPointAfterContent(
   if (nextSibling && $isElementNode(nextSibling)) return [nextSibling, 0];
 
   return $pointBeside(node, true);
+}
+
+/** Whether `child` is `owner`'s closing glyph or attribute display: bytes USFM spells after the
+ * content. */
+function $isAttributeDisplayOrCloserOf(child: LexicalNode, owner: LexicalNode): boolean {
+  return (
+    $isAttributeDisplayRun(child) ||
+    $isAttributeRunNode(child) ||
+    ($isImmutableTypedTextNode(child) && child.getTextType() === "attribute") ||
+    $isClosingGlyphOf(child, owner)
+  );
+}
+
+/**
+ * Where a key no byte spells sits in an editable view's bare default-attribute run (`|grace` for
+ * `lemma="grace"`): USFM would spell `lemma="` right after the `|`, which is the value's start in
+ * the run. `undefined` when `owner` has no such run for `keyName`.
+ */
+function $bareValueStart(owner: LexicalNode, keyName: string): [LexicalNode, number] | undefined {
+  for (const carrier of $displayByteCarriers(owner)) {
+    const bytes = $displayBytesOf(carrier);
+    if (!bytes?.owner.is(owner)) continue;
+    const { spans } = bytes;
+    if (spans.some((span) => isSameByteKind(span.bytes, { kind: "attributeKey", keyName })))
+      return undefined;
+    const value = spans.find((span) =>
+      isSameByteKind(span.bytes, { kind: "property", property: keyName }),
+    );
+    if (value && carrier.getTextContent()[value.start - 1] === "|") return [carrier, value.start];
+  }
+  return undefined;
+}
+
+/** The end of the bytes a read-only decorator displays of `owner`'s `wanted` bytes when `offset` is
+ * past them, or `undefined` when no decorator displays them or `offset` is not past them. */
+function $endOfDecoratorBytes(
+  owner: LexicalNode,
+  wanted: DisplayByteKind,
+  offset: number,
+): [LexicalNode, number] | undefined {
+  for (const carrier of $displayByteCarriers(owner)) {
+    if (!$isDisplayByteDecorator(carrier)) continue;
+    const bytes = $displayBytesOf(carrier);
+    if (!bytes?.owner.is(owner)) continue;
+    const index = bytes.spans.findIndex((span) => isSameByteKind(span.bytes, wanted));
+    if (index < 0) continue;
+    const span = bytes.spans[index];
+    const nextSpan = bytes.spans[index + 1];
+    // The same extent `$pointFromDisplayBytes` gives the span.
+    const highest = nextSpan
+      ? span.base + (nextSpan.start - span.start) - 1
+      : span.base + (bytes.length - span.start);
+    return offset > highest ? [carrier, nextSpan?.start ?? bytes.length] : undefined;
+  }
+  return undefined;
 }
 
 /** The element point in front of `node` in its parent, or after it when `after`. */

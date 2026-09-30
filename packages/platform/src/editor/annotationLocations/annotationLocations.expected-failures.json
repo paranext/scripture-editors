@@ -42,26 +42,7 @@
         "text(sep):\"\\u00a0\"@$.content[9]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[9].content[0]['number']|propertyOffset=1"
       ],
-      "failures": {
-        "standard|B|1|$.content[3].content[6]['caller']|propertyOffset=1|$.content[3].content[6]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "standard|B|1|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "standard|B|1|$.content[7].content[2]['caller']|propertyOffset=1|$.content[7].content[2]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "standard|B|1|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "standard|B|3|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]['marker']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "standard|B|3|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]['marker']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ]
-      }
+      "failures": {}
     },
     "standard+expandedNotes": {
       "ops": 2362,
@@ -162,211 +143,20 @@
         "text(sep):\"\\u00a0\"@$.content[7].content[2]|closingMarkerOffset=0"
       ],
       "failures": {
-        "visible|A|1|$.content[3].content[2]|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|1|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[3]|offset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|1|$.content[3].content[4]|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|1|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[5]|offset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|2|$.content[3].content[1]|offset=5|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|2|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[3]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|2|$.content[3].content[3]|offset=4|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|2|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[5]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|25|$.content[2].content[6].content[0]|offset=1|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|3|$.content[3].content[1]|offset=4|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|3|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[3]|offset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|3|$.content[3].content[3]|offset=3|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|3|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[5]|offset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|50|$.content[2].content[3]|offset=4|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|6|$.content[3].content[3]|offset=0|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|collapsed|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|A|collapsed|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|B|1|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|1|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|1|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|1|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|1|$.content[1]|keyName=altnumber,keyOffset=0|$.content[1]|keyName=altnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|1|$.content[1]|keyName=altnumber,keyOffset=1|$.content[1]|keyName=altnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|1|$.content[1]|keyName=altnumber,keyOffset=2|$.content[1]['altnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[1]|keyName=altnumber|$.content[1]|keyName=altnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|1|$.content[1]|keyName=pubnumber,keyOffset=0|$.content[1]|keyName=pubnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|1|$.content[1]|keyName=pubnumber,keyOffset=1|$.content[1]|keyName=pubnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|1|$.content[1]|keyName=pubnumber,keyOffset=2|$.content[1]['pubnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[1]|keyName=pubnumber|$.content[1]|keyName=pubnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|1|$.content[2].content[0]['altnumber']|propertyOffset=0|$.content[2].content[0]['altnumber']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]['pubnumber']|propertyOffset=0|$.content[2].content[0]['pubnumber']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=0|$.content[2].content[0]|keyName=altnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=1|$.content[2].content[0]|keyName=altnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=2|$.content[2].content[0]['altnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyName=altnumber|$.content[2].content[0]|keyName=altnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=0|$.content[2].content[0]|keyName=pubnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=1|$.content[2].content[0]|keyName=pubnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=2|$.content[2].content[0]['pubnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[2].content[0]|keyName=pubnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[2]['marker']|propertyOffset=0|$.content[2].content[2]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[2]|closingMarkerOffset=1|$.content[2].content[2]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[2]|closingMarkerOffset=2|$.content[2].content[2]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[4]['lemma']|propertyOffset=6|$.content[2].content[4]|keyName=strong,keyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[2].content[4]['strong']|propertyOffset=3|$.content[2].content[4]|closingMarkerOffset=0": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)"
-        ],
-        "visible|B|1|$.content[2].content[4]|closingMarkerOffset=1|$.content[2].content[4]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[4]|keyName=lemma,keyOffset=6|$.content[2].content[4]['lemma']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[2].content[4]|keyName=strong,keyOffset=7|$.content[2].content[4]['strong']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[2].content[6].content[1]['marker']|propertyOffset=0|$.content[2].content[6].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[6].content[1]|closingMarkerOffset=1|$.content[2].content[6].content[1]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[6].content[1]|closingMarkerOffset=2|$.content[2].content[6].content[1]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[6].content[1]|closingMarkerOffset=3|$.content[2].content[6].content[1]|closingMarkerOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[6]['marker']|propertyOffset=0|$.content[2].content[6]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[6]['marker']|propertyOffset=1|$.content[2].content[6]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[6]|closingMarkerOffset=1|$.content[2].content[6]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[6]|closingMarkerOffset=2|$.content[2].content[6]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[6]|closingMarkerOffset=3|$.content[2].content[6]|closingMarkerOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
         "visible|B|1|$.content[3].content[2]['marker']|propertyOffset=0|$.content[3].content[2]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible|B|1|$.content[3].content[2]['marker']|propertyOffset=1|$.content[3].content[2]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible|B|1|$.content[3].content[2]['marker']|propertyOffset=2|$.content[3].content[2]['marker']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible|B|1|$.content[3].content[2]['marker']|propertyOffset=3|$.content[3].content[2]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|1|$.content[3].content[2]['marker']|propertyOffset=5|$.content[3].content[2]|keyName=sid,keyOffset=0": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|1|$.content[3].content[2]['sid']|propertyOffset=0|$.content[3].content[2]['sid']|propertyOffset=1": [
@@ -403,12 +193,6 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|1|$.content[3].content[2]['who']|propertyOffset=7|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|B|1|$.content[3].content[2]|closingMarkerOffset=1|$.content[3].content[2]|closingMarkerOffset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|B|1|$.content[3].content[2]|closingMarkerOffset=2|$.content[3].content[3]|offset=0": [
           "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible|B|1|$.content[3].content[2]|keyName=sid,keyOffset=0|$.content[3].content[2]|keyName=sid,keyOffset=1": [
@@ -448,255 +232,26 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|1|$.content[3].content[4]['eid']|propertyOffset=2|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible|B|1|$.content[3].content[4]['marker']|propertyOffset=0|$.content[3].content[4]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible|B|1|$.content[3].content[4]['marker']|propertyOffset=1|$.content[3].content[4]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible|B|1|$.content[3].content[4]['marker']|propertyOffset=2|$.content[3].content[4]['marker']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible|B|1|$.content[3].content[4]['marker']|propertyOffset=3|$.content[3].content[4]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|1|$.content[3].content[4]['marker']|propertyOffset=5|$.content[3].content[4]['eid']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[3].content[4]|closingMarkerOffset=1|$.content[3].content[4]|closingMarkerOffset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|B|1|$.content[3].content[4]|closingMarkerOffset=2|$.content[3].content[5]|offset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[3].content[6].content[0]['marker']|propertyOffset=0|$.content[3].content[6].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[3].content[6].content[0]|closingMarkerOffset=1|$.content[3].content[6].content[0]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[3].content[6].content[0]|closingMarkerOffset=2|$.content[3].content[6].content[0]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[3].content[6].content[1]['marker']|propertyOffset=0|$.content[3].content[6].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[3].content[6].content[1]|closingMarkerOffset=1|$.content[3].content[6].content[1]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[3].content[6].content[1]|closingMarkerOffset=2|$.content[3].content[6].content[1]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[3].content[6]['caller']|propertyOffset=1|$.content[3].content[6]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[3].content[6]|closingMarkerOffset=1|$.content[3].content[6]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[3]['marker']|propertyOffset=0|$.content[3]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[6].content[0].content[0]['marker']|propertyOffset=0|$.content[6].content[0].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[6].content[0].content[0]['marker']|propertyOffset=1|$.content[6].content[0].content[0]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[6].content[0].content[1]['marker']|propertyOffset=0|$.content[6].content[0].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[6].content[0].content[1]['marker']|propertyOffset=1|$.content[6].content[0].content[1]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[6].content[0]['marker']|propertyOffset=0|$.content[6].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[7].content[2].content[0]['marker']|propertyOffset=0|$.content[7].content[2].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[7].content[2].content[0]|closingMarkerOffset=1|$.content[7].content[2].content[0]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[7].content[2].content[0]|closingMarkerOffset=2|$.content[7].content[2].content[0]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[7].content[2].content[1]['marker']|propertyOffset=0|$.content[7].content[2].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[7].content[2].content[1]|closingMarkerOffset=1|$.content[7].content[2].content[1]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[7].content[2].content[1]|closingMarkerOffset=2|$.content[7].content[2].content[1]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[7].content[2]['caller']|propertyOffset=1|$.content[7].content[2]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|1|$.content[7].content[2]|closingMarkerOffset=1|$.content[7].content[2]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[1]['altnumber']|propertyOffset=1|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]['marker']|propertyOffset=1|$.content[1]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]['number']|propertyOffset=1|$.content[1]|keyName=altnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]['number']|propertyOffset=2|$.content[1]|keyName=altnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]['pubnumber']|propertyOffset=0|$.content[2]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[1]|keyName=pubnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[1]|keyName=pubnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber|$.content[1]|keyName=pubnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]|keyName=altnumber,keyOffset=1|$.content[1]['altnumber']|propertyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]|keyName=altnumber,keyOffset=2|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]|keyName=altnumber|$.content[1]|keyName=altnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]|keyName=pubnumber,keyOffset=1|$.content[1]['pubnumber']|propertyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]|keyName=pubnumber,keyOffset=2|$.content[2]": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[1]|keyName=pubnumber|$.content[1]|keyName=pubnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[2].content[0]['altnumber']|propertyOffset=2|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]['marker']|propertyOffset=1|$.content[2].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]['number']|propertyOffset=1|$.content[2].content[0]|keyName=altnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]['number']|propertyOffset=2|$.content[2].content[0]|keyName=altnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]['pubnumber']|propertyOffset=2|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber|$.content[2].content[1]|offset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber|$.content[2].content[1]|offset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyName=altnumber,keyOffset=2|$.content[2].content[0]['altnumber']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyName=altnumber|$.content[2].content[0]|keyName=altnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyName=pubnumber,keyOffset=2|$.content[2].content[0]['pubnumber']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[0]|keyName=pubnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[4]['lemma']|propertyOffset=4|$.content[2].content[4]|keyName=strong,keyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|3|$.content[2].content[4]['lemma']|propertyOffset=5|$.content[2].content[4]|keyName=strong,keyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|3|$.content[2].content[4]['lemma']|propertyOffset=6|$.content[2].content[4]|keyName=strong,keyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|3|$.content[2].content[4]['strong']|propertyOffset=1|$.content[2].content[4]|closingMarkerOffset=0": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)"
-        ],
-        "visible|B|3|$.content[2].content[4]['strong']|propertyOffset=2|$.content[2].content[4]|closingMarkerOffset=1": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)",
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[4]['strong']|propertyOffset=3|$.content[2].content[4]|closingMarkerOffset=2": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)",
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=4|$.content[2].content[4]['lemma']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=5|$.content[2].content[4]['lemma']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=6|$.content[2].content[4]['lemma']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|3|$.content[2].content[4]|keyName=strong,keyOffset=5|$.content[2].content[4]['strong']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|3|$.content[2].content[4]|keyName=strong,keyOffset=6|$.content[2].content[4]['strong']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|3|$.content[2].content[4]|keyName=strong,keyOffset=7|$.content[2].content[4]['strong']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|3|$.content[2].content[6].content[1]|closingMarkerOffset=1|$.content[2].content[6].content[1]|closingMarkerOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[6]|closingMarkerOffset=1|$.content[2].content[6]|closingMarkerOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2]['marker']|propertyOffset=0|$.content[2].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[3].content[0]['marker']|propertyOffset=1|$.content[3].content[0]['number']|propertyOffset=2": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[2]['marker']|propertyOffset=0|$.content[3].content[2]['marker']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible|B|3|$.content[3].content[2]['marker']|propertyOffset=1|$.content[3].content[2]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
@@ -705,12 +260,14 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[2]['marker']|propertyOffset=3|$.content[3].content[2]|keyName=sid,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible|B|3|$.content[3].content[2]['marker']|propertyOffset=4|$.content[3].content[2]|keyName=sid,keyOffset=1": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[2]['marker']|propertyOffset=5|$.content[3].content[2]|keyName=sid,keyOffset=2": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[2]['sid']|propertyOffset=0|$.content[3].content[2]['sid']|propertyOffset=3": [
@@ -741,18 +298,12 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[2]['who']|propertyOffset=5|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible|B|3|$.content[3].content[2]['who']|propertyOffset=6|$.content[3].content[2]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible|B|3|$.content[3].content[2]['who']|propertyOffset=7|$.content[3].content[2]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[3].content[2]|closingMarkerOffset=1|$.content[3].content[3]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|B|3|$.content[3].content[2]|closingMarkerOffset=2|$.content[3].content[3]|offset=2": [
           "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible|B|3|$.content[3].content[2]|keyName=sid,keyOffset=0|$.content[3].content[2]|keyName=sid,keyOffset=3": [
@@ -786,16 +337,16 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[4]['eid']|propertyOffset=0|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible|B|3|$.content[3].content[4]['eid']|propertyOffset=1|$.content[3].content[4]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible|B|3|$.content[3].content[4]['eid']|propertyOffset=2|$.content[3].content[4]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible|B|3|$.content[3].content[4]['marker']|propertyOffset=0|$.content[3].content[4]['marker']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible|B|3|$.content[3].content[4]['marker']|propertyOffset=1|$.content[3].content[4]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
@@ -804,101 +355,15 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[4]['marker']|propertyOffset=3|$.content[3].content[4]['eid']|propertyOffset=0": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[4]['marker']|propertyOffset=4|$.content[3].content[4]['eid']|propertyOffset=1": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[4]['marker']|propertyOffset=5|$.content[3].content[4]['eid']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[3].content[4]|closingMarkerOffset=1|$.content[3].content[5]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible|B|3|$.content[3].content[4]|closingMarkerOffset=2|$.content[3].content[5]|offset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible|B|3|$.content[3].content[6].content[0]|closingMarkerOffset=3|$.content[3].content[6].content[1]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[3].content[6].content[0]|closingMarkerOffset=4|$.content[3].content[6].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[3].content[6].content[1]|closingMarkerOffset=3|$.content[3].content[6]|closingMarkerOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[3].content[6].content[1]|closingMarkerOffset=4|$.content[3].content[6]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[3].content[6]['caller']|propertyOffset=1|$.content[3].content[6].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[3].content[6]['marker']|propertyOffset=1|$.content[3].content[6]['caller']|propertyOffset=2": [
           "R9-UNDISPLAYED-SNAP-INVERTS",
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[3]['marker']|propertyOffset=1|$.content[3].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[4].content[0]['marker']|propertyOffset=1|$.content[4].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[4]['marker']|propertyOffset=0|$.content[4].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[6].content[0]['marker']|propertyOffset=1|$.content[6].content[0].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[6].content[0]['marker']|propertyOffset=2|$.content[6].content[0].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[7].content[0]['marker']|propertyOffset=1|$.content[7].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[7].content[2].content[0]|closingMarkerOffset=3|$.content[7].content[2].content[1]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[7].content[2].content[0]|closingMarkerOffset=4|$.content[7].content[2].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[7].content[2].content[1]|closingMarkerOffset=3|$.content[7].content[2]|closingMarkerOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[7].content[2].content[1]|closingMarkerOffset=4|$.content[7].content[2]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[7].content[2]['caller']|propertyOffset=1|$.content[7].content[2].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[7].content[2]['marker']|propertyOffset=1|$.content[7].content[2]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS",
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[7].content[2]|closingMarkerOffset=2|$.content[7].content[3]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[7].content[3]['marker']|propertyOffset=1|$.content[7].content[3]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[7]['marker']|propertyOffset=0|$.content[7].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[8]['marker']|propertyOffset=1|$.content[8]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[8]['number']|propertyOffset=1|$.content[9]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[9].content[0]['marker']|propertyOffset=1|$.content[9].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[9]['marker']|propertyOffset=0|$.content[9].content[0]['marker']|propertyOffset=0": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ]
       }
@@ -918,211 +383,20 @@
         "text(sep):\"\\u00a0\"@$.content[7].content[2]|closingMarkerOffset=0"
       ],
       "failures": {
-        "visible+collapsed|A|1|$.content[3].content[2]|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|1|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[3]|offset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|1|$.content[3].content[4]|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|1|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[5]|offset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|2|$.content[3].content[1]|offset=5|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|2|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[3]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|2|$.content[3].content[3]|offset=4|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|2|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[5]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|25|$.content[2].content[6].content[0]|offset=1|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|3|$.content[3].content[1]|offset=4|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|3|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[3]|offset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|3|$.content[3].content[3]|offset=3|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|3|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[5]|offset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|50|$.content[2].content[3]|offset=4|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|6|$.content[3].content[3]|offset=0|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|collapsed|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|A|collapsed|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyName=altnumber,keyOffset=0|$.content[1]|keyName=altnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyName=altnumber,keyOffset=1|$.content[1]|keyName=altnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyName=altnumber,keyOffset=2|$.content[1]['altnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyName=altnumber|$.content[1]|keyName=altnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyName=pubnumber,keyOffset=0|$.content[1]|keyName=pubnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyName=pubnumber,keyOffset=1|$.content[1]|keyName=pubnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyName=pubnumber,keyOffset=2|$.content[1]['pubnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[1]|keyName=pubnumber|$.content[1]|keyName=pubnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]['altnumber']|propertyOffset=0|$.content[2].content[0]['altnumber']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]['pubnumber']|propertyOffset=0|$.content[2].content[0]['pubnumber']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=0|$.content[2].content[0]|keyName=altnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=1|$.content[2].content[0]|keyName=altnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=2|$.content[2].content[0]['altnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyName=altnumber|$.content[2].content[0]|keyName=altnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=0|$.content[2].content[0]|keyName=pubnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=1|$.content[2].content[0]|keyName=pubnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=2|$.content[2].content[0]['pubnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[0]|keyName=pubnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[2]['marker']|propertyOffset=0|$.content[2].content[2]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[2]|closingMarkerOffset=1|$.content[2].content[2]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[2]|closingMarkerOffset=2|$.content[2].content[2]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[4]['lemma']|propertyOffset=6|$.content[2].content[4]|keyName=strong,keyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[4]['strong']|propertyOffset=3|$.content[2].content[4]|closingMarkerOffset=0": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[4]|closingMarkerOffset=1|$.content[2].content[4]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[4]|keyName=lemma,keyOffset=6|$.content[2].content[4]['lemma']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[4]|keyName=strong,keyOffset=7|$.content[2].content[4]['strong']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[6].content[1]['marker']|propertyOffset=0|$.content[2].content[6].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[6].content[1]|closingMarkerOffset=1|$.content[2].content[6].content[1]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[6].content[1]|closingMarkerOffset=2|$.content[2].content[6].content[1]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[6].content[1]|closingMarkerOffset=3|$.content[2].content[6].content[1]|closingMarkerOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[6]['marker']|propertyOffset=0|$.content[2].content[6]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[6]['marker']|propertyOffset=1|$.content[2].content[6]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[6]|closingMarkerOffset=1|$.content[2].content[6]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[6]|closingMarkerOffset=2|$.content[2].content[6]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[6]|closingMarkerOffset=3|$.content[2].content[6]|closingMarkerOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
         "visible+collapsed|B|1|$.content[3].content[2]['marker']|propertyOffset=0|$.content[3].content[2]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible+collapsed|B|1|$.content[3].content[2]['marker']|propertyOffset=1|$.content[3].content[2]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible+collapsed|B|1|$.content[3].content[2]['marker']|propertyOffset=2|$.content[3].content[2]['marker']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible+collapsed|B|1|$.content[3].content[2]['marker']|propertyOffset=3|$.content[3].content[2]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|1|$.content[3].content[2]['marker']|propertyOffset=5|$.content[3].content[2]|keyName=sid,keyOffset=0": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|1|$.content[3].content[2]['sid']|propertyOffset=0|$.content[3].content[2]['sid']|propertyOffset=1": [
@@ -1159,12 +433,6 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|1|$.content[3].content[2]['who']|propertyOffset=7|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[2]|closingMarkerOffset=1|$.content[3].content[2]|closingMarkerOffset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[2]|closingMarkerOffset=2|$.content[3].content[3]|offset=0": [
           "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible+collapsed|B|1|$.content[3].content[2]|keyName=sid,keyOffset=0|$.content[3].content[2]|keyName=sid,keyOffset=1": [
@@ -1204,255 +472,26 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|1|$.content[3].content[4]['eid']|propertyOffset=2|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible+collapsed|B|1|$.content[3].content[4]['marker']|propertyOffset=0|$.content[3].content[4]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible+collapsed|B|1|$.content[3].content[4]['marker']|propertyOffset=1|$.content[3].content[4]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible+collapsed|B|1|$.content[3].content[4]['marker']|propertyOffset=2|$.content[3].content[4]['marker']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible+collapsed|B|1|$.content[3].content[4]['marker']|propertyOffset=3|$.content[3].content[4]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|1|$.content[3].content[4]['marker']|propertyOffset=5|$.content[3].content[4]['eid']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[4]|closingMarkerOffset=1|$.content[3].content[4]|closingMarkerOffset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[4]|closingMarkerOffset=2|$.content[3].content[5]|offset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[6].content[0]['marker']|propertyOffset=0|$.content[3].content[6].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[6].content[0]|closingMarkerOffset=1|$.content[3].content[6].content[0]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[6].content[0]|closingMarkerOffset=2|$.content[3].content[6].content[0]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[6].content[1]['marker']|propertyOffset=0|$.content[3].content[6].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[6].content[1]|closingMarkerOffset=1|$.content[3].content[6].content[1]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[6].content[1]|closingMarkerOffset=2|$.content[3].content[6].content[1]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[6]['caller']|propertyOffset=1|$.content[3].content[6]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[3].content[6]|closingMarkerOffset=1|$.content[3].content[6]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[3]['marker']|propertyOffset=0|$.content[3]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[6].content[0].content[0]['marker']|propertyOffset=0|$.content[6].content[0].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[6].content[0].content[0]['marker']|propertyOffset=1|$.content[6].content[0].content[0]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[6].content[0].content[1]['marker']|propertyOffset=0|$.content[6].content[0].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[6].content[0].content[1]['marker']|propertyOffset=1|$.content[6].content[0].content[1]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[6].content[0]['marker']|propertyOffset=0|$.content[6].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[7].content[2].content[0]['marker']|propertyOffset=0|$.content[7].content[2].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[7].content[2].content[0]|closingMarkerOffset=1|$.content[7].content[2].content[0]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[7].content[2].content[0]|closingMarkerOffset=2|$.content[7].content[2].content[0]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[7].content[2].content[1]['marker']|propertyOffset=0|$.content[7].content[2].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[7].content[2].content[1]|closingMarkerOffset=1|$.content[7].content[2].content[1]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[7].content[2].content[1]|closingMarkerOffset=2|$.content[7].content[2].content[1]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[7].content[2]['caller']|propertyOffset=1|$.content[7].content[2]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[7].content[2]|closingMarkerOffset=1|$.content[7].content[2]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[1]['altnumber']|propertyOffset=1|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]['marker']|propertyOffset=1|$.content[1]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]['number']|propertyOffset=1|$.content[1]|keyName=altnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]['number']|propertyOffset=2|$.content[1]|keyName=altnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]['pubnumber']|propertyOffset=0|$.content[2]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[1]|keyName=pubnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[1]|keyName=pubnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber|$.content[1]|keyName=pubnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]|keyName=altnumber,keyOffset=1|$.content[1]['altnumber']|propertyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]|keyName=altnumber,keyOffset=2|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]|keyName=altnumber|$.content[1]|keyName=altnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]|keyName=pubnumber,keyOffset=1|$.content[1]['pubnumber']|propertyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]|keyName=pubnumber,keyOffset=2|$.content[2]": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[1]|keyName=pubnumber|$.content[1]|keyName=pubnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]['altnumber']|propertyOffset=2|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]['marker']|propertyOffset=1|$.content[2].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]['number']|propertyOffset=1|$.content[2].content[0]|keyName=altnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]['number']|propertyOffset=2|$.content[2].content[0]|keyName=altnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]['pubnumber']|propertyOffset=2|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber|$.content[2].content[1]|offset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber|$.content[2].content[1]|offset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyName=altnumber,keyOffset=2|$.content[2].content[0]['altnumber']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyName=altnumber|$.content[2].content[0]|keyName=altnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyName=pubnumber,keyOffset=2|$.content[2].content[0]['pubnumber']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[0]|keyName=pubnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]['lemma']|propertyOffset=4|$.content[2].content[4]|keyName=strong,keyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]['lemma']|propertyOffset=5|$.content[2].content[4]|keyName=strong,keyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]['lemma']|propertyOffset=6|$.content[2].content[4]|keyName=strong,keyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]['strong']|propertyOffset=1|$.content[2].content[4]|closingMarkerOffset=0": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]['strong']|propertyOffset=2|$.content[2].content[4]|closingMarkerOffset=1": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)",
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]['strong']|propertyOffset=3|$.content[2].content[4]|closingMarkerOffset=2": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)",
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=4|$.content[2].content[4]['lemma']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=5|$.content[2].content[4]['lemma']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=6|$.content[2].content[4]['lemma']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]|keyName=strong,keyOffset=5|$.content[2].content[4]['strong']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]|keyName=strong,keyOffset=6|$.content[2].content[4]['strong']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[4]|keyName=strong,keyOffset=7|$.content[2].content[4]['strong']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[6].content[1]|closingMarkerOffset=1|$.content[2].content[6].content[1]|closingMarkerOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[6]|closingMarkerOffset=1|$.content[2].content[6]|closingMarkerOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2]['marker']|propertyOffset=0|$.content[2].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[0]['marker']|propertyOffset=1|$.content[3].content[0]['number']|propertyOffset=2": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['marker']|propertyOffset=0|$.content[3].content[2]['marker']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['marker']|propertyOffset=1|$.content[3].content[2]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
@@ -1461,12 +500,14 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['marker']|propertyOffset=3|$.content[3].content[2]|keyName=sid,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['marker']|propertyOffset=4|$.content[3].content[2]|keyName=sid,keyOffset=1": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['marker']|propertyOffset=5|$.content[3].content[2]|keyName=sid,keyOffset=2": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['sid']|propertyOffset=0|$.content[3].content[2]['sid']|propertyOffset=3": [
@@ -1497,18 +538,12 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['who']|propertyOffset=5|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['who']|propertyOffset=6|$.content[3].content[2]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['who']|propertyOffset=7|$.content[3].content[2]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[2]|closingMarkerOffset=1|$.content[3].content[3]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[2]|closingMarkerOffset=2|$.content[3].content[3]|offset=2": [
           "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]|keyName=sid,keyOffset=0|$.content[3].content[2]|keyName=sid,keyOffset=3": [
@@ -1542,16 +577,16 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[4]['eid']|propertyOffset=0|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible+collapsed|B|3|$.content[3].content[4]['eid']|propertyOffset=1|$.content[3].content[4]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible+collapsed|B|3|$.content[3].content[4]['eid']|propertyOffset=2|$.content[3].content[4]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible+collapsed|B|3|$.content[3].content[4]['marker']|propertyOffset=0|$.content[3].content[4]['marker']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
+          "R3-COLLAPSED-HOLDS(ends snap together)"
         ],
         "visible+collapsed|B|3|$.content[3].content[4]['marker']|propertyOffset=1|$.content[3].content[4]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
@@ -1560,101 +595,15 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[4]['marker']|propertyOffset=3|$.content[3].content[4]['eid']|propertyOffset=0": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[4]['marker']|propertyOffset=4|$.content[3].content[4]['eid']|propertyOffset=1": [
+          "R9-UNDISPLAYED-SNAP-INVERTS",
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[4]['marker']|propertyOffset=5|$.content[3].content[4]['eid']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[4]|closingMarkerOffset=1|$.content[3].content[5]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[4]|closingMarkerOffset=2|$.content[3].content[5]|offset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[6].content[0]|closingMarkerOffset=3|$.content[3].content[6].content[1]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[6].content[0]|closingMarkerOffset=4|$.content[3].content[6].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[6].content[1]|closingMarkerOffset=3|$.content[3].content[6]|closingMarkerOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[6].content[1]|closingMarkerOffset=4|$.content[3].content[6]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[6]['caller']|propertyOffset=1|$.content[3].content[6].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[3].content[6]['marker']|propertyOffset=1|$.content[3].content[6]['caller']|propertyOffset=2": [
           "R9-UNDISPLAYED-SNAP-INVERTS",
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[3]['marker']|propertyOffset=1|$.content[3].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[4].content[0]['marker']|propertyOffset=1|$.content[4].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[4]['marker']|propertyOffset=0|$.content[4].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[6].content[0]['marker']|propertyOffset=1|$.content[6].content[0].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[6].content[0]['marker']|propertyOffset=2|$.content[6].content[0].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[7].content[0]['marker']|propertyOffset=1|$.content[7].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[7].content[2].content[0]|closingMarkerOffset=3|$.content[7].content[2].content[1]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[7].content[2].content[0]|closingMarkerOffset=4|$.content[7].content[2].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[7].content[2].content[1]|closingMarkerOffset=3|$.content[7].content[2]|closingMarkerOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[7].content[2].content[1]|closingMarkerOffset=4|$.content[7].content[2]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[7].content[2]['caller']|propertyOffset=1|$.content[7].content[2].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[7].content[2]['marker']|propertyOffset=1|$.content[7].content[2]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS",
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[7].content[2]|closingMarkerOffset=2|$.content[7].content[3]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[7].content[3]['marker']|propertyOffset=1|$.content[7].content[3]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[7]['marker']|propertyOffset=0|$.content[7].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[8]['marker']|propertyOffset=1|$.content[8]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[8]['number']|propertyOffset=1|$.content[9]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[9].content[0]['marker']|propertyOffset=1|$.content[9].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[9]['marker']|propertyOffset=0|$.content[9].content[0]['marker']|propertyOffset=0": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ]
       }
@@ -1670,347 +619,7 @@
         "text(sep):\"\\u00a0\"@$.content[7].content[2].content[1]",
         "text(sep):\"\\u00a0\"@$.content[7].content[2]|closingMarkerOffset=0"
       ],
-      "failures": {
-        "formatted|B|1|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|1|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|1|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|1|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|1|$.content[1]|keyName=altnumber,keyOffset=0|$.content[1]|keyName=altnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|1|$.content[1]|keyName=altnumber,keyOffset=1|$.content[1]|keyName=altnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|1|$.content[1]|keyName=altnumber,keyOffset=2|$.content[1]['altnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|1|$.content[1]|keyName=altnumber|$.content[1]|keyName=altnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|1|$.content[1]|keyName=pubnumber,keyOffset=0|$.content[1]|keyName=pubnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|1|$.content[1]|keyName=pubnumber,keyOffset=1|$.content[1]|keyName=pubnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|1|$.content[1]|keyName=pubnumber,keyOffset=2|$.content[1]['pubnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|1|$.content[1]|keyName=pubnumber|$.content[1]|keyName=pubnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|1|$.content[2].content[0]['altnumber']|propertyOffset=0|$.content[2].content[0]['altnumber']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]['pubnumber']|propertyOffset=0|$.content[2].content[0]['pubnumber']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=0|$.content[2].content[0]|keyName=altnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=1|$.content[2].content[0]|keyName=altnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=2|$.content[2].content[0]['altnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyName=altnumber|$.content[2].content[0]|keyName=altnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=0|$.content[2].content[0]|keyName=pubnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=1|$.content[2].content[0]|keyName=pubnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=2|$.content[2].content[0]['pubnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|1|$.content[2].content[0]|keyName=pubnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|1|$.content[2].content[4]['lemma']|propertyOffset=6|$.content[2].content[4]|keyName=strong,keyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|1|$.content[2].content[4]['strong']|propertyOffset=3|$.content[2].content[4]|closingMarkerOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|1|$.content[2].content[4]|keyName=lemma,keyOffset=6|$.content[2].content[4]['lemma']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|1|$.content[2].content[4]|keyName=strong,keyOffset=7|$.content[2].content[4]['strong']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|1|$.content[3].content[2]['who']|propertyOffset=7|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|1|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[2]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|1|$.content[3].content[2]|closingMarkerOffset=1|$.content[3].content[2]|closingMarkerOffset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|1|$.content[3].content[4]['eid']|propertyOffset=2|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|1|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[4]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|1|$.content[3].content[4]|closingMarkerOffset=1|$.content[3].content[4]|closingMarkerOffset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|1|$.content[3].content[6]['caller']|propertyOffset=1|$.content[3].content[6]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|1|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|1|$.content[7].content[2]['caller']|propertyOffset=1|$.content[7].content[2]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|1|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[1]['altnumber']|propertyOffset=1|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]['marker']|propertyOffset=1|$.content[1]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]['number']|propertyOffset=1|$.content[1]|keyName=altnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]['number']|propertyOffset=2|$.content[1]|keyName=altnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[1]|keyName=pubnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[1]|keyName=pubnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber|$.content[1]|keyName=pubnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]|keyName=altnumber,keyOffset=1|$.content[1]['altnumber']|propertyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]|keyName=altnumber,keyOffset=2|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]|keyName=altnumber|$.content[1]|keyName=altnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]|keyName=pubnumber,keyOffset=1|$.content[1]['pubnumber']|propertyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]|keyName=pubnumber,keyOffset=2|$.content[2]": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1]|keyName=pubnumber|$.content[1]|keyName=pubnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[2].content[0]['altnumber']|propertyOffset=2|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]['marker']|propertyOffset=1|$.content[2].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]['number']|propertyOffset=1|$.content[2].content[0]|keyName=altnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]['number']|propertyOffset=2|$.content[2].content[0]|keyName=altnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]['pubnumber']|propertyOffset=2|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber|$.content[2].content[1]|offset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber|$.content[2].content[1]|offset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyName=altnumber,keyOffset=2|$.content[2].content[0]['altnumber']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyName=altnumber|$.content[2].content[0]|keyName=altnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyName=pubnumber,keyOffset=2|$.content[2].content[0]['pubnumber']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[0]|keyName=pubnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[4]['lemma']|propertyOffset=4|$.content[2].content[4]|keyName=strong,keyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2].content[4]['lemma']|propertyOffset=5|$.content[2].content[4]|keyName=strong,keyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2].content[4]['lemma']|propertyOffset=6|$.content[2].content[4]|keyName=strong,keyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2].content[4]['strong']|propertyOffset=1|$.content[2].content[4]|closingMarkerOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2].content[4]['strong']|propertyOffset=2|$.content[2].content[4]|closingMarkerOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2].content[4]['strong']|propertyOffset=3|$.content[2].content[4]|closingMarkerOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=4|$.content[2].content[4]['lemma']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=5|$.content[2].content[4]['lemma']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=6|$.content[2].content[4]['lemma']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2].content[4]|keyName=strong,keyOffset=5|$.content[2].content[4]['strong']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2].content[4]|keyName=strong,keyOffset=6|$.content[2].content[4]['strong']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2].content[4]|keyName=strong,keyOffset=7|$.content[2].content[4]['strong']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[2]['marker']|propertyOffset=0|$.content[2].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[3].content[0]['marker']|propertyOffset=1|$.content[3].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[3].content[2]['who']|propertyOffset=5|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|3|$.content[3].content[2]['who']|propertyOffset=6|$.content[3].content[2]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|3|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[3]|offset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|3|$.content[3].content[2]|closingMarkerOffset=1|$.content[3].content[3]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|3|$.content[3].content[4]['eid']|propertyOffset=0|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|3|$.content[3].content[4]['eid']|propertyOffset=1|$.content[3].content[4]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|3|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[5]|offset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|3|$.content[3].content[4]|closingMarkerOffset=1|$.content[3].content[5]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "formatted|B|3|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]['marker']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[3].content[6]['marker']|propertyOffset=1|$.content[3].content[6]['caller']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[3]['marker']|propertyOffset=1|$.content[3].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[4].content[0]['marker']|propertyOffset=1|$.content[4].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[4]['marker']|propertyOffset=0|$.content[4].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[7].content[0]['marker']|propertyOffset=1|$.content[7].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]['marker']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "formatted|B|3|$.content[7].content[2]['marker']|propertyOffset=1|$.content[7].content[2]['caller']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[7].content[2]|closingMarkerOffset=2|$.content[7].content[3]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[7].content[3]['marker']|propertyOffset=1|$.content[7].content[3]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[7]['marker']|propertyOffset=0|$.content[7].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[8]['marker']|propertyOffset=1|$.content[8]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[9].content[0]['marker']|propertyOffset=1|$.content[9].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[9]['marker']|propertyOffset=0|$.content[9].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ]
-      }
+      "failures": {}
     },
     "paragraph-structure": {
       "ops": 1514,
@@ -2023,377 +632,7 @@
         "text(sep):\"\\u00a0\"@$.content[7].content[2].content[1]",
         "text(sep):\"\\u00a0\"@$.content[7].content[2]|closingMarkerOffset=0"
       ],
-      "failures": {
-        "paragraph-structure|B|1|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|1|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|1|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|1|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|1|$.content[1]|keyName=altnumber,keyOffset=0|$.content[1]|keyName=altnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|1|$.content[1]|keyName=altnumber,keyOffset=1|$.content[1]|keyName=altnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|1|$.content[1]|keyName=altnumber,keyOffset=2|$.content[1]['altnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|1|$.content[1]|keyName=altnumber|$.content[1]|keyName=altnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|1|$.content[1]|keyName=pubnumber,keyOffset=0|$.content[1]|keyName=pubnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|1|$.content[1]|keyName=pubnumber,keyOffset=1|$.content[1]|keyName=pubnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|1|$.content[1]|keyName=pubnumber,keyOffset=2|$.content[1]['pubnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|1|$.content[1]|keyName=pubnumber|$.content[1]|keyName=pubnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]['altnumber']|propertyOffset=0|$.content[2].content[0]['altnumber']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]['pubnumber']|propertyOffset=0|$.content[2].content[0]['pubnumber']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=0|$.content[2].content[0]|keyName=altnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=1|$.content[2].content[0]|keyName=altnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=2|$.content[2].content[0]['altnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyName=altnumber|$.content[2].content[0]|keyName=altnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=0|$.content[2].content[0]|keyName=pubnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=1|$.content[2].content[0]|keyName=pubnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=2|$.content[2].content[0]['pubnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[0]|keyName=pubnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[4]['lemma']|propertyOffset=6|$.content[2].content[4]|keyName=strong,keyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[4]['strong']|propertyOffset=3|$.content[2].content[4]|closingMarkerOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[4]|keyName=lemma,keyOffset=6|$.content[2].content[4]['lemma']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|1|$.content[2].content[4]|keyName=strong,keyOffset=7|$.content[2].content[4]['strong']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|1|$.content[3].content[2]['who']|propertyOffset=7|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|1|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[2]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|1|$.content[3].content[2]|closingMarkerOffset=1|$.content[3].content[2]|closingMarkerOffset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|1|$.content[3].content[4]['eid']|propertyOffset=2|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|1|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[4]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|1|$.content[3].content[4]|closingMarkerOffset=1|$.content[3].content[4]|closingMarkerOffset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|1|$.content[3].content[6]['caller']|propertyOffset=1|$.content[3].content[6]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|1|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|1|$.content[3]['marker']|propertyOffset=0|$.content[3]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[6].content[0].content[0]['marker']|propertyOffset=0|$.content[6].content[0].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[6].content[0].content[0]['marker']|propertyOffset=1|$.content[6].content[0].content[0]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[6].content[0].content[1]['marker']|propertyOffset=0|$.content[6].content[0].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[6].content[0].content[1]['marker']|propertyOffset=1|$.content[6].content[0].content[1]['marker']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[6].content[0]['marker']|propertyOffset=0|$.content[6].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[7].content[2]['caller']|propertyOffset=1|$.content[7].content[2]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|1|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[1]['altnumber']|propertyOffset=1|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]['marker']|propertyOffset=1|$.content[1]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]['number']|propertyOffset=1|$.content[1]|keyName=altnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]['number']|propertyOffset=2|$.content[1]|keyName=altnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]['pubnumber']|propertyOffset=0|$.content[2]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[1]|keyName=pubnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[1]|keyName=pubnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber|$.content[1]|keyName=pubnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]|keyName=altnumber,keyOffset=1|$.content[1]['altnumber']|propertyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]|keyName=altnumber,keyOffset=2|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]|keyName=altnumber|$.content[1]|keyName=altnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]|keyName=pubnumber,keyOffset=1|$.content[1]['pubnumber']|propertyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]|keyName=pubnumber,keyOffset=2|$.content[2]": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[1]|keyName=pubnumber|$.content[1]|keyName=pubnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]['altnumber']|propertyOffset=2|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]['marker']|propertyOffset=1|$.content[2].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]['number']|propertyOffset=1|$.content[2].content[0]|keyName=altnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]['number']|propertyOffset=2|$.content[2].content[0]|keyName=altnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]['pubnumber']|propertyOffset=2|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber|$.content[2].content[1]|offset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber|$.content[2].content[1]|offset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyName=altnumber,keyOffset=2|$.content[2].content[0]['altnumber']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyName=altnumber|$.content[2].content[0]|keyName=altnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyName=pubnumber,keyOffset=2|$.content[2].content[0]['pubnumber']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[0]|keyName=pubnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]['lemma']|propertyOffset=4|$.content[2].content[4]|keyName=strong,keyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]['lemma']|propertyOffset=5|$.content[2].content[4]|keyName=strong,keyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]['lemma']|propertyOffset=6|$.content[2].content[4]|keyName=strong,keyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]['strong']|propertyOffset=1|$.content[2].content[4]|closingMarkerOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]['strong']|propertyOffset=2|$.content[2].content[4]|closingMarkerOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]['strong']|propertyOffset=3|$.content[2].content[4]|closingMarkerOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=4|$.content[2].content[4]['lemma']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=5|$.content[2].content[4]['lemma']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=6|$.content[2].content[4]['lemma']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]|keyName=strong,keyOffset=5|$.content[2].content[4]['strong']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]|keyName=strong,keyOffset=6|$.content[2].content[4]['strong']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[4]|keyName=strong,keyOffset=7|$.content[2].content[4]['strong']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[2]['marker']|propertyOffset=0|$.content[2].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[3].content[0]['marker']|propertyOffset=1|$.content[3].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[3].content[2]['who']|propertyOffset=5|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|3|$.content[3].content[2]['who']|propertyOffset=6|$.content[3].content[2]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|3|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[3]|offset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|3|$.content[3].content[2]|closingMarkerOffset=1|$.content[3].content[3]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|3|$.content[3].content[4]['eid']|propertyOffset=0|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|3|$.content[3].content[4]['eid']|propertyOffset=1|$.content[3].content[4]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|3|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[5]|offset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|3|$.content[3].content[4]|closingMarkerOffset=1|$.content[3].content[5]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "paragraph-structure|B|3|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]['marker']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[3].content[6]['marker']|propertyOffset=1|$.content[3].content[6]['caller']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[3]['marker']|propertyOffset=1|$.content[3].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[4].content[0]['marker']|propertyOffset=1|$.content[4].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[4]['marker']|propertyOffset=0|$.content[4].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[6].content[0]['marker']|propertyOffset=1|$.content[6].content[0].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[6].content[0]['marker']|propertyOffset=2|$.content[6].content[0].content[0]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[7].content[0]['marker']|propertyOffset=1|$.content[7].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]['marker']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[7].content[2]['marker']|propertyOffset=1|$.content[7].content[2]['caller']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[7].content[2]|closingMarkerOffset=2|$.content[7].content[3]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[7].content[3]['marker']|propertyOffset=1|$.content[7].content[3]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[7]['marker']|propertyOffset=0|$.content[7].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[8]['marker']|propertyOffset=1|$.content[8]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[8]['number']|propertyOffset=1|$.content[9]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[9].content[0]['marker']|propertyOffset=1|$.content[9].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[9]['marker']|propertyOffset=0|$.content[9].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ]
-      }
+      "failures": {}
     },
     "hidden+expanded": {
       "ops": 1514,
@@ -2406,347 +645,7 @@
         "text(sep):\"\\u00a0\"@$.content[7].content[2].content[1]",
         "text(sep):\"\\u00a0\"@$.content[7].content[2]|closingMarkerOffset=0"
       ],
-      "failures": {
-        "hidden+expanded|B|1|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|1|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|1|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|1|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|1|$.content[1]|keyName=altnumber,keyOffset=0|$.content[1]|keyName=altnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|1|$.content[1]|keyName=altnumber,keyOffset=1|$.content[1]|keyName=altnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|1|$.content[1]|keyName=altnumber,keyOffset=2|$.content[1]['altnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|1|$.content[1]|keyName=altnumber|$.content[1]|keyName=altnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|1|$.content[1]|keyName=pubnumber,keyOffset=0|$.content[1]|keyName=pubnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|1|$.content[1]|keyName=pubnumber,keyOffset=1|$.content[1]|keyName=pubnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|1|$.content[1]|keyName=pubnumber,keyOffset=2|$.content[1]['pubnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|1|$.content[1]|keyName=pubnumber|$.content[1]|keyName=pubnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]['altnumber']|propertyOffset=0|$.content[2].content[0]['altnumber']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]['pubnumber']|propertyOffset=0|$.content[2].content[0]['pubnumber']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=0|$.content[2].content[0]|keyName=altnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=1|$.content[2].content[0]|keyName=altnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyName=altnumber,keyOffset=2|$.content[2].content[0]['altnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyName=altnumber|$.content[2].content[0]|keyName=altnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=0|$.content[2].content[0]|keyName=pubnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=1|$.content[2].content[0]|keyName=pubnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyName=pubnumber,keyOffset=2|$.content[2].content[0]['pubnumber']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[0]|keyName=pubnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[4]['lemma']|propertyOffset=6|$.content[2].content[4]|keyName=strong,keyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[4]['strong']|propertyOffset=3|$.content[2].content[4]|closingMarkerOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[4]|keyName=lemma,keyOffset=6|$.content[2].content[4]['lemma']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|1|$.content[2].content[4]|keyName=strong,keyOffset=7|$.content[2].content[4]['strong']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|1|$.content[3].content[2]['who']|propertyOffset=7|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|1|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[2]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|1|$.content[3].content[2]|closingMarkerOffset=1|$.content[3].content[2]|closingMarkerOffset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|1|$.content[3].content[4]['eid']|propertyOffset=2|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|1|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[4]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|1|$.content[3].content[4]|closingMarkerOffset=1|$.content[3].content[4]|closingMarkerOffset=2": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|1|$.content[3].content[6]['caller']|propertyOffset=1|$.content[3].content[6]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|1|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|1|$.content[7].content[2]['caller']|propertyOffset=1|$.content[7].content[2]['caller']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|1|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[1]['altnumber']|propertyOffset=1|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]['marker']|propertyOffset=1|$.content[1]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]['number']|propertyOffset=1|$.content[1]|keyName=altnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]['number']|propertyOffset=2|$.content[1]|keyName=altnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[1]|keyName=pubnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[1]|keyName=pubnumber,keyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]|keyClosingMarkerOffset=4,keyName=altnumber|$.content[1]|keyName=pubnumber,keyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]|keyName=altnumber,keyOffset=1|$.content[1]['altnumber']|propertyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]|keyName=altnumber,keyOffset=2|$.content[1]|keyClosingMarkerOffset=0,keyName=altnumber": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]|keyName=altnumber|$.content[1]|keyName=altnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]|keyName=pubnumber,keyOffset=1|$.content[1]['pubnumber']|propertyOffset=1": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]|keyName=pubnumber,keyOffset=2|$.content[2]": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1]|keyName=pubnumber|$.content[1]|keyName=pubnumber,keyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]['altnumber']|propertyOffset=2|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]['marker']|propertyOffset=1|$.content[2].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]['number']|propertyOffset=1|$.content[2].content[0]|keyName=altnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]['number']|propertyOffset=2|$.content[2].content[0]|keyName=altnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]['pubnumber']|propertyOffset=2|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyClosingMarkerOffset=0,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=altnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyClosingMarkerOffset=1,keyName=pubnumber|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber|$.content[2].content[1]|offset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyClosingMarkerOffset=3,keyName=pubnumber|$.content[2].content[1]|offset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyClosingMarkerOffset=4,keyName=altnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyName=altnumber,keyOffset=2|$.content[2].content[0]['altnumber']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyName=altnumber|$.content[2].content[0]|keyName=altnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyName=pubnumber,keyOffset=2|$.content[2].content[0]['pubnumber']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[0]|keyName=pubnumber|$.content[2].content[0]|keyName=pubnumber,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]['lemma']|propertyOffset=4|$.content[2].content[4]|keyName=strong,keyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]['lemma']|propertyOffset=5|$.content[2].content[4]|keyName=strong,keyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]['lemma']|propertyOffset=6|$.content[2].content[4]|keyName=strong,keyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]['strong']|propertyOffset=1|$.content[2].content[4]|closingMarkerOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]['strong']|propertyOffset=2|$.content[2].content[4]|closingMarkerOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]['strong']|propertyOffset=3|$.content[2].content[4]|closingMarkerOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=4|$.content[2].content[4]['lemma']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=5|$.content[2].content[4]['lemma']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]|keyName=lemma,keyOffset=6|$.content[2].content[4]['lemma']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]|keyName=strong,keyOffset=5|$.content[2].content[4]['strong']|propertyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]|keyName=strong,keyOffset=6|$.content[2].content[4]['strong']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[4]|keyName=strong,keyOffset=7|$.content[2].content[4]['strong']|propertyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[2]['marker']|propertyOffset=0|$.content[2].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[3].content[0]['marker']|propertyOffset=1|$.content[3].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[3].content[2]['who']|propertyOffset=5|$.content[3].content[2]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|3|$.content[3].content[2]['who']|propertyOffset=6|$.content[3].content[2]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|3|$.content[3].content[2]|closingMarkerOffset=0|$.content[3].content[3]|offset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|3|$.content[3].content[2]|closingMarkerOffset=1|$.content[3].content[3]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|3|$.content[3].content[4]['eid']|propertyOffset=0|$.content[3].content[4]|closingMarkerOffset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|3|$.content[3].content[4]['eid']|propertyOffset=1|$.content[3].content[4]|closingMarkerOffset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|3|$.content[3].content[4]|closingMarkerOffset=0|$.content[3].content[5]|offset=0": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|3|$.content[3].content[4]|closingMarkerOffset=1|$.content[3].content[5]|offset=1": [
-          "R8-INBOUND-UNRESOLVED"
-        ],
-        "hidden+expanded|B|3|$.content[3].content[6]['caller']|propertyOffset=2|$.content[3].content[6].content[0]['marker']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[3].content[6]['marker']|propertyOffset=1|$.content[3].content[6]['caller']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[3]['marker']|propertyOffset=1|$.content[3].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[4].content[0]['marker']|propertyOffset=1|$.content[4].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[4]['marker']|propertyOffset=0|$.content[4].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[7].content[0]['marker']|propertyOffset=1|$.content[7].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[7].content[2]['caller']|propertyOffset=2|$.content[7].content[2].content[0]['marker']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "hidden+expanded|B|3|$.content[7].content[2]['marker']|propertyOffset=1|$.content[7].content[2]['caller']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[7].content[2]|closingMarkerOffset=2|$.content[7].content[3]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[7].content[3]['marker']|propertyOffset=1|$.content[7].content[3]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[7]['marker']|propertyOffset=0|$.content[7].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[8]['marker']|propertyOffset=1|$.content[8]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[9].content[0]['marker']|propertyOffset=1|$.content[9].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[9]['marker']|propertyOffset=0|$.content[9].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ]
-      }
+      "failures": {}
     }
   },
   "edges": {
@@ -2796,177 +695,31 @@
       "ops": 202,
       "anomalies": [],
       "exempt": [],
-      "failures": {
-        "visible|B|1|$.content[1].content[1]['marker']|propertyOffset=0|$.content[1].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[1].content[1]|closingMarkerOffset=1|$.content[1].content[1]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[1].content[1]|closingMarkerOffset=2|$.content[1].content[1]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[1]['marker']|propertyOffset=0|$.content[2].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[1]|closingMarkerOffset=1|$.content[2].content[1]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|1|$.content[2].content[1]|closingMarkerOffset=2|$.content[2].content[1]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[0]['marker']|propertyOffset=1|$.content[0]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[0]['number']|propertyOffset=1|$.content[1]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[1].content[0]['marker']|propertyOffset=1|$.content[1].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[1].content[0]['number']|propertyOffset=1|$.content[1].content[1]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[1].content[0]['number']|propertyOffset=2|$.content[1].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[1].content[1]|closingMarkerOffset=3|$.content[2]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[1]['marker']|propertyOffset=0|$.content[1].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible|B|3|$.content[2].content[1]|closingMarkerOffset=3|$.content[3]['marker']|propertyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible|B|3|$.content[3]['marker']|propertyOffset=1|$.content[3]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ]
-      }
+      "failures": {}
     },
     "visible+collapsed": {
       "ops": 202,
       "anomalies": [],
       "exempt": [],
-      "failures": {
-        "visible+collapsed|B|1|$.content[1].content[1]['marker']|propertyOffset=0|$.content[1].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[1].content[1]|closingMarkerOffset=1|$.content[1].content[1]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[1].content[1]|closingMarkerOffset=2|$.content[1].content[1]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[1]['marker']|propertyOffset=0|$.content[2].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[1]|closingMarkerOffset=1|$.content[2].content[1]|closingMarkerOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[2].content[1]|closingMarkerOffset=2|$.content[2].content[1]|closingMarkerOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[0]['marker']|propertyOffset=1|$.content[0]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[0]['number']|propertyOffset=1|$.content[1]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[1].content[0]['marker']|propertyOffset=1|$.content[1].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[1].content[0]['number']|propertyOffset=1|$.content[1].content[1]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[1].content[0]['number']|propertyOffset=2|$.content[1].content[1]['marker']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[1].content[1]|closingMarkerOffset=3|$.content[2]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[1]['marker']|propertyOffset=0|$.content[1].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[2].content[1]|closingMarkerOffset=3|$.content[3]['marker']|propertyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "visible+collapsed|B|3|$.content[3]['marker']|propertyOffset=1|$.content[3]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ]
-      }
+      "failures": {}
     },
     "formatted": {
       "ops": 193,
       "anomalies": [],
       "exempt": [],
-      "failures": {
-        "formatted|B|3|$.content[0]['marker']|propertyOffset=1|$.content[0]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[1].content[0]['marker']|propertyOffset=1|$.content[1].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[1]['marker']|propertyOffset=0|$.content[1].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "formatted|B|3|$.content[2].content[1]|closingMarkerOffset=3|$.content[3]['marker']|propertyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "formatted|B|3|$.content[3]['marker']|propertyOffset=1|$.content[3]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ]
-      }
+      "failures": {}
     },
     "paragraph-structure": {
       "ops": 193,
       "anomalies": [],
       "exempt": [],
-      "failures": {
-        "paragraph-structure|B|3|$.content[0]['marker']|propertyOffset=1|$.content[0]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[0]['number']|propertyOffset=1|$.content[1]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[1].content[0]['marker']|propertyOffset=1|$.content[1].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[1].content[1]|closingMarkerOffset=3|$.content[2]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[1]['marker']|propertyOffset=0|$.content[1].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[2].content[1]|closingMarkerOffset=3|$.content[3]['marker']|propertyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "paragraph-structure|B|3|$.content[3]['marker']|propertyOffset=1|$.content[3]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ]
-      }
+      "failures": {}
     },
     "hidden+expanded": {
       "ops": 193,
       "anomalies": [],
       "exempt": [],
-      "failures": {
-        "hidden+expanded|B|3|$.content[0]['marker']|propertyOffset=1|$.content[0]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[1].content[0]['marker']|propertyOffset=1|$.content[1].content[0]['number']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[1]['marker']|propertyOffset=0|$.content[1].content[0]['marker']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "hidden+expanded|B|3|$.content[2].content[1]|closingMarkerOffset=3|$.content[3]['marker']|propertyOffset=0": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ],
-        "hidden+expanded|B|3|$.content[3]['marker']|propertyOffset=1|$.content[3]['number']|propertyOffset=2": [
-          "R5-CHAPTER-NOT-CARRIER"
-        ]
-      }
+      "failures": {}
     }
   }
 }

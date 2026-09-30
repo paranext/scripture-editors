@@ -819,6 +819,105 @@ describe("$getRangeFromUsjSelection", () => {
   });
 });
 
+describe("$getNodeFromLocation for bytes the view does not display", () => {
+  it("resolves a milestone's closer to beside the milestone when no glyph displays it", () => {
+    let para: ParaNode;
+    const { editor } = createBasicTestEnvironment([ParaNode, MilestoneNode], () => {
+      para = $createParaNode();
+      $getRoot().append(
+        para.append(
+          $createTextNode("said"),
+          $createMilestoneNode("qt-e", undefined, "q1"),
+          $createTextNode(" done"),
+        ),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      const closer = { jsonPath: "$.content[0].content[1]" } as const;
+      expect($getNodeFromLocation({ ...closer, closingMarkerOffset: 0 }, undefined)).toEqual([
+        para,
+        1,
+      ]);
+      expect($getNodeFromLocation({ ...closer, closingMarkerOffset: 2 }, undefined)).toEqual([
+        para,
+        2,
+      ]);
+    });
+  });
+
+  it("resolves an undisplayed attribute value at the end of the element's content", () => {
+    let grace: TextNode;
+    const { editor } = createBasicTestEnvironment([ParaNode, CharNode], () => {
+      grace = $createTextNode("grace");
+      $getRoot().append(
+        $createParaNode().append($createTextNode("In the "), $createCharNode("w").append(grace)),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getNodeFromLocation(
+          { jsonPath: "$.content[0].content[1]['lemma']", propertyOffset: 0 },
+          undefined,
+        ),
+      ).toEqual([grace, 5]);
+    });
+  });
+
+  /** `\p In the \w grace<run>\w*` with editable markers; `run` is the attribute run's text, if any. */
+  function createWordSpan(run?: string) {
+    const nodes: { grace?: TextNode; run?: TextNode } = {};
+    const { editor } = createBasicTestEnvironment([ParaNode, CharNode, MarkerNode], () => {
+      nodes.grace = $createTextNode("grace");
+      const char = $createCharNode("w").append($createMarkerNode("w", "opening"), nodes.grace);
+      if (run !== undefined) {
+        nodes.run = $createTextNode(run);
+        $setState(nodes.run, textTypeState, "attribute");
+        char.append(nodes.run);
+      }
+      char.append($createMarkerNode("w", "closing"));
+      $getRoot().append(
+        $createParaNode().append(
+          $createMarkerNode("p", "opening"),
+          $createTextNode("In the "),
+          char,
+        ),
+      );
+    });
+    return { editor, nodes };
+  }
+
+  it.each<[string, string | undefined]>([
+    ["the closer", undefined],
+    ["the attribute run and the closer", "|grace"],
+  ])("resolves an attribute key no byte spells in front of %s", (_name, run) => {
+    const { editor, nodes } = createWordSpan(run);
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getNodeFromLocation(
+          { jsonPath: "$.content[0].content[1]", keyName: "strong", keyOffset: 0 },
+          undefined,
+        ),
+      ).toEqual([nodes.grace, 5]);
+    });
+  });
+
+  it("resolves a default attribute's unspelled key at its value's start in the run", () => {
+    const { editor, nodes } = createWordSpan("|grace");
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getNodeFromLocation(
+          { jsonPath: "$.content[0].content[1]", keyName: "lemma", keyOffset: 0 },
+          undefined,
+        ),
+      ).toEqual([nodes.run, 1]);
+    });
+  });
+});
+
 describe("$getRangeFromUsjSelection with annotations (PT-3835)", () => {
   it("resolves coalesced offsets across the annotation into the right text nodes", () => {
     const { editor, t1, t3 } = buildAnnotatedEnvironment(); // "the " |man| " who stands"
