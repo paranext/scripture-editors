@@ -115,36 +115,6 @@
         "standard|A|1|$.content[4].content[1]|offset=4|$.content[4].content[2]": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "standard|A|1|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|1|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|1|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|1|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|1|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|1|$.content[4].content[2].content[0]|offset=5|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|1|$.content[4].content[2]|closingMarkerOffset=0|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
@@ -540,38 +510,8 @@
         "standard|A|2|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "standard|A|2|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|2|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard|A|2|$.content[4].content[2]|closingMarkerOffset=0|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -1203,36 +1143,11 @@
         "standard|A|3|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "standard|A|3|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|3|$.content[4].content[2].content[0]|offset=6|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
         "standard|A|3|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard|A|3|$.content[4].content[2]|closingMarkerOffset=0|$.content[4].content[3]|offset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -1951,11 +1866,6 @@
         "standard|A|reversed2|$.content[4].content[0]['number']|propertyOffset=2|$.content[4].content[0]['number']|propertyOffset=0": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|reversed2|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|reversed2|$.content[7].content[1]|offset=0|$.content[7].content[0]['number']|propertyOffset=1": [
           "M4-SOFT-HELD"
         ],
@@ -2114,36 +2024,6 @@
         ],
         "standard+expandedNotes|A|1|$.content[4].content[1]|offset=4|$.content[4].content[2]": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard+expandedNotes|A|1|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|1|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|1|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|1|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|1|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|1|$.content[4].content[2].content[0]|offset=5|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard+expandedNotes|A|1|$.content[4].content[2]|closingMarkerOffset=0|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -2566,38 +2446,8 @@
         "standard+expandedNotes|A|2|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "standard+expandedNotes|A|2|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|2|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|2|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|2|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard+expandedNotes|A|2|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard+expandedNotes|A|2|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard+expandedNotes|A|2|$.content[4].content[2]|closingMarkerOffset=0|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -3269,36 +3119,11 @@
         "standard+expandedNotes|A|3|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "standard+expandedNotes|A|3|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|3|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|3|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|3|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard+expandedNotes|A|3|$.content[4].content[2].content[0]|offset=6|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
         "standard+expandedNotes|A|3|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard+expandedNotes|A|3|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard+expandedNotes|A|3|$.content[4].content[2]|closingMarkerOffset=0|$.content[4].content[3]|offset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -3958,11 +3783,6 @@
         "standard+expandedNotes|A|6|$.content[4].content[1]|offset=2|$.content[4].content[2].content[0]|offset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "standard+expandedNotes|A|6|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard+expandedNotes|A|6|$.content[4].content[2].content[0]|offset=4|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
@@ -4048,16 +3868,6 @@
         ],
         "standard+expandedNotes|A|reversed2|$.content[3].content[6].content[0]['marker']|propertyOffset=0|$.content[3].content[6]['caller']|propertyOffset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard+expandedNotes|A|reversed2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2]": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard+expandedNotes|A|reversed2|$.content[4].content[2].content[0]|offset=6|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard+expandedNotes|A|reversed2|$.content[4].content[4]|$.content[4].content[3]|offset=5": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -4185,36 +3995,6 @@
         ],
         "unformatted|A|1|$.content[4].content[1]|offset=4|$.content[4].content[2]": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "unformatted|A|1|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|1|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|1|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|1|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|1|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|1|$.content[4].content[2].content[0]|offset=5|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "unformatted|A|1|$.content[4].content[2]|closingMarkerOffset=0|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -4635,38 +4415,8 @@
         "unformatted|A|2|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "unformatted|A|2|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|2|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|2|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|2|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "unformatted|A|2|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "unformatted|A|2|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "unformatted|A|2|$.content[4].content[2]|closingMarkerOffset=0|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -5332,36 +5082,11 @@
         "unformatted|A|3|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "unformatted|A|3|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|3|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|3|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|3|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "unformatted|A|3|$.content[4].content[2].content[0]|offset=6|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
         "unformatted|A|3|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "unformatted|A|3|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "unformatted|A|3|$.content[4].content[2]|closingMarkerOffset=0|$.content[4].content[3]|offset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -6015,11 +5740,6 @@
         "unformatted|A|6|$.content[4].content[1]|offset=2|$.content[4].content[2].content[0]|offset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "unformatted|A|6|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "unformatted|A|6|$.content[4].content[2].content[0]|offset=4|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
@@ -6105,16 +5825,6 @@
         ],
         "unformatted|A|reversed2|$.content[3].content[6].content[0]['marker']|propertyOffset=0|$.content[3].content[6]['caller']|propertyOffset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "unformatted|A|reversed2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2]": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|reversed2|$.content[4].content[2].content[0]|offset=6|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "unformatted|A|reversed2|$.content[4].content[4]|$.content[4].content[3]|offset=5": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -6203,36 +5913,6 @@
         ],
         "visible|A|1|$.content[4].content[1]|offset=4|$.content[4].content[2]": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "visible|A|1|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|1|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|1|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|1|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|1|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|1|$.content[4].content[2].content[0]|offset=5|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "visible|A|1|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -6469,38 +6149,8 @@
         "visible|A|2|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "visible|A|2|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|2|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|2|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|2|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "visible|A|2|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "visible|A|2|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "visible|A|2|$.content[7].content[1]|offset=3|$.content[7].content[2]": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -6860,33 +6510,8 @@
         "visible|A|3|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "visible|A|3|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|3|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|3|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|3|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "visible|A|3|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "visible|A|3|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "visible|A|3|$.content[7].content[1]|offset=2|$.content[7].content[2]": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -7302,16 +6927,6 @@
         ],
         "visible|A|reversed2|$.content[3].content[6].content[1]|$.content[3].content[6].content[0].content[0]|offset=4": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "visible|A|reversed2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2]": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible|A|reversed2|$.content[4].content[2].content[0]|offset=6|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "visible|A|reversed2|$.content[7].content[2].content[0].content[0]|offset=0|$.content[7].content[2]['caller']|propertyOffset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -8327,36 +7942,6 @@
         "visible+collapsed|A|1|$.content[4].content[1]|offset=4|$.content[4].content[2]": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "visible+collapsed|A|1|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|1|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|1|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|1|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|1|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|1|$.content[4].content[2].content[0]|offset=5|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "visible+collapsed|A|1|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
@@ -8591,38 +8176,8 @@
         "visible+collapsed|A|2|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "visible+collapsed|A|2|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|2|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|2|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|2|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "visible+collapsed|A|2|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "visible+collapsed|A|2|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "visible+collapsed|A|2|$.content[4].content[3]|offset=5|$.content[4].content[4]": [
           "R2-ELEM-OFFSET-AS-TEXT(end)"
@@ -8993,33 +8548,8 @@
         "visible+collapsed|A|3|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "visible+collapsed|A|3|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|3|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|3|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|3|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "visible+collapsed|A|3|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "visible+collapsed|A|3|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "visible+collapsed|A|3|$.content[4].content[3]|offset=4|$.content[4].content[4]": [
           "R2-ELEM-OFFSET-AS-TEXT(end)"
@@ -9450,16 +8980,6 @@
         ],
         "visible+collapsed|A|reversed2|$.content[3].content[6].content[1]|$.content[3].content[6].content[0].content[0]|offset=4": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "visible+collapsed|A|reversed2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2]": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|reversed2|$.content[4].content[2].content[0]|offset=6|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "visible+collapsed|A|reversed2|$.content[7].content[2].content[0].content[0]|offset=0|$.content[7].content[2]['caller']|propertyOffset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -10459,36 +9979,6 @@
         "formatted|A|1|$.content[4].content[1]|offset=4|$.content[4].content[2]": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "formatted|A|1|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|1|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|1|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|1|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|1|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|1|$.content[4].content[2].content[0]|offset=5|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "formatted|A|1|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
@@ -10662,38 +10152,8 @@
         "formatted|A|2|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "formatted|A|2|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|2|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|2|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|2|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "formatted|A|2|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "formatted|A|2|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "formatted|A|2|$.content[4].content[3]|offset=5|$.content[4].content[4]": [
           "R2-ELEM-OFFSET-AS-TEXT(end)"
@@ -10957,33 +10417,8 @@
         "formatted|A|3|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "formatted|A|3|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|3|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|3|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "formatted|A|3|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "formatted|A|3|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "formatted|A|3|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "formatted|A|3|$.content[4].content[3]|offset=4|$.content[4].content[4]": [
           "R2-ELEM-OFFSET-AS-TEXT(end)"
@@ -11280,11 +10715,6 @@
         ],
         "formatted|A|reversed2|$.content[3].content[7]|offset=0|$.content[3].content[6].content[1].content[0]|offset=9": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "formatted|A|reversed2|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "formatted|A|reversed2|$.content[4].content[2]|$.content[4].content[1]|offset=3": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -11925,36 +11355,6 @@
         "paragraph-structure|A|1|$.content[4].content[1]|offset=4|$.content[4].content[2]": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "paragraph-structure|A|1|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|1|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|1|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|1|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|1|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|1|$.content[4].content[2].content[0]|offset=5|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "paragraph-structure|A|1|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
@@ -12121,38 +11521,8 @@
         "paragraph-structure|A|2|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "paragraph-structure|A|2|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|2|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|2|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|2|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "paragraph-structure|A|2|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "paragraph-structure|A|2|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "paragraph-structure|A|2|$.content[4].content[3]|offset=5|$.content[4].content[4]": [
           "R2-ELEM-OFFSET-AS-TEXT(end)"
@@ -12410,33 +11780,8 @@
         "paragraph-structure|A|3|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "paragraph-structure|A|3|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|3|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|3|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|3|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "paragraph-structure|A|3|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "paragraph-structure|A|3|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "paragraph-structure|A|3|$.content[4].content[3]|offset=4|$.content[4].content[4]": [
           "R2-ELEM-OFFSET-AS-TEXT(end)"
@@ -12750,11 +12095,6 @@
         ],
         "paragraph-structure|A|reversed2|$.content[3].content[7]|offset=0|$.content[3].content[6].content[1].content[0]|offset=9": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "paragraph-structure|A|reversed2|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "paragraph-structure|A|reversed2|$.content[4].content[2]|$.content[4].content[1]|offset=3": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
@@ -13412,36 +12752,6 @@
         "hidden+expanded|A|1|$.content[4].content[1]|offset=4|$.content[4].content[2]": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "hidden+expanded|A|1|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|1|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|1|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|1|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|1|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|1|$.content[4].content[2].content[0]|offset=5|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "hidden+expanded|A|1|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
@@ -13620,38 +12930,8 @@
         "hidden+expanded|A|2|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=0": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "hidden+expanded|A|2|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|2|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|2|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|2|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|2|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "hidden+expanded|A|2|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "hidden+expanded|A|2|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=1": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "hidden+expanded|A|2|$.content[4].content[3]|offset=5|$.content[4].content[4]": [
           "R2-ELEM-OFFSET-AS-TEXT(end)"
@@ -13921,33 +13201,8 @@
         "hidden+expanded|A|3|$.content[4].content[1]|offset=4|$.content[4].content[2].content[0]|offset=1": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "hidden+expanded|A|3|$.content[4].content[2].content[0]|offset=0|$.content[4].content[2].content[0]|offset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|3|$.content[4].content[2].content[0]|offset=1|$.content[4].content[2].content[0]|offset=4": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|3|$.content[4].content[2].content[0]|offset=2|$.content[4].content[2].content[0]|offset=5": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "hidden+expanded|A|3|$.content[4].content[2].content[0]|offset=3|$.content[4].content[2].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "hidden+expanded|A|3|$.content[4].content[2].content[0]|offset=7|$.content[4].content[3]|offset=2": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "hidden+expanded|A|3|$.content[4].content[2]|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "hidden+expanded|A|3|$.content[4].content[3]|offset=4|$.content[4].content[4]": [
           "R2-ELEM-OFFSET-AS-TEXT(end)"
@@ -14248,11 +13503,6 @@
         ],
         "hidden+expanded|A|reversed2|$.content[3].content[7]|offset=0|$.content[3].content[6].content[1].content[0]|offset=9": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "hidden+expanded|A|reversed2|$.content[4].content[2].content[0]|offset=4|$.content[4].content[2].content[0]|offset=2": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "hidden+expanded|A|reversed2|$.content[4].content[2]|$.content[4].content[1]|offset=3": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"

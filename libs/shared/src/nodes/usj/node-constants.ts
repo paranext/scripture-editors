@@ -71,6 +71,11 @@ export const APP_PLACED_CARET_COMMAND: LexicalCommand<void> = createCommand(
   "APP_PLACED_CARET_COMMAND",
 );
 export const ANNOTATION_CHANGE_TAG = "annotation-change";
+/**
+ * The tag every update that wraps a selection in a `TypedMarkNode` carries. The wrap splits
+ * text nodes, and the pieces it creates are the same content in new nodes — never typed text.
+ */
+export const TYPED_MARK_WRAP_TAG = "typed-mark-wrap";
 export const DELTA_CHANGE_TAG = "delta-change";
 /**
  * Marks a commit that carries Lexical's `HISTORY_MERGE_TAG` yet still CHANGES the document — a

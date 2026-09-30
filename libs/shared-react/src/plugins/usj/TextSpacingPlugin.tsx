@@ -10,6 +10,7 @@ import { mergeRegister } from "@lexical/utils";
 import {
   $createTextNode,
   $getState,
+  $hasUpdateTag,
   $isTextNode,
   LexicalEditor,
   LexicalNode,
@@ -28,6 +29,7 @@ import {
   NBSP,
   NoteNode,
   textTypeState,
+  TYPED_MARK_WRAP_TAG,
   VerseNode,
 } from "shared";
 
@@ -178,13 +180,18 @@ function $textNodeTrailingSpaceTransform(node: TextNode): void {
 
 /**
  * Moves a TextNode out of an UnknownNode when it was planted there by an edit, so a read-only
- * opaque block never gains prose of its own.
+ * opaque block never gains prose of its own. Text a mark wrap splits off stays where it is.
  * @param node - The TextNode to check.
  * @param editor - The LexicalEditor instance.
  */
 function $textNodeInUnknownTransform(node: TextNode, editor: LexicalEditor): void {
   const unknownNode = node.getParent();
   if (!$isUnknownNode(unknownNode) || !node.isAttached()) return;
+
+  // A mark wrap splits caption text into pieces that are new nodes but no new text. The tag
+  // covers the whole update, so text typed in that same update would stay too; no update both
+  // wraps and takes typing.
+  if ($hasUpdateTag(TYPED_MARK_WRAP_TAG)) return;
 
   // Only text planted inside a PRE-EXISTING opaque block is an intrusion (e.g. typing into a
   // figure). A wrapper that appeared in this SAME update brought its own content with it — a

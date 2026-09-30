@@ -46,6 +46,7 @@ import {
   openingMarkerText,
   ParaNode,
   textTypeState,
+  TYPED_MARK_WRAP_TAG,
   UnknownNode,
   VerseNode,
 } from "shared";
@@ -490,6 +491,59 @@ describe("TextSpacingPlugin", () => {
       if (!$isUnknownNode(unknown)) throw new Error("Expected an UnknownNode");
       expect(unknown.getTextContent()).toBe("a caption");
     });
+  });
+
+  it("keeps a mark wrap's split-off sibling inside a pre-existing UnknownNode; the same split without the tag is still moved out", async () => {
+    /** Splits the pre-existing figure's `"caption"` text after its first letter and wraps the
+     * first piece in a mark, the shape `$wrapSelectionInTypedMarkNode` itself leaves behind: a
+     * plain `TextNode` ("aption") that is a new sibling inside the `UnknownNode`, never typed
+     * text. Runs in an update carrying `tag` (or no tag) and returns what the figure and its
+     * parent look like afterwards. */
+    async function splitAndMarkFirstPiece(tag?: string): Promise<{
+      figureText: string;
+      paraChildCount: number;
+    }> {
+      let unknownNode: UnknownNode;
+      const { editor } = await testEnvironment(() => {
+        unknownNode = $createUnknownNode("figure", "fig").append($createTextNode("caption"));
+        $getRoot().append($createParaNode().append(unknownNode, $createImmutableVerseNode("1")));
+      });
+
+      await act(async () => {
+        editor.update(
+          () => {
+            const para = $getRoot().getFirstChild();
+            if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+            const unknown = para.getFirstChild();
+            if (!$isUnknownNode(unknown)) throw new Error("Expected an UnknownNode");
+            const original = unknown.getFirstChild();
+            if (!$isTextNode(original)) throw new Error("Expected a TextNode");
+            const [head] = original.splitText(1); // "c" (this node) / "aption" (new sibling).
+            const mark = $createTypedMarkNode();
+            mark.addID("test", "m1");
+            head.insertBefore(mark);
+            mark.append(head); // "aption" stays a plain sibling in the UnknownNode.
+          },
+          tag ? { tag } : undefined,
+        );
+      });
+
+      return editor.getEditorState().read(() => {
+        const para = $getRoot().getFirstChild();
+        if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+        const unknown = para.getFirstChild();
+        if (!$isUnknownNode(unknown)) throw new Error("Expected an UnknownNode");
+        return { figureText: unknown.getTextContent(), paraChildCount: para.getChildren().length };
+      });
+    }
+
+    const tagged = await splitAndMarkFirstPiece(TYPED_MARK_WRAP_TAG);
+    expect(tagged.figureText).toBe("caption");
+    expect(tagged.paraChildCount).toBe(2); // [UnknownNode, VerseNode] — "aption" stayed.
+
+    const untagged = await splitAndMarkFirstPiece();
+    expect(untagged.figureText).toBe("c");
+    expect(untagged.paraChildCount).toBe(3); // [UnknownNode, TextNode("aption"), VerseNode]
   });
 
   it("should insert a space before a verse if preceded by a CharNode", async () => {

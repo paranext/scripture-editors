@@ -4,6 +4,14 @@
  *
  * Standard view.
  */
+import {
+  $heldBytes,
+  HELD_TYPE,
+  mountInView,
+  oracleView,
+  ORACLE_TYPE,
+  richUsj,
+} from "./annotationLocations.test-helpers";
 import { copyEvent, pasteEvent } from "../markerEdit/markerEdit.test-helpers";
 import { displayAnnotated } from "../markerEdit/displayAnnotations.test-helpers";
 import { $textContaining, propertyPath, twoParaUsj } from "../positions/positions.test-helpers";
@@ -18,8 +26,10 @@ import {
   COPY_COMMAND,
   LexicalNode,
   PASTE_COMMAND,
+  REDO_COMMAND,
+  UNDO_COMMAND,
 } from "lexical";
-import { $isCharNode, CharNode } from "shared";
+import { $isCharNode, $wrapSelectionInTypedMarkNode, CharNode, COMMENT_MARK_TYPE } from "shared";
 import { AnnotationRange, StructureProtectionMode } from "shared-react";
 
 type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
@@ -133,4 +143,95 @@ describe("a pasted copy of annotated display bytes", () => {
     expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["grace"] });
     expect(wordSpans(mounted.ref.current?.getUsj()?.content)).toHaveLength(2);
   });
+});
+
+/** The figure and the text right after it in {@link richUsj}'s `content[4]` (`\fig
+ * caption|…\fig* break`) — where the corruption moves caption text into the paragraph's own
+ * prose. */
+function figureAndFollowing(usj: Usj | undefined): {
+  captionText: string;
+  following: MarkerContent | undefined;
+} {
+  const para = usj?.content?.[4];
+  if (!para || typeof para === "string") throw new Error("expected a paragraph at content[4]");
+  const content = para.content ?? [];
+  const figureIndex = content.findIndex(
+    (item) => typeof item !== "string" && item.type === "figure",
+  );
+  const figure = figureIndex >= 0 ? content[figureIndex] : undefined;
+  if (!figure || typeof figure === "string") throw new Error("expected a figure in content[4]");
+  const captionText = (figure.content ?? [])
+    .filter((item): item is string => typeof item === "string")
+    .join("");
+  return { captionText, following: content[figureIndex + 1] };
+}
+
+describe("an annotation inside a figure caption", () => {
+  /** In front of the `\fig` marker through the caption's first letter — the audit's own repro for
+   * a range that starts or ends inside a figure caption. */
+  const intoCaptionRange: AnnotationRange = {
+    start: { jsonPath: "$.content[4].content[2]" },
+    end: { jsonPath: "$.content[4].content[2].content[0]", offset: 1 },
+  };
+
+  it.each<[string, string]>([
+    ["standard", "[immutable-typed-text]c"],
+    ["formatted", "c"],
+  ])("leaves the caption in the figure (%s)", async (name, expectedHeld) => {
+    const mounted = await mountInView(richUsj, oracleView(name));
+    const before = mounted.ref.current?.getUsj();
+
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(intoCaptionRange, ORACLE_TYPE, "cap");
+      await Promise.resolve();
+    });
+
+    expect(mounted.ref.current?.getUsj()).toEqual(before);
+    const held = mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "cap"));
+    expect(held).toBe(expectedHeld);
+  });
+
+  it.each(["standard", "formatted"])("survives undo and redo (review focus) (%s)", async (name) => {
+    const mounted = await mountInView(richUsj, oracleView(name));
+    const before = mounted.ref.current?.getUsj();
+
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(intoCaptionRange, ORACLE_TYPE, "cap");
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined);
+    });
+    expect(mounted.ref.current?.getUsj()).toEqual(before);
+
+    await act(async () => {
+      mounted.lexical.dispatchCommand(REDO_COMMAND, undefined);
+    });
+    expect(mounted.ref.current?.getUsj()).toEqual(before);
+  });
+
+  it.each(["standard", "formatted"])(
+    "keeps the caption when a comment is made inside it (%s)",
+    async (name) => {
+      const mounted = await mountInView(richUsj, oracleView(name));
+
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const text = $textContaining("caption");
+          const selection = $createRangeSelection();
+          selection.anchor.set(text.getKey(), 2, "text");
+          selection.focus.set(text.getKey(), 4, "text");
+          $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+        });
+        await Promise.resolve();
+      });
+
+      const { captionText, following } = figureAndFollowing(mounted.ref.current?.getUsj());
+      expect(captionText).toBe("caption");
+      if (typeof following !== "string")
+        throw new Error(`expected text after the figure, got ${JSON.stringify(following)}`);
+      expect(following.startsWith(" break")).toBe(true);
+    },
+  );
 });

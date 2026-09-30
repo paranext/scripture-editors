@@ -9,6 +9,7 @@
 import { $isAttributeRunNode } from "../usj/AttributeRunNode.js";
 import { $charSeparatorPrefixLength } from "../usj/markerSeparators.utils.js";
 import { $isMilestoneNode } from "../usj/MilestoneNode.js";
+import { TYPED_MARK_WRAP_TAG } from "../usj/node-constants.js";
 import { $isMarkerTrailingSeparator } from "../usj/node.utils.js";
 import { $isVerseNode } from "../usj/VerseNode.js";
 import {
@@ -29,7 +30,7 @@ import {
   TypedMarkOnRemove,
 } from "./TypedMarkNode.js";
 import type { LexicalNode, PointType, RangeSelection } from "lexical";
-import { $isElementNode, $isTextNode } from "lexical";
+import { $addUpdateTag, $isElementNode, $isTextNode } from "lexical";
 
 /**
  * Whether `node` is part of a display owner's unit: the owner's `AttributeRunNode` wrapper(s) and
@@ -77,6 +78,7 @@ export function $wrapSelectionInTypedMarkNode(
   onMouseEnter?: TypedMarkOnMouseEnter,
   onMouseLeave?: TypedMarkOnMouseLeave,
 ): void {
+  $addUpdateTag(TYPED_MARK_WRAP_TAG);
   const nodes = selection.getNodes();
   const anchorOffset = selection.anchor.offset;
   const focusOffset = selection.focus.offset;
