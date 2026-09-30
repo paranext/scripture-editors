@@ -28,6 +28,7 @@ import {
   ImmutableChapterNode,
   ImmutableTypedTextNode,
   ImmutableUnmatchedNode,
+  isSerializedCharNode,
   isSerializedImpliedParaNode,
   isSerializedMarkerNode,
   isSerializedTextNode,
@@ -449,37 +450,39 @@ function replaceMarkWithMilestones(
 }
 
 /**
- * Whether the node at `nodes[index]` sits immediately after an opening char-span glyph — the
- * serialized twin of `$charSeparatorPrefixLength` (markerSeparators.utils.ts). The previous
- * sibling is read through a `TypedMarkNode` on both sides exactly as the live predicate does: if
- * it IS a mark, its deepest last descendant stands in for it (a mark that ends right before this
- * node hides the glyph as its last child); if `nodes[index]` itself has no earlier sibling
- * because `nodes` is a mark's own unwrapped children, `precedingSibling` — threaded in from the
- * enclosing call exactly like `isCharChild` — carries the search outward, ascending through as
- * many mark levels as the live predicate's `previous ??= child.getPreviousSibling()` loop does.
+ * Whether the node at `nodes[index]` sits immediately after an opening glyph that is `enclosingChar`'s
+ * OWN opener, or a nested child span's own opener sitting loose among `enclosingChar`'s children —
+ * the serialized twin of `$charSeparatorPrefixLength` (markerSeparators.utils.ts), whose own
+ * classifier is `$charGlyphNestedValue` (nestedGlyphs.utils.ts). The previous sibling is read
+ * through a `TypedMarkNode` on both sides exactly as the live predicate does: if it IS a mark, its
+ * deepest last descendant stands in for it (a mark that ends right before this node hides the glyph
+ * as its last child); if `nodes[index]` itself has no earlier sibling because `nodes` is a mark's
+ * own unwrapped children, `precedingSibling` — threaded in from the enclosing call exactly like
+ * `enclosingChar` — carries the search outward, ascending through as many mark levels as the live
+ * predicate's `previous ??= child.getPreviousSibling()` loop does.
  *
- * `isCharChild` stands in for the live predicate's char-span-glyph classifier
- * (`$charGlyphNestedValue`), approximated rather than reproduced: this codebase's adaptors never
- * place a bare "opening" marker sibling here for anything but a char span's own opener — a
- * milestone or verse-attribute display run's glyphs live inside an `AttributeRunNode` wrapper
- * (`recurseNodes` skips it wholesale below) or a textType "attribute" `TextNode` (filtered out
- * before this runs) — so "found inside a char span's children" already is the distinction. The
- * exporter oracle (positions/logicalModel.oracle.test.tsx) checks that premise on every span it
- * walks.
+ * An opening glyph found this way is not always `enclosingChar`'s own: a milestone's display run
+ * (`\qt-s` … `\*`) can sit loose among a char span's children too (`$charGlyphNestedValue`'s third
+ * case), and its NBSP is never a structural separator. Matching `previous`'s marker against
+ * `enclosingChar`'s own marker, or against a nested child CharNode's, is what tells the two apart.
  */
 function precedesOpeningCharGlyph(
   nodes: SerializedLexicalNode[],
   index: number,
   precedingSibling: SerializedLexicalNode | undefined,
-  isCharChild: boolean,
+  enclosingChar: SerializedCharNode | undefined,
 ): boolean {
-  if (!isCharChild) return false;
+  if (!enclosingChar) return false;
   let previous = index > 0 ? nodes[index - 1] : precedingSibling;
   while (previous && isSerializedTypedMarkNode(previous)) {
     const { children } = previous;
     previous = children.length > 0 ? children[children.length - 1] : undefined;
   }
-  return isSerializedMarkerNode(previous) && previous.markerSyntax === "opening";
+  if (!isSerializedMarkerNode(previous) || previous.markerSyntax !== "opening") return false;
+  if (previous.marker === enclosingChar.marker) return true;
+  return enclosingChar.children.some(
+    (child) => isSerializedCharNode(child) && child.marker === previous.marker,
+  );
 }
 
 /** The serialized twin of `$throughMarks` (attributeDisplay.utils.ts): an annotation mark is
@@ -530,7 +533,9 @@ function recurseNodes(
   // never re-derived by comparing text, or content that coincidentally matches the caller's
   // rendered text anywhere else in the note would be dropped too.
   callerSlot?: SerializedTextNode,
-  isCharChild = false,
+  // The char span `nodes` are the (unwrapped, through marks) direct children of, or `undefined`
+  // outside any char span — see `precedesOpeningCharGlyph`.
+  enclosingChar?: SerializedCharNode,
   // The effective previous sibling for `nodes[0]`, when `nodes` is a TypedMarkNode's own
   // unwrapped children — see `precedesOpeningCharGlyph`.
   precedingSibling?: SerializedLexicalNode,
@@ -576,7 +581,7 @@ function recurseNodes(
         markers.push(
           createCharMarker(
             serializedCharNode,
-            recurseNodes(serializedCharNode.children, viewOptions, undefined, true),
+            recurseNodes(serializedCharNode.children, viewOptions, undefined, serializedCharNode),
             viewOptions,
           ),
         );
@@ -653,7 +658,7 @@ function recurseNodes(
           serializedMarkNode.children,
           viewOptions,
           callerSlot,
-          isCharChild,
+          enclosingChar,
           index > 0 ? nodes[index - 1] : precedingSibling,
         );
         if (childMarkers) {
@@ -703,7 +708,7 @@ function recurseNodes(
           // kept like any other content text.
           !(
             serializedTextNode.text.startsWith(NODE_ATTRIBUTE_PREFIX) &&
-            !precedesOpeningCharGlyph(nodes, index, precedingSibling, isCharChild)
+            !precedesOpeningCharGlyph(nodes, index, precedingSibling, enclosingChar)
           ) &&
           // Char-span attribute display runs (bare `|…`, no NBSP prefix — see
           // usj-editor.adaptor's `addCharAttributes`) carry no NBSP prefix to strip against, so
@@ -723,7 +728,7 @@ function recurseNodes(
           // closer), or the byte is eaten instead of round-tripping as data.
           if (isStandardView(viewOptions)) {
             if (
-              precedesOpeningCharGlyph(nodes, index, precedingSibling, isCharChild) &&
+              precedesOpeningCharGlyph(nodes, index, precedingSibling, enclosingChar) &&
               text.startsWith(NBSP)
             )
               text = text.slice(1);

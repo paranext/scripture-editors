@@ -1056,6 +1056,69 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
     expect(para.content).toEqual(["before ", { type: "ms", marker: "qt-s", sid: "q1" }, " after"]);
   });
 
+  // A milestone's display run normally rides inside its own `AttributeRunNode` wrapper (excluded
+  // above) with its attribute text tagged `textType: "attribute"`. Both protections can be missing
+  // at once — a loose glyph pair and an untagged attribute text, direct children of a char span —
+  // and the span's own opener/closer glyphs must not be confused with the milestone's.
+  it("drops an untagged milestone display run loose inside a char span, not kept as literal content", () => {
+    const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
+    initializeDeserialize(undefined);
+    const { editor: localEditor } = createBasicTestEnvironment(nodes);
+    localEditor.update(
+      () => {
+        const ms = $createMilestoneNode("qt-s", "q1");
+        const char = $createCharNode("w");
+        char.append(
+          $createMarkerNode("w", "opening"),
+          $createTextNode("grace"),
+          ms,
+          $createMarkerNode("qt-s", "opening"),
+          $createTextNode(`${NBSP}|sid="q1"`),
+          $createMarkerNode("", "selfClosing"),
+          $createMarkerNode("w", "closing"),
+        );
+        $getRoot().append($createParaNode("p").append(char));
+      },
+      { discrete: true },
+    );
+
+    const result = editorUsjAdaptor.deserializeEditorState(
+      localEditor.getEditorState(),
+      standardViewOptions,
+    );
+
+    const para = result?.content?.[0] as MarkerObject;
+    const charMarker = para.content?.[0] as MarkerObject;
+    expect(charMarker.content).toEqual(["grace", { type: "ms", marker: "qt-s", sid: "q1" }]);
+  });
+
+  it("does not duplicate a char span's own attribute when it also carries the attribute's untagged display text", () => {
+    const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
+    initializeDeserialize(undefined);
+    const { editor: localEditor } = createBasicTestEnvironment(nodes);
+    localEditor.update(
+      () => {
+        const char = $createCharNode("w", { lemma: "x" });
+        char.append(
+          $createMarkerNode("w", "opening"),
+          $createTextNode(`${NBSP}|x`),
+          $createMarkerNode("w", "closing"),
+        );
+        $getRoot().append($createParaNode("p").append(char));
+      },
+      { discrete: true },
+    );
+
+    const result = editorUsjAdaptor.deserializeEditorState(
+      localEditor.getEditorState(),
+      standardViewOptions,
+    );
+
+    const para = result?.content?.[0] as MarkerObject;
+    const charMarker = para.content?.[0] as MarkerObject;
+    expect(charMarker).toEqual({ type: "char", marker: "w", lemma: "x", content: ["|x"] });
+  });
+
   it("excludes an unknown node's display marker/attribute runs from saved USJ content", () => {
     // \fig caption|src="image.jpg" size="span" ref="1.18"\fig* — the marker/attribute display
     // children `createUnknown` adds in editable mode are presentation only; they must not leak
