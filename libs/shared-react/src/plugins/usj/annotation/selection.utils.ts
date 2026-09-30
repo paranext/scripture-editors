@@ -943,17 +943,22 @@ function $pointFromDisplayBytes(
     for (let index = 0; index < bytes.spans.length; index++) {
       const span = bytes.spans[index];
       if (!isSameByteKind(span.bytes, wanted)) continue;
-      const nextSpan = bytes.spans[index + 1];
-      // The last span owns the position at the very end of the text; every other span stops one
-      // byte before the next span starts.
-      const highest = nextSpan
-        ? span.base + (nextSpan.start - span.start) - 1
-        : span.base + (bytes.length - span.start);
+      const highest = highestSpanOffset(bytes, index);
       if (offset < span.base || offset > highest) continue;
       return [carrier, span.start + (offset - span.base)];
     }
   }
   return undefined;
+}
+
+/** The highest offset span `index` of `bytes` addresses. The last span owns the position at the
+ * very end of the text; every other span stops one byte before the next span starts. */
+function highestSpanOffset(bytes: DisplayBytes, index: number): number {
+  const span = bytes.spans[index];
+  const nextSpan = bytes.spans[index + 1];
+  return nextSpan
+    ? span.base + (nextSpan.start - span.start) - 1
+    : span.base + (bytes.length - span.start);
 }
 
 /**
@@ -1031,7 +1036,12 @@ export function $getNodeFromLocation(
       : $pointFromDisplayBytes(node, { kind: "attributeMarker", keyName }, 0);
     if (point) return point;
 
-    return $bareValueStart(node, keyName) ?? $nearestPointAfterContent(node);
+    const bareValueStart = $bareValueStart(node, keyName);
+    if (bareValueStart) return bareValueStart;
+    // A milestone key no byte displays resolves in front of the milestone, where its values and
+    // closer resolve too, so no range across them runs backward.
+    if ($isMilestoneNode(node)) return $pointBeside(node, false);
+    return $nearestPointAfterContent(node);
   }
 
   // Handle UsjClosingAttributeMarkerLocation BEFORE UsjMarkerLocation/UsjClosingMarkerLocation.
@@ -1081,8 +1091,7 @@ export function $getNodeFromLocation(
     const closingLength = $closingMarkerLength(node);
     if (closingLength !== undefined && location.closingMarkerOffset >= closingLength)
       return $pointBeside(node, true);
-    // A leaf owner (a milestone) has no content before its closer: in front of the leaf, or past
-    // it from the character after the closer on — the leaf-property rule.
+    // A leaf owner (a milestone) has no content before its closer: in front of the leaf.
     if (!$isElementNode(node)) return $pointBeside(node, false);
     const lastChild = node.getLastChild();
     if (lastChild && $isTextNode(lastChild)) return [lastChild, lastChild.getTextContent().length];
@@ -1144,14 +1153,14 @@ const PROPERTIES_BEFORE_CONTENT: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Where a location falls among the bytes one read-only decorator displays, counted in the
- * decorator's non-whitespace bytes: a separator names nothing an annotation can hold.
+ * Where a location falls among the bytes one read-only decorator displays, counted in the bytes an
+ * annotation can hold: a separator names nothing.
  */
 interface DecoratorBytePosition {
   decorator: LexicalNode;
-  /** How many of the decorator's non-whitespace bytes are in front of the location. */
+  /** How many of the decorator's holdable bytes are in front of the location. */
   before: number;
-  /** How many non-whitespace bytes the decorator displays in all. */
+  /** How many holdable bytes the decorator displays in all. */
   total: number;
 }
 
@@ -1162,9 +1171,12 @@ interface LocatedPoint {
   insideDecorator?: DecoratorBytePosition;
 }
 
-/** How many of `text`'s bytes before `end` are not whitespace. */
-function nonWhitespaceCount(text: string, end = text.length): number {
-  return text.slice(0, end).replace(/\s/gu, "").length;
+/** Where `offset` falls among `text`'s holdable bytes — all but its edge whitespace, the rule a
+ * text carrier's holdable range follows. */
+function holdableBytePosition(text: string, offset: number): { before: number; total: number } {
+  const lead = text.length - text.trimStart().length;
+  const end = Math.max(lead, text.trimEnd().length);
+  return { before: Math.min(Math.max(offset, lead), end) - lead, total: end - lead };
 }
 
 /**
@@ -1184,11 +1196,7 @@ function $getPointFromLocation(
     const text = $decoratorDisplayText(node);
     return {
       point,
-      insideDecorator: {
-        decorator: node,
-        before: nonWhitespaceCount(text, offset),
-        total: nonWhitespaceCount(text),
-      },
+      insideDecorator: { decorator: node, ...holdableBytePosition(text, offset) },
     };
   }
   if (isUsjTextContentLocation(location)) return { point };
@@ -1342,6 +1350,10 @@ function $pointBeforePresentationText(
     skipped = true;
   }
   if (!skipped) return [node, offset];
+  // A read-only glyph before the skipped text is addressed by the boundary right after it.
+  const parent = previous?.getParent();
+  if (previous && parent && $isDisplayByteDecorator(previous))
+    return [parent, previous.getIndexWithinParent() + 1];
   const last = $isElementNode(previous) ? previous.getLastDescendant() : previous;
   return $isTextNode(last) ? [last, last.getTextContentSize()] : [node, offset];
 }
@@ -1806,8 +1818,12 @@ function $nearestPointAfterContent(
     while (content && $isAttributeDisplayOrCloserOf(content, node))
       content = content.getPreviousSibling();
     if (content !== lastChild) {
+      // An empty span's placeholder is no content: the content ends in front of it.
       if ($isTextNode(content) && !$displayBytesOf(content))
-        return [content, content.getTextContentSize()];
+        return [
+          content,
+          $shouldIgnoreNodeForContentIndexes(content) ? 0 : content.getTextContentSize(),
+        ];
       return [node, content ? content.getIndexWithinParent() + 1 : 0];
     }
     if (lastChild && $isTextNode(lastChild)) return [lastChild, lastChild.getTextContent().length];
@@ -1865,13 +1881,9 @@ function $endOfDecoratorBytes(
     if (!bytes?.owner.is(owner)) continue;
     const index = bytes.spans.findIndex((span) => isSameByteKind(span.bytes, wanted));
     if (index < 0) continue;
-    const span = bytes.spans[index];
-    const nextSpan = bytes.spans[index + 1];
-    // The same extent `$pointFromDisplayBytes` gives the span.
-    const highest = nextSpan
-      ? span.base + (nextSpan.start - span.start) - 1
-      : span.base + (bytes.length - span.start);
-    return offset > highest ? [carrier, nextSpan?.start ?? bytes.length] : undefined;
+    return offset > highestSpanOffset(bytes, index)
+      ? [carrier, bytes.spans[index + 1]?.start ?? bytes.length]
+      : undefined;
   }
   return undefined;
 }

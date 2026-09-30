@@ -144,13 +144,13 @@
       ],
       "failures": {
         "visible|B|1|$.content[3].content[2]['marker']|propertyOffset=0|$.content[3].content[2]['marker']|propertyOffset=1": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|1|$.content[3].content[2]['marker']|propertyOffset=1|$.content[3].content[2]['marker']|propertyOffset=2": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|1|$.content[3].content[2]['marker']|propertyOffset=2|$.content[3].content[2]['marker']|propertyOffset=3": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|1|$.content[3].content[2]['marker']|propertyOffset=3|$.content[3].content[2]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
@@ -235,13 +235,13 @@
           "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible|B|1|$.content[3].content[4]['marker']|propertyOffset=0|$.content[3].content[4]['marker']|propertyOffset=1": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|1|$.content[3].content[4]['marker']|propertyOffset=1|$.content[3].content[4]['marker']|propertyOffset=2": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|1|$.content[3].content[4]['marker']|propertyOffset=2|$.content[3].content[4]['marker']|propertyOffset=3": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|1|$.content[3].content[4]['marker']|propertyOffset=3|$.content[3].content[4]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
@@ -251,7 +251,7 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[2]['marker']|propertyOffset=0|$.content[3].content[2]['marker']|propertyOffset=3": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[2]['marker']|propertyOffset=1|$.content[3].content[2]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
@@ -260,7 +260,8 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[2]['marker']|propertyOffset=3|$.content[3].content[2]|keyName=sid,keyOffset=0": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R9-UNDISPLAYED-SNAP-INVERTS",
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[2]['marker']|propertyOffset=4|$.content[3].content[2]|keyName=sid,keyOffset=1": [
           "R9-UNDISPLAYED-SNAP-INVERTS",
@@ -346,7 +347,7 @@
           "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible|B|3|$.content[3].content[4]['marker']|propertyOffset=0|$.content[3].content[4]['marker']|propertyOffset=3": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible|B|3|$.content[3].content[4]['marker']|propertyOffset=1|$.content[3].content[4]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
@@ -384,13 +385,13 @@
       ],
       "failures": {
         "visible+collapsed|B|1|$.content[3].content[2]['marker']|propertyOffset=0|$.content[3].content[2]['marker']|propertyOffset=1": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|1|$.content[3].content[2]['marker']|propertyOffset=1|$.content[3].content[2]['marker']|propertyOffset=2": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|1|$.content[3].content[2]['marker']|propertyOffset=2|$.content[3].content[2]['marker']|propertyOffset=3": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|1|$.content[3].content[2]['marker']|propertyOffset=3|$.content[3].content[2]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
@@ -475,13 +476,13 @@
           "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible+collapsed|B|1|$.content[3].content[4]['marker']|propertyOffset=0|$.content[3].content[4]['marker']|propertyOffset=1": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|1|$.content[3].content[4]['marker']|propertyOffset=1|$.content[3].content[4]['marker']|propertyOffset=2": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|1|$.content[3].content[4]['marker']|propertyOffset=2|$.content[3].content[4]['marker']|propertyOffset=3": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|1|$.content[3].content[4]['marker']|propertyOffset=3|$.content[3].content[4]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
@@ -491,7 +492,7 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['marker']|propertyOffset=0|$.content[3].content[2]['marker']|propertyOffset=3": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['marker']|propertyOffset=1|$.content[3].content[2]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
@@ -500,7 +501,8 @@
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['marker']|propertyOffset=3|$.content[3].content[2]|keyName=sid,keyOffset=0": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R9-UNDISPLAYED-SNAP-INVERTS",
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[2]['marker']|propertyOffset=4|$.content[3].content[2]|keyName=sid,keyOffset=1": [
           "R9-UNDISPLAYED-SNAP-INVERTS",
@@ -586,7 +588,7 @@
           "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
         "visible+collapsed|B|3|$.content[3].content[4]['marker']|propertyOffset=0|$.content[3].content[4]['marker']|propertyOffset=3": [
-          "R3-COLLAPSED-HOLDS(ends snap together)"
+          "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
         "visible+collapsed|B|3|$.content[3].content[4]['marker']|propertyOffset=1|$.content[3].content[4]['marker']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"

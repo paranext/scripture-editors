@@ -5,7 +5,9 @@
  * Standard view.
  */
 import {
+  $byteNodes,
   $heldBytes,
+  $heldIndexes,
   edgesUsj,
   HELD_TYPE,
   MountedInView,
@@ -25,9 +27,15 @@ import {
 } from "../positions/positions.test-helpers";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
-import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
+import {
+  MarkerContent,
+  MarkerObject,
+  Usj,
+  UsjDocumentLocation,
+} from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
+  $createPoint,
   $createRangeSelection,
   $getRoot,
   $getSelection,
@@ -662,22 +670,35 @@ describe("display bytes the design holds whole", () => {
 });
 
 describe("inbound resolution for annotations", () => {
-  /** Sets `range` in `view` over `usj` and returns what holds it and what the logger reported. */
+  /** Sets `range` in `view` over `usj` and returns what holds it — the held bytes, and the text of
+   * each held decorator — and what the logger reported. */
   async function annotateInView(
     usj: Usj,
     viewName: string,
     range: AnnotationRange,
-  ): Promise<{ held: string; logs: string[] }> {
+  ): Promise<{ held: string; decorators: string[]; logs: string[] }> {
     const mounted = await mountInView(usj, oracleView(viewName));
     await act(async () => {
       mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, "in");
       await Promise.resolve();
     });
-    const held = mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "in"));
-    return { held, logs: mounted.logs };
+    return mounted.lexical.getEditorState().read(() => {
+      const heldIndexes = $heldIndexes(HELD_TYPE, "in");
+      const decorators = $byteNodes()
+        .filter(([, offset], index) => offset < 0 && heldIndexes.has(index))
+        .map(([node]) => node.getTextContent());
+      return { held: $heldBytes(HELD_TYPE, "in"), decorators, logs: mounted.logs };
+    });
   }
 
-  it.each<{ name: string; view: string; usj: Usj; range: AnnotationRange; held: string }>([
+  it.each<{
+    name: string;
+    view: string;
+    usj: Usj;
+    range: AnnotationRange;
+    held: string;
+    decorators?: string[];
+  }>([
     {
       name: "a milestone's closer, which the view does not display",
       view: "formatted",
@@ -697,6 +718,8 @@ describe("inbound resolution for annotations", () => {
         end: { jsonPath: "$.content[3].content[2]", closingMarkerOffset: 0 },
       },
       held: " [immutable-typed-text][immutable-typed-text]",
+      // The opening glyph and the attribute display, never the `\*` closer the range ends at.
+      decorators: ["\\qt-s", `${NBSP}|sid="q1" who="Pilate"`],
     },
     {
       name: "a default attribute's unspelled key through its value's start",
@@ -739,11 +762,63 @@ describe("inbound resolution for annotations", () => {
       // The verse's own bytes end before the range starts: only the `\wj` glyph is named.
       held: "[immutable-typed-text]",
     },
-  ])("resolves $name ($view)", async ({ view, usj, range, held }) => {
+  ])("resolves $name ($view)", async ({ view, usj, range, held, decorators }) => {
     const result = await annotateInView(usj, view, range);
 
     expect(result.logs.filter((log) => log.includes("Failed to find"))).toEqual([]);
     expect(result.held).toBe(held);
+    if (decorators) expect(result.decorators).toEqual(decorators);
+  });
+
+  it.each<{
+    name: string;
+    view: string;
+    location: UsjDocumentLocation;
+    type: string;
+    after: boolean;
+  }>([
+    {
+      name: "a milestone's undisplayed attribute key in front of the milestone",
+      view: "formatted",
+      location: { jsonPath: "$.content[3].content[2]", keyName: "who", keyOffset: 0 },
+      type: "ms",
+      after: false,
+    },
+    {
+      name: "a caller offset past what a collapsed caller shows behind the caller",
+      view: "visible+collapsed",
+      location: { jsonPath: "$.content[3].content[6]['caller']", propertyOffset: 2 },
+      type: "immutable-note-caller",
+      after: true,
+    },
+  ])("puts a caret at $name ($view)", async ({ view, location, type, after }) => {
+    const mounted = await mountInView(richUsj, oracleView(view));
+
+    await act(async () => {
+      mounted.ref.current?.setSelection({ start: location });
+      await Promise.resolve();
+    });
+
+    mounted.lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection");
+      expect(selection.isCollapsed()).toBe(true);
+      const beside = $firstOfType(
+        $getRoot(),
+        (node): node is LexicalNode => node.getType() === type,
+      );
+      if (!beside) throw new Error(`expected a ${type} node`);
+      const parent = beside.getParentOrThrow();
+      // The same position however it is spelled: an element point, or the text point it becomes.
+      const expected = $createPoint(
+        parent.getKey(),
+        beside.getIndexWithinParent() + (after ? 1 : 0),
+        "element",
+      );
+      expect(selection.anchor.isBefore(expected) || expected.isBefore(selection.anchor)).toBe(
+        false,
+      );
+    });
   });
 
   it("puts a caret at a paragraph's marker at the paragraph's start", async () => {

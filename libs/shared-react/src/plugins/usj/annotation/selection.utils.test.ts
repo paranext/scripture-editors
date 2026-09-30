@@ -9,6 +9,8 @@ import {
   ImmutableVerseNode,
 } from "../../../nodes/usj/ImmutableVerseNode";
 import { SelectionRange, AnnotationRange } from "./selection.model";
+import { $createImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
+import { usjReactNodes } from "../../../nodes/usj";
 import { STANDARD_VIEW_MODE, UNFORMATTED_VIEW_MODE } from "../../../views/view-mode.model";
 import { getViewOptions } from "../../../views/view-options.utils";
 import {
@@ -23,10 +25,13 @@ import {
   $getNodeByKey,
   $getRoot,
   $setState,
+  ElementNode,
+  LexicalNode,
   LineBreakNode,
   TextNode,
 } from "lexical";
 import {
+  $createBookNode,
   $createChapterNode,
   $createCharNode,
   $createImmutableChapterNode,
@@ -35,8 +40,10 @@ import {
   $createMarkerTrailingSeparator,
   $createMarkerNode,
   $createMilestoneNode,
+  $createNoteNode,
   $createParaNode,
   $createTypedMarkNode,
+  $createUnknownNode,
   $createVerseBlockNode,
   $createVerseNode,
   ChapterNode,
@@ -48,6 +55,7 @@ import {
   MarkerNode,
   MilestoneNode,
   NBSP,
+  NoteNode,
   openingMarkerText,
   ParaNode,
   textTypeState,
@@ -904,6 +912,33 @@ describe("$getNodeFromLocation for bytes the view does not display", () => {
     });
   });
 
+  it("resolves an undisplayed attribute of an empty span in front of its placeholder", () => {
+    let placeholder: TextNode;
+    const { editor } = createBasicTestEnvironment([...usjReactNodes], () => {
+      placeholder = $createTextNode(NBSP);
+      $getRoot().append(
+        $createParaNode().append(
+          $createTextNode("see "),
+          $createCharNode("jmp").append(
+            $createImmutableTypedTextNode("marker", "\\jmp "),
+            placeholder,
+            $createImmutableTypedTextNode("attribute", '|link-href="x"'),
+            $createImmutableTypedTextNode("marker", "\\jmp*"),
+          ),
+        ),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getNodeFromLocation(
+          { jsonPath: "$.content[0].content[1]['link-href']", propertyOffset: 1 },
+          undefined,
+        ),
+      ).toEqual([placeholder, 0]);
+    });
+  });
+
   it("resolves a default attribute's unspelled key at its value's start in the run", () => {
     const { editor, nodes } = createWordSpan("|grace");
 
@@ -914,6 +949,181 @@ describe("$getNodeFromLocation for bytes the view does not display", () => {
           undefined,
         ),
       ).toEqual([nodes.run, 1]);
+    });
+  });
+});
+
+describe("$getNodeFromLocation for the properties USFM spells before the content", () => {
+  it.each<[string, string]>([
+    ["a book's code", "$.content[0]['code']"],
+    ["a note's caller", "$.content[1].content[0]['caller']"],
+    ["a note's category", "$.content[1].content[0]['category']"],
+  ])("resolves %s the view does not display at the element's start", (_name, jsonPath) => {
+    const nodes: { book?: TextNode; note?: NoteNode } = {};
+    const { editor } = createBasicTestEnvironment([...usjReactNodes], () => {
+      nodes.book = $createTextNode("Genesis");
+      nodes.note = $createNoteNode("f", "+", false, "things").append(
+        $createCharNode("ft").append($createTextNode("body")),
+      );
+      $getRoot().append(
+        $createBookNode("GEN").append(nodes.book),
+        $createParaNode().append(nodes.note, $createTextNode(" after")),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      const expected = jsonPath.startsWith("$.content[0]") ? [nodes.book, 0] : [nodes.note, 0];
+      expect($getNodeFromLocation({ jsonPath, propertyOffset: 1 } as const, undefined)).toEqual(
+        expected,
+      );
+    });
+  });
+
+  it("resolves a caller offset past what a collapsed caller shows to the end of it", () => {
+    let caller: LexicalNode;
+    const { editor } = createBasicTestEnvironment([...usjReactNodes], () => {
+      caller = $createImmutableNoteCallerNode("+", "body");
+      $getRoot().append(
+        $createParaNode().append(
+          $createNoteNode("f", "+", true).append(
+            caller,
+            $createCharNode("ft").append($createTextNode("body")),
+          ),
+        ),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getNodeFromLocation(
+          { jsonPath: "$.content[0].content[0]['caller']", propertyOffset: 2 },
+          undefined,
+        ),
+      ).toEqual([caller, 1]);
+    });
+  });
+
+  it("resolves a milestone's undisplayed attribute key in front of it, where its value resolves", () => {
+    let para: ParaNode;
+    const { editor } = createBasicTestEnvironment([ParaNode, MilestoneNode], () => {
+      para = $createParaNode();
+      $getRoot().append(
+        para.append(
+          $createTextNode("Then "),
+          $createMilestoneNode("qt-s", "q1", undefined, { who: "Pilate" }),
+          $createTextNode("said"),
+        ),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      const milestone = "$.content[0].content[1]";
+      expect(
+        $getNodeFromLocation({ jsonPath: milestone, keyName: "who", keyOffset: 0 }, undefined),
+      ).toEqual([para, 1]);
+      const range = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: milestone, keyName: "who", keyOffset: 0 },
+          end: { jsonPath: `${milestone}['who']`, propertyOffset: 0 },
+        },
+        undefined,
+        { forAnnotation: true },
+      );
+      expect(range?.isBackward()).toBe(false);
+      expect(range?.isCollapsed()).toBe(true);
+    });
+  });
+});
+
+describe("$getRangeFromUsjSelection for an annotation", () => {
+  /** `\p See \fig cap|src="a b.jpg" size="col"\fig* after` with the figure's attribute bytes read-only. */
+  function createFigure() {
+    const nodes: { figure?: ElementNode; attributes?: LexicalNode; after?: TextNode } = {};
+    const { editor } = createBasicTestEnvironment([...usjReactNodes], () => {
+      nodes.attributes = $createImmutableTypedTextNode("attribute", '|src="a b.jpg" size="col"');
+      nodes.figure = $createUnknownNode("figure", "fig", { file: "a b.jpg", size: "col" }).append(
+        $createImmutableTypedTextNode("marker", "\\fig "),
+        $createTextNode("cap"),
+        nodes.attributes,
+        $createImmutableTypedTextNode("marker", "\\fig*"),
+      );
+      nodes.after = $createTextNode(" after");
+      $getRoot().append(
+        $createParaNode().append(
+          $createMarkerNode("p", "opening"),
+          $createTextNode("See "),
+          nodes.figure,
+          nodes.after,
+        ),
+      );
+    });
+    return { editor, nodes };
+  }
+  const file = "$.content[0].content[1]['file']";
+
+  it("holds a read-only decorator for a range naming only a space inside it", () => {
+    const { editor, nodes } = createFigure();
+
+    editor.getEditorState().read(() => {
+      const range = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: file, propertyOffset: 1 },
+          end: { jsonPath: file, propertyOffset: 2 },
+        },
+        undefined,
+        { forAnnotation: true },
+      );
+      const index = nodes.attributes?.getIndexWithinParent();
+      expect(range?.anchor.key).toBe(nodes.figure?.getKey());
+      expect(range?.anchor.offset).toBe(index);
+      expect(range?.focus.key).toBe(nodes.figure?.getKey());
+      expect(range?.focus.offset).toBe((index ?? 0) + 1);
+    });
+  });
+
+  it("keeps a reversed range's direction and takes the decorator its earlier end is inside", () => {
+    const { editor, nodes } = createFigure();
+
+    editor.getEditorState().read(() => {
+      const range = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: "$.content[0].content[2]", offset: 2 },
+          end: { jsonPath: file, propertyOffset: 1 },
+        },
+        undefined,
+        { forAnnotation: true },
+      );
+      expect(range?.isBackward()).toBe(true);
+      expect(range?.anchor.key).toBe(nodes.after?.getKey());
+      expect(range?.anchor.offset).toBe(2);
+      expect(range?.focus.key).toBe(nodes.figure?.getKey());
+      expect(range?.focus.offset).toBe(nodes.attributes?.getIndexWithinParent());
+    });
+  });
+});
+
+describe("$getRangeFromUsjSelection for a range ending at a closer", () => {
+  it("ends in front of an empty span's placeholder when read-only glyphs frame it", () => {
+    let char: CharNode;
+    const { editor } = createBasicTestEnvironment([...usjReactNodes], () => {
+      char = $createCharNode("wj").append(
+        $createImmutableTypedTextNode("marker", "\\wj "),
+        $createTextNode(NBSP),
+        $createImmutableTypedTextNode("marker", "\\wj*"),
+      );
+      $getRoot().append($createParaNode().append($createTextNode("here: "), char));
+    });
+
+    editor.getEditorState().read(() => {
+      const range = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: "$.content[0].content[0]", offset: 5 },
+          end: { jsonPath: "$.content[0].content[1]", closingMarkerOffset: 0 },
+        },
+        undefined,
+      );
+      expect(range?.focus.key).toBe(char.getKey());
+      expect(range?.focus.offset).toBe(1);
     });
   });
 });

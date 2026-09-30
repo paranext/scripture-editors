@@ -341,7 +341,8 @@ export async function runOracle(
       const flags: string[] = [];
       let inbound = "";
       m.lexical.getEditorState().read(() => {
-        const selection = $getRangeFromUsjSelection({ start, end }, view);
+        // The range as `setAnnotation` resolves it.
+        const selection = $getRangeFromUsjSelection({ start, end }, view, { forAnnotation: true });
         if (!selection) {
           inbound = "unresolved";
           return;
