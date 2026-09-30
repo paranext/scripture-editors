@@ -160,6 +160,66 @@ export function takeTypedMarkRemovalReports(editor: LexicalEditor): [type: strin
   return taken;
 }
 
+/** Per editor, the `type`/`id` pairs whose removal no mark reports any more. */
+const silencedRemovals = new WeakMap<LexicalEditor, Set<string>>();
+
+function removalKey(type: string, id: string): string {
+  return `${type}\u0000${id}`;
+}
+
+/**
+ * Stop, or resume, every mark of `editor` reporting the removal of `type`/`id`. A reporter that has
+ * already told the host an annotation is gone silences it, so a mark an undo brings back cannot
+ * report it a second time.
+ */
+export function setTypedMarkRemovalSilenced(
+  editor: LexicalEditor,
+  type: string,
+  id: string,
+  silenced: boolean,
+): void {
+  let keys = silencedRemovals.get(editor);
+  if (silenced) {
+    if (!keys) silencedRemovals.set(editor, (keys = new Set()));
+    keys.add(removalKey(type, id));
+  } else keys?.delete(removalKey(type, id));
+}
+
+/** Resume reporting every silenced removal in `editor`. */
+export function clearTypedMarkRemovalSilences(editor: LexicalEditor): void {
+  silencedRemovals.delete(editor);
+}
+
+/** Drop the callback for `type`/`id` from `registry`'s entry for `key`. */
+function dropRegisteredCallback<T>(
+  registry: Map<NodeKey, { [type: string]: { [id: string]: T } }>,
+  key: NodeKey,
+  type: string,
+  id: string,
+): void {
+  const entry = registry.get(key);
+  const typeCallbacks = entry?.[type];
+  if (!entry || !typeCallbacks || !(id in typeCallbacks)) return;
+  const remaining = omitRecordKey(typeCallbacks, id);
+  const next =
+    Object.keys(remaining).length > 0
+      ? { ...entry, [type]: remaining }
+      : omitRecordKey(entry, type);
+  if (Object.keys(next).length > 0) registry.set(key, next);
+  else registry.delete(key);
+}
+
+/**
+ * Drop mark `key`'s callbacks for `type`/`id`, as `remove()` drops a mark's callbacks, for a mark
+ * that left the document without `remove()` running.
+ */
+export function forgetTypedMarkCallbacks(key: NodeKey, type: string, id: string): void {
+  dropRegisteredCallback(typedOnClickRegistry, key, type, id);
+  dropRegisteredCallback(typedOnRemoveRegistry, key, type, id);
+  dropRegisteredCallback(typedOnMouseEnterRegistry, key, type, id);
+  dropRegisteredCallback(typedOnMouseLeaveRegistry, key, type, id);
+}
+
 export class TypedMarkNode extends ElementNode {
   __typedIDs: TypedIDs;
   __typedOnClicks?: TypedOnClicks;
@@ -952,6 +1012,10 @@ export class TypedMarkNode extends ElementNode {
     if (!callback) return;
 
     const editor = $getEditor();
+    if (silencedRemovals.get(editor)?.has(removalKey(type, id))) {
+      this.removeOnRemoveFor(type, id);
+      return;
+    }
     const reports = removalReports.get(editor) ?? [];
     reports.push([type, id]);
     removalReports.set(editor, reports);

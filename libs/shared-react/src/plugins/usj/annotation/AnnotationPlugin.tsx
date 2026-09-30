@@ -183,8 +183,10 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
     deleteDisplayAnnotationRegistration(editor, type, id);
     // Without this, a host's removeAnnotation on an annotation held only on display bytes would
     // report nothing, and core would never call the extension's interactionCommand.
-    if (covered.length > 0 && registration && markKeys.length === 0)
+    if (covered.length > 0 && registration && markKeys.length === 0) {
+      displayIndex.noteReported(type, id);
       registration.onRemove?.(type, id, "removed", covered.join(""));
+    }
   };
 
   useImperativeHandle(ref, () => ({

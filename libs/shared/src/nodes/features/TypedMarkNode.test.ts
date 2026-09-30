@@ -722,6 +722,8 @@ describe("TypedMarkNode", () => {
     }
 
     it("never splits or moves an attribute display run", () => {
+      const onClick = vi.fn();
+      const onRemove = vi.fn();
       const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode]);
       editor.update(
         () => {
@@ -732,7 +734,7 @@ describe("TypedMarkNode", () => {
           const selection = $createRangeSelection();
           selection.anchor.set(word.getKey(), 2, "text");
           selection.focus.set(tail.getKey(), 3, "text");
-          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1, onClick, onRemove);
         },
         { discrete: true },
       );
@@ -747,7 +749,10 @@ describe("TypedMarkNode", () => {
         expect(para.getTextContent()).toBe("grace|grace of God");
         expect($held(run)).toEqual([[0, 6]]);
       });
-      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)).toBeDefined();
+      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)).toEqual({
+        onClick,
+        onRemove,
+      });
     });
 
     /** The attribute-tagged value text inside `wrapper`, the display run's `|…` bytes. */
@@ -1093,6 +1098,8 @@ describe("TypedMarkNode", () => {
     });
 
     it("annotates a range inside an attribute value on the run itself, and changes nothing else", () => {
+      const onClick = vi.fn();
+      const onRemove = vi.fn();
       const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
       let char!: CharNode;
       let run!: TextNode;
@@ -1109,7 +1116,7 @@ describe("TypedMarkNode", () => {
           const selection = $createRangeSelection();
           selection.anchor.set(run.getKey(), 1, "text");
           selection.focus.set(run.getKey(), 6, "text");
-          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1, onClick, onRemove);
         },
         { discrete: true },
       );
@@ -1119,7 +1126,10 @@ describe("TypedMarkNode", () => {
         expect(char.getLatest().getChildren().some($isTypedMarkNode)).toBe(false);
         expect($held(run.getLatest())).toEqual([[1, 6]]);
       });
-      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)).toBeDefined();
+      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)).toEqual({
+        onClick,
+        onRemove,
+      });
     });
 
     it("annotates only the number when the range covers a verse's number", () => {

@@ -29,7 +29,6 @@ import {
   $coveredDisplayText,
   $displayAnnotationsOf,
   $isTypedMarkNode,
-  ANNOTATION_CHANGE_TAG,
   deleteDisplayAnnotationRegistration,
   DisplayAnnotation,
   displayAnnotationsState,
@@ -40,6 +39,9 @@ import {
   ImmutableUnmatchedNode,
   MarkerNode,
   registerDisplayAnnotationBasis,
+  clearTypedMarkRemovalSilences,
+  forgetTypedMarkCallbacks,
+  setTypedMarkRemovalSilenced,
   takeTypedMarkRemovalReports,
   TypedIDs,
   typedMarkClassNames,
@@ -55,8 +57,10 @@ export interface DisplayAnnotationIndex {
   /** The keys of the display-byte nodes holding `type`/`id`. */
   keysFor(type: string, id: string): ReadonlySet<NodeKey>;
   /** Record that the host set `type`/`id` in the current update, so the loss of its last holder
-   * is reported afresh even if an earlier range's was. */
+   * is reported afresh even if an earlier range's was. Call inside the update. */
   noteSet(type: string, id: string): void;
+  /** Record that the host has just been told `type`/`id` was removed, in the current update. */
+  noteReported(type: string, id: string): void;
 }
 
 /** Every node class a carrier can be (`$isDisplayAnnotationCarrier`). */
@@ -109,10 +113,17 @@ function createIndex(editor: LexicalEditor): Entry {
   /** A mark's `onRemove` per annotation, which an annotation held only by marks has nowhere else. */
   const markOnRemove = new Map<string, TypedMarkOnRemove>();
   const lastText = new Map<string, string>();
+  // The maps above keep an entry for an annotation whose holders an undo took away, for the redo
+  // that brings them back; the history stack gives no word when that redo is gone for good, so
+  // they hold at most one entry per annotation set since the last `setUsj` load, which clears
+  // them.
   /** Annotations whose removal the host has heard of since they were last set, from a mark or from
-   * here. */
+   * here. Cleared by a `setUsj` load. */
   const reported = new Set<string>();
-  const setThisUpdate = new Set<string>();
+  /** Annotations whose removal the host heard of in the commit being made. */
+  let heardThisCommit = new Set<string>();
+  /** The marks that left the document in the commit being made, per annotation they held. */
+  let droppedMarks = new Map<string, NodeKey[]>();
   const painted = new WeakMap<HTMLElement, string[]>();
   const wired = new WeakSet<HTMLElement>();
   let emptied = new Set<string>();
@@ -223,8 +234,12 @@ function createIndex(editor: LexicalEditor): Entry {
         const mark = $isTypedMarkNode(node) ? node : undefined;
         const typedIds = mark ? Object.entries(mark.getTypedIDs()) : [];
         const after = typedIds.flatMap(([type, ids]) => ids.map((id) => indexKey(type, id)));
-        for (const annotationKey of annotationsByMark.get(key) ?? [])
-          if (!after.includes(annotationKey)) dropHolder(marksByAnnotation, annotationKey, key);
+        for (const annotationKey of annotationsByMark.get(key) ?? []) {
+          if (after.includes(annotationKey)) continue;
+          dropHolder(marksByAnnotation, annotationKey, key);
+          if (!mark)
+            droppedMarks.set(annotationKey, [...(droppedMarks.get(annotationKey) ?? []), key]);
+        }
         for (const annotationKey of after) addHolder(marksByAnnotation, annotationKey, key);
         if (after.length > 0) annotationsByMark.set(key, after);
         else annotationsByMark.delete(key);
@@ -246,43 +261,74 @@ function createIndex(editor: LexicalEditor): Entry {
     lastText.delete(annotationKey);
   }
 
+  /** Take the removals marks have reported since the last take as heard. */
+  function takeMarkReports(): void {
+    for (const [type, id] of takeTypedMarkRemovalReports(editor)) hear(indexKey(type, id));
+  }
+
+  function hear(annotationKey: string): void {
+    reported.add(annotationKey);
+    heardThisCommit.add(annotationKey);
+  }
+
+  /** Forget everything a `setUsj` load drops: it removes every annotation and clears undo. */
+  function forgetAll(): void {
+    reported.clear();
+    clearTypedMarkRemovalSilences(editor);
+    for (const annotationKey of new Set([...markOnRemove.keys(), ...lastText.keys()])) {
+      if (holderCount(annotationKey) > 0) continue;
+      const [type, id] = annotationKey.split("\u0000");
+      forget(annotationKey, type, id);
+    }
+  }
+
   /**
    * After every mutation listener of the commit has run: report, once, each annotation whose last
    * holder (a mark or a display byte) left without the host hearing of it. A mark reports its own
-   * `remove()` (one call per mark), so an annotation a mark has reported since it was last set is
-   * not reported again; neither is one that `setAnnotation` or `removeAnnotation` took away, since
-   * they report it themselves. A whole-state replacement reports nothing, because marks do not
-   * report there either (`TypedMarkNode.remove` never runs): a `setUsj` load forgets the
-   * annotation, and undo or redo keeps its callbacks for the redo that brings the holders back. A
-   * settle that discards an annotation's bytes, a collaborator's apply, and a selection delete that
-   * drops an emptied mark without `remove()` all report.
+   * `remove()` (one call per mark), and `setAnnotation` and `removeAnnotation` report what they
+   * take away, so an annotation the host has heard of since it was last set is not reported again.
+   * Once reported here, no mark reports it either, so a mark an undo brings back stays quiet. A
+   * whole-state replacement reports nothing, because marks do not report there either
+   * (`TypedMarkNode.remove` never runs): a `setUsj` load forgets every annotation, and undo or
+   * redo keeps the callbacks for the redo that brings the holders back. A settle that discards an
+   * annotation's bytes, a collaborator's apply, and a selection delete that drops an emptied mark
+   * without `remove()` all report.
    */
   function reportDestroyed({ tags }: { tags: Set<string> }): void {
-    for (const [type, id] of takeTypedMarkRemovalReports(editor)) reported.add(indexKey(type, id));
-    for (const annotationKey of setThisUpdate) reported.delete(annotationKey);
-    setThisUpdate.clear();
+    takeMarkReports();
     const candidates = emptied;
+    const heard = heardThisCommit;
+    const dropped = droppedMarks;
     emptied = new Set();
-    const isReload = tags.has(EXTERNAL_USJ_MUTATION_TAG);
-    const isHistory = tags.has(HISTORIC_TAG);
-    const isAnnotationChange = tags.has(ANNOTATION_CHANGE_TAG);
+    heardThisCommit = new Set();
+    droppedMarks = new Map();
+    if (tags.has(EXTERNAL_USJ_MUTATION_TAG)) {
+      forgetAll();
+      return;
+    }
+    if (tags.has(HISTORIC_TAG)) return;
     for (const annotationKey of candidates) {
-      if (holderCount(annotationKey) > 0 || isHistory) continue;
+      if (holderCount(annotationKey) > 0) continue;
       const [type, id] = annotationKey.split("\u0000");
-      if (isReload) {
-        reported.delete(annotationKey);
-        forget(annotationKey, type, id);
-        continue;
-      }
       const onRemove =
         getDisplayAnnotationRegistration(editor, type, id)?.onRemove ??
         markOnRemove.get(annotationKey);
       const text = lastText.get(annotationKey) ?? "";
-      const heard = isAnnotationChange || reported.has(annotationKey);
-      reported.add(annotationKey);
       forget(annotationKey, type, id);
-      if (!heard) onRemove?.(type, id, "destroyed", text);
+      if (!onRemove || reported.has(annotationKey) || heard.has(annotationKey)) continue;
+      reported.add(annotationKey);
+      setTypedMarkRemovalSilenced(editor, type, id, true);
+      for (const key of dropped.get(annotationKey) ?? []) forgetTypedMarkCallbacks(key, type, id);
+      onRemove(type, id, "destroyed", text);
     }
+  }
+
+  /** `setAnnotation` begins a new lifecycle: its loss is reported afresh. */
+  function noteSet(type: string, id: string): void {
+    takeMarkReports();
+    const annotationKey = indexKey(type, id);
+    reported.delete(annotationKey);
+    setTypedMarkRemovalSilenced(editor, type, id, false);
   }
 
   const unregister = mergeRegister(
@@ -312,7 +358,8 @@ function createIndex(editor: LexicalEditor): Entry {
   return {
     index: {
       keysFor: (type, id) => keysByAnnotation.get(indexKey(type, id)) ?? EMPTY,
-      noteSet: (type, id) => setThisUpdate.add(indexKey(type, id)),
+      noteSet,
+      noteReported: (type, id) => hear(indexKey(type, id)),
     },
     references: 0,
     unregister,
@@ -363,6 +410,7 @@ export function useDisplayAnnotationIndex(editor: LexicalEditor): DisplayAnnotat
     () => ({
       keysFor: (type, id) => current.current?.keysFor(type, id) ?? EMPTY,
       noteSet: (type, id) => current.current?.noteSet(type, id),
+      noteReported: (type, id) => current.current?.noteReported(type, id),
     }),
     [],
   );

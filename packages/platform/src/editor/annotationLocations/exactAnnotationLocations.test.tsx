@@ -1076,16 +1076,23 @@ describe("removal is reported by what holds the annotation now", () => {
     toOffset: number,
   ): Promise<void> {
     await act(async () => {
-      mounted.lexical.update(() => {
-        const selection = $createRangeSelection();
-        selection.anchor.set($textContaining(from).getKey(), fromOffset, "text");
-        selection.focus.set($textContaining(to).getKey(), toOffset, "text");
-        $setSelection(selection);
-        selection.removeText();
-      });
+      mounted.lexical.update(() => $selectAndDelete(from, fromOffset, to, toOffset));
       await Promise.resolve();
       await Promise.resolve();
     });
+  }
+
+  /** {@link selectAndDelete}'s edit, inside an update. */
+  function $selectAndDelete(from: string, fromOffset: number, to: string, toOffset: number): void {
+    const selection = $createRangeSelection();
+    selection.anchor.set($textContaining(from).getKey(), fromOffset, "text");
+    selection.focus.set($textContaining(to).getKey(), toOffset, "text");
+    $setSelection(selection);
+    selection.removeText();
+  }
+
+  async function undo(mounted: Mounted): Promise<void> {
+    await act(async () => mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined));
   }
 
   it("reports destroyed once when a selection deletes exactly a mark's text", async () => {
@@ -1171,6 +1178,98 @@ describe("removal is reported by what holds the annotation now", () => {
       await Promise.resolve();
     });
     expect(onRemove.mock.calls.slice(1)).toEqual([["external-test", "G", "destroyed", "grace"]]);
+  });
+
+  it("reports once when a selection delete and removeAnnotation of the same id share a commit", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountGraceMark(onRemove);
+
+    await act(async () => {
+      mounted.lexical.update(() => $selectAndDelete("grace", 0, "grace", "grace".length));
+      mounted.ref.current?.removeAnnotation("test", "G");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "G"))).toEqual(
+      [],
+    );
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a selection delete that shares a commit with setting another id", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountGraceMark(onRemove);
+
+    await act(async () => {
+      mounted.lexical.update(() => $selectAndDelete("grace", 0, "grace", "grace".length));
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: contentPath([3, 0]), offset: 0 },
+          end: { jsonPath: contentPath([3, 0]), offset: "depart".length },
+        },
+        "test",
+        "Y",
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "Y"))).toEqual([
+      "depart",
+    ]);
+    expect(onRemove.mock.calls).toEqual([["external-test", "G", "destroyed", "grace"]]);
+  });
+
+  describe("after a selection delete that reported the mark is undone", () => {
+    it("reports nothing more when a later delete removes the mark itself", async () => {
+      const onRemove = vi.fn<TypedMarkOnRemove>();
+      const mounted = await mountGraceMark(onRemove);
+      await selectAndDelete(mounted, "grace", 0, "grace", "grace".length);
+      await undo(mounted);
+      expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "G"))).toEqual(
+        ["grace"],
+      );
+
+      await selectAndDelete(mounted, "In the ", "In th".length, " of God", 2);
+
+      expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "G"))).toEqual(
+        [],
+      );
+      expect(onRemove.mock.calls).toEqual([["external-test", "G", "destroyed", "grace"]]);
+    });
+
+    it("reports nothing more when the host removes the annotation", async () => {
+      const onRemove = vi.fn<TypedMarkOnRemove>();
+      const mounted = await mountGraceMark(onRemove);
+      await selectAndDelete(mounted, "grace", 0, "grace", "grace".length);
+      await undo(mounted);
+
+      await act(async () => {
+        mounted.ref.current?.removeAnnotation("test", "G");
+        await Promise.resolve();
+      });
+
+      expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "G"))).toEqual(
+        [],
+      );
+      expect(onRemove.mock.calls).toEqual([["external-test", "G", "destroyed", "grace"]]);
+    });
+  });
+
+  it("reports nothing more when a mark that reported its own removal comes back and is deleted by selection", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountGraceMark(onRemove);
+    await selectAndDelete(mounted, "In the ", "In th".length, " of God", 2);
+    expect(causes(onRemove)).toEqual(["destroyed"]);
+    await undo(mounted);
+
+    await selectAndDelete(mounted, "grace", 0, "grace", "grace".length);
+
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "G"))).toEqual(
+      [],
+    );
+    expect(causes(onRemove)).toEqual(["destroyed"]);
   });
 
   it("reports destroyed once when a settle discards every byte of a mark", async () => {
