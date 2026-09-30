@@ -1,7 +1,7 @@
 {
   "rich": {
     "standard": {
-      "ops": 2319,
+      "ops": 2314,
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[1]['number']|propertyOffset=1",
@@ -45,7 +45,7 @@
       "failures": {}
     },
     "standard+expandedNotes": {
-      "ops": 2327,
+      "ops": 2319,
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[1]['number']|propertyOffset=1",
@@ -87,7 +87,7 @@
       "failures": {}
     },
     "unformatted": {
-      "ops": 2327,
+      "ops": 2319,
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[1]['number']|propertyOffset=1",
@@ -129,7 +129,7 @@
       "failures": {}
     },
     "visible": {
-      "ops": 1540,
+      "ops": 1538,
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[3].content[6].content[0]",
@@ -142,7 +142,7 @@
       "failures": {}
     },
     "visible+collapsed": {
-      "ops": 1540,
+      "ops": 1538,
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[3].content[6].content[0]",
@@ -155,7 +155,7 @@
       "failures": {}
     },
     "formatted": {
-      "ops": 1500,
+      "ops": 1498,
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[3].content[6].content[0]",
@@ -168,7 +168,7 @@
       "failures": {}
     },
     "paragraph-structure": {
-      "ops": 1500,
+      "ops": 1498,
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[3].content[6].content[0]",
@@ -181,7 +181,7 @@
       "failures": {}
     },
     "hidden+expanded": {
-      "ops": 1500,
+      "ops": 1498,
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[3].content[6].content[0]",

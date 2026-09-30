@@ -1488,8 +1488,9 @@ function $locationFromNode(
     // A boundary in front of displayed USFM bytes is at their first byte, so it reports what those
     // bytes are rather than a content boundary. For read-only bytes it is the only point that
     // addresses them at all.
-    if (childAtOffset && $displayBytesOf(childAtOffset)) {
-      const byteLocation = $locationFromDisplayBytes(childAtOffset, 0, collapsesSpaceRuns);
+    const front = childAtOffset && $frontDisplayByteNode(childAtOffset);
+    if (front) {
+      const byteLocation = $locationFromDisplayBytes(front, 0, collapsesSpaceRuns);
       if (byteLocation) return byteLocation;
     }
     if (childAtOffset && $isDisplayByteDecorator(childAtOffset))
@@ -1574,9 +1575,11 @@ function $endsInOwnSeparator(node: TextNode): boolean {
 
 /**
  * The location of the first byte after `node`: in front of the first leaf of whatever follows it,
- * looking through annotation marks, so a `\va` run or a char span answers with its own first byte
- * rather than the content an element point would skip to. `undefined` when nothing follows `node`
- * in its parent, or when what follows answers with the end of whatever precedes it — this node.
+ * looking through annotation marks, so a `\va` run or a char span answers with its own first byte.
+ * With nothing after `node` in its parent, that byte is the parent's content end (a paragraph's
+ * newline) — except at the very end of the document, whose spelling is one past that newline.
+ * `undefined` there, and when what follows answers with the end of whatever precedes it — this
+ * node.
  */
 function $locationOfFirstByteAfter(
   node: LexicalNode,
@@ -1590,7 +1593,11 @@ function $locationOfFirstByteAfter(
   )
     current = mark;
   const next = current.getNextSibling();
-  if (!next) return undefined;
+  if (!next) {
+    const parent = current.getParent();
+    if (!parent || $endsDocument(current)) return undefined;
+    return $locationFromNode(parent, parent.getChildrenSize(), collapsesSpaceRuns);
+  }
   const leaf = $isElementNode(next) ? (next.getFirstDescendant() ?? next) : next;
   if (
     $defersToNeighbor(leaf, collapsesSpaceRuns) ||
@@ -1598,6 +1605,23 @@ function $locationOfFirstByteAfter(
   )
     return undefined;
   return $locationFromNode(leaf, 0, collapsesSpaceRuns);
+}
+
+/** Whether nothing follows `node` anywhere in the document. */
+function $endsDocument(node: LexicalNode): boolean {
+  for (let current: LexicalNode | null = node; current; current = current.getParent())
+    if (current.getNextSibling()) return false;
+  return true;
+}
+
+/** The node carrying the first display byte at `child`'s front: `child` itself, or the first piece
+ * of an attribute display run's wrapper (`\va 1a\va*`), whose element point would otherwise skip
+ * the run as non-content. `undefined` when no display byte starts there. */
+function $frontDisplayByteNode(child: LexicalNode): LexicalNode | undefined {
+  if ($displayBytesOf(child)) return child;
+  if (!$isAttributeRunNode(child)) return undefined;
+  const first = child.getFirstDescendant();
+  return first && $displayBytesOf(first) ? first : undefined;
 }
 
 /**
@@ -1614,7 +1638,8 @@ function $locationInFrontOfMarkChild(
     const child = mark.getChildAtIndex(index);
     if (!child) return undefined;
     // Displayed USFM bytes answer with their first byte, as they do in front of any element point.
-    if ($displayBytesOf(child)) return $locationFromDisplayBytes(child, 0, collapsesSpaceRuns);
+    const front = $frontDisplayByteNode(child);
+    if (front) return $locationFromDisplayBytes(front, 0, collapsesSpaceRuns);
     if ($isTextNode(child) && $getLogicalTextLocation(child, 0, collapsesSpaceRuns))
       return $locationFromNode(child, 0, collapsesSpaceRuns);
     // Presentation-only children — including a nested mark holding nothing but presentation —

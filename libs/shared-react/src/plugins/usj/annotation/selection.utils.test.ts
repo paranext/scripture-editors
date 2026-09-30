@@ -41,6 +41,9 @@ import {
   $createImmutableChapterNode,
   $createImmutableTypedTextNode,
   $createImmutableUnmatchedNode,
+  $createAttributeRunNode,
+  $isAttributeRunNode,
+  AttributeRunNode,
   $createImpliedParaNode,
   $createMarkerTrailingSeparator,
   $createMarkerNode,
@@ -969,7 +972,12 @@ function $requireNode<T extends LexicalNode>(key: string): T {
 describe("$getLocationFromNode behind a verse's trailing separator", () => {
   /** `\p <before>\v N <after>`, the verse wrapped in an annotation mark that ends with it when
    * `marked`; returns the verse's key. */
-  function createVerse(number: string, before: string, after: string, marked = false) {
+  function createVerse(
+    number: string,
+    before: string,
+    after: string,
+    { marked = false, nextParagraph = false } = {},
+  ) {
     let verseKey = "";
     const { editor } = createBasicTestEnvironment(
       [TypedMarkNode, ParaNode, VerseNode, MarkerNode],
@@ -981,6 +989,10 @@ describe("$getLocationFromNode behind a verse's trailing separator", () => {
         para.append(marked ? $createTypedMarkNode({ spelling: ["s1"] }).append(verse) : verse);
         if (after) para.append($createTextNode(after));
         $getRoot().append(para);
+        if (nextParagraph)
+          $getRoot().append(
+            $createParaNode("q1").append($createMarkerNode("q1", "opening"), $createTextNode("y")),
+          );
       },
     );
     return { editor, verseKey };
@@ -990,7 +1002,7 @@ describe("$getLocationFromNode behind a verse's trailing separator", () => {
     ["with nothing around the verse", false],
     ["when an annotation mark ends with the verse", true],
   ])("reports the verse text's first byte %s", (_name, marked) => {
-    const { editor, verseKey } = createVerse("1", "", "God said", marked);
+    const { editor, verseKey } = createVerse("1", "", "God said", { marked });
 
     editor.getEditorState().read(() => {
       const verse = $requireNode<VerseNode>(verseKey);
@@ -1001,7 +1013,19 @@ describe("$getLocationFromNode behind a verse's trailing separator", () => {
     });
   });
 
-  it("keeps the verse number's spelling when nothing follows the verse", () => {
+  it("reports a verse ending a paragraph that is not the last as that paragraph's newline", () => {
+    const { editor, verseKey } = createVerse("2", "x", "", { nextParagraph: true });
+
+    editor.getEditorState().read(() => {
+      const verse = $requireNode<VerseNode>(verseKey);
+      expect($getLocationFromNode(verse, verse.getTextContentSize(), undefined)).toEqual({
+        jsonPath: "$.content[0].content[1]['number']",
+        propertyOffset: 1,
+      });
+    });
+  });
+
+  it("keeps the document-end spelling for a verse ending the document", () => {
     const { editor, verseKey } = createVerse("2", "x", "");
 
     editor.getEditorState().read(() => {
@@ -1009,6 +1033,55 @@ describe("$getLocationFromNode behind a verse's trailing separator", () => {
       expect($getLocationFromNode(verse, verse.getTextContentSize(), undefined)).toEqual({
         jsonPath: "$.content[0].content[1]['number']",
         propertyOffset: 2,
+      });
+    });
+  });
+});
+
+describe("$getLocationFromNode in front of an attribute display run", () => {
+  /** `\p \v 1 \va 1a\va* In the`, the verse and its `\va` run inside an annotation mark when
+   * `marked`; returns the key of the element whose child the run is. */
+  function createVerseAltnumber(marked: boolean) {
+    let containerKey = "";
+    const { editor } = createBasicTestEnvironment(
+      [TypedMarkNode, ParaNode, VerseNode, MarkerNode, AttributeRunNode],
+      () => {
+        const value = $createTextNode(" 1a");
+        $setState(value, textTypeState, "attribute");
+        const run = $createAttributeRunNode("va").append(
+          $createMarkerNode("va", "opening"),
+          value,
+          $createMarkerNode("va", "closing"),
+        );
+        const verse = $createVerseNode("1", "\\v 1 ");
+        const para = $createParaNode("p").append($createMarkerNode("p", "opening"));
+        if (marked) {
+          const mark = $createTypedMarkNode({ spelling: ["s1"] }).append(verse, run);
+          containerKey = mark.getKey();
+          para.append(mark);
+        } else {
+          containerKey = para.getKey();
+          para.append(verse, run);
+        }
+        $getRoot().append(para.append($createTextNode("In the")));
+      },
+    );
+    return { editor, containerKey };
+  }
+
+  it.each([
+    ["an element point", false],
+    ["a boundary between an annotation mark's children", true],
+  ])("reports %s in front of a verse's \\va run as the run's first byte", (_name, marked) => {
+    const { editor, containerKey } = createVerseAltnumber(marked);
+
+    editor.getEditorState().read(() => {
+      const container = $requireNode<ElementNode>(containerKey);
+      const run = container.getChildren().find($isAttributeRunNode);
+      if (!run) throw new Error("expected the \\va run");
+      expect($getLocationFromNode(container, run.getIndexWithinParent(), undefined)).toEqual({
+        jsonPath: "$.content[0].content[0]",
+        keyName: "altnumber",
       });
     });
   });

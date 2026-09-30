@@ -58,6 +58,7 @@ import {
 } from "lexical";
 import {
   $getLogicalContentItems,
+  $isAttributeRunNode,
   $isMarkerNode,
   $isNoteNode,
   $isVisibleMarkerNode,
@@ -593,10 +594,16 @@ const callerCategoryUsj = doc({
   ],
 });
 
+/** `\p b \v 2` then `\q1 y`: a verse ending a paragraph that is not the document's last. */
+const verseEndsParagraphUsj = doc(
+  { type: "para", marker: "p", content: ["b", { type: "verse", marker: "v", number: "2" }] },
+  { type: "para", marker: "q1", content: ["y"] },
+);
+
 /** A caret behind a glyph's own trailing separator names the byte after that separator, whatever
  * it is: the separator has no position of its own. The rows exist only where the glyph is editable
  * text (a verse's `\v 1 `, an expanded note's ` + ` caller). */
-const GLYPH_END_ROWS: Row[] = [
+const VERSE_END_ROWS: Row[] = [
   {
     caret: "behind a verse's separator, in front of its text",
     usj: verseTextUsj,
@@ -615,6 +622,26 @@ const GLYPH_END_ROWS: Row[] = [
     point: endOf((view) => $nodeAt([2, 0], view)),
     location: { jsonPath: "$.content[2].content[0]", keyName: "altnumber" },
   },
+  {
+    caret: "in front of a verse's own \\va run, as an element point",
+    usj: verseAltnumberUsj,
+    point: () => {
+      const run = $dfs().find(({ node }) => $isAttributeRunNode(node))?.node;
+      if (!run) throw new Error("expected the \\va run");
+      return [run.getParentOrThrow(), run.getIndexWithinParent()];
+    },
+    location: { jsonPath: "$.content[2].content[0]", keyName: "altnumber" },
+  },
+  {
+    caret: "behind a verse's separator at the end of a paragraph that is not the last",
+    usj: verseEndsParagraphUsj,
+    point: endOf((view) => $nodeAt([2, 1], view)),
+    // The separator there is the paragraph's newline, which the number's offset space counts.
+    location: { jsonPath: "$.content[2].content[1]['number']", propertyOffset: 1 },
+  },
+];
+
+const CALLER_END_ROWS: Row[] = [
   {
     caret: "behind a caller's separator, in front of the note's first span",
     usj: callerSpanUsj,
@@ -647,13 +674,13 @@ function expectReportAndRoundTrip({ usj, point, location }: Row, view: ViewOptio
 }
 
 describe.each<[string, ViewOptions, Row[]]>([
-  ["Standard", requireView(STANDARD_VIEW_MODE), GLYPH_END_ROWS.slice(0, 3)],
+  ["Standard", requireView(STANDARD_VIEW_MODE), VERSE_END_ROWS],
   [
     "Standard, notes expanded",
     { ...requireView(STANDARD_VIEW_MODE), noteMode: "expanded" },
-    GLYPH_END_ROWS,
+    [...VERSE_END_ROWS, ...CALLER_END_ROWS],
   ],
-  ["Unformatted", requireView(UNFORMATTED_VIEW_MODE), GLYPH_END_ROWS],
+  ["Unformatted", requireView(UNFORMATTED_VIEW_MODE), [...VERSE_END_ROWS, ...CALLER_END_ROWS]],
 ])("reporting a caret behind a glyph's trailing separator (%s)", (_name, view, rows) => {
   it.each(rows)("reports a caret $caret as that next byte", (row) => {
     expectReportAndRoundTrip(row, view);
@@ -730,6 +757,13 @@ describe("reporting an unmatched closer (Standard view)", () => {
       usj: unmatchedUsj,
       point: (current) => [$nodeAt([2, 0], current), 1],
       location: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 0 },
+    },
+    {
+      caret: "behind the `*`, as the unmatched marker's name end",
+      usj: unmatchedUsj,
+      point: (current) => [$nodeAt([2, 0], current), 2],
+      // The same convention as a closer's end, `closingMarkerOffset: <closer length>`.
+      location: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 1 },
     },
     {
       caret: "in front of the `\\`, as the unmatched marker's own location",
