@@ -1,7 +1,7 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import { deepEqual } from "fast-equals";
-import { $getState, LexicalEditor, TextNode } from "lexical";
+import { $getSelection, $getState, $isRangeSelection, LexicalEditor, TextNode } from "lexical";
 import { useEffect } from "react";
 import {
   $hasSameCharAttributes,
@@ -194,6 +194,18 @@ function $charTextNodeTransform(node: TextNode): void {
 
   const text = node.getTextContent();
   if (text.length > 1 && text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT)) {
+    // Text typed into the placeholder lands after it, with the caret after what was typed. A caret
+    // still at the node's start means this is not that: it is an editable span whose opening
+    // glyph was just deleted, leaving its content led by the glyph's separator NBSP (the same
+    // character as the placeholder), and the unwrap that follows owns the separator. Throwing the
+    // caret to the end of the content from there loses the user's place.
+    const selection = $getSelection();
+    const caretAtStart =
+      $isRangeSelection(selection) &&
+      selection.isCollapsed() &&
+      selection.anchor.key === node.getKey() &&
+      selection.anchor.offset === 0;
+    if (caretAtStart) return;
     node.setTextContent(text.slice(1));
     node.selectEnd();
   }

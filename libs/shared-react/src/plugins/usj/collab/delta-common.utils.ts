@@ -162,7 +162,9 @@ export const LF = "\n";
  * with `$applyUpdate`'s insert/delete traversals.
  *
  * @param embedNodeKey - The key of the embed node to replace.
- * @param insertEmbedOps - The operations to insert the new embed node.
+ * @param insertEmbedOps - The operations to insert the new embed node. Any after the first are
+ *   inserted right after it, once the old embed is deleted: inserted before that delete, text lands
+ *   at the old embed's position and is deleted along with it.
  * @returns The replace embed operations, or `undefined` if the node is not found.
  */
 export function $getReplaceEmbedOps(
@@ -175,7 +177,8 @@ export function $getReplaceEmbedOps(
   const retain = $getOTPositionOfNode(node, "apply");
   if (retain === undefined) return;
 
-  const ops: DeltaOp[] = [{ retain }, ...insertEmbedOps, { delete: 1 }];
+  const [embedOp, ...following] = insertEmbedOps;
+  const ops: DeltaOp[] = [{ retain }, ...(embedOp ? [embedOp] : []), { delete: 1 }, ...following];
   return ops;
 }
 

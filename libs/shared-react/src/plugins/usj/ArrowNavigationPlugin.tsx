@@ -12,6 +12,8 @@ import { ViewOptions } from "../../views/view-options.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $findMatchingParent } from "@lexical/utils";
 import {
+  $createRangeSelection,
+  $getEditor,
   $getRoot,
   $getSelection,
   $isDecoratorNode,
@@ -19,6 +21,7 @@ import {
   $isLineBreakNode,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   COMMAND_PRIORITY_HIGH,
   ElementNode,
   KEY_DOWN_COMMAND,
@@ -26,6 +29,7 @@ import {
   LexicalNode,
   PointType,
   RangeSelection,
+  SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
 import { useEffect } from "react";
@@ -731,7 +735,9 @@ function $applyOneVisibleStop(
     return false;
   }
   if (alter === "collapse") {
-    landing.node.select(landing.offset, landing.offset);
+    if (landing.kind === "element" && $isElementNode(landing.node))
+      $selectElementPoint(landing.node, landing.offset);
+    else landing.node.select(landing.offset, landing.offset);
     return true;
   }
   selection.focus.set(landing.node.getKey(), landing.offset, landing.kind);
@@ -882,7 +888,38 @@ function $selectPastTrailingNote(note: NoteNode): void {
   // Detached from any block: leave the caret where the user can still see it.
   if (!parent) return;
   const indexPastNote = note.getIndexWithinParent() + 1;
-  parent.select(indexPastNote, indexPastNote);
+  $selectElementPoint(parent, indexPastNote);
+}
+
+/**
+ * Puts a collapsed caret at child slot `offset` of `element`, and keeps it at that slot when the
+ * slot sits just past a collapsed note.
+ *
+ * `ElementNode.select` on an element that cannot be empty - a char span - descends into the child
+ * at its edge rather than naming the slot itself. At the end of a span that a collapsed note ends
+ * (an unclosed `\wj`, whose missing closer leaves the note its last child), that child is the
+ * note, and the descent comes to rest inside the note's hidden closing glyph: an invisible caret
+ * whose next keystroke edits the note body.
+ *
+ * The slot past the note is where the caret belongs, and `TrailingNoteCaretGuardPlugin` gives it a
+ * caret host to render in when it hears of the move on `SELECTION_CHANGE_COMMAND`. The move is
+ * announced here, inside this update, because the browser's own report of it comes too late for an
+ * inline span: the element point is written out to the DOM and read back, and reading a position at
+ * the end of an inline element resolves it into that element's last text - the same hidden glyph.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $selectElementPoint(element: ElementNode, offset: number): void {
+  const childBefore = element.getChildAtIndex(offset - 1);
+  if (!$isNoteNode(childBefore) || childBefore.getIsCollapsed() !== true) {
+    element.select(offset, offset);
+    return;
+  }
+  const selection = $createRangeSelection();
+  selection.anchor.set(element.getKey(), offset, "element");
+  selection.focus.set(element.getKey(), offset, "element");
+  $setSelection(selection);
+  $getEditor().dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
 }
 
 /** Helper to handle forward arrow key navigation logic */

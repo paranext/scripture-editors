@@ -232,6 +232,9 @@ export function ContextMenuPlugin({
     if (!menuState.isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // Claims the key, so a host listening further along (e.g. an editor-level Escape that
+        // closes the editor) can tell this Escape was spent closing the menu.
+        event.preventDefault();
         closeMenu();
       } else if (event.key === "ArrowDown") {
         event.preventDefault();

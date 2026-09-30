@@ -630,15 +630,21 @@ describe("editable-mode marker menu harness", () => {
       await dispatchKeyDown(editor, " ");
 
       expect(document.querySelector(".autocomplete-menu-container")).toBeNull();
-      editor.getEditorState().read(() => {
-        const para = requireDefined($getRoot().getChildren().filter($isParaNode)[0], "para");
-        const markers = para
-          .getChildren()
-          .filter($isCharNode)
-          .map((char) => char.getMarker());
-        expect(markers).toContain("nd");
-        expect(markers).toContain("wj");
-      });
+      // The bytes land immediately, but with no terminating separator they settle on the engine's
+      // DEFERRED clock rather than inside the commit update (invariant IV - settle has two
+      // clocks), so the end state is awaited rather than read synchronously, exactly as the
+      // first-session assertion above does.
+      await waitFor(() =>
+        editor.getEditorState().read(() => {
+          const para = requireDefined($getRoot().getChildren().filter($isParaNode)[0], "para");
+          const markers = para
+            .getChildren()
+            .filter($isCharNode)
+            .map((char) => char.getMarker());
+          expect(markers).toContain("nd");
+          expect(markers).toContain("wj");
+        }),
+      );
     });
 
     it("with an EMPTY filter, `\\` lands a literal backslash and does NOT reopen", async () => {

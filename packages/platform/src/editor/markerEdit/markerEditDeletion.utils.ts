@@ -24,8 +24,10 @@ import {
 import {
   $createMarkerNode,
   $createMarkerTrailingSeparator,
+  $isCharNode,
   $isMarkerNode,
   $isMarkerTrailingSeparator,
+  $isSeparatorPrefixHostText,
   $isSynthesizedMarkerNode,
   $paraPrefixSeparatorCaretHeld,
   $isParaNode,
@@ -35,6 +37,7 @@ import {
   defaultMarkerAttribute,
   getEditableCallerText,
   MARKER_TRAILING_SPACE_TEXT_TYPE,
+  MarkerNode,
   NBSP,
   NoteNode,
   PARA_MARKER_DEFAULT,
@@ -509,6 +512,57 @@ export function $unwrapCharNode(char: CharNode): void {
     anchor = child;
   }
   char.remove();
+}
+
+/**
+ * The opening char glyph a forward Delete at `point` would empty: the next character after the
+ * caret is the glyph's last remaining one. `undefined` for anything else, including a glyph with
+ * more than one character left (deleting one of those is an ordinary text edit).
+ */
+function $openerGlyphEmptiedByForwardDelete(point: PointType): MarkerNode | undefined {
+  const node = point.getNode();
+  let candidate: LexicalNode | null | undefined;
+  if (point.type === "element" && $isElementNode(node))
+    candidate = node.getChildAtIndex(point.offset);
+  else if ($isMarkerNode(node) && point.offset === 0) candidate = node;
+  else if ($isTextNode(node) && point.offset === node.getTextContentSize())
+    candidate = node.getNextSibling();
+  if ($isCharNode(candidate)) candidate = candidate.getFirstChild();
+  if (!$isMarkerNode(candidate) || candidate.getMarkerSyntax() !== "opening") return undefined;
+  const char = candidate.getParent();
+  if (!$isCharNode(char) || !candidate.is(char.getFirstChild())) return undefined;
+  return candidate.getTextContentSize() === 1 ? candidate : undefined;
+}
+
+/**
+ * Forward Delete of the last character left of a char span's opening glyph — `\wj` deleted one
+ * character at a time from before its backslash. Deleting it deletes the marker, so the span
+ * unwraps, and exactly that one character goes: the marker's separator space is, with the marker
+ * gone, the text's own space, which the next Delete removes like any other character. The caret
+ * stays where it was, at the start of what was the span's content.
+ *
+ * Handled here rather than left to the rich-text delete: with the glyph gone, an UNCLOSED span's
+ * only child is its content led by the separator NBSP — the very shape of an empty span's
+ * placeholder with text typed after it — and the placeholder cleanup then dropped the NBSP too and
+ * threw the caret to the end of the span.
+ *
+ * Mutating: call inside `editor.update()` (dispatched from the `DELETE_CHARACTER_COMMAND` handler).
+ *
+ * @returns Whether the delete was handled.
+ */
+export function $deleteLastOpenerGlyphCharForward(): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const glyph = $openerGlyphEmptiedByForwardDelete(selection.anchor);
+  const char = glyph?.getParent();
+  if (!glyph || !$isCharNode(char)) return false;
+  const content = glyph.getNextSibling();
+  glyph.remove();
+  if ($isSeparatorPrefixHostText(content) && content.getTextContent().startsWith(NBSP))
+    content.setTextContent(` ${content.getTextContent().slice(NBSP.length)}`);
+  $unwrapCharNode(char);
+  if ($isTextNode(content) && content.isAttached()) content.select(0, 0);
+  return true;
 }
 
 /**

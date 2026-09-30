@@ -39,13 +39,20 @@ import {
   $createMarkerTrailingSeparator,
   $createNoteNode,
   $getNoteCallerPreviewText,
+  $isAttributeRunNode,
   $isCharNode,
+  $isGlyphTextNode,
   $isImmutableTypedTextNode,
   $isImmutableUnmatchedNode,
   $isMarkerNode,
   $isNoteNode,
+  $isVisibleMarkerNode,
   $moveSelectionToEnd,
   $normalizeSelectionOutOfGlyphText,
+  $noteCategoryRunPieces,
+  $noteEditableCallerNode,
+  $separatorPrefixLength,
+  $shouldIgnoreNodeForContentIndexes,
   CharNode,
   closingMarkerText,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
@@ -61,6 +68,13 @@ import {
   segmentState,
   textTypeState,
 } from "shared";
+
+// Lives in a leaf module so this file and `ImmutableNoteCallerNode` do not import each other (see
+// `note-index.utils`). Re-exported so it reaches the `nodes/usj` barrel, which exports this file
+// and not the leaf; imported here too since `$getNoteByKeyOrIndex` below builds on it.
+import { $getNoteAtIndex } from "./note-index.utils";
+
+export { $getNoteAtIndex, $getNoteIndex } from "./note-index.utils";
 
 /** Caller count is in an object so it can be manipulated by passing the object. */
 export interface CallerData {
@@ -392,12 +406,11 @@ export function $createWholeNote(
   // category input on the insert path. A category acquired later heals its run through the
   // shared display-run sync.
   if (viewOptions?.markerMode === "editable" && !isCollapsed) {
-    if (caller === "") note.append(...contentNodes);
-    else {
-      callerNode = $createTextNode(getEditableCallerText(note.__caller));
-      if (isShellAtomic) callerNode.setMode("token");
-      note.append(callerNode, ...contentNodes);
-    }
+    // An empty caller keeps its slot: the two separators Paratext 9 leaves where a deleted caller
+    // was (`\f  \fr …`), as the load path (`createNote`) builds it.
+    callerNode = $createTextNode(getEditableCallerText(note.__caller));
+    if (isShellAtomic) callerNode.setMode("token");
+    note.append(callerNode, ...contentNodes);
   } else {
     // The engine-owned NBSP separators of a collapsed note's layout, in the same tagged token
     // shape as the para-marker prefix separator (and as the load path's `createNote` builds
@@ -434,14 +447,7 @@ export function $getNoteByKeyOrIndex(noteKeyOrIndex: string | number): NoteNode 
     return node;
   }
 
-  const dfsNodes = $dfs();
-  if (dfsNodes.length <= 0) return;
-
-  const dfsNotes = dfsNodes.filter((dfsNode) => $isNoteNode(dfsNode.node));
-  const note = dfsNotes[noteKeyOrIndex]?.node;
-  if (!$isNoteNode(note)) return;
-
-  return note;
+  return $getNoteAtIndex(noteKeyOrIndex);
 }
 
 /**
@@ -451,6 +457,8 @@ export function $getNoteByKeyOrIndex(noteKeyOrIndex: string | number): NoteNode 
  * notes, where `expandInline` builds collapsed. Here the user is navigating INTO the note, so
  * `expandInline` must expand it (the caret is about to be adjacent — the same condition under
  * which the NoteNodePlugin keeps it open); only an always-`"collapsed"` mode keeps it closed.
+ *
+ * Mutating: call inside `editor.update()`.
  *
  * @param noteNode - The note node to select.
  * @param viewOptions - The current editor view options.
@@ -468,9 +476,347 @@ export function $selectNote(noteNode: NoteNode, viewOptions: ViewOptions | undef
       }
     } else nodeBefore.selectEnd();
   } else {
-    const lastCharChild = noteNode.getChildren().reverse().find($isCharNode);
-    lastCharChild?.selectEnd();
+    const children = noteNode.getChildren();
+    const lastCharChild = children.slice().reverse().find($isCharNode);
+    if (lastCharChild) $selectCharContentEnd(lastCharChild);
+    else {
+      // An expanded note with no content run at all (`\f + \f*`) holds nothing to select the end
+      // of, and leaving the caret where it was puts it OUTSIDE the note the user asked to be in -
+      // so the next keystroke lands in the surrounding text. Land it at the child slot content
+      // would occupy: just before the closing glyph, or at the end when there is none. The glyph
+      // is a marker node under `markerMode: "editable"` and display-only text under `"visible"`.
+      const closingIndex = $closingGlyphIndex(noteNode);
+      const at = closingIndex === -1 ? children.length : closingIndex;
+      noteNode.select(at, at);
+    }
   }
+}
+
+/**
+ * Index of `element`'s own closing glyph among its children: a marker node under
+ * `markerMode: "editable"`, display-only text under `"visible"`.
+ *
+ * Only the LAST child can be the element's own closer. A closing glyph earlier in the children is
+ * not a boundary the content ends at: it can be a nested span's, where that span's glyphs sit
+ * among the run's own children (the flattened nested shape collaborative input can carry).
+ * @param element - The note or char span whose closer to find.
+ * @returns The closer's index, or `-1` when the element does not end in one (implicitly closed,
+ *   markers hidden, or content after an inner closer).
+ */
+function $closingGlyphIndex(element: NoteNode | CharNode): number {
+  const lastIndex = element.getChildrenSize() - 1;
+  const last = element.getLastChild();
+  const isCloser =
+    ($isMarkerNode(last) && last.getMarkerSyntax() === "closing") ||
+    ($isVisibleMarkerNode(last) &&
+      last.getTextContent() === closingMarkerText(element.getMarker()));
+  return isCloser ? lastIndex : -1;
+}
+
+/**
+ * Puts the caret at the end of a char span's CONTENT: ahead of its closing glyph when the span is
+ * explicitly closed (`\ft a\ft*`), where text typed extends the run rather than landing after it.
+ * @param charNode - The char span.
+ */
+function $selectCharContentEnd(charNode: CharNode) {
+  const closingIndex = $closingGlyphIndex(charNode);
+  if (closingIndex === -1) {
+    charNode.selectEnd();
+    return;
+  }
+  const beforeCloser = charNode.getChildAtIndex(closingIndex - 1);
+  if ($isTextNode(beforeCloser) && !$shouldIgnoreNodeForContentIndexes(beforeCloser))
+    beforeCloser.selectEnd();
+  else charNode.select(closingIndex, closingIndex);
+}
+
+/**
+ * Puts the caret immediately AFTER `noteNode`, where PT9 leaves it once the user is done with a
+ * note: in a collapsed note the note renders as its caller alone, so this is the position just
+ * past the caller.
+ *
+ * The mirror of {@link $selectNote}'s collapsed branch, which lands just BEFORE the note.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @param noteNode - The note node to put the caret after.
+ */
+export function $selectAfterNote(noteNode: NoteNode) {
+  const nodeAfter = noteNode.getNextSibling();
+  // Landing in the following text rather than on the parent's element offset gives the caret a
+  // text position to type into, the same reason $selectNote prefers `selectEnd()` on the node
+  // before over the parent-offset branch.
+  //
+  // A glyph text node is not that text: its bytes are a picture of its own state (a verse number,
+  // a marker's syntax), so offset 0 is a position INSIDE the picture, which the next keystroke
+  // splits - the very thing $normalizeSelectionOutOfGlyphText exists to prevent. A note that ends
+  // a verse is followed by exactly such a node, so it takes the parent-offset branch instead.
+  if ($isTextNode(nodeAfter) && !$isGlyphTextNode(nodeAfter)) {
+    nodeAfter.select(0, 0);
+    return;
+  }
+  const parent = noteNode.getParent();
+  if (!parent) return;
+  const indexAfter = noteNode.getIndexWithinParent() + 1;
+  parent.select(indexAfter, indexAfter);
+}
+
+/**
+ * A caret inside one of a note's marker glyphs (`\ft`, `\ft*`, `\+nd`, `\cat`), which an editable
+ * marker mode renders as text the user can edit. Glyphs are addressed relative to the note's
+ * content offset they sit at, so a host whose own rendering of the note shows no glyphs still
+ * agrees on every content offset.
+ */
+export interface NoteGlyphCaret {
+  /**
+   * Which glyph, counting from 0, among those that sit at the same content offset - `\ft*\fr` puts
+   * two glyphs between the same two content characters.
+   */
+  index: number;
+  /** Offset into the glyph's own text (its display separator excluded), in UTF-16 code units. */
+  offset: number;
+}
+
+/** One stop on the walk a note offset is counted along: content text, or a marker glyph. */
+interface NoteTextStop {
+  node: TextNode;
+  isGlyph: boolean;
+  /** Where the stop's own text starts - past a content node's display separator prefix. */
+  dataStart: number;
+}
+
+/**
+ * Puts the caret at `utf16Offset` within a note's own text, counting the note's CONTENT only and
+ * skipping every display artifact the view adds around it: marker glyphs (editable and visible),
+ * attribute display runs, engine-owned NBSP spacers, an opening glyph's NBSP separator prefix,
+ * and - in an expanded editable note - the caller text node. That makes the offset origin the
+ * note's USJ text, so a host that captured a position over its OWN rendering of the same note
+ * (a footnotes pane row, say) resolves against the same characters no matter which
+ * `ViewOptions.markerMode` this editor renders in.
+ *
+ * Text the source wrote directly inside the note rather than inside a `\ft`-style run counts too,
+ * as it does in the note's USJ.
+ *
+ * With `glyph`, the caret goes inside the marker glyph that position names instead (see
+ * {@link NoteGlyphCaret}): a run's opening or closing glyph, a nested span's, or an unmatched
+ * marker - never the note's own opening glyph, caller, or closing glyph. The start of a glyph that
+ * follows text the user can type in (content, or the caller) is that text's end, where typing
+ * extends it rather than rewriting the glyph. A glyph position the note does not have falls back to
+ * the content offset.
+ *
+ * Offsets past the end of the note's text clamp to the end.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @param noteNode - The note node whose text to place the caret in.
+ * @param utf16Offset - Offset into the note's content text, in UTF-16 code units.
+ * @param glyph - The marker glyph at that offset to put the caret in, if any.
+ * @returns `true` when a caret was placed, `false` when the note holds no content text to place
+ *   one in (the caller should fall back to {@link $selectNote}).
+ */
+export function $selectNoteTextOffset(
+  noteNode: NoteNode,
+  utf16Offset: number,
+  glyph?: NoteGlyphCaret,
+): boolean {
+  const caller = $noteEditableCallerNode(noteNode);
+  const stops = $noteTextStops(noteNode, caller);
+  if (glyph && $selectGlyphStop(stops, utf16Offset, glyph, $isTypingTextBefore(noteNode, caller)))
+    return true;
+
+  let remaining = Math.max(utf16Offset, 0);
+  let lastDataNode: TextNode | undefined;
+  for (const { node, isGlyph, dataStart } of stops) {
+    if (isGlyph) continue;
+    const dataLength = node.getTextContentSize() - dataStart;
+    // Strictly `<`: an offset that lands exactly on a run boundary belongs to the run it starts,
+    // not to the one it ends. The two are the same caret on screen but not the same place to type
+    // - the end of `\fr`'s text extends the reference run, while the start of `\ft`'s extends the
+    // note text the user clicked into. The final position is reached by the clamp below instead.
+    if (remaining < dataLength) {
+      const at = dataStart + remaining;
+      node.select(at, at);
+      return true;
+    }
+    remaining -= dataLength;
+    lastDataNode = node;
+  }
+
+  if (!lastDataNode) return false;
+  const end = lastDataNode.getTextContentSize();
+  lastDataNode.select(end, end);
+  return true;
+}
+
+/**
+ * The note's content text and its runs' marker glyphs, in document order. Excluded: the note's own
+ * opening glyph, caller, and closing glyph (its shell, which a note editor governs through its own
+ * controls), the `\cat` category run and every other attribute display run, and the view's NBSP
+ * spacers.
+ */
+function $noteTextStops(noteNode: NoteNode, caller: TextNode | undefined): NoteTextStop[] {
+  const stops: NoteTextStop[] = [];
+  for (const { node } of $dfs(noteNode)) {
+    if (!$isTextNode(node) || $findMatchingParent(node, $isAttributeRunNode)) continue;
+    if ($isNoteContentText(node, caller))
+      stops.push({ node, isGlyph: false, dataStart: $separatorPrefixLength(node) });
+    else if ($isNoteRunGlyph(node, noteNode)) stops.push({ node, isGlyph: true, dataStart: 0 });
+  }
+  return stops;
+}
+
+/** Whether `node` is a marker glyph of one of the note's runs, or an unmatched marker in it. */
+function $isNoteRunGlyph(node: TextNode, noteNode: NoteNode): boolean {
+  if ($isImmutableUnmatchedNode(node)) return true;
+  // The note's own opening and closing glyphs are its children; a run's are its span's.
+  return $isMarkerNode(node) && !noteNode.is(node.getParent());
+}
+
+/**
+ * Text the user can type into that `node` directly follows, if any: note content, or the caller
+ * (the shell's end, where typing goes into the note's content). Its end is the same place on screen
+ * as the glyph's start.
+ */
+function $isTypingTextBefore(
+  noteNode: NoteNode,
+  caller: TextNode | undefined,
+): (node: TextNode) => TextNode | undefined {
+  return (node) => {
+    let cursor: LexicalNode = node;
+    while (!cursor.getPreviousSibling()) {
+      const parent = cursor.getParent();
+      if (!parent || parent.is(noteNode)) return undefined;
+      cursor = parent;
+    }
+    const before = cursor.getPreviousSibling();
+    const last = $isElementNode(before) ? before.getLastDescendant() : before;
+    if (!$isTextNode(last)) return undefined;
+    if (caller?.is(last) || $isNoteContentText(last, caller)) return last;
+    return undefined;
+  };
+}
+
+/**
+ * Put the caret in the glyph `glyph` names at content offset `utf16Offset` among `stops`.
+ * @returns Whether that glyph exists and got the caret.
+ */
+function $selectGlyphStop(
+  stops: NoteTextStop[],
+  utf16Offset: number,
+  glyph: NoteGlyphCaret,
+  typingTextBefore: (node: TextNode) => TextNode | undefined,
+): boolean {
+  let contentOffset = 0;
+  let glyphIndex = 0;
+  for (const { node, isGlyph, dataStart } of stops) {
+    if (!isGlyph) {
+      const dataLength = node.getTextContentSize() - dataStart;
+      contentOffset += dataLength;
+      if (dataLength > 0) glyphIndex = 0;
+      if (contentOffset > utf16Offset) return false;
+      continue;
+    }
+    if (contentOffset === utf16Offset && glyphIndex === glyph.index) {
+      $selectInGlyph(node, glyph.offset, typingTextBefore);
+      return true;
+    }
+    glyphIndex += 1;
+  }
+  return false;
+}
+
+/** Put the caret `offset` characters into `glyphNode` (see {@link $selectNoteTextOffset}). */
+function $selectInGlyph(
+  glyphNode: TextNode,
+  offset: number,
+  typingTextBefore: (node: TextNode) => TextNode | undefined,
+) {
+  const size = glyphNode.getTextContentSize();
+  // An atomic glyph (an unmatched marker outside an editable marker mode) takes no caret inside.
+  const at = glyphNode.isToken() ? size : Math.min(Math.max(offset, 0), size);
+  const before = at === 0 ? typingTextBefore(glyphNode) : undefined;
+  if (before) {
+    const end = before.getTextContentSize();
+    before.select(end, end);
+  } else glyphNode.select(at, at);
+}
+
+/**
+ * Puts the caret at `utf16Offset` within a note's `\cat` category value - the category a
+ * study-Bible note carries as a field rather than as content, which an expanded editable note shows
+ * as its own run right after the caller. The value's display separator is skipped, so offset 0 is
+ * the start of the category itself. Offsets past the end clamp to the end.
+ *
+ * With `glyph`, the caret goes inside the run's `\cat` or `\cat*` glyph instead, addressed as
+ * {@link $selectNoteTextOffset} addresses a run's glyphs: `\cat` sits at value offset 0 and
+ * `\cat*` at the value's end.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @param noteNode - The note whose category to place the caret in.
+ * @param utf16Offset - Offset into the category value, in UTF-16 code units.
+ * @param glyph - The category run's glyph at that offset to put the caret in, if any.
+ * @returns `true` when a caret was placed, `false` when the note shows no category run.
+ */
+export function $selectNoteCategoryOffset(
+  noteNode: NoteNode,
+  utf16Offset: number,
+  glyph?: NoteGlyphCaret,
+): boolean {
+  const { opener, value, closer } = $noteCategoryRunPieces(noteNode);
+  if (!value) return false;
+  const start = $categoryValueStart(value);
+  if (glyph) {
+    const stops: NoteTextStop[] = [];
+    if (opener) stops.push({ node: opener, isGlyph: true, dataStart: 0 });
+    stops.push({ node: value, isGlyph: false, dataStart: start });
+    if (closer) stops.push({ node: closer, isGlyph: true, dataStart: 0 });
+    const caller = $noteEditableCallerNode(noteNode);
+    if ($selectGlyphStop(stops, utf16Offset, glyph, $isTypingTextBefore(noteNode, caller)))
+      return true;
+  }
+  const at = Math.min(start + Math.max(utf16Offset, 0), value.getTextContentSize());
+  value.select(at, at);
+  return true;
+}
+
+/** Where a category value's own text starts, past the NBSP display separator it leads with. */
+function $categoryValueStart(value: TextNode): number {
+  return value.getTextContent().startsWith(NBSP) ? NBSP.length : 0;
+}
+
+/**
+ * Whether `node`, somewhere inside a note, is text of the note's CONTENT rather than display the
+ * view adds around it (see {@link $selectNoteTextOffset} for the list).
+ * @param node - A node inside the note.
+ * @param caller - The note's editable caller text node, if it has one.
+ */
+function $isNoteContentText(node: LexicalNode, caller: TextNode | undefined): node is TextNode {
+  if (!$isTextNode(node)) return false;
+  if ($shouldIgnoreNodeForContentIndexes(node)) return false;
+  // A glyph's bytes are a picture of its own state (an unmatched closer, say), never content.
+  if ($isGlyphTextNode(node)) return false;
+  // An expanded editable note spells its caller out as plain text ahead of the content.
+  return !caller || !node.is(caller);
+}
+
+/**
+ * Where an expanded note with no content takes the text a user types into it: the child index just
+ * before its closing glyph, or its end when it has none. What is typed there is the note's content,
+ * written directly in the note (`\f + text\f*`) with no run marker added.
+ *
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
+ *
+ * @param noteNode - The note.
+ * @returns The child index, or `undefined` when the note is collapsed or already has content.
+ */
+export function $emptyNoteContentSlot(noteNode: NoteNode): number | undefined {
+  if (noteNode.getIsCollapsed() !== false) return undefined;
+  if (noteNode.getChildren().some($isCharNode)) return undefined;
+  const caller = $noteEditableCallerNode(noteNode);
+  for (const { node } of $dfs(noteNode)) if ($isNoteContentText(node, caller)) return undefined;
+  const closingIndex = $closingGlyphIndex(noteNode);
+  return closingIndex === -1 ? noteNode.getChildrenSize() : closingIndex;
 }
 
 /** Add the given space node after each child node */

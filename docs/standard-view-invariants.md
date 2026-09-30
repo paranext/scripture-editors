@@ -163,6 +163,17 @@ end — which is where `token` mode redirects typing forward into the note's con
 leading edge Lexical inserts INSIDE the note before the opening glyph (a `NoteNode` does not refuse
 text before it), and at the seam between the glyph and the caller it inserts between them.
 
+A RANGE that reaches into the shell (a double-click on the caller, a drag from the shell into the
+content, select-all) is narrowed to the note's content, never grown to take in the whole shell:
+typing or deleting over a range that holds the shell removes it and unwraps the note. A range
+wholly inside the shell collapses to its trailing edge.
+
+**Text written directly in a note is content, even in a collapsed note.** A collapsed note's layout
+puts a tagged NBSP spacer (`$createMarkerTrailingSeparator`) after each of its top-level nodes, and
+`NoteNodePlugin` resets only those spacers. Untagged text directly in the note (`\f + x\ft a\f*`,
+`\f + x\f*`, as a host's note editor applies it) must survive: losing it on apply also strands the
+host's session, since the apply still replaces the note node.
+
 Consequence for tests: asserting that the mode is `token` proves nothing about whether the shell is
 protected. Assert what the DOCUMENT does under a keystroke.
 
