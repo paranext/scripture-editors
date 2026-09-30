@@ -7,6 +7,7 @@
 import {
   $heldBytes,
   HELD_TYPE,
+  MountedInView,
   mountInView,
   oracleView,
   ORACLE_TYPE,
@@ -14,7 +15,12 @@ import {
 } from "./annotationLocations.test-helpers";
 import { copyEvent, pasteEvent } from "../markerEdit/markerEdit.test-helpers";
 import { displayAnnotated } from "../markerEdit/displayAnnotations.test-helpers";
-import { $textContaining, propertyPath, twoParaUsj } from "../positions/positions.test-helpers";
+import {
+  $textContaining,
+  propertyPath,
+  twoParaUsj,
+  typeOver,
+} from "../positions/positions.test-helpers";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -26,11 +32,20 @@ import {
   COPY_COMMAND,
   LexicalNode,
   PASTE_COMMAND,
+  RangeSelection,
   REDO_COMMAND,
   UNDO_COMMAND,
 } from "lexical";
-import { $isCharNode, $wrapSelectionInTypedMarkNode, CharNode, COMMENT_MARK_TYPE } from "shared";
-import { AnnotationRange, StructureProtectionMode } from "shared-react";
+import {
+  $isCharNode,
+  $isTypedMarkNode,
+  $wrapSelectionInTypedMarkNode,
+  CharNode,
+  COMMENT_MARK_TYPE,
+  NBSP,
+} from "shared";
+import { $getRangeFromUsjSelection, AnnotationRange, StructureProtectionMode } from "shared-react";
+import { vi } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
 
@@ -234,4 +249,173 @@ describe("an annotation inside a figure caption", () => {
       expect(following.startsWith(" break")).toBe(true);
     },
   );
+});
+
+/** Settle the scope the way an abandoned edit does: blur, then commit the pending literal. */
+function settle(mounted: MountedInView): void {
+  const rootElement = mounted.lexical.getRootElement();
+  if (!rootElement) throw new Error("editor root not found");
+  act(() => rootElement.blur());
+  act(() => mounted.ref.current?.commitPendingMarkerEdits());
+}
+
+/** The text of every mark holding `type`/`id`, in document order. Call inside a read. */
+function $markTexts(type: string, id: string): string[] {
+  const texts: string[] = [];
+  const walk = (node: LexicalNode): void => {
+    if ($isTypedMarkNode(node) && node.hasID(type, id)) texts.push(node.getTextContent());
+    if ($isElementNode(node)) node.getChildren().forEach(walk);
+  };
+  walk($getRoot());
+  return texts;
+}
+
+/** The `content` of the first char span with `marker` in `usj`'s first paragraph (content[2]) —
+ * found by marker, since the comment's milestones shift the indexes around it. */
+function spanContentIn(usj: Usj | undefined, marker: string): MarkerContent[] {
+  const para = usj?.content[2];
+  if (!para || typeof para === "string") throw new Error("expected a paragraph at content[2]");
+  const span = para.content?.find(
+    (item) => typeof item !== "string" && item.type === "char" && item.marker === marker,
+  );
+  if (!span || typeof span === "string") throw new Error(`no \\${marker} span in the paragraph`);
+  return span.content ?? [];
+}
+
+/** Whether `item` is a comment milestone of `kind` (`zmsc-s` or `zmsc-e`) for comment `id`. */
+function isCommentMilestone(item: MarkerContent | undefined, kind: "s" | "e", id: string): boolean {
+  if (!item || typeof item === "string" || item.marker !== `zmsc-${kind}`) return false;
+  const ids: { sid?: unknown; eid?: unknown } = item;
+  return (kind === "s" ? ids.sid : ids.eid) === id;
+}
+
+/** Wraps comment `id` over the live range `$select` builds, in one update. */
+async function commentOver(
+  mounted: MountedInView,
+  id: string,
+  $select: () => RangeSelection | undefined,
+): Promise<void> {
+  await act(async () => {
+    mounted.lexical.update(() => {
+      const selection = $select();
+      if (!selection) throw new Error("the range did not resolve");
+      $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, id);
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+/** Reloads `mounted` from its own `getUsj()`, which it returns. */
+async function reloadFromOwnUsj(mounted: MountedInView): Promise<Usj | undefined> {
+  const usj = mounted.ref.current?.getUsj();
+  if (!usj) throw new Error("no USJ to reload");
+  await act(async () => {
+    mounted.ref.current?.setUsj(usj);
+    await Promise.resolve();
+  });
+  return usj;
+}
+
+describe("a range into part of an inline element", () => {
+  const standard = oracleView("standard");
+  /** `the ` + `\nd` + `LO` of {@link richUsj}'s `In the \nd LORD\nd*`: from inside `In the ` to
+   * inside the span's text. */
+  const intoSpanRange: AnnotationRange = {
+    start: { jsonPath: "$.content[2].content[1]", offset: 2 },
+    end: { jsonPath: "$.content[2].content[2].content[0]", offset: 2 },
+  };
+
+  it("holds only the bytes it names, never the rest of the span", async () => {
+    const mounted = await mountInView(richUsj, standard);
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(intoSpanRange, ORACLE_TYPE, "part");
+      await Promise.resolve();
+    });
+
+    const held = mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "part"));
+    expect(held).toBe(" the \\ndLO");
+  });
+
+  it("keeps a comment on the same bytes through a save and reload", async () => {
+    const mounted = await mountInView(richUsj, standard);
+    await commentOver(mounted, "c9", () => $getRangeFromUsjSelection(intoSpanRange, standard));
+    const before = mounted.lexical.getEditorState().read(() => $markTexts(COMMENT_MARK_TYPE, "c9"));
+    expect(before).toEqual([" the ", "LO"]);
+
+    const saved = await reloadFromOwnUsj(mounted);
+
+    const spanContent = spanContentIn(saved, "nd");
+    const loAt = spanContent.indexOf("LO");
+    expect(loAt).toBeGreaterThan(0);
+    expect(isCommentMilestone(spanContent[loAt - 1], "s", "c9")).toBe(true);
+    expect(isCommentMilestone(spanContent[loAt + 1], "e", "c9")).toBe(true);
+    expect(
+      mounted.lexical.getEditorState().read(() => $markTexts(COMMENT_MARK_TYPE, "c9")),
+    ).toEqual(before);
+  });
+
+  /** `\p x \add a \+nd b\+nd* c\add* y`. */
+  const nestedUsj: Usj = twoParaUsj([
+    "x ",
+    {
+      type: "char",
+      marker: "add",
+      content: ["a ", { type: "char", marker: "nd", content: ["b"] }, " c"],
+    },
+    " y",
+  ]);
+
+  it.each<{ from: string; needle: string; offset: number; outside: string[] }>([
+    { from: "`a`, after the outer span's separator", needle: "a ", offset: 1, outside: [] },
+    { from: "the text before the outer span", needle: "x ", offset: 1, outside: [" "] },
+  ])(
+    "keeps the outer span in place for a comment from $from to the end of a nested span it covers whole",
+    async ({ needle, offset, outside }) => {
+      const mounted = await mountInView(nestedUsj, standard);
+      await commentOver(mounted, "c8", () => {
+        const selection = $createRangeSelection();
+        selection.anchor.set($textContaining(needle).getKey(), offset, "text");
+        selection.focus.set($textContaining(" c").getKey(), 0, "text");
+        return selection;
+      });
+      const before = mounted.lexical
+        .getEditorState()
+        .read(() => $markTexts(COMMENT_MARK_TYPE, "c8"));
+      expect(before).toEqual([...outside, `a \\+nd${NBSP}b\\+nd*`]);
+
+      const saved = await reloadFromOwnUsj(mounted);
+
+      const addContent = spanContentIn(saved, "add");
+      const ndAt = addContent.findIndex((item) => typeof item !== "string" && item.marker === "nd");
+      expect(isCommentMilestone(addContent[0], "s", "c8")).toBe(true);
+      expect(addContent[1]).toBe("a ");
+      expect(ndAt).toBe(2);
+      expect(isCommentMilestone(addContent[ndAt + 1], "e", "c8")).toBe(true);
+      expect(addContent[ndAt + 2]).toBe(" c");
+      expect(
+        mounted.lexical.getEditorState().read(() => $markTexts(COMMENT_MARK_TYPE, "c8")),
+      ).toEqual(before);
+    },
+  );
+
+  it("keeps marks inside a span through a settle elsewhere in the paragraph", async () => {
+    const mounted = await mountInView(richUsj, standard);
+    const onRemove = vi.fn();
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(intoSpanRange, ORACLE_TYPE, "part", { onRemove });
+      await Promise.resolve();
+    });
+    const $marks = () => $markTexts(HELD_TYPE, "part");
+    const before = mounted.lexical.getEditorState().read($marks);
+    expect(before).toEqual([" the ", "LO"]);
+
+    await typeOver(mounted.lexical, " God", " God \\bd x\\bd*");
+    settle(mounted);
+
+    // The typed literal settled into a span, so the paragraph really was re-tokenized.
+    expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
+    expect(mounted.lexical.getEditorState().read($marks)).toEqual(before);
+    expect(onRemove).toHaveBeenCalledTimes(0);
+  });
 });

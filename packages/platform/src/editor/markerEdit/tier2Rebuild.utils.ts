@@ -2046,10 +2046,9 @@ function $restoreMarkByteRanges(
       const start = $selectablePoint(resolvedStart.point);
       const end = $selectablePoint(resolvedEnd.point);
       if (!start || !end) continue;
-      // A collapsed range covers no bytes, and wrapping one splits a text node at the same offset
-      // twice, which marks everything IN FRONT of it: a mark over the wrong bytes is worse than a
-      // dropped mark, so refuse. (Offset 0 collapses to a no-op inside the wrap itself.) The one
-      // collapsed range that still names something is a mark over nothing but a preserved run.
+      // A collapsed range covers no bytes, and the wrap holds nothing for one. The one collapsed
+      // range that still names something is a mark over nothing but a preserved run, which is
+      // pulled back in here.
       if (start.key === end.key && start.offset === end.offset && start.type === end.type) {
         if (preservedKey) $wrapPreservedRun(preservedKey, annotation);
         continue;

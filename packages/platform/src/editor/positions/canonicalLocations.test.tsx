@@ -25,7 +25,12 @@ import {
   serializeEditorState,
 } from "../adaptors/usj-editor.adaptor";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
-import { settledPositionContext, twoParaUsj, typeOver } from "./positions.test-helpers";
+import {
+  $textContaining,
+  settledPositionContext,
+  twoParaUsj,
+  typeOver,
+} from "./positions.test-helpers";
 import {
   $livePointFromSettledLocation,
   $liveSelectionFromSettled,
@@ -462,6 +467,42 @@ describe.each(VIEWS)("resolving a canonical location (%s)", (_name, view) => {
       expect(reported).toEqual(location);
     },
   );
+});
+
+describe("reporting a caret inside a char opener's separator (Standard view)", () => {
+  const view = requireView(STANDARD_VIEW_MODE);
+  /** `\p In the \nd LORD\nd*`: Standard view spells the span's separator as the NBSP its text
+   * starts with. */
+  const spanUsj = doc({
+    type: "para",
+    marker: "p",
+    content: ["In the ", { type: "char", marker: "nd", content: ["LORD"] }],
+  });
+
+  it.each<{ caret: string; offset: number; location: UsjDocumentLocation }>([
+    {
+      caret: "in front of the separator, as the end of the opener's name",
+      offset: 0,
+      location: { jsonPath: "$.content[2].content[1]['marker']", propertyOffset: 2 },
+    },
+    {
+      caret: "behind the separator, as the start of the span's text",
+      offset: 1,
+      location: { jsonPath: "$.content[2].content[1].content[0]", offset: 0 },
+    },
+  ])("reports a caret $caret, and resolves it back to a caret there", ({ offset, location }) => {
+    const editor = load(spanUsj, view);
+    const [reported, resolved] = editor.getEditorState().read(() => {
+      const report = $getLocationFromNode($textContaining("LORD"), offset, view);
+      const range = $getRangeFromUsjSelection({ start: report }, view);
+      const again = range
+        ? $getLocationFromNode(range.anchor.getNode(), range.anchor.offset, view)
+        : undefined;
+      return [report, again];
+    });
+    expect(reported).toEqual(location);
+    expect(resolved).toEqual(location);
+  });
 });
 
 describe.each(VIEWS)("resolving the shapes hosts wrote before (%s)", (_name, view) => {

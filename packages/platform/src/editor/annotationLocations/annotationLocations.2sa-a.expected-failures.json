@@ -14,106 +14,106 @@
         "text(sep):\"\\u00a0\"@$.content[5]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[6]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[6].content[0]['number']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[6].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[6].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[7]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[8]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[9]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[9].content[0]['number']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[9].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[9].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[10]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[10].content[1].content[0]",
-        "text(sep):\"\\u00a0\"@$.content[10].content[1].content[0].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[10].content[1].content[0]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[10].content[1].content[1]",
-        "text(sep):\"\\u00a0\"@$.content[10].content[1].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[10].content[1].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[10].content[1]|closingMarkerOffset=0",
         "text(sep):\"\\u00a0\"@$.content[11]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[11].content[1].content[0]",
-        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[0].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[0]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[11].content[1].content[1]",
-        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[11].content[1].content[2]",
-        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[2].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[2].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[2]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[2].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[11].content[1]|closingMarkerOffset=0",
         "text(sep):\"\\u00a0\"@$.content[12]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[12].content[1].content[0]",
         "text(sep):\"\\u00a0\"@$.content[12].content[1].content[0]['marker']|propertyOffset=3",
-        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[0].content[0].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[0].content[0]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[12].content[1].content[1]|offset=0",
         "text(sep):\"\\u00a0\"@$.content[12].content[1].content[1]|offset=1",
-        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[2].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[2]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[12].content[1].content[3]",
-        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[3].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[3]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[12].content[1]|closingMarkerOffset=0",
         "text(sep):\"\\u00a0\"@$.content[13]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[13].content[1].content[0]",
-        "text(sep):\"\\u00a0\"@$.content[13].content[1].content[0].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[13].content[1].content[0]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[13].content[1].content[1]|offset=0",
         "text(sep):\"\\u00a0\"@$.content[13].content[1].content[1]|offset=1",
-        "text(sep):\"\\u00a0\"@$.content[13].content[1].content[2].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[13].content[1].content[2]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[13].content[1]|closingMarkerOffset=0",
         "text(sep):\"\\u00a0\"@$.content[14]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[15]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[15].content[0]['number']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[15].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[15].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[16]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[16].content[1].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[16].content[3].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[16].content[5].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[16].content[7].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[16].content[1]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[16].content[3]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[16].content[5]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[16].content[7]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[17]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[17].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[18]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[18].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[18].content[1]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[19]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[19].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[19].content[1]['marker']|propertyOffset=1",
         "text*(soft):\" \"@$.content[19].content[1]['lemma']|propertyOffset=5",
         "text(sep):\"\\u00a0\"@$.content[20]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[20].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[20].content[1]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[21]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[21].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[21].content[1]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[22]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[22].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[22].content[1]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[23]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[23].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[23].content[1]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[24]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[24].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[24].content[1]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[25]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[25].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[25].content[1]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[26]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[26].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[26].content[1]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[27]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[27].content[1]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[28]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[28].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[28].content[1]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[29]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[29].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[29].content[1]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[30]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[30].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[30].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[31]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[31].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[31].content[1]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[32]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[32].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[33]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[33].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[33].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[34]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[34].content[1].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[34].content[1].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[34].content[1]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[34].content[1].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[35]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[35].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[0]",
-        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[0].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[0]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[1]",
-        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[2]",
-        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[2].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[2]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1]|closingMarkerOffset=0",
         "text(sep):\"\\u00a0\"@$.content[36]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[36].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[36].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[37]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[38]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[38].content[0]['number']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[38].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[38].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[39]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[40]['marker']|propertyOffset=1",
         "text*(soft):\"\\u00a0\"@$.content[40].content[1]['marker']|propertyOffset=4",
@@ -138,7 +138,7 @@
         "text(sep):\"\\u00a0\"@$.content[53]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[54]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[54].content[0]['number']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[54].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[54].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[55]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[56]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[57]['marker']|propertyOffset=1",
@@ -146,21 +146,21 @@
         "text(sep):\"\\u00a0\"@$.content[59]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[60]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[60].content[0]['number']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[60].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[60].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[61]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[62]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[63]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[64]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[64].content[0]['number']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[64].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[64].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[65]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[65].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[65].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[66]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[66].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[66].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[67]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[68]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[68].content[0]['number']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[68].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[68].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[69]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[70]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[71]['marker']|propertyOffset=1",
@@ -177,32 +177,32 @@
         "text(sep):\"\\u00a0\"@$.content[76]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[76].content[0]['number']|propertyOffset=2",
         "text*(soft):\"\\u00a0\"@$.content[76].content[0]|keyName=altnumber,keyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[76].content[2].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[76].content[2]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[77]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[77].content[0]['number']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[77].content[1].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[77].content[1].content[1].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[77].content[2].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[77].content[4].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[77].content[1]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[77].content[1].content[1]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[77].content[2]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[77].content[4]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[78]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[78].content[0]['number']|propertyOffset=2",
         "text*(soft):\"\\u00a0\"@$.content[78].content[0]|keyName=altnumber,keyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[78].content[1].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[78].content[1].content[1].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[78].content[3].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[78].content[1]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[78].content[1].content[1]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[78].content[3]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[79]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[79].content[0]['number']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[79].content[1].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[79].content[2].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[79].content[1]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[79].content[2]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[80]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[80].content[1].content[0]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[80].content[1].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[80].content[1]['marker']|propertyOffset=2",
+        "text(sep):\"\\u00a0\"@$.content[80].content[1].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[81]['marker']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[81].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[81].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[82]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[83]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[83].content[0]['number']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[83].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[83].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[84]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[85]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[86]['marker']|propertyOffset=1",
@@ -212,21 +212,21 @@
         "text(sep):\"\\u00a0\"@$.content[89]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[90]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[90].content[0]['number']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[90].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[90].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[91]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[92]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[93]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[94]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[94].content[0]['number']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[94].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[94].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[95]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[96]['marker']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[96].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[96].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[97]['marker']|propertyOffset=3",
-        "text(sep):\"\\u00a0\"@$.content[97].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[97].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[98]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[99]['marker']|propertyOffset=3",
-        "text(sep):\"\\u00a0\"@$.content[99].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[99].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[100]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[101]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[102]['marker']|propertyOffset=2",
@@ -239,7 +239,7 @@
         "text(sep):\"\\u00a0\"@$.content[109]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[110]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[110].content[0]['number']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[110].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[110].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[111]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[112].content[0]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[112].content[0].content[0]['marker']|propertyOffset=3",
@@ -258,7 +258,7 @@
         "text(sep):\"\\u00a0\"@$.content[114].content[0]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[114].content[0].content[0]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[114].content[0].content[1]['marker']|propertyOffset=3",
-        "text(sep):\"\\u00a0\"@$.content[114].content[0].content[1].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[114].content[0].content[1].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[114].content[0].content[2]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[114].content[0].content[3]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[114].content[0].content[4]['marker']|propertyOffset=3",
@@ -267,7 +267,7 @@
         "text(sep):\"\\u00a0\"@$.content[116].content[0]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[116].content[0].content[0]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[116].content[0].content[1]['marker']|propertyOffset=3",
-        "text(sep):\"\\u00a0\"@$.content[116].content[0].content[1].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[116].content[0].content[1].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[116].content[0].content[2]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[116].content[0].content[3]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[116].content[0].content[4]['marker']|propertyOffset=3",
@@ -276,24 +276,24 @@
         "text(sep):\"\\u00a0\"@$.content[118]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[119]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[119].content[0]['number']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[119].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[119].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[120]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[121]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[122]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[122].content[0]['number']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[122].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[122].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[123]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[124]['marker']|propertyOffset=20",
-        "text(sep):\"\\u00a0\"@$.content[124].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[124].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[125]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[126]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[126].content[0]['number']|propertyOffset=5",
-        "text(sep):\"\\u00a0\"@$.content[126].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[126].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[127]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[128]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[129]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[129].content[0]['number']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[129].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[129].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[130]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[131]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[132]['marker']|propertyOffset=1",
@@ -301,200 +301,53 @@
         "text(sep):\"\\u00a0\"@$.content[134]['marker']|propertyOffset=3",
         "text(sep):\"\\u00a0\"@$.content[135]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[135].content[1].content[0]",
-        "text(sep):\"\\u00a0\"@$.content[135].content[1].content[0].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[135].content[1].content[0]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[135].content[1].content[1]",
-        "text(sep):\"\\u00a0\"@$.content[135].content[1].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[135].content[1].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[135].content[1]|closingMarkerOffset=0",
         "text(sep):\"\\u00a0\"@$.content[136]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[136].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[136].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[137]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[138]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[138].content[0]['number']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[138].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[138].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[139]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[140].content[0]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[140].content[0].content[1].content[0]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[140].content[0].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[140].content[1]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[141]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[142].content[0]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[142].content[1]['marker']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[142].content[2]['marker']|propertyOffset=1",
         "verse*(soft):\" \"@$.content[142].content[2].content[0]['number']|propertyOffset=2",
-        "text(sep):\"\\u00a0\"@$.content[142].content[2].content[2].content[0]|offset=0"
+        "text(sep):\"\\u00a0\"@$.content[142].content[2].content[2]['marker']|propertyOffset=2"
       ],
       "failures": {
-        "standard|A|1|$.content[11].content[1].content[0].content[0]|offset=5|$.content[11].content[1].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|1|$.content[11].content[1].content[2].content[0]|offset=0|$.content[11].content[1].content[2].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|1|$.content[11].content[1]['caller']|propertyOffset=0|$.content[11].content[1].content[0]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|1|$.content[116].content[0].content[1].content[1].content[0]|offset=0|$.content[116].content[0].content[1].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|1|$.content[119].content[0]['number']|propertyOffset=2|$.content[119].content[0]['number']|propertyOffset=3": [
           "M4-SOFT-HELD"
-        ],
-        "standard|A|1|$.content[122].content[0]['number']|propertyOffset=3|$.content[122].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|1|$.content[135].content[1].content[0].content[0]|offset=0|$.content[135].content[1].content[0].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|1|$.content[135].content[1].content[1].content[0]|offset=0|$.content[135].content[1].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|1|$.content[139].content[0]|offset=347|$.content[140]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|1|$.content[20].content[0]|offset=2|$.content[20].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|1|$.content[32].content[0]|offset=28|$.content[32].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|1|$.content[38].content[0]['number']|propertyOffset=2|$.content[38].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
         "standard|A|1|$.content[50].content[0]|$.content[50].content[1]|offset=0": [
           "R2-ELEM-OFFSET-AS-TEXT(start)",
           "O3-UNMATCHED-MISLABEL"
         ],
-        "standard|A|1|$.content[54].content[0]['number']|propertyOffset=2|$.content[54].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|1|$.content[60].content[1].content[0]|offset=0|$.content[60].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|1|$.content[64].content[1].content[0]|offset=17|$.content[65]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|1|$.content[77].content[1].content[0]|offset=3|$.content[77].content[1].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|1|$.content[77].content[3]|offset=95|$.content[77].content[4]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|1|$.content[79].content[1].content[0]|offset=6|$.content[79].content[2]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|1|$.content[80].content[1].content[0]|offset=0|$.content[80].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|1|$.content[92].content[1].content[0]|offset=6|$.content[92].content[1].content[0]|offset=7": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|1|$.content[94].content[0]['number']|propertyOffset=2|$.content[94].content[0]['number']|propertyOffset=3": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|12|$.content[11].content[1].content[0].content[0]|offset=5|$.content[11].content[1].content[1].content[0]|offset=7": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[11].content[1].content[2].content[1]['marker']|propertyOffset=0|$.content[11].content[1].content[2].content[1].content[0]|offset=9": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|12|$.content[110].content[0]['number']|propertyOffset=1|$.content[110].content[1].content[0]|offset=5": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[116].content[0].content[1].content[0]|offset=17|$.content[116].content[0].content[1].content[1].content[0]|offset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[12].content[0]|offset=112|$.content[12].content[1].content[0]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[12].content[1].content[2]|$.content[12].content[1].content[3]['marker']|propertyOffset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|12|$.content[126].content[1]['marker']|propertyOffset=1|$.content[126].content[1].content[0]|offset=10": [
-          "O2-LABEL-MOVES-ON-SPLIT"
+          "M4-SOFT-HELD"
         ],
         "standard|A|12|$.content[128]|$.content[129].content[0]['number']|propertyOffset=3": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|12|$.content[13].content[1].content[2]['marker']|propertyOffset=1|$.content[13].content[1].content[2].content[0]|offset=10": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|12|$.content[135].content[0]|offset=12|$.content[135].content[1].content[0].content[0]|offset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|12|$.content[138].content[0]|$.content[138].content[1].content[0]|offset=1": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[139].content[0]|offset=337|$.content[140]['marker']|propertyOffset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[140].content[0].content[0]|offset=64|$.content[140].content[0].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[141].content[0]|offset=175|$.content[142].content[0].content[0]|offset=4": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[16].content[3].content[0]|offset=6|$.content[16].content[5]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[16].content[7]['marker']|propertyOffset=2|$.content[16].content[7].content[0]|offset=11": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|12|$.content[18].content[2]|offset=111|$.content[19].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[20].content[0]|offset=2|$.content[20].content[1]|keyName=strong,keyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[22].content[2]|offset=93|$.content[23].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[24].content[1]['marker']|propertyOffset=3|$.content[24].content[1]['link-href']|propertyOffset=4": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|12|$.content[26].content[0]|offset=1|$.content[26].content[1].content[0]|offset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[30].content[0]|offset=4|$.content[30].content[1].content[0]|offset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[30].content[2]|offset=156|$.content[31].content[1].content[0]|offset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[32].content[0]|offset=18|$.content[32].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[32].content[2]|offset=60|$.content[33].content[1].content[0]|offset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[35].content[0]|offset=10|$.content[35].content[1]['marker']|propertyOffset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[35].content[1].content[1].content[1]['marker']|propertyOffset=0|$.content[35].content[1].content[1].content[1].content[0]|offset=9": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|12|$.content[36].content[1]['marker']|propertyOffset=2|$.content[36].content[1].content[0]|offset=11": [
-          "O2-LABEL-MOVES-ON-SPLIT"
+          "M4-SOFT-HELD"
         ],
         "standard|A|12|$.content[43].content[1]['marker']|propertyOffset=3|$.content[43].content[1]['eid']|propertyOffset=9": [
           "M4-SOFT-HELD"
         ],
         "standard|A|12|$.content[52]|$.content[54]": ["M4-SOFT-HELD"],
-        "standard|A|12|$.content[6].content[1]['marker']|propertyOffset=2|$.content[6].content[1].content[0]|offset=11": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|12|$.content[60].content[1].content[0]|offset=0|$.content[60].content[1].content[0]|offset=12": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|12|$.content[64]|$.content[64].content[1]['marker']|propertyOffset=2": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[65].content[1]|$.content[65].content[1].content[0]|offset=8": [
-          "O2-LABEL-MOVES-ON-SPLIT"
+          "M4-SOFT-HELD"
         ],
         "standard|A|12|$.content[73].content[0]|offset=191|$.content[74].content[0]['number']|propertyOffset=3": [
           "M4-SOFT-HELD"
@@ -505,119 +358,26 @@
         "standard|A|12|$.content[76].content[0]['marker']|propertyOffset=0|$.content[76].content[0]['altnumber']|propertyOffset=2": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|12|$.content[77].content[1].content[0]|offset=3|$.content[77].content[1].content[1]|closingMarkerOffset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|12|$.content[77].content[3]|offset=85|$.content[77].content[4]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|12|$.content[78]|$.content[78].content[0]|keyName=altnumber,keyOffset=1": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|12|$.content[80].content[1].content[0]|offset=10|$.content[80].content[1].content[1].content[0]|offset=6": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|12|$.content[83].content[0]['number']|propertyOffset=0|$.content[83].content[1].content[0]|offset=4": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|12|$.content[87].content[0]['marker']|propertyOffset=1|$.content[88].content[0]|offset=4": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|12|$.content[92].content[0]|offset=20|$.content[92].content[1].content[0]|offset=8": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|12|$.content[93]['marker']|propertyOffset=0|$.content[94].content[1]": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[10].content[1].content[0]['marker']|propertyOffset=2|$.content[10].content[1].content[0].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[10].content[1].content[1].content[0]|offset=19|$.content[10].content[1]|closingMarkerOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[10].content[1].content[1]['marker']|propertyOffset=2|$.content[10].content[1].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[11].content[1].content[0].content[0]|offset=5|$.content[11].content[1].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[11].content[1].content[2].content[0]|offset=0|$.content[11].content[1].content[2].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[11].content[1]['caller']|propertyOffset=0|$.content[11].content[1].content[0]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|2|$.content[110].content[0]['number']|propertyOffset=1|$.content[110].content[0]['number']|propertyOffset=3": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|2|$.content[113].content[0]|offset=298|$.content[114]": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)"
-        ],
-        "standard|A|2|$.content[116].content[0].content[1].content[1].content[0]|offset=0|$.content[116].content[0].content[1].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|2|$.content[119].content[0]['number']|propertyOffset=2|$.content[119].content[1]": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[122].content[0]['number']|propertyOffset=3|$.content[122].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|2|$.content[129].content[0]['number']|propertyOffset=1|$.content[129].content[0]['number']|propertyOffset=3": [
           "M4-SOFT-HELD"
-        ],
-        "standard|A|2|$.content[135].content[0]|offset=12|$.content[135].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[135].content[1].content[0].content[0]|offset=0|$.content[135].content[1].content[0].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[135].content[1].content[1].content[0]|offset=0|$.content[135].content[1].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[138].content[1]['marker']|propertyOffset=2|$.content[138].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[139].content[0]|offset=347|$.content[140]['marker']|propertyOffset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[140].content[0].content[0]|offset=74|$.content[140].content[0].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[140].content[1].content[0]|offset=79|$.content[141]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[16].content[4]|offset=1|$.content[16].content[5]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[16].content[7]['marker']|propertyOffset=2|$.content[16].content[7].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[20].content[0]|offset=2|$.content[20].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[24].content[1]['marker']|propertyOffset=3|$.content[24].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[25].content[1]['marker']|propertyOffset=3|$.content[25].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[29].content[1]['marker']|propertyOffset=3|$.content[29].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[31].content[1]['marker']|propertyOffset=1|$.content[31].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[32].content[0]|offset=28|$.content[32].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[36].content[1]['marker']|propertyOffset=2|$.content[36].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[38].content[0]['number']|propertyOffset=2|$.content[38].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
         "standard|A|2|$.content[40].content[1]['marker']|propertyOffset=3|$.content[40].content[1]['marker']|propertyOffset=5": [
           "M4-SOFT-HELD"
@@ -631,22 +391,6 @@
         "standard|A|2|$.content[48]['marker']|propertyOffset=2|$.content[48].content[1]|offset=0": [
           "O3-UNMATCHED-MISLABEL"
         ],
-        "standard|A|2|$.content[50].content[0]|$.content[50].content[1]|offset=1": [
-          "R2-ELEM-OFFSET-AS-TEXT(start)",
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "standard|A|2|$.content[54].content[0]['number']|propertyOffset=2|$.content[54].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[6].content[1]['marker']|propertyOffset=2|$.content[6].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[60].content[1].content[0]|offset=0|$.content[60].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[64].content[1].content[0]|offset=17|$.content[65]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|2|$.content[74].content[0]['number']|propertyOffset=1|$.content[74].content[0]['number']|propertyOffset=3": [
           "M4-SOFT-HELD"
         ],
@@ -656,189 +400,36 @@
         "standard|A|2|$.content[77].content[0]['number']|propertyOffset=1|$.content[77].content[0]['number']|propertyOffset=3": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|2|$.content[77].content[1].content[0]|offset=3|$.content[77].content[1].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[77].content[3]|offset=95|$.content[77].content[4]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[78].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[78].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[79].content[1].content[0]|offset=6|$.content[79].content[2]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[80].content[1].content[0]|offset=0|$.content[80].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|2|$.content[80].content[1].content[0]|offset=10|$.content[80].content[1].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|2|$.content[90].content[0]['number']|propertyOffset=1|$.content[90].content[0]['number']|propertyOffset=3": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|2|$.content[91].content[0]|offset=22|$.content[91].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|2|$.content[92].content[1].content[0]|offset=6|$.content[92].content[1].content[0]|offset=8": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|2|$.content[94].content[0]['number']|propertyOffset=2|$.content[94].content[1]": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[10].content[0]|offset=110|$.content[10].content[1].content[0].content[0]|offset=4": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[10].content[1].content[1]['marker']|propertyOffset=2|$.content[10].content[2]|offset=0": [
-          "O2-LABEL-MOVES-ON-SPLIT"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[109]|$.content[111]['marker']|propertyOffset=0": ["M4-SOFT-HELD"],
-        "standard|A|25|$.content[11].content[1].content[1].content[0]|offset=15|$.content[11].content[1].content[2].content[1].content[0]|offset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[11].content[1]['caller']|propertyOffset=0|$.content[11].content[1].content[1].content[0]|offset=10": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[116].content[0].content[1].content[0]|offset=7|$.content[116].content[0].content[1].content[1].content[0]|offset=5": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|25|$.content[117]['marker']|propertyOffset=2|$.content[119].content[1]['marker']|propertyOffset=2": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[12].content[1].content[2]|$.content[12].content[1].content[3].content[0]|offset=12": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "O2-LABEL-MOVES-ON-SPLIT"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[121]['marker']|propertyOffset=1|$.content[122].content[1].content[0]|offset=10": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[124].content[0]|offset=4|$.content[124].content[1].content[0]|offset=11": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[126].content[1]['marker']|propertyOffset=1|$.content[127].content[0]|offset=8": [
-          "O2-LABEL-MOVES-ON-SPLIT"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[127].content[0]|offset=13|$.content[129].content[1]['marker']|propertyOffset=1": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[13].content[0]|offset=110|$.content[13].content[1].content[0]|closingMarkerOffset=4": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[13].content[1].content[2]['marker']|propertyOffset=1|$.content[13].content[1]|closingMarkerOffset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[13].content[2]|offset=184|$.content[15].content[1].content[0]|offset=7": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[135].content[0]|offset=2|$.content[135].content[1].content[0].content[0]|offset=5": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[135].content[1].content[1].content[0]|offset=0|$.content[135].content[1]|closingMarkerOffset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|25|$.content[136].content[0]|offset=33|$.content[136].content[1].content[0]|offset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[138].content[0]|$.content[139].content[0]|offset=2": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|25|$.content[139].content[0]|offset=337|$.content[140].content[0].content[0]|offset=9": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[140].content[0].content[0]|offset=74|$.content[140].content[0].content[1]|closingMarkerOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[140].content[1].content[0]|offset=59|$.content[141].content[0]|offset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[141].content[0]|offset=155|$.content[142].content[0]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|25|$.content[142].content[0].content[0]|offset=32|$.content[142].content[2].content[2]['marker']|propertyOffset=0": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[16].content[3]|$.content[16].content[5]['marker']|propertyOffset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|25|$.content[16].content[5].content[0]|offset=4|$.content[16].content[7].content[0]|offset=4": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[18].content[1]['marker']|propertyOffset=0|$.content[18].content[2]|offset=6": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|25|$.content[18].content[2]|offset=101|$.content[19].content[1].content[0]|offset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[19].content[1]['lemma']|propertyOffset=0|$.content[19].content[2]|offset=14": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|25|$.content[19].content[2]|offset=199|$.content[20].content[1]|keyName=strong,keyOffset=4": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[21].content[0]|offset=2|$.content[21].content[1]|closingMarkerOffset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[21].content[2]|offset=91|$.content[22].content[1].content[0]|offset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[22].content[2]|offset=83|$.content[23].content[1].content[0]|offset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[23].content[2]|offset=203|$.content[24].content[1].content[0]|offset=4": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[25].content[1]['marker']|propertyOffset=3|$.content[25].content[1]|closingMarkerOffset=0": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|25|$.content[25].content[2]|offset=59|$.content[26].content[1].content[0]|offset=6": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[26].content[2]|offset=189|$.content[27].content[1]|closingMarkerOffset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[27].content[2]|offset=32|$.content[28].content[1]['link-href']|propertyOffset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[29]['marker']|propertyOffset=1|$.content[29].content[1]['link-href']|propertyOffset=7": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[30].content[0]|offset=4|$.content[30].content[1]|keyName=link-href,keyOffset=6": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[31].content[1]['marker']|propertyOffset=1|$.content[31].content[1]|closingMarkerOffset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|25|$.content[32].content[2]|offset=50|$.content[33].content[1].content[0]|offset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[33].content[2]|offset=56|$.content[34].content[1].content[0]|offset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[35].content[0]|offset=10|$.content[35].content[1].content[0]|offset=12": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[35].content[1].content[1].content[0]|$.content[35].content[1].content[1].content[1].content[0]|offset=12": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|25|$.content[35].content[1].content[1].content[1].content[0]|offset=17|$.content[35].content[1].content[1].content[2].content[0]|offset=16": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|25|$.content[36].content[1].content[0]|offset=209|$.content[38].content[1].content[0]|offset=0": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[36].content[1]['marker']|propertyOffset=2|$.content[36].content[1].content[0]|offset=24": [
-          "O2-LABEL-MOVES-ON-SPLIT"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[4]['number']|propertyOffset=2|$.content[5]['marker']|propertyOffset=0": [
           "M4-SOFT-HELD"
@@ -862,29 +453,16 @@
           "O3-UNMATCHED-MISLABEL"
         ],
         "standard|A|25|$.content[5].content[0]|offset=92|$.content[6].content[1].content[0]|offset=4": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[52]|$.content[54].content[1].content[0]|offset=0": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[60].content[0]|$.content[60].content[1].content[0]|offset=15": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[64].content[1]['marker']|propertyOffset=0|$.content[65].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|25|$.content[65].content[1]|$.content[65].content[1]|keyName=x-custom-attribute-1,keyOffset=4": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|25|$.content[65].content[2]|offset=95|$.content[66].content[1].content[0]|offset=8": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[66].content[2]|offset=96|$.content[68].content[1]": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[73].content[0]|offset=181|$.content[74].content[0]|keyName=altnumber,keyOffset=1": [
           "M4-SOFT-HELD"
@@ -902,191 +480,41 @@
           "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[77].content[0]['number']|propertyOffset=1|$.content[77].content[1]|closingMarkerOffset=0": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[77].content[2]|$.content[77].content[3]|offset=10": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|25|$.content[77].content[3]|offset=75|$.content[77].content[4].content[0]|offset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[78].content[0]|keyName=altnumber|$.content[78].content[1].content[1].content[0]|offset=1": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[78].content[4]|offset=124|$.content[79].content[1].content[0]|offset=1": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[79].content[1].content[0]|offset=6|$.content[79].content[2].content[0]|offset=20": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[80].content[1].content[0]|offset=0|$.content[80].content[1].content[1].content[0]|offset=9": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|25|$.content[81].content[0]|offset=14|$.content[81].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[81].content[2]|offset=65|$.content[83].content[1].content[0]|offset=7": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[86].content[0]|offset=156|$.content[88].content[0]|offset=7": [
           "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[89]|$.content[91]": ["M4-SOFT-HELD"],
         "standard|A|25|$.content[9]['marker']|propertyOffset=0|$.content[9].content[1].content[0]|offset=13": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|25|$.content[94].content[0]['number']|propertyOffset=2|$.content[95].content[0]|offset=10": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|25|$.content[96].content[1]|closingMarkerOffset=1|$.content[97].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[96]['marker']|propertyOffset=1|$.content[96].content[1].content[0]|offset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|25|$.content[99].content[0]|offset=3|$.content[99].content[1].content[0]|offset=6": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[10].content[0]|offset=120|$.content[10].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[10].content[1].content[0]['marker']|propertyOffset=2|$.content[10].content[1].content[0].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[10].content[1].content[1].content[0]|offset=19|$.content[10].content[1]|closingMarkerOffset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[10].content[1].content[1]['marker']|propertyOffset=2|$.content[10].content[1].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[11].content[1].content[0].content[0]|offset=5|$.content[11].content[1].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[11].content[1].content[2].content[0]|offset=0|$.content[11].content[1].content[2].content[0]|offset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[11].content[1]['caller']|propertyOffset=0|$.content[11].content[1].content[0]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|3|$.content[110].content[0]['number']|propertyOffset=1|$.content[110].content[1]": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[111].content[0]|offset=213|$.content[112]": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)"
-        ],
-        "standard|A|3|$.content[114].content[0].content[1].content[0]|offset=18|$.content[114].content[0].content[1].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[115].content[0]|offset=3|$.content[116]": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)"
-        ],
-        "standard|A|3|$.content[116].content[0].content[1].content[1].content[0]|offset=0|$.content[116].content[0].content[1].content[1].content[0]|offset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
+          "M4-SOFT-HELD"
         ],
         "standard|A|3|$.content[119].content[0]['number']|propertyOffset=2|$.content[119].content[1]['marker']|propertyOffset=0": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[122].content[0]['number']|propertyOffset=3|$.content[122].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[126].content[1]['marker']|propertyOffset=1|$.content[126].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
+          "M4-SOFT-HELD"
         ],
         "standard|A|3|$.content[129].content[0]['number']|propertyOffset=1|$.content[129].content[1]": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[13].content[1].content[2]['marker']|propertyOffset=1|$.content[13].content[1].content[2].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[13].content[1]['marker']|propertyOffset=0|$.content[13].content[1].content[0]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|3|$.content[134].content[0]|offset=13|$.content[134].content[0]|offset=16": [
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
-        "standard|A|3|$.content[135].content[0]|offset=12|$.content[135].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[135].content[1].content[0].content[0]|offset=0|$.content[135].content[1].content[0].content[0]|offset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[135].content[1].content[1].content[0]|offset=0|$.content[135].content[1].content[1].content[0]|offset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[138].content[1]['marker']|propertyOffset=2|$.content[138].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[139].content[0]|offset=347|$.content[140].content[0]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[140].content[0].content[0]|offset=74|$.content[140].content[0].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[140].content[1].content[0]|offset=79|$.content[141]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|3|$.content[15].content[0]['marker']|propertyOffset=1|$.content[15].content[0]['number']|propertyOffset=2": [
           "M4-SOFT-HELD"
-        ],
-        "standard|A|3|$.content[16].content[0]|offset=0|$.content[16].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[16].content[4]|offset=1|$.content[16].content[5]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[16].content[7]['marker']|propertyOffset=2|$.content[16].content[7].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[18].content[1]['marker']|propertyOffset=0|$.content[18].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[20].content[0]|offset=2|$.content[20].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[21].content[0]|offset=2|$.content[21].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[24].content[1]['marker']|propertyOffset=3|$.content[24].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[25].content[1]['marker']|propertyOffset=3|$.content[25].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[29].content[1]['marker']|propertyOffset=3|$.content[29].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[30].content[1]['marker']|propertyOffset=1|$.content[30].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[31].content[1]['marker']|propertyOffset=1|$.content[31].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[32].content[0]|offset=28|$.content[32].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[33].content[1]['marker']|propertyOffset=1|$.content[33].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[34].content[1].content[0]|offset=8|$.content[34].content[1].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[34].content[1]['marker']|propertyOffset=1|$.content[34].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[36].content[1]['marker']|propertyOffset=2|$.content[36].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[38].content[0]['number']|propertyOffset=2|$.content[38].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
         "standard|A|3|$.content[40].content[1]['marker']|propertyOffset=3|$.content[40].content[1]['who']|propertyOffset=0": [
           "M4-SOFT-HELD"
@@ -1094,191 +522,62 @@
         "standard|A|3|$.content[43].content[1]['marker']|propertyOffset=3|$.content[43].content[1]['eid']|propertyOffset=0": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|3|$.content[50].content[0]|$.content[50].content[1]|offset=2": [
-          "R2-ELEM-OFFSET-AS-TEXT(start)",
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "standard|A|3|$.content[54].content[0]['number']|propertyOffset=2|$.content[54].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[6].content[1]['marker']|propertyOffset=2|$.content[6].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[60].content[1].content[0]|offset=0|$.content[60].content[1].content[0]|offset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[64].content[1].content[0]|offset=17|$.content[65]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[66].content[0]|offset=3|$.content[66].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|3|$.content[74].content[0]['number']|propertyOffset=1|$.content[74].content[0]|keyName=altnumber": [
           "M4-SOFT-HELD"
         ],
         "standard|A|3|$.content[74].content[0]|keyName=pubnumber,keyOffset=1|$.content[74].content[0]['pubnumber']|propertyOffset=1": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|3|$.content[76].content[0]|keyClosingMarkerOffset=4,keyName=altnumber|$.content[76].content[2]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|3|$.content[77].content[0]['number']|propertyOffset=1|$.content[77].content[1]": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[77].content[1].content[0]|offset=3|$.content[77].content[1].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[77].content[3]|offset=95|$.content[77].content[4]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[78].content[0]|keyClosingMarkerOffset=3,keyName=altnumber|$.content[78].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[79].content[1].content[0]|offset=6|$.content[79].content[2]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[80].content[1].content[0]|offset=0|$.content[80].content[1].content[0]|offset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[80].content[1].content[0]|offset=10|$.content[80].content[1].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|3|$.content[83].content[0]['number']|propertyOffset=0|$.content[83].content[0]['number']|propertyOffset=3": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|3|$.content[9].content[1]['marker']|propertyOffset=1|$.content[9].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|3|$.content[90].content[0]['number']|propertyOffset=1|$.content[90].content[1]": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[91].content[0]|offset=22|$.content[91].content[1]['marker']|propertyOffset=4": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[92].content[0]|offset=20|$.content[92].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[92].content[1].content[0]|offset=6|$.content[92].content[1].content[0]|offset=9": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|3|$.content[94].content[0]['number']|propertyOffset=2|$.content[94].content[1]['marker']|propertyOffset=0": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|3|$.content[96].content[1]['marker']|propertyOffset=1|$.content[96].content[1].content[0]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[10].content[0]|offset=110|$.content[10].content[1].content[1].content[0]|offset=19": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[10].content[0]|offset=80|$.content[10].content[1].content[0]['marker']|propertyOffset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[10].content[1].content[1]['marker']|propertyOffset=2|$.content[10].content[2]|offset=25": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[108].content[0]|offset=27|$.content[110].content[1].content[0]|offset=3": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[109]|$.content[111].content[0]|offset=23": ["M4-SOFT-HELD"],
-        "standard|A|50|$.content[11].content[0]|offset=125|$.content[11].content[1].content[1].content[0]|offset=5": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[11].content[1].content[1].content[0]|offset=15|$.content[11].content[1].content[2].content[2]|offset=11": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[11].content[1]['caller']|propertyOffset=0|$.content[11].content[1].content[2].content[1]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[115].content[0]|offset=3|$.content[116].content[0].content[1].content[1].content[0]|offset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[117]['marker']|propertyOffset=2|$.content[120].content[0]|offset=13": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|50|$.content[12].content[0]|offset=92|$.content[12].content[1].content[0].content[0]|closingMarkerOffset=4": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+        "standard|A|3|$.content[94].content[0]['number']|propertyOffset=2|$.content[94].content[1]['marker']|propertyOffset=0": [
+          "M4-SOFT-HELD"
+        ],
+        "standard|A|50|$.content[108].content[0]|offset=27|$.content[110].content[1].content[0]|offset=3": [
+          "M4-SOFT-HELD"
+        ],
+        "standard|A|50|$.content[109]|$.content[111].content[0]|offset=23": ["M4-SOFT-HELD"],
+        "standard|A|50|$.content[117]['marker']|propertyOffset=2|$.content[120].content[0]|offset=13": [
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[12].content[1].content[0]|$.content[12].content[1].content[3].content[0]|offset=7": [
           "R6-CORRUPT-figure-split",
           "REMOVE-TRACE",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[12].content[1].content[2]|$.content[12].content[2]|offset=12": [
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard|A|50|$.content[120].content[0]|offset=233|$.content[122].content[1].content[0]|offset=5": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[121]['marker']|propertyOffset=1|$.content[123].content[0]|offset=17": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|50|$.content[123].content[0]|offset=177|$.content[124].content[1].content[0]|offset=6": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|50|$.content[124].content[1]|closingMarkerOffset=2|$.content[127].content[0]|offset=3": [
           "M4-SOFT-HELD"
-        ],
-        "standard|A|50|$.content[126].content[1]['marker']|propertyOffset=1|$.content[129].content[0]['number']|propertyOffset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard|A|50|$.content[127].content[0]|offset=13|$.content[130].content[0]|offset=15": [
           "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[13].content[0]|offset=110|$.content[13].content[1].content[2]|closingMarkerOffset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[13].content[0]|offset=80|$.content[13].content[1].content[0].content[0]|offset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[13].content[1].content[2]['marker']|propertyOffset=1|$.content[13].content[2]|offset=24": [
+          "R6-CORRUPT-figure-split",
+          "REMOVE-TRACE",
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard|A|50|$.content[13].content[2]|offset=154|$.content[15].content[1].content[0]|offset=2": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[13].content[2]|offset=184|$.content[16].content[1]|closingMarkerOffset=0": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[133]['marker']|propertyOffset=0|$.content[135].content[1].content[0].content[0]|offset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[135].content[0]|offset=2|$.content[135].content[1].content[1].content[0]|offset=20": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[135].content[1].content[1].content[0]|offset=0|$.content[135].content[2]|offset=24": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[136].content[0]|offset=3|$.content[136].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[136].content[2]|offset=162|$.content[139]": ["M4-SOFT-HELD"],
         "standard|A|50|$.content[138].content[0]|$.content[139].content[0]|offset=27": [
           "M4-SOFT-HELD"
-        ],
-        "standard|A|50|$.content[139].content[0]|offset=307|$.content[140].content[0].content[0]|offset=4": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[139].content[0]|offset=337|$.content[140].content[0].content[0]|offset=34": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[140].content[0].content[0]|offset=44|$.content[140].content[0].content[1].content[0]|offset=14": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[140].content[1].content[0]|offset=59|$.content[141].content[0]|offset=25": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[141].content[0]|offset=155|$.content[142].content[0].content[0]|offset=22": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
         "standard|A|50|$.content[142].content[0].content[0]|offset=2|$.content[142].content[2].content[1]|offset=5": [
           "M4-SOFT-HELD"
@@ -1286,112 +585,17 @@
         "standard|A|50|$.content[142].content[0].content[0]|offset=32|$.content[142].content[2].content[3]|offset=11": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|50|$.content[16].content[3]|$.content[16].content[7]['marker']|propertyOffset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[16].content[7].content[0]|offset=9|$.content[17].content[1]|closingMarkerOffset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[18].content[1]['marker']|propertyOffset=0|$.content[18].content[2]|offset=31": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[18].content[2]|offset=71|$.content[19].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|50|$.content[19].content[1]['lemma']|propertyOffset=0|$.content[19].content[2]|offset=39": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|50|$.content[19].content[2]|offset=169|$.content[20].content[1].content[0]|offset=6": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[19].content[2]|offset=199|$.content[20].content[1]['lemma']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|50|$.content[2]['marker']|propertyOffset=1|$.content[4]['pubnumber']|propertyOffset=1": [
           "M4-SOFT-HELD"
-        ],
-        "standard|A|50|$.content[20].content[2]|offset=66|$.content[21].content[1]['link-href']|propertyOffset=5": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[21].content[2]|offset=61|$.content[22].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[21].content[2]|offset=91|$.content[22].content[1]|keyName=link-title,keyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[22].content[2]|offset=53|$.content[23].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[22].content[2]|offset=83|$.content[23].content[1]|keyName=id,keyOffset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[23].content[2]|offset=173|$.content[24].content[1]['marker']|propertyOffset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[23].content[2]|offset=203|$.content[24].content[1]|closingMarkerOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[24].content[2]|offset=35|$.content[25].content[1]['link-href']|propertyOffset=12": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[25].content[1]['marker']|propertyOffset=3|$.content[25].content[2]|offset=19": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[25].content[2]|offset=29|$.content[26].content[1].content[0]|offset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[26].content[2]|offset=159|$.content[27].content[1]['link-href']|propertyOffset=6": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[27].content[2]|offset=2|$.content[28].content[1].content[0]|offset=5": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[27].content[2]|offset=32|$.content[28].content[1]['link-href']|propertyOffset=28": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[28].content[1]|closingMarkerOffset=3|$.content[29].content[1]['link-href']|propertyOffset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[29].content[2]|offset=104|$.content[30].content[1]|keyName=link-href,keyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[30].content[2]|offset=136|$.content[31].content[1]['key']|propertyOffset=7": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[31].content[1]['marker']|propertyOffset=1|$.content[31].content[2]|offset=22": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[32].content[2]|offset=20|$.content[33].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[33].content[2]|offset=26|$.content[34].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[33].content[2]|offset=56|$.content[34].content[1].content[1]|closingMarkerOffset=5": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[34].content[2]|offset=28|$.content[35].content[1].content[0]|offset=7": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[35].content[0]|offset=10|$.content[35].content[1].content[1].content[1].content[0]|offset=7": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[35].content[1].content[1].content[0]|$.content[35].content[1].content[1].content[2].content[0]|offset=11": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[35].content[2]|offset=84|$.content[36].content[1].content[0]|offset=19": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
         "standard|A|50|$.content[36].content[1].content[0]|offset=179|$.content[38].content[0]['number']|propertyOffset=2": [
           "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[36].content[1].content[0]|offset=209|$.content[39].content[0]|offset=10": [
           "M4-SOFT-HELD"
-        ],
-        "standard|A|50|$.content[36].content[1]['marker']|propertyOffset=2|$.content[36].content[1].content[0]|offset=49": [
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard|A|50|$.content[39].content[4]|offset=210|$.content[40].content[2]|offset=0": [
           "M4-SOFT-HELD"
@@ -1421,8 +625,7 @@
           "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[5].content[0]|offset=62|$.content[6].content[1]['marker']|propertyOffset=2": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[5].content[0]|offset=92|$.content[7].content[0]|offset=14": [
           "M4-SOFT-HELD"
@@ -1432,8 +635,7 @@
         ],
         "standard|A|50|$.content[52]|$.content[55].content[0]|offset=3": ["M4-SOFT-HELD"],
         "standard|A|50|$.content[58].content[0]|offset=68|$.content[60].content[1].content[0]|offset=10": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[60].content[0]|$.content[61].content[0]|offset=13": [
           "M4-SOFT-HELD"
@@ -1441,25 +643,11 @@
         "standard|A|50|$.content[62].content[0]|offset=192|$.content[64].content[1].content[0]|offset=17": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|50|$.content[64].content[1]['marker']|propertyOffset=0|$.content[65].content[1].content[0]|offset=16": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[65].content[1]|$.content[65].content[1]|keyName=z-custom-attribute-2,keyOffset=0": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[65].content[2]|offset=65|$.content[66].content[1].content[0]|offset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[65].content[2]|offset=95|$.content[66].content[1]|keyName=custom-attribute-no-prefix,keyOffset=16": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|50|$.content[66].content[2]|offset=96|$.content[69].content[0]|offset=0": [
           "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[7].content[0]|offset=804|$.content[9].content[1].content[0]|offset=8": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[73].content[0]|offset=181|$.content[74].content[0]|keyClosingMarkerOffset=2,keyName=pubnumber": [
           "M4-SOFT-HELD"
@@ -1483,48 +671,25 @@
           "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[76].content[3]|offset=282|$.content[77].content[1].content[1]|closingMarkerOffset=1": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[77].content[0]['number']|propertyOffset=1|$.content[77].content[3]|offset=5": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|50|$.content[77].content[2]|$.content[77].content[3]|offset=35": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|50|$.content[77].content[5]|offset=237|$.content[78].content[1].content[1]": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[78].content[0]|keyName=altnumber|$.content[78].content[2]|offset=12": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|50|$.content[78].content[2]|offset=52|$.content[78].content[3].content[0]|offset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|50|$.content[78].content[4]|offset=124|$.content[79].content[2].content[0]|offset=15": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[78].content[4]|offset=94|$.content[79].content[1]": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[79].content[1].content[0]|offset=6|$.content[79].content[2].content[0]|offset=45": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[80].content[0]|offset=8|$.content[80].content[1].content[1].content[0]|offset=4": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[80].content[1].content[0]|offset=0|$.content[80].content[2]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[81].content[0]|offset=14|$.content[81].content[1]|closingMarkerOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[81].content[2]|offset=35|$.content[83].content[1].content[0]|offset=2": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[81].content[2]|offset=65|$.content[84].content[0]|offset=18": [
           "M4-SOFT-HELD"
@@ -1536,8 +701,7 @@
           "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[88].content[0]|offset=12|$.content[90].content[1].content[0]|offset=3": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[89]|$.content[91].content[0]|offset=22": ["M4-SOFT-HELD"],
         "standard|A|50|$.content[9]['marker']|propertyOffset=0|$.content[10].content[0]|offset=10": [
@@ -1549,75 +713,14 @@
         "standard|A|50|$.content[94].content[0]['number']|propertyOffset=2|$.content[95].content[0]|offset=35": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|50|$.content[95].content[0]|offset=105|$.content[96].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|50|$.content[98].content[0]|offset=11|$.content[99].content[1].content[0]|offset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|6|$.content[11].content[1].content[0].content[0]|offset=5|$.content[11].content[1].content[1].content[0]|offset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|6|$.content[11].content[1].content[2].content[1]['marker']|propertyOffset=0|$.content[11].content[1].content[2].content[1].content[0]|offset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|6|$.content[110].content[0]['number']|propertyOffset=1|$.content[110].content[1]['marker']|propertyOffset=2": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|6|$.content[116].content[0].content[1].content[0]|offset=17|$.content[116].content[0].content[1].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|6|$.content[12].content[0]|offset=112|$.content[12].content[1]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|6|$.content[12].content[1].content[2]|$.content[12].content[1].content[2].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|6|$.content[126].content[1]['marker']|propertyOffset=1|$.content[126].content[1].content[0]|offset=4": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|6|$.content[13].content[1].content[2]['marker']|propertyOffset=1|$.content[13].content[1].content[2].content[0]|offset=4": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|6|$.content[135].content[0]|offset=12|$.content[135].content[1].content[0]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|6|$.content[138].content[0]|$.content[138].content[0]['number']|propertyOffset=3": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|6|$.content[141].content[0]|offset=175|$.content[142].content[0]['marker']|propertyOffset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|6|$.content[16].content[7]['marker']|propertyOffset=2|$.content[16].content[7].content[0]|offset=5": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|6|$.content[20].content[0]|offset=2|$.content[20].content[1].content[0]|offset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|6|$.content[24].content[1]['marker']|propertyOffset=3|$.content[24].content[1].content[0]|offset=5": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|6|$.content[26].content[0]|offset=1|$.content[26].content[1]['marker']|propertyOffset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|6|$.content[35].content[1].content[1].content[1]['marker']|propertyOffset=0|$.content[35].content[1].content[1].content[1].content[0]|offset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|6|$.content[36].content[1]['marker']|propertyOffset=2|$.content[36].content[1].content[0]|offset=5": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|6|$.content[43].content[1]['marker']|propertyOffset=3|$.content[43].content[1]['eid']|propertyOffset=3": [
           "M4-SOFT-HELD"
-        ],
-        "standard|A|6|$.content[6].content[1]['marker']|propertyOffset=2|$.content[6].content[1].content[0]|offset=5": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|6|$.content[60].content[1].content[0]|offset=0|$.content[60].content[1].content[0]|offset=6": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|6|$.content[65].content[1]|$.content[65].content[1].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard|A|6|$.content[75].content[0]|keyName=altnumber|$.content[75].content[0]['altnumber']|propertyOffset=2": [
           "M4-SOFT-HELD"
@@ -1625,55 +728,17 @@
         "standard|A|6|$.content[76].content[0]['marker']|propertyOffset=0|$.content[76].content[0]|keyName=altnumber": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|6|$.content[77].content[1].content[0]|offset=3|$.content[77].content[1].content[1].content[0]|offset=1": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|6|$.content[80].content[1].content[0]|offset=10|$.content[80].content[1].content[1].content[0]|offset=0": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|6|$.content[83].content[0]['number']|propertyOffset=0|$.content[83].content[1]['marker']|propertyOffset=1": [
-          "M4-SOFT-HELD",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+          "M4-SOFT-HELD"
         ],
         "standard|A|6|$.content[87].content[0]['marker']|propertyOffset=1|$.content[88]['marker']|propertyOffset=0": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|6|$.content[92].content[0]|offset=20|$.content[92].content[1].content[0]|offset=2": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|collapsed|$.content[0]|$.content[0]": ["R3-COLLAPSED-HOLDS"],
-        "standard|A|collapsed|$.content[11].content[1]['caller']|propertyOffset=0|$.content[11].content[1]['caller']|propertyOffset=0": [
-          "R3-COLLAPSED-HOLDS"
-        ],
-        "standard|A|collapsed|$.content[85].content[1]|$.content[85].content[1]": [
-          "R3-COLLAPSED-HOLDS"
-        ],
-        "standard|A|reversed2|$.content[10].content[1]|closingMarkerOffset=1|$.content[10].content[1].content[1].content[0]|offset=19": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|reversed2|$.content[11].content[1].content[1]['marker']|propertyOffset=0|$.content[11].content[1].content[0].content[0]|offset=5": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
         "standard|A|reversed2|$.content[110].content[0]['number']|propertyOffset=3|$.content[110].content[0]['number']|propertyOffset=1": [
           "M4-SOFT-HELD"
         ],
-        "standard|A|reversed2|$.content[122].content[1]['marker']|propertyOffset=0|$.content[122].content[0]['number']|propertyOffset=3": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|reversed2|$.content[138].content[1].content[0]|offset=1|$.content[138].content[1]['marker']|propertyOffset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|reversed2|$.content[6].content[1].content[0]|offset=1|$.content[6].content[1]['marker']|propertyOffset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
         "standard|A|reversed2|$.content[74].content[0]['number']|propertyOffset=3|$.content[74].content[0]['number']|propertyOffset=1": [
           "M4-SOFT-HELD"
-        ],
-        "standard|A|reversed2|$.content[77].content[4]['marker']|propertyOffset=0|$.content[77].content[3]|offset=95": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|A|reversed2|$.content[91].content[1]|$.content[91].content[0]|offset=22": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
         "standard|B|1|$.content[10].content[1]['caller']|propertyOffset=1|$.content[10].content[1]['caller']|propertyOffset=2": [
           "R9-UNDISPLAYED-SNAP-INVERTS"
@@ -1703,10 +768,6 @@
         ],
         "standard|B|3|$.content[11].content[1]['category']|propertyOffset=3|$.content[11].content[1]['category']|propertyOffset=6": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "standard|B|3|$.content[12].content[1]['caller']|propertyOffset=1|$.content[12].content[1].content[0]['marker']|propertyOffset=0": [
-          "R2-ELEM-OFFSET-AS-TEXT(start)",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ]
       }
     },

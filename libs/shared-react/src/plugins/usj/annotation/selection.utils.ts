@@ -36,6 +36,7 @@ import {
 } from "lexical";
 import {
   $chapterGlyphTextNode,
+  $charSeparatorPrefixLength,
   $getLogicalContentItems,
   $getLogicalIndexOfChild,
   $getLogicalParent,
@@ -1227,6 +1228,17 @@ function $locationFromNode(
 
   // Regular text node - UsjTextContentLocation in coalesced-USJ coordinates.
   if ($isTextNode(node)) {
+    // A caret in front of the separator the span's text starts with is the end of the opener's
+    // name — the answer the same caret gives once the separator is its own node.
+    if (offset < $charSeparatorPrefixLength(node)) {
+      const previousGlyph = node.getPreviousSibling();
+      if ($isMarkerNode(previousGlyph))
+        return $locationFromNode(
+          previousGlyph,
+          previousGlyph.getTextContentSize(),
+          collapsesSpaceRuns,
+        );
+    }
     const logicalTextLocation = $getLogicalTextLocation(node, offset, collapsesSpaceRuns);
     if (logicalTextLocation) {
       return {

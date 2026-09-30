@@ -29,7 +29,7 @@ import {
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
 } from "./TypedMarkNode.js";
-import type { LexicalNode, PointType, RangeSelection } from "lexical";
+import type { ElementNode, LexicalNode, PointType, RangeSelection } from "lexical";
 import { $addUpdateTag, $isElementNode, $isTextNode } from "lexical";
 
 /**
@@ -52,21 +52,115 @@ function $isDisplayOwnerUnit(node: LexicalNode): boolean {
 }
 
 /**
- * The `[start, end)` bytes of carrier `node` a selection from `start` to `end` covers, or
- * `undefined` when it covers none. A decorator is covered whole (`[0, 0]`). An end point on
- * another node leaves this node covered to that side's edge.
+ * A caret between leaves: a text offset in a text leaf, or 0 (in front of) / 1 (behind) any other
+ * leaf. Two spellings of one caret (the end of a text, the front of the next leaf) compare as
+ * adjacent, never as reversed.
+ */
+interface LeafCaret {
+  leaf: LexicalNode;
+  offset: number;
+}
+
+function leafSize(node: LexicalNode): number {
+  return $isTextNode(node) ? node.getTextContentSize() : 1;
+}
+
+function $firstLeaf(node: LexicalNode): LexicalNode {
+  let leaf = node;
+  while ($isElementNode(leaf)) {
+    const child = leaf.getFirstChild();
+    if (!child) return leaf;
+    leaf = child;
+  }
+  return leaf;
+}
+
+function $lastLeaf(node: LexicalNode): LexicalNode {
+  let leaf = node;
+  while ($isElementNode(leaf)) {
+    const child = leaf.getLastChild();
+    if (!child) return leaf;
+    leaf = child;
+  }
+  return leaf;
+}
+
+/**
+ * The caret a selection point stands for. An element point `(E, i)` is in front of child `i`'s
+ * first leaf, or behind E's last leaf when `i` is past its children — never a text offset.
+ */
+function $caretOf(point: PointType): LeafCaret {
+  const node = point.getNode();
+  if (!$isElementNode(node))
+    return { leaf: node, offset: $isTextNode(node) ? point.offset : Math.min(point.offset, 1) };
+  const child = node.getChildAtIndex(point.offset);
+  if (child) return { leaf: $firstLeaf(child), offset: 0 };
+  const last = node.getLastChild();
+  if (!last) return { leaf: node, offset: 0 };
+  const leaf = $lastLeaf(last);
+  return { leaf, offset: leafSize(leaf) };
+}
+
+function compareCarets(a: LeafCaret, b: LeafCaret): number {
+  if (a.leaf.is(b.leaf)) return a.offset - b.offset;
+  return a.leaf.isBefore(b.leaf) ? -1 : 1;
+}
+
+/** The `[from, to)` offsets of `leaf` the range from `start` to `end` covers (`from === to`: none). */
+function $coveredOffsets(leaf: LexicalNode, start: LeafCaret, end: LeafCaret): [number, number] {
+  const size = leafSize(leaf);
+  let from = size;
+  if (start.leaf.is(leaf)) from = start.offset;
+  else if (start.leaf.isBefore(leaf)) from = 0;
+  let to = 0;
+  if (end.leaf.is(leaf)) to = end.offset;
+  else if (leaf.isBefore(end.leaf)) to = size;
+  return [from, Math.max(from, to)];
+}
+
+/** The first leaf after `node` in document order, if any. */
+function $leafAfter(node: LexicalNode): LexicalNode | undefined {
+  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
+    const sibling = current.getNextSibling();
+    if (sibling) return $firstLeaf(sibling);
+  }
+  return undefined;
+}
+
+/**
+ * Whether the range covers `element` from in front of its first leaf through behind its last.
+ *
+ * An element that ends with a separator (a collapsed note's layout does) counts as covered only
+ * when the range also goes on past it: moved into a mark, the separator then sits between held
+ * bytes. A range that stops at the element's end leaves it in place, since its mark would
+ * otherwise end in a separator with nothing held beyond it.
+ */
+function $coversWhole(element: ElementNode, start: LeafCaret, end: LeafCaret): boolean {
+  const first = $firstLeaf(element);
+  const last = $lastLeaf(element);
+  if (compareCarets(start, { leaf: first, offset: 0 }) > 0) return false;
+  if (compareCarets(end, { leaf: last, offset: leafSize(last) }) < 0) return false;
+  if ($isMarkerTrailingSeparator(last)) {
+    const after = $leafAfter(element);
+    if (!after || compareCarets(end, { leaf: after, offset: 0 }) <= 0) return false;
+  }
+  return true;
+}
+
+/**
+ * The `[start, end)` bytes of carrier `node` the range from `start` to `end` covers, or
+ * `undefined` when it covers none. A decorator is covered whole (`[0, 0]`), and only when the
+ * range passes over it.
  */
 function $coveredCarrierRange(
   node: LexicalNode,
-  start: PointType,
-  end: PointType,
+  start: LeafCaret,
+  end: LeafCaret,
 ): [number, number] | undefined {
   if (!$isDisplayAnnotationCarrier(node)) return undefined;
-  if (!$isTextNode(node)) return [0, 0];
-  const from = start.type === "text" && start.key === node.getKey() ? start.offset : 0;
-  const to =
-    end.type === "text" && end.key === node.getKey() ? end.offset : node.getTextContentSize();
-  return to > from ? [from, to] : undefined;
+  const [from, to] = $coveredOffsets(node, start, end);
+  if (to <= from) return undefined;
+  return $isTextNode(node) ? [from, to] : [0, 0];
 }
 
 export function $wrapSelectionInTypedMarkNode(
@@ -78,18 +172,22 @@ export function $wrapSelectionInTypedMarkNode(
   onMouseEnter?: TypedMarkOnMouseEnter,
   onMouseLeave?: TypedMarkOnMouseLeave,
 ): void {
+  // A collapsed range names no byte, so it holds nothing — not even the node beside it.
+  if (selection.isCollapsed()) return;
   const nodes = selection.getNodes();
-  const anchorOffset = selection.anchor.offset;
-  const focusOffset = selection.focus.offset;
-  const nodesLength = nodes.length;
   const isBackward = selection.isBackward();
   const [startPoint, endPoint] = isBackward
     ? [selection.focus, selection.anchor]
     : [selection.anchor, selection.focus];
+  // Measured before the loop splits anything: `splitText` keeps the original key on the first
+  // piece and ordering reads the live tree, so each caret keeps naming the same place.
+  const startCaret = $caretOf(startPoint);
+  const endCaret = $caretOf(endPoint);
+  if (compareCarets(startCaret, endCaret) >= 0) return;
   let markCreated = false;
   let carrierAnnotated = false;
   const $annotateCarrier = (node: LexicalNode) => {
-    const covered = $coveredCarrierRange(node, startPoint, endPoint);
+    const covered = $coveredCarrierRange(node, startCaret, endCaret);
     if (!covered) return;
     // Tagged here, at the wrap's first actual mutation, never unconditionally at the top of the
     // function: an update's tags survive only as long as the commit that carries them changes a
@@ -100,16 +198,13 @@ export function $wrapSelectionInTypedMarkNode(
     $addDisplayAnnotation(node, type, id, covered[0], covered[1]);
     carrierAnnotated = true;
   };
-  const startOffset = isBackward ? focusOffset : anchorOffset;
-  const endOffset = isBackward ? anchorOffset : focusOffset;
   let currentNodeParent;
   let lastCreatedMarkNode;
 
   // We only want wrap adjacent text nodes, line break nodes and inline element nodes. For decorator
   // nodes and block element nodes, we step out of their boundary and start again after, if there
   // are more nodes.
-  for (let i = 0; i < nodesLength; i++) {
-    const node = nodes[i];
+  for (const node of nodes) {
     if ($isElementNode(lastCreatedMarkNode) && lastCreatedMarkNode.isParentOf(node)) {
       // If the current node is a child of the last created mark node, there is nothing to do here
       continue;
@@ -151,37 +246,29 @@ export function $wrapSelectionInTypedMarkNode(
       lastCreatedMarkNode = undefined;
       continue;
     }
-    const isFirstNode = i === 0;
-    const isLastNode = i === nodesLength - 1;
     let targetNode: LexicalNode | null = null;
 
     if ($isTextNode(node)) {
       // Case 1: The node is a text node and we can split it
-      const textContentSize = node.getTextContentSize();
+      const [from, to] = $coveredOffsets(node, startCaret, endCaret);
       // A char span opener's separator is the first byte of the text right after the glyph —
       // either the prefix of the span's first content text or, in front of a nested span, a
       // standalone NBSP spacer. That byte is the glyph's display, so the mark starts after it; a
       // spacer holds nothing else and stays out of the mark whole. Only that place qualifies: an
       // NBSP anywhere else in the span is content.
-      const separatorLength = $charSeparatorPrefixLength(node);
-      const startTextOffset = Math.max(isFirstNode ? startOffset : 0, separatorLength);
-      const endTextOffset = isLastNode ? endOffset : textContentSize;
+      const startTextOffset = Math.max(from, $charSeparatorPrefixLength(node));
       // A text node the range covers no byte of stays out of the mark: the range starts at its end
       // (a position in front of a verse or a closing glyph names the text before it), ends at its
       // start, or covers only the separator prefix. `splitText` never returns an empty piece, so
       // wrapping here would mark the whole node.
-      if (startTextOffset >= endTextOffset) continue;
+      if (startTextOffset >= to) continue;
       // Tagged here, at the split that is about to happen — see the tag's other call site below
       // for why it is never added unconditionally.
       $addUpdateTag(TYPED_MARK_WRAP_TAG);
-      const splitNodes = node.splitText(startTextOffset, endTextOffset);
-      targetNode =
-        splitNodes.length > 1 &&
-        (splitNodes.length === 3 ||
-          (isFirstNode && !isLastNode) ||
-          endTextOffset === textContentSize)
-          ? splitNodes[1]
-          : splitNodes[0];
+      const splitNodes = node.splitText(startTextOffset, to);
+      // `splitText` drops a cut at either end, so the covered piece is the second when the range
+      // starts inside the node and the first otherwise.
+      targetNode = splitNodes[startTextOffset > 0 ? 1 : 0];
     } else if ($isTypedMarkNode(node)) {
       // Case 2: the node is a mark node and we can ignore it as a target, moving on to its
       // children. Note that when we make a mark inside another mark, it may ultimately be un-nested
@@ -190,7 +277,12 @@ export function $wrapSelectionInTypedMarkNode(
 
       continue;
     } else if ($isElementNode(node) && node.isInline()) {
-      // Case 3: inline element nodes can be added in their entirety to the new mark
+      // Case 3: an inline element moves into the mark whole only when the range covers all of it,
+      // opening glyph through closing glyph (its opener's separator goes with it, between held
+      // bytes). A range that starts or ends inside it leaves it in place: its listed content text
+      // is wrapped piece by piece and its glyphs hold the annotation as carriers, so no byte the
+      // range does not name is marked.
+      if (!$coversWhole(node, startCaret, endCaret)) continue;
       targetNode = node;
     }
 
