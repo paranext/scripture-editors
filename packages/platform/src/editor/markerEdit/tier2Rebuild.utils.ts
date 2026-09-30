@@ -82,7 +82,8 @@ import {
   $createImpliedParaNode,
   $createTypedMarkNode,
   $displayAnnotationsOf,
-  $registerDisplayAnnotation,
+  $isTypedMarkIdHeld,
+  $setDisplayAnnotationHeldByMark,
   $wrapSelectionInTypedMarkNode,
   closingMarkerText,
   getDisplayAnnotationRegistration,
@@ -2065,16 +2066,18 @@ function $restoreMarkByteRanges(
         annotation.onMouseEnter,
         annotation.onMouseLeave,
       );
-      // An annotation a mark held stays reported through marks only, even when the settle leaves
-      // nothing of it but display bytes.
-      if (
-        annotation.fromMark &&
-        getDisplayAnnotationRegistration($getEditor(), annotation.type, annotation.id)
-      )
-        $registerDisplayAnnotation(annotation.type, annotation.id, {}, true);
       if (preservedKey) $extendMarkOverPreservedRun(preservedKey, annotation.type, annotation.id);
     }
   }
+  // An annotation is reported through its marks only while a mark holds it. A settle that carries
+  // a mark's bytes wholly onto display bytes leaves none, so its carriers report from here on; the
+  // settle itself removes rebuilt marks without reporting them.
+  const carried = new Map<string, { type: string; id: string }>();
+  for (const range of ranges)
+    for (const { type, id, fromMark } of range.annotations)
+      if (fromMark) carried.set(JSON.stringify([type, id]), { type, id });
+  for (const { type, id } of carried.values())
+    $setDisplayAnnotationHeldByMark(type, id, $isTypedMarkIdHeld(type, id));
   $setSelection(selectionBefore);
 }
 

@@ -211,8 +211,9 @@ export interface DisplayAnnotationCallbacks {
   onMouseLeave?: TypedMarkOnMouseLeave;
 }
 
-/** An annotation's registration: its callbacks, and whether a `TypedMarkNode` ever held it — an
- * annotation that did reports its removal through its marks alone. */
+/** An annotation's registration: its callbacks, and whether a `TypedMarkNode` holds it, or held it
+ * since it was set or last carried by a settle — an annotation that did reports its removal
+ * through its marks alone. */
 export interface DisplayAnnotationRegistration extends DisplayAnnotationCallbacks {
   hadMarks: boolean;
 }
@@ -249,6 +250,20 @@ export function $registerDisplayAnnotation(
     ...defined,
     hadMarks: (previous?.hadMarks ?? false) || heldMark,
   });
+}
+
+/**
+ * Record whether a `TypedMarkNode` holds `type`/`id` now, for an annotation already registered; a
+ * settle that carried its marks onto display bytes alone makes it display-only. Call inside an
+ * update of the editor.
+ */
+export function $setDisplayAnnotationHeldByMark(
+  type: string,
+  id: string,
+  heldByMark: boolean,
+): void {
+  const registration = registrations.get($getEditor())?.get(registrationKey(type, id));
+  if (registration) registration.hadMarks = heldByMark;
 }
 
 export function getDisplayAnnotationRegistration(

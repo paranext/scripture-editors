@@ -560,7 +560,7 @@ describe("typing content after an annotated verse", () => {
 });
 
 describe("a comment mark that the settle leaves on display bytes alone", () => {
-  it("reports its removal through its marks only, never through the carrier", async () => {
+  it("reports its removal once from the carrier once no mark holds it", async () => {
     const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
     const bareWord: MarkerObject = { type: "char", marker: "w", content: ["grace"] };
     const mounted = await mountStandardViewEditor(twoParaUsj(["In the ", bareWord, " of God"]));
@@ -604,6 +604,8 @@ describe("a comment mark that the settle leaves on display bytes alone", () => {
     });
 
     expect(displayAnnotated(mounted.lexical)).toEqual({});
-    expect(onRemove.mock.calls.slice(callsBefore)).toEqual([]);
+    expect(onRemove.mock.calls.slice(callsBefore)).toEqual([
+      [COMMENT_MARK_TYPE, "c1", "destroyed", "|"],
+    ]);
   });
 });

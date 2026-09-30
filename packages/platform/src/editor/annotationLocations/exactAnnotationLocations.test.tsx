@@ -20,6 +20,7 @@ import { copyEvent, pasteEvent } from "../markerEdit/markerEdit.test-helpers";
 import { displayAnnotated } from "../markerEdit/displayAnnotations.test-helpers";
 import {
   $textContaining,
+  contentPath,
   propertyPath,
   settledPara,
   twoParaUsj,
@@ -54,6 +55,7 @@ import {
   $isCharNode,
   $isImmutableChapterNode,
   $isImmutableUnmatchedNode,
+  $isMarkerNode,
   $isMarkerTrailingSeparator,
   $isNoteNode,
   $isTypedMarkNode,
@@ -62,6 +64,7 @@ import {
   COMMENT_MARK_TYPE,
   NBSP,
   NoteNode,
+  TypedMarkOnRemove,
 } from "shared";
 import {
   $getRangeFromUsjSelection,
@@ -278,7 +281,7 @@ describe("an annotation inside a figure caption", () => {
 });
 
 /** Settle the scope the way an abandoned edit does: blur, then commit the pending literal. */
-function settle(mounted: MountedInView): void {
+function settle(mounted: Pick<MountedInView, "lexical" | "ref">): void {
   const rootElement = mounted.lexical.getRootElement();
   if (!rootElement) throw new Error("editor root not found");
   act(() => rootElement.blur());
@@ -862,6 +865,160 @@ describe("inbound resolution for annotations", () => {
       expect(selection.anchor.getNode().is(verse.getParent())).toBe(true);
       expect(selection.anchor.offset).toBe(verse.getIndexWithinParent());
     });
+  });
+});
+
+describe("removal is reported by what holds the annotation now", () => {
+  const standard = oracleView("standard");
+  const bareWord: MarkerObject = { type: "char", marker: "w", content: ["grace"] };
+  const typedLemma = '|lemma="grace"';
+
+  /** `\p In the \w grace\w* of God` with `|lemma="grace"` typed after `grace`, the caret left at
+   * its end so the typing is still pending. */
+  async function mountTypingLemma(): Promise<Mounted> {
+    const mounted = await mountStandardViewEditor(twoParaUsj(["In the ", bareWord, " of God"]));
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const word = $textContaining("grace");
+        word.setTextContent(`${word.getTextContent()}${typedLemma}`);
+        word.select(word.getTextContentSize(), word.getTextContentSize());
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return mounted;
+  }
+
+  /** The `lemma` value set as annotation `L` while the typing is pending, then the paragraph
+   * settled, which leaves the annotation on the `|grace` run with no mark. */
+  async function mountSetWhilePending(onRemove: TypedMarkOnRemove): Promise<Mounted> {
+    const mounted = await mountTypingLemma();
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(lemmaRange, "test", "L", { onRemove });
+      await Promise.resolve();
+    });
+    settle(mounted);
+    expect(displayAnnotated(mounted.lexical)).toEqual({ L: ["grace"] });
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "L"))).toEqual(
+      [],
+    );
+    return mounted;
+  }
+
+  /** Deletes the `\w` span the way a user does: from in front of its opener glyph to behind its
+   * closer glyph. */
+  async function userDeletesWord(mounted: Mounted): Promise<void> {
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const glyphs = $onlyCharNode().getChildren().filter($isMarkerNode);
+        const opener = glyphs[0];
+        const closer = glyphs[glyphs.length - 1];
+        const selection = $createRangeSelection();
+        selection.anchor.set(opener.getKey(), 0, "text");
+        selection.focus.set(closer.getKey(), closer.getTextContentSize(), "text");
+        $setSelection(selection);
+        selection.removeText();
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  async function removeL(mounted: Mounted): Promise<void> {
+    await act(async () => {
+      mounted.ref.current?.removeAnnotation("test", "L");
+      await Promise.resolve();
+    });
+  }
+
+  it("reports destroyed once when the user deletes the bytes of an annotation set while typing was pending", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountSetWhilePending(onRemove);
+
+    await userDeletesWord(mounted);
+
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(onRemove.mock.calls).toEqual([["external-test", "L", "destroyed", "grace"]]);
+    await removeL(mounted);
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports removed once for the same annotation, and an undo brings it back without a report", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountSetWhilePending(onRemove);
+
+    await removeL(mounted);
+
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(onRemove.mock.calls).toEqual([["external-test", "L", "removed", "grace"]]);
+    await act(async () => mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined));
+    expect(displayAnnotated(mounted.lexical)).toEqual({ L: ["grace"] });
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an annotation a mark still holds reported through that mark alone", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountTypingLemma();
+    settle(mounted);
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        { start: { jsonPath: contentPath([2, 0]), offset: 0 }, end: lemmaRange.end },
+        "test",
+        "L",
+        { onRemove },
+      );
+      await Promise.resolve();
+    });
+    const $marks = () => $markTexts("external-test", "L");
+    expect(mounted.lexical.getEditorState().read($marks)).toEqual(["In the ", "grace"]);
+    expect(displayAnnotated(mounted.lexical)).toEqual({ L: ["\\w", "|grace"] });
+
+    await userDeletesWord(mounted);
+
+    // The selection removes the emptied `grace` mark, which reports; the `\w` and `|grace`
+    // carriers add nothing while the `In the ` mark holds the annotation.
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(mounted.lexical.getEditorState().read($marks)).toEqual(["In the "]);
+    expect(onRemove.mock.calls).toEqual([["external-test", "L", "destroyed", ""]]);
+
+    await act(async () => {
+      mounted.lexical.update(() => $textContaining("In the ").getParentOrThrow().remove());
+      await Promise.resolve();
+    });
+
+    expect(onRemove.mock.calls.slice(1)).toEqual([["external-test", "L", "destroyed", "In the "]]);
+  });
+
+  it("reports nothing for content marks a settle of their paragraph rebuilds", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const body = "alpha bravo charlie";
+    const mounted = await mountInView(twoParaUsj([body]), standard);
+    const ranges = {
+      bravo: [body.indexOf("bravo"), body.indexOf("bravo") + "bravo".length],
+      straddle: [body.indexOf("bravo"), body.indexOf("charlie") + "char".length],
+    };
+    for (const [id, [start, end]] of Object.entries(ranges))
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(
+          {
+            start: { jsonPath: contentPath([2, 0]), offset: start },
+            end: { jsonPath: contentPath([2, 0]), offset: end },
+          },
+          "test",
+          id,
+          { onRemove },
+        );
+        await Promise.resolve();
+      });
+
+    await typeOver(mounted.lexical, "lie", "lie \\nd LORD\\nd*");
+    settle(mounted);
+
+    expect(spanContentIn(mounted.ref.current?.getUsj(), "nd")).toEqual(["LORD"]);
+    const $held = (id: string) => () => $markTexts("external-test", id).join("");
+    expect(mounted.lexical.getEditorState().read($held("bravo"))).toBe("bravo");
+    expect(mounted.lexical.getEditorState().read($held("straddle"))).toBe("bravo char");
+    expect(onRemove).not.toHaveBeenCalled();
   });
 });
 

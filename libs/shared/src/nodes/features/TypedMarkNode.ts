@@ -5,7 +5,7 @@
  */
 
 import { assertSafeKey } from "@eten-tech-foundation/scripture-utilities";
-import { addClassNamesToElement, removeClassNamesFromElement } from "@lexical/utils";
+import { $dfsIterator, addClassNamesToElement, removeClassNamesFromElement } from "@lexical/utils";
 import type {
   BaseSelection,
   EditorConfig,
@@ -1354,6 +1354,13 @@ export function $unwrapTypedMarkNode(node: TypedMarkNode): void {
     target = child;
   }
   node.remove();
+}
+
+/** Whether any `TypedMarkNode` in the active editor's document holds `type`/`id`. Read-only. */
+export function $isTypedMarkIdHeld(type: string, id: string): boolean {
+  for (const { node } of $dfsIterator())
+    if ($isTypedMarkNode(node) && node.hasID(type, id)) return true;
+  return false;
 }
 
 export function $getMarkIDs(node: TextNode, type: string, offset: number): string[] | undefined {
