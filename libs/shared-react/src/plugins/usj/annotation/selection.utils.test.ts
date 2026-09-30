@@ -9,6 +9,7 @@ import {
   ImmutableVerseNode,
 } from "../../../nodes/usj/ImmutableVerseNode";
 import { SelectionRange, AnnotationRange } from "./selection.model";
+import type { UsjPropertyValueLocation } from "@eten-tech-foundation/scripture-utilities";
 import { $createImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { usjReactNodes } from "../../../nodes/usj";
 import { STANDARD_VIEW_MODE, UNFORMATTED_VIEW_MODE } from "../../../views/view-mode.model";
@@ -954,11 +955,11 @@ describe("$getNodeFromLocation for bytes the view does not display", () => {
 });
 
 describe("$getNodeFromLocation for the properties USFM spells before the content", () => {
-  it.each<[string, string]>([
-    ["a book's code", "$.content[0]['code']"],
-    ["a note's caller", "$.content[1].content[0]['caller']"],
-    ["a note's category", "$.content[1].content[0]['category']"],
-  ])("resolves %s the view does not display at the element's start", (_name, jsonPath) => {
+  it.each<[string, UsjPropertyValueLocation]>([
+    ["a book's code", { jsonPath: "$.content[0]['code']", propertyOffset: 1 }],
+    ["a note's caller", { jsonPath: "$.content[1].content[0]['caller']", propertyOffset: 1 }],
+    ["a note's category", { jsonPath: "$.content[1].content[0]['category']", propertyOffset: 1 }],
+  ])("resolves %s the view does not display at the element's start", (_name, location) => {
     const nodes: { book?: TextNode; note?: NoteNode } = {};
     const { editor } = createBasicTestEnvironment([...usjReactNodes], () => {
       nodes.book = $createTextNode("Genesis");
@@ -972,10 +973,10 @@ describe("$getNodeFromLocation for the properties USFM spells before the content
     });
 
     editor.getEditorState().read(() => {
-      const expected = jsonPath.startsWith("$.content[0]") ? [nodes.book, 0] : [nodes.note, 0];
-      expect($getNodeFromLocation({ jsonPath, propertyOffset: 1 } as const, undefined)).toEqual(
-        expected,
-      );
+      const expected = location.jsonPath.startsWith("$.content[0]")
+        ? [nodes.book, 0]
+        : [nodes.note, 0];
+      expect($getNodeFromLocation(location, undefined)).toEqual(expected);
     });
   });
 
