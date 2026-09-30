@@ -7,6 +7,7 @@ import {
   $createRangeSelection,
   $getPreviousSelection,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $isTextNode,
   COMMAND_PRIORITY_CRITICAL,
@@ -25,6 +26,7 @@ import {
   RangeSelection,
   REMOVE_TEXT_COMMAND,
   SELECTION_CHANGE_COMMAND,
+  TextNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
 import {
@@ -171,6 +173,13 @@ export function $guardCaretOutOfNoteShell(isPointerGesture = false): boolean {
 
   if (!selection.isCollapsed()) return $narrowSelectionOutOfShell(selection);
 
+  const ended = $noteEndAt(selection.anchor);
+  if (ended) {
+    const end = $contentEndPoint(ended);
+    if (selection.anchor.is(end)) return false;
+    $setCollapsed(selection, end);
+    return true;
+  }
   const note = $shellAt(selection.anchor);
   if (!note) return false;
   if (!isPointerGesture && $arrivedFromContentSide(note)) {
@@ -217,6 +226,58 @@ function $isInClosingGlyph(note: NoteNode, point: PointType): boolean {
   );
 }
 
+/** `note`'s own closing glyph, or `undefined` when it has none (an unclosed note). */
+function $closingGlyph(note: NoteNode): TextNode | undefined {
+  const index = $contentEndIndex(note);
+  if (index === note.getChildrenSize()) return undefined;
+  const closer = note.getChildAtIndex(index);
+  return $isTextNode(closer) ? closer : undefined;
+}
+
+/**
+ * The end of `note`'s content as a TEXT point: the end of the last text before the closing glyph.
+ * The mirror of {@link $shellTrailingEdge}. An element point at the closer's index is not a safe
+ * caret: it resolves to the closer's own start, and the closer is ordinary text, so a keystroke there
+ * is prepended to the glyph.
+ */
+function $contentEndPoint(note: NoteNode): PointType {
+  const endIndex = $contentEndIndex(note);
+  if (endIndex > $contentStartIndex(note)) {
+    const before = note.getChildAtIndex(endIndex - 1);
+    const text = $isElementNode(before) ? before.getLastDescendant() : before;
+    if ($isTextNode(text)) return $createPoint(text.getKey(), text.getTextContentSize(), "text");
+  }
+  return $shellTrailingEdge(note);
+}
+
+/**
+ * The protected note whose END `point` rests at illegitimately, or `undefined`: at or inside its
+ * closing glyph, on the note past its content, or just past the whole note when nothing follows it
+ * in its block (the end of a note editor's row).
+ */
+function $noteEndAt(point: PointType): NoteNode | undefined {
+  const node = point.getNode();
+  const parent = node.getParent();
+  if ($isNoteNode(parent) && $noteShellNodes(parent).length > 0 && $closingGlyph(parent)?.is(node))
+    return parent;
+  if (point.type !== "element") return undefined;
+  if ($isNoteNode(node) && $noteShellNodes(node).length > 0 && $closingGlyph(node))
+    return point.offset > $contentEndIndex(node) ||
+      (point.offset === $contentEndIndex(node) && point.offset > $contentStartIndex(node))
+      ? node
+      : undefined;
+  if (!$isElementNode(node)) return undefined;
+  const before = node.getChildAtIndex(point.offset - 1);
+  return $isNoteNode(before) && $noteShellNodes(before).length > 0 && !before.getNextSibling()
+    ? before
+    : undefined;
+}
+
+function $setCollapsed(selection: RangeSelection, point: PointType): void {
+  selection.anchor.set(point.key, point.offset, point.type);
+  selection.focus.set(point.key, point.offset, point.type);
+}
+
 /** Every expanded note with a protected shell that the range reaches into. */
 function $protectedNotesIn(selection: RangeSelection): NoteNode[] {
   const notes: NoteNode[] = [];
@@ -260,13 +321,13 @@ function $narrowSelectionOutOfShell(selection: RangeSelection): boolean {
     const startsBeforeContent = start.isBefore(contentStart) && !startsAtContent;
     if ($shellAt(start) || $isInClosingGlyph(note, start) || startsBeforeContent) {
       if (!end.isBefore(contentStart) || $shellAt(end)) {
-        start = $isInClosingGlyph(note, start) ? contentEnd : $shellTrailingEdge(note);
+        start = $isInClosingGlyph(note, start) ? $contentEndPoint(note) : $shellTrailingEdge(note);
         changed = true;
       }
     }
     if ($shellAt(end) || $isInClosingGlyph(note, end) || contentEnd.isBefore(end)) {
       if (start.isBefore(contentEnd) || start.is(contentEnd)) {
-        end = $shellAt(end) ? $shellTrailingEdge(note) : contentEnd;
+        end = $shellAt(end) ? $shellTrailingEdge(note) : $contentEndPoint(note);
         changed = true;
       }
     }
@@ -328,13 +389,30 @@ function $guardCollapsedDeletion(
   granularity: "character" | "word" | "line",
 ): boolean {
   const caret = selection.anchor;
+  const ended = $noteEndAt(caret);
+  if (ended) {
+    $setCollapsed(selection, $contentEndPoint(ended));
+    return true;
+  }
   const note = $protectedNoteOf(caret.getNode());
   if (!note) return false;
   if ($shellAt(caret)) return true;
   const edge = $shellTrailingEdge(note);
   const caretIsPastShell = edge.isBefore(caret) && !edge.is(caret);
   if (!caretIsPastShell) return true;
-  if (!isBackward) return false;
+  if (!isBackward) {
+    const closer = $closingGlyph(note);
+    if (!closer) return false;
+    const closerStart = $createPoint(closer.getKey(), 0, "text");
+    const ahead = $textBetween(caret, closerStart);
+    if (ahead === "") return true;
+    if (granularity === "character") return false;
+    if (granularity === "word" && /[\p{L}\p{N}]/u.test(ahead)) return false;
+    // A word or line delete that would run on into the closer deletes up to it instead.
+    selection.focus.set(closerStart.key, closerStart.offset, closerStart.type);
+    selection.removeText();
+    return true;
+  }
   const between = $textBetween(edge, caret);
   if (between === "") return true;
   if (granularity === "character") return false;
