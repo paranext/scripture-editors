@@ -9,7 +9,10 @@ import {
   ImmutableVerseNode,
 } from "../../../nodes/usj/ImmutableVerseNode";
 import { SelectionRange, AnnotationRange } from "./selection.model";
-import type { UsjPropertyValueLocation } from "@eten-tech-foundation/scripture-utilities";
+import type {
+  UsjDocumentLocation,
+  UsjPropertyValueLocation,
+} from "@eten-tech-foundation/scripture-utilities";
 import { $createImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { usjReactNodes } from "../../../nodes/usj";
 import { STANDARD_VIEW_MODE, UNFORMATTED_VIEW_MODE } from "../../../views/view-mode.model";
@@ -37,6 +40,7 @@ import {
   $createCharNode,
   $createImmutableChapterNode,
   $createImmutableTypedTextNode,
+  $createImmutableUnmatchedNode,
   $createImpliedParaNode,
   $createMarkerTrailingSeparator,
   $createMarkerNode,
@@ -52,6 +56,7 @@ import {
   closingMarkerText,
   ImmutableChapterNode,
   ImmutableTypedTextNode,
+  ImmutableUnmatchedNode,
   ImpliedParaNode,
   MarkerNode,
   MilestoneNode,
@@ -950,6 +955,109 @@ describe("$getNodeFromLocation for bytes the view does not display", () => {
           undefined,
         ),
       ).toEqual([nodes.run, 1]);
+    });
+  });
+});
+
+/** The live node an environment's setup callback created, by the key it recorded. */
+function $requireNode<T extends LexicalNode>(key: string): T {
+  const node = $getNodeByKey<T>(key);
+  if (!node) throw new Error(`no node with key ${key}`);
+  return node;
+}
+
+describe("$getLocationFromNode behind a verse's trailing separator", () => {
+  /** `\p <before>\v N <after>`, the verse wrapped in an annotation mark that ends with it when
+   * `marked`; returns the verse's key. */
+  function createVerse(number: string, before: string, after: string, marked = false) {
+    let verseKey = "";
+    const { editor } = createBasicTestEnvironment(
+      [TypedMarkNode, ParaNode, VerseNode, MarkerNode],
+      () => {
+        const verse = $createVerseNode(number, `\\v ${number} `);
+        verseKey = verse.getKey();
+        const para = $createParaNode("p").append($createMarkerNode("p", "opening"));
+        if (before) para.append($createTextNode(before));
+        para.append(marked ? $createTypedMarkNode({ spelling: ["s1"] }).append(verse) : verse);
+        if (after) para.append($createTextNode(after));
+        $getRoot().append(para);
+      },
+    );
+    return { editor, verseKey };
+  }
+
+  it.each([
+    ["with nothing around the verse", false],
+    ["when an annotation mark ends with the verse", true],
+  ])("reports the verse text's first byte %s", (_name, marked) => {
+    const { editor, verseKey } = createVerse("1", "", "God said", marked);
+
+    editor.getEditorState().read(() => {
+      const verse = $requireNode<VerseNode>(verseKey);
+      expect($getLocationFromNode(verse, verse.getTextContentSize(), undefined)).toEqual({
+        jsonPath: "$.content[0].content[1]",
+        offset: 0,
+      });
+    });
+  });
+
+  it("keeps the verse number's spelling when nothing follows the verse", () => {
+    const { editor, verseKey } = createVerse("2", "x", "");
+
+    editor.getEditorState().read(() => {
+      const verse = $requireNode<VerseNode>(verseKey);
+      expect($getLocationFromNode(verse, verse.getTextContentSize(), undefined)).toEqual({
+        jsonPath: "$.content[0].content[1]['number']",
+        propertyOffset: 2,
+      });
+    });
+  });
+});
+
+describe("an unmatched marker's bytes", () => {
+  /** `\p x \* y` with editable markers; returns the unmatched marker's key. */
+  function createUnmatched() {
+    let unmatchedKey = "";
+    const { editor } = createBasicTestEnvironment(
+      [ParaNode, MarkerNode, ImmutableUnmatchedNode],
+      () => {
+        const unmatched = $createImmutableUnmatchedNode("*");
+        unmatchedKey = unmatched.getKey();
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createMarkerNode("p", "opening"),
+            $createTextNode("x "),
+            unmatched,
+            $createTextNode(" y"),
+          ),
+        );
+      },
+    );
+    return { editor, unmatchedKey };
+  }
+
+  it.each<[number, UsjDocumentLocation]>([
+    [0, { jsonPath: "$.content[0].content[1]" }],
+    [1, { jsonPath: "$.content[0].content[1]['marker']", propertyOffset: 0 }],
+  ])("reports a caret at offset %i as the byte it is in front of", (offset, location) => {
+    const { editor, unmatchedKey } = createUnmatched();
+
+    editor.getEditorState().read(() => {
+      expect($getLocationFromNode($requireNode(unmatchedKey), offset, undefined)).toEqual(location);
+    });
+  });
+
+  it.each<[UsjDocumentLocation, number]>([
+    [{ jsonPath: "$.content[0].content[1]" }, 0],
+    [{ jsonPath: "$.content[0].content[1]['marker']", propertyOffset: 0 }, 1],
+  ])("resolves %j into the unmatched marker's own text", (location, offset) => {
+    const { editor, unmatchedKey } = createUnmatched();
+
+    editor.getEditorState().read(() => {
+      expect($getNodeFromLocation(location, undefined)).toEqual([
+        $requireNode(unmatchedKey),
+        offset,
+      ]);
     });
   });
 });

@@ -989,3 +989,36 @@ describe("the boundary between two touching closers", () => {
     expect(location).toEqual({ jsonPath: contentPath([2, index]) });
   });
 });
+
+describe("a caret at a verse text's start", () => {
+  const verseUsj = twoParaUsj([{ type: "verse", marker: "v", number: "1" }, "God said"]);
+  const textStart: UsjDocumentLocation = { jsonPath: "$.content[2].content[1]", offset: 0 };
+
+  it("reports the text location setSelection put the caret at", async () => {
+    const { ref } = await mountStandardViewEditor(verseUsj);
+
+    await act(async () => {
+      ref.current?.setSelection({ start: textStart });
+      await Promise.resolve();
+    });
+
+    expect(ref.current?.getSelection()).toEqual({ start: textStart });
+  });
+
+  it("reports a caret at the end of the verse glyph as the text's first byte", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(verseUsj);
+
+    await act(async () => {
+      lexical.update(() => {
+        const verse = $getRoot()
+          .getAllTextNodes()
+          .find((node) => $isVerseNode(node));
+        if (!verse) throw new Error("expected the verse's glyph text");
+        verse.select(verse.getTextContentSize(), verse.getTextContentSize());
+      });
+      await Promise.resolve();
+    });
+
+    expect(ref.current?.getSelection()).toEqual({ start: textStart });
+  });
+});

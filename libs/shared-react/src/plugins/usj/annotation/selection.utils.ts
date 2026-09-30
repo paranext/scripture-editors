@@ -54,6 +54,7 @@ import {
   $isImmutableTableCellNode,
   $isImmutableTableRowNode,
   $isImmutableTypedTextNode,
+  $isImmutableUnmatchedNode,
   $isImpliedParaNode,
   $isMarkerNode,
   $isMilestoneNode,
@@ -659,30 +660,37 @@ function $attributeRunValueBytes(value: TextNode): DisplayBytes | undefined {
       ],
     };
 
-  if (kind === "milestone" && $isMilestoneNode(owner)) {
-    const markerLength = owner.getMarker().length;
-    return {
-      owner,
-      length,
-      spans: [
-        // A milestone has no text content of its own, so the separator and the `|` both keep
-        // counting into its marker name's offset space.
-        { start: 0, base: markerLength, bytes: { kind: "property", property: "marker" } },
-        ...pipeAttributeSpans(text, 2, milestoneDefaultAttribute(owner.getMarker())),
-      ],
-    };
-  }
+  if (kind === "milestone" && $isMilestoneNode(owner))
+    return { owner, length, spans: milestoneAttributeSpans(owner.getMarker(), text) };
 
   return undefined;
 }
 
-/** The spans of an opaque block's folded attribute display run (an `ImmutableTypedTextNode` with
- * text type "attribute"), which spells a whole attribute-marker run or pipe-attribute list. */
+/** The spans of a milestone's attribute display — its marker's separator, then
+ * `|sid="q1" who="Pilate"` — the same bytes whether an editable run's value text or markerMode
+ * "visible"'s read-only decorator spells them. A milestone has no text content of its own, so the
+ * separator and the `|` both keep counting into its marker name's offset space. */
+function milestoneAttributeSpans(marker: string, text: string): DisplayByteSpan[] {
+  return [
+    { start: 0, base: marker.length, bytes: { kind: "property", property: "marker" } },
+    ...pipeAttributeSpans(text, 2, milestoneDefaultAttribute(marker)),
+  ];
+}
+
+/** The spans of a read-only attribute display (an `ImmutableTypedTextNode` with text type
+ * "attribute"): an opaque block's folded run, which spells a whole attribute-marker run or
+ * pipe-attribute list, or the attribute list markerMode "visible" renders after a milestone. */
 function $opaqueAttributeBytes(node: ImmutableTypedTextNode): DisplayBytes | undefined {
-  const owner = node.getParent();
-  if (!$isUnknownNode(owner)) return undefined;
   const text = node.getTextContent();
   const length = text.length;
+  const owner = node.getParent();
+  if (!$isUnknownNode(owner)) {
+    // A milestone's loose display follows it the way its loose glyphs do (see `$glyphOwner`).
+    const milestone = $getPreviousContentSibling(node);
+    return $isMilestoneNode(milestone)
+      ? { owner: milestone, length, spans: milestoneAttributeSpans(milestone.getMarker(), text) }
+      : undefined;
+  }
   const markerRun = attributeMarkerRunSpans(text, (owner.getMarker() ?? "").length);
   if (markerRun.length > 0) return { owner, length, spans: markerRun };
   if (!text.startsWith("|")) return undefined;
@@ -736,6 +744,10 @@ function $displayBytesOf(node: LexicalNode): DisplayBytes | undefined {
 
   if (!$isTextNode(node)) return undefined;
 
+  // An unmatched marker spells `\` then its marker name, which carries its own `*` (`\*`, `\nd*`).
+  if ($isImmutableUnmatchedNode(node))
+    return { owner: node, length: node.getTextContentSize(), spans: markerGlyphSpans(1) };
+
   if ($getState(node, textTypeState) === "attribute") return $attributeRunValueBytes(node);
 
   const parent = node.getParent();
@@ -781,7 +793,8 @@ function $isDisplayByteDecorator(node: LexicalNode): boolean {
  * — the owner's glyphs first, then the pieces of the display runs that ride on it. */
 function $displayByteCarriers(owner: LexicalNode): LexicalNode[] {
   const carriers: LexicalNode[] = [];
-  if ($isVerseNode(owner)) carriers.push(owner);
+  // A verse's text and an unmatched marker's are their own bytes.
+  if ($isVerseNode(owner) || $isImmutableUnmatchedNode(owner)) carriers.push(owner);
   if ($isElementNode(owner)) {
     const chapterGlyph = $isChapterNode(owner) ? $chapterGlyphTextNode(owner) : undefined;
     const noteCaller = $isNoteNode(owner) ? $noteEditableCallerNode(owner) : undefined;
@@ -1418,6 +1431,19 @@ function $locationFromNode(
   offset: number,
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation {
+  // Behind a glyph's own trailing separator the next byte is the first one after the glyph, and a
+  // separator has no position of its own: the caret names that byte (the same answer the
+  // paragraph separator gives, below).
+  if (
+    $isTextNode(node) &&
+    offset > 0 &&
+    offset === node.getTextContentSize() &&
+    $endsInOwnSeparator(node)
+  ) {
+    const after = $locationOfFirstByteAfter(node, collapsesSpaceRuns);
+    if (after) return after;
+  }
+
   // Standard view renders USFM bytes as real nodes, so a point inside one of them is a point in
   // those bytes rather than in content.
   const displayLocation = $locationFromDisplayBytes(node, offset, collapsesSpaceRuns);
@@ -1534,6 +1560,44 @@ function $locationFromNode(
   // Anything else — presentation text with nothing beside it to defer to, a decorator the model
   // counts as one item — is the gap in front of it, or after it for a point past its start.
   return $locationBeside(node, offset > 0, collapsesSpaceRuns);
+}
+
+/** Whether `node` is editable glyph text ending in its own trailing separator: a verse's `\v 1 `,
+ * or an expanded note's ` + ` caller. A chapter's glyph is not one: only its own runs follow it. */
+function $endsInOwnSeparator(node: TextNode): boolean {
+  if (!TRAILING_SEPARATOR_REGEX.test(node.getTextContent())) return false;
+  if ($isVerseNode(node)) return true;
+  // An annotation mark around the caller is transparent in USJ, so the note is the logical parent.
+  const note = $getLogicalParent(node);
+  return $isNoteNode(note) && !!$noteEditableCallerNode(note)?.is(node);
+}
+
+/**
+ * The location of the first byte after `node`: in front of the first leaf of whatever follows it,
+ * looking through annotation marks, so a `\va` run or a char span answers with its own first byte
+ * rather than the content an element point would skip to. `undefined` when nothing follows `node`
+ * in its parent, or when what follows answers with the end of whatever precedes it — this node.
+ */
+function $locationOfFirstByteAfter(
+  node: LexicalNode,
+  collapsesSpaceRuns: boolean,
+): UsjDocumentLocation | undefined {
+  let current = node;
+  for (
+    let mark = current.getParent();
+    !current.getNextSibling() && $isTypedMarkNode(mark);
+    mark = current.getParent()
+  )
+    current = mark;
+  const next = current.getNextSibling();
+  if (!next) return undefined;
+  const leaf = $isElementNode(next) ? (next.getFirstDescendant() ?? next) : next;
+  if (
+    $defersToNeighbor(leaf, collapsesSpaceRuns) ||
+    $displayBytesOf(leaf)?.spans[0]?.bytes.kind === "precedingText"
+  )
+    return undefined;
+  return $locationFromNode(leaf, 0, collapsesSpaceRuns);
 }
 
 /**

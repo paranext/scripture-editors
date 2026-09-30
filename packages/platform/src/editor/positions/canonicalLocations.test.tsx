@@ -37,8 +37,14 @@ import {
   $settledLocationFromLivePoint,
 } from "./settledPositions.utils";
 import { $prepareSettleScopes } from "./settledScopes.utils";
-import { MarkerContent, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
+import {
+  MarkerContent,
+  MarkerObject,
+  Usj,
+  UsjDocumentLocation,
+} from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
+import { $dfs } from "@lexical/utils";
 import {
   $createRangeSelection,
   $getNodeByKey,
@@ -53,7 +59,9 @@ import {
 import {
   $getLogicalContentItems,
   $isMarkerNode,
+  $isNoteNode,
   $isVisibleMarkerNode,
+  $noteEditableCallerNode,
   getPendedDisplayOwners,
   TypedMarkNode,
 } from "shared";
@@ -502,6 +510,235 @@ describe("reporting a caret inside a char opener's separator (Standard view)", (
     });
     expect(reported).toEqual(location);
     expect(resolved).toEqual(location);
+  });
+});
+
+/** The caret at the very end of the node `find` names — behind its last byte. */
+function endOf(find: (view: ViewOptions) => LexicalNode): Point {
+  return (view) => {
+    const node = find(view);
+    return [node, node.getTextContentSize()];
+  };
+}
+
+/** The editable caller text of the note at a content path. */
+function $callerAt(indexes: number[], view: ViewOptions): LexicalNode {
+  const note = $nodeAt(indexes, view);
+  const caller = $isNoteNode(note) ? $noteEditableCallerNode(note) : undefined;
+  if (!caller) throw new Error(`no editable caller on the note at ${indexes}`);
+  return caller;
+}
+
+/** The first leaf in document order whose text contains `text`. */
+function $leafContaining(text: string): LexicalNode {
+  const leaf = $dfs().find(
+    ({ node }) => !$isElementNode(node) && node.getTextContent().includes(text),
+  )?.node;
+  if (!leaf) throw new Error(`no leaf containing ${JSON.stringify(text)}`);
+  return leaf;
+}
+
+/** `\p \v 1 God said`. */
+const verseTextUsj = doc({
+  type: "para",
+  marker: "p",
+  content: [{ type: "verse", marker: "v", number: "1" }, "God said"],
+});
+
+/** `\p \v 1 \wj first\wj*`. */
+const verseSpanUsj = doc({
+  type: "para",
+  marker: "p",
+  content: [
+    { type: "verse", marker: "v", number: "1" },
+    { type: "char", marker: "wj", content: ["first"] },
+  ],
+});
+
+/** `\p \v 1 \va 1a\va* In the`. */
+const verseAltnumberUsj = doc({
+  type: "para",
+  marker: "p",
+  content: [{ type: "verse", marker: "v", number: "1", altnumber: "1a" }, "In the"],
+});
+
+/** `\p In the\f + \fr 1.1 \ft body\f*`. */
+const callerSpanUsj = doc({
+  type: "para",
+  marker: "p",
+  content: [
+    "In the",
+    {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [noteChar("fr", ["1.1 "]), noteChar("ft", ["body"])],
+    },
+  ],
+});
+
+/** `\p In the\f + \cat x\cat*\ft body\f*`. */
+const callerCategoryUsj = doc({
+  type: "para",
+  marker: "p",
+  content: [
+    "In the",
+    {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      category: "x",
+      content: [noteChar("ft", ["body"])],
+    },
+  ],
+});
+
+/** A caret behind a glyph's own trailing separator names the byte after that separator, whatever
+ * it is: the separator has no position of its own. The rows exist only where the glyph is editable
+ * text (a verse's `\v 1 `, an expanded note's ` + ` caller). */
+const GLYPH_END_ROWS: Row[] = [
+  {
+    caret: "behind a verse's separator, in front of its text",
+    usj: verseTextUsj,
+    point: endOf((view) => $nodeAt([2, 0], view)),
+    location: { jsonPath: "$.content[2].content[1]", offset: 0 },
+  },
+  {
+    caret: "behind a verse's separator, in front of a char span",
+    usj: verseSpanUsj,
+    point: endOf((view) => $nodeAt([2, 0], view)),
+    location: { jsonPath: "$.content[2].content[1]" },
+  },
+  {
+    caret: "behind a verse's separator, in front of its own \\va run",
+    usj: verseAltnumberUsj,
+    point: endOf((view) => $nodeAt([2, 0], view)),
+    location: { jsonPath: "$.content[2].content[0]", keyName: "altnumber" },
+  },
+  {
+    caret: "behind a caller's separator, in front of the note's first span",
+    usj: callerSpanUsj,
+    point: endOf((view) => $callerAt([2, 1], view)),
+    location: { jsonPath: "$.content[2].content[1].content[0]" },
+  },
+  {
+    caret: "behind a caller's separator, in front of the note's \\cat run",
+    usj: callerCategoryUsj,
+    point: endOf((view) => $callerAt([2, 1], view)),
+    location: { jsonPath: "$.content[2].content[1]", keyName: "category" },
+  },
+];
+
+/** Assert a row's report, and that resolving the reported location puts the caret where it reports
+ * the same location again. */
+function expectReportAndRoundTrip({ usj, point, location }: Row, view: ViewOptions) {
+  const editor = load(usj, view);
+  const [reported, again] = editor.getEditorState().read(() => {
+    const [node, offset] = point(view);
+    const report = $getLocationFromNode(node, offset, view);
+    const range = $getRangeFromUsjSelection({ start: location }, view);
+    const roundTrip = range
+      ? $getLocationFromNode(range.anchor.getNode(), range.anchor.offset, view)
+      : undefined;
+    return [report, roundTrip];
+  });
+  expect(reported).toEqual(location);
+  expect(again).toEqual(location);
+}
+
+describe.each<[string, ViewOptions, Row[]]>([
+  ["Standard", requireView(STANDARD_VIEW_MODE), GLYPH_END_ROWS.slice(0, 3)],
+  [
+    "Standard, notes expanded",
+    { ...requireView(STANDARD_VIEW_MODE), noteMode: "expanded" },
+    GLYPH_END_ROWS,
+  ],
+  ["Unformatted", requireView(UNFORMATTED_VIEW_MODE), GLYPH_END_ROWS],
+])("reporting a caret behind a glyph's trailing separator (%s)", (_name, view, rows) => {
+  it.each(rows)("reports a caret $caret as that next byte", (row) => {
+    expectReportAndRoundTrip(row, view);
+  });
+});
+
+describe("reporting a milestone's attribute display (visible markers)", () => {
+  const visible: ViewOptions = { ...requireView(FORMATTED_VIEW_MODE), markerMode: "visible" };
+  /** A milestone's attributes are keys of its marker object that `MarkerObject` does not name. */
+  const quoteStart: MarkerObject & { who: string } = {
+    type: "ms",
+    marker: "qt-s",
+    sid: "q1",
+    who: "Pilate",
+  };
+  /** `\p said\qt-s |sid="q1" who="Pilate"\*x\qt-e |q1\*`. */
+  const milestoneUsj = doc({
+    type: "para",
+    marker: "p",
+    content: ["said", quoteStart, "x", { type: "ms", marker: "qt-e", eid: "q1" }],
+  });
+
+  it("reports a caret in front of the attribute display as the byte Standard view names there", () => {
+    expectReportAndRoundTrip(
+      {
+        caret: "in front of a milestone's attribute display",
+        usj: milestoneUsj,
+        point: () => {
+          const display = $leafContaining('|sid="q1"');
+          return [display.getParentOrThrow(), display.getIndexWithinParent()];
+        },
+        // The separator after `\qt-s`, which counts into the marker name's offset space.
+        location: { jsonPath: "$.content[2].content[1]['marker']", propertyOffset: 4 },
+      },
+      visible,
+    );
+  });
+
+  it.each([
+    ['|sid="q1"', "$.content[2].content[1]"],
+    ["|q1", "$.content[2].content[3]"],
+  ])(
+    "labels every byte of the %s display the way Standard view labels the same bytes",
+    (text, milestonePath) => {
+      const labels = (view: ViewOptions) =>
+        load(milestoneUsj, view)
+          .getEditorState()
+          .read(() => {
+            const display = $leafContaining(text);
+            return Array.from({ length: display.getTextContentSize() }, (_, offset) =>
+              $getLocationFromNode(display, offset, view),
+            );
+          });
+
+      const standard = labels(requireView(STANDARD_VIEW_MODE));
+      expect(standard[0]).toEqual({ jsonPath: `${milestonePath}['marker']`, propertyOffset: 4 });
+      expect(labels(visible)).toEqual(standard);
+    },
+  );
+});
+
+describe("reporting an unmatched closer (Standard view)", () => {
+  const view = requireView(STANDARD_VIEW_MODE);
+  /** `\t-s \* and t-e`: a closer with no opener to close. */
+  const unmatchedUsj = doc({
+    type: "para",
+    marker: "t-s",
+    content: [{ type: "unmatched", marker: "*" }, " and t-e"],
+  });
+
+  it.each<Row>([
+    {
+      caret: "in front of the `*`, as that byte of the unmatched marker",
+      usj: unmatchedUsj,
+      point: (current) => [$nodeAt([2, 0], current), 1],
+      location: { jsonPath: "$.content[2].content[0]['marker']", propertyOffset: 0 },
+    },
+    {
+      caret: "in front of the `\\`, as the unmatched marker's own location",
+      usj: unmatchedUsj,
+      point: (current) => [$nodeAt([2, 0], current), 0],
+      location: { jsonPath: "$.content[2].content[0]" },
+    },
+  ])("reports a caret $caret, and resolves it back to a caret there", (row) => {
+    expectReportAndRoundTrip(row, view);
   });
 });
 
