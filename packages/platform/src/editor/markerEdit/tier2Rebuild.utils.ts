@@ -26,7 +26,6 @@ import {
   USJ_VERSION,
 } from "@eten-tech-foundation/scripture-utilities";
 import {
-  $addUpdateTag,
   $getNodeByKey,
   $getSelection,
   $getState,
@@ -37,7 +36,6 @@ import {
   $isTextNode,
   $parseSerializedNode,
   ElementNode,
-  HISTORY_MERGE_TAG,
   LexicalNode,
   NodeKey,
   SerializedLexicalNode,
@@ -70,7 +68,6 @@ import {
   CharNode,
   ImpliedParaNode,
   LoggerBasic,
-  MARKER_SETTLE_TAG,
   MarkerLookup,
   MarkerType,
   NBSP,
@@ -2004,15 +2001,22 @@ function $closeNoteAtOwnCloser(
     previous = node;
   }
   $replaceSentinels(newNodes, sentinels);
-  note.remove();
-  // Joins the undo step the closer was typed in, so one undo takes the whole typed closer away -
-  // not just its last character - and the note is open again, holding its text. Tagged as a settle
-  // too: a merge-tagged commit that is not one never reaches `onUsjChange`.
-  $addUpdateTag(HISTORY_MERGE_TAG);
-  $addUpdateTag(MARKER_SETTLE_TAG);
+  // The note stays the same node, taking on the closed note's content and attributes: closing a note
+  // is an edit to it, not a new note, and a host tells the two apart by whether the node is new (a
+  // new note is where a host opens its note editor).
+  // Appended before the old children go: a note left empty removes itself.
+  const oldChildren = note.getChildren();
+  note.append(...closedNote.getChildren());
+  oldChildren.forEach((child) => child.remove());
+  note
+    .setCaller(closedNote.getCaller())
+    .setCategory(closedNote.getCategory())
+    .setUnknownAttributes(closedNote.getUnknownAttributes())
+    .setIsCollapsed(closedNote.getIsCollapsed());
+  closedNote.remove();
   if (anchorInNote) {
-    if (closedNote.getIsCollapsed() === true) $selectAfterNote(closedNote);
-    else $selectNote(closedNote, viewOptions);
+    if (note.getIsCollapsed() === true) $selectAfterNote(note);
+    else $selectNote(note, viewOptions);
   }
   return true;
 }

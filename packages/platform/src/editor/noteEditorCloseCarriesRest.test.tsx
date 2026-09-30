@@ -165,13 +165,21 @@ describe("closing an unclosed note in the middle, in a note editor", () => {
     const loaded = requireDefined(text.editorRef.getNoteOps(key), "note ops");
     const row = await renderEditor(noteEditorStartUsj, noteEditorOptions);
     await act(async () => row.editorRef.applyUpdate([loaded[0]]));
-    const openNote = requireDefined(row.editorRef.getNoteOps(0), "note ops")[0];
 
+    // Typing just before the closer is an undo step of its own, which the closer must not join.
     await act(async () => row.editorRef.selectNoteTextOffset(0, 5));
     await restCaret(row.lexical);
-    await typeText(row.lexical, "\\f*");
+    await typeText(row.lexical, "Q");
+    await restCaret(row.lexical);
+    const openNote = requireDefined(row.editorRef.getNoteOps(0), "note ops")[0];
+
+    // The marker palette commits a typed closer in one update, as the hosts do.
+    await act(async () => {
+      row.editorRef.commitTypedCloser("f");
+    });
     await restCaret(row.lexical);
     const closedNote = requireDefined(row.editorRef.getNoteOps(0), "note ops")[0];
+    expect(closedNote).not.toEqual(openNote);
 
     let taken: ReturnType<typeof row.editorRef.takeOpsAfterNote>;
     await act(async () => {
@@ -202,14 +210,21 @@ describe("closing an unclosed note in the middle, in a note editor", () => {
 });
 
 describe("closing an unclosed note in the middle, in the text", () => {
-  it("one undo takes the typed closer away and opens the note again", async () => {
+  it("one undo takes the committed closer away and opens the note again, text and all", async () => {
     const text = await renderEditor(scriptureUsj);
     const [key] = noteKeys(text.lexical);
-    const before = text.editorRef.getUsj();
 
+    // Typing just before the closer is an undo step of its own, which the closer must not join.
     await act(async () => text.editorRef.selectNoteTextOffset(key, 5));
     await restCaret(text.lexical);
-    await typeText(text.lexical, "\\f*");
+    await typeText(text.lexical, "Q");
+    await restCaret(text.lexical);
+    const before = text.editorRef.getUsj();
+
+    // The marker palette commits a typed closer in one update, as the hosts do.
+    await act(async () => {
+      text.editorRef.commitTypedCloser("f");
+    });
     await restCaret(text.lexical);
     const para = text.editorRef.getUsj()?.content[2];
     expect(typeof para === "object" ? para.content : undefined).toEqual([
@@ -219,7 +234,7 @@ describe("closing an unclosed note in the middle, in the text", () => {
         type: "note",
         marker: "f",
         caller: "+",
-        content: [{ type: "char", marker: "ft", closed: "false", content: ["alpha"] }],
+        content: [{ type: "char", marker: "ft", closed: "false", content: ["alphaQ"] }],
       },
       " beta",
     ]);

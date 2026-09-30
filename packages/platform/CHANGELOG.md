@@ -31,8 +31,7 @@ refused. The public surface grew substantially; nothing was removed.
   the first right after the new embed, once the old one is deleted.
 - `EditorRef.takeOpsAfterNote` — removes what follows a note in its paragraph and returns its
   operations, as part of the undo step that left it there, so one undo puts a typed closer and the
-  text it moved back as they were. Closing an unclosed note by typing its closer is likewise one
-  undo step with the closer's typing: one undo takes the whole `\f*` away.
+  text it moved back as they were.
 - `EditorRef.highlightNote` — applies PT9's selected-caller style (class `caller_highlight`: a
   yellow fill with thin blue top and bottom borders) to one note's caller at a time, through
   `NoteCallerHighlightPlugin`; purely presentational, and `undefined` clears it. A host that
@@ -138,7 +137,8 @@ refused. The public surface grew substantially; nothing was removed.
 - The caller of an unclosed note (which renders expanded, its caller as text) can be deleted; the
   note keeps an empty caller and shows both separators (`\f  \fr …`), as Paratext 9 does.
 - Typing a note's own closer (`\f*`) into an unclosed note closes it there; what followed the
-  closer moves after the note.
+  closer moves after the note. The note stays the same node, so `onUsjChange` does not report it as
+  an inserted note.
 - After typing an undeclared marker (`\df `) the caret stays where it was typed instead of landing
   in the next closing glyph.
 - A drag across a protected note shell that is typed or deleted over leaves the shell intact.

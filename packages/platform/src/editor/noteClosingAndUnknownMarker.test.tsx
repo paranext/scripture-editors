@@ -187,6 +187,29 @@ describe("typing a note's own closer into an unclosed note", () => {
     });
   });
 
+  it("is an edit to the note, not a new note: the note keeps its key", async () => {
+    const insertedKeys: (string | undefined)[] = [];
+    const { editorRef, lexical } = await renderEditor(
+      usjWith(unclosedNote("alpha beta")),
+      undefined,
+      undefined,
+      (_usj, _ops, _source, insertedNodeKey) => insertedKeys.push(insertedNodeKey),
+    );
+    const [key] = noteKeys(lexical);
+
+    await act(async () => editorRef.selectNoteTextOffset(key, 5));
+    await restCaret(lexical);
+    await act(async () => {
+      editorRef.commitTypedCloser("f");
+    });
+    await restCaret(lexical);
+
+    expect(noteKeys(lexical)).toEqual([key]);
+    lexical.getEditorState().read(() => expect($onlyNote().getIsCollapsed()).toBe(true));
+    expect(insertedKeys.length).toBeGreaterThan(0);
+    expect(insertedKeys.filter((insertedKey) => insertedKey !== undefined)).toEqual([]);
+  });
+
   it("moves what followed the closer out of the note, into the paragraph", async () => {
     const { editorRef, lexical } = await renderEditor(usjWith(unclosedNote("alpha beta")));
 
