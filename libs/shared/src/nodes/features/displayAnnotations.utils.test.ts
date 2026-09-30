@@ -237,21 +237,17 @@ describe("annotations held on a carrier", () => {
 });
 
 describe("display-annotation registration", () => {
-  it("is kept per editor, remembers a mark once seen, and can be forgotten", () => {
+  it("is kept per editor, keeps callbacks a later call omits, and can be forgotten", () => {
     const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
     const onRemove = vi.fn();
     editor.update(
       () => {
-        $registerDisplayAnnotation("spelling", "a", { onRemove }, false);
-        $registerDisplayAnnotation("spelling", "a", {}, true);
-        $registerDisplayAnnotation("spelling", "a", {}, false);
+        $registerDisplayAnnotation("spelling", "a", { onRemove });
+        $registerDisplayAnnotation("spelling", "a", {});
       },
       { discrete: true },
     );
-    expect(getDisplayAnnotationRegistration(editor, "spelling", "a")).toEqual({
-      onRemove,
-      hadMarks: true,
-    });
+    expect(getDisplayAnnotationRegistration(editor, "spelling", "a")).toEqual({ onRemove });
     const { editor: other } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
     expect(getDisplayAnnotationRegistration(other, "spelling", "a")).toBeUndefined();
     deleteDisplayAnnotationRegistration(editor, "spelling", "a");

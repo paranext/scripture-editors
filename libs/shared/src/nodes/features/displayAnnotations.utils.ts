@@ -211,12 +211,8 @@ export interface DisplayAnnotationCallbacks {
   onMouseLeave?: TypedMarkOnMouseLeave;
 }
 
-/** An annotation's registration: its callbacks, and whether a `TypedMarkNode` holds it, or held it
- * since it was set or last carried by a settle — an annotation that did reports its removal
- * through its marks alone. */
-export interface DisplayAnnotationRegistration extends DisplayAnnotationCallbacks {
-  hadMarks: boolean;
-}
+/** The host callbacks registered for an annotation display bytes hold. */
+export type DisplayAnnotationRegistration = DisplayAnnotationCallbacks;
 
 const registrations = new WeakMap<LexicalEditor, Map<string, DisplayAnnotationRegistration>>();
 
@@ -225,14 +221,13 @@ function registrationKey(type: string, id: string): string {
 }
 
 /**
- * Record `type`/`id` for the active editor: callbacks given here replace the ones held, and
- * `heldMark` latches `hadMarks`. Call inside an update or read of the editor.
+ * Record `type`/`id` for the active editor: callbacks given here replace the ones held. Call
+ * inside an update or read of the editor.
  */
 export function $registerDisplayAnnotation(
   type: string,
   id: string,
   callbacks: DisplayAnnotationCallbacks,
-  heldMark: boolean,
 ): void {
   const editor = $getEditor();
   let byKey = registrations.get(editor);
@@ -245,25 +240,7 @@ export function $registerDisplayAnnotation(
   const defined = Object.fromEntries(
     Object.entries(callbacks).filter(([, callback]) => callback !== undefined),
   );
-  byKey.set(key, {
-    ...previous,
-    ...defined,
-    hadMarks: (previous?.hadMarks ?? false) || heldMark,
-  });
-}
-
-/**
- * Record whether a `TypedMarkNode` holds `type`/`id` now, for an annotation already registered; a
- * settle that carried its marks onto display bytes alone makes it display-only. Call inside an
- * update of the editor.
- */
-export function $setDisplayAnnotationHeldByMark(
-  type: string,
-  id: string,
-  heldByMark: boolean,
-): void {
-  const registration = registrations.get($getEditor())?.get(registrationKey(type, id));
-  if (registration) registration.hadMarks = heldByMark;
+  byKey.set(key, { ...previous, ...defined });
 }
 
 export function getDisplayAnnotationRegistration(

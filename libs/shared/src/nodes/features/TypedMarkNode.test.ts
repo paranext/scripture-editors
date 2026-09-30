@@ -747,7 +747,7 @@ describe("TypedMarkNode", () => {
         expect(para.getTextContent()).toBe("grace|grace of God");
         expect($held(run)).toEqual([[0, 6]]);
       });
-      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)?.hadMarks).toBe(true);
+      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)).toBeDefined();
     });
 
     /** The attribute-tagged value text inside `wrapper`, the display run's `|…` bytes. */
@@ -1119,7 +1119,7 @@ describe("TypedMarkNode", () => {
         expect(char.getLatest().getChildren().some($isTypedMarkNode)).toBe(false);
         expect($held(run.getLatest())).toEqual([[1, 6]]);
       });
-      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)?.hadMarks).toBe(false);
+      expect(getDisplayAnnotationRegistration(editor, testType1, testID1)).toBeDefined();
     });
 
     it("annotates only the number when the range covers a verse's number", () => {

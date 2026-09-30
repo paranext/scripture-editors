@@ -5,7 +5,7 @@
  */
 
 import { assertSafeKey } from "@eten-tech-foundation/scripture-utilities";
-import { $dfsIterator, addClassNamesToElement, removeClassNamesFromElement } from "@lexical/utils";
+import { addClassNamesToElement, removeClassNamesFromElement } from "@lexical/utils";
 import type {
   BaseSelection,
   EditorConfig,
@@ -20,7 +20,13 @@ import type {
   Spread,
   TextNode,
 } from "lexical";
-import { $applyNodeReplacement, $isRangeSelection, $isTextNode, ElementNode } from "lexical";
+import {
+  $applyNodeReplacement,
+  $getEditor,
+  $isRangeSelection,
+  $isTextNode,
+  ElementNode,
+} from "lexical";
 
 export interface TypedIDs {
   [type: string]: string[];
@@ -140,6 +146,19 @@ const typedOnClickRegistry = new Map<NodeKey, TypedOnClicks>();
 const typedOnRemoveRegistry = new Map<NodeKey, TypedOnRemoves>();
 const typedOnMouseEnterRegistry = new Map<NodeKey, TypedOnMouseEnters>();
 const typedOnMouseLeaveRegistry = new Map<NodeKey, TypedOnMouseLeaves>();
+
+/** Per editor, the `type`/`id` pairs whose `onRemove` a mark has called since the last take. */
+const removalReports = new WeakMap<LexicalEditor, [type: string, id: string][]>();
+
+/**
+ * The `type`/`id` pairs whose `onRemove` a mark of `editor` has called since the last take, so a
+ * reporter that runs after the commit knows the host has already heard of them. Clears the list.
+ */
+export function takeTypedMarkRemovalReports(editor: LexicalEditor): [type: string, id: string][] {
+  const taken = removalReports.get(editor) ?? [];
+  removalReports.delete(editor);
+  return taken;
+}
 
 export class TypedMarkNode extends ElementNode {
   __typedIDs: TypedIDs;
@@ -932,6 +951,10 @@ export class TypedMarkNode extends ElementNode {
     const callback = callbacks[type]?.[id];
     if (!callback) return;
 
+    const editor = $getEditor();
+    const reports = removalReports.get(editor) ?? [];
+    reports.push([type, id]);
+    removalReports.set(editor, reports);
     callback(type, id, cause, this.getTextContent());
     this.removeOnRemoveFor(type, id);
   }
@@ -1354,13 +1377,6 @@ export function $unwrapTypedMarkNode(node: TypedMarkNode): void {
     target = child;
   }
   node.remove();
-}
-
-/** Whether any `TypedMarkNode` in the active editor's document holds `type`/`id`. Read-only. */
-export function $isTypedMarkIdHeld(type: string, id: string): boolean {
-  for (const { node } of $dfsIterator())
-    if ($isTypedMarkNode(node) && node.hasID(type, id)) return true;
-  return false;
 }
 
 export function $getMarkIDs(node: TextNode, type: string, offset: number): string[] | undefined {

@@ -1,18 +1,14 @@
 /**
  * The per-editor index of annotations held on display-byte nodes (`displayAnnotationsState`):
  * which nodes hold each `type`/`id`, their painting, their click and hover callbacks, and the
- * one-time "destroyed" report for an annotation held only on display bytes. One acquisition per
- * editor, reference-counted, because both `AnnotationPlugin` and `CommentPlugin` need it.
+ * one-time "destroyed" report for an annotation whose last holder — a mark or a display byte —
+ * left without the host hearing of it. One acquisition per editor, reference-counted, because both
+ * `AnnotationPlugin` and `CommentPlugin` need it.
  */
 
 import { ImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { ImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
-import {
-  $dfsIterator,
-  addClassNamesToElement,
-  mergeRegister,
-  removeClassNamesFromElement,
-} from "@lexical/utils";
+import { addClassNamesToElement, mergeRegister, removeClassNamesFromElement } from "@lexical/utils";
 import { useEffect, useMemo, useRef } from "react";
 import {
   $getNearestNodeFromDOMNode,
@@ -33,6 +29,7 @@ import {
   $coveredDisplayText,
   $displayAnnotationsOf,
   $isTypedMarkNode,
+  ANNOTATION_CHANGE_TAG,
   deleteDisplayAnnotationRegistration,
   DisplayAnnotation,
   displayAnnotationsState,
@@ -43,8 +40,11 @@ import {
   ImmutableUnmatchedNode,
   MarkerNode,
   registerDisplayAnnotationBasis,
+  takeTypedMarkRemovalReports,
   TypedIDs,
   typedMarkClassNames,
+  TypedMarkNode,
+  TypedMarkOnRemove,
   VerseNode,
 } from "shared";
 
@@ -54,6 +54,9 @@ export const DISPLAY_ANNOTATION_CLASS_NAME = "display-annotation";
 export interface DisplayAnnotationIndex {
   /** The keys of the display-byte nodes holding `type`/`id`. */
   keysFor(type: string, id: string): ReadonlySet<NodeKey>;
+  /** Record that the host set `type`/`id` in the current update, so the loss of its last holder
+   * is reported afresh even if an earlier range's was. */
+  noteSet(type: string, id: string): void;
 }
 
 /** Every node class a carrier can be (`$isDisplayAnnotationCarrier`). */
@@ -100,11 +103,47 @@ const entries = new WeakMap<LexicalEditor, Entry>();
 function createIndex(editor: LexicalEditor): Entry {
   const keysByAnnotation = new Map<string, Set<NodeKey>>();
   const annotationsByKey = new Map<NodeKey, DisplayAnnotation[]>();
+  /** The marks holding each annotation, and the annotations each mark holds. */
+  const marksByAnnotation = new Map<string, Set<NodeKey>>();
+  const annotationsByMark = new Map<NodeKey, string[]>();
+  /** A mark's `onRemove` per annotation, which an annotation held only by marks has nowhere else. */
+  const markOnRemove = new Map<string, TypedMarkOnRemove>();
   const lastText = new Map<string, string>();
+  /** Annotations whose removal the host has heard of since they were last set, from a mark or from
+   * here. */
+  const reported = new Set<string>();
+  const setThisUpdate = new Set<string>();
   const painted = new WeakMap<HTMLElement, string[]>();
   const wired = new WeakSet<HTMLElement>();
   let emptied = new Set<string>();
   const theme = editor._config.theme;
+
+  function holderCount(annotationKey: string): number {
+    return (
+      (keysByAnnotation.get(annotationKey)?.size ?? 0) +
+      (marksByAnnotation.get(annotationKey)?.size ?? 0)
+    );
+  }
+
+  function addHolder(holders: Map<string, Set<NodeKey>>, annotationKey: string, key: NodeKey) {
+    let keys = holders.get(annotationKey);
+    if (!keys) holders.set(annotationKey, (keys = new Set()));
+    keys.add(key);
+  }
+
+  function dropHolder(holders: Map<string, Set<NodeKey>>, annotationKey: string, key: NodeKey) {
+    const keys = holders.get(annotationKey);
+    if (!keys?.delete(key)) return;
+    if (keys.size === 0) holders.delete(annotationKey);
+    if (holderCount(annotationKey) === 0) emptied.add(annotationKey);
+  }
+
+  /** Remember what `mark` holds now, as the text a later report of its annotations names. */
+  function $noteMarkText(mark: TypedMarkNode): void {
+    const text = mark.getTextContent();
+    for (const [type, ids] of Object.entries(mark.getTypedIDs()))
+      for (const id of ids) lastText.set(indexKey(type, id), text);
+  }
 
   function dispatch(
     element: HTMLElement,
@@ -159,59 +198,90 @@ function createIndex(editor: LexicalEditor): Entry {
         const node = mutation === "destroyed" ? null : $getNodeByKey(key);
         const after = node ? $displayAnnotationsOf(node) : [];
         const before = annotationsByKey.get(key) ?? [];
-        for (const { type, id } of before) {
-          const annotationKey = indexKey(type, id);
-          if (after.some((kept) => kept.type === type && kept.id === id)) continue;
-          const keys = keysByAnnotation.get(annotationKey);
-          keys?.delete(key);
-          if (keys && keys.size === 0) emptied.add(annotationKey);
-        }
+        for (const { type, id } of before)
+          if (!after.some((kept) => kept.type === type && kept.id === id))
+            dropHolder(keysByAnnotation, indexKey(type, id), key);
         for (const annotation of after) {
           const annotationKey = indexKey(annotation.type, annotation.id);
-          let keys = keysByAnnotation.get(annotationKey);
-          if (!keys) keysByAnnotation.set(annotationKey, (keys = new Set()));
-          keys.add(key);
+          addHolder(keysByAnnotation, annotationKey, key);
           if (node) lastText.set(annotationKey, $coveredDisplayText(node, annotation));
         }
         if (after.length > 0) annotationsByKey.set(key, after);
         else annotationsByKey.delete(key);
         if (node) paint(key, after);
+        // A mark's own mutations miss an edit of the text inside it.
+        for (let parent = node?.getParent(); parent; parent = parent.getParent())
+          if ($isTypedMarkNode(parent)) $noteMarkText(parent);
       }
     });
   }
 
+  function onMarkMutations(mutations: Map<NodeKey, NodeMutation>): void {
+    editor.getEditorState().read(() => {
+      for (const [key, mutation] of mutations) {
+        const node = mutation === "destroyed" ? null : $getNodeByKey(key);
+        const mark = $isTypedMarkNode(node) ? node : undefined;
+        const typedIds = mark ? Object.entries(mark.getTypedIDs()) : [];
+        const after = typedIds.flatMap(([type, ids]) => ids.map((id) => indexKey(type, id)));
+        for (const annotationKey of annotationsByMark.get(key) ?? [])
+          if (!after.includes(annotationKey)) dropHolder(marksByAnnotation, annotationKey, key);
+        for (const annotationKey of after) addHolder(marksByAnnotation, annotationKey, key);
+        if (after.length > 0) annotationsByMark.set(key, after);
+        else annotationsByMark.delete(key);
+        if (!mark) continue;
+        $noteMarkText(mark);
+        const onRemoves = mark.getTypedOnRemoves();
+        for (const [type, ids] of typedIds)
+          for (const id of ids) {
+            const onRemove = onRemoves[type]?.[id];
+            if (onRemove) markOnRemove.set(indexKey(type, id), onRemove);
+          }
+      }
+    });
+  }
+
+  function forget(annotationKey: string, type: string, id: string): void {
+    deleteDisplayAnnotationRegistration(editor, type, id);
+    markOnRemove.delete(annotationKey);
+    lastText.delete(annotationKey);
+  }
+
   /**
-   * After every mutation listener of the commit has run: report each display-only annotation whose
-   * last carrier left. An annotation a mark ever held is reported by its marks alone. A whole-state
-   * replacement reports nothing, because marks do not report there either (`TypedMarkNode.remove`
-   * never runs): a `setUsj` load forgets the annotation, and undo or redo keeps its registration for
-   * the redo that brings the carriers back. A collaborator's apply removes nodes through
-   * `remove()`, as a local edit does, so it reports.
+   * After every mutation listener of the commit has run: report, once, each annotation whose last
+   * holder (a mark or a display byte) left without the host hearing of it. A mark reports its own
+   * `remove()` (one call per mark), so an annotation a mark has reported since it was last set is
+   * not reported again; neither is one that `setAnnotation` or `removeAnnotation` took away, since
+   * they report it themselves. A whole-state replacement reports nothing, because marks do not
+   * report there either (`TypedMarkNode.remove` never runs): a `setUsj` load forgets the
+   * annotation, and undo or redo keeps its callbacks for the redo that brings the holders back. A
+   * settle that discards an annotation's bytes, a collaborator's apply, and a selection delete that
+   * drops an emptied mark without `remove()` all report.
    */
   function reportDestroyed({ tags }: { tags: Set<string> }): void {
+    for (const [type, id] of takeTypedMarkRemovalReports(editor)) reported.add(indexKey(type, id));
+    for (const annotationKey of setThisUpdate) reported.delete(annotationKey);
+    setThisUpdate.clear();
     const candidates = emptied;
     emptied = new Set();
     const isReload = tags.has(EXTERNAL_USJ_MUTATION_TAG);
     const isHistory = tags.has(HISTORIC_TAG);
+    const isAnnotationChange = tags.has(ANNOTATION_CHANGE_TAG);
     for (const annotationKey of candidates) {
-      if ((keysByAnnotation.get(annotationKey)?.size ?? 0) > 0) continue;
-      keysByAnnotation.delete(annotationKey);
+      if (holderCount(annotationKey) > 0 || isHistory) continue;
       const [type, id] = annotationKey.split("\u0000");
-      if (isHistory) continue;
       if (isReload) {
-        deleteDisplayAnnotationRegistration(editor, type, id);
+        reported.delete(annotationKey);
+        forget(annotationKey, type, id);
         continue;
       }
-      const registration = getDisplayAnnotationRegistration(editor, type, id);
-      if (!registration || registration.hadMarks) continue;
-      const markHolds = editor.getEditorState().read(() => {
-        for (const { node } of $dfsIterator())
-          if ($isTypedMarkNode(node) && node.hasID(type, id)) return true;
-        return false;
-      });
-      if (markHolds) continue;
-      deleteDisplayAnnotationRegistration(editor, type, id);
-      registration.onRemove?.(type, id, "destroyed", lastText.get(annotationKey) ?? "");
+      const onRemove =
+        getDisplayAnnotationRegistration(editor, type, id)?.onRemove ??
+        markOnRemove.get(annotationKey);
+      const text = lastText.get(annotationKey) ?? "";
+      const heard = isAnnotationChange || reported.has(annotationKey);
+      reported.add(annotationKey);
+      forget(annotationKey, type, id);
+      if (!heard) onRemove?.(type, id, "destroyed", text);
     }
   }
 
@@ -219,6 +289,11 @@ function createIndex(editor: LexicalEditor): Entry {
     ...CARRIER_KLASSES.filter((klass) => editor.hasNodes([klass])).map((klass) =>
       editor.registerMutationListener(klass, onMutations, { skipInitialization: false }),
     ),
+    editor.hasNodes([TypedMarkNode])
+      ? editor.registerMutationListener(TypedMarkNode, onMarkMutations, {
+          skipInitialization: false,
+        })
+      : () => undefined,
     editor.registerUpdateListener(reportDestroyed),
     registerDisplayAnnotationBasis(editor),
     editor.registerCommand(
@@ -237,6 +312,7 @@ function createIndex(editor: LexicalEditor): Entry {
   return {
     index: {
       keysFor: (type, id) => keysByAnnotation.get(indexKey(type, id)) ?? EMPTY,
+      noteSet: (type, id) => setThisUpdate.add(indexKey(type, id)),
     },
     references: 0,
     unregister,
@@ -284,7 +360,10 @@ export function useDisplayAnnotationIndex(editor: LexicalEditor): DisplayAnnotat
     };
   }, [editor]);
   return useMemo(
-    () => ({ keysFor: (type, id) => current.current?.keysFor(type, id) ?? EMPTY }),
+    () => ({
+      keysFor: (type, id) => current.current?.keysFor(type, id) ?? EMPTY,
+      noteSet: (type, id) => current.current?.noteSet(type, id),
+    }),
     [],
   );
 }

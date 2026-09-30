@@ -64,6 +64,7 @@ import {
   COMMENT_MARK_TYPE,
   NBSP,
   NoteNode,
+  TypedMarkNode,
   TypedMarkOnRemove,
 } from "shared";
 import {
@@ -73,7 +74,7 @@ import {
   DISPLAY_ANNOTATION_CLASS_NAME,
   StructureProtectionMode,
 } from "shared-react";
-import { vi } from "vitest";
+import { Mock, vi } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
 
@@ -297,6 +298,23 @@ function $markTexts(type: string, id: string): string[] {
   };
   walk($getRoot());
   return texts;
+}
+
+/** The only mark holding `type`/`id`. Call inside a read or update. */
+function $markHolding(type: string, id: string): TypedMarkNode {
+  const found: TypedMarkNode[] = [];
+  const walk = (node: LexicalNode): void => {
+    if ($isTypedMarkNode(node) && node.hasID(type, id)) found.push(node);
+    if ($isElementNode(node)) node.getChildren().forEach(walk);
+  };
+  walk($getRoot());
+  if (found.length !== 1) throw new Error(`expected one mark holding ${id}, found ${found.length}`);
+  return found[0];
+}
+
+/** The cause of each call `onRemove` received, in order. */
+function causes(onRemove: Mock<TypedMarkOnRemove>): string[] {
+  return onRemove.mock.calls.map(([, , cause]) => cause);
 }
 
 /** The `content` of the first char span with `marker` in `usj`'s first paragraph (content[2]) —
@@ -975,11 +993,11 @@ describe("removal is reported by what holds the annotation now", () => {
 
     await userDeletesWord(mounted);
 
-    // The selection removes the emptied `grace` mark, which reports; the `\w` and `|grace`
+    // The selection removes the `grace` mark, which reports itself; the `\w` and `|grace`
     // carriers add nothing while the `In the ` mark holds the annotation.
     expect(displayAnnotated(mounted.lexical)).toEqual({});
     expect(mounted.lexical.getEditorState().read($marks)).toEqual(["In the "]);
-    expect(onRemove.mock.calls).toEqual([["external-test", "L", "destroyed", ""]]);
+    expect(causes(onRemove)).toEqual(["destroyed"]);
 
     await act(async () => {
       mounted.lexical.update(() => $textContaining("In the ").getParentOrThrow().remove());
@@ -1019,6 +1037,215 @@ describe("removal is reported by what holds the annotation now", () => {
     expect(mounted.lexical.getEditorState().read($held("bravo"))).toBe("bravo");
     expect(mounted.lexical.getEditorState().read($held("straddle"))).toBe("bravo char");
     expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  /** `\p In the grace of God` with annotation `id` on `grace`, a plain content mark. */
+  async function mountGraceMark(onRemove: TypedMarkOnRemove, id = "G"): Promise<Mounted> {
+    const mounted = await mountStandardViewEditor(twoParaUsj(["In the grace of God"]));
+    await setGrace(mounted, onRemove, id, 7);
+    return mounted;
+  }
+
+  async function setGrace(
+    mounted: Mounted,
+    onRemove: TypedMarkOnRemove,
+    id: string,
+    start: number,
+  ): Promise<void> {
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: contentPath([2, 0]), offset: start },
+          end: { jsonPath: contentPath([2, 0]), offset: start + "grace".length },
+        },
+        "test",
+        id,
+        { onRemove },
+      );
+      await Promise.resolve();
+    });
+  }
+
+  /** Selects from `from`'s text at `fromOffset` to `to`'s at `toOffset` and deletes the selection,
+   * as the Delete key does. */
+  async function selectAndDelete(
+    mounted: Mounted,
+    from: string,
+    fromOffset: number,
+    to: string,
+    toOffset: number,
+  ): Promise<void> {
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const selection = $createRangeSelection();
+        selection.anchor.set($textContaining(from).getKey(), fromOffset, "text");
+        selection.focus.set($textContaining(to).getKey(), toOffset, "text");
+        $setSelection(selection);
+        selection.removeText();
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("reports destroyed once when a selection deletes exactly a mark's text", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountGraceMark(onRemove);
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "G"))).toEqual([
+      "grace",
+    ]);
+
+    await selectAndDelete(mounted, "grace", 0, "grace", "grace".length);
+
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "G"))).toEqual(
+      [],
+    );
+    expect(onRemove.mock.calls).toEqual([["external-test", "G", "destroyed", "grace"]]);
+    await act(async () => {
+      mounted.ref.current?.removeAnnotation("test", "G");
+      await Promise.resolve();
+    });
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports destroyed once when a selection deletes a mark's text and one byte more", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountGraceMark(onRemove);
+
+    await selectAndDelete(mounted, "grace", 0, " of God", 1);
+
+    expect(causes(onRemove)).toEqual(["destroyed"]);
+  });
+
+  it("reports nothing more when that delete is undone and redone", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountGraceMark(onRemove);
+    await selectAndDelete(mounted, "grace", 0, "grace", "grace".length);
+    expect(onRemove).toHaveBeenCalledTimes(1);
+
+    await act(async () => mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined));
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "G"))).toEqual([
+      "grace",
+    ]);
+    await act(async () => mounted.lexical.dispatchCommand(REDO_COMMAND, undefined));
+
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "G"))).toEqual(
+      [],
+    );
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports nothing for a mark a setUsj load drops", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountGraceMark(onRemove);
+
+    await act(async () => {
+      mounted.ref.current?.setUsj(twoParaUsj(["In the beginning"]));
+      // LoadStatePlugin applies the load in a microtask.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "G"))).toEqual(
+      [],
+    );
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it("reports removed once when the same id is set again, then destroyed once for the new range", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountStandardViewEditor(twoParaUsj(["In the grace of God, grace"]));
+    await setGrace(mounted, onRemove, "G", 7);
+    const second = "In the grace of God, ".length;
+
+    await setGrace(mounted, onRemove, "G", second);
+
+    expect(onRemove.mock.calls).toEqual([["external-test", "G", "removed", "grace"]]);
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const text = $markHolding("external-test", "G").getFirstDescendant();
+        if (!$isTextNode(text)) throw new Error("the mark holds no text");
+        text.select(0, text.getTextContentSize()).removeText();
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onRemove.mock.calls.slice(1)).toEqual([["external-test", "G", "destroyed", "grace"]]);
+  });
+
+  it("reports destroyed once when a settle discards every byte of a mark", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountTypingLemma();
+    const name = 'lemma="';
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const text = $textContaining(typedLemma);
+        const start = text.getTextContent().indexOf(name);
+        const selection = $createRangeSelection();
+        selection.anchor.set(text.getKey(), start, "text");
+        selection.focus.set(text.getKey(), start + name.length, "text");
+        $wrapSelectionInTypedMarkNode(selection, "external-test", "D", undefined, onRemove);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The wrap's own commit already settles the pending typing; the explicit settle holds the row
+    // either way.
+    settle(mounted);
+
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "D"))).toEqual(
+      [],
+    );
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(onRemove.mock.calls).toEqual([["external-test", "D", "destroyed", name]]);
+  });
+
+  it("reports destroyed once when one delete takes a mark an undo brought back and its carrier", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountStandardViewEditor(twoParaUsj(["alpha nd ", bareWord, " of God"]));
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: contentPath([2, 0]), offset: "alpha ".length },
+          end: { jsonPath: contentPath([2, 1, 0]), offset: 0 },
+        },
+        "test",
+        "X",
+        { onRemove },
+      );
+      await Promise.resolve();
+    });
+    // A backslash typed in front of the marked `nd ` turns it into a marker the settle re-spells;
+    // the undo brings the mark back.
+    await act(async () => {
+      mounted.lexical.update(() => $textContaining("alpha").select(6, 6).insertText("\\"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    settle(mounted);
+    await act(async () => mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined));
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "X"))).toEqual([
+      "nd ",
+    ]);
+    expect(displayAnnotated(mounted.lexical).X).toHaveLength(1);
+
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const glyphs = $onlyCharNode().getChildren().filter($isMarkerNode);
+        const closer = glyphs[glyphs.length - 1];
+        const selection = $createRangeSelection();
+        selection.anchor.set($textContaining("alpha").getKey(), 0, "text");
+        selection.focus.set(closer.getKey(), closer.getTextContentSize(), "text");
+        $setSelection(selection);
+        selection.removeText();
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(causes(onRemove)).toEqual(["destroyed"]);
   });
 });
 

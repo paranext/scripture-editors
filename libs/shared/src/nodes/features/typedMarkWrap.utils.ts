@@ -191,7 +191,6 @@ export function $wrapSelectionInTypedMarkNode(
   const startCaret = $caretOf(startPoint);
   const endCaret = $caretOf(endPoint);
   if (compareCarets(startCaret, endCaret) >= 0) return;
-  let markCreated = false;
   let carrierAnnotated = false;
   const $annotateCarrier = (node: LexicalNode) => {
     const covered = $coveredCarrierRange(node, startCaret, endCaret);
@@ -316,7 +315,6 @@ export function $wrapSelectionInTypedMarkNode(
         lastCreatedMarkNode = $createTypedMarkNode();
         lastCreatedMarkNode.addID(type, id, onClick, onRemove, onMouseEnter, onMouseLeave);
         targetNode.insertBefore(lastCreatedMarkNode);
-        markCreated = true;
       }
 
       // Add the target node to be wrapped in the latest created mark node
@@ -332,12 +330,7 @@ export function $wrapSelectionInTypedMarkNode(
     }
   }
   if (carrierAnnotated)
-    $registerDisplayAnnotation(
-      type,
-      id,
-      { onClick, onRemove, onMouseEnter, onMouseLeave },
-      markCreated,
-    );
+    $registerDisplayAnnotation(type, id, { onClick, onRemove, onMouseEnter, onMouseLeave });
   // Make selection collapsed at the end for comments.
   if (type === COMMENT_MARK_TYPE && $isElementNode(lastCreatedMarkNode)) {
     if (isBackward) lastCreatedMarkNode.selectStart();

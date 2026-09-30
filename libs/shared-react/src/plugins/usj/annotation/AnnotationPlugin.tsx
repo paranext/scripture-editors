@@ -156,9 +156,9 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
   const displayIndex = useDisplayAnnotationIndex(editor);
 
   /**
-   * Removes every mark and every display-byte range for the type/id pair. An annotation a mark
-   * ever held reports its removal through its marks (`deleteID`, one call per mark); one held only
-   * on display bytes reports it here, once.
+   * Removes every mark and every display-byte range for the type/id pair. Each mark reports its
+   * removal itself (`deleteID`, one call per mark); an annotation no mark holds reports it here,
+   * once.
    */
   const $removeAnnotationNodes = (type: string, id: string, nodeKeys?: Set<NodeKey>) => {
     const markKeys = Array.from(nodeKeys ?? markNodeMap.get(getTypeIDMapKey(type, id)) ?? []);
@@ -181,10 +181,8 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
     }
     const registration = getDisplayAnnotationRegistration(editor, type, id);
     deleteDisplayAnnotationRegistration(editor, type, id);
-    // `hadMarks` governs only "destroyed". An annotation that began as a mark but settled into
-    // display bytes alone has no mark left to report through, so "removed" fires whenever the
-    // carriers were the only thing holding it — otherwise a host's removeAnnotation on such an
-    // annotation would report nothing and core would never call the extension's interactionCommand.
+    // Without this, a host's removeAnnotation on an annotation held only on display bytes would
+    // report nothing, and core would never call the extension's interactionCommand.
     if (covered.length > 0 && registration && markKeys.length === 0)
       registration.onRemove?.(type, id, "removed", covered.join(""));
   };
@@ -217,6 +215,7 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
           }
 
           $removeAnnotationNodes(type, id);
+          displayIndex.noteSet(type, id);
 
           $wrapSelectionInTypedMarkNode(
             editorSelection,
