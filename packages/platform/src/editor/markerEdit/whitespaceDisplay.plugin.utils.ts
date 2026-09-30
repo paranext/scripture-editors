@@ -49,6 +49,11 @@ import {
   $selectionReachesIntoOpaqueBlock,
   $shouldBlockSelectionReplacement,
 } from "shared-react";
+import {
+  isCopyFromOutsideEditor,
+  normalizeCopyLimit,
+  sliceToCopyLimit,
+} from "../copyLimit/copyLimit.utils";
 import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
 import { $isNoteCallerSlot } from "./noteCallerSlot.utils";
 import { paratext9HtmlToUsfm } from "./paratext9Clipboard.utils";
@@ -938,11 +943,19 @@ export function $getStandardViewClipboardData(
  *
  * A selection that is merely not a RANGE (a node selection) is still declined: it has real content,
  * and the synthesized-event path copies it correctly.
+ *
+ * `copyLimit` is `EditorOptions.copyLimit`; see {@link $writeCopyPayload}. While it is set, no
+ * `application/x-lexical-editor` flavor is written: it carries each note caller's preview text,
+ * which is the note's whole text, and so can hold more than the USFM the limit is measured on.
+ *
+ * Mutating when `isCut`: call inside `editor.update()` — in practice, from a `COPY_COMMAND` or
+ * `CUT_COMMAND` handler.
  */
 export function $handleCopyForStandardView(
   event: ClipboardEvent | null | undefined,
   editor: LexicalEditor,
   isCut: boolean,
+  copyLimit?: number,
 ): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) {
@@ -954,7 +967,8 @@ export function $handleCopyForStandardView(
   }
   const data = $getStandardViewClipboardData(editor);
   if (!data) return false;
-  return $writeCopyPayload(event, editor, selection, data, isCut);
+  if (copyLimit !== undefined) delete data["application/x-lexical-editor"];
+  return $writeCopyPayload(event, editor, selection, data, isCut, copyLimit);
 }
 
 /**
@@ -967,6 +981,11 @@ export function $handleCopyForStandardView(
  * own, so a read-only surface reaching this function must still copy and remove nothing. The rule
  * lives here rather than at each call site so every caller gets it.
  *
+ * `copyLimit` is `EditorOptions.copyLimit`. `CopyLimitPlugin` fits the selection to it before this
+ * runs, so `data` already fits. If it does not, a development build warns, and only the first
+ * `copyLimit` code units of the plain text are written, with nothing removed. While it is set, a
+ * browser copy whose page selection runs outside the editor is declined, for the page guard.
+ *
  * Mutating when `isCut`: call inside `editor.update()` — in practice, from a `COPY_COMMAND` or
  * `CUT_COMMAND` handler.
  */
@@ -976,35 +995,69 @@ export function $writeCopyPayload(
   selection: RangeSelection,
   data: LexicalClipboardData,
   isCut: boolean,
+  copyLimit?: number,
 ): boolean {
-  // The same "nothing to copy" rule `$handleCopyForStandardView`'s collapsed-selection leg
-  // states, reached through the non-collapsed door: a RANGE can cover nodes that contribute no
-  // bytes at all (a construct with no children left, selected by the two element points either side
-  // of it), and writing the payload anyway replaces the clipboard's real contents with an empty
-  // string and an empty `<p>`. Keyed on the readable bytes alone: the internal flavor serializes
-  // such a range as an empty `nodes` array, which is still a non-empty string. The event is still
-  // CLAIMED — the selection is this handler's to answer — it just writes nothing, leaving whatever
-  // the user copied last intact. A cut still removes the range: the bytes it would have carried are
-  // the ones that do not exist, not the nodes.
+  const limit = normalizeCopyLimit(copyLimit);
+  if (limit !== undefined && isCopyFromOutsideEditor(editor, event)) return false;
+  const plain = data["text/plain"] ?? "";
+  if (limit !== undefined && plain.length > limit) {
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console -- Intentional developer warning: a caller skipped the fit.
+      console.warn(
+        "@eten-tech-foundation/platform-editor: a copy reached the clipboard over its copy limit; " +
+          "writing shortened plain text only.",
+      );
+    }
+    return $writeClipboardData(event, editor, { "text/plain": sliceToCopyLimit(plain, limit) });
+  }
+  // A RANGE can cover nodes that contribute no bytes at all (a construct with no children left,
+  // selected by the two element points either side of it). `$writeClipboardData` then writes
+  // nothing but still claims the command, and a cut still removes the range: the bytes it would
+  // have carried are the ones that do not exist, not the nodes.
+  return $writeClipboardData(
+    event,
+    editor,
+    data,
+    isCut && editor.isEditable() ? () => selection.removeText() : undefined,
+  );
+}
+
+/**
+ * Writes `data` to the clipboard through whichever leg delivered a copy or cut command, claims the
+ * command, then runs `$remove` if one is given (a cut's removal). A payload with no plain text
+ * writes nothing, leaving the clipboard's contents as they were, but the command is still claimed.
+ * Declines (returns `false`) only for a native clipboard event whose data store is unavailable.
+ *
+ * Mutating when `$remove` is given: call inside `editor.update()` — in practice, from a
+ * `COPY_COMMAND` or `CUT_COMMAND` handler.
+ */
+export function $writeClipboardData(
+  event: ClipboardEvent | null | undefined,
+  editor: LexicalEditor,
+  data: LexicalClipboardData,
+  $remove?: () => void,
+): boolean {
+  // Keyed on the readable bytes alone: the internal flavor serializes an empty range as an empty
+  // `nodes` array, which is still a non-empty string. Writing an empty payload would replace the
+  // clipboard's real contents with an empty string and an empty `<p>`.
   const isEmptyPayload = !data["text/plain"];
-  const shouldRemoveRange = isCut && editor.isEditable();
   if (!event || !("clipboardData" in event)) {
     // Null-payload dispatch (ClipboardPlugin / ContextMenuPlugin / EditorRef): write via
     // Lexical's execCommand mechanism with OUR pre-normalized payload. copyToClipboard(null)
     // without `data` would intercept its own synthesized event at COMMAND_PRIORITY_CRITICAL
     // and write the stock payload — which is why this branch must pass `data`.
     if (!isEmptyPayload) void copyToClipboard(editor, null, data);
-    if (shouldRemoveRange) selection.removeText();
+    $remove?.();
     return true;
   }
   // Event-shaped payload whose clipboardData is null/absent: decline outright. This is an
-  // in-flight native clipboard event whose data store isn't
-  // accessible — routing it into the null-dispatch leg above would re-enter
-  // document.execCommand from inside that dispatch and never preventDefault the original event.
+  // in-flight native clipboard event whose data store isn't accessible — routing it into the
+  // null-dispatch leg above would re-enter document.execCommand from inside that dispatch and
+  // never preventDefault the original event.
   if (event.clipboardData == null) return false;
   event.preventDefault();
   if (!isEmptyPayload)
     for (const [mime, value] of Object.entries(data)) event.clipboardData.setData(mime, value);
-  if (shouldRemoveRange) selection.removeText();
+  $remove?.();
   return true;
 }

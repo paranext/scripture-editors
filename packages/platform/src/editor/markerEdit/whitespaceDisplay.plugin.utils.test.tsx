@@ -14,6 +14,7 @@ import {
   $getStandardViewClipboardData,
   $handleCopyForStandardView,
   $handlePasteForStandardView,
+  $writeCopyPayload,
   getPastePayload,
   htmlPasteText,
   normalizePastedNbsp,
@@ -30,10 +31,13 @@ import { Usj, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
 import { $dfs, mergeRegister } from "@lexical/utils";
 import {
   $createNodeSelection,
+  $createParagraphNode,
   $createPoint,
   $createRangeSelection,
   $createTextNode,
   $getRoot,
+  $getSelection,
+  $isRangeSelection,
   $isTextNode,
   $setSelection,
   $setState,
@@ -2044,5 +2048,69 @@ describe("multi-line paste carrying an NBSP", () => {
       expect($usfmBytes(paras[1])).toBe("\\p c");
       expect($noTextNodeHoldsANewline()).toBe(true);
     });
+  });
+});
+
+describe("$writeCopyPayload with a copy limit", () => {
+  /** An editor holding "abcdefghij", all of it selected. */
+  async function selectedTenCharacters() {
+    let text!: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      text = $createTextNode("abcdefghij");
+      $getRoot().append($createParagraphNode().append(text));
+    });
+    await act(async () => editor.update(() => text.select(0, 10)));
+    return editor;
+  }
+
+  const rootText = (editor: LexicalEditor) =>
+    editor.getEditorState().read(() => $getRoot().getTextContent());
+
+  it("writes only the start of the plain text, and removes nothing, for a payload over the limit", async () => {
+    const editor = await selectedTenCharacters();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { event, getData } = copyEvent();
+    await act(async () =>
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        $writeCopyPayload(
+          event,
+          editor,
+          selection,
+          { "text/plain": "abcdefghij", "text/html": "<p>abcdefghij</p>" },
+          true,
+          4,
+        );
+      }),
+    );
+    const warned = warn.mock.calls.length;
+    warn.mockRestore();
+    expect(getData("text/plain")).toBe("abcd");
+    expect(getData("text/html")).toBe("");
+    expect(rootText(editor)).toBe("abcdefghij");
+    expect(warned).toBe(1);
+  });
+
+  it("writes and removes a payload within the limit as it is", async () => {
+    const editor = await selectedTenCharacters();
+    const { event, getData } = copyEvent();
+    await act(async () =>
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        $writeCopyPayload(
+          event,
+          editor,
+          selection,
+          { "text/plain": "abcdefghij", "text/html": "<p>abcdefghij</p>" },
+          true,
+          10,
+        );
+      }),
+    );
+    expect(getData("text/plain")).toBe("abcdefghij");
+    expect(getData("text/html")).toBe("<p>abcdefghij</p>");
+    expect(rootText(editor)).toBe("");
   });
 });
