@@ -31,6 +31,7 @@ import {
 } from "lexical";
 import {
   $caretHoldsRunSite,
+  $hasRenamingSeparatorGap,
   $isAttributeRunNode,
   $isCanonicalMarkerNode,
   $isCanonicalRunOpenerGlyph,
@@ -70,7 +71,6 @@ import {
   MarkerType,
   NoteNode,
   ParaNode,
-  separatorRemovalTokenizesIdentically,
   textTypeState,
   VerseNode,
 } from "shared";
@@ -1081,12 +1081,14 @@ export function $settlePendedDisplayOwner(
   // more whitespace), the deletion cannot mean anything and the O(1) in-place heal settles it —
   // no paragraph rebuild. When they do not (`\ndthings` renames the marker; `\nd*` is a closing
   // marker the user is entitled to), the gap is left for the re-tokenize fallback below, where
-  // the displayed bytes win. The predicate lives beside the tokenizer's own name scan
-  // (usfmFragmentToUsj.ts) so the two can never drift.
+  // the displayed bytes win — except in a block no settle scope re-tokenizes (a table cell), where
+  // the heal is the only settle there is. `$hasRenamingSeparatorGap` is the separator sync's own
+  // rule, so the settle and the sync never disagree about a gap; its predicate lives beside the
+  // tokenizer's name scan (usfmFragmentToUsj.ts) so the two can never drift.
   let separatorHealed = false;
   if ($isCharNode(node)) {
     const gapBytes = $openerSeparatorGapFollowingBytes(node);
-    if (gapBytes !== undefined && separatorRemovalTokenizesIdentically(gapBytes)) {
+    if (gapBytes !== undefined && !$hasRenamingSeparatorGap(node)) {
       $syncOpenerSeparators(node);
       separatorHealed = true;
       mutated = true;

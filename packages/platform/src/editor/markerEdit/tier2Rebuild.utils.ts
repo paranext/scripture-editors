@@ -3126,7 +3126,7 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
  * The override applies just the same when the nearest scope found is a NOTE, not only a paragraph:
  * a well-formed, expanded note can itself live inside a sidebar, and an `UnknownNode` further out
  * still wins over it — matching the pend path's own full-chain literal-only guard
- * (`$inLiteralOnlyBlock`, markerEditTier2Trigger.utils.ts), which never pends a key whose divergence
+ * (`$isInLiteralOnlyBlock`, shared), which never pends a key whose divergence
  * could never settle in the first place.
  *
  * One scope is not an ancestor: a chapter's attribute markers sitting at DOCUMENT ROOT directly

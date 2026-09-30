@@ -51,8 +51,8 @@ import {
   $isCanonicalUnmatchedNode,
   $isChapterNode,
   $isCharNode,
-  $isImmutableTableNode,
   $isImmutableUnmatchedNode,
+  $isInLiteralOnlyBlock,
   $isMarkerNode,
   $isTypedMarkNode,
   $isUnknownNode,
@@ -118,30 +118,6 @@ function $displayRunValueAtRest(node: TextNode): boolean {
     descriptor.scanPieces(reference.owner),
     descriptor.expectedPieces(reference.owner),
   );
-}
-
-/**
- * Whether `node` sits inside a block whose text the tokenizer keeps literal — a book id, an
- * opaque UnknownNode block (sidebar, periph, figure, …), or a table. These are the
- * degradation-property contexts `$rebuildParas` refuses to re-tokenize (the paragraph guard
- * rails and `$requestTier2ForNode`'s opaque-block bail), so a divergence there can never
- * settle. Both the backslash path and the `//` optbreak path below skip such nodes: pending
- * a literal the engine will never rebuild would only leave a stuck key.
- *
- * Chapters USED to sit in this list, and their entry was purely circular: nothing about a
- * chapter's bytes is literal-by-policy — they were excluded only because no scope rebuilt them.
- * `$rebuildChapter` (tier2Rebuild.utils.ts) is that scope now, so a chapter's display bytes pend
- * and settle like any paragraph's. `book` stays: it has no settle scope, deliberately.
- *
- * Tables are here for the same reason `book` is: no rebuild scope owns one. Their cells hold
- * ordinary `TextNode`s, so this transform does run on them, and a cell whose text contains `//`
- * (a URL, say — the tokenizer reads `//` as an optbreak wherever it appears) would otherwise pend
- * a key nothing can ever settle, leaving it to re-arm the idle timer for the rest of the session.
- */
-function $inLiteralOnlyBlock(node: LexicalNode): boolean {
-  for (let parent = node.getParent(); parent; parent = parent.getParent())
-    if ($isBookNode(parent) || $isUnknownNode(parent) || $isImmutableTableNode(parent)) return true;
-  return false;
 }
 
 /** The char span `node` is content of: its parent, read through any annotation marks. */
@@ -237,7 +213,7 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
     // Pend so caret departure routes it through `$rebuildParas`, which re-tokenizes `//` into an
     // optbreak while keeping the significant flanking spaces byte-exact. Skip the literal-only
     // blocks the tokenizer never re-tokenizes — a settle there could never happen.
-    else if (text.includes("//") && !$inLiteralOnlyBlock(node))
+    else if (text.includes("//") && !$isInLiteralOnlyBlock(node))
       context.pendingKeys.add(node.getKey());
     // A value typed into an empty `\va`/`\vp` SOURCE span is a pending attribute edit for the verse
     // the span rides on: no backslash or pipe ever lands, so without pending here the key is
@@ -265,7 +241,9 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
     // element-side pend uses) for departure to re-tokenize — graced while the caret stays in the
     // span, so the user can keep typing the new name. Any other gap heals in place now: dirtying
     // the span hands it to the separator sync's one registration home (CharNodePlugin), which
-    // heals exactly as it does when the span itself is edited.
+    // heals exactly as it does when the span itself is edited. In a block no settle scope
+    // re-tokenizes (a table cell) no gap renames, so only a caret-held one pends there, and the
+    // settle heals it in place.
     const span = $spanOfContentText(node);
     if (span && $hasUnsettledSeparatorGap(span)) context.pendingKeys.add(span.getKey());
     else if (span && $openerSeparatorGapFollowingBytes(span) !== undefined) span.markDirty();
@@ -281,7 +259,7 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
   // Note content now routes to the note-scoped rebuild (`$rebuildNoteContent`) via
   // `$requestTier2ForNode`, so it is NOT skipped here; books/chapters/unknowns keep
   // literal text (degradation property).
-  if ($inLiteralOnlyBlock(node)) return;
+  if ($isInLiteralOnlyBlock(node)) return;
   // Only the USER'S TYPED RUN can terminate a marker (the type-through corruption class): with
   // the caret mid-word ("li|ke"), typing `\` yields
   // "li\ke …", and the word remainder's own following space made `\ke ` look terminated —

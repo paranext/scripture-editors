@@ -17,6 +17,7 @@ import {
   $getRoot,
   $getSelection,
   $isRangeSelection,
+  $isElementNode,
   $isTextNode,
   CLICK_COMMAND,
   LexicalEditor,
@@ -30,9 +31,10 @@ import {
   $isParaNode,
   $isTypedMarkNode,
   CharNode,
-  getMarker,
+  canonicalAttributeText,
+  defaultMarkerAttribute,
+  getPendedDisplayOwners,
   NBSP,
-  usfmFragmentToUsjContent,
 } from "shared";
 import { AnnotationRange } from "shared-react";
 import { describe, expect, it } from "vitest";
@@ -116,17 +118,40 @@ function paraOf(usj: Usj | undefined, marker: string): MarkerObject {
   return para;
 }
 
-/** The paragraph as the tokenizer reads the live tree's bytes for it (NBSP separators are the
- * file's spaces) — what the screen says the paragraph is. */
-function screenPara(lexical: LexicalEditor, marker: string): MarkerContent | undefined {
-  const bytes = lexical.getEditorState().read(() => {
-    const para = $getRoot()
-      .getChildren()
-      .find((node) => $isParaNode(node) && node.getMarker() === marker);
-    if (!para) throw new Error(`no live ${marker} paragraph`);
-    return para.getTextContent().replaceAll(NBSP, " ");
-  });
-  return usfmFragmentToUsjContent(bytes, { getMarker })[0];
+/** The USFM a writer emits for `item`: a marker and its separator space, then its content, then
+ * the closer (and a char span's attributes in their canonical display form before it). */
+function usfmOf(item: MarkerContent): string {
+  if (typeof item === "string") return item;
+  const { type, marker = "", content = [], closed, ...attributes } = item;
+  const inner = content.map(usfmOf).join("");
+  if (type === "unmatched") return `\\${marker}`;
+  if (type === "para") return `\\${marker} ${inner}`;
+  if (type === "char") {
+    const attributeText = canonicalAttributeText(attributes, defaultMarkerAttribute(marker));
+    const closer = closed === "false" ? "" : `\\${marker}*`;
+    return `\\${marker} ${inner}${attributeText}${closer}`;
+  }
+  throw new Error(`no USFM written for a ${type}`);
+}
+
+/** The live bytes on screen for `node` (NBSP separators are the file's spaces). */
+function screenBytes(lexical: LexicalEditor, $node: () => LexicalNode): string {
+  return lexical.getEditorState().read(() => $node().getTextContent().replaceAll(NBSP, " "));
+}
+
+/** The live paragraph with `marker`. */
+function $paraWithMarker(marker: string): LexicalNode {
+  const para = $getRoot()
+    .getChildren()
+    .find((node) => $isParaNode(node) && node.getMarker() === marker);
+  if (!para) throw new Error(`no live ${marker} paragraph`);
+  return para;
+}
+
+/** Screen bytes == saved bytes: the live `marker` paragraph shows exactly what the file gets. */
+function expectScreenIsSaved(mounted: Mounted, marker: string): void {
+  const saved = paraOf(mounted.ref.current?.getUsj(), marker);
+  expect(screenBytes(mounted.lexical, () => $paraWithMarker(marker))).toBe(usfmOf(saved));
 }
 
 /** The marker of the live span holding the caret, if the caret is inside one. */
@@ -140,12 +165,18 @@ function caretSpanMarker(lexical: LexicalEditor): string | undefined {
   });
 }
 
+/** The first live char span in document order, wherever it sits (a paragraph, a table cell). */
 function $firstSpan(): CharNode {
-  const span = $getRoot()
-    .getChildren()
-    .filter($isParaNode)
-    .flatMap((para) => para.getChildren())
-    .find($isCharNode);
+  const find = (node: LexicalNode): CharNode | undefined => {
+    if ($isCharNode(node)) return node;
+    if (!$isElementNode(node)) return undefined;
+    for (const child of node.getChildren()) {
+      const span = find(child);
+      if (span) return span;
+    }
+    return undefined;
+  };
+  const span = find($getRoot());
   if (!span) throw new Error("no live span");
   return span;
 }
@@ -204,7 +235,7 @@ describe("typing over a span's separator", () => {
       const settled = mounted.ref.current?.getUsj();
       expect(paraOf(settled, renamed).content).toEqual(expected);
       expect(settled).toEqual(pending);
-      expect(screenPara(mounted.lexical, renamed)).toEqual(paraOf(settled, renamed));
+      expectScreenIsSaved(mounted, renamed);
     },
   );
 
@@ -224,7 +255,7 @@ describe("typing over a span's separator", () => {
       " of God",
     ]);
     expect(settled).toEqual(pending);
-    expect(screenPara(mounted.lexical, "p")).toEqual(paraOf(settled, "p"));
+    expectScreenIsSaved(mounted, "p");
   });
 
   it("keeps typing inside the live span until the caret departs", async () => {
@@ -261,7 +292,7 @@ describe("typing over a span's separator", () => {
 
     const settled = mounted.ref.current?.getUsj();
     expect(settled).toEqual(renamed);
-    expect(screenPara(mounted.lexical, "wxgrace")).toEqual(paraOf(settled, "wxgrace"));
+    expectScreenIsSaved(mounted, "wxgrace");
   });
 
   it("still renames after an undo and a redo of the unsettled type-over", async () => {
@@ -287,7 +318,7 @@ describe("typing over a span's separator", () => {
       " of God",
     ]);
     expect(settled).toEqual(pending);
-    expect(screenPara(mounted.lexical, "wxgrace")).toEqual(paraOf(settled, "wxgrace"));
+    expectScreenIsSaved(mounted, "wxgrace");
   });
 
   it("heals the separator back in front of a space typed over it, keeping the space", async () => {
@@ -310,6 +341,197 @@ describe("typing over a span's separator", () => {
     ]);
     expect(settled).toEqual(pending);
     expect(spanText()).toBe(`${NBSP} agrace`);
+    expectScreenIsSaved(mounted, "p");
+  });
+
+  it("heals the separator back when a `|` is typed over it, and settles the `|…` it starts", async () => {
+    // `\w|grace` reads the same as `\w |grace`, so the separator is healed at once, before
+    // departure; the bare `|grace` before `\w*` is then the span's default attribute.
+    const mounted = await mountStandardViewEditor(wordUsj("w"));
+    await selectIn(mounted.lexical, "grace", 0, 1);
+    await typeChars(mounted.lexical, "|");
+    expect(
+      mounted.lexical.getEditorState().read(() => $textContaining("|grace").getTextContent()),
+    ).toBe(`${NBSP}|grace`);
+    const pending = mounted.ref.current?.getUsj();
+    expect(paraOf(pending, "p").content).toEqual([
+      "In the ",
+      { type: "char", marker: "w", lemma: "grace" },
+      " of God",
+    ]);
+
+    await depart(mounted);
+    expect(mounted.ref.current?.getUsj()).toEqual(pending);
+    expectScreenIsSaved(mounted, "p");
+  });
+
+  it("settles a `\\` typed over it as the marker it starts", async () => {
+    // `\w\grace\w*`: the name scan stops at the `\` either way, and `\grace` is an unknown
+    // marker, which body text resolves as a paragraph.
+    const mounted = await mountStandardViewEditor(wordUsj("w"));
+    await selectIn(mounted.lexical, "grace", 0, 1);
+    await typeChars(mounted.lexical, "\\");
+    const pending = mounted.ref.current?.getUsj();
+
+    await depart(mounted);
+    const settled = mounted.ref.current?.getUsj();
+    expect(paraOf(settled, "grace").content).toEqual([
+      { type: "unmatched", marker: "w*" },
+      " of God",
+    ]);
+    expect(settled).toEqual(pending);
+    expectScreenIsSaved(mounted, "p");
+    expectScreenIsSaved(mounted, "grace");
+  });
+
+  it("renames the marker when typing lands between the glyph and the separator", async () => {
+    // The caret at the very start of `⍽grace` types into the glyph: `\wx`. The span is renamed
+    // on departure, and the screen shows what the file gets.
+    const mounted = await mountStandardViewEditor(wordUsj("w"));
+    await selectIn(mounted.lexical, "grace", 0, 0);
+    await typeChars(mounted.lexical, "x");
+
+    await depart(mounted);
+    const settled = mounted.ref.current?.getUsj();
+    expect(paraOf(settled, "p").content?.[1]).toMatchObject({
+      type: "char",
+      marker: "wx",
+      content: ["grace"],
+    });
+    expectScreenIsSaved(mounted, "p");
+  });
+
+  it("renames the marker when content text starts with the typed byte before the separator", async () => {
+    // The same bytes held by the content text instead of the glyph (`\w` + `x⍽grace`): the sync
+    // may not heal them into `\w⍽x⍽grace`, because they spell `\wx`.
+    const mounted = await mountStandardViewEditor(wordUsj("w"));
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const content = $textContaining("grace");
+        content.setTextContent(`x${NBSP}grace`);
+        content.select(1, 1);
+      });
+      await Promise.resolve();
+    });
+    const pending = mounted.ref.current?.getUsj();
+
+    await depart(mounted);
+    const settled = mounted.ref.current?.getUsj();
+    expect(paraOf(settled, "wx").content).toEqual([
+      "grace",
+      { type: "unmatched", marker: "w*" },
+      " of God",
+    ]);
+    expect(settled).toEqual(pending);
+    expectScreenIsSaved(mounted, "wx");
+  });
+});
+
+describe("a `|…` after the separator that is not an attribute list", () => {
+  // `\w |lemma="g"grace\w*`: the `|…` tail before the closer is not a whole attribute list, so
+  // Paratext 9 keeps all of it as the span's text — none of it is attributes, and none is dropped.
+  const expected = [
+    "In the ",
+    { type: "char", marker: "w", content: ['|lemma="g"grace'] },
+    " of God",
+  ];
+
+  it("survives a load and a save unchanged", async () => {
+    const mounted = await mountStandardViewEditor(twoParaUsj(expected));
+    expect(paraOf(mounted.ref.current?.getUsj(), "p").content).toEqual(expected);
+    expectScreenIsSaved(mounted, "p");
+  });
+
+  it.each([
+    ["typed after the separator", 1, 1],
+    ["typed over the separator", 0, 1],
+  ])("stays the span's text when %s", async (_name, start, end) => {
+    const mounted = await mountStandardViewEditor(wordUsj("w"));
+    await selectIn(mounted.lexical, "grace", start, end);
+    await typeChars(mounted.lexical, '|lemma="g"');
+    const pending = mounted.ref.current?.getUsj();
+    expect(paraOf(pending, "p").content).toEqual(expected);
+    expectScreenIsSaved(mounted, "p");
+
+    await depart(mounted);
+    const settled = mounted.ref.current?.getUsj();
+    expect(paraOf(settled, "p").content).toEqual(expected);
+    expect(settled).toEqual(pending);
+    expectScreenIsSaved(mounted, "p");
+  });
+});
+
+describe("a span in a table cell, which no settle re-tokenizes", () => {
+  const tableUsj: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      {
+        type: "table",
+        content: [
+          {
+            type: "table:row",
+            marker: "tr",
+            content: [
+              {
+                type: "table:cell",
+                marker: "tc1",
+                align: "start",
+                content: ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+              },
+            ],
+          },
+        ],
+      },
+      { type: "para", marker: "p", content: ["depart here"] },
+    ],
+  };
+
+  /** The first `char` in `usj`, wherever it is nested. */
+  function savedSpan(usj: Usj | undefined): MarkerObject {
+    const find = (items: MarkerContent[] | undefined): MarkerObject | undefined => {
+      for (const item of items ?? []) {
+        if (typeof item === "string") continue;
+        if (item.type === "char") return item;
+        const found = find(item.content);
+        if (found) return found;
+      }
+      return undefined;
+    };
+    const span = find(usj?.content);
+    if (!span) throw new Error("no saved span");
+    return span;
+  }
+
+  function expectSpanScreenIsSaved(mounted: Mounted, text: string): void {
+    const saved = savedSpan(mounted.ref.current?.getUsj());
+    expect(saved.content).toEqual([text]);
+    expect(screenBytes(mounted.lexical, $firstSpan)).toBe(usfmOf(saved));
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBe(0);
+  }
+
+  it("heals a separator typed over, since nothing could settle a new marker name there", async () => {
+    const mounted = await mountStandardViewEditor(tableUsj);
+    await selectIn(mounted.lexical, "grace", 0, 1);
+    await typeChars(mounted.lexical, "x");
+    await depart(mounted);
+    expectSpanScreenIsSaved(mounted, "xgrace");
+  });
+
+  it("heals a deleted separator once the caret departs", async () => {
+    const mounted = await mountStandardViewEditor(tableUsj);
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const content = $textContaining("grace");
+        content.setTextContent("grace");
+        content.select(0, 0);
+      });
+      await Promise.resolve();
+    });
+    await depart(mounted);
+    expectSpanScreenIsSaved(mounted, "grace");
   });
 });
 
@@ -407,6 +629,6 @@ describe("deleting a span's separator", () => {
       " God",
     ]);
     expect(settled).toEqual(pending);
-    expect(screenPara(mounted.lexical, "ndLORD")).toEqual(paraOf(settled, "ndLORD"));
+    expectScreenIsSaved(mounted, "ndLORD");
   });
 });

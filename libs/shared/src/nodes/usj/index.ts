@@ -34,6 +34,7 @@ export * from "./ImmutableTableNode.js";
 export * from "./ImmutableTableRowNode.js";
 export * from "./ImmutableTableCellNode.js";
 export * from "./ImpliedParaNode.js";
+export * from "./literalOnlyBlock.utils.js";
 export * from "./markerSeparators.utils.js";
 export * from "./MilestoneNode.js";
 export * from "./nestedGlyphs.utils.js";

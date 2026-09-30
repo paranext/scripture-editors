@@ -53,6 +53,7 @@ import { $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
 import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { $isCharNode, CharNode } from "./CharNode.js";
+import { $isInLiteralOnlyBlock } from "./literalOnlyBlock.utils.js";
 import { $charGlyphNestedValue } from "./nestedGlyphs.utils.js";
 import { NBSP } from "./node-constants.js";
 import {
@@ -184,10 +185,14 @@ function $openerSeparatorGap(opener: MarkerNode, char: CharNode): "prefix" | "sp
  * sync's to heal: the site is followed by plain content text (read through annotation marks) whose
  * first byte would change the token stream if the separator stayed gone — a name character that
  * the marker name runs into, or the `*` of a closer. Element content, glyphs and attribute runs
- * all begin with bytes the name scan stops at, so their gaps always heal.
+ * all begin with bytes the name scan stops at, so their gaps always heal. So does any gap in a
+ * block no settle scope re-tokenizes ({@link $isInLiteralOnlyBlock}: a table cell, the `\id`
+ * line, an opaque block): nothing could ever settle the new name there, and healing keeps the
+ * screen equal to what the writer saves.
  */
 function $isRenamingGap(opener: MarkerNode): boolean {
   if (!$isSeparatorPrefixHostText($contentAfterOpener(opener))) return false;
+  if ($isInLiteralOnlyBlock(opener)) return false;
   return !separatorRemovalTokenizesIdentically(opener.getNextSibling()?.getTextContent() ?? "");
 }
 
@@ -317,6 +322,26 @@ export function $hasUnsettledSeparatorGap(char: CharNode): boolean {
         $isMarkerNode(child) &&
         $openerSeparatorGap(child, char) !== undefined &&
         ($isCaretAtOpenerBoundary(child, char) || $isRenamingGap(child)),
+    );
+}
+
+/**
+ * True when `char` has a separator gap that settles by re-tokenizing rather than healing in place:
+ * the bytes after it would read differently with the separator back, in a block that has a settle
+ * scope. The settle's in-place heal and the sync decide by this same rule, so a gap the sync would
+ * heal is never re-tokenized on departure, and the reverse.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $hasRenamingSeparatorGap(char: CharNode): boolean {
+  if (!char.isAttached()) return false;
+  return char
+    .getChildren()
+    .some(
+      (child: LexicalNode) =>
+        $isMarkerNode(child) &&
+        $openerSeparatorGap(child, char) !== undefined &&
+        $isRenamingGap(child),
     );
 }
 

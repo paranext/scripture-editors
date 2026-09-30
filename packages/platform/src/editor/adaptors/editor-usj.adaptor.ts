@@ -696,7 +696,15 @@ function recurseNodes(
           // (displayed as `~`, never as a bare NBSP node) is at stake — leaving the drop to
           // genuinely structural nodes.
           serializedTextNode.text !== NBSP &&
-          !serializedTextNode.text.startsWith(NODE_ATTRIBUTE_PREFIX) &&
+          // The untagged NBSP-`|` form of milestone attribute text. Text right after a char span's
+          // opening glyph is never that: its NBSP is the span's separator, and a `|…` after it is
+          // content the attribute grammar left literal (`\w |lemma="g"grace\w*` — Paratext 9
+          // parses attributes only when the whole `|…` tail before the closer matches), so it is
+          // kept like any other content text.
+          !(
+            serializedTextNode.text.startsWith(NODE_ATTRIBUTE_PREFIX) &&
+            !precedesOpeningCharGlyph(nodes, index, precedingSibling, isCharChild)
+          ) &&
           // Char-span attribute display runs (bare `|…`, no NBSP prefix — see
           // usj-editor.adaptor's `addCharAttributes`) carry no NBSP prefix to strip against, so
           // the prefix check above can't catch them; the textType state tag is the only signal.
