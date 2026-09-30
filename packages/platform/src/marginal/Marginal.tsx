@@ -241,6 +241,9 @@ const Marginal = forwardRef(function Marginal<TLogger extends LoggerBasic>(
     getOpsAfterNote(noteKeyOrIndex) {
       return editorRef.current?.getOpsAfterNote(noteKeyOrIndex);
     },
+    takeOpsAfterNote(noteKeyOrIndex) {
+      return editorRef.current?.takeOpsAfterNote(noteKeyOrIndex);
+    },
     getNoteIndex(noteKey) {
       return editorRef.current?.getNoteIndex(noteKey);
     },

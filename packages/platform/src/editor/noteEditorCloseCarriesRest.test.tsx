@@ -158,4 +158,73 @@ describe("closing an unclosed note in the middle, in a note editor", () => {
     expect(row.editorRef.getOpsAfterNote(0)).toEqual([]);
     expect(row.editorRef.getOpsAfterNote(5)).toBeUndefined();
   });
+
+  it("takes what followed the closer out, and one undo puts the closer and the text back", async () => {
+    const text = await renderEditor(scriptureUsj);
+    const [key] = noteKeys(text.lexical);
+    const loaded = requireDefined(text.editorRef.getNoteOps(key), "note ops");
+    const row = await renderEditor(noteEditorStartUsj, noteEditorOptions);
+    await act(async () => row.editorRef.applyUpdate([loaded[0]]));
+    const openNote = requireDefined(row.editorRef.getNoteOps(0), "note ops")[0];
+
+    await act(async () => row.editorRef.selectNoteTextOffset(0, 5));
+    await restCaret(row.lexical);
+    await typeText(row.lexical, "\\f*");
+    await restCaret(row.lexical);
+    const closedNote = requireDefined(row.editorRef.getNoteOps(0), "note ops")[0];
+
+    let taken: ReturnType<typeof row.editorRef.takeOpsAfterNote>;
+    await act(async () => {
+      taken = row.editorRef.takeOpsAfterNote(0);
+    });
+    expect(taken).toEqual([{ insert: " beta" }]);
+    expect(row.editorRef.getOpsAfterNote(0)).toEqual([]);
+    expect(row.editorRef.getNoteOps(0)?.[0]).toEqual(closedNote);
+
+    await act(async () => row.editorRef.undo());
+    expect(row.editorRef.getNoteOps(0)?.[0]).toEqual(openNote);
+    expect(row.editorRef.getOpsAfterNote(0)).toEqual([]);
+
+    await act(async () => row.editorRef.redo());
+    expect(row.editorRef.getNoteOps(0)?.[0]).toEqual(closedNote);
+    expect(row.editorRef.getOpsAfterNote(0)).toEqual([]);
+  });
+
+  it("takes nothing from a note with nothing after it, and nothing from a missing note", async () => {
+    const row = await renderEditor(noteEditorStartUsj, noteEditorOptions);
+    const text = await renderEditor(scriptureUsj);
+    const loaded = requireDefined(text.editorRef.getNoteOps(0), "note ops");
+    await act(async () => row.editorRef.applyUpdate([loaded[0]]));
+
+    expect(row.editorRef.takeOpsAfterNote(0)).toEqual([]);
+    expect(row.editorRef.takeOpsAfterNote(5)).toBeUndefined();
+  });
+});
+
+describe("closing an unclosed note in the middle, in the text", () => {
+  it("one undo takes the typed closer away and opens the note again", async () => {
+    const text = await renderEditor(scriptureUsj);
+    const [key] = noteKeys(text.lexical);
+    const before = text.editorRef.getUsj();
+
+    await act(async () => text.editorRef.selectNoteTextOffset(key, 5));
+    await restCaret(text.lexical);
+    await typeText(text.lexical, "\\f*");
+    await restCaret(text.lexical);
+    const para = text.editorRef.getUsj()?.content[2];
+    expect(typeof para === "object" ? para.content : undefined).toEqual([
+      { type: "verse", marker: "v", number: "1" },
+      "before ",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "ft", closed: "false", content: ["alpha"] }],
+      },
+      " beta",
+    ]);
+
+    await act(async () => text.editorRef.undo());
+    expect(text.editorRef.getUsj()).toEqual(before);
+  });
 });

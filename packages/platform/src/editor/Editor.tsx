@@ -58,6 +58,7 @@ import {
   EditorState,
   LexicalEditor,
   HISTORIC_TAG,
+  HISTORY_MERGE_TAG,
   REDO_COMMAND,
   SELECTION_CHANGE_COMMAND,
   SKIP_DOM_SELECTION_TAG,
@@ -98,6 +99,7 @@ import {
   $applyUpdate,
   $getNoteByKeyOrIndex,
   $getNoteIndex,
+  $getOTPositionOfNode,
   $getParticularNodeOps,
   $getUsjSelectionFromEditor,
   $getRangeFromUsjSelection,
@@ -121,6 +123,7 @@ import {
   DecoratorBoundarySelectionPlugin,
   DeltaOnChangePlugin,
   DeltaOp,
+  DeltaSource,
   DisableHistoryShortcutsPlugin,
   editorHoldsDomFocus,
   EmptyNoteCaretGuardPlugin,
@@ -175,6 +178,16 @@ function $rememberExpandedNote(
   expandedNoteKeyRef: React.MutableRefObject<string | undefined>,
 ): void {
   if (noteNode && !noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
+}
+
+/** The ops for whatever follows `noteNode` in its paragraph (see `EditorRef.getOpsAfterNote`). */
+function $getOpsAfterNote(noteNode: NoteNode): DeltaOp[] {
+  const following = noteNode.getNextSiblings();
+  const first = following.at(0);
+  const last = following.at(-1);
+  if (!first || !last) return [];
+  const end = $isElementNode(last) ? (last.getLastDescendant() ?? last) : last;
+  return $getParticularNodeOps(first, end);
 }
 
 /**
@@ -515,6 +528,64 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     );
   }, [viewOptions, markerLookup, stableLogger]);
 
+  /**
+   * `EditorRef.applyUpdate`, with `extraTag` (when given) riding on the update as well - how
+   * `takeOpsAfterNote` joins its removal to the undo step of the edit that left the text there.
+   */
+  function applyOps(ops: DeltaOp[], source: DeltaSource, extraTag?: string) {
+    // Delta ops address content by its position in the USJ, which this layout's regrouping
+    // changes, so applying them would edit the wrong nodes rather than fail. A remote op is not
+    // a caller error, and throwing into a host's op loop would tear it down, so report and drop
+    // it - a read-only view refreshes by being handed new USJ, not by replaying deltas.
+    if (isBlockVerse && source === "remote") {
+      loggerRef.current?.error(
+        "Editor: ignoring a remote update in the block verse layout; reload the view with the " +
+          "new USJ instead.",
+      );
+      return;
+    }
+    // Block verse only, not `effectiveIsReadonly`: a read-only pane in a collaborative session is
+    // a supported flow, and it stays current by having remote deltas applied to it. Throwing here
+    // would tear down the host's op loop for the same reason the remote branch above reports and
+    // drops instead of throwing.
+    assertNotBlockVerse("apply an update");
+    const holdsFocus = holdsDomFocus();
+    const unregisterTagRelease =
+      !holdsFocus && editorRef.current
+        ? releaseTagsAfterNextCommit(editorRef.current, SKIP_DOM_SELECTION_TAG)
+        : undefined;
+    editorRef.current?.update(
+      () => {
+        if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
+        if (!holdsFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+        if (extraTag) $addUpdateTag(extraTag);
+        $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
+      },
+      { discrete: true },
+    );
+    // An empty (or fully no-op) `ops` leaves `$applyUpdate` with nothing to change, and the
+    // update above then commits nothing - disarm rather than leave the listener armed for
+    // whatever commit happens next.
+    unregisterTagRelease?.();
+    if (!holdsFocus && editorRef.current) clearStaleDomSelection(editorRef.current);
+    const editorState = editorRef.current?.getEditorState();
+    if (!editorState) return;
+
+    const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
+    if (newUsj) {
+      const isEdited = !deepEqual(editedUsjRef.current, newUsj);
+      if (isEdited) editedUsjRef.current = newUsj;
+      if (isEdited || !deepEqual(usj, newUsj)) {
+        // "apply" coordinates: `$applyUpdate` placed the inserted node by interpreting the
+        // retain with its own traversals (every embed opaque), so the reverse lookup must
+        // count the same way to find the node that was actually inserted.
+        const insertedNodeKey = getInsertedNodeKey(ops, editorState, "apply");
+        lastNotifiedUsjRef.current = newUsj;
+        onUsjChange?.(newUsj, ops, source, insertedNodeKey);
+      }
+    }
+  }
+
   // Built as a plain object (rebuilt per render, same as the previous inline useImperativeHandle
   // factory) and assigned to editorApiRef UNCONDITIONALLY below — never inside the
   // useImperativeHandle factory, which React only invokes when the consumer actually attached a
@@ -619,56 +690,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       }
     },
     applyUpdate(ops, source = "remote") {
-      // Delta ops address content by its position in the USJ, which this layout's regrouping
-      // changes, so applying them would edit the wrong nodes rather than fail. A remote op is not
-      // a caller error, and throwing into a host's op loop would tear it down, so report and drop
-      // it - a read-only view refreshes by being handed new USJ, not by replaying deltas.
-      if (isBlockVerse && source === "remote") {
-        loggerRef.current?.error(
-          "Editor: ignoring a remote update in the block verse layout; reload the view with the " +
-            "new USJ instead.",
-        );
-        return;
-      }
-      // Block verse only, not `effectiveIsReadonly`: a read-only pane in a collaborative session is
-      // a supported flow, and it stays current by having remote deltas applied to it. Throwing here
-      // would tear down the host's op loop for the same reason the remote branch above reports and
-      // drops instead of throwing.
-      assertNotBlockVerse("apply an update");
-      const holdsFocus = holdsDomFocus();
-      const unregisterTagRelease =
-        !holdsFocus && editorRef.current
-          ? releaseTagsAfterNextCommit(editorRef.current, SKIP_DOM_SELECTION_TAG)
-          : undefined;
-      editorRef.current?.update(
-        () => {
-          if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
-          if (!holdsFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
-          $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
-        },
-        { discrete: true },
-      );
-      // An empty (or fully no-op) `ops` leaves `$applyUpdate` with nothing to change, and the
-      // update above then commits nothing - disarm rather than leave the listener armed for
-      // whatever commit happens next.
-      unregisterTagRelease?.();
-      if (!holdsFocus && editorRef.current) clearStaleDomSelection(editorRef.current);
-      const editorState = editorRef.current?.getEditorState();
-      if (!editorState) return;
-
-      const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
-      if (newUsj) {
-        const isEdited = !deepEqual(editedUsjRef.current, newUsj);
-        if (isEdited) editedUsjRef.current = newUsj;
-        if (isEdited || !deepEqual(usj, newUsj)) {
-          // "apply" coordinates: `$applyUpdate` placed the inserted node by interpreting the
-          // retain with its own traversals (every embed opaque), so the reverse lookup must
-          // count the same way to find the node that was actually inserted.
-          const insertedNodeKey = getInsertedNodeKey(ops, editorState, "apply");
-          lastNotifiedUsjRef.current = newUsj;
-          onUsjChange?.(newUsj, ops, source, insertedNodeKey);
-        }
-      }
+      applyOps(ops, source);
     },
     replaceEmbedUpdate(embedNodeKey, insertEmbedOps) {
       const ops = editorRef.current?.read(() => $getReplaceEmbedOps(embedNodeKey, insertEmbedOps));
@@ -1071,14 +1093,25 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     getOpsAfterNote(noteKeyOrIndex) {
       return editorRef.current?.read(() => {
         const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
-        if (!noteNode) return undefined;
-        const following = noteNode.getNextSiblings();
-        const first = following.at(0);
-        const last = following.at(-1);
-        if (!first || !last) return [];
-        const end = $isElementNode(last) ? (last.getLastDescendant() ?? last) : last;
-        return $getParticularNodeOps(first, end);
+        return noteNode ? $getOpsAfterNote(noteNode) : undefined;
       });
+    },
+    takeOpsAfterNote(noteKeyOrIndex) {
+      const found = editorRef.current?.read(() => {
+        const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+        if (!noteNode) return undefined;
+        const notePosition = $getOTPositionOfNode(noteNode, "apply");
+        return { ops: $getOpsAfterNote(noteNode), notePosition };
+      });
+      if (!found) return undefined;
+      const { ops, notePosition } = found;
+      if (ops.length === 0 || notePosition === undefined) return ops;
+      const length = ops.reduce(
+        (total, op) => total + (typeof op.insert === "string" ? op.insert.length : 1),
+        0,
+      );
+      applyOps([{ retain: notePosition + 1 }, { delete: length }], "remote", HISTORY_MERGE_TAG);
+      return ops;
     },
     getNoteIndex(noteKey) {
       const editor = editorRef.current;

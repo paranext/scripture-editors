@@ -29,6 +29,10 @@ refused. The public surface grew substantially; nothing was removed.
   typed mid-note in an unclosed note); passed after the note op to `replaceEmbedUpdate`, it lands
   after the note in the editor the note is applied to. `replaceEmbedUpdate` inserts any ops after
   the first right after the new embed, once the old one is deleted.
+- `EditorRef.takeOpsAfterNote` — removes what follows a note in its paragraph and returns its
+  operations, as part of the undo step that left it there, so one undo puts a typed closer and the
+  text it moved back as they were. Closing an unclosed note by typing its closer is likewise one
+  undo step with the closer's typing: one undo takes the whole `\f*` away.
 - `EditorRef.highlightNote` — applies PT9's selected-caller style (class `caller_highlight`: a
   yellow fill with thin blue top and bottom borders) to one note's caller at a time, through
   `NoteCallerHighlightPlugin`; purely presentational, and `undefined` clears it. A host that

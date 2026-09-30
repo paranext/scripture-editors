@@ -26,6 +26,7 @@ import {
   USJ_VERSION,
 } from "@eten-tech-foundation/scripture-utilities";
 import {
+  $addUpdateTag,
   $getNodeByKey,
   $getSelection,
   $getState,
@@ -36,6 +37,7 @@ import {
   $isTextNode,
   $parseSerializedNode,
   ElementNode,
+  HISTORY_MERGE_TAG,
   LexicalNode,
   NodeKey,
   SerializedLexicalNode,
@@ -68,6 +70,7 @@ import {
   CharNode,
   ImpliedParaNode,
   LoggerBasic,
+  MARKER_SETTLE_TAG,
   MarkerLookup,
   MarkerType,
   NBSP,
@@ -2002,6 +2005,11 @@ function $closeNoteAtOwnCloser(
   }
   $replaceSentinels(newNodes, sentinels);
   note.remove();
+  // Joins the undo step the closer was typed in, so one undo takes the whole typed closer away -
+  // not just its last character - and the note is open again, holding its text. Tagged as a settle
+  // too: a merge-tagged commit that is not one never reaches `onUsjChange`.
+  $addUpdateTag(HISTORY_MERGE_TAG);
+  $addUpdateTag(MARKER_SETTLE_TAG);
   if (anchorInNote) {
     if (closedNote.getIsCollapsed() === true) $selectAfterNote(closedNote);
     else $selectNote(closedNote, viewOptions);
