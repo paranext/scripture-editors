@@ -214,6 +214,7 @@ export interface EditorRef {
     setTransientInput(input: TransientInput | undefined): void;
     setUsj(usj: Usj): void;
     splitParagraphWithMarker(marker: string): void;
+    takeOpsAfterNote(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
     toolbarEndRef: RefObject<HTMLElement | null> | null;
     undo(): void;
 }

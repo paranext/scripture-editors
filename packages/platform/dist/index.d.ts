@@ -936,6 +936,23 @@ export declare interface EditorRef {
    */
   getOpsAfterNote(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
   /**
+   * EXPERIMENTAL: Removes whatever follows a note in its paragraph and returns its operations, as
+   * {@link EditorRef.getOpsAfterNote} reads them.
+   *
+   * The removal joins the undo step of the edit that left the text there rather than being an undo
+   * step of its own. A host's note editor takes the text that a typed closer (`\f*`) moved out of
+   * the note, to apply it after the note in the Scripture text; one undo then puts the closer AND
+   * that text back the way they were - the note open again, holding the text. Were the removal its
+   * own step, the first undo would bring the text back after the note, where the host would take it
+   * again.
+   *
+   * @param noteKeyOrIndex - The note key or document-order index (see
+   *   {@link EditorRef.getNoteIndex}).
+   * @returns The operations removed (empty when nothing follows the note), or `undefined` when there
+   *   is no such note.
+   */
+  takeOpsAfterNote(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
+  /**
    * EXPERIMENTAL: Document-order index of the note with the given key — the coordinate a USJ-built
    * notes list (e.g. a footnotes pane) addresses notes by, and the same index `noteCallerOnClick`
    * reports.
