@@ -568,7 +568,7 @@ describe("a comment mark that the settle leaves on display bytes alone", () => {
     await act(async () => {
       mounted.lexical.update(() => {
         const word = $textContaining("grace");
-        word.setTextContent(`grace${typed}`);
+        word.setTextContent(`${NBSP}grace${typed}`);
         word.select(word.getTextContentSize(), word.getTextContentSize());
       });
       await Promise.resolve();

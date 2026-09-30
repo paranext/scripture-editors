@@ -44,7 +44,7 @@ import {
 import {
   $caretHoldsRunSite,
   $charClosingGlyph,
-  $hasCaretHeldSeparatorGap,
+  $hasUnsettledSeparatorGap,
   $isAttributeRunNode,
   $isBookNode,
   $isCanonicalMarkerNode,
@@ -54,12 +54,15 @@ import {
   $isImmutableTableNode,
   $isImmutableUnmatchedNode,
   $isMarkerNode,
+  $isTypedMarkNode,
   $isUnknownNode,
   $isVerseNode,
+  $openerSeparatorGapFollowingBytes,
   $ownerOfRunPiece,
   $runDiverges,
   $runEntirelyAbsent,
   $verseOfAttributeSourceText,
+  CharNode,
   DisplayRunDescriptor,
   displayRunDescriptor,
   displayRunDescriptors,
@@ -139,6 +142,13 @@ function $inLiteralOnlyBlock(node: LexicalNode): boolean {
   for (let parent = node.getParent(); parent; parent = parent.getParent())
     if ($isBookNode(parent) || $isUnknownNode(parent) || $isImmutableTableNode(parent)) return true;
   return false;
+}
+
+/** The char span `node` is content of: its parent, read through any annotation marks. */
+function $spanOfContentText(node: LexicalNode): CharNode | undefined {
+  let parent = node.getParent();
+  while ($isTypedMarkNode(parent)) parent = parent.getParent();
+  return $isCharNode(parent) ? parent : undefined;
 }
 
 /**
@@ -244,19 +254,21 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
     // pend; departure's chapter-scoped rebuild re-tokenizes `\c` and `\ca` together (attrCapture
     // folds, or refuses at the fixed point for an unfoldable span).
     else if ($isChapterNode($settleScopeForNode(node))) context.pendingKeys.add(node.getKey());
-    else {
-      // Deleting a char opener's NBSP separator OUT OF ITS PREFIX position is a leaf-only edit:
-      // the span's own element transform (the plugin's CharNode pend) does not run for it, so
-      // without reporting the gap from the text side here nothing ever pends the span — the
-      // deletion neither healed nor renamed, and the byte silently resurrected from node state
-      // on the next save. Pend the OWNING SPAN's key (the same key the element-side pend uses);
-      // departure settles it through the tokenize-identity routing. The standalone-spacer
-      // deletion shape structurally dirties the span and never needs this arm.
-      const parent = node.getParent();
-      if ($isCharNode(parent) && $hasCaretHeldSeparatorGap(parent))
-        context.pendingKeys.add(parent.getKey());
-      context.pendingKeys.delete(node.getKey());
-    }
+    else context.pendingKeys.delete(node.getKey());
+    // Deleting a char opener's NBSP separator out of its prefix position, or typing over it, is a
+    // leaf-only edit: the span's own element transform (the plugin's CharNode pend and the
+    // separator sync) does not run for it, so the gap is decided from the text side here or never
+    // — the screen would keep `\wxgrace` while the writer resurrects the separator on the next
+    // save. Checked after every arm above, since a gap is independent of what else the text holds
+    // (`|…`, `//`). The tokenize-identity rule decides: a gap the caret still holds, or whose
+    // bytes read differently without the separator, pends the OWNING SPAN's key (the key the
+    // element-side pend uses) for departure to re-tokenize — graced while the caret stays in the
+    // span, so the user can keep typing the new name. Any other gap heals in place now: dirtying
+    // the span hands it to the separator sync's one registration home (CharNodePlugin), which
+    // heals exactly as it does when the span itself is edited.
+    const span = $spanOfContentText(node);
+    if (span && $hasUnsettledSeparatorGap(span)) context.pendingKeys.add(span.getKey());
+    else if (span && $openerSeparatorGapFollowingBytes(span) !== undefined) span.markDirty();
     return;
   }
   // The para-prefix trailing-space node is NOT exempt: it only
@@ -436,7 +448,10 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
     if ($isCharNode(node)) {
       // A caret-held separator gap and a caret-held attribute-run divergence — the CharNode
       // transform's pend conditions (MarkerEditPlugin.tsx) — are both covered by the shared loop
-      // above.
+      // above. A gap whose bytes read differently without the separator pends wherever the caret
+      // is, the mirror of the text transform's gap arm: a redone type-over restores `\wxgrace`
+      // with no transform to report it.
+      if ($hasUnsettledSeparatorGap(node)) context.pendingKeys.add(node.getKey());
       node.getChildren().forEach(visit);
       return;
     }

@@ -38,7 +38,7 @@ import {
   ExpectedRun,
   ScannedRun,
 } from "../nodes/usj/displayRunDescriptor.js";
-import { $hasCaretHeldSeparatorGap } from "../nodes/usj/markerSeparators.utils.js";
+import { $hasCaretGracedSeparatorGap } from "../nodes/usj/markerSeparators.utils.js";
 import { $isMilestoneNode } from "../nodes/usj/MilestoneNode.js";
 import { NBSP } from "../nodes/usj/node-constants.js";
 import { $isVerseNode } from "../nodes/usj/VerseNode.js";
@@ -209,7 +209,7 @@ const separatorDescriptor: DisplayRunDescriptor = {
   ownerOf: () => undefined,
   expectedPieces: () => NO_RUN,
   scanPieces: () => NO_PIECES,
-  graceSite: (owner) => $isCharNode(owner) && $hasCaretHeldSeparatorGap(owner),
+  graceSite: (owner) => $isCharNode(owner) && $hasCaretGracedSeparatorGap(owner),
   settleScope: "owner",
   deletionPolicy: "retokenize",
   byteFormat: { writer: "kind-owned", glyphs: "none" },
