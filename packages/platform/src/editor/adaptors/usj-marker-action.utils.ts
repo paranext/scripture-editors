@@ -23,6 +23,7 @@ import {
   $charStackContainer,
   $createCharNode,
   $createMarkerNode,
+  $createMarkerTrailingSeparator,
   $createNodeFromSerializedNode,
   $findChapter,
   $innermostCharAncestor,
@@ -456,10 +457,11 @@ export function getUsjMarkerAction(
             lastInsertedNode.insertAfter(tailChar);
             if (caretChar.isEmpty()) caretChar.remove();
           } else if (!$isTextNode(lastInsertedNode.getNextSibling())) {
-            // Add a trailing spacer only if one doesn't already follow. Inserting between a char and
-            // its existing spacer would leave two adjacent spacers, which a note transform collapses
-            // with a selectEnd that steals the caret out of the new marker.
-            lastInsertedNode.insertAfter($createTextNode(NBSP));
+            // Add a trailing separator only if no text already follows: inserting between a char and
+            // its existing separator would leave two adjacent separators, a doubled display space.
+            // The tagged token separator, never a bare NBSP: typing at a bare NBSP's end lands inside
+            // it, and the NBSP is then saved as content.
+            lastInsertedNode.insertAfter($createMarkerTrailingSeparator());
           }
           // Land the caret inside the new marker's content, not before it. selectEnd
           // leaves it after the empty-char placeholder, which the placeholder transform strips on

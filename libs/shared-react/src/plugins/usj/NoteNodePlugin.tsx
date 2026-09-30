@@ -11,6 +11,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $createRangeSelection,
+  $createTextNode,
   $getNodeByKey,
   $getSelection,
   $isRangeSelection,
@@ -203,13 +204,37 @@ function $noteNodeTransform(node: NoteNode, viewOptions: ViewOptions | undefined
 }
 
 /**
- * Whether `node` fills the separator slot after a note's caller or top-level CharNode: the
- * engine's tagged separator, or a bare lone NBSP (the untagged spacer the marker menu inserts after
- * a new span). Any other text in that slot is the note's content.
+ * Ensures the engine's tagged separator follows `node` (a note's caller or top-level CharNode). A
+ * bare lone NBSP already in that slot is a separator without its tag, so it is replaced by a tagged
+ * one: untagged, typing at its end would land inside it and the NBSP would be saved as content.
+ * Anything else in that slot (content text, the closing glyph) keeps its bytes, and the separator
+ * goes in front of it.
  */
-function $isNoteSeparator(node: LexicalNode | null): boolean {
-  if (!$isTextNode(node) || $isMarkerNode(node)) return false;
-  return $isMarkerTrailingSeparator(node) || node.getTextContent() === NBSP;
+function $ensureNoteSeparatorAfter(node: LexicalNode): void {
+  const next = node.getNextSibling();
+  if ($isMarkerTrailingSeparator(next)) return;
+  if ($isTextNode(next) && !$isMarkerNode(next) && next.getTextContent() === NBSP)
+    next.replace($createMarkerTrailingSeparator());
+  else node.insertAfter($createMarkerTrailingSeparator());
+}
+
+/**
+ * Resets a tagged note separator's changed text back to exactly one NBSP. Text added to the
+ * separator is the user's, so it is kept as content right after the separator, with the caret at
+ * its end. A separator carries no data, so content on either side of it saves the same bytes.
+ */
+function $restoreNoteSeparator(separator: TextNode): void {
+  const text = separator.getTextContent();
+  const at = text.indexOf(NBSP);
+  const added = at < 0 ? text : text.slice(0, at) + text.slice(at + 1);
+  separator.setTextContent(NBSP);
+  if (!added) {
+    separator.selectEnd();
+    return;
+  }
+  const content = $createTextNode(added);
+  separator.insertAfter(content);
+  content.selectEnd();
 }
 
 /**
@@ -226,14 +251,12 @@ function $noteCharNodeTransform(node: CharNode): void {
   const previewText = $getNoteCallerPreviewText(children);
   if (noteCaller.getPreviewText() !== previewText) noteCaller.setPreviewText(previewText);
 
-  // Whatever follows the span without a separator in between (content text, the closing glyph)
-  // keeps its bytes; the separator goes in front of it.
-  if (!$isNoteSeparator(node.getNextSibling())) node.insertAfter($createMarkerTrailingSeparator());
+  $ensureNoteSeparatorAfter(node);
 }
 
 /**
  * Changes in NoteNode children text are updated in the NoteNodeCaller preview text.
- * Also restore a note separator whose text was changed.
+ * Also restore a note separator whose text was changed, keeping any added text as content.
  * Also remove 'empty' placeholder in CharNode inside NoteNode once other text content is added.
  * @param node - TextNode thats needs its preview text updated.
  */
@@ -247,10 +270,8 @@ function $noteTextNodeTransform(node: TextNode): void {
   // note is its content (such as the space between a cross reference's `\xo` and `\xt` spans),
   // which serializes as written, so it is never rewritten.
   const parent = node.getParent();
-  if ($isNoteNode(parent) && $isMarkerTrailingSeparator(node) && node.getTextContent() !== NBSP) {
-    node.setTextContent(NBSP);
-    node.selectEnd();
-  }
+  if ($isNoteNode(parent) && $isMarkerTrailingSeparator(node) && node.getTextContent() !== NBSP)
+    $restoreNoteSeparator(node);
 
   if ($isCharNode(parent) && parent.getChildrenSize() === 1) {
     const text = node.getTextContent();
@@ -265,14 +286,13 @@ function $noteTextNodeTransform(node: TextNode): void {
 }
 
 /**
- * Ensure a separator after the caller. Content text right after the caller keeps its bytes; the
- * separator goes in front of it.
+ * Ensure a separator after the caller.
  * @param node - The note caller that needs a separator after it.
  */
 function $noteCallerNodeTransform(node: ImmutableNoteCallerNode): void {
   if (!$isImmutableNoteCallerNode(node)) return;
 
-  if (!$isNoteSeparator(node.getNextSibling())) node.insertAfter($createMarkerTrailingSeparator());
+  $ensureNoteSeparatorAfter(node);
 }
 
 /**

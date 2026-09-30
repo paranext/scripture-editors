@@ -23,6 +23,7 @@ import {
   typeOver,
 } from "../positions/positions.test-helpers";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -42,11 +43,14 @@ import {
 } from "lexical";
 import {
   $isCharNode,
+  $isMarkerTrailingSeparator,
+  $isNoteNode,
   $isTypedMarkNode,
   $wrapSelectionInTypedMarkNode,
   CharNode,
   COMMENT_MARK_TYPE,
   NBSP,
+  NoteNode,
 } from "shared";
 import { $getRangeFromUsjSelection, AnnotationRange, StructureProtectionMode } from "shared-react";
 import { vi } from "vitest";
@@ -519,4 +523,58 @@ describe("a note's own content text", () => {
 
     expect(mounted.ref.current?.getUsj()).toEqual(before);
   });
+
+  it("types after a span the marker menu inserts into a note without saving its separator", async () => {
+    const formatted = oracleView("formatted");
+    const mounted = await mountInView(crossRefUsj, formatted);
+    const $lastNoteChild = () => {
+      const note = $noteIn($getRoot());
+      const last = note?.getLastChild();
+      if (!$isTextNode(last)) throw new Error("expected the note to end in its separator");
+      return last;
+    };
+
+    // The caret on the note's own last separator, where the marker menu inserts after it.
+    await act(async () => {
+      mounted.lexical.update(() => $lastNoteChild().select(1, 1), { discrete: true });
+    });
+    getUsjMarkerAction("xk", { current: undefined }, formatted, undefined, undefined, {
+      discrete: true,
+    }).action({ editor: mounted.lexical, reference: { book: "GEN", chapterNum: 1, verseNum: 1 } });
+    // Type at the end of the separator that follows the new span.
+    await act(async () => {
+      mounted.lexical.update(() => {
+        $lastNoteChild().select(1, 1);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        selection.insertText("a");
+      });
+      await Promise.resolve();
+    });
+
+    expect(JSON.stringify(mounted.ref.current?.getUsj())).not.toContain(NBSP);
+    const note = settledPara(mounted.ref.current?.getUsj(), 2).content?.[1];
+    if (!note || typeof note === "string") throw new Error("expected the note");
+    expect(note.content?.at(-1)).toBe("a");
+    mounted.lexical.getEditorState().read(() => {
+      const keyword = $noteIn($getRoot())
+        ?.getChildren()
+        .find((child) => $isCharNode(child) && child.getMarker() === "xk");
+      const separator = keyword?.getNextSibling();
+      expect($isMarkerTrailingSeparator(separator)).toBe(true);
+      expect(separator?.getTextContent()).toBe(NBSP);
+      expect(separator?.getNextSibling()?.getTextContent()).toBe("a");
+    });
+  });
 });
+
+/** The first note under `node`. Call inside a read or update. */
+function $noteIn(node: LexicalNode): NoteNode | undefined {
+  if ($isNoteNode(node)) return node;
+  if (!$isElementNode(node)) return undefined;
+  for (const child of node.getChildren()) {
+    const found = $noteIn(child);
+    if (found) return found;
+  }
+  return undefined;
+}

@@ -1,5 +1,6 @@
 import {
   $createImmutableNoteCallerNode,
+  $isImmutableNoteCallerNode,
   defaultCrossRefCallers,
   defaultNoteCallers,
   ImmutableNoteCallerNode,
@@ -526,26 +527,57 @@ describe("NoteNodePlugin", () => {
       });
     });
 
-    it("still resets a separator whose text was changed", async () => {
+    it.each<{ shape: string; typed: string; layout: string }>([
+      {
+        shape: "NBSP + x",
+        typed: `${NBSP}x`,
+        layout: `caller|sep|char:xo|sep|text:"x "|sep|char:xt|sep`,
+      },
+      {
+        shape: "a + NBSP + b",
+        typed: `a${NBSP}b`,
+        layout: `caller|sep|char:xo|sep|text:"ab "|sep|char:xt|sep`,
+      },
+    ])(
+      "restores a separator whose text became $shape, keeping the added text as content",
+      async ({ typed, layout }) => {
+        let noteKey = "";
+        const { editor } = await testEnvironment(undefined, undefined, () => {
+          const note = $createCrossRefNote();
+          noteKey = note.getKey();
+          $getRoot().append($createParaNode().append(note));
+        });
+
+        await act(async () => {
+          editor.update(() => {
+            const separator = $getNodeByKey<NoteNode>(noteKey)?.getChildAtIndex(3);
+            if (!$isMarkerTrailingSeparator(separator) || !$isTextNode(separator))
+              throw new Error("Expected a separator");
+            separator.setTextContent(typed);
+          });
+        });
+
+        editor.getEditorState().read(() => {
+          expect(noteLayout($getNodeByKey<NoteNode>(noteKey))).toEqual(layout);
+        });
+      },
+    );
+
+    it("makes a bare NBSP after the caller or a span the tagged separator", async () => {
       let noteKey = "";
       const { editor } = await testEnvironment(undefined, undefined, () => {
-        const note = $createCrossRefNote();
+        const note = $createNoteNode("x", "-").append(
+          $createImmutableNoteCallerNode("-", ""),
+          $createTextNode(NBSP),
+          $createCharNode("xo").append($createTextNode("1.2")),
+          $createTextNode(NBSP),
+        );
         noteKey = note.getKey();
         $getRoot().append($createParaNode().append(note));
       });
 
-      await act(async () => {
-        editor.update(() => {
-          const separator = $getNodeByKey<NoteNode>(noteKey)?.getChildAtIndex(3);
-          if (!$isTextNode(separator)) throw new Error("Expected a separator");
-          separator.setTextContent(`${NBSP}x`);
-        });
-      });
-
       editor.getEditorState().read(() => {
-        const note = $getNodeByKey<NoteNode>(noteKey);
-        expect(note?.getChildAtIndex(3)?.getTextContent()).toBe(NBSP);
-        expect(noteLayout(note)).toEqual(`caller|sep|char:xo|sep|text:" "|sep|char:xt|sep`);
+        expect(noteLayout($getNodeByKey<NoteNode>(noteKey))).toEqual(`caller|sep|char:xo|sep`);
       });
     });
   });
@@ -614,7 +646,7 @@ function getPreviewText(noteNode: NoteNode | undefined): string | undefined {
 function noteLayout(note: NoteNode | null | undefined): string {
   return (note?.getChildren() ?? [])
     .map((child: LexicalNode) => {
-      if (child instanceof ImmutableNoteCallerNode) return "caller";
+      if ($isImmutableNoteCallerNode(child)) return "caller";
       if ($isMarkerNode(child)) return `marker:${visible(child.getTextContent())}`;
       if ($isMarkerTrailingSeparator(child) && child.getTextContent() === NBSP) return "sep";
       if ($isCharNode(child)) return `char:${child.getMarker()}`;
