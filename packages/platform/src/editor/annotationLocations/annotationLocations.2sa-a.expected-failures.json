@@ -548,8 +548,6 @@
           "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[12].content[1].content[0]|$.content[12].content[1].content[3].content[0]|offset=7": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard|A|50|$.content[120].content[0]|offset=233|$.content[122].content[1].content[0]|offset=5": [
@@ -565,8 +563,6 @@
           "M4-SOFT-HELD"
         ],
         "standard|A|50|$.content[13].content[0]|offset=110|$.content[13].content[1].content[2]|closingMarkerOffset=3": [
-          "R6-CORRUPT-figure-split",
-          "REMOVE-TRACE",
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "standard|A|50|$.content[13].content[2]|offset=154|$.content[15].content[1].content[0]|offset=2": [

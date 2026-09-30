@@ -18,6 +18,7 @@ import { displayAnnotated } from "../markerEdit/displayAnnotations.test-helpers"
 import {
   $textContaining,
   propertyPath,
+  settledPara,
   twoParaUsj,
   typeOver,
 } from "../positions/positions.test-helpers";
@@ -27,7 +28,10 @@ import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
   $getRoot,
+  $getSelection,
   $isElementNode,
+  $isRangeSelection,
+  $isTextNode,
   $setSelection,
   COPY_COMMAND,
   LexicalNode,
@@ -417,5 +421,102 @@ describe("a range into part of an inline element", () => {
     expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
     expect(mounted.lexical.getEditorState().read($marks)).toEqual(before);
     expect(onRemove).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe("a note's own content text", () => {
+  const standard = oracleView("standard");
+  /** `\p see \x - \xo 1.2\xo* \xt Crossref text.\xt*\x* after.`: the space between the two spans
+   * is the note's own content, directly inside it. */
+  const crossRefUsj: Usj = twoParaUsj([
+    "see ",
+    {
+      type: "note",
+      marker: "x",
+      caller: "-",
+      content: [
+        { type: "char", marker: "xo", content: ["1.2"] },
+        " ",
+        { type: "char", marker: "xt", content: ["Crossref text."] },
+      ],
+    },
+    " after.",
+  ]);
+  /** The note's own space between its two spans. */
+  const noteSpacePath = "$.content[2].content[1].content[1]";
+
+  it.each<{ over: string; range: AnnotationRange }>([
+    {
+      over: "just the note's own space",
+      range: {
+        start: { jsonPath: noteSpacePath, offset: 0 },
+        end: { jsonPath: noteSpacePath, offset: 1 },
+      },
+    },
+    {
+      over: "the text before the note through part of its last span",
+      range: {
+        start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+        end: { jsonPath: "$.content[2].content[1].content[2].content[0]", offset: 3 },
+      },
+    },
+  ])("keeps every space when an annotation over $over is set and removed", async ({ range }) => {
+    const mounted = await mountInView(crossRefUsj, standard);
+    const before = mounted.ref.current?.getUsj();
+
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, "note");
+      await Promise.resolve();
+    });
+    await act(async () => {
+      mounted.ref.current?.removeAnnotation(ORACLE_TYPE, "note");
+      await Promise.resolve();
+    });
+
+    expect(mounted.ref.current?.getUsj()).toEqual(before);
+  });
+
+  it("keeps the space when a character is typed into it and deleted again", async () => {
+    const mounted = await mountInView(crossRefUsj, standard);
+    const before = mounted.ref.current?.getUsj();
+    const $noteSpace = () => {
+      const node = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: noteSpacePath, offset: 0 },
+          end: { jsonPath: noteSpacePath, offset: 1 },
+        },
+        standard,
+      )?.anchor.getNode();
+      if (!$isTextNode(node) || node.getTextContent() !== " ")
+        throw new Error("the note's own space did not resolve");
+      return node;
+    };
+
+    await act(async () => {
+      mounted.lexical.update(() => {
+        $noteSpace().select(1, 1);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        selection.insertText("a");
+      });
+      await Promise.resolve();
+    });
+    const typedNote = settledPara(mounted.ref.current?.getUsj(), 2).content?.[1];
+    if (!typedNote || typeof typedNote === "string") throw new Error("expected the note");
+    expect(typedNote.content?.[1]).toBe(" a");
+    await act(async () => {
+      mounted.lexical.update(() => {
+        // What Backspace does to the typed character (jsdom has no native selection to extend).
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed())
+          throw new Error("no collapsed range selection");
+        const { key, offset } = selection.anchor;
+        selection.anchor.set(key, offset - 1, "text");
+        selection.removeText();
+      });
+      await Promise.resolve();
+    });
+
+    expect(mounted.ref.current?.getUsj()).toEqual(before);
   });
 });
