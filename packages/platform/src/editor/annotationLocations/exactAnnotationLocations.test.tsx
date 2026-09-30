@@ -17,7 +17,10 @@ import {
   richUsj,
 } from "./annotationLocations.test-helpers";
 import { copyEvent, pasteEvent } from "../markerEdit/markerEdit.test-helpers";
-import { displayAnnotated } from "../markerEdit/displayAnnotations.test-helpers";
+import {
+  displayAnnotated,
+  settleByBlurAndCommit,
+} from "../markerEdit/displayAnnotations.test-helpers";
 import {
   $textContaining,
   contentPath,
@@ -83,8 +86,9 @@ type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
 type WordChar = MarkerObject & { lemma?: string };
 
 const lemmaWord: WordChar = { type: "char", marker: "w", lemma: "grace", content: ["grace"] };
-/** `\p In the \w grace|lemma="grace"\w* of God`. `lemma` alone is the `\w` default attribute, so
- * the display is the bare `|grace` run and the key is never spelled. */
+/** `twoParaUsj`'s `\id GEN` / `\c 1` header, `\p In the \w grace|lemma="grace"\w* of God` as the
+ * first paragraph, and `\p depart here` as the second. `lemma` alone is the `\w` default
+ * attribute, so the display is the bare `|grace` run and the key is never spelled. */
 const lemmaUsj: Usj = twoParaUsj(["In the ", lemmaWord, " of God"]);
 /** `grace`, the `\w` span's `lemma` value. */
 const lemmaRange: AnnotationRange = {
@@ -172,6 +176,7 @@ async function pasteAtEndOfParagraph(
 describe("a pasted copy of annotated display bytes", () => {
   it.each<{ mode: StructureProtectionMode; path: string }>([
     { mode: "off", path: "Lexical's rich-paste node insertion" },
+    // Pins the stateless HTML clipboard path, not the sanitizer stripping a carried annotation.
     { mode: "protected", path: "the structure-protection html sanitizer" },
   ])("holds no annotation: an internal paste through $path ($mode)", async ({ mode }) => {
     const mounted = await mountStandardViewEditor(lemmaUsj, { structureProtectionMode: mode });
@@ -280,14 +285,6 @@ describe("an annotation inside a figure caption", () => {
     },
   );
 });
-
-/** Settle the scope the way an abandoned edit does: blur, then commit the pending literal. */
-function settle(mounted: Pick<MountedInView, "lexical" | "ref">): void {
-  const rootElement = mounted.lexical.getRootElement();
-  if (!rootElement) throw new Error("editor root not found");
-  act(() => rootElement.blur());
-  act(() => mounted.ref.current?.commitPendingMarkerEdits());
-}
 
 /** The text of every mark holding `type`/`id`, in document order. Call inside a read. */
 function $markTexts(type: string, id: string): string[] {
@@ -458,7 +455,7 @@ describe("a range into part of an inline element", () => {
     expect(before).toEqual([" the ", "LO"]);
 
     await typeOver(mounted.lexical, " God", " God \\bd x\\bd*");
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     // The typed literal settled into a span, so the paragraph really was re-tokenized.
     expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
@@ -915,7 +912,7 @@ describe("removal is reported by what holds the annotation now", () => {
       mounted.ref.current?.setAnnotation(lemmaRange, "test", "L", { onRemove });
       await Promise.resolve();
     });
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
     expect(displayAnnotated(mounted.lexical)).toEqual({ L: ["grace"] });
     expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "L"))).toEqual(
       [],
@@ -977,7 +974,7 @@ describe("removal is reported by what holds the annotation now", () => {
   it("keeps an annotation a mark still holds reported through that mark alone", async () => {
     const onRemove = vi.fn<TypedMarkOnRemove>();
     const mounted = await mountTypingLemma();
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
     await act(async () => {
       mounted.ref.current?.setAnnotation(
         { start: { jsonPath: contentPath([2, 0]), offset: 0 }, end: lemmaRange.end },
@@ -1030,7 +1027,7 @@ describe("removal is reported by what holds the annotation now", () => {
       });
 
     await typeOver(mounted.lexical, "lie", "lie \\nd LORD\\nd*");
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(spanContentIn(mounted.ref.current?.getUsj(), "nd")).toEqual(["LORD"]);
     const $held = (id: string) => () => $markTexts("external-test", id).join("");
@@ -1291,7 +1288,7 @@ describe("removal is reported by what holds the annotation now", () => {
 
     // The wrap's own commit already settles the pending typing; the explicit settle holds the row
     // either way.
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "D"))).toEqual(
       [],
@@ -1322,7 +1319,7 @@ describe("removal is reported by what holds the annotation now", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
     await act(async () => mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined));
     expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "X"))).toEqual([
       "nd ",

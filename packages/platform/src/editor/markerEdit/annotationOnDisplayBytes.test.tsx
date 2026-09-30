@@ -14,8 +14,13 @@ import {
   twoParaUsj,
   typeOver,
 } from "../positions/positions.test-helpers";
-import { $carrierHolding, displayAnnotated } from "./displayAnnotations.test-helpers";
-import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
+import {
+  $carrierHolding,
+  appendToWord,
+  displayAnnotated,
+  settleByBlurAndCommit,
+} from "./displayAnnotations.test-helpers";
+import { MarkerObject, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
@@ -37,7 +42,7 @@ import {
   NBSP,
   TypedMarkOnRemove,
 } from "shared";
-import { AnnotationRange } from "shared-react";
+import { AnnotationRange, getEditorDelta } from "shared-react";
 import { Mock, vi } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
@@ -94,6 +99,22 @@ function paraText(mounted: Mounted): string {
   return mounted.lexical
     .getEditorState()
     .read(() => $getRoot().getChildren()[2]?.getTextContent() ?? "");
+}
+
+/** A location at the offset midpoint strictly inside `range`, when its two ends name the same
+ * property with at least one byte of room between them (e.g. byte 3 of the run `|grace` is
+ * `['lemma'] propertyOffset 2`); `range.end` otherwise, since a single-byte range — every numeric
+ * annotation here but `lemma` and `who` — has no interior of its own. */
+function interiorLocation(range: AnnotationRange): UsjDocumentLocation {
+  const { start, end } = range;
+  if (
+    "propertyOffset" in start &&
+    "propertyOffset" in end &&
+    start.jsonPath === end.jsonPath &&
+    end.propertyOffset - start.propertyOffset >= 2
+  )
+    return { ...end, propertyOffset: Math.floor((start.propertyOffset + end.propertyOffset) / 2) };
+  return end;
 }
 
 describe("an annotation on a char span's attribute value", () => {
@@ -240,14 +261,6 @@ describe("a display-only annotation dropped by a whole-state replacement", () =>
   });
 });
 
-/** Settle the scope the way an abandoned edit does: blur, then commit the pending literal. */
-function settle(mounted: Mounted): void {
-  const rootElement = mounted.lexical.getRootElement();
-  if (!rootElement) throw new Error("editor root not found");
-  act(() => rootElement.blur());
-  act(() => mounted.ref.current?.commitPendingMarkerEdits());
-}
-
 /** One display-byte kind: the document, the settled range naming its bytes, what the carrier
  * then holds, and the paragraph an unrelated literal is typed into to force a settle. */
 interface Kind {
@@ -350,12 +363,13 @@ describe.each(KINDS)("an annotation on $name", ({ usj, range, held, literalHost 
     const plain = await mountStandardViewEditor(usj);
     const annotated = await mountStandardViewEditor(usj);
     await annotate(annotated, range);
+    const point = interiorLocation(range);
     for (const mounted of [plain, annotated])
       await act(async () => {
-        mounted.ref.current?.setSelection({ start: range.end });
+        mounted.ref.current?.setSelection({ start: point });
         await Promise.resolve();
       });
-    expect(plain.ref.current?.getSelection()).toEqual({ start: range.end });
+    expect(plain.ref.current?.getSelection()).toEqual({ start: point });
     expect(annotated.ref.current?.getSelection()).toEqual(plain.ref.current?.getSelection());
   });
 
@@ -382,7 +396,7 @@ describe.each(KINDS)("an annotation on $name", ({ usj, range, held, literalHost 
     const mounted = await mountStandardViewEditor(usj);
     await annotate(mounted, range);
     await typeOver(mounted.lexical, literalHost, `${literalHost} \\wj x\\wj*`);
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(JSON.stringify(mounted.ref.current?.getUsj())).toContain('"marker":"wj"');
     expect(displayAnnotated(mounted.lexical)).toEqual({ "1": held });
@@ -403,13 +417,14 @@ describe("a collapsed note's caller", () => {
       start: { jsonPath: propertyPath([2, 1], "caller"), propertyOffset: 0 },
       end: { jsonPath: propertyPath([2, 1], "caller"), propertyOffset: 1 },
     });
-    expect(Object.keys(displayAnnotated(mounted.lexical))).toEqual(["1"]);
+    // A collapsed caller is a decorator: its own text is empty, so the covered text is too.
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": [""] });
     expect(mounted.ref.current?.getUsj()).toEqual(usj);
   });
 });
 
 describe("an annotated chapter number", () => {
-  it("is carried through a settle of its chapter", async () => {
+  it("is carried through a settle of the chapter's alternate-number attribute", async () => {
     const mounted = await mountStandardViewEditor(twoParaUsj(["In the beginning"]));
     await annotate(mounted, chapterNumberRange);
     await act(async () => {
@@ -464,6 +479,11 @@ describe("typing inside an annotated alternate number", () => {
     expect(annotatedChange).toHaveBeenCalledTimes(1);
     expect(annotatedChange.mock.calls.at(-1)?.[0]).toEqual(plainChange.mock.calls.at(-1)?.[0]);
     expect(annotatedChange.mock.calls.at(-1)?.[1]).toEqual(plainChange.mock.calls.at(-1)?.[1]);
+    // A full-document delta walks every node, including the annotated verse's own embed, not just
+    // the ops the edit itself announced.
+    expect(getEditorDelta(annotated.lexical.getEditorState())).toEqual(
+      getEditorDelta(plain.lexical.getEditorState()),
+    );
     expect(displayAnnotated(annotated.lexical)).toEqual({ "1": ["3"] });
   });
 });
@@ -565,15 +585,7 @@ describe("a comment mark that the settle leaves on display bytes alone", () => {
     const bareWord: MarkerObject = { type: "char", marker: "w", content: ["grace"] };
     const mounted = await mountStandardViewEditor(twoParaUsj(["In the ", bareWord, " of God"]));
     const typed = '|lemma="grace"';
-    await act(async () => {
-      mounted.lexical.update(() => {
-        const word = $textContaining("grace");
-        word.setTextContent(`${NBSP}grace${typed}`);
-        word.select(word.getTextContentSize(), word.getTextContentSize());
-      });
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await appendToWord(mounted.lexical, typed);
     await act(async () => {
       mounted.lexical.update(() => {
         const text = $textContaining(typed);
@@ -589,9 +601,12 @@ describe("a comment mark that the settle leaves on display bytes alone", () => {
     });
     // The settle re-spells `|lemma="grace"` as `|grace`: of the marked bytes only the `|` is kept,
     // so the comment is left on the run's `|` with no mark.
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
     expect(markCount(mounted.lexical)).toBe(0);
     expect(displayAnnotated(mounted.lexical)).toEqual({ c1: ["|"] });
+    // The mark becoming a display-only carrier is not a loss: the annotation is still held, so the
+    // settle itself reports nothing.
+    expect(onRemove).not.toHaveBeenCalled();
     const callsBefore = onRemove.mock.calls.length;
 
     await act(async () => {

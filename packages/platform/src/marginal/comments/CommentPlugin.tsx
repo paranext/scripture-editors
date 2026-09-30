@@ -942,14 +942,19 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
                 hasAnchorKey = true;
               }
             } else if (anchor.type === "element" && $isElementNode(anchorNode)) {
-              // An element point sits between two children; a decorator carrier on either side
-              // (the caret directly in front of, or just after, a collapsed one) can hold an id no
-              // text point names.
+              // An element point sits between two children; a carrier on either side (the caret
+              // directly in front of, or just after, one) can hold an id no text point names. The
+              // child BEFORE the caret is read at its own text length — the caret sits at its END,
+              // not its start — while a decorator has no text of its own, so 0 is its only offset.
               const children = anchorNode.getChildren();
               const commentIDs = new Set<string>();
-              for (const child of [children[anchor.offset - 1], children[anchor.offset]]) {
-                if (child)
-                  $commentIdsAt(child, 0).forEach((commentID) => commentIDs.add(commentID));
+              for (const [child, isBefore] of [
+                [children[anchor.offset - 1], true],
+                [children[anchor.offset], false],
+              ] as const) {
+                if (!child) continue;
+                const offset = isBefore && $isTextNode(child) ? child.getTextContentSize() : 0;
+                $commentIdsAt(child, offset).forEach((commentID) => commentIDs.add(commentID));
               }
               if (commentIDs.size > 0) {
                 setActiveIDs([...commentIDs]);

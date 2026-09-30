@@ -140,6 +140,11 @@ describe("$carrierHoldableRange", () => {
     ],
     ["a decorator, held whole", () => $createImmutableChapterNode("1"), [0, 0]],
     ["an unmatched closer, held whole", () => $createImmutableUnmatchedNode("*"), [0, 2]],
+    [
+      "a text carrier whose bytes are entirely whitespace",
+      () => $createTextNode(`${NBSP}${NBSP}`),
+      [2, 2],
+    ],
   ])("clamps %s", (_description, $makeNode, expected) => {
     const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
     editor.update(

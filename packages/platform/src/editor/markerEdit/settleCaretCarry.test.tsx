@@ -17,7 +17,7 @@ import {
   typeOver,
   $textContaining,
 } from "../positions/positions.test-helpers";
-import { displayAnnotated } from "./displayAnnotations.test-helpers";
+import { appendToWord, displayAnnotated } from "./displayAnnotations.test-helpers";
 import { IDLE_SETTLE_DELAY_MS } from "./MarkerEditPlugin";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -186,21 +186,6 @@ function caretText(lexical: LexicalEditor): string {
     };
     return walk(para).replaceAll(NBSP, " ");
   });
-}
-
-/** Append `typed` to the `\w` span's word, with the caret `caretFromEnd` bytes before its end. */
-async function appendToWord(
-  lexical: LexicalEditor,
-  typed: string,
-  caretFromEnd = 0,
-): Promise<void> {
-  await inOneUpdate(lexical, () => {
-    const word = $textContaining("grace");
-    const text = `${word.getTextContent()}${typed}`;
-    word.setTextContent(text);
-    word.select(text.length - caretFromEnd, text.length - caretFromEnd);
-  });
-  expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
 }
 
 /** The settled first paragraph. */

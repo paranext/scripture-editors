@@ -22,7 +22,7 @@ import {
   typeOver,
   $textContaining,
 } from "../positions/positions.test-helpers";
-import { displayAnnotated } from "./displayAnnotations.test-helpers";
+import { displayAnnotated, settleByBlurAndCommit } from "./displayAnnotations.test-helpers";
 import { $pendGlyphEdit } from "./markerEdit.test-helpers";
 import { $rebuildParas } from "./tier2Rebuild.utils";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -125,14 +125,6 @@ async function annotate(
   });
 }
 
-/** Settle the scope the way an abandoned edit does: blur, then commit the pending literal. */
-function settle(mounted: Mounted): void {
-  const rootElement = mounted.lexical.getRootElement();
-  if (!rootElement) throw new Error("editor root not found");
-  act(() => rootElement.blur());
-  act(() => mounted.ref.current?.commitPendingMarkerEdits());
-}
-
 /** The two-paragraph doc with `bravo` annotated and nothing pending yet. */
 async function mountWithAnnotatedBravo(onRemove?: TypedMarkOnRemove): Promise<Mounted> {
   const mounted = await mountStandardViewEditor(twoParaUsj([body]));
@@ -148,7 +140,7 @@ describe("an annotation inside a settling paragraph", () => {
     await typeOver(mounted.lexical, literalHost, withLiteral);
     expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
 
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     // The settle really happened: the typed literal is a char span now.
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
@@ -161,7 +153,7 @@ describe("an annotation inside a settling paragraph", () => {
     const mounted = await mountWithAnnotatedBravo(onRemove);
 
     await typeOver(mounted.lexical, literalHost, withLiteral);
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     // Positive controls first: `not.toHaveBeenCalled` is equally happy against a settle that never
     // ran and against a carry that dropped the mark without reporting it, so pin that the settle
@@ -174,7 +166,7 @@ describe("an annotation inside a settling paragraph", () => {
   it("leaves the paragraph a Tier-2 fixed point, annotation and all", async () => {
     const mounted = await mountWithAnnotatedBravo();
     await typeOver(mounted.lexical, literalHost, withLiteral);
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     let changed = false;
     act(() =>
@@ -203,7 +195,7 @@ describe("an annotation inside a settling paragraph", () => {
     expect(annotatedIDSets(mounted.lexical)).toEqual([{ [markType("test")]: ["1", "2"] }]);
 
     await typeOver(mounted.lexical, literalHost, withLiteral);
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(annotatedText(mounted.lexical)).toEqual(["bravo"]);
     expect(annotatedIDSets(mounted.lexical)).toEqual([{ [markType("test")]: ["1", "2"] }]);
@@ -217,7 +209,7 @@ describe("an annotation inside a settling paragraph", () => {
     await annotate(mounted, bravoRange, "1");
     await typeOver(mounted.lexical, "bravo", "\\nd LORD\\nd*");
 
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
     expect(annotatedText(mounted.lexical)).toEqual(["LORD"]);
@@ -245,7 +237,7 @@ describe("an annotation inside a settling paragraph", () => {
     expect(annotatedText(mounted.lexical)).toEqual(["\u00a0\u00a0"]);
 
     await typeOver(mounted.lexical, "bravo charlie", "bravo charlie \\nd LORD\\nd*");
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
     expect(annotatedText(mounted.lexical)).toEqual([]);
@@ -259,7 +251,7 @@ describe("an annotation inside a settling paragraph", () => {
 
     // Type the literal over the MIDDLE word, so neither annotated end is the edited node.
     await typeOver(mounted.lexical, " bravo ", " bravo \\nd LORD\\nd* ");
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
     expect(annotatedText(mounted.lexical)).toEqual(["alpha", "charlie"]);
@@ -319,7 +311,7 @@ describe("an annotation whose bytes include a preserved node", () => {
     expect(before.join("")).toContain("bravo");
 
     await typeOver(mounted.lexical, " charlie", " charlie \\nd LORD\\nd*");
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
     // The note itself is preserved whole, so the annotation's own text is unchanged apart from
@@ -375,7 +367,7 @@ describe("an annotation inside settling note content", () => {
     expect(annotatedText(mounted.lexical)).toEqual(["bravo"]);
 
     await typeOver(mounted.lexical, literalHost, withLiteral);
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     // The note's own content re-tokenized: the literal is a char span inside the note.
     expect(
@@ -390,7 +382,7 @@ describe("an annotation inside settling note content", () => {
     const mounted = await mountWithAnnotatedNoteBody(onRemove);
 
     await typeOver(mounted.lexical, literalHost, withLiteral);
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     // Positive controls first — see the paragraph row of the same name. A note's mark is removed
     // DIRECTLY by the rebuild (it is one of the note's own children), so the suppression this row
@@ -486,7 +478,7 @@ describe("a comment mark over typed attribute bytes the settle re-spells away", 
       await Promise.resolve();
       await Promise.resolve();
     });
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     // The settle really happened: the attribute is the span's own now.
     expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
@@ -540,7 +532,7 @@ describe("a comment mark over typed attribute bytes the settle re-spells away", 
       await Promise.resolve();
       await Promise.resolve();
     });
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     // The mark over `grace|` keeps its word; the settled `|` is the attribute run's own display
     // byte, which a mark never splits off.
@@ -610,7 +602,7 @@ describe("an annotation that begins on a preserved node", () => {
     expect(before[0]).toContain("bravo");
 
     await typeOver(mounted.lexical, literalHost, withLiteral);
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
     // The note is preserved whole across the splice, and the mark it started on still holds it —
@@ -648,7 +640,7 @@ describe("an annotation that begins on a preserved node", () => {
     expect(annotatedIDSets(mounted.lexical)).toEqual([{ [markType("test")]: ["1", "2"] }]);
 
     await typeOver(mounted.lexical, literalHost, withLiteral);
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
     expect(annotatedText(mounted.lexical)).toEqual(before);
@@ -687,7 +679,7 @@ describe("an annotation that begins on a preserved node", () => {
     expect(before[0]).not.toContain("bravo");
 
     await typeOver(mounted.lexical, literalHost, `bravo${withLiteral}`);
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
     // Both ends of a mark over nothing but a preserved node anchor just past it, so there is no
@@ -744,7 +736,7 @@ describe("annotations in a note's direct text", () => {
     expect(annotatedText(mounted.lexical)).toEqual(["alpha", "bravo"]);
 
     await typeOver(mounted.lexical, literalHost, withLiteral);
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
     expect(annotatedText(mounted.lexical)).toEqual(["alpha", "bravo"]);
@@ -771,7 +763,7 @@ describe("annotations in a note's direct text", () => {
       expect(annotatedText(mounted.lexical)).toEqual(["bb"]);
 
       await typeOver(mounted.lexical, " cc ee", " cc ee \\nd LORD\\nd*");
-      settle(mounted);
+      settleByBlurAndCommit(mounted);
 
       expect(annotatedText(mounted.lexical)).toEqual(["bb"]);
     });
@@ -817,7 +809,7 @@ describe("an annotation that begins with a whole char span", () => {
     ).toBe(true);
 
     await typeOver(mounted.lexical, " words", " words \\wj x\\wj*");
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     // The span's glyphs and separator are display, not content: the carried mark covers the
     // span's text and what follows it, and the separator stays the span's own.
@@ -872,7 +864,7 @@ describe("a comment mark in a chapter's settle region", () => {
     });
     const pending = mounted.ref.current?.getUsj();
 
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
     const settled = mounted.ref.current?.getUsj();
 
     expect(annotatedText(mounted.lexical)).toEqual(["alt"]);
@@ -989,7 +981,7 @@ describe("annotations around a typed footnote literal", () => {
 
       await typeOver(mounted.lexical, " bravo ", ` bravo ${footnote} `);
       expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
-      settle(mounted);
+      settleByBlurAndCommit(mounted);
 
       expect(hasSettledNote(mounted.lexical)).toBe(true);
       expect(markShapes(mounted.lexical)).toEqual(["alpha", "charlie"]);
@@ -1010,7 +1002,7 @@ describe("annotations around a typed footnote literal", () => {
 
       await typeOver(mounted.lexical, "bravo charlie", `bravo ${footnote} charlie`);
       expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
-      settle(mounted);
+      settleByBlurAndCommit(mounted);
 
       expect(markShapes(mounted.lexical)).toEqual(["bravo <note> charlie"]);
       expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
@@ -1033,7 +1025,7 @@ describe("annotations around a typed footnote literal", () => {
         },
         "1",
       );
-      settle(mounted);
+      settleByBlurAndCommit(mounted);
 
       expect(hasSettledNote(mounted.lexical)).toBe(true);
       expect(annotatedText(mounted.lexical)).toEqual(["note"]);
@@ -1056,7 +1048,7 @@ describe("annotations around a typed footnote literal", () => {
 
       await typeOver(mounted.lexical, "alpha bravo ", "alpha \\fe + \\ft x\\fe* bravo ");
       expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
-      settle(mounted);
+      settleByBlurAndCommit(mounted);
 
       expect(
         treeHas(
@@ -1074,7 +1066,7 @@ describe("annotations around a typed footnote literal", () => {
     function pendingAndSettledUsj(mounted: Mounted) {
       expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
       const pending = mounted.ref.current?.getUsj();
-      settle(mounted);
+      settleByBlurAndCommit(mounted);
       return { pending, settled: mounted.ref.current?.getUsj() };
     }
 
@@ -1119,7 +1111,7 @@ describe("annotations around a typed footnote literal", () => {
       const mounted = await mountWithComment("charlie");
       await typeOver(mounted.lexical, "alpha bravo ", "alpha \\f + \\ft ");
       await typeOver(mounted.lexical, " delta", " text\\f* delta");
-      settle(mounted);
+      settleByBlurAndCommit(mounted);
 
       expect(hasSettledNote(mounted.lexical)).toBe(true);
       expect(annotatedText(mounted.lexical)).toEqual(["charlie"]);
@@ -1190,7 +1182,7 @@ describe("a comment mark across a leaf display owner and its attribute run", () 
     ]);
 
     await typeOver(mounted.lexical, " is truth?", " is truth? \\nd LORD\\nd*");
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(treeHas(mounted.lexical, $isCharNode)).toBe(true);
     expect(settledItems(mounted, "ms").filter((ms) => ms.marker === "qt-s")).toEqual([quote]);

@@ -16,7 +16,7 @@ import {
   NodeKey,
 } from "lexical";
 import { createRef } from "react";
-import { $addDisplayAnnotation, COMMENT_MARK_TYPE } from "shared";
+import { $addDisplayAnnotation, $isMarkerNode, COMMENT_MARK_TYPE } from "shared";
 import { $isImmutableNoteCallerNode, getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
 import { MockInstance, vi } from "vitest";
 
@@ -251,5 +251,86 @@ describe("Marginal comments panel", () => {
     const callerElement = container.querySelector(".immutable-note-caller");
     if (!callerElement) throw new Error("expected the note caller to render");
     expect(callerElement.classList.contains("selected")).toBe(true);
+  });
+
+  /** A `\nd` char span, whose opening marker glyph (`\nd`) is a text carrier. */
+  const sampleUsjWithCharSpan: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+      { type: "chapter", marker: "c", number: "1" },
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "verse", marker: "v", number: "1" },
+          "before ",
+          { type: "char", marker: "nd", content: ["name"] },
+          " after",
+        ],
+      },
+    ],
+  };
+
+  /** Mounts Marginal over `sampleUsjWithCharSpan` and holds comment `"c1"` on only the LAST
+   * character of the `\nd` span's opening marker glyph (`\nd`) — no mark. */
+  async function renderMarginalWithGlyphTailComment() {
+    const ref = createRef<MarginalRef>();
+    let mountedContainer: HTMLElement | undefined;
+    await act(async () => {
+      const { container } = render(
+        <Marginal
+          ref={ref}
+          defaultUsj={sampleUsjWithCharSpan}
+          scrRef={{ book: "GEN", chapterNum: 1, verseNum: 1 }}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        />,
+      );
+      mountedContainer = container;
+    });
+    if (!ref.current) throw new Error("MarginalRef did not mount");
+    if (!mountedContainer) throw new Error("container did not mount");
+    const lexical = getEmbeddedLexicalEditor(mountedContainer);
+
+    let openerKey!: NodeKey;
+    let charKey!: NodeKey;
+    await act(async () => {
+      lexical.update(() => {
+        const opener = findDescendant($getRoot(), $isMarkerNode);
+        if (!opener) throw new Error("expected an opening marker glyph in the seed content");
+        openerKey = opener.getKey();
+        const parent = opener.getParent();
+        if (!parent) throw new Error("opener glyph has no parent");
+        charKey = parent.getKey();
+        const size = opener.getTextContentSize();
+        $addDisplayAnnotation(opener, COMMENT_MARK_TYPE, "c1", size - 1, size);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    return { marginal: ref.current, lexical, container: mountedContainer, openerKey, charKey };
+  }
+
+  it("names a comment held on the tail of a text carrier from an element-point caret behind it", async () => {
+    const { lexical, openerKey, charKey } = await renderMarginalWithGlyphTailComment();
+
+    await act(async () => {
+      lexical.update(() => {
+        const opener = $getNodeByKey(openerKey);
+        const charNode = $getNodeByKey(charKey);
+        if (!opener || !charNode || !$isElementNode(charNode))
+          throw new Error("expected the char span and its opener glyph");
+        const index = opener.getIndexWithinParent();
+        charNode.select(index + 1, index + 1);
+      });
+      // The effect that marks an active carrier "selected" schedules its own commit on a 0ms timer.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const openerElement = lexical.getElementByKey(openerKey);
+    if (!openerElement) throw new Error("expected the opener glyph to render");
+    expect(openerElement.classList.contains("selected")).toBe(true);
   });
 });

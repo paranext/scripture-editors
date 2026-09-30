@@ -15,7 +15,7 @@ import {
   typeOver,
   $textContaining,
 } from "../positions/positions.test-helpers";
-import { displayAnnotated } from "./displayAnnotations.test-helpers";
+import { displayAnnotated, settleByBlurAndCommit } from "./displayAnnotations.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -62,14 +62,6 @@ async function annotate(mounted: Mounted, range: AnnotationRange): Promise<void>
     mounted.ref.current?.setAnnotation(range, "test", "1");
     await Promise.resolve();
   });
-}
-
-/** Settle the scope the way an abandoned edit does: blur, then commit the pending literal. */
-function settle(mounted: Mounted): void {
-  const rootElement = mounted.lexical.getRootElement();
-  if (!rootElement) throw new Error("editor root not found");
-  act(() => rootElement.blur());
-  act(() => mounted.ref.current?.commitPendingMarkerEdits());
 }
 
 /** An ordinary edit in the second paragraph, which a wedged editor would silently drop. */
@@ -120,7 +112,7 @@ describe("an annotation that runs out of a char span", () => {
     await annotate(mounted, outOfCharRange);
     const before = annotatedText(mounted.lexical);
     await typeOver(mounted.lexical, " words", " words \\wj x\\wj*");
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(annotatedText(mounted.lexical)).toEqual(before);
   });
@@ -137,7 +129,7 @@ describe("an annotation that runs out of a char span", () => {
     const before = trimmed(annotatedText(mounted.lexical));
     expect(before).toContain("name");
     await typeOver(mounted.lexical, " words", " words \\wj x\\wj*");
-    settle(mounted);
+    settleByBlurAndCommit(mounted);
 
     expect(trimmed(annotatedText(mounted.lexical))).toEqual(before);
   });

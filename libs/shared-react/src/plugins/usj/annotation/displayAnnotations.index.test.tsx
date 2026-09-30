@@ -19,6 +19,7 @@ import {
 } from "lexical";
 import {
   $addDisplayAnnotation,
+  $createCharNode,
   $createMarkerNode,
   $createParaNode,
   $createTypedMarkNode,
@@ -31,12 +32,22 @@ import {
   getDisplayAnnotationRegistration,
   textTypeState,
   TypedMarkNode,
+  TypedMarkOnClick,
+  TypedMarkOnMouseEnter,
+  TypedMarkOnMouseLeave,
+  TypedMarkOnRemove,
 } from "shared";
 import { vi } from "vitest";
 
-/** The mark theme names the platform editor uses (`editor.theme.ts:6-7`); the painter reads them
- * from the editor's theme exactly as `TypedMarkNode.createDOM` does. */
+/** The platform editor's own theme names for `typedMark`/`typedMarkOverlap`; the painter reads
+ * them from the editor's theme exactly as `TypedMarkNode.createDOM` does. */
 const THEME = { typedMark: "editor-typed-mark", typedMarkOverlap: "editor-typed-markOverlap" };
+
+/** The container and release function `setup` most recently created, so `afterEach` can clean up
+ * a test that forgot either — a plain function return gives the test its own copy to call, but
+ * nothing else sees whether it did. */
+let lastContainer: HTMLElement | undefined;
+let lastRelease: (() => void) | undefined;
 
 function setup() {
   const editor = createEditor({
@@ -48,9 +59,11 @@ function setup() {
     },
   });
   const container = document.createElement("div");
+  lastContainer = container;
   document.body.appendChild(container);
   editor.setRootElement(container);
   const { index, release } = acquireDisplayAnnotationIndex(editor);
+  lastRelease = release;
   let run!: TextNode;
   editor.update(
     () => {
@@ -61,6 +74,13 @@ function setup() {
   );
   return { editor, run, index, release };
 }
+
+afterEach(() => {
+  lastRelease?.();
+  lastContainer?.remove();
+  lastRelease = undefined;
+  lastContainer = undefined;
+});
 
 function classesOf(editor: LexicalEditor, node: TextNode): string[] {
   return [...(editor.getElementByKey(node.getKey())?.classList ?? [])];
@@ -74,20 +94,48 @@ function wrap(
   to: number,
   type: string,
   id: string,
-  callbacks: { onClick?: () => void; onRemove?: () => void } = {},
+  callbacks: {
+    onClick?: TypedMarkOnClick;
+    onRemove?: TypedMarkOnRemove;
+    onMouseEnter?: TypedMarkOnMouseEnter;
+    onMouseLeave?: TypedMarkOnMouseLeave;
+  } = {},
 ) {
   editor.update(
     () => {
       const selection = $createRangeSelection();
       selection.anchor.set(node.getKey(), from, "text");
       selection.focus.set(node.getKey(), to, "text");
-      $wrapSelectionInTypedMarkNode(selection, type, id, callbacks.onClick, callbacks.onRemove);
+      $wrapSelectionInTypedMarkNode(
+        selection,
+        type,
+        id,
+        callbacks.onClick,
+        callbacks.onRemove,
+        callbacks.onMouseEnter,
+        callbacks.onMouseLeave,
+      );
     },
     { discrete: true },
   );
 }
 
 describe("the display-annotation index", () => {
+  it("keeps painting while one of two acquisitions is still held, and stops once both release", () => {
+    const { editor, run, release: firstRelease } = setup();
+    const second = acquireDisplayAnnotationIndex(editor);
+    wrap(editor, run, 1, 6, "external-spelling", "a");
+    expect(classesOf(editor, run)).toContain(DISPLAY_ANNOTATION_CLASS_NAME);
+
+    second.release();
+    wrap(editor, run, 1, 4, "external-spelling", "c");
+    expect(classesOf(editor, run)).toContain("annotationId-c");
+
+    firstRelease();
+    wrap(editor, run, 0, 1, "external-spelling", "d");
+    expect(classesOf(editor, run)).not.toContain("annotationId-d");
+  });
+
   it("paints a carrier with the class names a mark gets, and unpaints it when the annotation goes", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 6, "external-spelling", "a");
@@ -151,6 +199,47 @@ describe("the display-annotation index", () => {
     wrap(editor, run, 1, 6, "external-spelling", "a", { onClick });
     editor.getElementByKey(run.getKey())?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(onClick).toHaveBeenCalledWith(expect.any(MouseEvent), "external-spelling", "a", "grace");
+    release();
+  });
+
+  it("calls the annotation's hover callbacks with the bytes it covers", () => {
+    const { editor, run, release } = setup();
+    const onMouseEnter = vi.fn();
+    const onMouseLeave = vi.fn();
+    wrap(editor, run, 1, 6, "external-spelling", "a", { onMouseEnter, onMouseLeave });
+    const element = editor.getElementByKey(run.getKey());
+    element?.dispatchEvent(new MouseEvent("mouseenter"));
+    element?.dispatchEvent(new MouseEvent("mouseleave"));
+    expect(onMouseEnter).toHaveBeenCalledWith(
+      expect.any(MouseEvent),
+      "external-spelling",
+      "a",
+      "grace",
+    );
+    expect(onMouseLeave).toHaveBeenCalledWith(
+      expect.any(MouseEvent),
+      "external-spelling",
+      "a",
+      "grace",
+    );
+    release();
+  });
+
+  it("repaints an annotation on an element Lexical re-creates", () => {
+    const { editor, run, release } = setup();
+    wrap(editor, run, 1, 6, "external-spelling", "a");
+    const before = editor.getElementByKey(run.getKey());
+    expect(before?.classList.contains("annotationId-a")).toBe(true);
+
+    // "code" format changes the node's own DOM tag, which forces Lexical to create a new element
+    // rather than update the old one.
+    editor.update(() => run.getLatest().setFormat("code"), { discrete: true });
+
+    const after = editor.getElementByKey(run.getKey());
+    expect(after).not.toBe(before);
+    expect(after?.tagName).toBe("CODE");
+    expect(after?.classList.contains("annotationId-a")).toBe(true);
+    expect(after?.classList.contains(DISPLAY_ANNOTATION_CLASS_NAME)).toBe(true);
     release();
   });
 
@@ -364,6 +453,25 @@ describe("the display-annotation index", () => {
           selection,
         });
         expect($displayAnnotationsOf(pasted)).toEqual([]);
+      },
+      { discrete: true },
+    );
+    release();
+  });
+
+  it("strips display annotations from an element subtree pasted with the rest", () => {
+    const { editor, release } = setup();
+    editor.update(
+      () => {
+        const glyph = $createMarkerNode("w");
+        $addDisplayAnnotation(glyph, "external-spelling", "a", 0, glyph.getTextContentSize());
+        const span = $createCharNode("w").append(glyph);
+        const selection = $getSelection() ?? $createRangeSelection();
+        editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+          nodes: [span],
+          selection,
+        });
+        expect($displayAnnotationsOf(glyph)).toEqual([]);
       },
       { discrete: true },
     );
