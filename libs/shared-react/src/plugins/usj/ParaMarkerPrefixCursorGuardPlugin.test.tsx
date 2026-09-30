@@ -15,6 +15,7 @@ import {
   LexicalEditor,
   PASTE_COMMAND,
   RangeSelection,
+  SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
 import {
@@ -1174,6 +1175,213 @@ describe("a non-collapsed selection spanning the prefix narrows instead of losin
     }
 
     expect(sawAnchorKey).toBe(content.getKey());
+  });
+});
+
+/** Dispatches `SELECTION_CHANGE_COMMAND` the way Lexical does after the browser moves the caret. */
+function dispatchSelectionChange(editor: LexicalEditor): void {
+  editor.update(
+    () => {
+      editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    },
+    { discrete: true },
+  );
+}
+
+// Home (and any other keyboard move to the start of the `\id` line) lands the browser caret at the
+// line's very start, which Lexical resolves to `(book, 0)` — in FRONT of the prefix glyph. Text typed
+// there would sit before `\id GEN ` on screen, while the save (which never writes the glyph as its
+// own node) puts it after.
+describe("a caret that comes to rest before the book's prefix moves past it", () => {
+  it("moves a (book, 0) caret to the start of the line's content", async () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        content = $createTextNode("Genesis");
+        book = $createBookLine("GEN", content);
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, book, 0);
+
+    dispatchSelectionChange(editor);
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(content, 0);
+    });
+  });
+
+  it("moves a (book, 0) caret on a line with no content to just past the prefix", async () => {
+    let book!: BookNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        book = $createBookLine("GEN");
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, book, 0);
+
+    dispatchSelectionChange(editor);
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(book, 1);
+    });
+  });
+
+  it("typing after the correction lands after the prefix", async () => {
+    let book!: BookNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        book = $createBookLine("GEN", $createTextNode("Genesis"));
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, book, 0);
+    dispatchSelectionChange(editor);
+
+    editor.update(
+      () => {
+        editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "x");
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      const rootBook = $getRoot().getFirstChild();
+      if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
+      expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}xGenesis`);
+    });
+  });
+
+  it("leaves a non-collapsed selection that reaches back to (book, 0) alone (Shift+Home)", async () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        content = $createTextNode("Genesis");
+        book = $createBookLine("GEN", content);
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, content, 3, book, 0);
+
+    dispatchSelectionChange(editor);
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(book, 0, content, 3);
+    });
+  });
+
+  it("leaves a (para, 0) caret alone — only the book's prefix is corrected here", async () => {
+    let para!: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("p").append(
+          $createImmutableTypedTextNode("marker", `\\p${NBSP}`),
+          $createTextNode("text"),
+        );
+        $getRoot().append(para);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, para, 0);
+
+    dispatchSelectionChange(editor);
+
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(para, 0);
+    });
+  });
+});
+
+describe("content that lands in front of the book's prefix is moved after it", () => {
+  it("moves text inserted before the prefix to just after it, keeping the caret in it", async () => {
+    let book!: BookNode;
+    let typed!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        book = $createBookLine("GEN", $createTextNode("Genesis"));
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+
+    editor.update(
+      () => {
+        typed = $createTextNode("abc");
+        book.getFirstChildOrThrow().insertBefore(typed);
+        typed.select(3, 3);
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      const rootBook = $getRoot().getFirstChild();
+      if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
+      expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}abcGenesis`);
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.isCollapsed()).toBe(true);
+      expect(selection.anchor.getNode().getTextContent().slice(0, selection.anchor.offset)).toBe(
+        "abc",
+      );
+    });
+  });
+
+  it("keeps the order of several nodes that land in front of the prefix", async () => {
+    let book!: BookNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        book = $createBookLine("GEN", $createTextNode("Genesis"));
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+
+    editor.update(
+      () => {
+        const prefix = book.getFirstChildOrThrow();
+        prefix.insertBefore($createTextNode("one "));
+        prefix.insertBefore($createTextNode("two ").toggleFormat("bold"));
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      const rootBook = $getRoot().getFirstChild();
+      if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
+      expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}one two Genesis`);
+    });
+  });
+
+  it("leaves a book with no prefix alone", async () => {
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append($createBookNode("GEN").append($createTextNode("Genesis")));
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+
+    editor.update(
+      () => {
+        const book = $getRoot().getFirstChild();
+        if (!$isBookNode(book)) throw new Error("expected a BookNode");
+        book.getFirstChildOrThrow().insertBefore($createTextNode("abc "));
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toBe("abc Genesis");
+    });
   });
 });
 

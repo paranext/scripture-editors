@@ -19,6 +19,7 @@ import {
   LexicalNode,
   PASTE_COMMAND,
   RangeSelection,
+  SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { mergeRegister } from "@lexical/utils";
 import { useEffect } from "react";
@@ -223,6 +224,68 @@ function $narrowSelectionBeforeCommand(): boolean {
 }
 
 /**
+ * Moves a COLLAPSED caret that has come to rest in front of the book's own prefix — the element
+ * point `(book, 0)` — to just past it.
+ *
+ * The browser puts the caret there for any keyboard move to the start of the `\id` line (Home,
+ * Ctrl+Home, ArrowUp from the line below): the prefix is a `contenteditable="false"` island, so the
+ * line's visual start is the boundary before it. Left there, typed text becomes the book's first
+ * child and renders in front of `\id GEN `, while the save — which never writes the glyph as its own
+ * node — puts it after the book code. A click reaching the same point is corrected by
+ * {@link $guardCursorAtParaStart}; this covers every other way of arriving.
+ *
+ * A non-collapsed selection is left alone: Shift+Home legitimately extends to the line's start, and
+ * every command that would remove or replace its span already narrows it past the prefix first
+ * ({@link $narrowSelectionPastBookPrefix}).
+ *
+ * Mutating: call inside `editor.update()` (a command listener already runs inside one).
+ *
+ * @returns `true` if the caret was moved, `false` if it was not in front of the prefix.
+ */
+function $guardCaretBeforeBookPrefix(): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const { anchor } = selection;
+  if (anchor.type !== "element" || anchor.offset !== 0) return false;
+  const book = anchor.getNode();
+  if (!$isBookNode(book) || !$isBookPrefixNode(book.getFirstChild())) return false;
+  $placeCaretAtBoundary(book, 1);
+  return true;
+}
+
+/**
+ * Keeps the book's own prefix the book's first child, by moving anything that has landed in front
+ * of it to directly after it — in order, so the line reads exactly as the save will write it: the
+ * serializer drops the glyph wherever it sits, so the content before it and after it are written
+ * as one run following the book code.
+ *
+ * {@link $guardCaretBeforeBookPrefix} keeps a user's caret from resting there, but not every
+ * insertion goes through a selection change first (a drop, a programmatic `select(0, 0)`), and
+ * everything else that reads the line — the deletion guards here, the arrow-key rules, the line's
+ * settle — finds the prefix as the book's first child.
+ *
+ * The prefix is recognized by its shape and marker text rather than its position, since its
+ * position is exactly what is wrong. A book built without one (a markerMode that shows no markers)
+ * has nothing to reorder.
+ *
+ * Registered as a `BookNode` transform, so it runs in the same update that made the change.
+ */
+function $keepBookPrefixFirst(book: BookNode): void {
+  const children = book.getChildren();
+  const markerText = `\\${book.getMarker()}`;
+  const prefixIndex = children.findIndex(
+    (child) => $isVisibleMarkerNode(child) && child.getTextContent().startsWith(markerText),
+  );
+  if (prefixIndex <= 0) return;
+
+  let insertionPoint: LexicalNode = children[prefixIndex];
+  for (const node of children.slice(0, prefixIndex)) {
+    insertionPoint.insertAfter(node);
+    insertionPoint = node;
+  }
+}
+
+/**
  * Keeps the cursor out of the places a paragraph's structural prefix occupies but no caret may
  * rest in, correcting a click to the first content position in the same update cycle.
  *
@@ -259,6 +322,10 @@ function $narrowSelectionBeforeCommand(): boolean {
  * `RangeSelection.insertText()`/`removeText()` instead of a delete command —
  * `CONTROLLED_TEXT_INSERTION_COMMAND`, `PASTE_COMMAND` and `CUT_COMMAND` too, each narrowed by
  * {@link $narrowSelectionBeforeCommand} ahead of every other handler registered for them.
+ *
+ * A collapsed caret that a keyboard move leaves in FRONT of the book's prefix (Home) is moved past
+ * it on `SELECTION_CHANGE_COMMAND` ({@link $guardCaretBeforeBookPrefix}), and anything that still
+ * lands there is moved after the prefix by a `BookNode` transform ({@link $keepBookPrefixFirst}).
  */
 export function ParaMarkerPrefixCursorGuardPlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -317,6 +384,24 @@ export function ParaMarkerPrefixCursorGuardPlugin(): null {
         COMMAND_PRIORITY_CRITICAL,
       ),
       editor.registerCommand(CUT_COMMAND, $narrowSelectionBeforeCommand, COMMAND_PRIORITY_CRITICAL),
+    );
+  }, [editor]);
+
+  useEffect(() => {
+    return mergeRegister(
+      // Below `DecoratorBoundarySelectionPlugin` (CRITICAL), which can itself produce `(book, 0)`
+      // when it snaps a caret that landed inside the prefix glyph to the glyph's leading edge; above
+      // the listeners that report the caret's position (e.g. `OnSelectionChangePlugin`, LOW), so
+      // they only ever see the corrected one. Never claims the command.
+      editor.registerCommand(
+        SELECTION_CHANGE_COMMAND,
+        () => {
+          $guardCaretBeforeBookPrefix();
+          return false;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+      editor.registerNodeTransform(BookNode, $keepBookPrefixFirst),
     );
   }, [editor]);
 

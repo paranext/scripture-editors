@@ -178,6 +178,12 @@ What follows from that:
   caret in it is a content position, and a collapsed caret there is CHARACTER source with
   `paraMarker: "id"` — which is what makes the character list (styles valid under `id`, plus every
   note style) non-empty and keeps the empty-to-paragraph fallback from firing.
+- **The prefix is always the book's first child, and nothing comes before it.** The browser puts a
+  keyboard caret on the boundary IN FRONT of the prefix (Home, Ctrl+Home), so a collapsed caret
+  that lands at `(book, 0)` is moved just past it on selection change, the same place a click there
+  is moved to. Anything that still lands in front (a drop, a programmatic insert) is moved after it
+  by a `BookNode` transform, in order — the save drops the prefix wherever it sits, so that is
+  exactly where the file puts it. Both live in `ParaMarkerPrefixCursorGuardPlugin`.
 - **A book is never RETAGGED.** `\id` names the book, so a paragraph pick in the line can only
   SPLIT: the tail after the caret becomes a new paragraph inserted directly after the book, with an
   open character span closed on the left and reopened in it. Typed `\p`, `\ip` or `\c ` bytes end
