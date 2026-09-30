@@ -43,6 +43,8 @@ import {
 } from "lexical";
 import {
   $isCharNode,
+  $isImmutableChapterNode,
+  $isImmutableUnmatchedNode,
   $isMarkerTrailingSeparator,
   $isNoteNode,
   $isTypedMarkNode,
@@ -52,7 +54,12 @@ import {
   NBSP,
   NoteNode,
 } from "shared";
-import { $getRangeFromUsjSelection, AnnotationRange, StructureProtectionMode } from "shared-react";
+import {
+  $getRangeFromUsjSelection,
+  AnnotationRange,
+  DISPLAY_ANNOTATION_CLASS_NAME,
+  StructureProtectionMode,
+} from "shared-react";
 import { vi } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
@@ -567,6 +574,104 @@ describe("a note's own content text", () => {
     });
   });
 });
+
+describe("display bytes the design holds whole", () => {
+  it("holds a chapter decorator a range passes over, in the views without editable markers", async () => {
+    const mounted = await mountInView(richUsj, oracleView("formatted"));
+
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[0].content[0]", offset: 11 },
+          end: { jsonPath: "$.content[2]" },
+        },
+        ORACLE_TYPE,
+        "ch",
+      );
+      await Promise.resolve();
+    });
+
+    const held = mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "ch"));
+    expect(held).toContain("[immutable-chapter]");
+    mounted.lexical.getEditorState().read(() => {
+      const chapter = $firstOfType($getRoot(), $isImmutableChapterNode);
+      if (!chapter) throw new Error("expected a chapter decorator");
+      const element = mounted.lexical.getElementByKey(chapter.getKey());
+      expect(element?.classList.contains(DISPLAY_ANNOTATION_CLASS_NAME)).toBe(true);
+    });
+  });
+
+  it("never holds a verse's trailing separator, so its removal reports the number alone", async () => {
+    const mounted = await mountInView(richUsj, oracleView("standard"));
+    const onRemove = vi.fn();
+
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[3].content[0]['number']", propertyOffset: 0 },
+          end: { jsonPath: "$.content[3].content[0]['number']", propertyOffset: 2 },
+        },
+        ORACLE_TYPE,
+        "v2",
+        { onRemove },
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      mounted.ref.current?.removeAnnotation(ORACLE_TYPE, "v2");
+      await Promise.resolve();
+    });
+
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(onRemove).toHaveBeenCalledWith(HELD_TYPE, "v2", "removed", "2");
+  });
+
+  it("holds an unmatched closer whole, never splitting it into a mark", async () => {
+    const unmatchedUsj: Usj = twoParaUsj(["x ", { type: "unmatched", marker: "*" }, " y"]);
+    const mounted = await mountInView(unmatchedUsj, oracleView("standard"));
+    const before = mounted.ref.current?.getUsj();
+
+    // The closer is a standalone content item (not text-run-coalesced), so it is named by the
+    // gaps on either side of it in its paragraph's own content array — in front of it (index 1)
+    // through behind it (index 2) — the same content-array-gap addressing R2's audit repro uses.
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[2]", offset: 1 },
+          end: { jsonPath: "$.content[2]", offset: 2 },
+        },
+        ORACLE_TYPE,
+        "u1",
+      );
+      await Promise.resolve();
+    });
+
+    mounted.lexical.getEditorState().read(() => {
+      const unmatched = $firstOfType($getRoot(), $isImmutableUnmatchedNode);
+      if (!unmatched) throw new Error("expected the unmatched closer");
+      expect(unmatched.getTextContent()).toBe("\\*");
+      expect($isTypedMarkNode(unmatched.getParent())).toBe(false);
+    });
+    const held = mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "u1"));
+    expect(held).toBe("\\*");
+    expect(mounted.ref.current?.getUsj()).toEqual(before);
+  });
+});
+
+/** The first node under `node` (itself included) that `predicate` accepts, by document order. Call
+ * inside a read or update. */
+function $firstOfType<T extends LexicalNode>(
+  node: LexicalNode,
+  predicate: (node: LexicalNode) => node is T,
+): T | undefined {
+  if (predicate(node)) return node;
+  if (!$isElementNode(node)) return undefined;
+  for (const child of node.getChildren()) {
+    const found = $firstOfType(child, predicate);
+    if (found) return found;
+  }
+  return undefined;
+}
 
 /** The first note under `node`. Call inside a read or update. */
 function $noteIn(node: LexicalNode): NoteNode | undefined {

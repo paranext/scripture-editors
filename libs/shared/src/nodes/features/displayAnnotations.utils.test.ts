@@ -1,8 +1,9 @@
 import { $createAttributeRunNode } from "../usj/AttributeRunNode.js";
+import { $createImmutableChapterNode } from "../usj/ImmutableChapterNode.js";
 import { usjBaseNodes } from "../usj/index.js";
 import { $createMilestoneNode } from "../usj/MilestoneNode.js";
 import { NBSP } from "../usj/node-constants.js";
-import { $createMarkerTrailingSeparator } from "../usj/node.utils.js";
+import { $createMarkerTrailingSeparator, getEditableCallerText } from "../usj/node.utils.js";
 import { getVisibleOpenMarkerText } from "../usj/markerText.utils.js";
 import { $createParaNode } from "../usj/ParaNode.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
@@ -11,6 +12,7 @@ import { textTypeState } from "../collab/delta.state.js";
 import { displayAnnotationsState, mapRangeThroughEdit } from "./displayAnnotations.state.js";
 import {
   $addDisplayAnnotation,
+  $carrierHoldableRange,
   $coveredDisplayText,
   $displayAnnotationIdsAt,
   $displayAnnotationsOf,
@@ -22,9 +24,10 @@ import {
   registerDisplayAnnotationBasis,
 } from "./displayAnnotations.utils.js";
 import { $createImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
+import { $createImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
 import { $createMarkerNode } from "./MarkerNode.js";
 import { TypedMarkNode } from "./TypedMarkNode.js";
-import { $createTextNode, $getRoot, $getState, $setState, TextNode } from "lexical";
+import { $createTextNode, $getRoot, $getState, $setState, LexicalNode, TextNode } from "lexical";
 import { vi } from "vitest";
 
 describe("mapRangeThroughEdit", () => {
@@ -96,6 +99,52 @@ describe("$isDisplayAnnotationCarrier", () => {
           false,
           false,
         ]);
+      },
+      { discrete: true },
+    );
+  });
+
+  it("also names a chapter in the views without editable markers, and an unmatched closer", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    editor.update(
+      () => {
+        expect($isDisplayAnnotationCarrier($createImmutableChapterNode("1"))).toBe(true);
+        expect($isDisplayAnnotationCarrier($createImmutableUnmatchedNode("*"))).toBe(true);
+      },
+      { discrete: true },
+    );
+  });
+});
+
+describe("$carrierHoldableRange", () => {
+  it.each<[string, () => LexicalNode, [number, number]]>([
+    [
+      "a verse's own trailing separator",
+      () => $createVerseNode("3", getVisibleOpenMarkerText("v", "3")),
+      [0, 4],
+    ],
+    [
+      "the spaces around an editable caller",
+      () => $createTextNode(getEditableCallerText("+")),
+      [1, 2],
+    ],
+    [
+      "a marker glyph, which has no edge whitespace of its own",
+      () => $createMarkerNode("nd"),
+      [0, 3],
+    ],
+    [
+      "an attribute run's text",
+      () => $setState($createTextNode('|lemma="grace"'), textTypeState, "attribute"),
+      [0, 14],
+    ],
+    ["a decorator, held whole", () => $createImmutableChapterNode("1"), [0, 0]],
+    ["an unmatched closer, held whole", () => $createImmutableUnmatchedNode("*"), [0, 2]],
+  ])("clamps %s", (_description, $makeNode, expected) => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    editor.update(
+      () => {
+        expect($carrierHoldableRange($makeNode())).toEqual(expected);
       },
       { discrete: true },
     );

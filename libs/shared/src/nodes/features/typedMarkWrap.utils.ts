@@ -14,11 +14,13 @@ import { $isMarkerTrailingSeparator } from "../usj/node.utils.js";
 import { $isVerseNode } from "../usj/VerseNode.js";
 import {
   $addDisplayAnnotation,
+  $carrierHoldableRange,
   $isAttributeDisplayRun,
   $isDisplayAnnotationCarrier,
   $isElementOwnerRunAnchor,
   $registerDisplayAnnotation,
 } from "./displayAnnotations.utils.js";
+import { $isImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
 import { $isMarkerNode } from "./MarkerNode.js";
 import {
   $createTypedMarkNode,
@@ -38,8 +40,8 @@ import { $addUpdateTag, $isElementNode, $isTextNode } from "lexical";
  * wrapper directly follows (`\va 3\va*`, `|who="Pilate"`), or a note's caller or chapter's glyph
  * text ({@link $isElementOwnerRunAnchor}). The run belongs to its owner by position alone, so
  * moving either half into a mark without the other reads as the run having been deleted: the
- * display-run sync then removes a milestone, or writes a second run beside a caller. A verse is
- * also a `TextNode`, which the wrap would otherwise split like content.
+ * display-run sync then removes a milestone, or writes a second run beside a caller. A verse and an
+ * unmatched closer are also `TextNode`s, which the wrap would otherwise split like content.
  */
 function $isDisplayOwnerUnit(node: LexicalNode): boolean {
   return (
@@ -47,7 +49,8 @@ function $isDisplayOwnerUnit(node: LexicalNode): boolean {
     $isMilestoneNode(node) ||
     $isAttributeRunNode(node) ||
     $isAttributeRunNode(node.getParent()) ||
-    $isElementOwnerRunAnchor(node)
+    $isElementOwnerRunAnchor(node) ||
+    $isImmutableUnmatchedNode(node)
   );
 }
 
@@ -150,7 +153,8 @@ function $coversWhole(element: ElementNode, start: LeafCaret, end: LeafCaret): b
 /**
  * The `[start, end)` bytes of carrier `node` the range from `start` to `end` covers, or
  * `undefined` when it covers none. A decorator is covered whole (`[0, 0]`), and only when the
- * range passes over it.
+ * range passes over it. A text carrier's covered bytes are clamped to its holdable range
+ * ({@link $carrierHoldableRange}), so a glyph's own edge whitespace is never held.
  */
 function $coveredCarrierRange(
   node: LexicalNode,
@@ -160,7 +164,10 @@ function $coveredCarrierRange(
   if (!$isDisplayAnnotationCarrier(node)) return undefined;
   const [from, to] = $coveredOffsets(node, start, end);
   if (to <= from) return undefined;
-  return $isTextNode(node) ? [from, to] : [0, 0];
+  if (!$isTextNode(node)) return [0, 0];
+  const [low, high] = $carrierHoldableRange(node);
+  const clamped: [number, number] = [Math.max(from, low), Math.min(to, high)];
+  return clamped[1] > clamped[0] ? clamped : undefined;
 }
 
 export function $wrapSelectionInTypedMarkNode(

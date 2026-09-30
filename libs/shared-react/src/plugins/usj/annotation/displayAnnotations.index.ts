@@ -38,7 +38,9 @@ import {
   displayAnnotationsState,
   EXTERNAL_USJ_MUTATION_TAG,
   getDisplayAnnotationRegistration,
+  ImmutableChapterNode,
   ImmutableTypedTextNode,
+  ImmutableUnmatchedNode,
   MarkerNode,
   registerDisplayAnnotationBasis,
   TypedIDs,
@@ -62,6 +64,8 @@ const CARRIER_KLASSES: Klass<LexicalNode>[] = [
   ImmutableTypedTextNode,
   ImmutableNoteCallerNode,
   ImmutableVerseNode,
+  ImmutableChapterNode,
+  ImmutableUnmatchedNode,
 ];
 
 const EMPTY: ReadonlySet<NodeKey> = new Set();

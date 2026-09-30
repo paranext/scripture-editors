@@ -156,7 +156,8 @@ describe("an annotation across content and a verse number", () => {
     });
 
     expect(markTexts(mounted.lexical)).toEqual(["and"]);
-    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["\\v 2 "] });
+    // The verse's own trailing separator is never held.
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["\\v 2"] });
     expect(mounted.ref.current?.getUsj()).toEqual(usj);
   });
 

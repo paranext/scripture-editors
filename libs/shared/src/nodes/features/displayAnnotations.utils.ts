@@ -10,6 +10,7 @@
 import { textTypeState } from "../collab/delta.state.js";
 import { $chapterGlyphTextNode, $noteEditableCallerNode } from "../usj/attributeDisplay.utils.js";
 import { $isChapterNode } from "../usj/ChapterNode.js";
+import { ImmutableChapterNode } from "../usj/ImmutableChapterNode.js";
 import {
   IMMUTABLE_NOTE_CALLER_NODE_TYPE,
   IMMUTABLE_VERSE_NODE_TYPE,
@@ -24,6 +25,7 @@ import {
   mapRangeThroughAlignment,
   alignCharacters,
 } from "./displayAnnotations.state.js";
+import { $isImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
 import { ImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
 import { $isMarkerNode, MarkerNode } from "./MarkerNode.js";
 import type {
@@ -41,6 +43,8 @@ const DISPLAY_ANNOTATION_DECORATOR_TYPES: ReadonlySet<string> = new Set([
   IMMUTABLE_NOTE_CALLER_NODE_TYPE,
   IMMUTABLE_VERSE_NODE_TYPE,
   ImmutableTypedTextNode.getType(),
+  // A chapter in the views without editable markers: the same whole-node treatment as a verse.
+  ImmutableChapterNode.getType(),
 ]);
 
 /** Whether `node` is the text of an attribute display run — engine-owned display bytes, never
@@ -67,10 +71,11 @@ export function $isElementOwnerRunAnchor(node: LexicalNode): boolean {
 
 /**
  * Whether `node` is a display-byte node an annotation is held ON rather than wrapped: a marker
- * glyph, an attribute run's text, a verse, a note's editable caller, a chapter's `\c N` glyph, or a
- * read-only glyph, caller or verse decorator. Never a separator — the engine-owned whitespace
- * between a marker and its content has no position of its own — and never a milestone or an
- * `AttributeRunNode` wrapper, which spell no bytes themselves (their run pieces do).
+ * glyph, an attribute run's text, a verse, a note's editable caller, a chapter's `\c N` glyph, an
+ * unmatched closer, or a read-only glyph, caller, verse or chapter decorator. Never a separator —
+ * the engine-owned whitespace between a marker and its content has no position of its own — and
+ * never a milestone or an `AttributeRunNode` wrapper, which spell no bytes themselves (their run
+ * pieces do).
  */
 export function $isDisplayAnnotationCarrier(node: LexicalNode): boolean {
   if ($isDecoratorNode(node)) return DISPLAY_ANNOTATION_DECORATOR_TYPES.has(node.getType());
@@ -79,8 +84,25 @@ export function $isDisplayAnnotationCarrier(node: LexicalNode): boolean {
     $isMarkerNode(node) ||
     $isVerseNode(node) ||
     $isAttributeDisplayRun(node) ||
-    $isElementOwnerRunAnchor(node)
+    $isElementOwnerRunAnchor(node) ||
+    // An unmatched closer (`ImmutableUnmatchedNode`) is a `TextNode` subclass, not a decorator, so
+    // the decorator-type set above cannot reach it.
+    $isImmutableUnmatchedNode(node)
   );
+}
+
+/**
+ * The bytes of carrier `node` an annotation can hold: all of a decorator (`[0, 0]`, the whole
+ * node), or a text carrier without the whitespace at its edges — a glyph's own separator (the
+ * space in `\v 3 `, around a caller, after a run opener), which has no position of its own.
+ */
+export function $carrierHoldableRange(node: LexicalNode): [number, number] {
+  if (!$isTextNode(node)) return [0, 0];
+  if ($isImmutableUnmatchedNode(node)) return [0, node.getTextContentSize()];
+  const text = node.getTextContent();
+  const lead = text.length - text.trimStart().length;
+  if (lead === text.length) return [lead, lead];
+  return [lead, text.trimEnd().length];
 }
 
 function sameAnnotation(a: DisplayAnnotation, type: string, id: string): boolean {

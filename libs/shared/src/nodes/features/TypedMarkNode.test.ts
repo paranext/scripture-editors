@@ -28,6 +28,7 @@ import {
   getDisplayAnnotationRegistration,
 } from "./displayAnnotations.utils.js";
 import { $createImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
+import { $createImmutableUnmatchedNode, ImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
 import { $createMarkerNode } from "./MarkerNode.js";
 import {
   $createTypedMarkNode,
@@ -792,7 +793,8 @@ describe("TypedMarkNode", () => {
         expect(milestone.getMarker()).toBe("qt-s");
         expect(milestone.getUnknownAttributes()).toEqual({ who: "Pilate" });
         expect($held(pieces.opener)).toEqual([[0, pieces.opener?.getTextContentSize() ?? -1]]);
-        expect($held(pieces.value)).toEqual([[0, pieces.value?.getTextContentSize() ?? -1]]);
+        // The value's text opens with the run's own NBSP separator, never held.
+        expect($held(pieces.value)).toEqual([[1, pieces.value?.getTextContentSize() ?? -1]]);
         expect($held(pieces.closer)).toEqual([[0, pieces.closer?.getTextContentSize() ?? -1]]);
         expect($displayAnnotationsOf(milestone)).toEqual([]);
       });
@@ -826,11 +828,66 @@ describe("TypedMarkNode", () => {
         expect(wrapper?.getParent()?.is(para)).toBe(true);
         const marks = para.getChildren().filter($isTypedMarkNode);
         expect(marks.map((mark) => mark.getTextContent())).toEqual(["beginning ", "and"]);
-        expect($held(verse)).toEqual([[0, verseText.length]]);
+        // The verse's own trailing separator is never held.
+        expect($held(verse)).toEqual([[0, verseText.length - 1]]);
         if (!$isAttributeRunNode(wrapper)) throw new Error("expected the `\\va` run wrapper");
-        wrapper
-          .getChildren()
-          .forEach((piece) => expect($held(piece)).toEqual([[0, piece.getTextContentSize()]]));
+        const [opener, value, closer] = wrapper.getChildren();
+        expect($held(opener)).toEqual([[0, opener.getTextContentSize()]]);
+        expect($held(value)).toEqual([[1, value.getTextContentSize()]]);
+        expect($held(closer)).toEqual([[0, closer.getTextContentSize()]]);
+      });
+    });
+
+    it("holds a verse's own bytes but not its trailing separator when the range runs into the next text", () => {
+      const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+      let verse!: VerseNode;
+      const verseText = getVisibleOpenMarkerText("v", "3");
+      editor.update(
+        () => {
+          const after = $createTextNode("and");
+          verse = $createVerseNode("3", verseText);
+          $getRoot().append($createParaNode().append(verse, after));
+          const selection = $createRangeSelection();
+          selection.anchor.set(verse.getKey(), 3, "text");
+          selection.focus.set(after.getKey(), 2, "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        const para = $getRoot().getFirstChildOrThrow<ParaNode>();
+        // Offset 3 sits right in front of the verse's digit; the trailing separator after it is
+        // never held, even though the range runs past it into the following text.
+        expect($held(verse)).toEqual([[3, 4]]);
+        const marks = para.getChildren().filter($isTypedMarkNode);
+        expect(marks.map((mark) => mark.getTextContent())).toEqual(["an"]);
+      });
+    });
+
+    it("never splits an unmatched closer, holding the bytes the range covers on it as carrier state", () => {
+      const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+      let unmatched!: ImmutableUnmatchedNode;
+      editor.update(
+        () => {
+          const before = $createTextNode("before ");
+          unmatched = $createImmutableUnmatchedNode("*");
+          $getRoot().append($createParaNode().append(before, unmatched));
+          const selection = $createRangeSelection();
+          selection.anchor.set(before.getKey(), 2, "text");
+          selection.focus.set(unmatched.getKey(), 1, "text");
+          $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        const para = $getRoot().getFirstChildOrThrow<ParaNode>();
+        const latest = unmatched.getLatest();
+        expect(latest.getTextContent()).toBe("\\*");
+        expect(latest.getParent()?.is(para)).toBe(true);
+        expect($isTypedMarkNode(latest.getParent())).toBe(false);
+        expect($held(latest)).toEqual([[0, 1]]);
       });
     });
 
@@ -877,7 +934,8 @@ describe("TypedMarkNode", () => {
         expect(pieces.value?.getTextContent()).toBe(`${NBSP}People`);
         const marks = note.getChildren().filter($isTypedMarkNode);
         expect(marks.map((mark) => mark.getTextContent())).toEqual(["note"]);
-        expect($held(caller)).toEqual([[1, getEditableCallerText("+").length]]);
+        // The caller's own surrounding spaces are never held.
+        expect($held(caller)).toEqual([[1, getEditableCallerText("+").length - 1]]);
       });
     });
 
@@ -912,7 +970,8 @@ describe("TypedMarkNode", () => {
         expect(chapter.getChildren().some($isTypedMarkNode)).toBe(false);
         const marks = para.getChildren().filter($isTypedMarkNode);
         expect(marks.map((mark) => mark.getTextContent())).toEqual(["In the"]);
-        expect($held(glyph)).toEqual([[1, glyphText.length]]);
+        // The glyph's own trailing separator is never held.
+        expect($held(glyph)).toEqual([[1, glyphText.length - 1]]);
       });
     });
 
@@ -1132,7 +1191,8 @@ describe("TypedMarkNode", () => {
           ["after", "and".length],
         );
         expect(marks).toEqual(["and"]);
-        expect(verseHeld).toEqual([[0, getVisibleOpenMarkerText("v", "2").length]]);
+        // The verse's own trailing separator is never held.
+        expect(verseHeld).toEqual([[0, getVisibleOpenMarkerText("v", "2").length - 1]]);
         expect(paraText).toBe(
           `in the beginning ${getVisibleOpenMarkerText("v", "2")}and the earth`,
         );
@@ -1141,7 +1201,7 @@ describe("TypedMarkNode", () => {
       it("marks none of the text a range ends at the start of, after a verse", () => {
         const { marks, verseHeld } = wrapAroundVerse(["before", "in the ".length], ["after", 0]);
         expect(marks).toEqual(["beginning "]);
-        expect(verseHeld).toEqual([[0, getVisibleOpenMarkerText("v", "2").length]]);
+        expect(verseHeld).toEqual([[0, getVisibleOpenMarkerText("v", "2").length - 1]]);
       });
 
       /** Wraps `the \nd LORD\nd* made` from `start` (an offset in the span's text, `NBSP` + `LORD`)
