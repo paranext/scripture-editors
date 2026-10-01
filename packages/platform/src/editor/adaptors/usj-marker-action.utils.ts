@@ -38,6 +38,7 @@ import {
   $setCharNodeMarker,
   CharNode,
   createLexicalUsjNode,
+  createMarkerLookup,
   defaultStyleInfo,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   StyleInfo,
@@ -67,6 +68,8 @@ import {
 } from "shared-react";
 import usjEditorAdaptor from "./usj-editor.adaptor";
 import { $coveredTextNodes } from "../markerEdit/charFormatting.utils";
+import { $moveCaretOffChapterLine } from "../markerEdit/chapterLine.utils";
+import { Tier2Context } from "../markerEdit/tier2Rebuild.utils";
 
 interface UsjMarkerActionResult {
   content: MarkerContent[];
@@ -259,6 +262,11 @@ export function getUsjMarkerAction(
   /** Project stylesheet; falls back to the bundled one. Decides NEST membership. */
   styleInfo?: StyleInfo,
 ): UsjMarkerActionWithNoteKey {
+  const chapterLineContext: Tier2Context = {
+    viewOptions: viewOptions ?? getDefaultViewOptions(),
+    getMarker: createMarkerLookup(styleInfo ?? defaultStyleInfo),
+    logger,
+  };
   // Note markers are handled directly via $insertNote (no serialization round-trip).
   if (NoteNode.isValidMarker(marker, nodeOptions?.extraValidMarkers)) {
     // Captured synchronously inside the `editor.update()` callback below - Lexical's callback
@@ -270,6 +278,9 @@ export function getUsjMarkerAction(
     let insertedNoteKey: string | undefined;
     const action = (currentEditor: { editor: LexicalEditor; reference: SerializedVerseRef }) => {
       currentEditor.editor.update(() => {
+        // A caret on an editable chapter line has no block to insert the note into; move it to
+        // where content after the chapter number goes (see `chapterLine.utils.ts`).
+        if (!$moveCaretOffChapterLine(chapterLineContext)) return;
         insertedNoteKey = $insertNoteForMarker(
           marker,
           currentEditor.reference,
@@ -292,6 +303,9 @@ export function getUsjMarkerAction(
     noteText?: string;
   }) => {
     currentEditor.editor.update(() => {
+      // A caret on an editable chapter line has no block to insert inline content into; move it
+      // to where content after the chapter number goes (see `chapterLine.utils.ts`).
+      if (!$moveCaretOffChapterLine(chapterLineContext)) return;
       const selection = $getSelection();
       // A marker glyph's bytes are a picture of its node's own state, never operands. Re-express
       // the selection so no glyph is one, BEFORE any branch below reads the anchor: a caret parked

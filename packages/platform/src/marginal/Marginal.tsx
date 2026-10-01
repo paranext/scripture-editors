@@ -149,8 +149,8 @@ const Marginal = forwardRef(function Marginal<TLogger extends LoggerBasic>(
     setTransientInput(input) {
       editorRef.current?.setTransientInput(input);
     },
-    setUsj(usj) {
-      editorRef.current?.setUsj(usj);
+    setUsj(usj, options) {
+      editorRef.current?.setUsj(usj, options);
     },
     applyUpdate(ops, source) {
       editorRef.current?.applyUpdate(ops, source);

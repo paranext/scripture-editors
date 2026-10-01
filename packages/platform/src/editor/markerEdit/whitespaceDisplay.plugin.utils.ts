@@ -38,6 +38,8 @@ import {
   $isNoteNode,
   $isUnknownNode,
   GENERATOR_NOTE_CALLER,
+  MarkerLookup,
+  MarkerType,
   MARKER_TRAILING_SPACE_TEXT_TYPE,
   NBSP,
   textTypeState,
@@ -201,9 +203,21 @@ export function getPastePayload(
       ? event.clipboardData
       : undefined;
   if (!clipboardData) return undefined;
+  return getDataTransferPayload(clipboardData, namespace);
+}
+
+/**
+ * Read a paste's clipboard or a drop's data store into the text every claim replays — the carrier
+ * choice {@link getPastePayload} describes — so a paste and a drop of the same content are the same
+ * bytes to every claim that handles both.
+ */
+export function getDataTransferPayload(
+  dataTransfer: DataTransfer,
+  namespace: string,
+): PastePayload {
   const normalizeLineEndings = (text: string) => text.replace(/\r\n?/g, "\n");
-  const plainText = normalizeLineEndings(clipboardData.getData("text/plain"));
-  const html = clipboardData.getData("text/html");
+  const plainText = normalizeLineEndings(dataTransfer.getData("text/plain"));
+  const html = dataTransfer.getData("text/html");
   // A Paratext 9 clipboard's html is decoded to USFM and WINS over its own `text/plain`
   // (`paratext9Clipboard.utils.ts`) whenever the decode has anything in it; every other source's
   // `text/plain` wins whenever it carries anything; a clipboard with only `text/html` falls back to
@@ -234,7 +248,7 @@ export function getPastePayload(
       ? normalizeLineEndings(paratext9Text)
       : plainText || (html ? normalizeLineEndings(htmlPasteText(html)) : ""),
     isInternal: isSameNamespaceLexicalPayload(
-      clipboardData.getData("application/x-lexical-editor"),
+      dataTransfer.getData("application/x-lexical-editor"),
       namespace,
     ),
   };
@@ -389,6 +403,53 @@ export function stripPastedChapterAndBookId(text: string): string {
 }
 
 /**
+ * A `\v` token: the marker, its separator, the one word the tokenizer reads as the verse number, and
+ * the one space that ends the token — the same shape {@link CHAPTER_TOKEN} reads for a chapter.
+ */
+const VERSE_TOKEN = new RegExp(
+  String.raw`\\v(?![${ENGINE_MARKER_NAME_BYTES}*])[ \u00A0]*[^\s\\]*[ \u00A0]?`,
+  "g",
+);
+
+/**
+ * An opening marker with no `+` and no closing `*`, and the one space that ends it — the only shape
+ * a paragraph marker takes. Whether it IS one is the stylesheet's to say (see
+ * {@link stripPastedBlockMarkers}).
+ */
+const PLAIN_OPENER_TOKEN = new RegExp(
+  String.raw`\\([${ENGINE_MARKER_NAME_BYTES}]+)(?![${ENGINE_MARKER_NAME_BYTES}*])[ \u00A0]?`,
+  "g",
+);
+
+/**
+ * Drops every structure marker from a structure-protected paste, keeping the text around it: every
+ * paragraph-kind marker the stylesheet knows, and `\v` with its verse number (`\c` and `\id` are
+ * already gone — {@link stripPastedChapterAndBookId}). These are the markers structure protection
+ * keeps a user from TYPING — Platform.Bible's marker menu disables exactly this set under protection
+ * — and pasted text re-tokenizes into real markers the same way typed text does, so without this a
+ * paste could add a verse or split a paragraph that the keyboard could not. Character markers, notes
+ * and figures are content and stay. A marker the stylesheet does not know stays too — its bytes
+ * cannot be classified, and dropping bytes a strip cannot classify loses user content — but a known
+ * gap remains under protection: in body text the tokenizer reads an unrecognized marker as a
+ * PARAGRAPH regardless of the stylesheet, the same as PT9's `DetermineUnknownTokenType`
+ * (`usfmFragmentToUsj.ts`), so a protected paste of an unknown marker can still split the paragraph,
+ * exactly as typing it would.
+ *
+ * Each token goes with the one space that separates it from the text after it, so `aa \v 9 bb`
+ * becomes `aa bb` and `\p text` becomes `text`.
+ *
+ * @param text The paste's text, `\c`/`\id` already stripped.
+ * @param getMarker The editor's stylesheet lookup.
+ */
+export function stripPastedBlockMarkers(text: string, getMarker: MarkerLookup): string {
+  return text
+    .replace(VERSE_TOKEN, "")
+    .replace(PLAIN_OPENER_TOKEN, (token, name: string) =>
+      getMarker(name)?.type === MarkerType.Paragraph ? "" : token,
+    );
+}
+
+/**
  * True when `node` is part of an attribute display run: a TextNode tagged textType "attribute"
  * (a char span's bare `|…` run, a verse's `\va`/`\vp` value, or a milestone's attribute text — all
  * three share this one tag), or `node` itself / one of its ancestors is an `AttributeRunNode` — the
@@ -489,10 +550,31 @@ function $isSelectionWithinOneAttributeNode(selection: RangeSelection): boolean 
  * attribute-run end of the range. A multi-line payload landing in body content this way therefore
  * still collapses per newline instead of splitting the paragraph; splitting a paragraph the removal
  * has just cut a char span in half in is the corruption this path exists to avoid.
+ *
+ * Structure protection applies to BOTH shapes, unlike the two rules above: a value-byte paste
+ * settles its `\v`/paragraph-marker bytes into a real verse or a split paragraph exactly as a typed
+ * one would (measured: a `\v 9` typed or pasted into a `\va` value re-tokenizes into a real verse
+ * node, and a `\p` there splits the paragraph, stranding the run's own closer as an unmatched
+ * marker in the new one) — protection's rule that a protected paste never adds structure outranks
+ * the paste-≡-typing carve-out for exactly the bytes that would become structure, so
+ * {@link stripPastedBlockMarkers} runs on both branches under protection.
  */
-function $insertPastedTextIntoAttributeContext(selection: RangeSelection, text: string): void {
+function $insertPastedTextIntoAttributeContext(
+  selection: RangeSelection,
+  text: string,
+  isStructureProtected: boolean,
+  getMarker: MarkerLookup,
+): void {
   const valueBytes = $isSelectionWithinOneAttributeNode(selection);
-  const resolved = valueBytes ? text : normalizePastedNbsp(stripPastedChapterAndBookId(text));
+  const resolved = valueBytes
+    ? isStructureProtected
+      ? stripPastedBlockMarkers(text, getMarker)
+      : text
+    : normalizePastedNbsp(
+        isStructureProtected
+          ? stripPastedBlockMarkers(stripPastedChapterAndBookId(text), getMarker)
+          : stripPastedChapterAndBookId(text),
+      );
   // Nothing survived the strip, so there is nothing to replace the selection with — see
   // `$handlePasteForStandardView`.
   if (resolved) selection.insertText(resolved.replace(/\n/g, " "));
@@ -534,24 +616,27 @@ function $insertPastedTextIntoAttributeContext(selection: RangeSelection, text: 
  * changes nothing: there is nothing left to replace the selection with, so the selection stays, and
  * declining would hand the raw `\c` to Lexical's own paste, which the strip exists to keep it from.
  *
- * A structure-protected document is otherwise handled HERE, with the same bytes an unprotected one
- * gets — `structureProtectionMode: "protected"` (Platform.Bible's Simple interface mode) changes only
- * the insertion MECHANISM, never the bytes. Declining the whole paste instead handed it to
+ * A structure-protected document is otherwise handled HERE, with the byte rules an unprotected one
+ * gets plus one of its own — `structureProtectionMode: "protected"` (Platform.Bible's Simple
+ * interface mode). Declining the whole paste instead handed it to
  * `StructureKeyboardPlugin`'s html sanitizer (`$sanitizeAndInsert`), which reads `text/html` and
  * nothing else, and that cost three things protection is supposed to make SAFER: a pasted `\c 7`
  * never reached {@link stripPastedChapterAndBookId}, so it created a second chapter node and poisoned
  * every subsequent save — the exact corruption that strip exists for, present only in the protected
  * mode; NBSPs never reached {@link normalizePastedNbsp}; and a Paratext 9 clipboard's `usfm:` comments
- * were never decoded, so a P9 footnote arrived as the caller glyph its `text/plain` shows. The
- * sanitizer was never protecting Standard view from marker BYTES either: the marker engine has no
- * protection gate, so a pasted or typed `\v`/`\p` literal tokenizes into a real marker in both modes,
- * and the sanitizer's `$sanitizeNodesForProtectedStructure` only strips verse/para NODES out of an html
- * DOM import — a shape Standard view's own `text/html` no longer carries at all (it is the USFM bytes
- * now, {@link usfmToClipboardHtml}). So protection in Standard view governs SELECTION REPLACEMENT
- * (declined above, one owner) and PARAGRAPH SPLITTING (below), not marker bytes, which are content
- * here. Under protection a multi-line payload's newlines become single spaces and the whole thing goes
- * in as ONE `insertText` — no `INSERT_PARAGRAPH_COMMAND`, no `splitExpected` arming — matching
- * `$sanitizeNodesForProtectedStructure`'s own convention for a boundary it removes.
+ * were never decoded, so a P9 footnote arrived as the caller glyph its `text/plain` shows. Nor did the
+ * sanitizer keep structure out: its `$sanitizeNodesForProtectedStructure` only strips verse/para
+ * NODES out of an html DOM import — a shape Standard view's own `text/html` no longer carries at all
+ * (it is the USFM bytes now, {@link usfmToClipboardHtml}) — and pasted marker bytes re-tokenize into
+ * real markers the same way typed ones do. So protection in Standard view governs three things
+ * here: SELECTION REPLACEMENT (declined above, one owner), PARAGRAPH SPLITTING (a multi-line
+ * payload's newlines become single spaces and the whole thing goes in as ONE `insertText` — no
+ * `INSERT_PARAGRAPH_COMMAND`, no `splitExpected` arming — matching
+ * `$sanitizeNodesForProtectedStructure`'s own convention for a boundary it removes), and STRUCTURE
+ * MARKERS (every paragraph marker and `\v` is dropped, {@link stripPastedBlockMarkers}: the set a
+ * user cannot type under protection). Character markers, notes and figures are content and stay. A
+ * same-editor copy is taken here too under protection rather than left to Lexical's rich paste,
+ * for the same reason (see the decline below).
  *
  * The same-namespace-flavor decline is SUSPENDED whenever the selection TOUCHES attribute-display
  * text at either end ({@link $isSelectionInAttributeContext}). Lexical's default rich-paste node
@@ -574,9 +659,11 @@ function $insertPastedTextIntoAttributeContext(selection: RangeSelection, text: 
  * sits outside. Attribute value bytes are never rich content — a user cannot "type formatting"
  * into one either — so this handler must always claim a paste touching one and insert it as plain
  * text ({@link $insertPastedTextIntoAttributeContext}), regardless of what other MIME flavors the
- * clipboard also carries. A protected document needs no special case in that branch: inserting one
- * `insertText` with each newline collapsed to a space is already exactly what protection asks for,
- * and the selection refusal above has already declined the shapes it owns. One further precedence is unaffected by this suspension: the CRITICAL-priority in-note
+ * clipboard also carries. A protected document DOES need special handling in that branch:
+ * `$insertPastedTextIntoAttributeContext` strips structure markers under protection the same way
+ * the body-content path does, because a value-byte paste that re-tokenizes its `\v`/paragraph-marker
+ * bytes (the paste-≡-typing carve-out above) would otherwise add the very structure protection
+ * exists to keep out. One further precedence is unaffected by this suspension: the CRITICAL-priority in-note
  * multi-line `PASTE_COMMAND` claim (`MarkerEditPlugin.tsx`) still runs BEFORE this handler and
  * still wins for a multi-line payload whose selection touches EXPANDED note content — an attribute
  * run that happens to sit inside an expanded note's content is reached by this handler (and this
@@ -590,13 +677,18 @@ export function $handlePasteForStandardView(
   event: ClipboardEvent | null | undefined,
   isStructureProtected = false,
   armSplitExpected: () => void = () => undefined,
+  getMarker: MarkerLookup = () => undefined,
 ): boolean {
   const payload = getPastePayload(event, $getEditor()._config.namespace);
   if (!payload) return false;
   const selection = $getSelection();
   const inAttributeContext =
     $isRangeSelection(selection) && $isSelectionInAttributeContext(selection);
-  if (!inAttributeContext && payload.isInternal) return false;
+  // A same-editor copy keeps Lexical's own node-tree paste, except under structure protection:
+  // there it would reach `StructureKeyboardPlugin`'s html sanitizer, which inserts the copy's USFM
+  // bytes as text, and the marker engine re-tokenizes them into whatever structure they carry. Its
+  // `text/plain` is those same bytes, so it takes the path below, which drops the structure.
+  if (!inAttributeContext && payload.isInternal && !isStructureProtected) return false;
   // The one thing protection still declines: a selection `StructureKeyboardPlugin` refuses to
   // replace. Both plugins register `PASTE_COMMAND` at `COMMAND_PRIORITY_HIGH` and this one mounts
   // first (matching `Editor.tsx`'s order), so claiming such a paste here would starve the refusal
@@ -616,22 +708,54 @@ export function $handlePasteForStandardView(
   if (!$isRangeSelection(selection)) return false;
   event?.preventDefault();
   if (inAttributeContext) {
-    $insertPastedTextIntoAttributeContext(selection, text);
+    $insertPastedTextIntoAttributeContext(selection, text, isStructureProtected, getMarker);
     return true;
   }
-  const normalized = normalizePastedNbsp(stripPastedChapterAndBookId(text));
-  if (!normalized) return true;
+  $insertPastedText(selection, text, isStructureProtected, armSplitExpected, getMarker);
+  return true;
+}
+
+/**
+ * Inserts an external paste's resolved text at `selection` the way {@link $handlePasteForStandardView}
+ * does: `\c`/`\id` tokens dropped ({@link stripPastedChapterAndBookId}), NBSPs normalized
+ * positionally ({@link normalizePastedNbsp}), and the lines replayed as the user would type them —
+ * or, in a structure-protected document, its structure markers dropped
+ * ({@link stripPastedBlockMarkers}) and its lines joined into one. Exported for the chapter-line paste
+ * and drop claims (`chapterLine.utils.ts`), which must put the same bytes into the document.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @param selection Where the text goes; a range is replaced.
+ * @param text The resolved text ({@link getPastePayload}), line endings already normalized.
+ * @param isStructureProtected Whether the document is structure-protected.
+ * @param armSplitExpected Arms the engine's `splitExpected` flag for a multi-line replay.
+ * @param getMarker The editor's stylesheet lookup, which says which pasted markers are structure.
+ */
+export function $insertPastedText(
+  selection: RangeSelection,
+  text: string,
+  isStructureProtected: boolean,
+  armSplitExpected: () => void,
+  getMarker: MarkerLookup,
+): void {
+  const withoutChapterOrBookId = stripPastedChapterAndBookId(text);
+  const normalized = normalizePastedNbsp(
+    isStructureProtected
+      ? stripPastedBlockMarkers(withoutChapterOrBookId, getMarker)
+      : withoutChapterOrBookId,
+  );
+  if (!normalized) return;
   const lines = normalized.split("\n");
   // A protected document never gains a paragraph from a paste: each newline becomes a single space
   // and the payload goes in as one insertion, so the block structure the user sees is exactly the
   // one they had. Every byte-level rule above still applied.
   if (isStructureProtected) {
     selection.insertText(lines.join(" "));
-    return true;
+    return;
   }
   if (lines.length < 2) {
     selection.insertText(normalized);
-    return true;
+    return;
   }
   // The engine's own INSERT_PARAGRAPH_COMMAND handler arms `splitExpected` for each dispatch
   // below, but the FIRST line is inserted before any of them run, so the flag is armed up front
@@ -652,7 +776,6 @@ export function $handlePasteForStandardView(
     const lineSelection = $getSelection();
     if ($isRangeSelection(lineSelection)) lineSelection.insertText(line);
   });
-  return true;
 }
 
 /**
