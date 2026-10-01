@@ -1546,7 +1546,10 @@ function $locationFromNode(
     // a caret at the paragraph's content start sits) is no USJ content of its own: a point in it
     // is the point beside it — the start of the text after it, or the end of the bytes before it.
     const isAfter = offset > 0;
-    const neighbor = isAfter ? node.getNextSibling() : node.getPreviousSibling();
+    let neighbor = isAfter ? node.getNextSibling() : node.getPreviousSibling();
+    // An annotation mark is transparent: the text beside it is its first or last leaf.
+    while ($isTypedMarkNode(neighbor))
+      neighbor = isAfter ? neighbor.getFirstChild() : neighbor.getLastChild();
     if (
       $isTextNode(neighbor) &&
       ($displayBytesOf(neighbor) || $getLogicalTextLocation(neighbor, 0, collapsesSpaceRuns))

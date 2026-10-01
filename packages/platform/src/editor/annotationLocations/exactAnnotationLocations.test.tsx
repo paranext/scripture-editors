@@ -5,11 +5,13 @@
  * Standard view.
  */
 import {
+  $byteLoc,
   $byteNodes,
   $heldBytes,
   $heldIndexes,
   edgesUsj,
   HELD_TYPE,
+  locKey,
   MountedInView,
   mountInView,
   oracleView,
@@ -579,6 +581,57 @@ describe("a range into part of an inline element", () => {
     expect(mounted.lexical.getEditorState().read($marks)).toEqual(before);
     expect(onRemove).toHaveBeenCalledTimes(0);
   });
+});
+
+describe("the labels around a mark on a note's text between its spans", () => {
+  /** `\p The crossref\x - \xo 1.2\xo* \xt Crossref text.\xt*\x*. After.` — the space between the
+   * two spans is the note's own text, with a layout separator on each side of it in the views
+   * whose notes lay out apart. */
+  const crossrefUsj: Usj = twoParaUsj([
+    "The crossref",
+    {
+      type: "note",
+      marker: "x",
+      caller: "-",
+      content: [
+        { type: "char", marker: "xo", content: ["1.2"] },
+        " ",
+        { type: "char", marker: "xt", content: ["Crossref text."] },
+      ],
+    },
+    ". After.",
+  ]);
+
+  /** Every byte's outbound label, in document order. Call inside a read. */
+  function $labels(viewName: string): string[] {
+    const view = oracleView(viewName);
+    return $byteNodes().map(([node, offset]) => locKey($byteLoc(node, offset, false, view)));
+  }
+
+  it.each(["standard", "visible", "visible+collapsed", "formatted"])(
+    "stay where they were when a range ends at that text's end (%s)",
+    async (name) => {
+      const mounted = await mountInView(crossrefUsj, oracleView(name));
+      const before = mounted.lexical.getEditorState().read(() => $labels(name));
+
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(
+          {
+            start: { jsonPath: "$.content[2].content[0]", offset: 4 },
+            end: { jsonPath: "$.content[2].content[1].content[1]", offset: 1 },
+          },
+          ORACLE_TYPE,
+          "lab",
+        );
+        await Promise.resolve();
+      });
+
+      expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "lab"))).toContain(
+        "crossref",
+      );
+      expect(mounted.lexical.getEditorState().read(() => $labels(name))).toEqual(before);
+    },
+  );
 });
 
 describe("a note's own content text", () => {
