@@ -14,8 +14,9 @@
  * The failures that exist are recorded per corpus and view in a committed expected-failure list;
  * {@link expectOracleMatchesList} fails on a failure the list does not name, on a listed entry that
  * no longer fails or fails with fewer classes, and on a listed entry that fails with a class it
- * was not listed with. Each section also pins the run's operation count, its walk anomalies and
- * the bytes it exempts, so a list cannot shrink by running fewer operations or by exempting more.
+ * was not listed with. Each section also pins the run's operation count and a hash of which
+ * operations ran, its walk anomalies and the bytes it exempts, so a list cannot shrink by running
+ * fewer or other operations or by exempting more.
  *
  * Environment switches: `ANNOTATION_ORACLE_WRITE=1` rewrites the list sections the run completed,
  * `ANNOTATION_ORACLE_SUMMARY=1` prints per-class counts, `ANNOTATION_ORACLE_VIEW=<name>` runs one
@@ -172,6 +173,9 @@ export interface OracleRun {
   failures: OracleFailure[];
   /** How many operations ran. */
   ops: number;
+  /** SHA-256 of the operations that ran, each as its tier, shape and start and end labels, in run
+   * order: a run that swaps one operation for another at the same count changes it. */
+  opsSha256: string;
   /** Bytes and carets whose labels the universe could not place, in walk order. */
   anomalies: string[];
   /** The description of every byte no range is required to hold (separators and soft bytes), in
@@ -514,7 +518,25 @@ export async function runOracle(
         `${anomalies.length ? `, anomalies ${JSON.stringify(anomalies)}` : ""}`,
     );
   const exempt = info.filter((_, i) => !holdable(i)).map((byte) => byte.desc);
-  return { failures, ops: ranges.length, anomalies: anomalies.map(asciiOnly), exempt };
+  const opsSha256 = createHash("sha256")
+    .update(
+      JSON.stringify(
+        ranges.map(({ tier, shape, a, b }) => [
+          tier,
+          shape,
+          universe.labels[a],
+          universe.labels[b],
+        ]),
+      ),
+    )
+    .digest("hex");
+  return {
+    failures,
+    ops: ranges.length,
+    opsSha256,
+    anomalies: anomalies.map(asciiOnly),
+    exempt,
+  };
 }
 
 /** Decorators a range end inside of can drop. */
@@ -618,6 +640,9 @@ function exemptSignature(exempt: string[]): OracleExempt {
 /** One list section: what the run covered, and each failure key → its classes. */
 interface OracleSection {
   ops: number;
+  /** Absent in a list recorded before operations were hashed; such a list fails every comparison
+   * until it is rewritten. */
+  opsSha256?: string;
   anomalies: string[];
   exempt: OracleExempt;
   failures: { [key: string]: string[] };
@@ -646,8 +671,10 @@ function readExempt(value: unknown, where: string): OracleExempt {
 
 function readSection(value: unknown, where: string): OracleSection {
   if (!isRecord(value)) throw new Error(`${where} is not an object`);
-  const { ops, anomalies, exempt, failures } = value;
+  const { ops, opsSha256, anomalies, exempt, failures } = value;
   if (typeof ops !== "number") throw new Error(`${where}.ops is not a number`);
+  if (opsSha256 !== undefined && typeof opsSha256 !== "string")
+    throw new Error(`${where}.opsSha256 is not a string`);
   if (!isStringArray(anomalies)) throw new Error(`${where}.anomalies is not a string array`);
   if (!isRecord(failures)) throw new Error(`${where}.failures is not an object`);
   const entries: OracleSection["failures"] = {};
@@ -656,7 +683,7 @@ function readSection(value: unknown, where: string): OracleSection {
       throw new Error(`${where}.failures["${key}"] is not a string array`);
     entries[key] = classes;
   }
-  return { ops, anomalies, exempt: readExempt(exempt, where), failures: entries };
+  return { ops, opsSha256, anomalies, exempt: readExempt(exempt, where), failures: entries };
 }
 
 function readOracleList(listFile: URL): OracleList {
@@ -712,10 +739,10 @@ const sameClasses = (a: string[], b: string[]): boolean =>
  * records it as that section (written by {@link flushOracleLists}). Call it last in the `it`, after
  * the run completed.
  *
- * The comparison fails on a changed operation count, walk anomalies or exempt bytes; on a failure
- * the list does not name (`unexpected`); on a listed entry that no longer fails or fails with
- * fewer classes (`fixed` — rewrite the list); and on a listed entry that fails with a class it was
- * not listed with (`worse`).
+ * The comparison fails on a changed operation count or set, walk anomalies or exempt bytes; on
+ * a failure the list does not name (`unexpected`); on a listed entry that no longer fails or fails
+ * with fewer classes (`fixed` — rewrite the list); and on a listed entry that fails with a class
+ * it was not listed with (`worse`).
  *
  * @param options.stride - The sampling stride of a sampled run. A list records the stride it was
  *   written at, and a run at another stride fails instead of comparing.
@@ -731,6 +758,7 @@ export function expectOracleMatchesList(
   const keyed = keyedFailures(run.failures);
   const current: OracleSection = {
     ops: run.ops,
+    opsSha256: run.opsSha256,
     anomalies: run.anomalies,
     exempt: exemptSignature(run.exempt),
     failures: {},
@@ -788,6 +816,7 @@ export function expectOracleMatchesList(
   );
   expect({
     ops: current.ops,
+    opsSha256: current.opsSha256,
     anomalies: current.anomalies,
     exempt: current.exempt,
     unexpected: unexpected.map((key) => {
@@ -804,6 +833,7 @@ export function expectOracleMatchesList(
     ),
   }).toEqual({
     ops: section.ops,
+    opsSha256: section.opsSha256,
     anomalies: section.anomalies,
     exempt: section.exempt,
     unexpected: [],

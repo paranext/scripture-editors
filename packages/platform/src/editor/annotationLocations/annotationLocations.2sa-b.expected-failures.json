@@ -3,6 +3,7 @@
   "2SA": {
     "standard+expandedNotes": {
       "ops": 9324,
+      "opsSha256": "c20aebe8df13b85327affdf541427dc440d2c5788097004ea17dc47e9cc8b305",
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[1]['marker']|propertyOffset=4",
@@ -317,6 +318,7 @@
     },
     "visible": {
       "ops": 8703,
+      "opsSha256": "5ea31431d6da0af837b37e5d3c5686e62ea80be976368e9b3cb10ee4d3975078",
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[10].content[1].content[0]",
@@ -347,6 +349,7 @@
     },
     "formatted": {
       "ops": 8684,
+      "opsSha256": "c75f2779af41dfb30f8bd826ee7da88565ffb5ed31bdfdd2a2a29eb8d6a7e235",
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[10].content[1].content[0]",
@@ -377,6 +380,7 @@
     },
     "hidden+expanded": {
       "ops": 8684,
+      "opsSha256": "c75f2779af41dfb30f8bd826ee7da88565ffb5ed31bdfdd2a2a29eb8d6a7e235",
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[10].content[1].content[0]",

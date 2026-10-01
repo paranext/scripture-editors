@@ -2,6 +2,7 @@
   "rich": {
     "standard": {
       "ops": 2314,
+      "opsSha256": "a3cd2f821a7259863e2ca289df333adcd2ce902d529109db9f71f22631ae49a4",
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[1]['number']|propertyOffset=1",
@@ -46,6 +47,7 @@
     },
     "standard+expandedNotes": {
       "ops": 2319,
+      "opsSha256": "fc55311a04234bf574e3d905ffe3b6347bbf77a2af8e21ce469cb9c01d31f4f2",
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[1]['number']|propertyOffset=1",
@@ -88,6 +90,7 @@
     },
     "unformatted": {
       "ops": 2319,
+      "opsSha256": "fc55311a04234bf574e3d905ffe3b6347bbf77a2af8e21ce469cb9c01d31f4f2",
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[1]['number']|propertyOffset=1",
@@ -130,6 +133,7 @@
     },
     "visible": {
       "ops": 1538,
+      "opsSha256": "f53a24a32d29e5592bc732c6b3dc9b291635159e2b73a61c25465a0862e85799",
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[3].content[6].content[0]",
@@ -143,6 +147,7 @@
     },
     "visible+collapsed": {
       "ops": 1538,
+      "opsSha256": "f53a24a32d29e5592bc732c6b3dc9b291635159e2b73a61c25465a0862e85799",
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[3].content[6].content[0]",
@@ -156,6 +161,7 @@
     },
     "formatted": {
       "ops": 1498,
+      "opsSha256": "09b8bae60f79b424db713fd305ae0367a68c39b4c072cea661493f9ba0b5ab8d",
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[3].content[6].content[0]",
@@ -169,6 +175,7 @@
     },
     "paragraph-structure": {
       "ops": 1498,
+      "opsSha256": "09b8bae60f79b424db713fd305ae0367a68c39b4c072cea661493f9ba0b5ab8d",
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[3].content[6].content[0]",
@@ -182,6 +189,7 @@
     },
     "hidden+expanded": {
       "ops": 1498,
+      "opsSha256": "09b8bae60f79b424db713fd305ae0367a68c39b4c072cea661493f9ba0b5ab8d",
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[3].content[6].content[0]",
@@ -197,6 +205,7 @@
   "edges": {
     "standard": {
       "ops": 495,
+      "opsSha256": "0c42e49885b001cddedfe4aa56963ca8dbe25e6ccf727eaf548dc914a507435c",
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[0]['number']|propertyOffset=1",
@@ -213,6 +222,7 @@
     },
     "standard+expandedNotes": {
       "ops": 495,
+      "opsSha256": "0c42e49885b001cddedfe4aa56963ca8dbe25e6ccf727eaf548dc914a507435c",
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[0]['number']|propertyOffset=1",
@@ -229,6 +239,7 @@
     },
     "unformatted": {
       "ops": 495,
+      "opsSha256": "0c42e49885b001cddedfe4aa56963ca8dbe25e6ccf727eaf548dc914a507435c",
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[0]['number']|propertyOffset=1",
@@ -245,30 +256,35 @@
     },
     "visible": {
       "ops": 374,
+      "opsSha256": "6b76fe88af3c1fb383139214d7215b7d088dfe412d5383a1acd3b4eb20cd02ff",
       "anomalies": [],
       "exempt": [],
       "failures": {}
     },
     "visible+collapsed": {
       "ops": 374,
+      "opsSha256": "6b76fe88af3c1fb383139214d7215b7d088dfe412d5383a1acd3b4eb20cd02ff",
       "anomalies": [],
       "exempt": [],
       "failures": {}
     },
     "formatted": {
       "ops": 365,
+      "opsSha256": "fb2cb0c0cf4a9007c742170e10a0b06145d815832a7ea068ce47f85b6f49fa4a",
       "anomalies": [],
       "exempt": [],
       "failures": {}
     },
     "paragraph-structure": {
       "ops": 365,
+      "opsSha256": "fb2cb0c0cf4a9007c742170e10a0b06145d815832a7ea068ce47f85b6f49fa4a",
       "anomalies": [],
       "exempt": [],
       "failures": {}
     },
     "hidden+expanded": {
       "ops": 365,
+      "opsSha256": "fb2cb0c0cf4a9007c742170e10a0b06145d815832a7ea068ce47f85b6f49fa4a",
       "anomalies": [],
       "exempt": [],
       "failures": {}

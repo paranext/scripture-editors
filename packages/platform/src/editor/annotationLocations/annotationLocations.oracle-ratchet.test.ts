@@ -42,6 +42,7 @@ function baseRun(): OracleRun {
   return {
     failures: [failure("one", [REMOVE_TRACE]), failure("two", [REMOVE_TRACE, LABEL_MOVED])],
     ops: 10,
+    opsSha256: "op-set-a",
     anomalies: [],
     exempt: ['text(sep):" "@$.content[0]'],
   };
@@ -87,6 +88,7 @@ describe("the oracle's expected-failure ratchet", () => {
       c: {
         v: {
           ops: 10,
+          opsSha256: "op-set-a",
           anomalies: [],
           exempt: ['text(sep):" "@$.content[0]'],
           failures: {
@@ -140,6 +142,23 @@ describe("the oracle's expected-failure ratchet", () => {
   it("fails when the operation count changes", () => {
     const list = recordedList(baseRun());
     expect(diffOf(() => compare(list, { ...baseRun(), ops: 9 })).ops).toBe(9);
+  });
+
+  it("fails when the operations change but their count does not", () => {
+    const list = recordedList(baseRun());
+    const diff = diffOf(() => compare(list, { ...baseRun(), opsSha256: "op-set-b" }));
+    expect(diff.opsSha256).toBe("op-set-b");
+    expect(diff.ops).toBe(10);
+  });
+
+  it("fails against a section recorded without an operation hash", () => {
+    const list = recordedList(baseRun());
+    const written: { c: { v: { [field: string]: unknown } } } = JSON.parse(
+      readFileSync(list, "utf-8"),
+    );
+    delete written.c.v.opsSha256;
+    writeFileSync(list, JSON.stringify(written));
+    expect(diffOf(() => compare(list, baseRun())).opsSha256).toBe("op-set-a");
   });
 
   it("fails when the walk anomalies change", () => {
