@@ -240,23 +240,11 @@ function createVerseMarker(node: SerializedImmutableVerseNode | SerializedVerseN
 function createCharMarker(
   node: SerializedCharNode,
   content: MarkerContent[] | undefined,
-  viewOptions: ViewOptions | undefined,
 ): MarkerObject {
   const { type, marker: nodeMarker, unknownAttributes } = node;
   const marker = nodeMarker === "" ? undefined : nodeMarker;
-  // Remove the structural NBSP separator at the span's START only. The strip mirrors the ADD:
-  // the forward adaptor (`createChar`) prepends the separator only in markerMode "editable", and
-  // solely to the first child — never to text following a nested closer (the `ht` in
-  // `\wj li\+nd g\+nd*ht\wj*`) — so the strip is gated and positional to match. In the
-  // non-editable modes (Formatted's "hidden", Markers' "visible") nothing added a separator, so a
-  // leading NBSP there is the author's own `~` and must survive; a leading NBSP on any LATER
-  // string is authored data in every mode. In standard view this separator is stripped earlier,
-  // before whitespace inversion, so a real leading NBSP in the data isn't misread as the
-  // separator here (see the `recurseNodes` TextNode branch).
-  if (viewOptions?.markerMode === "editable" && !isStandardView(viewOptions) && content) {
-    const [first] = content;
-    if (typeof first === "string" && first.startsWith(NBSP)) content[0] = first.slice(1);
-  }
+  // The structural NBSP separator at the span's start is stripped in `recurseNodes`, from the
+  // text node right after the opening glyph — positionally, so an authored leading `~` survives.
   return removeUndefinedProperties({
     type,
     marker,
@@ -625,7 +613,6 @@ function recurseNodes(
           createCharMarker(
             serializedCharNode,
             recurseNodes(serializedCharNode.children, viewOptions, undefined, serializedCharNode),
-            viewOptions,
           ),
         );
         break;
@@ -766,20 +753,21 @@ function recurseNodes(
           node !== callerSlot
         ) {
           let text = createTextMarker(serializedTextNode);
-          // Standard view stores display text; collapse space runs and invert on serialization. A
-          // char marker's leading NBSP separator (added by the forward adaptor's `createChar`)
-          // must be stripped before inversion so it isn't misread as a collapsed space run — but
-          // only when this text is the glyph-adjacent separator host, not any text that merely
-          // happens to start with NBSP (e.g. an authored NBSP right after a nested span's
-          // closer), or the byte is eaten instead of round-tripping as data.
-          if (isStandardView(viewOptions)) {
-            if (
-              precedesOpeningCharGlyph(nodes, index, precedingSibling, enclosingChar) &&
-              text.startsWith(NBSP)
-            )
-              text = text.slice(1);
-            text = displayTextToUsj(collapseSpaceRuns(text));
-          }
+          // A char marker's leading NBSP separator (added by the forward adaptor's `createChar`
+          // in markerMode "editable") is stripped from the one text that hosts it: the text right
+          // after the opening glyph. Positional, never "the span's first string starts with
+          // NBSP": once a mark splits the separator off into its own (dropped) node, the span's
+          // first string is the author's own `~`, which must survive. In Standard view the strip
+          // also has to come before whitespace inversion, so the separator isn't misread as a
+          // collapsed space run.
+          if (
+            viewOptions?.markerMode === "editable" &&
+            precedesOpeningCharGlyph(nodes, index, precedingSibling, enclosingChar) &&
+            text.startsWith(NBSP)
+          )
+            text = text.slice(1);
+          // Standard view stores display text; collapse space runs and invert on serialization.
+          if (isStandardView(viewOptions)) text = displayTextToUsj(collapseSpaceRuns(text));
           combineTextContentOrAdd(markers, text);
         }
         break;

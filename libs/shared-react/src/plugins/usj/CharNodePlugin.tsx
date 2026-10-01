@@ -1,7 +1,15 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister } from "@lexical/utils";
 import { deepEqual } from "fast-equals";
-import { $getState, LexicalEditor, TextNode } from "lexical";
+import {
+  $getEditor,
+  $getNodeByKey,
+  $getState,
+  $isTextNode,
+  LexicalEditor,
+  NodeKey,
+  TextNode,
+} from "lexical";
 import { useEffect } from "react";
 import {
   $hasSameCharAttributes,
@@ -186,6 +194,11 @@ function $charNodeTransform(node: CharNode): void {
 
 /**
  * Remove 'empty' placeholder in CharNode once other text content is added.
+ *
+ * Only a span that was EMPTY before this update (its one child exactly the placeholder) had a
+ * placeholder to type into. A span whose text merely starts with a no-break space — the author's
+ * own `~b`, or that text merged back together when an annotation mark around its `~` is removed —
+ * keeps the byte. A span the update created has no earlier state, and is treated as before.
  * @param node - TextNode that might be a placeholder.
  */
 function $charTextNodeTransform(node: TextNode): void {
@@ -193,8 +206,29 @@ function $charTextNodeTransform(node: TextNode): void {
   if (!$isCharNode(parent) || parent.getChildrenSize() !== 1) return;
 
   const text = node.getTextContent();
-  if (text.length > 1 && text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT)) {
+  if (
+    text.length > 1 &&
+    text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT) &&
+    $wasEmptyOrNew(parent.getKey())
+  ) {
     node.setTextContent(text.slice(1));
     node.selectEnd();
   }
+}
+
+/** Whether the char span `key` held only its placeholder in the editor's last committed state, or
+ * did not exist there. */
+function $wasEmptyOrNew(key: NodeKey): boolean {
+  return $getEditor()
+    .getEditorState()
+    .read(() => {
+      const previous = $getNodeByKey(key);
+      if (!$isCharNode(previous)) return true;
+      const children = previous.getChildren();
+      return (
+        children.length === 1 &&
+        $isTextNode(children[0]) &&
+        children[0].getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT
+      );
+    });
 }

@@ -360,6 +360,112 @@ describe("an annotation over a no-break space the text itself contains", () => {
     expect(mounted.ref.current?.getUsj()).toEqual(before);
   });
 
+  /** `\p In \w ~b\w* end`: the span's content starts with a no-break space of its own. */
+  const leadingNbspUsj: Usj = twoParaUsj([
+    "In ",
+    { type: "char", marker: "w", content: [`${NBSP}b`] },
+    " end",
+  ]);
+  const spanTextPath = "$.content[2].content[1].content[0]";
+
+  it.each(
+    [
+      "standard",
+      "unformatted",
+      "visible",
+      "formatted",
+      "paragraph-structure",
+      "hidden+expanded",
+    ].flatMap((view) =>
+      [
+        {
+          name: "the space alone",
+          range: {
+            start: { jsonPath: spanTextPath, offset: 0 },
+            end: { jsonPath: spanTextPath, offset: 1 },
+          },
+        },
+        {
+          name: "the text before the span through the space",
+          range: {
+            start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+            end: { jsonPath: spanTextPath, offset: 1 },
+          },
+        },
+        {
+          name: "the span's marker through the space",
+          range: {
+            start: { jsonPath: "$.content[2].content[1]" },
+            end: { jsonPath: spanTextPath, offset: 1 },
+          },
+        },
+      ].map((row) => ({ ...row, view })),
+    ),
+  )(
+    "keeps one leading a char span's content when $name is set and removed ($view)",
+    async ({ view, range }) => {
+      const mounted = await mountInView(leadingNbspUsj, oracleView(view));
+      const before = mounted.ref.current?.getUsj();
+
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, "lead");
+        await Promise.resolve();
+      });
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
+
+      await act(async () => {
+        mounted.ref.current?.removeAnnotation(ORACLE_TYPE, "lead");
+        await Promise.resolve();
+      });
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
+    },
+  );
+
+  it.each(["formatted", "paragraph-structure", "hidden+expanded"])(
+    "keeps one leading a char span's content when that text is typed into (%s)",
+    async (name) => {
+      const mounted = await mountInView(leadingNbspUsj, oracleView(name));
+
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const text = $textContaining("b");
+          text.setTextContent(`${text.getTextContent()}x`);
+        });
+        await Promise.resolve();
+      });
+
+      const para = mounted.ref.current?.getUsj()?.content?.[2];
+      if (!para || typeof para === "string") throw new Error("expected a paragraph");
+      expect(para.content?.[1]).toEqual({
+        type: "char",
+        marker: "w",
+        content: [`${NBSP}bx`],
+      });
+    },
+  );
+
+  it.each(["formatted", "hidden+expanded"])(
+    "still drops an empty span's placeholder once text is typed into it (%s)",
+    async (name) => {
+      const emptyUsj = twoParaUsj(["x ", { type: "char", marker: "wj", content: [] }, " y"]);
+      const mounted = await mountInView(emptyUsj, oracleView(name));
+
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const char = $onlyCharNode();
+          const placeholder = char.getFirstChild();
+          if (!$isTextNode(placeholder)) throw new Error("expected the placeholder text");
+          placeholder.setTextContent(`${NBSP}a`);
+        });
+        await Promise.resolve();
+      });
+
+      const para = mounted.ref.current?.getUsj()?.content?.[2];
+      if (!para || typeof para === "string") throw new Error("expected a paragraph");
+      expect(para.content?.[1]).toEqual({ type: "char", marker: "wj", content: ["a"] });
+    },
+  );
+
   it("keeps it through a settle elsewhere in the paragraph (unformatted)", async () => {
     const mounted = await mountInView(tildeUsj, oracleView("unformatted"));
     await act(async () => {
