@@ -728,9 +728,12 @@ describe("StructureKeyboardPlugin — two-step delete for range selections with 
     let book: BookNode;
     let t2: TextNode;
     const { editor } = await guardedEnvironment(() => {
-      book = $createBookLine("GEN", $createTextNode("Genesis"));
+      book = $createBookLine("GEN");
       t2 = $createTextNode("cd");
-      $getRoot().append(book, $createParaNode("p").append($createImmutableVerseNode("1"), t2));
+      $getRoot().append(
+        book.append($createTextNode("Genesis")),
+        $createParaNode("p").append($createImmutableVerseNode("1"), t2),
+      );
     });
     updateSelection(editor, book!, 0, t2!, 1);
 

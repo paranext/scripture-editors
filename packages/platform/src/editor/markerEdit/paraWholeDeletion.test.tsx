@@ -706,11 +706,11 @@ describe("backspacing an Enter-Enter split back together (content bytes survive 
     // Backspace deletes and re-creates the same marker forever.
     let book!: BookNode, next!: ParaNode, after!: ParaNode;
     const { editor } = await testEnvironmentWithDisplaySyncs(() => {
-      book = $createBookLine("GEN", $createTextNode("gen"));
+      book = $createBookLine("GEN");
       next = $createParaNode("ip");
       after = $createParaNode("p");
       $getRoot().append(
-        book,
+        book.append($createTextNode("gen")),
         next.append(
           $createMarkerNode("ip"),
           $createMarkerTrailingSeparator(),
@@ -847,10 +847,10 @@ describe("backspacing a fresh paragraph below the `\\id` line away (collapsed-ca
     // backspacing its prefix away must dissolve it back into nothing, exactly as below a paragraph.
     let book!: BookNode, fresh!: ParaNode;
     const { editor } = await testEnvironment(() => {
-      book = $createBookLine("GEN", $createTextNode("gen"));
+      book = $createBookLine("GEN");
       fresh = $createParaNode("ip");
       $getRoot().append(
-        book,
+        book.append($createTextNode("gen")),
         fresh.append($createMarkerNode("ip"), $createTextNode(NBSP)),
         $createParaNode("p").append(
           $createMarkerNode("p"),

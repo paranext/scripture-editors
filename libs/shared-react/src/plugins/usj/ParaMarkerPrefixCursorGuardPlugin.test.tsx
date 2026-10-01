@@ -579,8 +579,8 @@ describe("$guardCursorAtParaStart", () => {
       let content!: TextNode;
       const { editor } = createBasicTestEnvironment(nodes, () => {
         content = $createTextNode("Genesis");
-        book = $createBookLine("GEN", content);
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append(content));
       });
 
       updateSelection(editor, book, 0);
@@ -663,8 +663,8 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
     let book!: BookNode;
     const { editor } = await baseTestEnvironment(
       () => {
-        book = $createBookLine("GEN", $createTextNode("Genesis"));
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append($createTextNode("Genesis")));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -683,8 +683,8 @@ describe("DELETE_CHARACTER_COMMAND refuses to remove the book's prefix glyph", (
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("Genesis");
-        book = $createBookLine("GEN", content);
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append(content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -868,8 +868,8 @@ describe("DELETE_LINE_COMMAND clamps a collapsed mid-content caret past the pref
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("Genesis");
-        book = $createBookLine("GEN", content);
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append(content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -916,8 +916,8 @@ describe("DELETE_LINE_COMMAND clamps a collapsed mid-content caret past the pref
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("one two three");
-        book = $createBookLine("GEN", content);
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append(content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -967,8 +967,8 @@ describe("$narrowSelectionPastBookPrefix", () => {
     let content!: TextNode;
     const { editor } = createBasicTestEnvironment(nodesForBook, () => {
       content = $createTextNode("Genesis");
-      book = $createBookLine("GEN", content);
-      $getRoot().append(book);
+      book = $createBookLine("GEN");
+      $getRoot().append(book.append(content));
     });
     updateSelection(editor, book, 0, content, 3);
 
@@ -992,8 +992,8 @@ describe("$narrowSelectionPastBookPrefix", () => {
     let content!: TextNode;
     const { editor } = createBasicTestEnvironment(nodesForBook, () => {
       content = $createTextNode("Genesis");
-      book = $createBookLine("GEN", content);
-      $getRoot().append(book);
+      book = $createBookLine("GEN");
+      $getRoot().append(book.append(content));
     });
     updateSelection(editor, content, 3, book, 0);
 
@@ -1042,8 +1042,8 @@ describe("$narrowSelectionPastBookPrefix", () => {
     let content!: TextNode;
     const { editor } = createBasicTestEnvironment(nodesForBook, () => {
       content = $createTextNode("Genesis");
-      book = $createBookLine("GEN", content);
-      $getRoot().append(book);
+      book = $createBookLine("GEN");
+      $getRoot().append(book.append(content));
     });
     updateSelection(editor, book, 0, book, 1); // exactly the prefix, nothing else
 
@@ -1126,8 +1126,8 @@ describe("a non-collapsed selection spanning the prefix narrows instead of losin
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("Genesis");
-        book = $createBookLine("GEN", content);
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append(content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -1163,8 +1163,8 @@ describe("a non-collapsed selection spanning the prefix narrows instead of losin
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("Genesis");
-        book = $createBookLine("GEN", content);
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append(content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -1195,8 +1195,8 @@ describe("a non-collapsed selection spanning the prefix narrows instead of losin
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("Genesis");
-        book = $createBookLine("GEN", content);
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append(content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -1227,8 +1227,8 @@ describe("a non-collapsed selection spanning the prefix narrows instead of losin
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("Genesis");
-        book = $createBookLine("GEN", content);
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append(content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -1264,8 +1264,8 @@ describe("a non-collapsed selection spanning the prefix narrows instead of losin
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("Genesis");
-        book = $createBookLine("GEN", content);
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append(content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -1317,8 +1317,8 @@ describe("a caret that comes to rest before the book's prefix moves past it", ()
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("Genesis");
-        book = $createBookLine("GEN", content);
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append(content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -1353,8 +1353,8 @@ describe("a caret that comes to rest before the book's prefix moves past it", ()
     let book!: BookNode;
     const { editor } = await baseTestEnvironment(
       () => {
-        book = $createBookLine("GEN", $createTextNode("Genesis"));
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append($createTextNode("Genesis")));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -1382,8 +1382,8 @@ describe("a caret that comes to rest before the book's prefix moves past it", ()
     const { editor } = await baseTestEnvironment(
       () => {
         content = $createTextNode("Genesis");
-        book = $createBookLine("GEN", content);
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append(content));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -1400,11 +1400,13 @@ describe("a caret that comes to rest before the book's prefix moves past it", ()
     let para!: ParaNode;
     const { editor } = await baseTestEnvironment(
       () => {
-        para = $createParaNode("p").append(
-          $createImmutableTypedTextNode("marker", `\\p${NBSP}`),
-          $createTextNode("text"),
+        para = $createParaNode("p");
+        $getRoot().append(
+          para.append(
+            $createImmutableTypedTextNode("marker", `\\p${NBSP}`),
+            $createTextNode("text"),
+          ),
         );
-        $getRoot().append(para);
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -1424,8 +1426,8 @@ describe("content that lands in front of the book's prefix is moved after it", (
     let typed!: TextNode;
     const { editor } = await baseTestEnvironment(
       () => {
-        book = $createBookLine("GEN", $createTextNode("Genesis"));
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append($createTextNode("Genesis")));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );
@@ -1457,8 +1459,8 @@ describe("content that lands in front of the book's prefix is moved after it", (
     let book!: BookNode;
     const { editor } = await baseTestEnvironment(
       () => {
-        book = $createBookLine("GEN", $createTextNode("Genesis"));
-        $getRoot().append(book);
+        book = $createBookLine("GEN");
+        $getRoot().append(book.append($createTextNode("Genesis")));
       },
       <ParaMarkerPrefixCursorGuardPlugin />,
     );

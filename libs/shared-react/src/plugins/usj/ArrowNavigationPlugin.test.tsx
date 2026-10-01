@@ -2616,8 +2616,8 @@ describe("Backward navigation in the book line", () => {
     let trailing: TextNode;
     const { editor } = await testEnvironment(() => {
       trailing = $createTextNode(" trailing desc");
-      book = $createBookLine("GEN", $createCollapsedNoteNode(), trailing);
-      $getRoot().append(book);
+      book = $createBookLine("GEN");
+      $getRoot().append(book.append($createCollapsedNoteNode(), trailing));
     });
     updateSelection(editor, trailing!, 0);
 
@@ -2636,8 +2636,8 @@ describe("Backward navigation in the book line", () => {
     let trailing: TextNode;
     const { editor } = await testEnvironment(() => {
       trailing = $createTextNode(" trailing desc");
-      book = $createBookLine("GEN", $createCollapsedNoteNode(), trailing);
-      $getRoot().append(book);
+      book = $createBookLine("GEN");
+      $getRoot().append(book.append($createCollapsedNoteNode(), trailing));
     });
     updateSelection(editor, trailing!, 0);
 
@@ -2724,13 +2724,10 @@ describe("Backward navigation in the book line", () => {
     let trailing: TextNode;
     const { editor } = await testEnvironment(() => {
       trailing = $createTextNode(" trailing desc");
-      book = $createBookLine(
-        "GEN",
-        $createTextNode("description"),
-        $createCollapsedNoteNode(),
-        trailing,
+      book = $createBookLine("GEN");
+      $getRoot().append(
+        book.append($createTextNode("description"), $createCollapsedNoteNode(), trailing),
       );
-      $getRoot().append(book);
     });
     updateSelection(editor, trailing!, 0);
 
@@ -2793,8 +2790,8 @@ describe("Forward navigation past a collapsed note in the book line", () => {
     let note: NoteNode;
     const { editor } = await testEnvironment(() => {
       note = $createCollapsedNoteNode();
-      book = $createBookLine("GEN", $createTextNode("description"), note);
-      $getRoot().append(book);
+      book = $createBookLine("GEN");
+      $getRoot().append(book.append($createTextNode("description"), note));
     });
     // Element point right after the description text and before the note — exactly the shape the
     // book line's own backward note-hop lands the caret on (`(book, i)`).
@@ -2822,13 +2819,10 @@ describe("Forward navigation past a collapsed note in the book line", () => {
     let trailing: TextNode;
     const { editor } = await testEnvironment(() => {
       trailing = $createTextNode(" trailing desc");
-      book = $createBookLine(
-        "GEN",
-        $createTextNode("description"),
-        $createCollapsedNoteNode(),
-        trailing,
+      book = $createBookLine("GEN");
+      $getRoot().append(
+        book.append($createTextNode("description"), $createCollapsedNoteNode(), trailing),
       );
-      $getRoot().append(book);
     });
     updateSelection(editor, book!, 2);
 
@@ -2886,14 +2880,16 @@ describe("Backward navigation into a collapsed note ending the previous block", 
       () => {
         note = $createNoteNode("f", "+");
         para2Text = $createTextNode("p2 text");
-        book = $createBookLine(
-          "GEN",
-          note.append(
-            $createImmutableNoteCallerNode("+", "note1 preview"),
-            $createCharNode("ft").append($createTextNode("note1 text")),
+        book = $createBookLine("GEN");
+        $getRoot().append(
+          book.append(
+            note.append(
+              $createImmutableNoteCallerNode("+", "note1 preview"),
+              $createCharNode("ft").append($createTextNode("note1 text")),
+            ),
           ),
+          $createParaNode().append(para2Text),
         );
-        $getRoot().append(book, $createParaNode().append(para2Text));
       },
       "ltr",
       standardView,
