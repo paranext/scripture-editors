@@ -400,7 +400,10 @@ function createNote(
   const caller = markerObject.caller ?? "*";
   let callerNode: SerializedImmutableNoteCallerNode | SerializedTextNode;
   if (_viewOptions?.markerMode === "editable") {
+    // Unmergeable, or Lexical folds content text that starts right after it into the caller on
+    // the first edit, and the caller then saves as content.
     callerNode = createText(getEditableCallerText(caller));
+    callerNode.detail = UNMERGEABLE_TEXT_DETAIL;
   } else {
     callerNode = createNoteCaller(caller, childNodes);
   }
@@ -501,6 +504,13 @@ function createMarker(
     version: 1,
   };
 }
+
+/**
+ * The `detail` flag of a text node Lexical's normalization never merges with an adjacent text node
+ * (`TextNode.toggleUnmergeable`). Lexical keeps its detail flags internal, so the value is spelled
+ * here.
+ */
+const UNMERGEABLE_TEXT_DETAIL = 2;
 
 function createText(text: string, mode: TextModeType = "normal"): SerializedTextNode {
   return {
