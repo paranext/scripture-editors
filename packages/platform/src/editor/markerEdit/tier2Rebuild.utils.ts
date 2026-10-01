@@ -76,6 +76,7 @@ import {
   $isUnknownNode,
   $isVerseNode,
   $isMarkerTrailingSeparator,
+  $isNbspContentInMark,
   $isTypedMarkNode,
   $milestoneAttributeRunPieces,
   $verseAttributeRunPieces,
@@ -222,7 +223,9 @@ export function toFragmentText(text: string): string {
  *   corrupting it to a plain space. Two structural shapes still flatten to " " even here:
  *   a node that is EXACTLY one NBSP (the engine-owned spacer / empty-char placeholder shape,
  *   which serialization also treats as structural — the lone-NBSP byte test in
- *   editor-usj.adaptor.ts), and the one structural leading NBSP fused onto a char span's first
+ *   editor-usj.adaptor.ts) unless it is a no-break space an annotation mark split off content
+ *   (`isNbspContent`, from `$isNbspContentInMark`), and the one structural leading NBSP fused
+ *   onto a char span's first
  *   content child (`structuralLead` — the positional twin of `createCharMarker`'s non-standard
  *   first-string strip in editor-usj.adaptor.ts).
  *
@@ -235,9 +238,10 @@ export function contentFragmentText(
   text: string,
   viewOptions: ViewOptions | undefined,
   structuralLead = false,
+  isNbspContent = false,
 ): string {
   if (hasStandardViewWhitespace(viewOptions)) return toFragmentText(text);
-  if (text === NBSP) return " ";
+  if (text === NBSP && !isNbspContent) return " ";
   const hasLead = structuralLead && text.startsWith(NBSP);
   const body = hasLead ? text.slice(1) : text;
   return (hasLead ? " " : "") + body.replaceAll(NBSP, "~");
@@ -1068,7 +1072,12 @@ function $appendNodesFragment(
         node,
         isStructuralRun
           ? toFragmentText($textNodeFragmentText(node))
-          : contentFragmentText($textNodeFragmentText(node), viewOptions, structuralLead),
+          : contentFragmentText(
+              $textNodeFragmentText(node),
+              viewOptions,
+              structuralLead,
+              $isNbspContentInMark(node),
+            ),
       );
     } else if ($isElementNode(node)) {
       // TypedMarkNode and other transparent wrappers: an annotation is a host overlay, never

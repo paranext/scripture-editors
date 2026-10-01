@@ -485,6 +485,47 @@ function precedesOpeningCharGlyph(
   );
 }
 
+/**
+ * Whether the lone-NBSP text `nodes[index]` is content an annotation mark holds — the serialized
+ * twin of `$isNbspContentInMark` (node.utils.ts), which says why: a direct child of a mark
+ * (`inMark`), untagged, not where a char opener's separator sits, and, inside a char span, not the
+ * span's only content.
+ */
+function isNbspContentInMark(
+  nodes: SerializedLexicalNode[],
+  index: number,
+  precedingSibling: SerializedLexicalNode | undefined,
+  enclosingChar: SerializedCharNode | undefined,
+  inMark: boolean,
+): boolean {
+  const node = nodes[index];
+  if (!inMark || !isSerializedTextNode(node) || node.text !== NBSP) return false;
+  if (node[NODE_STATE_KEY]?.textType !== undefined) return false;
+  if (precedesOpeningCharGlyph(nodes, index, precedingSibling, enclosingChar)) return false;
+  return !enclosingChar || hasOtherCharContent(enclosingChar.children, node);
+}
+
+/** Whether `children` (a char span's, read through marks) hold content besides `except`: the
+ * serialized twin of `$hasOtherCharContent` (node.utils.ts). */
+function hasOtherCharContent(
+  children: SerializedLexicalNode[],
+  except: SerializedTextNode,
+): boolean {
+  return children.some((child) => {
+    if (child === except) return false;
+    if (isSerializedTypedMarkNode(child)) return hasOtherCharContent(child.children, except);
+    if (isSerializedMarkerNode(child)) return false;
+    if (isSerializedTextNode(child))
+      return (
+        child[NODE_STATE_KEY]?.textType === undefined &&
+        child.text !== "" &&
+        child.text !== NBSP &&
+        !isCursorPlaceholderOnly(child.text)
+      );
+    return "children" in child && child.type !== AttributeRunNode.getType();
+  });
+}
+
 /** The serialized twin of `$throughMarks` (attributeDisplay.utils.ts): an annotation mark is
  * presentation this export splices away, so a slot identified by its position among its parent's
  * children has to see through one. */
@@ -539,6 +580,8 @@ function recurseNodes(
   // The effective previous sibling for `nodes[0]`, when `nodes` is a TypedMarkNode's own
   // unwrapped children — see `precedesOpeningCharGlyph`.
   precedingSibling?: SerializedLexicalNode,
+  // Whether `nodes` are a TypedMarkNode's own children — see `isNbspContentInMark`.
+  inMark = false,
 ): MarkerContent[] | undefined {
   const markers: MarkerContent[] = [];
   let childMarkers: MarkerContent[] | undefined;
@@ -660,6 +703,7 @@ function recurseNodes(
           callerSlot,
           enclosingChar,
           index > 0 ? nodes[index - 1] : precedingSibling,
+          true,
         );
         if (childMarkers) {
           const commentIDs = serializedMarkNode.typedIDs[COMMENT_MARK_TYPE];
@@ -692,15 +736,17 @@ function recurseNodes(
           // A byte test, not (only) the separator state tag, and deliberately so: a lone-NBSP
           // text node stands in for THREE presentation shapes — the tagged separators the
           // forward adaptor builds, the empty-char placeholder, and an orphaned structural
-          // prefix a split or deletion strands in its own (untagged) node. The known cost is
-          // that a CONTENT string which is exactly one NBSP is dropped too; fixing that needs
-          // a per-context story for the untagged shapes, not a tag test alone. The forward
-          // side keeps its own output clear of the ambiguity: `createPara` leaves a
-          // spaces-only paragraph-leading string plain instead of rewriting a lone " " into
-          // exactly this shape, so in standard view only an authored lone-NBSP data string
-          // (displayed as `~`, never as a bare NBSP node) is at stake — leaving the drop to
-          // genuinely structural nodes.
-          serializedTextNode.text !== NBSP &&
+          // prefix a split or deletion strands in its own (untagged) node. The one content shape
+          // told apart is a no-break space an annotation mark split off content text
+          // (`isNbspContentInMark`). Any other CONTENT string which is exactly one NBSP is
+          // dropped too; fixing that needs a per-context story for the untagged shapes, not a
+          // tag test alone. The forward side keeps its own output clear of the ambiguity:
+          // `createPara` leaves a spaces-only paragraph-leading string plain instead of
+          // rewriting a lone " " into exactly this shape, so in standard view only an authored
+          // lone-NBSP data string (displayed as `~`, never as a bare NBSP node) is at stake —
+          // leaving the drop to genuinely structural nodes.
+          (serializedTextNode.text !== NBSP ||
+            isNbspContentInMark(nodes, index, precedingSibling, enclosingChar, inMark)) &&
           // The untagged NBSP-`|` form of milestone attribute text. Text right after a char span's
           // opening glyph is never that: its NBSP is the span's separator, and a `|…` after it is
           // content the attribute grammar left literal (`\w |lemma="g"grace\w*` — Paratext 9

@@ -286,6 +286,123 @@ describe("an annotation inside a figure caption", () => {
   );
 });
 
+describe("an annotation over a no-break space the text itself contains", () => {
+  /** `\p Tilde~should be`: the `~` is a real no-break space in the paragraph's content. */
+  const tildeUsj: Usj = twoParaUsj([`Tilde${NBSP}should be`]);
+  const tildeRange: AnnotationRange = {
+    start: { jsonPath: "$.content[2].content[0]", offset: 5 },
+    end: { jsonPath: "$.content[2].content[0]", offset: 6 },
+  };
+
+  it.each(["unformatted", "visible", "visible+collapsed"])(
+    "holds it and saves it unchanged (%s)",
+    async (name) => {
+      const mounted = await mountInView(tildeUsj, oracleView(name));
+      const before = mounted.ref.current?.getUsj();
+
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(tildeRange, ORACLE_TYPE, "nb");
+        await Promise.resolve();
+      });
+
+      expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "nb"))).toBe(NBSP);
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
+    },
+  );
+
+  it.each(["unformatted", "visible", "formatted", "hidden+expanded"])(
+    "holds one inside a char span and saves it unchanged (%s)",
+    async (name) => {
+      const wordUsj = twoParaUsj([
+        "In ",
+        { type: "char", marker: "w", content: [`a${NBSP}b`] },
+        " end",
+      ]);
+      const mounted = await mountInView(wordUsj, oracleView(name));
+      const before = mounted.ref.current?.getUsj();
+
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(
+          {
+            start: { jsonPath: "$.content[2].content[1].content[0]", offset: 1 },
+            end: { jsonPath: "$.content[2].content[1].content[0]", offset: 2 },
+          },
+          ORACLE_TYPE,
+          "nb",
+        );
+        await Promise.resolve();
+      });
+
+      expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "nb"))).toBe(NBSP);
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
+    },
+  );
+
+  it("never makes an empty span's placeholder content (hidden+expanded)", async () => {
+    const emptyUsj = twoParaUsj(["x ", { type: "char", marker: "wj", content: [] }, " y"]);
+    const mounted = await mountInView(emptyUsj, oracleView("hidden+expanded"));
+    const before = mounted.ref.current?.getUsj();
+
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+          end: { jsonPath: "$.content[2].content[2]", offset: 1 },
+        },
+        ORACLE_TYPE,
+        "ph",
+      );
+      await Promise.resolve();
+    });
+
+    expect(mounted.ref.current?.getUsj()).toEqual(before);
+  });
+
+  it("keeps it through a settle elsewhere in the paragraph (unformatted)", async () => {
+    const mounted = await mountInView(tildeUsj, oracleView("unformatted"));
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(tildeRange, ORACLE_TYPE, "nb");
+      await Promise.resolve();
+    });
+
+    await typeOver(mounted.lexical, "should be", "should be \\bd x\\bd*");
+    settleByBlurAndCommit(mounted);
+
+    const para = mounted.ref.current?.getUsj()?.content?.[2];
+    if (!para || typeof para === "string") throw new Error("expected a paragraph");
+    expect(para.content?.[0]).toBe(`Tilde${NBSP}should be `);
+    expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
+    expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "nb"))).toBe(NBSP);
+  });
+
+  it.each(["unformatted", "visible"])(
+    "keeps it inside a comment through a save (%s)",
+    async (name) => {
+      const mounted = await mountInView(tildeUsj, oracleView(name));
+
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const text = $textContaining("Tilde");
+          const selection = $createRangeSelection();
+          selection.anchor.set(text.getKey(), 5, "text");
+          selection.focus.set(text.getKey(), 6, "text");
+          $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+        });
+        await Promise.resolve();
+      });
+
+      const para = mounted.ref.current?.getUsj()?.content?.[2];
+      if (!para || typeof para === "string") throw new Error("expected a paragraph");
+      const text = (para.content ?? []).filter((item) => typeof item === "string").join("");
+      expect(text).toBe(`Tilde${NBSP}should be`);
+      const milestones = (para.content ?? []).filter(
+        (item) => typeof item !== "string" && item.type === "ms",
+      );
+      expect(milestones).toHaveLength(2);
+    },
+  );
+});
+
 /** The text of every mark holding `type`/`id`, in document order. Call inside a read. */
 function $markTexts(type: string, id: string): string[] {
   const texts: string[] = [];
