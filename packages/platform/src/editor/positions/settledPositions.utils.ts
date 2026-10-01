@@ -743,11 +743,13 @@ function $livePointFromAnchor(
   const sides = pairedSides(plan);
   if (!sides) return $liveScopeFront(plan, logger);
   const addressDisplayBytes = !isUsjTextContentLocation(location);
-  const liveAnchor = $withWsRunIn(
-    sides.liveFragment,
-    anchorAcrossLiteralsSnapped(sides.alignment, anchor, "toLive"),
-    addressDisplayBytes,
-  );
+  const crossed = anchorAcrossLiteralsSnapped(sides.alignment, anchor, "toLive");
+  // A byte inside a closing glyph the user is still editing (`\ w*`) is a place the caret rests,
+  // and a settled position on that byte is that place — caret addressing would move it past the
+  // glyph, onto the content after it.
+  const glyph = $closingGlyphByte(sides.liveFragment, crossed);
+  if (glyph) return cutCorrected(plan, glyph);
+  const liveAnchor = $withWsRunIn(sides.liveFragment, crossed, addressDisplayBytes);
   const point = $resolveFragmentByteAnchor(sides.liveFragment, liveAnchor, {
     addressDisplayBytes,
   });

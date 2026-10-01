@@ -103,4 +103,18 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     for (let offset = 0; offset <= "\\qtx-s".length; offset += 1)
       expectBackInPlace(roundTrip(mounted, view, $node, offset));
   });
+
+  it("keeps a position inside a closer the user damaged", async () => {
+    const { mounted, $node } = await pendingEdit(
+      ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      view,
+      "\\w*",
+      "\\ w*",
+      2,
+    );
+    for (let offset = 1; offset < "\\ w*".length; offset += 1) {
+      const trip = roundTrip(mounted, view, $node, offset);
+      expect(trip.to).toBe(trip.from);
+    }
+  });
 });

@@ -1,60 +1,12 @@
 {
-  "closed char span (unformatted view)": [
-    "marker \"\\\\w*\"@1 type \" \" [positions]",
-    "marker \"\\\\w*\"@1 type \"*\" [positions]",
-    "marker \"\\\\w*\"@1 type \"|\" [positions]",
-    "marker \"\\\\w*\"@2 type \" \" [positions]",
-    "marker \"\\\\w*\"@2 type \"|\" [positions]"
-  ],
   "nested char span (unformatted view)": [
     "marker \"\\\\+wj\"@2 Delete [positions]",
-    "marker \"\\\\+wj\"@3 Backspace [positions]",
-    "marker \"\\\\+wj*\"@1 type \" \" [positions]",
-    "marker \"\\\\+wj*\"@1 type \"*\" [positions]",
-    "marker \"\\\\+wj*\"@1 type \"|\" [positions]",
-    "marker \"\\\\+wj*\"@2 type \" \" [positions]",
-    "marker \"\\\\+wj*\"@2 type \"*\" [positions]",
-    "marker \"\\\\+wj*\"@2 type \"|\" [positions]",
-    "marker \"\\\\+wj*\"@3 type \" \" [positions]",
-    "marker \"\\\\+wj*\"@3 type \"*\" [positions]",
-    "marker \"\\\\+wj*\"@3 type \"|\" [positions]",
-    "marker \"\\\\+wj*\"@4 type \" \" [positions]",
-    "marker \"\\\\+wj*\"@4 type \"|\" [positions]",
-    "marker \"\\\\nd*\"@1 type \" \" [positions]",
-    "marker \"\\\\nd*\"@1 type \"*\" [positions]",
-    "marker \"\\\\nd*\"@1 type \"|\" [positions]",
-    "marker \"\\\\nd*\"@2 type \" \" [positions]",
-    "marker \"\\\\nd*\"@2 type \"*\" [positions]",
-    "marker \"\\\\nd*\"@2 type \"|\" [positions]",
-    "marker \"\\\\nd*\"@3 type \" \" [positions]",
-    "marker \"\\\\nd*\"@3 type \"|\" [positions]"
-  ],
-  "char span with an attribute (unformatted view)": [
-    "marker \"\\\\w*\"@1 type \" \" [positions]",
-    "marker \"\\\\w*\"@1 type \"*\" [positions]",
-    "marker \"\\\\w*\"@1 type \"|\" [positions]",
-    "marker \"\\\\w*\"@2 type \" \" [positions]",
-    "marker \"\\\\w*\"@2 type \"|\" [positions]"
+    "marker \"\\\\+wj\"@3 Backspace [positions]"
   ],
   "note (unformatted view)": [
     "marker \"\\\\ft\"@1 Delete [positions]",
     "marker \"\\\\ft\"@2 Backspace [positions]",
-    "marker \"\\\\ft*\"@1 type \" \" [positions]",
-    "marker \"\\\\ft*\"@1 type \"*\" [positions]",
-    "marker \"\\\\ft*\"@1 type \"|\" [positions]",
-    "marker \"\\\\ft*\"@2 type \"*\" [positions]",
-    "marker \"\\\\ft*\"@3 type \" \" [positions]",
-    "marker \"\\\\ft*\"@3 type \"|\" [positions]",
     "text \"a\"@0 type \"\\\\\" [positions]"
-  ],
-  "milestone (unformatted view)": [
-    "marker \"\\\\*\"@1 type \" \" [positions]",
-    "marker \"\\\\*\"@1 type \"*\" [positions]",
-    "marker \"\\\\*\"@1 type \"|\" [positions]",
-    "marker \"\\\\*\"@2 type \" \" [positions]",
-    "marker \"\\\\*\"@2 type \"*\" [positions]",
-    "marker \"\\\\*\"@2 type \"x\" [positions]",
-    "marker \"\\\\*\"@2 type \"|\" [positions]"
   ],
   "\\ca span beside its chapter (unformatted view)": [
     "marker \"\\\\ca\"@1 Delete [positions]",
