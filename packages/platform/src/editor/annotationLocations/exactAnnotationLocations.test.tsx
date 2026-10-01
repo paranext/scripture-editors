@@ -2007,6 +2007,27 @@ describe("removal is reported by what holds the annotation now", () => {
     expect(causes(onRemove)).toEqual(["destroyed"]);
   });
 
+  it("reports nothing more when a mark that reported its own removal comes back and is removed again", async () => {
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    const mounted = await mountGraceMark(onRemove);
+    const removeMark = async () =>
+      act(async () => {
+        mounted.lexical.update(() => $markHolding("external-test", "G").remove());
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    await removeMark();
+    expect(onRemove.mock.calls).toEqual([["external-test", "G", "destroyed", "grace"]]);
+    await undo(mounted);
+    expect(mounted.lexical.getEditorState().read(() => $markTexts("external-test", "G"))).toEqual([
+      "grace",
+    ]);
+
+    await removeMark();
+
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
   it("reports destroyed once when a settle discards every byte of a mark", async () => {
     const onRemove = vi.fn<TypedMarkOnRemove>();
     const mounted = await mountTypingLemma();

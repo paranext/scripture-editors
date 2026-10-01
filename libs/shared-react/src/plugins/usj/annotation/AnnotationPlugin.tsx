@@ -158,7 +158,8 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
   /**
    * Removes every mark and every display-byte range for the type/id pair. Each mark reports its
    * removal itself (`deleteID`, one call per mark); an annotation no mark holds reports it here,
-   * once.
+   * once — unless the host has already heard of its removal since it was last set (a mark that
+   * held it reported its own deletion).
    *
    * @param nodeKeys - The caller's own snapshot of the mark keys, when it already has one (from
    *   `markNodeMap`); omitted, this looks the keys up itself.
@@ -180,7 +181,12 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
     deleteDisplayAnnotationRegistration(editor, type, id);
     // Without this, a host's removeAnnotation on an annotation held only on display bytes would
     // report nothing, and core would never call the extension's interactionCommand.
-    if (covered.length > 0 && registration && markKeys.length === 0) {
+    if (
+      covered.length > 0 &&
+      registration &&
+      markKeys.length === 0 &&
+      !displayIndex.hasReported(type, id)
+    ) {
       displayIndex.noteReported(type, id);
       registration.onRemove?.(type, id, "removed", covered.join(""));
     }

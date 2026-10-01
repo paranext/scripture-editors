@@ -267,15 +267,16 @@ export interface EditorRef {
    * content `<mark>`'s bytes but loses the glyph's own highlighting.
    *
    * `onRemove`: each `<mark>` reports its own removal when it goes away — one call per `<mark>`,
-   * whatever else still holds the annotation. Beyond that, the annotation's last holder — a
-   * `<mark>` or a display byte — leaving the document without any `<mark>` having reported it fires
-   * ONE more report, through its display bytes: `"removed"` when `removeAnnotation` or setting the
-   * same id again takes it away, `"destroyed"` when it drops out of the document (an edit, a
-   * collaborator's edit, or a settle that discards those bytes). An annotation split across several
-   * carriers that all leave in the same edit reports their text joined in document order; carriers
-   * lost across separate edits report only the text of the piece(s) still present at the last one.
-   * Undo, redo, and a `setUsj` reload report nothing; setting the id again starts a fresh reporting
-   * cycle for it.
+   * whatever else still holds the annotation — and only once: a `<mark>` an undo brings back stays
+   * quiet when it goes again. Beyond that, the annotation's last holder — a `<mark>` or a display
+   * byte — leaving the document without any `<mark>` having reported the annotation's removal since
+   * it was set fires ONE more report, through its display bytes: `"removed"` when
+   * `removeAnnotation` or setting the same id again takes it away, `"destroyed"` when it drops out
+   * of the document (an edit, a collaborator's edit, or a settle that discards those bytes). An
+   * annotation split across several carriers that all leave in the same edit reports their text
+   * joined in document order; carriers lost across separate edits report only the text of the
+   * piece(s) still present at the last one. Undo, redo, and a `setUsj` reload report nothing;
+   * setting the id again starts a fresh reporting cycle for it.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.

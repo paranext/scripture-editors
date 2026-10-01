@@ -62,6 +62,9 @@ export interface DisplayAnnotationIndex {
   noteSet(type: string, id: string): void;
   /** Record that the host has just been told `type`/`id` was removed, in the current update. */
   noteReported(type: string, id: string): void;
+  /** Whether the host has been told `type`/`id` was removed since it was last set — by a mark or
+   * by this index, in an earlier commit or earlier in the current update. */
+  hasReported(type: string, id: string): boolean;
 }
 
 /** Every node class a carrier can be (`$isDisplayAnnotationCarrier`). */
@@ -316,10 +319,11 @@ function createIndex(editor: LexicalEditor): Entry {
 
   /** Take the removals marks have reported since the last take as heard. */
   function takeMarkReports(): void {
-    for (const [type, id] of takeTypedMarkRemovalReports(editor)) hear(indexKey(type, id));
+    for (const [type, id] of takeTypedMarkRemovalReports(editor)) hear(type, id);
   }
 
-  function hear(annotationKey: string): void {
+  function hear(type: string, id: string): void {
+    const annotationKey = indexKey(type, id);
     reported.add(annotationKey);
     heardThisCommit.add(annotationKey);
   }
@@ -423,7 +427,11 @@ function createIndex(editor: LexicalEditor): Entry {
     index: {
       keysFor: (type, id) => keysByAnnotation.get(indexKey(type, id)) ?? EMPTY,
       noteSet,
-      noteReported: (type, id) => hear(indexKey(type, id)),
+      noteReported: hear,
+      hasReported: (type, id) => {
+        takeMarkReports();
+        return reported.has(indexKey(type, id));
+      },
     },
     references: 0,
     unregister,
@@ -475,6 +483,7 @@ export function useDisplayAnnotationIndex(editor: LexicalEditor): DisplayAnnotat
       keysFor: (type, id) => current.current?.keysFor(type, id) ?? EMPTY,
       noteSet: (type, id) => current.current?.noteSet(type, id),
       noteReported: (type, id) => current.current?.noteReported(type, id),
+      hasReported: (type, id) => current.current?.hasReported(type, id) ?? false,
     }),
     [],
   );

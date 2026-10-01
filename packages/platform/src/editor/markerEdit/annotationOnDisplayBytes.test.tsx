@@ -201,6 +201,53 @@ describe("an annotation across content and a verse number", () => {
     expect(mixed).toHaveBeenCalledTimes(marksBefore);
     expect(control).toHaveBeenCalledTimes(1);
   });
+
+  /** `and` behind `\v 2`: one mark, and the verse as a carrier. */
+  const markAndVerse: AnnotationRange = {
+    start: { jsonPath: contentPath([2, 0]), offset: "in the beginning ".length },
+    end: { jsonPath: contentPath([2, 2]), offset: "and".length },
+  };
+
+  /** Removes every mark in the document the way a deleted node goes: `remove()`. */
+  async function removeMarks(mounted: Mounted): Promise<void> {
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const marks: LexicalNode[] = [];
+        const walk = (node: LexicalNode): void => {
+          if ($isTypedMarkNode(node)) marks.push(node);
+          else if ($isElementNode(node)) node.getChildren().forEach(walk);
+        };
+        walk($getRoot());
+        marks.forEach((mark) => mark.remove());
+      });
+      await Promise.resolve();
+    });
+  }
+
+  it("reports once when its mark is deleted and the host then removes it from the verse", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(usj);
+    await annotate(mounted, markAndVerse, "1", onRemove);
+    await removeMarks(mounted);
+    expect(onRemove.mock.calls).toEqual([["external-test", "1", "destroyed", "and"]]);
+
+    await act(async () => mounted.ref.current?.removeAnnotation("test", "1"));
+
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports once when its mark is deleted and the host then sets the same id again", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(usj);
+    await annotate(mounted, markAndVerse, "1", onRemove);
+    await removeMarks(mounted);
+
+    await annotate(mounted, contentOnly, "1", onRemove);
+
+    expect(markTexts(mounted.lexical)).toEqual(["beginning"]);
+    expect(onRemove.mock.calls).toEqual([["external-test", "1", "destroyed", "and"]]);
+  });
 });
 
 describe("undoing the deletion of an annotated verse", () => {

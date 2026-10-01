@@ -152,6 +152,11 @@ const typedOnMouseLeaveRegistry = new Map<NodeKey, TypedOnMouseLeaves>();
  * since the last take. An editor nobody listens to has no entry, so nothing piles up for it. */
 const removalReports = new WeakMap<LexicalEditor, [type: string, id: string][]>();
 
+/** Per editor a reporter listens to, the marks that have reported each `type`/`id`'s removal since
+ * it was last set (by {@link removalKey}). An undo brings a mark back under its own key, so a mark
+ * found here has already told the host and stays quiet the next time it goes. */
+const reportedMarks = new WeakMap<LexicalEditor, Map<string, Set<NodeKey>>>();
+
 /**
  * Start recording the `type`/`id` pairs whose `onRemove` a mark of `editor` calls, for
  * {@link takeTypedMarkRemovalReports}. Returns the function that stops it and drops what was not
@@ -159,8 +164,10 @@ const removalReports = new WeakMap<LexicalEditor, [type: string, id: string][]>(
  */
 export function listenForTypedMarkRemovalReports(editor: LexicalEditor): () => void {
   removalReports.set(editor, []);
+  reportedMarks.set(editor, new Map());
   return () => {
     removalReports.delete(editor);
+    reportedMarks.delete(editor);
   };
 }
 
@@ -186,7 +193,8 @@ function removalKey(type: string, id: string): string {
 /**
  * Stop, or resume, every mark of `editor` reporting the removal of `type`/`id`. A reporter that has
  * already told the host an annotation is gone silences it, so a mark an undo brings back cannot
- * report it a second time.
+ * report it a second time. Resuming starts a new lifecycle, in which every mark may report once
+ * again.
  */
 export function setTypedMarkRemovalSilenced(
   editor: LexicalEditor,
@@ -198,12 +206,16 @@ export function setTypedMarkRemovalSilenced(
   if (silenced) {
     if (!keys) silencedRemovals.set(editor, (keys = new Set()));
     keys.add(removalKey(type, id));
-  } else keys?.delete(removalKey(type, id));
+  } else {
+    keys?.delete(removalKey(type, id));
+    reportedMarks.get(editor)?.delete(removalKey(type, id));
+  }
 }
 
 /** Resume reporting every silenced removal in `editor`. */
 export function clearTypedMarkRemovalSilences(editor: LexicalEditor): void {
   silencedRemovals.delete(editor);
+  reportedMarks.get(editor)?.clear();
 }
 
 /** Drop the callback for `type`/`id` from `registry`'s entry for `key`. */
@@ -1028,11 +1040,18 @@ export class TypedMarkNode extends ElementNode {
     if (!callback) return;
 
     const editor = $getEditor();
-    if (silencedRemovals.get(editor)?.has(removalKey(type, id))) {
+    const key = removalKey(type, id);
+    const reportedHere = reportedMarks.get(editor);
+    if (silencedRemovals.get(editor)?.has(key) || reportedHere?.get(key)?.has(this.getKey())) {
       this.removeOnRemoveFor(type, id);
       return;
     }
     removalReports.get(editor)?.push([type, id]);
+    if (reportedHere) {
+      let marks = reportedHere.get(key);
+      if (!marks) reportedHere.set(key, (marks = new Set()));
+      marks.add(this.getKey());
+    }
     callback(type, id, cause, this.getTextContent());
     this.removeOnRemoveFor(type, id);
   }
