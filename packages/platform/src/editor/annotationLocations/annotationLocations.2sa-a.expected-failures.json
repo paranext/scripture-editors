@@ -322,43 +322,7 @@
         "verse*(soft):\" \"@$.content[142].content[2].content[0]['number']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[142].content[2].content[2]['marker']|propertyOffset=2"
       ],
-      "failures": {
-        "standard|A|25|$.content[13].content[0]|offset=112|$.content[13].content[1].content[1]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[12].content[1].content[0]['marker']|propertyOffset=1|$.content[12].content[1].content[3].content[0]|offset=9": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[13].content[0]|offset=112|$.content[13].content[1]|closingMarkerOffset=0": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|B|1|$.content[10].content[1]['caller']|propertyOffset=1|$.content[10].content[1]|keyName=category": [
-          "R2-ELEM-OFFSET-AS-TEXT(start)",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|B|1|$.content[10].content[1]['category']|propertyOffset=4|$.content[10].content[1]['category']|propertyOffset=5": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "standard|B|1|$.content[11].content[1]['category']|propertyOffset=5|$.content[11].content[1]['category']|propertyOffset=6": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "standard|B|1|$.content[11].content[1]|keyName=category|$.content[11].content[1]|keyName=category,keyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "standard|B|3|$.content[10].content[1]['caller']|propertyOffset=1|$.content[10].content[1]|keyName=category,keyOffset=1": [
-          "R2-ELEM-OFFSET-AS-TEXT(start)",
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|B|3|$.content[10].content[1]['category']|propertyOffset=4|$.content[10].content[1]|keyClosingMarkerOffset=0,keyName=category": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|B|3|$.content[11].content[1]['category']|propertyOffset=5|$.content[11].content[1]|keyClosingMarkerOffset=1,keyName=category": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "standard|B|3|$.content[11].content[1]|keyName=category|$.content[11].content[1]|keyName=category,keyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ]
-      }
+      "failures": {}
     },
     "unformatted": {
       "ops": 9324,
@@ -672,12 +636,7 @@
         "verse*(soft):\" \"@$.content[142].content[2].content[0]['number']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[142].content[2].content[2]['marker']|propertyOffset=2"
       ],
-      "failures": {
-        "unformatted|A|1|$.content[84].content[0]|offset=5|$.content[84].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ]
-      }
+      "failures": {}
     },
     "visible+collapsed": {
       "ops": 8703,
@@ -707,49 +666,7 @@
         "text(sep):\"\\u00a0\"@$.content[135].content[1].content[1]",
         "text(sep):\"\\u00a0\"@$.content[135].content[1]|closingMarkerOffset=0"
       ],
-      "failures": {
-        "visible+collapsed|A|1|$.content[84].content[0]|offset=5|$.content[84].content[0]|offset=6": [
-          "R6-CORRUPT-figure-split",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|12|$.content[13].content[1]['caller']|propertyOffset=0|$.content[13].content[1].content[2].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|25|$.content[12].content[0]|offset=112|$.content[12].content[1].content[2].content[0]|offset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|50|$.content[12].content[0]|offset=82|$.content[12].content[1].content[1]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|B|1|$.content[10].content[1]['category']|propertyOffset=3|$.content[10].content[1]['category']|propertyOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[11].content[1]['category']|propertyOffset=0|$.content[11].content[1]['category']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[11].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[11].content[1]|keyClosingMarkerOffset=4,keyName=category": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[27].content[1]['link-href']|propertyOffset=5|$.content[27].content[1]['link-href']|propertyOffset=6": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[10].content[1]['category']|propertyOffset=3|$.content[10].content[1]['category']|propertyOffset=6": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[10].content[1]['marker']|propertyOffset=1|$.content[10].content[1]|keyName=category": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "visible+collapsed|B|3|$.content[11].content[1]['category']|propertyOffset=0|$.content[11].content[1]['category']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[11].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[11].content[1].content[0]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[27].content[1]['link-href']|propertyOffset=5|$.content[27].content[1]|closingMarkerOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ]
-      }
+      "failures": {}
     },
     "paragraph-structure": {
       "ops": 8684,
@@ -779,48 +696,7 @@
         "text(sep):\"\\u00a0\"@$.content[135].content[1].content[1]",
         "text(sep):\"\\u00a0\"@$.content[135].content[1]|closingMarkerOffset=0"
       ],
-      "failures": {
-        "paragraph-structure|A|12|$.content[13].content[1].content[0].content[0]|offset=0|$.content[13].content[1].content[2].content[0]|offset=5": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|25|$.content[12].content[0]|offset=113|$.content[12].content[1].content[3]": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|25|$.content[13].content[0]|offset=102|$.content[13].content[1].content[1]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|50|$.content[12].content[0]|offset=83|$.content[12].content[1].content[2].content[0]|offset=0": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|6|$.content[13].content[1].content[0].content[0]|offset=0|$.content[13].content[1].content[2]": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|B|1|$.content[10].content[1]['category']|propertyOffset=3|$.content[10].content[1]['category']|propertyOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[11].content[1]['category']|propertyOffset=0|$.content[11].content[1]['category']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|1|$.content[11].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[11].content[1]|keyClosingMarkerOffset=4,keyName=category": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[10].content[1]['category']|propertyOffset=3|$.content[10].content[1]['category']|propertyOffset=6": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[10].content[1]['marker']|propertyOffset=1|$.content[10].content[1]|keyName=category": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "paragraph-structure|B|3|$.content[11].content[1]['category']|propertyOffset=0|$.content[11].content[1]['category']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[11].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[11].content[1].content[0]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "paragraph-structure|B|3|$.content[27].content[1]['marker']|propertyOffset=2|$.content[27].content[1]['link-href']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ]
-      }
+      "failures": {}
     }
   }
 }
