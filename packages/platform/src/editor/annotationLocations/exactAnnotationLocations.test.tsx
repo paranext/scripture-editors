@@ -367,6 +367,29 @@ describe("an annotation over a no-break space the text itself contains", () => {
     " end",
   ]);
   const spanTextPath = "$.content[2].content[1].content[0]";
+  const leadingNbspRanges: { name: string; range: AnnotationRange }[] = [
+    {
+      name: "the space alone",
+      range: {
+        start: { jsonPath: spanTextPath, offset: 0 },
+        end: { jsonPath: spanTextPath, offset: 1 },
+      },
+    },
+    {
+      name: "the text before the span through the space",
+      range: {
+        start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+        end: { jsonPath: spanTextPath, offset: 1 },
+      },
+    },
+    {
+      name: "the span's marker through the space",
+      range: {
+        start: { jsonPath: "$.content[2].content[1]" },
+        end: { jsonPath: spanTextPath, offset: 1 },
+      },
+    },
+  ];
 
   it.each(
     [
@@ -376,31 +399,7 @@ describe("an annotation over a no-break space the text itself contains", () => {
       "formatted",
       "paragraph-structure",
       "hidden+expanded",
-    ].flatMap((view) =>
-      [
-        {
-          name: "the space alone",
-          range: {
-            start: { jsonPath: spanTextPath, offset: 0 },
-            end: { jsonPath: spanTextPath, offset: 1 },
-          },
-        },
-        {
-          name: "the text before the span through the space",
-          range: {
-            start: { jsonPath: "$.content[2].content[0]", offset: 1 },
-            end: { jsonPath: spanTextPath, offset: 1 },
-          },
-        },
-        {
-          name: "the span's marker through the space",
-          range: {
-            start: { jsonPath: "$.content[2].content[1]" },
-            end: { jsonPath: spanTextPath, offset: 1 },
-          },
-        },
-      ].map((row) => ({ ...row, view })),
-    ),
+    ].flatMap((view) => leadingNbspRanges.map((row) => ({ ...row, view }))),
   )(
     "keeps one leading a char span's content when $name is set and removed ($view)",
     async ({ view, range }) => {
