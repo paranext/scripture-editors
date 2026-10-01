@@ -13,25 +13,27 @@ import { $caretPositions, positionContext } from "../markerEdit/pendingSettledOr
 import { $prepareSettleScopes } from "./settledScopes.utils";
 import { $liveSelectionFromSettled, $settledLocationFromLivePoint } from "./settledPositions.utils";
 import { twoParaUsj } from "./positions.test-helpers";
-import { MarkerContent } from "@eten-tech-foundation/scripture-utilities";
+import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $getNodeByKey, $getRoot, TextNode } from "lexical";
-import { getPendedDisplayOwners } from "shared";
+import { getPendedDisplayOwners, NBSP } from "shared";
 import { $getRangeFromUsjSelection } from "shared-react";
 import { describe, expect, it } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountInView>>;
 
 /** Mount `content` in `view`, rewrite the first text node whose bytes are `bytes` to `edited`, and
- * leave the caret at `caret` in it — the shape a keystroke leaves pending. */
+ * leave the caret at `caret` in it — the shape a keystroke leaves pending. `content` is the first
+ * paragraph's content, or a whole document. */
 async function pendingEdit(
-  content: MarkerContent[],
+  content: MarkerContent[] | Usj,
   view: string,
   bytes: string,
   edited: string,
   caret: number,
 ): Promise<{ mounted: Mounted; $node: () => TextNode }> {
-  const mounted = await mountInView(twoParaUsj(content), oracleView(view));
+  const usj = Array.isArray(content) ? twoParaUsj(content) : content;
+  const mounted = await mountInView(usj, oracleView(view));
   let key = "";
   await act(async () => {
     mounted.lexical.update(() => {
@@ -166,5 +168,25 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     );
     for (let offset = 0; offset <= "\\a".length; offset += 1)
       expectBackInPlace(roundTrip(mounted, view, $node, offset));
+  });
+
+  it("keeps a position in a `\\ca` span beside its chapter that settles as a paragraph", async () => {
+    // Deleting the separator of `\ca 3\ca*` spells `\ca3\ca*`: no longer a span the chapter
+    // folds, it settles as a `\ca3` paragraph with an unmatched `\ca*`, beside the chapter.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { mounted, $node } = await pendingEdit(usj, view, `${NBSP}3`, "3", 0);
+    for (let offset = 0; offset <= 1; offset += 1)
+      expectBackInPlace(roundTrip(mounted, view, $node, offset));
+    // In front of the `3` is in the settled `\ca3` paragraph, not on the chapter.
+    expect(roundTrip(mounted, view, $node, 0).reported?.jsonPath).toMatch(/^\$\.content\[2\]/);
   });
 });

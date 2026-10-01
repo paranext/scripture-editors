@@ -124,6 +124,10 @@ interface SettledTopIndex {
  * the live nodes and over the scratch editor's root children, so the two sides' bytes are
  * comparable by construction — except where a paragraph's typed block marker settled into a
  * chapter, table, sidebar or other non-paragraph root child, which only the settled side has. */
+function keyOf(node: LexicalNode): NodeKey {
+  return node.getKey();
+}
+
 function $buildScopeFragment(
   kind: SettleScopePlan["kind"],
   nodes: readonly LexicalNode[],
@@ -139,7 +143,14 @@ function $buildScopeFragment(
   }
   if (kind === "chapter") {
     const chapter = nodes.find($isChapterNode);
-    return chapter && $buildChapterFragment(chapter, tier2.getMarker, tier2.viewOptions);
+    if (!chapter) return undefined;
+    // The settled side of a chapter scope can hold more than the chapter and the `\ca`/`\cp`
+    // nodes beside it: a span that no longer folds can settle as a paragraph of its own
+    // (`\ca3\ca*`), which the chapter's own builder does not read, so its bytes would be missing.
+    const region = new Set([chapter, ...$chapterAdjacentAttributeNodes(chapter)].map(keyOf));
+    return nodes.every((node) => region.has(node.getKey()))
+      ? $buildChapterFragment(chapter, tier2.getMarker, tier2.viewOptions)
+      : $buildSettledRootFragment(nodes, tier2.getMarker, tier2.viewOptions);
   }
   const note = nodes.find($isNoteNode);
   return note && $buildNoteFragment(note, tier2.getMarker, tier2.viewOptions)?.out;
