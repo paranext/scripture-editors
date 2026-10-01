@@ -17,7 +17,12 @@ import {
 } from "lexical";
 import { createRef } from "react";
 import { $addDisplayAnnotation, $isMarkerNode, COMMENT_MARK_TYPE } from "shared";
-import { $isImmutableNoteCallerNode, getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
+import {
+  $isImmutableNoteCallerNode,
+  annotationHighlightClassNames,
+  getViewOptions,
+  STANDARD_VIEW_MODE,
+} from "shared-react";
 import { MockInstance, vi } from "vitest";
 
 /** The first descendant of `root` (depth-first, root included) `predicate` accepts. */
@@ -329,8 +334,15 @@ describe("Marginal comments panel", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
+    // Only the glyph's last character holds the comment, so only it is painted selected.
     const openerElement = lexical.getElementByKey(openerKey);
     if (!openerElement) throw new Error("expected the opener glyph to render");
-    expect(openerElement.classList.contains("selected")).toBe(true);
+    expect(openerElement.classList.contains("selected")).toBe(false);
+    const selected = [...CSS.highlights].flatMap(([name, highlight]) =>
+      annotationHighlightClassNames(name)?.includes("selected")
+        ? [...highlight].map((range) => (range instanceof Range ? range.toString() : ""))
+        : [],
+    );
+    expect(selected).toEqual([openerElement.textContent?.slice(-1)]);
   });
 });

@@ -837,17 +837,26 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
     const changedElems: HTMLElement[] = [];
     let showCommentsTimeoutId: number | undefined;
 
+    const showComments = () => {
+      showCommentsTimeoutId = window.setTimeout(() => {
+        setShowComments(true);
+      }, 0);
+    };
     for (const id of activeIDs) {
       const keys = markNodeMap.get(id) ?? [];
-      for (const key of [...keys, ...displayIndex.keysFor(COMMENT_MARK_TYPE, id)]) {
+      for (const key of keys) {
         const elem = editor.getElementByKey(key);
         if (elem !== null) {
           elem.classList.add("selected");
           changedElems.push(elem);
-          showCommentsTimeoutId = window.setTimeout(() => {
-            setShowComments(true);
-          }, 0);
+          showComments();
         }
+      }
+      // Display bytes may hold the comment over only part of their text, so the index paints the
+      // state on exactly that part.
+      if (displayIndex.keysFor(COMMENT_MARK_TYPE, id).size > 0) {
+        displayIndex.setStateClass(COMMENT_MARK_TYPE, id, "selected", true);
+        showComments();
       }
     }
 
@@ -858,6 +867,8 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
       for (const changedElem of changedElems) {
         changedElem.classList.remove("selected");
       }
+      for (const id of activeIDs)
+        displayIndex.setStateClass(COMMENT_MARK_TYPE, id, "selected", false);
     };
   }, [activeIDs, displayIndex, editor, markNodeMap]);
 

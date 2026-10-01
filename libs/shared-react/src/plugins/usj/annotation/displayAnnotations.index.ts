@@ -8,6 +8,14 @@
 
 import { ImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { ImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
+import {
+  AnnotationHighlighter,
+  getHighlightApi,
+  LeafHighlight,
+  rangeContainsPoint,
+  rangeOverText,
+} from "./annotationHighlights";
+import { $paintIntervalsOf, $paintSize, leafPaint, PaintIntervals } from "./annotationPaint.utils";
 import { addClassNamesToElement, mergeRegister, removeClassNamesFromElement } from "@lexical/utils";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import {
@@ -65,6 +73,12 @@ export interface DisplayAnnotationIndex {
   /** Whether the host has been told `type`/`id` was removed since it was last set — by a mark or
    * by this index, in an earlier commit or earlier in the current update. */
   hasReported(type: string, id: string): boolean;
+  /** Add (`on`) or remove the state class `name` (such as `selected`) to everything `type`/`id`
+   * paints outside its marks, which style themselves. Call outside an update. */
+  setStateClass(type: string, id: string, name: string, on: boolean): void;
+  /** DOM ranges over everything `type`/`id` paints — its marks and the exact parts of its display
+   * bytes — in document order. Call outside an update. */
+  rangesFor(type: string, id: string): Range[];
 }
 
 /** Every node class a carrier can be (`$isDisplayAnnotationCarrier`). */
@@ -100,15 +114,6 @@ function parseIndexKey(key: string): [string, string] {
   const parsed: unknown = JSON.parse(key);
   if (!isTypeIdPair(parsed)) throw new Error(`not an annotation index key: ${key}`);
   return parsed;
-}
-
-function typedIdsOf(annotations: DisplayAnnotation[]): TypedIDs {
-  const out: TypedIDs = {};
-  for (const { type, id } of annotations) {
-    const ids = (out[type] ??= []);
-    if (!ids.includes(id)) ids.push(id);
-  }
-  return out;
 }
 
 /** Remove `displayAnnotationsState` from `node` and its whole subtree. Mutating. */
@@ -149,6 +154,29 @@ function createIndex(editor: LexicalEditor): Entry {
   let droppedMarks = new Map<string, NodeKey[]>();
   const painted = new WeakMap<HTMLElement, string[]>();
   const wired = new WeakSet<HTMLElement>();
+  /** The annotations each wired element's pointer is over now, with the bytes each covers. */
+  const hovered = new WeakMap<
+    HTMLElement,
+    Map<string, { annotation: DisplayAnnotation; text: string }>
+  >();
+  /** What each annotation paints outside its marks, per leaf ({@link $paintIntervalsOf}). */
+  const paintByAnnotation = new Map<string, Map<NodeKey, PaintIntervals>>();
+  /** The annotations painting each leaf. */
+  const annotationsByLeaf = new Map<NodeKey, Set<string>>();
+  /** The element each painted leaf was last painted on, to repaint one Lexical re-creates. */
+  const leafElement = new Map<NodeKey, HTMLElement>();
+  /** The leaves whose element is painted whole. */
+  const wholeLeaves = new Set<NodeKey>();
+  /** Extra class names the host's state adds to an annotation's painting (`selected`). */
+  const stateClasses = new Map<string, Set<string>>();
+  /** Leaves waiting for their element to render text, by element. */
+  const waitingForText = new Map<HTMLElement, MutationObserver>();
+  /** Set once the index is released: nothing paints after that. */
+  let disposed = false;
+  const highlightApi = getHighlightApi();
+  const highlighter = highlightApi
+    ? new AnnotationHighlighter(highlightApi, () => editor.getRootElement()?.parentElement ?? null)
+    : undefined;
   let emptied = new Set<string>();
   const theme = editor._config.theme;
 
@@ -209,51 +237,248 @@ function createIndex(editor: LexicalEditor): Entry {
     coveredText.set(annotationKey, text);
   }
 
-  function dispatch(
-    element: HTMLElement,
+  /** Whether pointer `event` on leaf `key` falls on the part annotation `annotationKey` paints
+   * there — anywhere on an element painted whole. */
+  function hits(key: NodeKey, annotationKey: string, event: MouseEvent): boolean {
+    if (wholeLeaves.has(key)) return true;
+    return (highlighter?.leafHighlights(key) ?? []).some(
+      (piece) =>
+        piece.annotations.includes(annotationKey) &&
+        rangeContainsPoint(piece.range, event.clientX, event.clientY),
+    );
+  }
+
+  /** The annotations `node` holds that `event` points at, each with the bytes it covers there. */
+  function $pointedAt(
+    node: LexicalNode,
     event: MouseEvent,
-    pick: "onClick" | "onMouseEnter" | "onMouseLeave",
-  ): void {
+  ): Map<string, { annotation: DisplayAnnotation; text: string }> {
+    const pointed = new Map<string, { annotation: DisplayAnnotation; text: string }>();
+    for (const annotation of $displayAnnotationsOf(node)) {
+      const annotationKey = indexKey(annotation.type, annotation.id);
+      if (pointed.has(annotationKey) || !hits(node.getKey(), annotationKey, event)) continue;
+      pointed.set(annotationKey, { annotation, text: $coveredDisplayText(node, annotation) });
+    }
+    return pointed;
+  }
+
+  function dispatch(element: HTMLElement, event: MouseEvent, pick: "onClick" | "move" | "leave") {
     // `$getNearestNodeFromDOMNode` looks the element up in the ACTIVE editor, so the read names it.
     editor.getEditorState().read(
       () => {
         const node = $getNearestNodeFromDOMNode(element);
         if (!node) return;
-        for (const annotation of $displayAnnotationsOf(node)) {
-          const callback = getDisplayAnnotationRegistration(
-            editor,
+        const pointed = pick === "leave" ? new Map() : $pointedAt(node, event);
+        const call = (
+          name: "onClick" | "onMouseEnter" | "onMouseLeave",
+          { annotation, text }: { annotation: DisplayAnnotation; text: string },
+        ) =>
+          getDisplayAnnotationRegistration(editor, annotation.type, annotation.id)?.[name]?.(
+            event,
             annotation.type,
             annotation.id,
-          )?.[pick];
-          callback?.(event, annotation.type, annotation.id, $coveredDisplayText(node, annotation));
+            text,
+          );
+        if (pick === "onClick") {
+          pointed.forEach((target) => call("onClick", target));
+          return;
         }
+        // Enter and leave per annotation, as the pointer moves onto and off the part it paints.
+        const before = hovered.get(element) ?? new Map();
+        for (const [annotationKey, target] of before)
+          if (!pointed.has(annotationKey)) call("onMouseLeave", target);
+        for (const [annotationKey, target] of pointed)
+          if (!before.has(annotationKey)) call("onMouseEnter", target);
+        hovered.set(element, pointed);
       },
       { editor },
     );
   }
 
-  function paint(key: NodeKey, annotations: DisplayAnnotation[]): void {
-    const element = editor.getElementByKey(key);
-    if (!element) return;
+  /** The class names an element or highlight painted by `annotationKeys` gets. */
+  function classNamesFor(annotationKeys: Iterable<string>): string[] {
+    const typedIds: TypedIDs = {};
+    const states = new Set<string>();
+    for (const annotationKey of annotationKeys) {
+      const [type, id] = parseIndexKey(annotationKey);
+      const ids = (typedIds[type] ??= []);
+      if (!ids.includes(id)) ids.push(id);
+      stateClasses.get(annotationKey)?.forEach((name) => states.add(name));
+    }
+    if (Object.keys(typedIds).length === 0) return [];
     // Split into tokens as `addClassNamesToElement` does for a `<mark>`: an id or a theme name
     // may hold whitespace, and `painted` must record exactly the tokens that were added.
-    const next =
-      annotations.length > 0
-        ? [
-            ...typedMarkClassNames(theme, typedIdsOf(annotations)),
-            DISPLAY_ANNOTATION_CLASS_NAME,
-          ].flatMap((name) => name.match(/\S+/g) ?? [])
-        : [];
+    return [
+      ...typedMarkClassNames(theme, typedIds),
+      DISPLAY_ANNOTATION_CLASS_NAME,
+      ...states,
+    ].flatMap((name) => name.match(/\S+/g) ?? []);
+  }
+
+  function paintElement(element: HTMLElement, next: string[]): void {
     const previous = painted.get(element) ?? [];
     removeClassNamesFromElement(element, ...previous.filter((name) => !next.includes(name)));
     addClassNamesToElement(element, ...next);
     painted.set(element, next);
-    if (next.length > 0 && !wired.has(element)) {
-      wired.add(element);
-      element.addEventListener("click", (event) => dispatch(element, event, "onClick"));
-      element.addEventListener("mouseenter", (event) => dispatch(element, event, "onMouseEnter"));
-      element.addEventListener("mouseleave", (event) => dispatch(element, event, "onMouseLeave"));
+  }
+
+  function wire(element: HTMLElement): void {
+    if (wired.has(element)) return;
+    wired.add(element);
+    element.addEventListener("click", (event) => dispatch(element, event, "onClick"));
+    element.addEventListener("mouseenter", (event) => dispatch(element, event, "move"));
+    element.addEventListener("mousemove", (event) => dispatch(element, event, "move"));
+    element.addEventListener("mouseleave", (event) => dispatch(element, event, "leave"));
+  }
+
+  /** Paint leaf `key` from what every annotation paints on it: its element whole, or highlights
+   * over exactly the painted characters. */
+  function $repaintLeaf(key: NodeKey): void {
+    const node = $getNodeByKey(key);
+    const element = editor.getElementByKey(key);
+    const annotationKeys = annotationsByLeaf.get(key);
+    const previous = leafElement.get(key);
+    if (previous && previous !== element) paintElement(previous, []);
+    if (!node || !element || !annotationKeys || annotationKeys.size === 0) {
+      if (element) paintElement(element, []);
+      highlighter?.clearLeaf(key);
+      leafElement.delete(key);
+      wholeLeaves.delete(key);
+      return;
     }
+    leafElement.set(key, element);
+    const byAnnotation = new Map(
+      [...annotationKeys].map((annotationKey) => [
+        annotationKey,
+        paintByAnnotation.get(annotationKey)?.get(key) ?? [],
+      ]),
+    );
+    const holds = $displayAnnotationsOf(node).length > 0;
+    let plan = leafPaint($paintSize(node), byAnnotation);
+    // Without a highlight API, a display byte that holds an annotation is painted whole, and a
+    // filler byte only partly painted is not painted at all.
+    if (!plan.whole && !highlighter)
+      plan = holds ? { whole: true } : { whole: false, segments: [] };
+    if (holds) wire(element);
+    if (plan.whole) {
+      highlighter?.clearLeaf(key);
+      wholeLeaves.add(key);
+      paintElement(element, classNamesFor(annotationKeys));
+      return;
+    }
+    wholeLeaves.delete(key);
+    paintElement(element, []);
+    if (!highlighter) return;
+    const pieces: LeafHighlight[] = [];
+    let missing = false;
+    for (const { start, end, annotations } of plan.segments) {
+      const range = rangeOverText(element, start, end);
+      if (!range) missing = true;
+      else pieces.push({ classNames: classNamesFor(annotations), annotations, range });
+    }
+    highlighter.setLeaf(key, pieces);
+    if (missing) repaintWhenRendered(key, element);
+  }
+
+  /** Paint leaf `key` again once `element` renders more text (a decorator's portal renders after
+   * the commit that created it). */
+  function repaintWhenRendered(key: NodeKey, element: HTMLElement): void {
+    if (waitingForText.has(element)) return;
+    const view = element.ownerDocument.defaultView;
+    if (!view) return;
+    const observer = new view.MutationObserver(() => {
+      observer.disconnect();
+      waitingForText.delete(element);
+      if (disposed) return;
+      editor.getEditorState().read(() => $repaintLeaf(key), { editor });
+    });
+    waitingForText.set(element, observer);
+    observer.observe(element, { childList: true, characterData: true, subtree: true });
+  }
+
+  /**
+   * Recompute what every annotation that can paint outside its marks paints — one with a
+   * display-byte holder, or with two marks a gap may join — and repaint each leaf whose painting
+   * changed, which `dirty` names, or whose element Lexical re-created.
+   */
+  function $refreshPaint(dirty: Iterable<NodeKey>): void {
+    const affected = new Set<NodeKey>();
+    for (const key of dirty) if (annotationsByLeaf.has(key)) affected.add(key);
+    const candidates = new Set([...keysByAnnotation.keys(), ...paintByAnnotation.keys()]);
+    for (const [annotationKey, marks] of marksByAnnotation)
+      if (marks.size >= 2) candidates.add(annotationKey);
+    for (const annotationKey of candidates) {
+      const [type, id] = parseIndexKey(annotationKey);
+      const next = $paintIntervalsOf(
+        type,
+        id,
+        keysByAnnotation.get(annotationKey) ?? [],
+        marksByAnnotation.get(annotationKey) ?? [],
+      );
+      const previous = paintByAnnotation.get(annotationKey) ?? new Map<NodeKey, PaintIntervals>();
+      for (const key of new Set([...previous.keys(), ...next.keys()]))
+        if (JSON.stringify(previous.get(key)) !== JSON.stringify(next.get(key))) affected.add(key);
+      for (const key of previous.keys()) {
+        if (next.has(key)) continue;
+        const keys = annotationsByLeaf.get(key);
+        keys?.delete(annotationKey);
+        if (keys?.size === 0) annotationsByLeaf.delete(key);
+      }
+      for (const key of next.keys()) {
+        let keys = annotationsByLeaf.get(key);
+        if (!keys) annotationsByLeaf.set(key, (keys = new Set()));
+        keys.add(annotationKey);
+      }
+      if (next.size > 0) paintByAnnotation.set(annotationKey, next);
+      else paintByAnnotation.delete(annotationKey);
+    }
+    for (const [key, element] of leafElement)
+      if (editor.getElementByKey(key) !== element) affected.add(key);
+    for (const key of affected) $repaintLeaf(key);
+  }
+
+  function refreshPaint(dirty: Iterable<NodeKey>): void {
+    if (disposed) return;
+    editor.getEditorState().read(() => $refreshPaint(dirty), { editor });
+  }
+
+  /** DOM ranges over everything `type`/`id` paints, in document order. */
+  function rangesFor(type: string, id: string): Range[] {
+    const annotationKey = indexKey(type, id);
+    const ranges: Range[] = [];
+    const whole = (element: HTMLElement) => {
+      const range = element.ownerDocument.createRange();
+      range.selectNodeContents(element);
+      ranges.push(range);
+    };
+    for (const key of marksByAnnotation.get(annotationKey) ?? []) {
+      const element = editor.getElementByKey(key);
+      if (element) whole(element);
+    }
+    for (const [key, intervals] of paintByAnnotation.get(annotationKey) ?? []) {
+      const element = editor.getElementByKey(key);
+      if (!element) continue;
+      if (wholeLeaves.has(key) || !highlighter) {
+        whole(element);
+        continue;
+      }
+      for (const [start, end] of intervals) {
+        const range = rangeOverText(element, start, end);
+        if (range) ranges.push(range);
+      }
+    }
+    return ranges.sort((a, b) => a.compareBoundaryPoints(Range.START_TO_START, b));
+  }
+
+  function setStateClass(type: string, id: string, name: string, on: boolean): void {
+    const annotationKey = indexKey(type, id);
+    const names = stateClasses.get(annotationKey) ?? new Set<string>();
+    if (names.has(name) === on) return;
+    if (on) names.add(name);
+    else names.delete(name);
+    if (names.size > 0) stateClasses.set(annotationKey, names);
+    else stateClasses.delete(annotationKey);
+    refreshPaint(paintByAnnotation.get(annotationKey)?.keys() ?? []);
   }
 
   function onMutations(mutations: Map<NodeKey, NodeMutation>): void {
@@ -277,8 +502,6 @@ function createIndex(editor: LexicalEditor): Entry {
           }
           if (after.length > 0) annotationsByKey.set(key, after);
           else annotationsByKey.delete(key);
-          // Nothing was, or is now, painted on this element: skip the element lookup entirely.
-          if (node && (after.length > 0 || before.length > 0)) paint(key, after);
           // A mark's own mutations miss an edit of the text inside it.
           for (let parent = node?.getParent(); parent; parent = parent.getParent())
             if ($isTypedMarkNode(parent)) $noteMarkText(parent);
@@ -423,6 +646,19 @@ function createIndex(editor: LexicalEditor): Entry {
     listenForTypedMarkRemovalReports(editor),
     editor.registerUpdateListener(reportDestroyed),
     registerDisplayAnnotationBasis(editor),
+    editor.registerUpdateListener(({ dirtyLeaves, dirtyElements }) => {
+      if (dirtyLeaves.size === 0 && dirtyElements.size === 0) return;
+      refreshPaint([...dirtyLeaves, ...dirtyElements.keys()]);
+    }),
+    // Also paints what the mutation listeners above found already in the document.
+    editor.registerRootListener((root) => {
+      if (root) refreshPaint([...annotationsByLeaf.keys()]);
+    }),
+    () => {
+      disposed = true;
+      highlighter?.dispose();
+      waitingForText.forEach((observer) => observer.disconnect());
+    },
     editor.registerCommand(
       SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
       ({ nodes }) => {
@@ -445,6 +681,8 @@ function createIndex(editor: LexicalEditor): Entry {
         takeMarkReports();
         return reported.has(indexKey(type, id));
       },
+      setStateClass,
+      rangesFor,
     },
     references: 0,
     unregister,
@@ -496,6 +734,8 @@ export function useDisplayAnnotationIndex(editor: LexicalEditor): DisplayAnnotat
       keysFor: (type, id) => current.current?.keysFor(type, id) ?? EMPTY,
       noteSet: (type, id) => current.current?.noteSet(type, id),
       noteReported: (type, id) => current.current?.noteReported(type, id),
+      setStateClass: (type, id, name, on) => current.current?.setStateClass(type, id, name, on),
+      rangesFor: (type, id) => current.current?.rangesFor(type, id) ?? [],
       hasReported: (type, id) => current.current?.hasReported(type, id) ?? false,
     }),
     [],

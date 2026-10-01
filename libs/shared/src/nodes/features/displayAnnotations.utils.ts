@@ -14,6 +14,7 @@ import { ImmutableChapterNode } from "../usj/ImmutableChapterNode.js";
 import {
   IMMUTABLE_NOTE_CALLER_NODE_TYPE,
   IMMUTABLE_VERSE_NODE_TYPE,
+  ZWSP,
 } from "../usj/node-constants.js";
 import { $isMarkerTrailingSeparator } from "../usj/node.utils.js";
 import { $isNoteNode } from "../usj/NoteNode.js";
@@ -180,6 +181,43 @@ export function $decoratorDisplayText(node: LexicalNode): string {
   if (node.getType() !== IMMUTABLE_NOTE_CALLER_NODE_TYPE) return node.getTextContent();
   const note = node.getParent();
   return $isNoteNode(note) ? note.getCaller() : "";
+}
+
+/** A decorator that reports the text it shows on screen. */
+interface RenderedTextSource {
+  getRenderedText(): unknown;
+}
+
+function hasRenderedText(node: LexicalNode): node is LexicalNode & RenderedTextSource {
+  return "getRenderedText" in node && typeof node.getRenderedText === "function";
+}
+
+/**
+ * The text a display-byte decorator shows on screen — what its element's DOM text reads once
+ * rendered. Empty for a decorator whose glyph CSS generates (a collapsed note's `+` caller) and for
+ * any other node.
+ */
+export function $decoratorRenderedText(node: LexicalNode): string {
+  if (!$isDecoratorNode(node) || !hasRenderedText(node)) return "";
+  const text = node.getRenderedText();
+  return typeof text === "string" ? text : "";
+}
+
+/** Whitespace, or the zero-width space a verse number is padded with: bytes at the edge of a
+ * glyph that name nothing. */
+function isEdgeFiller(char: string): boolean {
+  return char === ZWSP || /\s/u.test(char);
+}
+
+/** The `[start, end)` of `text` without the whitespace and zero-width spaces at its edges;
+ * `[0, 0]` when nothing else is left. */
+export function trimmedTextRange(text: string): [number, number] {
+  let start = 0;
+  while (start < text.length && isEdgeFiller(text[start])) start++;
+  if (start === text.length) return [0, 0];
+  let end = text.length;
+  while (end > start && isEdgeFiller(text[end - 1])) end--;
+  return [start, end];
 }
 
 /** The bytes `annotation` covers on `node` — everything a decorator shows, for a decorator. */

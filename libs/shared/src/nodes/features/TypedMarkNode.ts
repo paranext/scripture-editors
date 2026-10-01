@@ -1417,10 +1417,9 @@ function getTypedClassName(className: string, type: string): string {
 
 /**
  * The CSS class names an annotation carrying `typedIDs` is painted with: per type
- * `<theme.typedMark>-<type>`, `<theme.typedMarkOverlap>-<type>` whenever two ids of the type are on
- * the element — for a display-byte node even when their ranges on it do not overlap, since the
- * node is painted whole — and `annotationId-<id>` per id. A `<mark>` and a display-byte node an
- * annotation is held on are painted with the same names, so one host stylesheet styles both.
+ * `<theme.typedMark>-<type>`, `<theme.typedMarkOverlap>-<type>` whenever two ids of the type paint
+ * the same text, and `annotationId-<id>` per id. A `<mark>` and the display bytes an annotation is
+ * held on are painted with the same names, so one host stylesheet styles both.
  */
 export function typedMarkClassNames(theme: EditorThemeClasses, typedIDs: TypedIDs): string[] {
   const names: string[] = [];

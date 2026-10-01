@@ -42,7 +42,7 @@ import {
   NBSP,
   TypedMarkOnRemove,
 } from "shared";
-import { AnnotationRange, getEditorDelta } from "shared-react";
+import { AnnotationRange, annotationHighlightClassNames, getEditorDelta } from "shared-react";
 import { Mock, vi } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
@@ -118,7 +118,7 @@ function interiorLocation(range: AnnotationRange): UsjDocumentLocation {
 }
 
 describe("an annotation on a char span's attribute value", () => {
-  it("is held on the run, painted like a mark, and changes neither the display nor getUsj()", async () => {
+  it("is held on the run, painted on exactly its value, and changes neither the display nor getUsj()", async () => {
     const mounted = await mountStandardViewEditor(lemmaUsj);
     const displayBefore = paraText(mounted);
     await annotate(mounted, lemmaRange);
@@ -130,8 +130,18 @@ describe("an annotation on a char span's attribute value", () => {
     const element = mounted.lexical
       .getEditorState()
       .read(() => mounted.lexical.getElementByKey($carrierHolding("1").getKey()));
-    expect(element?.classList.contains("annotationId-1")).toBe(true);
-    expect(element?.classList.contains("editor-typed-mark-external-test")).toBe(true);
+    // The run is `|grace`: its `|` is not held, so the element is not painted, only its value.
+    expect(element?.classList.contains("annotationId-1")).toBe(false);
+    const painted = [...CSS.highlights].flatMap(([name, highlight]) => {
+      const classNames = annotationHighlightClassNames(name) ?? [];
+      return classNames.includes("annotationId-1")
+        ? [...highlight].map((range) => ({
+            text: range instanceof Range ? range.toString() : "",
+            typed: classNames.includes("editor-typed-mark-external-test"),
+          }))
+        : [];
+    });
+    expect(painted).toEqual([{ text: "grace", typed: true }]);
   });
 
   it("reports its removal once, as removed", async () => {

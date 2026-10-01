@@ -245,6 +245,11 @@ export class ImmutableChapterNode extends DecoratorNode<string> {
    * these bytes from `createDOM` instead, the way `ImmutableTypedTextNode` does.
    */
   override decorate(): string {
+    return this.getRenderedText();
+  }
+
+  /** The text this chapter shows on screen: its whole `\c N` glyph, or only its number. */
+  getRenderedText(): string {
     return this.getShowMarker()
       ? getVisibleOpenMarkerText(this.getMarker(), this.getNumber())
       : this.getNumber();

@@ -194,6 +194,9 @@ const Marginal = forwardRef(function Marginal<TLogger extends LoggerBasic>(
     removeAnnotation(type, id) {
       editorRef.current?.removeAnnotation(type, id);
     },
+    getAnnotationRanges(type, id) {
+      return editorRef.current?.getAnnotationRanges(type, id) ?? [];
+    },
     formatPara(blockMarker) {
       editorRef.current?.formatPara(blockMarker);
     },

@@ -242,11 +242,15 @@ export class ImmutableVerseNode extends DecoratorNode<ReactElement> {
   }
 
   override decorate(): ReactElement {
-    const text = this.getShowMarker()
+    return <VerseDecorator nodeKey={this.getKey()} text={this.getRenderedText()} />;
+  }
+
+  /** The text this verse shows on screen: its whole `\v N` glyph, or only its number. */
+  getRenderedText(): string {
+    return this.getShowMarker()
       ? getVisibleOpenMarkerText(this.getMarker(), this.getNumber())
       : // ZWSP added so double click word selection works without including this number.
         ZWSP + this.getNumber() + ZWSP;
-    return <VerseDecorator nodeKey={this.getKey()} text={text} />;
   }
 
   override exportJSON(): SerializedImmutableVerseNode {

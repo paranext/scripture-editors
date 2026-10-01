@@ -30,6 +30,8 @@ function failure(shape: string, flags: string[]): OracleFailure {
     end: "e",
     missing: [],
     extra: [],
+    paintExtra: [],
+    paintMissing: [],
     flags,
     inbound: "",
     partialInlineExtras: 0,

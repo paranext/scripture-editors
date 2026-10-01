@@ -25,12 +25,14 @@
  */
 import {
   $anyTrace,
+  $blockKey,
   $byteLoc,
   $byteNodes,
   $byteWalk,
   $caretWalk,
   $flatSignature,
   $heldIndexes,
+  $paintedIndexes,
   HELD_TYPE,
   locKey,
   mountInView,
@@ -137,6 +139,8 @@ interface ByteInfo {
   label: string;
   /** Keys of the inline elements (char, note, unknown) around the byte, innermost first. */
   inline: string[];
+  /** The key of the block element the byte is in. */
+  block: string;
 }
 
 /** One failing operation. */
@@ -154,6 +158,10 @@ export interface OracleFailure {
   missing: string[];
   /** Descriptions of the held bytes the range does not name. */
   extra: string[];
+  /** Descriptions of the bytes painted though neither held nor between two held bytes. */
+  paintExtra: string[];
+  /** Descriptions of the held (or between-held) bytes nothing paints. */
+  paintMissing: string[];
   flags: string[];
   /** The live points inbound resolved the range to, and the node types `getNodes()` listed. */
   inbound?: string;
@@ -290,6 +298,7 @@ export async function runOracle(
         e,
         label: byte.label,
         inline: $inlineAncestors(byte.node),
+        block: $blockKey(byte.node),
       });
       previousStart = s;
       previousEnd = e;
@@ -406,6 +415,7 @@ export async function runOracle(
           .map((log) => `log:${log.slice(0, 160)}`),
       );
       let held = new Map<number, "mark" | "carrier">();
+      let painted = new Set<number>();
       let touched: number[] = [];
       /** The first byte in a window around `touched` whose outbound label moved, as a flag. */
       const $movedLabel = (prefix: string): string | undefined => {
@@ -422,6 +432,7 @@ export async function runOracle(
       };
       m.lexical.getEditorState().read(() => {
         held = $heldIndexes(HELD_TYPE, id);
+        painted = $paintedIndexes(m.lexical, id);
         if ($flatSignature() !== signature) flags.push("bytes-changed");
         // Outbound labels in a window around the range must not move.
         touched = [...expected, ...held.keys()];
@@ -446,6 +457,25 @@ export async function runOracle(
         return before >= 0 && after < info.length && held.has(before) && held.has(after);
       };
       const missing = [...expected].filter((i) => !held.has(i)).sort((x, y) => x - y);
+      // Painted: every held byte, and the filler bytes between two held bytes in one block.
+      const shouldPaint = new Set(held.keys());
+      const heldOrder = [...held.keys()].sort((x, y) => x - y);
+      heldOrder.forEach((from, k) => {
+        const to = heldOrder[k + 1];
+        if (to === undefined || to === from + 1) return;
+        const between = Array.from({ length: to - from - 1 }, (_, n) => from + 1 + n);
+        const sameBlock = between.every((i) => info[i].block === info[from].block);
+        if (sameBlock && info[to].block === info[from].block && between.every((i) => !holdable(i)))
+          between.forEach((i) => shouldPaint.add(i));
+      });
+      const paintExtra = [...painted]
+        .filter((i) => !shouldPaint.has(i))
+        .sort((x, y) => x - y)
+        .map((i) => info[i]?.desc ?? `#${i}`);
+      const paintMissing = [...shouldPaint]
+        .filter((i) => !painted.has(i))
+        .sort((x, y) => x - y)
+        .map((i) => info[i]?.desc ?? `#${i}`);
       const extra = [...held]
         .filter(([i, holder]) => {
           if (expected.has(i)) return false;
@@ -483,7 +513,14 @@ export async function runOracle(
         mounted = await mountInView(usj, view);
         remounts++;
       }
-      if (missing.length === 0 && extra.length === 0 && flags.length === 0) continue;
+      if (
+        missing.length === 0 &&
+        extra.length === 0 &&
+        flags.length === 0 &&
+        paintExtra.length === 0 &&
+        paintMissing.length === 0
+      )
+        continue;
       const missingDescs = missing.map((i) => info[i]?.desc ?? `#${i}`);
       const extraDescs = extra.map((i) => info[i]?.desc ?? `#${i}`);
       failures.push({
@@ -497,12 +534,15 @@ export async function runOracle(
         end: universe.labels[range.b],
         missing: missingDescs,
         extra: extraDescs,
+        paintExtra,
+        paintMissing,
         flags,
         inbound,
         partialInlineExtras,
         wholeInlineSeparatorExtras,
         detail: (
           `missing ${JSON.stringify(missingDescs)} extra ${JSON.stringify(extraDescs)} ` +
+          `paint-extra ${JSON.stringify(paintExtra)} paint-missing ${JSON.stringify(paintMissing)} ` +
           `flags ${JSON.stringify(flags)}`
         ).slice(0, 400),
       });
@@ -567,7 +607,9 @@ export function classifyOracleFailure(f: OracleFailure): string[] {
   const fl = f.flags;
   const inbound = f.inbound ?? "";
   const anyFlag = (prefix: string): boolean => fl.some((flag) => flag.startsWith(prefix));
-  if (!(f.missing.length || f.extra.length || fl.length)) return ["NOISE-ONLY"];
+  if (f.paintExtra.length) c.push("PAINT-EXTRA");
+  if (f.paintMissing.length) c.push("PAINT-MISSING");
+  if (!(f.missing.length || f.extra.length || fl.length)) return c.length ? c : ["NOISE-ONLY"];
   if (anyFlag("usj-changed") || anyFlag("bytes-changed")) c.push("R6-CORRUPT-figure-split");
   if (anyFlag("threw")) c.push("THREW");
   if (anyFlag("remove-left")) c.push("REMOVE-TRACE");

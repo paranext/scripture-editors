@@ -1,4 +1,5 @@
 import { usjReactNodes } from "../../../nodes/usj";
+import { annotationHighlightClassNames } from "./annotationHighlights";
 import {
   acquireDisplayAnnotationIndex,
   DISPLAY_ANNOTATION_CLASS_NAME,
@@ -88,6 +89,16 @@ function classesOf(editor: LexicalEditor, node: TextNode): string[] {
   return [...(editor.getElementByKey(node.getKey())?.classList ?? [])];
 }
 
+/** Every piece of text an editor highlight paints, with the class names it paints it with. */
+function highlighted(): { text: string; classNames: string[] }[] {
+  return [...CSS.highlights].flatMap(([name, highlight]) =>
+    [...highlight].map((range) => ({
+      text: range instanceof Range ? range.toString() : "",
+      classNames: [...(annotationHighlightClassNames(name) ?? [])].sort(),
+    })),
+  );
+}
+
 /** Wrap `type`/`id` over `[from, to)` of `node` through the real wrap, with `callbacks`. */
 function wrap(
   editor: LexicalEditor,
@@ -126,21 +137,21 @@ describe("the display-annotation index", () => {
   it("keeps painting while one of two acquisitions is still held, and stops once both release", () => {
     const { editor, run, release: firstRelease } = setup();
     const second = acquireDisplayAnnotationIndex(editor);
-    wrap(editor, run, 1, 6, "external-spelling", "a");
+    wrap(editor, run, 0, 6, "external-spelling", "a");
     expect(classesOf(editor, run)).toContain(DISPLAY_ANNOTATION_CLASS_NAME);
 
     second.release();
-    wrap(editor, run, 1, 4, "external-spelling", "c");
+    wrap(editor, run, 0, 6, "external-spelling", "c");
     expect(classesOf(editor, run)).toContain("annotationId-c");
 
     firstRelease();
-    wrap(editor, run, 0, 1, "external-spelling", "d");
+    wrap(editor, run, 0, 6, "external-spelling", "d");
     expect(classesOf(editor, run)).not.toContain("annotationId-d");
   });
 
-  it("paints a carrier with the class names a mark gets, and unpaints it when the annotation goes", () => {
+  it("paints a carrier held whole with the class names a mark gets, and unpaints it when the annotation goes", () => {
     const { editor, run, release } = setup();
-    wrap(editor, run, 1, 6, "external-spelling", "a");
+    wrap(editor, run, 0, 6, "external-spelling", "a");
     expect(classesOf(editor, run)).toEqual(
       expect.arrayContaining([
         "editor-typed-mark-external-spelling",
@@ -156,21 +167,80 @@ describe("the display-annotation index", () => {
     release();
   });
 
-  it("paints two ids of one type with the overlap class, and keeps the other when one goes", () => {
+  it("paints only the held part of a carrier, with the class names a mark gets", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 6, "external-spelling", "a");
-    wrap(editor, run, 1, 4, "external-spelling", "b");
-    expect(classesOf(editor, run)).toEqual(
-      expect.arrayContaining(["annotationId-a", "annotationId-b"]),
-    );
-    // Two ids of one type held on one carrier: the overlap class, whether or not their ranges on
-    // it overlap (the carrier is painted whole).
-    expect(classesOf(editor, run)).toContain("editor-typed-markOverlap-external-spelling");
+    expect(classesOf(editor, run)).toEqual([]);
+    expect(highlighted()).toEqual([
+      {
+        text: "grace",
+        classNames: [
+          "annotationId-a",
+          DISPLAY_ANNOTATION_CLASS_NAME,
+          "editor-typed-mark-external-spelling",
+        ],
+      },
+    ]);
     editor.update(() => $removeDisplayAnnotation(run.getLatest(), "external-spelling", "a"), {
       discrete: true,
     });
-    expect(classesOf(editor, run)).toContain("annotationId-b");
-    expect(classesOf(editor, run)).not.toContain("editor-typed-markOverlap-external-spelling");
+    expect(highlighted()).toEqual([]);
+    expect(classesOf(editor, run)).toEqual([]);
+    release();
+  });
+
+  it("paints the overlap class on exactly the characters two ids of one type share", () => {
+    const { editor, run, release } = setup();
+    wrap(editor, run, 1, 6, "external-spelling", "a");
+    wrap(editor, run, 1, 4, "external-spelling", "b");
+    expect(highlighted()).toEqual(
+      expect.arrayContaining([
+        {
+          text: "gra",
+          classNames: [
+            "annotationId-a",
+            "annotationId-b",
+            DISPLAY_ANNOTATION_CLASS_NAME,
+            "editor-typed-mark-external-spelling",
+            "editor-typed-markOverlap-external-spelling",
+          ],
+        },
+        {
+          text: "ce",
+          classNames: [
+            "annotationId-a",
+            DISPLAY_ANNOTATION_CLASS_NAME,
+            "editor-typed-mark-external-spelling",
+          ],
+        },
+      ]),
+    );
+    expect(highlighted()).toHaveLength(2);
+    editor.update(() => $removeDisplayAnnotation(run.getLatest(), "external-spelling", "a"), {
+      discrete: true,
+    });
+    expect(highlighted()).toEqual([
+      {
+        text: "gra",
+        classNames: [
+          "annotationId-b",
+          DISPLAY_ANNOTATION_CLASS_NAME,
+          "editor-typed-mark-external-spelling",
+        ],
+      },
+    ]);
+    release();
+  });
+
+  it("never paints the overlap class where two ids of one type hold different parts", () => {
+    const { editor, run, release } = setup();
+    wrap(editor, run, 1, 3, "external-spelling", "a");
+    wrap(editor, run, 4, 6, "external-spelling", "b");
+    expect(highlighted().map(({ text }) => text)).toEqual(["gr", "ce"]);
+    expect(highlighted().flatMap(({ classNames }) => classNames)).not.toContain(
+      "editor-typed-markOverlap-external-spelling",
+    );
+    expect(classesOf(editor, run)).toEqual([]);
     release();
   });
 
@@ -184,7 +254,7 @@ describe("the display-annotation index", () => {
       },
       { discrete: true },
     );
-    wrap(editor, run, 1, 6, "external-spelling", "a b");
+    wrap(editor, run, 0, 6, "external-spelling", "a b");
     expect(classesOf(editor, run)).toEqual(
       expect.arrayContaining([...markTokens, DISPLAY_ANNOTATION_CLASS_NAME]),
     );
@@ -198,9 +268,14 @@ describe("the display-annotation index", () => {
   it("calls the annotation's click callback with the bytes it covers", () => {
     const { editor, run, release } = setup();
     const onClick = vi.fn();
-    wrap(editor, run, 1, 6, "external-spelling", "a", { onClick });
+    wrap(editor, run, 0, 6, "external-spelling", "a", { onClick });
     editor.getElementByKey(run.getKey())?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(onClick).toHaveBeenCalledWith(expect.any(MouseEvent), "external-spelling", "a", "grace");
+    expect(onClick).toHaveBeenCalledWith(
+      expect.any(MouseEvent),
+      "external-spelling",
+      "a",
+      "|grace",
+    );
     release();
   });
 
@@ -208,28 +283,133 @@ describe("the display-annotation index", () => {
     const { editor, run, release } = setup();
     const onMouseEnter = vi.fn();
     const onMouseLeave = vi.fn();
-    wrap(editor, run, 1, 6, "external-spelling", "a", { onMouseEnter, onMouseLeave });
+    wrap(editor, run, 0, 6, "external-spelling", "a", { onMouseEnter, onMouseLeave });
     const element = editor.getElementByKey(run.getKey());
     element?.dispatchEvent(new MouseEvent("mouseenter"));
     element?.dispatchEvent(new MouseEvent("mouseleave"));
+    expect(onMouseEnter).toHaveBeenCalledTimes(1);
     expect(onMouseEnter).toHaveBeenCalledWith(
       expect.any(MouseEvent),
       "external-spelling",
       "a",
-      "grace",
+      "|grace",
     );
+    expect(onMouseLeave).toHaveBeenCalledTimes(1);
     expect(onMouseLeave).toHaveBeenCalledWith(
       expect.any(MouseEvent),
       "external-spelling",
       "a",
-      "grace",
+      "|grace",
     );
     release();
   });
 
+  describe("over a carrier two annotations each hold part of", () => {
+    /** Where each painted text sits on screen: `gr` from x 0 to 10, `ce` from x 20 to 30. */
+    const rectsByText: { [text: string]: DOMRect } = {
+      gr: new DOMRect(0, 0, 10, 10),
+      ce: new DOMRect(20, 0, 10, 10),
+    };
+    beforeEach(() => {
+      Object.defineProperty(Range.prototype, "getClientRects", {
+        configurable: true,
+        value(this: Range): DOMRect[] {
+          const rect = rectsByText[this.toString()];
+          return rect ? [rect] : [];
+        },
+      });
+    });
+    afterEach(() => {
+      Reflect.deleteProperty(Range.prototype, "getClientRects");
+    });
+
+    function setupTwo() {
+      const fixture = setup();
+      const callbacks = {
+        a: { onClick: vi.fn(), onMouseEnter: vi.fn(), onMouseLeave: vi.fn() },
+        b: { onClick: vi.fn(), onMouseEnter: vi.fn(), onMouseLeave: vi.fn() },
+      };
+      wrap(fixture.editor, fixture.run, 1, 3, "external-spelling", "a", callbacks.a);
+      wrap(fixture.editor, fixture.run, 4, 6, "external-spelling", "b", callbacks.b);
+      const element = fixture.editor.getElementByKey(fixture.run.getKey());
+      if (!element) throw new Error("the run renders");
+      return { ...fixture, callbacks, element };
+    }
+
+    it("calls only the click callback of the annotation painted where the pointer is", () => {
+      const { callbacks, element, release } = setupTwo();
+      element.dispatchEvent(new MouseEvent("click", { clientX: 5, clientY: 5 }));
+      expect(callbacks.a.onClick).toHaveBeenCalledWith(
+        expect.any(MouseEvent),
+        "external-spelling",
+        "a",
+        "gr",
+      );
+      expect(callbacks.b.onClick).not.toHaveBeenCalled();
+
+      element.dispatchEvent(new MouseEvent("click", { clientX: 15, clientY: 5 }));
+      expect(callbacks.a.onClick).toHaveBeenCalledTimes(1);
+      expect(callbacks.b.onClick).not.toHaveBeenCalled();
+      release();
+    });
+
+    it("enters and leaves each annotation as the pointer moves over the part it paints", () => {
+      const { callbacks, element, release } = setupTwo();
+      element.dispatchEvent(new MouseEvent("mouseenter", { clientX: 15, clientY: 5 }));
+      expect(callbacks.a.onMouseEnter).not.toHaveBeenCalled();
+      element.dispatchEvent(new MouseEvent("mousemove", { clientX: 5, clientY: 5 }));
+      element.dispatchEvent(new MouseEvent("mousemove", { clientX: 6, clientY: 5 }));
+      expect(callbacks.a.onMouseEnter).toHaveBeenCalledTimes(1);
+      element.dispatchEvent(new MouseEvent("mousemove", { clientX: 25, clientY: 5 }));
+      expect(callbacks.a.onMouseLeave).toHaveBeenCalledTimes(1);
+      expect(callbacks.b.onMouseEnter).toHaveBeenCalledTimes(1);
+      element.dispatchEvent(new MouseEvent("mouseleave", { clientX: 40, clientY: 5 }));
+      expect(callbacks.b.onMouseLeave).toHaveBeenCalledTimes(1);
+      expect(callbacks.b.onMouseLeave).toHaveBeenCalledWith(
+        expect.any(MouseEvent),
+        "external-spelling",
+        "b",
+        "ce",
+      );
+      release();
+    });
+
+    it("adds a state class only to the parts its annotation paints", () => {
+      const { index, release } = setupTwo();
+      index.setStateClass("external-spelling", "a", "selected", true);
+      expect(highlighted()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ text: "gr", classNames: expect.arrayContaining(["selected"]) }),
+          {
+            text: "ce",
+            classNames: [
+              "annotationId-b",
+              DISPLAY_ANNOTATION_CLASS_NAME,
+              "editor-typed-mark-external-spelling",
+            ],
+          },
+        ]),
+      );
+      index.setStateClass("external-spelling", "a", "selected", false);
+      expect(highlighted().flatMap(({ classNames }) => classNames)).not.toContain("selected");
+      release();
+    });
+
+    it("gives ranges over exactly what each annotation paints", () => {
+      const { index, release } = setupTwo();
+      expect(index.rangesFor("external-spelling", "a").map((range) => range.toString())).toEqual([
+        "gr",
+      ]);
+      expect(index.rangesFor("external-spelling", "b").map((range) => range.toString())).toEqual([
+        "ce",
+      ]);
+      release();
+    });
+  });
+
   it("repaints an annotation on an element Lexical re-creates", () => {
     const { editor, run, release } = setup();
-    wrap(editor, run, 1, 6, "external-spelling", "a");
+    wrap(editor, run, 0, 6, "external-spelling", "a");
     const before = editor.getElementByKey(run.getKey());
     expect(before?.classList.contains("annotationId-a")).toBe(true);
 
@@ -242,6 +422,26 @@ describe("the display-annotation index", () => {
     expect(after?.tagName).toBe("CODE");
     expect(after?.classList.contains("annotationId-a")).toBe(true);
     expect(after?.classList.contains(DISPLAY_ANNOTATION_CLASS_NAME)).toBe(true);
+    release();
+  });
+
+  it("moves a partial highlight onto the text of an element Lexical re-creates", () => {
+    const { editor, run, release } = setup();
+    wrap(editor, run, 1, 6, "external-spelling", "a");
+    editor.update(() => run.getLatest().setFormat("code"), { discrete: true });
+    const after = editor.getElementByKey(run.getKey());
+    const ranges = [...CSS.highlights.values()].flatMap((highlight) => [...highlight]);
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0].toString()).toBe("grace");
+    expect(after?.contains(ranges[0].startContainer)).toBe(true);
+    release();
+  });
+
+  it("keeps a partial highlight on the same bytes as the carrier's text is typed into", () => {
+    const { editor, run, release } = setup();
+    wrap(editor, run, 1, 6, "external-spelling", "a");
+    editor.update(() => run.getLatest().setTextContent("|xgrace"), { discrete: true });
+    expect(highlighted().map(({ text }) => text)).toEqual(["grace"]);
     release();
   });
 

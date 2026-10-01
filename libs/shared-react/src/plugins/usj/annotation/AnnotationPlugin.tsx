@@ -38,6 +38,9 @@ export interface AnnotationRef {
     onMouseLeave?: TypedMarkOnMouseLeave,
   ): void;
   removeAnnotation(type: string, id: string): void;
+  /** DOM ranges over everything `type`/`id` paints, in document order (see
+   * `DisplayAnnotationIndex.rangesFor`). */
+  getAnnotationRanges(type: string, id: string): Range[];
 }
 
 function getTypeIDMapKey(type: string, id: string): string {
@@ -253,6 +256,10 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
         },
         { tag: ANNOTATION_CHANGE_TAG },
       );
+    },
+
+    getAnnotationRanges(type, id) {
+      return displayIndex.rangesFor(type, id);
     },
   }));
 

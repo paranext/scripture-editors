@@ -1063,6 +1063,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     removeAnnotation(type, id) {
       annotationRef.current?.removeAnnotation(externalTypedMarkType(type), id);
     },
+    getAnnotationRanges(type, id) {
+      return annotationRef.current?.getAnnotationRanges(externalTypedMarkType(type), id) ?? [];
+    },
     formatPara(blockMarker) {
       assertEditable("format a paragraph");
       // `discrete` for the same reason every other content-mutating method here uses it: a

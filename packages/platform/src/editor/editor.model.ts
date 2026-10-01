@@ -249,11 +249,22 @@ export interface EditorRef {
    *
    * A range may cover display bytes as well as text: a marker glyph, a verse or chapter number, a
    * note caller, or an attribute run's text (`|lemma="grace"`, `\va 3\va*`, a milestone's
-   * `|who="Pilate"`). Text is wrapped in a `<mark>`; display bytes keep their own element, which
-   * holds the annotation and gets the same class names (`<typedMark>-<type>`, `annotationId-<id>`)
-   * plus `display-annotation`, painted whole even where the range covers only part of it. The
-   * whitespace the editor shows between a marker and its content is never annotated. Setting an
-   * annotation never changes the document, a position, or what `getSelection` reports.
+   * `|who="Pilate"`). Text is wrapped in a `<mark>`; display bytes keep their own element and hold
+   * the annotation themselves. Setting an annotation never changes the document, a position, or
+   * what `getSelection` reports.
+   *
+   * Painting is exact: an annotation paints the bytes it holds, plus the whitespace the editor
+   * shows between two of them in one paragraph (a marker's separator, a verse number's trailing
+   * space) — never whitespace at its edges, and never the rest of a display byte it holds only part
+   * of. A display byte painted over all of its text gets the same class names a `<mark>` gets
+   * (`<typedMark>-<type>`, `<typedMarkOverlap>-<type>` where two ids of a type overlap,
+   * `annotationId-<id>`) plus `display-annotation`. A part of one is painted with a CSS Custom
+   * Highlight instead, which the editor styles from the same class rules: it copies the
+   * properties a highlight can paint (`background-color`, `color`, `text-decoration`,
+   * `text-shadow`) and draws a bottom border as an underline. Other properties and `:hover` rules
+   * apply only to elements, and the rules must not depend on ancestors inside the editable content.
+   * Where the browser has no highlight API, a display byte is painted whole. Find painted
+   * annotations with {@link EditorRef.getAnnotationRanges}, not by class.
    *
    * The annotation holds exactly the bytes the range names. A range into part of a char span, note
    * or figure holds only the part it names: the span's own text is marked piece by piece and its
@@ -334,6 +345,19 @@ export interface EditorRef {
    * @param id - ID of the annotation.
    */
   removeAnnotation(type: string, id: string): void;
+  /**
+   * DOM ranges over everything an annotation paints: each `<mark>` that holds its text, each
+   * display byte it holds (only the part it holds), and the whitespace painted between them — in
+   * document order, empty when nothing paints it. Measure, scroll to or hit-test an annotation with
+   * these; an element lookup by its `annotationId-<id>` class misses the display bytes painted
+   * with a highlight.
+   *
+   * @remarks **Live**: the ranges are over the editor's current DOM, including marker text the
+   *   user is still typing; take them again after the next edit.
+   * @param type - Type of the annotation.
+   * @param id - ID of the annotation.
+   */
+  getAnnotationRanges(type: string, id: string): Range[];
   /**
    * Format the paragraph at the current cursor position with the given block marker.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout

@@ -36,6 +36,7 @@ import {
 } from "shared";
 import {
   $getLocationFromNode,
+  annotationHighlightClassNames,
   getViewOptions,
   STANDARD_VIEW_MODE,
   ViewOptions,
@@ -299,6 +300,63 @@ export function $heldIndexes(type: string, id: string): Map<number, "mark" | "ca
     if (byCarrier) held.set(index, "carrier");
   });
   return held;
+}
+
+/** Whether `element` or an ancestor of it carries class `className`. */
+function hasClassAround(element: HTMLElement | null, className: string): boolean {
+  for (let current = element; current; current = current.parentElement)
+    if (current.classList.contains(className)) return true;
+  return false;
+}
+
+/** Every range of every editor highlight painting with class `className`. */
+function highlightRangesWith(className: string): AbstractRange[] {
+  return [...CSS.highlights].flatMap(([name, highlight]) =>
+    annotationHighlightClassNames(name)?.includes(className) ? [...highlight] : [],
+  );
+}
+
+/**
+ * What paints annotation `id` on screen now, by byte index (the indexing of {@link $byteNodes}):
+ * an element whose classes name it — a `<mark>`, or a display byte painted whole — or an editor
+ * highlight over the byte's character. A decorator counts when any of it is painted. Read from the
+ * DOM, never from the model.
+ */
+export function $paintedIndexes(lexical: LexicalEditor, id: string): Set<number> {
+  const className = `annotationId-${id}`;
+  const ranges = highlightRangesWith(className).filter((range) => range instanceof Range);
+  const painted = new Set<number>();
+  $byteNodes().forEach(([node, offset], index) => {
+    const element = lexical.getElementByKey(node.getKey());
+    if (!element) return;
+    if (hasClassAround(element, className)) {
+      painted.add(index);
+      return;
+    }
+    if (offset < 0) {
+      if (ranges.some((range) => range.intersectsNode(element))) painted.add(index);
+      return;
+    }
+    const text = [...element.childNodes].find((child) => child.nodeType === Node.TEXT_NODE);
+    if (!text) return;
+    if (
+      ranges.some(
+        (range) =>
+          !range.collapsed &&
+          range.comparePoint(text, offset) === 0 &&
+          range.comparePoint(text, offset + 1) === 0,
+      )
+    )
+      painted.add(index);
+  });
+  return painted;
+}
+
+/** The key of the nearest block element around `node` — a paragraph, a table cell, the root. */
+export function $blockKey(node: LexicalNode): string {
+  for (let parent = node.getParent(); parent; parent = parent.getParent())
+    if ($isElementNode(parent) && !parent.isInline()) return parent.getKey();
+  return "";
 }
 
 /** The held bytes of `type`/`id` in document order, a decorator as `[<type>]`, concatenated. */
