@@ -133,8 +133,8 @@ function createIndex(editor: LexicalEditor): Entry {
   const annotationsByMark = new Map<NodeKey, string[]>();
   /** A mark's `onRemove` per annotation, which an annotation held only by marks has nowhere else. */
   const markOnRemove = new Map<string, TypedMarkOnRemove>();
-  /** Each annotation's covered text: a mark's own text, or every carrier's text joined in document
-   * order, as of the last commit that touched a holder while one was still attached. */
+  /** Each annotation's covered text: every mark's and carrier's text joined in document order, as
+   * of the last commit that touched a holder while one was still attached. */
   const coveredText = new Map<string, string>();
   // The maps above keep an entry for an annotation whose holders an undo took away, for the redo
   // that brings them back; the history stack gives no word when that redo is gone for good, so
@@ -172,28 +172,41 @@ function createIndex(editor: LexicalEditor): Entry {
     if (holderCount(annotationKey) === 0) emptied.add(annotationKey);
   }
 
-  /** Remember what `mark` holds now, as the text a later report of its annotations names. */
+  /** Re-note the covered text of every annotation `mark` holds, now that what it holds changed. */
   function $noteMarkText(mark: TypedMarkNode): void {
-    const text = mark.getTextContent();
     for (const [type, ids] of Object.entries(mark.getTypedIDs()))
-      for (const id of ids) coveredText.set(indexKey(type, id), text);
+      for (const id of ids) $noteCoveredText(indexKey(type, id), type, id);
   }
 
-  /** `type`/`id`'s current carriers, in document order, each read for its own covered text and
-   * joined. */
-  function $joinedCoveredText(keys: ReadonlySet<NodeKey>, type: string, id: string): string {
-    const carriers = Array.from(keys, (key) => $getNodeByKey(key)).filter(
-      (node): node is LexicalNode => node !== null,
+  /**
+   * Note `type`/`id`'s covered text as it is now: every mark and carrier still holding it, in
+   * document order, each read for its own text and joined. Nothing is noted while nothing holds
+   * it, so the report of its last holder's loss names what the holders covered before they left.
+   */
+  function $noteCoveredText(annotationKey: string, type: string, id: string): void {
+    const keys = new Set([
+      ...(marksByAnnotation.get(annotationKey) ?? []),
+      ...(keysByAnnotation.get(annotationKey) ?? []),
+    ]);
+    const holders = Array.from(keys, (key) => $getNodeByKey(key)).filter(
+      (node): node is LexicalNode =>
+        node !== null &&
+        node.isAttached() &&
+        // A holder inside another holder is already in that one's text.
+        !node.getParents().some((parent) => keys.has(parent.getKey())),
     );
-    carriers.sort((a, b) => (a.isBefore(b) ? -1 : 1));
-    return carriers
+    if (holders.length === 0) return;
+    holders.sort((a, b) => (a.isBefore(b) ? -1 : 1));
+    const text = holders
       .map((node) => {
+        if ($isTypedMarkNode(node)) return node.getTextContent();
         const annotation = $displayAnnotationsOf(node).find(
           (candidate) => candidate.type === type && candidate.id === id,
         );
         return annotation ? $coveredDisplayText(node, annotation) : "";
       })
       .join("");
+    coveredText.set(annotationKey, text);
   }
 
   function dispatch(
@@ -270,13 +283,11 @@ function createIndex(editor: LexicalEditor): Entry {
           for (let parent = node?.getParent(); parent; parent = parent.getParent())
             if ($isTypedMarkNode(parent)) $noteMarkText(parent);
         }
-        // Every carrier of a touched annotation is now attached, or none is: re-join the text of
-        // the ones still holding it, so a later loss of the last one reports the full text.
+        // Re-join the text of every holder of a touched annotation still holding it, so a later
+        // loss of the last one reports the full text.
         for (const annotationKey of touched) {
-          const keys = keysByAnnotation.get(annotationKey);
-          if (!keys || keys.size === 0) continue;
           const [type, id] = parseIndexKey(annotationKey);
-          coveredText.set(annotationKey, $joinedCoveredText(keys, type, id));
+          $noteCoveredText(annotationKey, type, id);
         }
       },
       { editor },

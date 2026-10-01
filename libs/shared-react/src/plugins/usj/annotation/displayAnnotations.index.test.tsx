@@ -278,6 +278,40 @@ describe("the display-annotation index", () => {
     release();
   });
 
+  it("reports the text of every mark and carrier, joined in document order, once the last one leaves", () => {
+    const { editor, release } = setup();
+    const onRemove = vi.fn();
+    editor.update(
+      () => {
+        const first = $createTypedMarkNode({});
+        first.addID("external-spelling", "m", undefined, onRemove);
+        const second = $createTypedMarkNode({});
+        second.addID("external-spelling", "m", undefined, onRemove);
+        const carrier = $setState($createTextNode("|grace"), textTypeState, "attribute");
+        $getRoot().append(
+          $createParaNode().append(
+            first.append($createTextNode("alpha ")),
+            carrier,
+            $createTextNode(" beta "),
+            second.append($createTextNode("gamma")),
+          ),
+        );
+        $addDisplayAnnotation(carrier, "external-spelling", "m", 0, carrier.getTextContentSize());
+        $registerDisplayAnnotation("external-spelling", "m", { onRemove });
+      },
+      { discrete: true },
+    );
+    editor.update(() => $getRoot().clear(), { discrete: true });
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(onRemove).toHaveBeenCalledWith(
+      "external-spelling",
+      "m",
+      "destroyed",
+      "alpha |gracegamma",
+    );
+    release();
+  });
+
   it("keeps a type and an id apart even when both contain the NUL character", () => {
     const { editor, release } = setup();
     const nul = String.fromCharCode(0);

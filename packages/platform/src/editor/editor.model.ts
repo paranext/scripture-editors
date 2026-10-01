@@ -277,9 +277,9 @@ export interface EditorRef {
    * byte — leaving the document without any `<mark>` having reported the annotation's removal since
    * it was set fires ONE more report, through its display bytes: `"removed"` when
    * `removeAnnotation` or setting the same id again takes it away, `"destroyed"` when it drops out
-   * of the document (an edit, a collaborator's edit, or a settle that discards those bytes). An
-   * annotation split across several carriers that all leave in the same edit reports their text
-   * joined in document order; carriers lost across separate edits report only the text of the
+   * of the document (an edit, a collaborator's edit, or a settle that discards those bytes). That
+   * report's text is every `<mark>`'s and carrier's text joined in document order when they all
+   * leave in the same edit; holders lost across separate edits leave only the text of the
    * piece(s) still present at the last one. A collapsed note caller's text is the note's caller.
    * Undo, redo, and a `setUsj` reload report nothing; setting the id again starts a fresh reporting
    * cycle for it. An `onRemove` that throws — in a `<mark>`'s own report or in the one more
