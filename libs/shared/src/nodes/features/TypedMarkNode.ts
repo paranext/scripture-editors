@@ -148,16 +148,31 @@ const typedOnRemoveRegistry = new Map<NodeKey, TypedOnRemoves>();
 const typedOnMouseEnterRegistry = new Map<NodeKey, TypedOnMouseEnters>();
 const typedOnMouseLeaveRegistry = new Map<NodeKey, TypedOnMouseLeaves>();
 
-/** Per editor, the `type`/`id` pairs whose `onRemove` a mark has called since the last take. */
+/** Per editor a reporter listens to, the `type`/`id` pairs whose `onRemove` a mark has called
+ * since the last take. An editor nobody listens to has no entry, so nothing piles up for it. */
 const removalReports = new WeakMap<LexicalEditor, [type: string, id: string][]>();
+
+/**
+ * Start recording the `type`/`id` pairs whose `onRemove` a mark of `editor` calls, for
+ * {@link takeTypedMarkRemovalReports}. Returns the function that stops it and drops what was not
+ * taken. One reporter per editor: a second call restarts the record.
+ */
+export function listenForTypedMarkRemovalReports(editor: LexicalEditor): () => void {
+  removalReports.set(editor, []);
+  return () => {
+    removalReports.delete(editor);
+  };
+}
 
 /**
  * The `type`/`id` pairs whose `onRemove` a mark of `editor` has called since the last take, so a
  * reporter that runs after the commit knows the host has already heard of them. Clears the list.
+ * Empty unless {@link listenForTypedMarkRemovalReports} is recording for `editor`.
  */
 export function takeTypedMarkRemovalReports(editor: LexicalEditor): [type: string, id: string][] {
-  const taken = removalReports.get(editor) ?? [];
-  removalReports.delete(editor);
+  const taken = removalReports.get(editor);
+  if (!taken) return [];
+  removalReports.set(editor, []);
   return taken;
 }
 
@@ -1017,9 +1032,7 @@ export class TypedMarkNode extends ElementNode {
       this.removeOnRemoveFor(type, id);
       return;
     }
-    const reports = removalReports.get(editor) ?? [];
-    reports.push([type, id]);
-    removalReports.set(editor, reports);
+    removalReports.get(editor)?.push([type, id]);
     callback(type, id, cause, this.getTextContent());
     this.removeOnRemoveFor(type, id);
   }

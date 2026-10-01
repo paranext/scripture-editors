@@ -41,6 +41,7 @@ import {
   registerDisplayAnnotationBasis,
   clearTypedMarkRemovalSilences,
   forgetTypedMarkCallbacks,
+  listenForTypedMarkRemovalReports,
   setTypedMarkRemovalSilenced,
   takeTypedMarkRemovalReports,
   TypedIDs,
@@ -402,6 +403,7 @@ function createIndex(editor: LexicalEditor): Entry {
           skipInitialization: false,
         })
       : () => undefined,
+    listenForTypedMarkRemovalReports(editor),
     editor.registerUpdateListener(reportDestroyed),
     registerDisplayAnnotationBasis(editor),
     editor.registerCommand(

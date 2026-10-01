@@ -32,6 +32,8 @@ import { $createMarkerNode } from "./MarkerNode.js";
 import {
   $createTypedMarkNode,
   $isTypedMarkNode,
+  listenForTypedMarkRemovalReports,
+  takeTypedMarkRemovalReports,
   TypedMarkNode,
   TypedMarkOnMouseEnter,
   TypedMarkOnMouseLeave,
@@ -456,6 +458,43 @@ describe("TypedMarkNode", () => {
 
       expect(onRemove).toHaveBeenCalledTimes(1);
       expect(onRemove).toHaveBeenCalledWith(testType1, testID1, "destroyed", "example");
+    });
+
+    it("keeps no removal reports for an editor no reporter listens to", () => {
+      const onRemove = vi.fn();
+      const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode]);
+      for (let i = 0; i < 3; i++)
+        editor.update(
+          () => {
+            const markNode = $createTypedMarkNode({});
+            markNode.addID(testType1, `${testID1}-${i}`, undefined, onRemove);
+            $getRoot().append($createParaNode().append(markNode.append($createTextNode("x"))));
+            markNode.remove();
+          },
+          { discrete: true },
+        );
+
+      expect(onRemove).toHaveBeenCalledTimes(3);
+      expect(takeTypedMarkRemovalReports(editor)).toEqual([]);
+    });
+
+    it("keeps the removal reports a listening reporter has not taken yet", () => {
+      const onRemove = vi.fn();
+      const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode]);
+      const stopListening = listenForTypedMarkRemovalReports(editor);
+      editor.update(
+        () => {
+          const markNode = $createTypedMarkNode({});
+          markNode.addID(testType1, testID1, undefined, onRemove);
+          $getRoot().append($createParaNode().append(markNode.append($createTextNode("x"))));
+          markNode.remove();
+        },
+        { discrete: true },
+      );
+
+      expect(takeTypedMarkRemovalReports(editor)).toEqual([[testType1, testID1]]);
+      expect(takeTypedMarkRemovalReports(editor)).toEqual([]);
+      stopListening();
     });
 
     it("should not invoke callbacks for IDs preserved during merges", () => {
