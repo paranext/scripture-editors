@@ -15,10 +15,12 @@ import { $isVerseNode } from "../usj/VerseNode.js";
 import {
   $addDisplayAnnotation,
   $carrierHoldableRange,
+  $decoratorRenderedText,
   $isAttributeDisplayRun,
   $isDisplayAnnotationCarrier,
   $isElementOwnerRunAnchor,
   $registerDisplayAnnotation,
+  trimmedTextRange,
 } from "./displayAnnotations.utils.js";
 import { $isImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
 import { $isMarkerNode } from "./MarkerNode.js";
@@ -31,7 +33,7 @@ import {
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
 } from "./TypedMarkNode.js";
-import type { ElementNode, LexicalNode, PointType, RangeSelection } from "lexical";
+import type { ElementNode, LexicalNode, NodeKey, PointType, RangeSelection } from "lexical";
 import { $addUpdateTag, $isElementNode, $isTextNode } from "lexical";
 
 /**
@@ -151,20 +153,44 @@ function $coversWhole(element: ElementNode, start: LeafCaret, end: LeafCaret): b
 }
 
 /**
+ * Where a range holds a read-only decorator it ends inside of, in the decorator's rendered text:
+ * `[start, end)`, or `start === end` when the range names none of the bytes it shows (only bytes it
+ * stands for, such as a hidden `\va`).
+ */
+export interface DecoratorHold {
+  start: number;
+  end: number;
+}
+
+/** How {@link $wrapSelectionInTypedMarkNode} holds what a selection cannot point inside of. */
+export interface TypedMarkWrapOptions {
+  /** By decorator key: the part of a read-only decorator an end of the range falls inside of.
+   * A decorator not listed is held over all it renders. */
+  decoratorHolds?: ReadonlyMap<NodeKey, DecoratorHold>;
+}
+
+/**
  * The `[start, end)` bytes of carrier `node` the range from `start` to `end` covers, or
- * `undefined` when it covers none. A decorator is covered whole (`[0, 0]`), and only when the
- * range passes over it. A text carrier's covered bytes are clamped to its holdable range
+ * `undefined` when it covers none; `"undisplayed"` for a decorator held only for bytes it does not
+ * show. A decorator is covered only when the range passes over it: over the part `holds` names, or
+ * all the text it renders without its edge whitespace (whole, `[0, 0]`, when it renders none, as a
+ * caller CSS draws). A text carrier's covered bytes are clamped to its holdable range
  * ({@link $carrierHoldableRange}), so a glyph's own edge whitespace is never held.
  */
 function $coveredCarrierRange(
   node: LexicalNode,
   start: LeafCaret,
   end: LeafCaret,
-): [number, number] | undefined {
+  holds: ReadonlyMap<NodeKey, DecoratorHold> | undefined,
+): [number, number] | "undisplayed" | undefined {
   if (!$isDisplayAnnotationCarrier(node)) return undefined;
   const [from, to] = $coveredOffsets(node, start, end);
   if (to <= from) return undefined;
-  if (!$isTextNode(node)) return [0, 0];
+  if (!$isTextNode(node)) {
+    const hold = holds?.get(node.getKey());
+    if (hold) return hold.end > hold.start ? [hold.start, hold.end] : "undisplayed";
+    return trimmedTextRange($decoratorRenderedText(node));
+  }
   const [low, high] = $carrierHoldableRange(node);
   const clamped: [number, number] = [Math.max(from, low), Math.min(to, high)];
   return clamped[1] > clamped[0] ? clamped : undefined;
@@ -178,6 +204,7 @@ export function $wrapSelectionInTypedMarkNode(
   onRemove?: TypedMarkOnRemove,
   onMouseEnter?: TypedMarkOnMouseEnter,
   onMouseLeave?: TypedMarkOnMouseLeave,
+  options: TypedMarkWrapOptions = {},
 ): void {
   // A collapsed range names no byte, so it holds nothing — not even the node beside it.
   if (selection.isCollapsed()) return;
@@ -193,7 +220,7 @@ export function $wrapSelectionInTypedMarkNode(
   if (compareCarets(startCaret, endCaret) >= 0) return;
   let carrierAnnotated = false;
   const $annotateCarrier = (node: LexicalNode) => {
-    const covered = $coveredCarrierRange(node, startCaret, endCaret);
+    const covered = $coveredCarrierRange(node, startCaret, endCaret, options.decoratorHolds);
     if (!covered) return;
     // Tagged here, at the wrap's first actual mutation, never unconditionally at the top of the
     // function: an update's tags survive only as long as the commit that carries them changes a
@@ -201,7 +228,9 @@ export function $wrapSelectionInTypedMarkNode(
     // byte must never add this tag, or it rides into the update's own selection-only commit and
     // then onto whatever the user's NEXT edit turns out to be.
     $addUpdateTag(TYPED_MARK_WRAP_TAG);
-    $addDisplayAnnotation(node, type, id, covered[0], covered[1]);
+    if (covered === "undisplayed")
+      $addDisplayAnnotation(node, type, id, 0, 0, { undisplayed: true });
+    else $addDisplayAnnotation(node, type, id, covered[0], covered[1]);
     carrierAnnotated = true;
   };
   let currentNodeParent;

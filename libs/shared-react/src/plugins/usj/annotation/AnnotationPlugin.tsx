@@ -15,6 +15,7 @@ import {
   $removeTypedMarkId,
   $wrapSelectionInTypedMarkNode,
   ANNOTATION_CHANGE_TAG,
+  DecoratorHold,
   deleteDisplayAnnotationRegistration,
   getDisplayAnnotationRegistration,
   LoggerBasic,
@@ -214,8 +215,10 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
       editor.update(
         () => {
           // Apply the annotation to the selected range.
+          const decoratorHolds = new Map<NodeKey, DecoratorHold>();
           const editorSelection = $getRangeFromUsjSelection(selection, viewOptions, {
             forAnnotation: true,
+            decoratorHolds,
           });
           if (editorSelection === undefined) {
             logger?.error("Failed to find start or end node of the annotation.");
@@ -233,6 +236,7 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
             onRemove,
             onMouseEnter,
             onMouseLeave,
+            { decoratorHolds },
           );
         },
         { tag: ANNOTATION_CHANGE_TAG },

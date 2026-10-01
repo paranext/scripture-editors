@@ -241,6 +241,84 @@ describe("annotations held on a carrier", () => {
   });
 });
 
+describe("annotations held on what a decorator renders", () => {
+  it("holds part of a decorator's rendered text and covers exactly that part", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    editor.update(
+      () => {
+        const glyph = $createImmutableTypedTextNode("marker", "\\nd");
+        $getRoot().append($createParaNode().append(glyph));
+        $addDisplayAnnotation(glyph, "spelling", "a", 2, 3);
+        expect($coveredDisplayText(glyph, $displayAnnotationsOf(glyph)[0])).toBe("d");
+      },
+      { discrete: true },
+    );
+  });
+
+  it("follows a decorator's rendered text when it changes", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    editor.update(
+      () => {
+        const glyph = $createImmutableTypedTextNode("marker", "\\nd");
+        $getRoot().append($createParaNode().append(glyph));
+        $addDisplayAnnotation(glyph, "spelling", "a", 2, 3);
+        glyph.setTextContent("\\xnd");
+        expect($displayAnnotationsOf(glyph)).toEqual([
+          expect.objectContaining({ start: 3, end: 4 }),
+        ]);
+        // No rendered byte left: the decorator is held whole rather than the annotation lost.
+        glyph.setTextContent("");
+        expect($displayAnnotationsOf(glyph)).toEqual([
+          expect.objectContaining({ start: 0, end: 0 }),
+        ]);
+      },
+      { discrete: true },
+    );
+  });
+
+  it("holds a decorator for bytes it does not show until a shown range replaces it", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    editor.update(
+      () => {
+        const glyph = $createImmutableTypedTextNode("marker", "\\nd");
+        $getRoot().append($createParaNode().append(glyph));
+        $addDisplayAnnotation(glyph, "spelling", "a", 0, 0, { undisplayed: true });
+        expect($displayAnnotationsOf(glyph)).toEqual([
+          { type: "spelling", id: "a", start: 0, end: 0, undisplayed: true },
+        ]);
+        $addDisplayAnnotation(glyph, "spelling", "a", 1, 3);
+        expect($displayAnnotationsOf(glyph)).toEqual([
+          { type: "spelling", id: "a", start: 1, end: 3 },
+        ]);
+        // A shown range is never replaced by an undisplayed one.
+        $addDisplayAnnotation(glyph, "spelling", "a", 0, 0, { undisplayed: true });
+        expect($displayAnnotationsOf(glyph)).toEqual([
+          { type: "spelling", id: "a", start: 1, end: 3 },
+        ]);
+      },
+      { discrete: true },
+    );
+  });
+
+  it("reads an undisplayed hold back from serialized state", () => {
+    expect(
+      displayAnnotationsState.parse({
+        basis: "x",
+        annotations: [{ type: "t", id: "i", start: 0, end: 0, undisplayed: true }],
+      }),
+    ).toEqual({
+      basis: "x",
+      annotations: [{ type: "t", id: "i", start: 0, end: 0, undisplayed: true }],
+    });
+    expect(
+      displayAnnotationsState.parse({
+        basis: "x",
+        annotations: [{ type: "t", id: "i", start: 0, end: 0, undisplayed: "yes" }],
+      }),
+    ).toBeUndefined();
+  });
+});
+
 describe("display-annotation registration", () => {
   it("is kept per editor, keeps callbacks a later call omits, and can be forgotten", () => {
     const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);

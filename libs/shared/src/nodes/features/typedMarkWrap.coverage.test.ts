@@ -17,7 +17,7 @@ import {
 import { $createImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
 import { $createMarkerNode } from "./MarkerNode.js";
 import { $isTypedMarkNode, TypedMarkNode } from "./TypedMarkNode.js";
-import { $wrapSelectionInTypedMarkNode } from "./typedMarkWrap.utils.js";
+import { $wrapSelectionInTypedMarkNode, TypedMarkWrapOptions } from "./typedMarkWrap.utils.js";
 import {
   $createRangeSelection,
   $createTextNode,
@@ -355,24 +355,48 @@ describe("$wrapSelectionInTypedMarkNode() covers exactly the bytes the range nam
       pieces: { para: ParaNode; x: TextNode; y: TextNode },
       selection: RangeSelection,
     ) => void,
-  ): [number, number][] {
+    glyph = "\\w*",
+    options: TypedMarkWrapOptions | ((decorator: LexicalNode) => TypedMarkWrapOptions) = {},
+  ): DisplayAnnotation[] {
     const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
     let decorator!: LexicalNode;
     editor.update(
       () => {
         const x = $createTextNode("x");
-        decorator = $createImmutableTypedTextNode("marker", "\\w*");
+        decorator = $createImmutableTypedTextNode("marker", glyph);
         const y = $createTextNode("y");
         const para = $createParaNode().append(x, decorator, y);
         $getRoot().append(para);
         const selection = $createRangeSelection();
         select({ para, x, y }, selection);
-        $wrapSelectionInTypedMarkNode(selection, testType1, testID1);
+        $wrapSelectionInTypedMarkNode(
+          selection,
+          testType1,
+          testID1,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          typeof options === "function" ? options(decorator) : options,
+        );
       },
       { discrete: true },
     );
-    return editor.getEditorState().read(() => $held(decorator));
+    return editor
+      .getEditorState()
+      .read(() =>
+        $displayAnnotationsOf(decorator).filter((annotation) => annotation.id === testID1),
+      );
   }
+
+  /** Selects from in front of the decorator to behind it. */
+  const overDecorator = ({ para }: { para: ParaNode }, selection: RangeSelection) => {
+    selection.anchor.set(para.getKey(), 1, "element");
+    selection.focus.set(para.getKey(), 2, "element");
+  };
+
+  const at = (annotations: DisplayAnnotation[]) =>
+    annotations.map(({ start, end, undisplayed }) => ({ start, end, undisplayed }));
 
   it("holds nothing on a decorator for a range collapsed in front of it", () => {
     expect(
@@ -383,13 +407,34 @@ describe("$wrapSelectionInTypedMarkNode() covers exactly the bytes the range nam
     ).toEqual([]);
   });
 
-  it("holds a decorator the range passes over", () => {
-    expect(
-      wrapBesideDecorator(({ para }, selection) => {
-        selection.anchor.set(para.getKey(), 1, "element");
-        selection.focus.set(para.getKey(), 2, "element");
-      }),
-    ).toEqual([[0, 0]]);
+  it("holds all a decorator the range passes over renders", () => {
+    expect(at(wrapBesideDecorator(overDecorator))).toEqual([
+      { start: 0, end: 3, undisplayed: undefined },
+    ]);
+  });
+
+  it("never holds the space a decorator the range passes over ends in", () => {
+    expect(at(wrapBesideDecorator(overDecorator, "\\p "))).toEqual([
+      { start: 0, end: 2, undisplayed: undefined },
+    ]);
+  });
+
+  it("holds the part of a decorator the range ends inside of", () => {
+    const holds = (decorator: LexicalNode) => ({
+      decoratorHolds: new Map([[decorator.getKey(), { start: 1, end: 3 }]]),
+    });
+    expect(at(wrapBesideDecorator(overDecorator, "\\w*", holds))).toEqual([
+      { start: 1, end: 3, undisplayed: undefined },
+    ]);
+  });
+
+  it("holds a decorator, undisplayed, for a range naming only bytes it does not show", () => {
+    const holds = (decorator: LexicalNode) => ({
+      decoratorHolds: new Map([[decorator.getKey(), { start: 2, end: 2 }]]),
+    });
+    expect(at(wrapBesideDecorator(overDecorator, "\\w*", holds))).toEqual([
+      { start: 0, end: 0, undisplayed: true },
+    ]);
   });
 
   it("registers callbacks for a decorator carrier reached through the wrap's else-branch", () => {
@@ -412,7 +457,7 @@ describe("$wrapSelectionInTypedMarkNode() covers exactly the bytes the range nam
       { discrete: true },
     );
     editor.getEditorState().read(() => {
-      expect($held(decorator)).toEqual([[0, 0]]);
+      expect($held(decorator)).toEqual([[0, 3]]);
     });
     expect(getDisplayAnnotationRegistration(editor, testType1, testID1)).toEqual({
       onClick,

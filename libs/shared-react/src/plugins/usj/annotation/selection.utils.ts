@@ -2,6 +2,7 @@ import { $isImmutableVerseNode, ImmutableVerseNode } from "../../../nodes/usj/Im
 import { $isSomeVerseNode } from "../../../nodes/usj/node-react.utils";
 import { hasStandardViewWhitespace, ViewOptions } from "../../../views/view-options.utils";
 import { $blockToUsj, $getBlockUnits, $usjToBlock } from "./blockVerseLocations.utils";
+import { $renderedDecoratorHold } from "./decoratorHolds.utils";
 import { AnnotationRange, SelectionRange } from "./selection.model";
 import {
   type PropertyJsonPath,
@@ -32,6 +33,7 @@ import {
   $isTextNode,
   ElementNode,
   LexicalNode,
+  NodeKey,
   RangeSelection,
   TextNode,
 } from "lexical";
@@ -74,6 +76,7 @@ import {
   canonicalAttributeText,
   type CharNode,
   closingMarkerText,
+  type DecoratorHold,
   defaultMarkerAttribute,
   displayRunDescriptor,
   type DisplayRunKind,
@@ -102,10 +105,14 @@ import {
  * @param viewOptions - The editor's view options, which decide how its text maps to USJ offsets
  *   (see {@link $getNodeFromLocation}).
  * @param options - `forAnnotation`: resolve the range an annotation holds rather than a selection.
- *   A read-only decorator is held whole or not at all, so an annotation's end inside one takes the
- *   whole decorator, its start there keeps it unless only the decorator's trailing separator
- *   follows, and a range between two of its separators holds nothing. Without it, each end
+ *   A selection takes a read-only decorator whole or not at all, so an annotation's end inside one
+ *   takes the whole decorator, its start there keeps it unless only the decorator's trailing
+ *   separator follows, and a range between two of its separators holds nothing; `decoratorHolds`
+ *   then says which part of it the range names. Without it, each end
  *   resolves as a caret at that location does ({@link $getNodeFromLocation}).
+ *   `decoratorHolds` (with `forAnnotation`): filled, per decorator key, with the part of each
+ *   read-only decorator an end falls inside of, in its rendered text, for
+ *   `$wrapSelectionInTypedMarkNode` to hold exactly that part.
  * @returns A new editor RangeSelection object if the conversion is successful, or `undefined` if
  *   the required nodes or offsets cannot be found.
  *
@@ -122,7 +129,7 @@ import {
 export function $getRangeFromUsjSelection(
   selection: SelectionRange | AnnotationRange,
   viewOptions: ViewOptions | undefined,
-  options?: { forAnnotation?: boolean },
+  options?: { forAnnotation?: boolean; decoratorHolds?: Map<NodeKey, DecoratorHold> },
 ): RangeSelection | undefined {
   let { start } = selection;
   let end = selection.end ?? start;
@@ -161,11 +168,12 @@ export function $getRangeFromUsjSelection(
       endEdge[1],
       hasStandardViewWhitespace(viewOptions),
     );
-  if (options?.forAnnotation && end !== start)
-    [startEdge, endEdge] = $annotationEdges(
-      { edge: startEdge, inside: startAt.insideDecorator },
-      { edge: endEdge, inside: endAt.insideDecorator },
-    );
+  if (options?.forAnnotation && end !== start) {
+    const startEnd = { edge: startEdge, inside: startAt.insideDecorator };
+    const endEnd = { edge: endEdge, inside: endAt.insideDecorator };
+    [startEdge, endEdge] = $annotationEdges(startEnd, endEnd);
+    if (options.decoratorHolds) $collectDecoratorHolds(startEnd, endEnd, options.decoratorHolds);
+  }
 
   // Create selection range.
   const editorSelection = $createRangeSelection();
@@ -213,6 +221,35 @@ function $annotationEdges(
     ? $edgeBeside(last.inside, last.inside.before > 0, last.edge)
     : last.edge;
   return reversed ? [lastEdge, firstEdge] : [firstEdge, lastEdge];
+}
+
+/**
+ * The part of each read-only decorator an annotation range's end falls inside of, by decorator key
+ * — the decorators {@link $annotationEdges} keeps: from the range's first end to the decorator's
+ * end, from its start to the range's last end, or between both ends inside one decorator.
+ */
+function $collectDecoratorHolds(
+  start: RangeEnd,
+  end: RangeEnd,
+  holds: Map<NodeKey, DecoratorHold>,
+): void {
+  const { inside: startInside } = start;
+  const { inside: endInside } = end;
+  if (!startInside && !endInside) return;
+  const sameDecorator =
+    !!startInside && !!endInside && startInside.decorator.is(endInside.decorator);
+  const reversed =
+    startInside && endInside && sameDecorator
+      ? endInside.before < startInside.before
+      : $isBeforeInDocument(end, start);
+  const [first, last] = reversed ? [endInside, startInside] : [startInside, endInside];
+  const hold = (inside: DecoratorBytePosition, from: number, to: number) => {
+    if (to <= from) return;
+    const held = $renderedDecoratorHold(inside.decorator, from, to);
+    if (held) holds.set(inside.decorator.getKey(), held);
+  };
+  if (first) hold(first, first.before, sameDecorator && last ? last.before : first.total);
+  if (last && !sameDecorator) hold(last, 0, last.before);
 }
 
 /** The element point in front of the decorator, or behind it when `after`; `fallback` when it has

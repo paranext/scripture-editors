@@ -32,7 +32,9 @@ import {
   $caretWalk,
   $flatSignature,
   $heldIndexes,
+  $paintedDecoratorChars,
   $paintedIndexes,
+  carrierEdgeWhitespace,
   HELD_TYPE,
   locKey,
   mountInView,
@@ -45,6 +47,7 @@ import { act } from "@testing-library/react";
 import { createHash } from "crypto";
 import { readFileSync, writeFileSync } from "fs";
 import { $isElementNode, $isTextNode, LexicalNode, PointType } from "lexical";
+import { $displayAnnotationsOf, $decoratorRenderedText, NBSP } from "shared";
 import { $getRangeFromUsjSelection, ViewOptions } from "shared-react";
 import { expect } from "vitest";
 
@@ -66,6 +69,9 @@ export interface OracleUniverse {
   sep: Set<number>;
   /** Caret labels no byte boundary produced, inserted where the caret walk met them. */
   extra: string[];
+  /** Every character the fullest display shows that a range can hold, in document order, with
+   * the ranks it covers — what a read-only decorator's characters are matched against. */
+  chars: { ch: string; s: number; e: number; label: string }[];
 }
 
 /** Builds the universe of `usj` in Standard view with notes expanded. */
@@ -78,6 +84,7 @@ export async function buildOracleUniverse(usj: Usj): Promise<OracleUniverse> {
     rank: new Map(),
     sep: new Set(),
     extra: [],
+    chars: [],
   };
   mounted.lexical.getEditorState().read(() => {
     const order: string[] = [];
@@ -123,6 +130,18 @@ export async function buildOracleUniverse(usj: Usj): Promise<OracleUniverse> {
       for (let r = start; r < end; r++) covered.add(r);
     }
     for (let r = 0; r < universe.labels.length; r++) if (!covered.has(r)) universe.sep.add(r);
+    for (const byte of bytes) {
+      const start = universe.rank.get(byte.label);
+      if (byte.separator || byte.soft || start === undefined) continue;
+      const end = Math.max(universe.rank.get(byte.afterLabel) ?? start + 1, start + 1);
+      if (byte.offset >= 0) {
+        universe.chars.push({ ch: byte.ch, s: start, e: end, label: byte.label });
+        continue;
+      }
+      // A decorator here too (`\id`): its characters, without edge whitespace, share its ranks.
+      for (const ch of $decoratorRenderedText(byte.node).trim())
+        universe.chars.push({ ch, s: start, e: end, label: byte.label });
+    }
   });
   mounted.unmount();
   return universe;
@@ -141,6 +160,39 @@ interface ByteInfo {
   inline: string[];
   /** The key of the block element the byte is in. */
   block: string;
+  /** The live byte (its index in `$byteNodes()`) this is, or a part of: one character a
+   * read-only decorator renders, or the rest of the bytes it stands for but does not render. */
+  unit:
+    | { byte: number; kind: "byte" }
+    | { byte: number; kind: "char"; char: number }
+    | {
+        byte: number;
+        kind: "rest";
+        /** The decorator renders no text at all, so only its element can show the annotation. */
+        bare: boolean;
+      };
+  /** The ranks a decorator's `rest` covers, which need not be one run. */
+  ranks?: number[];
+}
+
+/** `a` aligned to `b` by a longest common subsequence: each index of `a` matched to one of `b`, or
+ * `undefined`. A space matches a no-break space. */
+function alignChars(a: string[], b: string[]): (number | undefined)[] {
+  const same = (x: string, y: string) => x.replace(NBSP, " ") === y.replace(NBSP, " ");
+  const lcs = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--)
+    for (let j = b.length - 1; j >= 0; j--)
+      lcs[i][j] = same(a[i], b[j]) ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  const matched: (number | undefined)[] = new Array<number | undefined>(a.length).fill(undefined);
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (same(a[i], b[j])) {
+      matched[i++] = j++;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) i++;
+    else j++;
+  }
+  return matched;
 }
 
 /** One failing operation. */
@@ -273,6 +325,8 @@ export async function runOracle(
   let mounted: MountedInView = await mountInView(usj, view);
   const anomalies: string[] = [];
   const info: ByteInfo[] = [];
+  /** Each live byte's outbound label, by its index in `$byteNodes()`. */
+  const byteLabels: string[] = [];
   const { producible, signature } = mounted.lexical.getEditorState().read(() => {
     let previousStart = -1;
     let previousEnd = 0;
@@ -290,16 +344,75 @@ export async function runOracle(
       }
       const e = Math.max(after ?? s + 1, s + 1);
       const marks = `${byte.carrier ? "*" : ""}${byte.separator ? "(sep)" : ""}${byte.soft ? "(soft)" : ""}`;
-      info.push({
-        desc: asciiOnly(`${byte.nodeType}${marks}:${JSON.stringify(byte.ch)}@${byte.label}`),
-        separator: byte.separator,
-        soft: byte.soft,
-        s,
-        e,
-        label: byte.label,
-        inline: $inlineAncestors(byte.node),
-        block: $blockKey(byte.node),
-      });
+      const inline = $inlineAncestors(byte.node);
+      const block = $blockKey(byte.node);
+      byteLabels.push(byte.label);
+      const byteIndex = byteLabels.length - 1;
+      if (byte.offset >= 0) {
+        info.push({
+          desc: asciiOnly(`${byte.nodeType}${marks}:${JSON.stringify(byte.ch)}@${byte.label}`),
+          separator: byte.separator,
+          soft: byte.soft,
+          s,
+          e,
+          label: byte.label,
+          inline,
+          block,
+          unit: { byte: byteIndex, kind: "byte" },
+        });
+      } else {
+        // A read-only decorator: each character it renders is matched to the character of the
+        // fullest display it shows, within the ranks the decorator covers; the ranks no rendered
+        // character takes are the bytes it stands for without showing them.
+        const shown = universe.chars.filter((char) => char.s >= s && char.e <= e);
+        const text = [...$decoratorRenderedText(byte.node)];
+        // Edge whitespace is the decorator's own display, never a byte it shows.
+        const { lead, trail } = carrierEdgeWhitespace(text.join(""));
+        const matched = [
+          ...new Array<undefined>(lead).fill(undefined),
+          ...alignChars(
+            text.slice(lead, text.length - trail),
+            shown.map((char) => char.ch),
+          ),
+          ...new Array<undefined>(trail).fill(undefined),
+        ];
+        // A decorator that shows its bytes some other way (a hidden caller as `*`, a caller CSS
+        // draws) is graded whole: only its element shows the annotation.
+        const rendered = matched.some((at) => at !== undefined) ? text : [];
+        const taken = new Set<number>();
+        rendered.forEach((ch, char) => {
+          const at = matched[char];
+          const twin = at === undefined ? undefined : shown[at];
+          if (twin) for (let r = twin.s; r < twin.e; r++) taken.add(r);
+          info.push({
+            desc: asciiOnly(
+              `${byte.nodeType}*${twin ? "" : "(soft)"}:${JSON.stringify(ch)}@${twin?.label ?? byte.label}`,
+            ),
+            separator: false,
+            soft: !twin,
+            s: twin?.s ?? s,
+            e: twin?.e ?? s,
+            label: twin?.label ?? byte.label,
+            inline,
+            block,
+            unit: { byte: byteIndex, kind: "char", char },
+          });
+        });
+        const ranks = Array.from({ length: e - s }, (_, n) => s + n).filter((r) => !taken.has(r));
+        if (ranks.length > 0 || rendered.length === 0)
+          info.push({
+            desc: asciiOnly(`${byte.nodeType}*(rest):${JSON.stringify(byte.ch)}@${byte.label}`),
+            separator: false,
+            soft: ranks.every((r) => universe.sep.has(r)),
+            s,
+            e,
+            ranks,
+            label: byte.label,
+            inline,
+            block,
+            unit: { byte: byteIndex, kind: "rest", bare: rendered.length === 0 },
+          });
+      }
       previousStart = s;
       previousEnd = e;
     }
@@ -375,12 +488,18 @@ export async function runOracle(
       const expected = new Set<number>();
       info.forEach((byte, i) => {
         if (!holdable(i)) return;
-        for (let r = Math.max(byte.s, lo); r < Math.min(byte.e, hi); r++)
-          if (!namesNothing.has(r)) {
-            expected.add(i);
-            return;
-          }
+        const ranks = byte.ranks ?? Array.from({ length: byte.e - byte.s }, (_, n) => byte.s + n);
+        if (ranks.some((r) => r >= lo && r < hi && !namesNothing.has(r))) expected.add(i);
       });
+      // A decorator's undisplayed rest is required only when the range names none of what the
+      // decorator shows: otherwise the characters it shows are what holds the annotation.
+      const namesShown = new Set(
+        [...expected].filter((i) => info[i].unit.kind === "char").map((i) => info[i].unit.byte),
+      );
+      for (const i of [...expected]) {
+        const { unit } = info[i];
+        if (unit.kind === "rest" && !unit.bare && namesShown.has(unit.byte)) expected.delete(i);
+      }
       const flags: string[] = [];
       let inbound = "";
       m.lexical.getEditorState().read(() => {
@@ -414,8 +533,10 @@ export async function runOracle(
           .filter((log) => FAILURE_LOG.test(log))
           .map((log) => `log:${log.slice(0, 160)}`),
       );
-      let held = new Map<number, "mark" | "carrier">();
-      let painted = new Set<number>();
+      const held = new Map<number, "mark" | "carrier">();
+      const painted = new Set<number>();
+      /** Held units nothing on screen shows: a decorator held only for bytes it does not show. */
+      const heldUnshown = new Set<number>();
       let touched: number[] = [];
       /** The first byte in a window around `touched` whose outbound label moved, as a flag. */
       const $movedLabel = (prefix: string): string | undefined => {
@@ -426,16 +547,56 @@ export async function runOracle(
         for (let i = from; i <= to; i++) {
           const [node, offset] = nodes[i];
           const label = locKey($byteLoc(node, offset, false, view));
-          if (label !== info[i]?.label) return `${prefix}:${i}:${info[i]?.label}->${label}`;
+          if (label !== byteLabels[i]) return `${prefix}:${i}:${byteLabels[i]}->${label}`;
         }
         return undefined;
       };
       m.lexical.getEditorState().read(() => {
-        held = $heldIndexes(HELD_TYPE, id);
-        painted = $paintedIndexes(m.lexical, id);
+        const heldBytes = $heldIndexes(HELD_TYPE, id);
+        const paintedBytes = $paintedIndexes(m.lexical, id);
+        const nodes = $byteNodes();
+        info.forEach(({ unit }, i) => {
+          if (unit.kind === "byte") {
+            const holder = heldBytes.get(unit.byte);
+            if (holder) held.set(i, holder);
+            if (paintedBytes.has(unit.byte)) painted.add(i);
+            return;
+          }
+          const node = nodes[unit.byte]?.[0];
+          if (!node) return;
+          const shown = $paintedDecoratorChars(m.lexical, node, id);
+          // A decorator inside a mark (a span moved into it whole) is held, all of it, by the mark.
+          if (heldBytes.get(unit.byte) === "mark") {
+            held.set(i, "mark");
+            if (shown.whole || (unit.kind === "char" && shown.chars.has(unit.char))) painted.add(i);
+            return;
+          }
+          const annotations = $displayAnnotationsOf(node).filter(
+            (annotation) => annotation.type === HELD_TYPE && annotation.id === id,
+          );
+          const whole = annotations.some(
+            (annotation) => annotation.start === annotation.end && !annotation.undisplayed,
+          );
+          if (unit.kind === "char") {
+            const holds =
+              whole ||
+              annotations.some(
+                (annotation) => annotation.start <= unit.char && unit.char < annotation.end,
+              );
+            if (holds) held.set(i, "carrier");
+            if (shown.whole || shown.chars.has(unit.char)) painted.add(i);
+            return;
+          }
+          const shownHeld = whole || (unit.bare && annotations.some((a) => !a.undisplayed));
+          if (shownHeld || annotations.some((annotation) => annotation.undisplayed))
+            held.set(i, "carrier");
+          // Held only for bytes the decorator does not show: nothing on screen is the annotation's.
+          if (!shownHeld) heldUnshown.add(i);
+          if (unit.bare && (shown.whole || shown.any)) painted.add(i);
+        });
         if ($flatSignature() !== signature) flags.push("bytes-changed");
         // Outbound labels in a window around the range must not move.
-        touched = [...expected, ...held.keys()];
+        touched = [...new Set([...expected, ...held.keys()].map((i) => info[i].unit.byte))];
         const moved = $movedLabel("label-moved");
         if (moved) flags.push(moved);
       });
@@ -457,19 +618,22 @@ export async function runOracle(
         return before >= 0 && after < info.length && held.has(before) && held.has(after);
       };
       const missing = [...expected].filter((i) => !held.has(i)).sort((x, y) => x - y);
-      // Painted: every held byte, and the filler bytes between two held bytes in one block.
-      const shouldPaint = new Set(held.keys());
-      const heldOrder = [...held.keys()].sort((x, y) => x - y);
+      // Painted: every held byte the view shows, and the filler bytes between two of them in one
+      // block. A decorator's undisplayed rest shows nothing, unless the decorator renders no text
+      // (a caller CSS draws), when its element is what shows the annotation.
+      const shows = (i: number) => info[i].unit.kind !== "rest" || info[i].unit.bare;
+      const shouldPaint = new Set([...held.keys()].filter((i) => shows(i) && !heldUnshown.has(i)));
+      const heldOrder = [...shouldPaint].sort((x, y) => x - y);
       heldOrder.forEach((from, k) => {
         const to = heldOrder[k + 1];
         if (to === undefined || to === from + 1) return;
-        const between = Array.from({ length: to - from - 1 }, (_, n) => from + 1 + n);
+        const between = Array.from({ length: to - from - 1 }, (_, n) => from + 1 + n).filter(shows);
         const sameBlock = between.every((i) => info[i].block === info[from].block);
         if (sameBlock && info[to].block === info[from].block && between.every((i) => !holdable(i)))
           between.forEach((i) => shouldPaint.add(i));
       });
       const paintExtra = [...painted]
-        .filter((i) => !shouldPaint.has(i))
+        .filter((i) => shows(i) && !shouldPaint.has(i))
         .sort((x, y) => x - y)
         .map((i) => info[i]?.desc ?? `#${i}`);
       const paintMissing = [...shouldPaint]
@@ -479,6 +643,8 @@ export async function runOracle(
       const extra = [...held]
         .filter(([i, holder]) => {
           if (expected.has(i)) return false;
+          const { unit } = info[i];
+          if (unit.kind === "rest" && !unit.bare && namesShown.has(unit.byte)) return false;
           return holdable(i) || holder !== "mark" || !betweenHeld(i);
         })
         .map(([i]) => i)

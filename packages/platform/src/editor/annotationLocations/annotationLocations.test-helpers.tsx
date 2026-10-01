@@ -352,6 +352,41 @@ export function $paintedIndexes(lexical: LexicalEditor, id: string): Set<number>
   return painted;
 }
 
+/**
+ * Which characters of decorator `node`'s rendered text paint annotation `id`, read from the DOM:
+ * `whole` when its element or an ancestor carries the annotation's class, else the characters an
+ * editor highlight covers; `any` when any highlight touches the element at all.
+ */
+export function $paintedDecoratorChars(
+  lexical: LexicalEditor,
+  node: LexicalNode,
+  id: string,
+): { whole: boolean; chars: Set<number>; any: boolean } {
+  const className = `annotationId-${id}`;
+  const element = lexical.getElementByKey(node.getKey());
+  const chars = new Set<number>();
+  if (!element) return { whole: false, chars, any: false };
+  if (hasClassAround(element, className)) return { whole: true, chars, any: true };
+  const ranges = highlightRangesWith(className).filter((range) => range instanceof Range);
+  const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let offset = 0;
+  for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+    const length = text.textContent?.length ?? 0;
+    for (let i = 0; i < length; i++)
+      if (
+        ranges.some(
+          (range) =>
+            !range.collapsed &&
+            range.comparePoint(text, i) === 0 &&
+            range.comparePoint(text, i + 1) === 0,
+        )
+      )
+        chars.add(offset + i);
+    offset += length;
+  }
+  return { whole: false, chars, any: ranges.some((range) => range.intersectsNode(element)) };
+}
+
 /** The key of the nearest block element around `node` — a paragraph, a table cell, the root. */
 export function $blockKey(node: LexicalNode): string {
   for (let parent = node.getParent(); parent; parent = parent.getParent())

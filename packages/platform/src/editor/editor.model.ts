@@ -266,6 +266,11 @@ export interface EditorRef {
    * Where the browser has no highlight API, a display byte is painted whole. Find painted
    * annotations with {@link EditorRef.getAnnotationRanges}, not by class.
    *
+   * A read-only glyph, verse number or chapter number (the views without editable markers) holds
+   * and paints exactly the part of what it shows that the range names. A range that names only
+   * bytes such a glyph stands for without showing them (a verse's `\va` where markers are hidden)
+   * holds the annotation on it but paints nothing.
+   *
    * The annotation holds exactly the bytes the range names. A range into part of a char span, note
    * or figure holds only the part it names: the span's own text is marked piece by piece and its
    * marker glyphs hold the annotation; a span the range covers whole is marked whole. A collapsed

@@ -165,14 +165,19 @@ Annotations are added with a specific `type` via the editor's reference API (see
 
 For example, if an annotation of type _"grammar"_ is overlapping it will have both CSS classnames `editor-typed-mark-external-grammar` and `editor-typed-markOverlap-external-grammar`. If it's not overlapping it still has the first classname. Annotations and comments are the same when considering if it's overlapping.
 
-The same class names are applied to the element of any display bytes an annotation covers — a
-marker glyph, a verse or chapter number, a note caller, an attribute run such as `|lemma="grace"`
-— which additionally carries `display-annotation`. Such an element is painted whole, and gets the
-overlap class whenever two annotations of one type are on it, even if the parts of it they name
-do not overlap. Style annotations by class, never by the `mark` element name.
-
-An annotation over part of a char span or note highlights only that part of its text; the span's
-glyphs it touches are painted whole.
+An annotation paints exactly the bytes it covers, including display bytes — a marker glyph, a
+verse or chapter number, a note caller, an attribute run such as `|lemma="grace"` — plus the
+whitespace the editor shows between two of its bytes in one paragraph (a marker's separator, the
+space after a verse number); never whitespace at its edges. A display-byte element covered in
+full gets the same class names plus `display-annotation`. Part of one is painted with a
+[CSS Custom Highlight](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API),
+which the editor styles from your class rules itself: it copies `background-color`, `color`,
+`text-decoration` and `text-shadow`, and draws a `border-bottom` as an underline. Other properties
+and `:hover` rules apply only to elements. So style annotations by class (never by the `mark`
+element name), and do not make a rule depend on ancestors inside the editable content. The overlap
+class marks only the text two annotations of one type share. To measure or scroll to an
+annotation, use `getAnnotationRanges(type, id)`: a class lookup misses display bytes painted with a
+highlight.
 
 ### Comment Styles
 

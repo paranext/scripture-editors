@@ -6,6 +6,7 @@
 import {
   $byteNodes,
   $heldBytes,
+  $paintedDecoratorChars,
   $paintedIndexes,
   HELD_TYPE,
   MountedInView,
@@ -17,7 +18,8 @@ import { settleByBlurAndCommit } from "../markerEdit/displayAnnotations.test-hel
 import { typeOver } from "../positions/positions.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { NBSP } from "shared";
+import { vi } from "vitest";
+import { $decoratorRenderedText, $displayAnnotationsOf, NBSP, TypedMarkOnRemove } from "shared";
 import { AnnotationRange } from "shared-react";
 
 /** A marker object with attributes `MarkerObject` does not name. */
@@ -63,15 +65,18 @@ async function annotate(mounted: MountedInView, range: AnnotationRange, id: stri
   });
 }
 
-/** The bytes painting `id`, in document order, a decorator as `[<type>]`. */
+/** The characters painting `id` on screen, in document order: a text's, and each a decorator
+ * renders. */
 function paintedText(mounted: MountedInView, id: string): string {
   return mounted.lexical.getEditorState().read(() => {
     const painted = $paintedIndexes(mounted.lexical, id);
     return $byteNodes()
-      .filter((_, index) => painted.has(index))
-      .map(([node, offset]) =>
-        offset >= 0 ? node.getTextContent()[offset] : `[${node.getType()}]`,
-      )
+      .map(([node, offset], index) => {
+        if (offset >= 0) return painted.has(index) ? node.getTextContent()[offset] : "";
+        const rendered = $decoratorRenderedText(node);
+        const { whole, chars } = $paintedDecoratorChars(mounted.lexical, node, id);
+        return [...rendered].filter((_, char) => whole || chars.has(char)).join("");
+      })
       .join("");
   });
 }
@@ -242,5 +247,136 @@ describe("annotation painting without the CSS Custom Highlight API", () => {
     );
     expect(paintedText(mounted, "digit")).toBe(`\\v${NBSP}12 `);
     mounted.unmount();
+  });
+});
+
+describe("annotation painting on read-only decorators", () => {
+  const number = `${para}.content[0]['number']`;
+  const digit: AnnotationRange = {
+    start: { jsonPath: number, propertyOffset: 1 },
+    end: { jsonPath: number, propertyOffset: 2 },
+  };
+
+  it.each(["formatted", "visible", "hidden+expanded"])(
+    "paints one digit of a verse number (%s)",
+    async (view) => {
+      const mounted = await mountInView(paintUsj, oracleView(view));
+      const onRemove = vi.fn<TypedMarkOnRemove>();
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(digit, ORACLE_TYPE, "digit", { onRemove });
+        await Promise.resolve();
+      });
+      expect(paintedText(mounted, "digit")).toBe("2");
+      await act(async () => mounted.ref.current?.removeAnnotation(ORACLE_TYPE, "digit"));
+      expect(onRemove).toHaveBeenCalledWith(HELD_TYPE, "digit", "removed", "2");
+      mounted.unmount();
+    },
+  );
+
+  it("paints a whole verse number without the space its glyph ends in (visible)", async () => {
+    const mounted = await mountInView(paintUsj, oracleView("visible"));
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: number, propertyOffset: 0 },
+        end: { jsonPath: number, propertyOffset: 2 },
+      },
+      "number",
+    );
+    expect(paintedText(mounted, "number")).toBe("12");
+    mounted.unmount();
+  });
+
+  it("paints one digit of a chapter number (formatted)", async () => {
+    const mounted = await mountInView(paintUsj, oracleView("formatted"));
+    const chapter = "$.content[0]['number']";
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: chapter, propertyOffset: 1 },
+        end: { jsonPath: chapter, propertyOffset: 2 },
+      },
+      "zero",
+    );
+    expect(paintedText(mounted, "zero")).toBe("0");
+    mounted.unmount();
+  });
+
+  it("paints one letter of a read-only marker glyph (visible)", async () => {
+    const mounted = await mountInView(paintUsj, oracleView("visible"));
+    const marker = `${para}.content[4]['marker']`;
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: marker, propertyOffset: 1 },
+        end: { jsonPath: marker, propertyOffset: 2 },
+      },
+      "letter",
+    );
+    expect(paintedText(mounted, "letter")).toBe("d");
+    mounted.unmount();
+  });
+
+  it("paints only the attribute value of a read-only attribute run (visible)", async () => {
+    const mounted = await mountInView(paintUsj, oracleView("visible"));
+    const who = `${para}.content[6]['who']`;
+    await annotate(
+      mounted,
+      { start: { jsonPath: who, propertyOffset: 0 }, end: { jsonPath: who, propertyOffset: 6 } },
+      "who",
+    );
+    expect(paintedText(mounted, "who")).toBe("Pilate");
+    mounted.unmount();
+  });
+
+  describe("bytes a decorator stands for but does not show", () => {
+    /** `\v 12 \va 12a\va*`: the alternate number shows only where markers do. */
+    const altUsj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "para",
+          marker: "p",
+          content: [{ type: "verse", marker: "v", number: "12", altnumber: "12a" }, "In"],
+        },
+      ],
+    };
+    const alt = "$.content[0].content[0]['altnumber']";
+
+    it("holds the annotation but paints nothing", async () => {
+      const mounted = await mountInView(altUsj, oracleView("hidden+expanded"));
+      await annotate(
+        mounted,
+        { start: { jsonPath: alt, propertyOffset: 0 }, end: { jsonPath: alt, propertyOffset: 3 } },
+        "alt",
+      );
+      const holders = mounted.lexical
+        .getEditorState()
+        .read(() =>
+          $byteNodes().flatMap(([node]) =>
+            $displayAnnotationsOf(node).filter((annotation) => annotation.id === "alt"),
+          ),
+        );
+      expect(holders).toEqual([
+        expect.objectContaining({ type: HELD_TYPE, id: "alt", undisplayed: true }),
+      ]);
+      expect(paintedText(mounted, "alt")).toBe("");
+      mounted.unmount();
+    });
+
+    it("paints only what the decorator shows of a range over shown and unshown bytes", async () => {
+      const mounted = await mountInView(altUsj, oracleView("hidden+expanded"));
+      await annotate(
+        mounted,
+        {
+          start: { jsonPath: "$.content[0].content[0]['number']", propertyOffset: 1 },
+          end: { jsonPath: alt, propertyOffset: 3 },
+        },
+        "both",
+      );
+      expect(paintedText(mounted, "both")).toBe("2");
+      mounted.unmount();
+    });
   });
 });

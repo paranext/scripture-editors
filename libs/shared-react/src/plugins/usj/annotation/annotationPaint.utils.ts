@@ -131,8 +131,8 @@ function merge(intervals: PaintIntervals): PaintIntervals {
 
 /**
  * What annotation `type`/`id` paints outside its marks, per leaf key: each carrier's held range (a
- * decorator held whole, `[0, 0]`, paints all it renders) and every interior gap between two held
- * pieces, the marks' pieces included. `carrierKeys` and `markKeys` are the nodes holding it.
+ * decorator held whole, `[0, 0]`, paints all it renders; one held for bytes it does not show
+ * paints nothing) and every interior gap between two held pieces, the marks' pieces included. `carrierKeys` and `markKeys` are the nodes holding it.
  */
 export function $paintIntervalsOf(
   type: string,
@@ -145,7 +145,8 @@ export function $paintIntervalsOf(
     const node = $getNodeByKey(key);
     if (!node?.isAttached()) continue;
     for (const annotation of $displayAnnotationsOf(node)) {
-      if (annotation.type !== type || annotation.id !== id) continue;
+      // Held for bytes the decorator does not show: nothing on screen is the annotation's.
+      if (annotation.type !== type || annotation.id !== id || annotation.undisplayed) continue;
       const whole = annotation.start === annotation.end;
       pieces.push({
         leaf: node,
