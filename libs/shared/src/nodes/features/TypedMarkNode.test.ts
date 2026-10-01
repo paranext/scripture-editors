@@ -47,6 +47,7 @@ import {
   $getState,
   $isTextNode,
   $setState,
+  createEditor,
   EditorConfig,
   LexicalNode,
   TextNode,
@@ -496,6 +497,41 @@ describe("TypedMarkNode", () => {
       expect(takeTypedMarkRemovalReports(editor)).toEqual([[testType1, testID1]]);
       expect(takeTypedMarkRemovalReports(editor)).toEqual([]);
       stopListening();
+    });
+
+    it("keeps the edit, and hands the error to the editor after it, when a mark's onRemove throws", async () => {
+      const error = new Error("boom");
+      const onError = vi.fn();
+      const editor = createEditor({
+        namespace: "TestEditor",
+        nodes: [ParaNode, TypedMarkNode],
+        onError,
+      });
+      editor.setRootElement(document.createElement("div"));
+      const throwing = vi.fn(() => {
+        throw error;
+      });
+      const other = vi.fn();
+      let markNode!: TypedMarkNode;
+      editor.update(
+        () => {
+          markNode = $createTypedMarkNode({});
+          markNode.addID(testType1, testID1, undefined, throwing);
+          markNode.addID(testType2, testID2, undefined, other);
+          $getRoot().append($createParaNode().append(markNode.append($createTextNode("gone"))));
+        },
+        { discrete: true },
+      );
+
+      editor.update(() => markNode.remove(), { discrete: true });
+
+      expect(throwing).toHaveBeenCalledTimes(1);
+      expect(other).toHaveBeenCalledWith(testType2, testID2, "destroyed", "gone");
+      expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe("");
+      expect(onError).not.toHaveBeenCalled();
+      await Promise.resolve();
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(error);
     });
 
     it("keeps a type and an id apart when silencing, even when both contain the NUL character", () => {

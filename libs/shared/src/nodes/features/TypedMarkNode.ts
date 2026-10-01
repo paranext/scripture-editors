@@ -1054,7 +1054,16 @@ export class TypedMarkNode extends ElementNode {
       if (!marks) reportedHere.set(key, (marks = new Set()));
       marks.add(this.getKey());
     }
-    callback(type, id, cause, this.getTextContent());
+    try {
+      callback(type, id, cause, this.getTextContent());
+    } catch (error) {
+      // Thrown here, a host's error would make Lexical discard the whole update — the user's edit
+      // with it — and skip this removal's other reports. The editor's error handler gets it once
+      // the update is done instead.
+      queueMicrotask(() =>
+        editor._onError(error instanceof Error ? error : new Error(String(error))),
+      );
+    }
     this.removeOnRemoveFor(type, id);
   }
 
