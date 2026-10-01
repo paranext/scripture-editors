@@ -960,7 +960,7 @@ describe("DELETE_LINE_COMMAND clamps a collapsed mid-content caret past the pref
 });
 
 describe("$narrowSelectionPastBookPrefix", () => {
-  const nodesForBook = [BookNode, ImmutableTypedTextNode, TextNode];
+  const nodesForBook = [BookNode, ImmutableTypedTextNode, TextNode, ParaNode];
 
   it("narrows the ANCHOR when it is the earlier endpoint (a forward selection)", () => {
     let book!: BookNode;
@@ -1059,6 +1059,57 @@ describe("$narrowSelectionPastBookPrefix", () => {
     expect(narrowed).toBe(true);
     editor.getEditorState().read(() => {
       $expectSelectionToBe(content, 0);
+    });
+  });
+
+  // The cheap pre-filter ahead of the `getNodes()` walk must never exclude a selection that
+  // genuinely spans the prefix, and must actually skip the walk for one that cannot.
+  it("is a no-op for a selection entirely after the book, never reaching the prefix", () => {
+    let tail!: TextNode;
+    const { editor } = createBasicTestEnvironment(nodesForBook, () => {
+      const book = $createBookLine("GEN");
+      tail = $createTextNode("elsewhere");
+      $getRoot().append(book, $createParaNode("p").append(tail));
+    });
+    updateSelection(editor, tail, 1, tail, 4);
+
+    let narrowed = true;
+    editor.update(
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) narrowed = $narrowSelectionPastBookPrefix(selection);
+      },
+      { discrete: true },
+    );
+
+    expect(narrowed).toBe(false);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(tail, 1, tail, 4);
+    });
+  });
+
+  it("narrows a selection anchored at (root, 0) — before even the book itself", () => {
+    let root!: ReturnType<typeof $getRoot>;
+    let content!: TextNode;
+    const { editor } = createBasicTestEnvironment(nodesForBook, () => {
+      content = $createTextNode("Genesis");
+      root = $getRoot();
+      root.append($createBookLine("GEN", content));
+    });
+    updateSelection(editor, root, 0, content, 3);
+
+    let narrowed = false;
+    editor.update(
+      () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) narrowed = $narrowSelectionPastBookPrefix(selection);
+      },
+      { discrete: true },
+    );
+
+    expect(narrowed).toBe(true);
+    editor.getEditorState().read(() => {
+      $expectSelectionToBe(content, 0, content, 3);
     });
   });
 });

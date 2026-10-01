@@ -15,6 +15,7 @@ import {
   DELETE_CHARACTER_COMMAND,
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
+  $isRootNode,
   isDOMNode,
   LexicalNode,
   PASTE_COMMAND,
@@ -103,12 +104,24 @@ function $pointJustPastBookPrefix(book: BookNode): {
  */
 export function $narrowSelectionPastBookPrefix(selection: RangeSelection): boolean {
   if (selection.isCollapsed()) return false;
+  // Cheap pre-filter before the `getNodes()` walk below, which visits every node the selection
+  // spans: the prefix is the very first thing in the document (the book's own first child, and
+  // the book is always the document's first block), so it can only be in the span at all when the
+  // EARLIER endpoint is at or before it — an element point on the root itself at offset 0, or
+  // anywhere inside the book (its own element point included: a node's top-level element is
+  // itself when the node already IS one). `getTopLevelElement()` returns `null` for the root node,
+  // so the root case needs its own check rather than falling out of the same call.
+  const point = selection.isBackward() ? selection.focus : selection.anchor;
+  const pointNode = point.getNode();
+  const mayReachPrefix =
+    ($isRootNode(pointNode) && point.offset === 0) || $isBookNode(pointNode.getTopLevelElement());
+  if (!mayReachPrefix) return false;
+
   const prefixNode = selection.getNodes().find($isBookPrefixNode);
   if (!prefixNode) return false;
   const book = prefixNode.getParent();
   if (!$isBookNode(book)) return false;
 
-  const point = selection.isBackward() ? selection.focus : selection.anchor;
   const target = $pointJustPastBookPrefix(book);
   point.set(target.key, target.offset, target.type);
   return true;
