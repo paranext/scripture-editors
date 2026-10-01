@@ -25,6 +25,7 @@ import {
   $setSelection,
   BaseSelection,
   LexicalEditor,
+  LexicalNode,
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
@@ -399,6 +400,42 @@ describe("ScriptureReferencePlugin", () => {
       });
       expect(mockOnScrRefChange).not.toHaveBeenCalled();
     });
+
+    // Which verse the caret reports matters as much as where it is drawn: a caret that resolves into
+    // the next verse reports that verse to the host, and every view following the host moves there.
+    it.each([
+      [
+        "an editable marker (Standard view)",
+        $editableVerseContentStartingWithNonTextState,
+        (): [LexicalNode, number] => [emptyVerseMarker, emptyVerseMarker.getTextContentSize()],
+      ],
+      [
+        "an immutable marker (Formatted view)",
+        $immutableVerseContentStartingWithNonTextState,
+        (): [LexicalNode, number] => [emptyVersePara, 1],
+      ],
+    ])(
+      "reports the empty verse for a caret the user puts in it, with %s",
+      async (_label, $initialState, caret) => {
+        const { editor } = await testEnvironment(scrRef, mockOnScrRefChange, $initialState);
+        // Consume the initial move-to-verse-start so the dispatch below runs the reporting logic.
+        await act(async () => {
+          editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        });
+        mockOnScrRefChange.mockClear();
+
+        const [node, offset] = editor.getEditorState().read(caret);
+        updateSelection(editor, node, offset);
+        await act(async () => {
+          editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        });
+
+        expect(mockOnScrRefChange).toHaveBeenCalledWith(expect.objectContaining({ verseNum: 5 }));
+        expect(mockOnScrRefChange).not.toHaveBeenCalledWith(
+          expect.objectContaining({ verseNum: 6 }),
+        );
+      },
+    );
 
     // Every view but Standard/Unformatted renders a verse as a childless `ImmutableVerseNode`
     // decorator, which cannot host a caret, so the marker's end is not available as a position
