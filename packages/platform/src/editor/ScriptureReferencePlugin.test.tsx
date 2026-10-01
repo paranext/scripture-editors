@@ -392,10 +392,9 @@ describe("ScriptureReferencePlugin", () => {
       await setScrRef({ ...scrRef, verseNum: 5 });
 
       editor.getEditorState().read(() => {
-        // Nothing but the NEXT verse marker follows, so placement leaves the boundary element point
-        // — and in editable-marker mode Lexical's own selection normalization then resolves that to
-        // the end of this verse's marker, which draws a caret in the right place. Either way the
-        // caret must NOT run on into verse 6's text.
+        // Nothing but the NEXT verse marker follows. The caret goes to the end of this verse's own
+        // marker, not to the start of verse 6's marker at the same screen location, and must NOT
+        // run on into verse 6's text.
         $expectSelectionToBe(emptyVerseMarker, emptyVerseMarker.getTextContentSize());
       });
       expect(mockOnScrRefChange).not.toHaveBeenCalled();
