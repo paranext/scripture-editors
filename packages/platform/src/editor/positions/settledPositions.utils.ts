@@ -933,12 +933,65 @@ function $liveLocationFromSettled(
   // re-reporting it would put it through the snapping rules a second time. It is resolved only to
   // find out whether it names anything.
   if (target.kind === "live") {
+    const renamed = $renamedCloserLocation(prepared, target.location);
+    if (renamed) return renamed;
     const [node, offset] = $getNodeFromLocation(target.location, prepared.viewOptions);
     return node && offset !== undefined ? target.location : undefined;
   }
   const point = $livePointInScope(context, prepared, target);
   const node = point && $getNodeByKey(point.key);
   return node ? $liveLocationOfPoint(node, point.offset, prepared.viewOptions) : undefined;
+}
+
+/** How many bytes `a` and `b` start with in common. */
+function commonPrefixLength(a: string, b: string): number {
+  let length = 0;
+  while (length < a.length && length < b.length && a[length] === b[length]) length += 1;
+  return length;
+}
+
+/**
+ * An offset into one spelling of a glyph restated in another: the bytes both spellings start and
+ * end with keep their place, and an offset among the bytes that differ snaps left to where they
+ * start (`\+wj*` → `\+j*`: in front of `*` is offset 4 in the one and 3 in the other).
+ */
+function glyphOffsetAcross(from: string, to: string, offset: number): number {
+  const prefix = commonPrefixLength(from, to);
+  const suffix = Math.min(
+    commonPrefixLength([...from].reverse().join(""), [...to].reverse().join("")),
+    from.length - prefix,
+    to.length - prefix,
+  );
+  if (offset <= prefix) return offset;
+  if (offset >= from.length - suffix) return offset - from.length + to.length;
+  return prefix;
+}
+
+/**
+ * A settled location on the closer of a span a pending opener rename renames in place, restated
+ * on the live closer's own bytes; `undefined` for any other location.
+ *
+ * Read-only: call inside a read of the LIVE editor state.
+ */
+function $renamedCloserLocation(
+  prepared: PreparedScopes,
+  location: UsjDocumentLocation,
+): UsjDocumentLocation | undefined {
+  if (!isUsjClosingMarkerLocation(location)) return undefined;
+  const path = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
+  for (const [key, closer] of prepared.renamedClosers) {
+    const span = $getNodeByKey(key)?.getParent();
+    if (!span || !isSamePath($getJsonPathIndexes(span), path)) continue;
+    return {
+      ...location,
+      closingMarkerOffset: glyphOffsetAcross(
+        closer.settled,
+        closer.live,
+        Math.min(location.closingMarkerOffset, closer.settled.length),
+      ),
+    };
+  }
+  return undefined;
 }
 
 /** Every caret position in front of `node`'s `offset`, nearest first: the earlier offsets of a
@@ -1074,9 +1127,9 @@ export function $liveSelectionFromSettled<T extends SelectionRange | AnnotationR
   prepared: PreparedScopes,
   settled: T,
 ): T | undefined {
-  // Nothing was rebuilt, so the settled document IS the live tree and the host's own coordinates
-  // already address it.
-  if (prepared.byFirstLiveKey.size === 0) return settled;
+  // Nothing was rebuilt or renamed, so the settled document IS the live tree and the host's own
+  // coordinates already address it.
+  if (prepared.byFirstLiveKey.size === 0 && prepared.renamedClosers.size === 0) return settled;
   const start = $liveLocationFromSettled(context, prepared, settled.start);
   if (!start) return undefined;
   if (!settled.end) return { ...settled, start };
@@ -1547,6 +1600,16 @@ export function $settledLocationFromLivePoint(
 ): UsjDocumentLocation | undefined {
   const plan = prepared.planContaining(node);
   if (plan) return $settledLocationInScope(prepared, plan, node, offset);
+  const renamed = prepared.renamedClosers.get(node.getKey());
+  if (renamed)
+    return settledTopTranslated(
+      prepared,
+      $getLocationFromNode(
+        node,
+        glyphOffsetAcross(renamed.live, renamed.settled, offset),
+        prepared.viewOptions,
+      ),
+    );
   // The document end is spelled on the document's last token, which a pending last block settles
   // into a different one.
   const lastBlock = $isRootNode(node) && offset >= node.getChildrenSize() && node.getLastChild();
@@ -1593,9 +1656,10 @@ export function $settledSelectionFromLive(prepared: PreparedScopes): SelectionRa
   // answer rather than being restated here. Two extra location reports is nothing beside preparing
   // a scope.
   const live = $getUsjSelectionFromEditor(prepared.viewOptions);
-  // Nothing was rebuilt, so the live tree IS the settled document and that reporter already
-  // addressed it.
-  if (!live || prepared.byFirstLiveKey.size === 0) return live;
+  // Nothing was rebuilt or renamed, so the live tree IS the settled document and that reporter
+  // already addressed it.
+  if (!live || (prepared.byFirstLiveKey.size === 0 && prepared.renamedClosers.size === 0))
+    return live;
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return undefined;
   const backward = selection.isBackward();

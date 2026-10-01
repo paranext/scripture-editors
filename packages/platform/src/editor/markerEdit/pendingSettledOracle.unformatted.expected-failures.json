@@ -1,15 +1,3 @@
 {
-  "nested char span (unformatted view)": [
-    "marker \"\\\\+wj\"@2 Delete [positions]",
-    "marker \"\\\\+wj\"@3 Backspace [positions]"
-  ],
-  "note (unformatted view)": [
-    "marker \"\\\\ft\"@1 Delete [positions]",
-    "marker \"\\\\ft\"@2 Backspace [positions]",
-    "text \"a\"@0 type \"\\\\\" [positions]"
-  ],
-  "\\ca span beside its chapter (unformatted view)": [
-    "marker \"\\\\ca\"@1 Delete [positions]",
-    "marker \"\\\\ca\"@2 Backspace [positions]"
-  ]
+  "note (unformatted view)": ["text \"a\"@0 type \"\\\\\" [positions]"]
 }

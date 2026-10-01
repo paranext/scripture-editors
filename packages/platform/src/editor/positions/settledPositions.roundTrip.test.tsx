@@ -117,4 +117,31 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
       expect(trip.to).toBe(trip.from);
     }
   });
+
+  it("keeps a position inside the closer of a span a pending opener rename renames", async () => {
+    const { mounted, $node: $opener } = await pendingEdit(
+      [
+        "a ",
+        {
+          type: "char",
+          marker: "nd",
+          content: ["one ", { type: "char", marker: "wj", content: ["two"] }, " three"],
+        },
+        " b",
+      ],
+      view,
+      "\\+wj",
+      "\\+j",
+      2,
+    );
+    // `\+wj*` settles as `\+j*`: in front of its `*` is closer offset 3 in the settled document.
+    const $closer = () => {
+      const closer = $opener().getParentOrThrow().getLastChild();
+      if (!(closer instanceof TextNode)) throw new Error("expected the span's closer");
+      return closer;
+    };
+    const trip = roundTrip(mounted, view, $closer, "\\+wj".length);
+    expect(trip.reported).toMatchObject({ closingMarkerOffset: "\\+j".length });
+    expect(trip.to).toBe(trip.from);
+  });
 });

@@ -19,6 +19,7 @@ import {
   $chapterAdjacentAttributeNodes,
   $exportSubtree,
   cutFragment,
+  serializedMarkerGlyphText,
   FragmentAccumulator,
   Tier2Context,
   withoutDroppedSentinels,
@@ -97,6 +98,19 @@ export interface PreparedScopes {
   /** Where a translation logs a basis the tree has moved on from, once it falls back to answering
    * from what is still there rather than refusing. */
   readonly logger: LoggerBasic | undefined;
+  /**
+   * The closing glyphs of char spans a pending opener rename renames in place, keyed by the
+   * glyph's key, with the bytes the glyph shows and the bytes it settles to (`\+wj*` → `\+j*`).
+   * Such a span keeps its place, so no plan covers it, but a position inside its closer counts
+   * into different bytes on the two sides.
+   */
+  readonly renamedClosers: ReadonlyMap<NodeKey, RenamedCloser>;
+}
+
+/** A closing glyph's bytes on screen and in the settled document. */
+export interface RenamedCloser {
+  readonly live: string;
+  readonly settled: string;
 }
 
 /** One settled top-level content item's provenance. */
@@ -435,8 +449,10 @@ function $isPlanned(node: LexicalNode, byLiveKey: ReadonlyMap<NodeKey, SettleSco
 function identityPrepared(
   viewOptions: ViewOptions,
   logger: LoggerBasic | undefined,
+  renamedClosers: ReadonlyMap<NodeKey, RenamedCloser> = new Map(),
 ): PreparedScopes {
   return {
+    renamedClosers,
     byFirstLiveKey: new Map(),
     liveToSettledTopIndex: (liveIndex) => liveIndex,
     settledToLiveTopIndex: (settledIndex) => ({ liveIndex: settledIndex, indexWithinScope: 0 }),
@@ -622,8 +638,15 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
   for (const key of [...context.cache.entries.keys()])
     if (!stillPending.has(key)) context.cache.entries.delete(key);
 
+  const renamedClosers = new Map<NodeKey, RenamedCloser>();
+  for (const { closer, newMarker } of scopes.charOpenerRenames.values())
+    if (closer)
+      renamedClosers.set(closer.getKey(), {
+        live: closer.getTextContent(),
+        settled: serializedMarkerGlyphText(newMarker, "closing", closer.getNested()),
+      });
   if (byFirstLiveKey.size === 0)
-    return identityPrepared(context.tier2.viewOptions, context.tier2.logger);
+    return identityPrepared(context.tier2.viewOptions, context.tier2.logger, renamedClosers);
 
   const { liveToSettled, settledToLive } = $mapTopIndexes(
     topPlans,
@@ -631,6 +654,7 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
   );
   return {
     byFirstLiveKey,
+    renamedClosers,
     liveToSettledTopIndex: (liveIndex) => liveToSettled[liveIndex] ?? liveIndex,
     settledToLiveTopIndex: (settledIndex) => settledToLive[settledIndex],
     planContaining: (node) => {

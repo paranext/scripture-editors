@@ -1,13 +1,5 @@
 {
-  "nested char span (standard+expandedNotes view)": [
-    "marker \"\\\\+wj\"@2 Delete [positions]",
-    "marker \"\\\\+wj\"@3 Backspace [positions]"
-  ],
-  "note (standard+expandedNotes view)": [
-    "marker \"\\\\ft\"@1 Delete [positions]",
-    "marker \"\\\\ft\"@2 Backspace [positions]",
-    "text \"a\"@0 type \"\\\\\" [positions]"
-  ],
+  "note (standard+expandedNotes view)": ["text \"a\"@0 type \"\\\\\" [positions]"],
   "\\ca span beside its chapter (standard+expandedNotes view)": [
     "marker \"\\\\ca\"@0 Delete [positions]",
     "marker \"\\\\ca\"@0 type \"*\" [positions]",
@@ -15,12 +7,10 @@
     "marker \"\\\\ca\"@0 type \"x\" [positions]",
     "marker \"\\\\ca\"@0 type \"|\" [positions]",
     "marker \"\\\\ca\"@1 Backspace [positions]",
-    "marker \"\\\\ca\"@1 Delete [positions]",
     "marker \"\\\\ca\"@1 type \" \" [positions]",
     "marker \"\\\\ca\"@1 type \"*\" [positions]",
     "marker \"\\\\ca\"@1 type \"\\\\\" [positions]",
     "marker \"\\\\ca\"@1 type \"|\" [positions]",
-    "marker \"\\\\ca\"@2 Backspace [positions]",
     "marker \"\\\\ca\"@2 Delete [positions]",
     "marker \"\\\\ca\"@2 type \" \" [positions]",
     "marker \"\\\\ca\"@2 type \"*\" [positions]",
