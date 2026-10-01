@@ -43,6 +43,7 @@ import {
   $hasUnrecoverableAttributes,
   $isAttributeRunNode,
   $isBookNode,
+  $isBookPrefixGlyph,
   $isChapterNode,
   $isCharNode,
   $isImmutableUnmatchedNode,
@@ -52,7 +53,6 @@ import {
   $isNoteNode,
   $isParaLikeNode,
   $isParaNode,
-  $isSynthesizedMarkerNode,
   $isUnknownNode,
   $isVerseNode,
   $isMarkerTrailingSeparator,
@@ -2027,7 +2027,7 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
  */
 function $bookContentNodes(book: BookNode): LexicalNode[] {
   const children = book.getChildren();
-  return $isSynthesizedMarkerNode(children[0]) ? children.slice(1) : children;
+  return $isBookPrefixGlyph(children[0]) ? children.slice(1) : children;
 }
 
 /**

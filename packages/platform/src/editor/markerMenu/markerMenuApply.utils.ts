@@ -50,10 +50,10 @@ import {
 import {
   $createParaNode,
   $isBookNode,
+  $isBookPrefixGlyph,
   $isCharNode,
   $isMarkerNode,
   $isParaNode,
-  $isSynthesizedMarkerNode,
   $normalizeSelectionOutOfGlyphText,
   $selectCharContentStart,
   BookNode,
@@ -269,9 +269,7 @@ function $splitBookWithMarker(book: BookNode, marker: string, viewOptions?: View
   if (!selection.isCollapsed() && $isTrappedInsideBookNote(end, book)) return false;
 
   // Captured before any insertion could shift what `book.getFirstChild()` reports.
-  const prefixGlyph = $isSynthesizedMarkerNode(book.getFirstChild())
-    ? book.getFirstChild()
-    : undefined;
+  const prefixGlyph = $isBookPrefixGlyph(book.getFirstChild()) ? book.getFirstChild() : undefined;
   if (prefixGlyph) {
     $moveEndpointPastPrefixGlyph(selection.anchor, book, prefixGlyph);
     $moveEndpointPastPrefixGlyph(selection.focus, book, prefixGlyph);
@@ -420,7 +418,7 @@ function $normalizeSelectionPastBookPrefix(selection: RangeSelection): void {
   const book = $findMatchingParent(selection.anchor.getNode(), $isBookNode);
   if (!book) return;
   const prefixGlyph = book.getFirstChild();
-  if (!prefixGlyph || !$isSynthesizedMarkerNode(prefixGlyph)) return;
+  if (!prefixGlyph || !$isBookPrefixGlyph(prefixGlyph)) return;
   $moveEndpointPastPrefixGlyph(selection.anchor, book, prefixGlyph);
   $moveEndpointPastPrefixGlyph(selection.focus, book, prefixGlyph);
 }

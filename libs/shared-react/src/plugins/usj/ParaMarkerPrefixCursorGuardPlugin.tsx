@@ -50,6 +50,11 @@ import { $isImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
  * paragraph's own marker prefix is the SAME node shape but takes the opposite, intentional path —
  * deleting it is a real marker-deletion gesture (`$paraMarkerDeletionTransform`,
  * markerEditDeletion.utils.ts), never something to refuse.
+ *
+ * Deliberately excludes the editable-mode `MarkerNode` prefix: that flavor is a `TextNode`, so it
+ * hosts a caret, and this predicate exists to answer "can a caret go here" — the editable prefix's
+ * answer is yes, unlike every other mode's. For the mode-independent question — "is this the `\id`
+ * line's prefix glyph, whatever mode is rendering it" — use `$isBookPrefixGlyph` (`shared`) instead.
  */
 export function $isBookPrefixNode(
   node: LexicalNode | null | undefined,

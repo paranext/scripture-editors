@@ -640,6 +640,26 @@ export function $isSynthesizedMarkerNode(node: LexicalNode | null | undefined): 
 }
 
 /**
+ * True for the `\id` line's own prefix glyph, in EVERY marker mode — a synthesized marker node
+ * ({@link $isSynthesizedMarkerNode}) that is its `BookNode`'s first child. Unlike
+ * `$isBookPrefixNode` (the cursor-guard plugin's own predicate, `shared-react`), this does not
+ * exclude the editable-mode `MarkerNode`: it answers "is this the glyph the prefix shape is made
+ * of", not "can a caret go here". Use `$isBookPrefixNode` for the caret question; use this one
+ * wherever the prefix needs recognizing regardless of markerMode — e.g. moving a selection
+ * endpoint past it, or leaving it out of the content a rebuild re-derives from bytes.
+ *
+ * Read-only: call inside `editor.read()`, `editor.getEditorState().read(...)`, or an update.
+ *
+ * @param node - The node to check.
+ * @returns `true` if the node is its parent `BookNode`'s first child AND a synthesized marker node.
+ */
+export function $isBookPrefixGlyph(node: LexicalNode | null | undefined): boolean {
+  if (!node || !$isSynthesizedMarkerNode(node)) return false;
+  const parent = node.getParent();
+  return $isBookNode(parent) && node.is(parent.getFirstChild());
+}
+
+/**
  * The serialized twin of {@link $isSynthesizedMarkerNode}: either flavor of visible marker
  * glyph — a `MarkerNode` (markerMode "editable") or a marker-typed `ImmutableTypedTextNode`
  * (markerMode "visible" and gutter views) — in a SERIALIZED tree. Kept beside the live predicate

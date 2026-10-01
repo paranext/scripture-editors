@@ -27,6 +27,7 @@ import {
   $createParaNode,
   $createVerseNode,
   $isBookNode,
+  $isBookPrefixGlyph,
   BookNode,
   ImmutableTypedTextNode,
   MarkerNode,
@@ -48,6 +49,7 @@ import {
   $guardCursorAtGutterMarker,
   $guardCursorAtParaStart,
   $guardCursorOnClick,
+  $isBookPrefixNode,
   $narrowSelectionPastBookPrefix,
   $shouldRefuseBookPrefixDeletion,
   ParaMarkerPrefixCursorGuardPlugin,
@@ -86,6 +88,38 @@ function runGutterGuard(editor: LexicalEditor, glyphKey: string): boolean {
   );
   return corrected;
 }
+
+// $isBookPrefixNode answers "can a caret go here" (so it deliberately excludes the editable-mode
+// MarkerNode, which hosts one); $isBookPrefixGlyph answers "is this the prefix glyph" in every
+// marker mode. The two predicates must disagree on exactly the editable-mode MarkerNode case and
+// agree everywhere else.
+describe("$isBookPrefixNode vs $isBookPrefixGlyph", () => {
+  it("the editable-mode MarkerNode prefix hosts a caret, so only $isBookPrefixGlyph recognizes it", () => {
+    let glyph!: MarkerNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      glyph = $createMarkerNode("id");
+      $getRoot().append($createBookNode("GEN").append(glyph));
+    });
+
+    editor.getEditorState().read(() => {
+      expect($isBookPrefixNode(glyph)).toBe(false);
+      expect($isBookPrefixGlyph(glyph)).toBe(true);
+    });
+  });
+
+  it("the immutable prefix (every other marker mode) is recognized by both predicates", () => {
+    let glyph!: ImmutableTypedTextNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      glyph = $createImmutableTypedTextNode("marker", "\\id GEN ");
+      $getRoot().append($createBookNode("GEN").append(glyph));
+    });
+
+    editor.getEditorState().read(() => {
+      expect($isBookPrefixNode(glyph)).toBe(true);
+      expect($isBookPrefixGlyph(glyph)).toBe(true);
+    });
+  });
+});
 
 // The product rule is about ONE node at a time: a marker the view renders in the GUTTER is an aid,
 // never a place the caret may rest, while a marker rendered as editable text IS content the user
