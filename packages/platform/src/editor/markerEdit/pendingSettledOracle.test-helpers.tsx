@@ -4,9 +4,9 @@
  * (`settledGetUsj.test.tsx`, `settleDifferential.test.tsx`) pin chosen shapes; this one enumerates
  * single keystrokes instead, so a shape nobody thought to list is covered by construction.
  *
- * For each document in a small corpus of paragraph, char span (plain, nested, with attributes),
- * note, verse and milestone shapes, in each view, every editable text node of the edited paragraph
- * is visited at every offset of a glyph-like node (marker glyphs, verse glyphs, attribute runs)
+ * For each document in a small corpus of paragraph, char span (plain, nested, with attributes,
+ * beside a chapter), note, verse and milestone shapes, in each view, every editable text node of
+ * the edited block is visited at every offset of a glyph-like node (marker glyphs, verse glyphs, attribute runs)
  * and at the first and last two offsets of plain text — the positions around marker glyphs and
  * separators. At each, one keystroke is applied to the bytes at that node: a name character, a
  * space, `*`, `\`, `|`, or the removal of the character before (Backspace) or after (Delete) it.
@@ -17,12 +17,24 @@
  * The settle is the departure an abandoned edit gets: a click into another paragraph, blur, and
  * `commitPendingMarkerEdits()`.
  *
+ * Positions are held to the same contract while the edit is pending: every caret position inside
+ * a text node reports (`getSelection()`'s translation) the location the same bytes report after the
+ * settle, or one a position to their left reports; and every report, handed back the way
+ * `setSelection` and `setAnnotation` hand a host's location in, lands on the position it came from
+ * or the closest representable one to its left.
+ *
  * One test file per view registers the oracle for that view
  * (`pendingSettledOracle.<view>.test.tsx`), so the views run in parallel.
  */
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
-import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { $prepareSettleScopes } from "../positions/settledScopes.utils";
+import {
+  $liveSelectionFromSettled,
+  $settledLocationFromLivePoint,
+} from "../positions/settledPositions.utils";
+import { SettledPositionContext } from "../positions/settledPositions.model";
+import { MarkerContent, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $getRoot,
@@ -30,33 +42,56 @@ import {
   $isElementNode,
   $isTextNode,
   CLICK_COMMAND,
+  LexicalEditor,
   LexicalNode,
+  NodeKey,
   TextNode,
 } from "lexical";
 import {
   $isMarkerNode,
   $isNoteNode,
   $isVerseNode,
+  createMarkerLookup,
+  defaultStyleInfo,
   getPendedDisplayOwners,
   NBSP,
   textTypeState,
+  TypedMarkNode,
 } from "shared";
-import { describe, expect, it } from "vitest";
+import { $getRangeFromUsjSelection, usjReactNodes, ViewOptions } from "shared-react";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, it } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountInView>>;
 
 /** A char span's attribute, spread in because `MarkerObject` declares no attribute fields. */
 const LEMMA: { [attribute: string]: string } = { lemma: "g" };
 
-/** The documents the oracle edits; each one's first body paragraph is the one edited. */
-const CORPUS: { name: string; content: MarkerContent[] }[] = [
+/** A document whose root holds the book, the chapter, `beside` — the root child the oracle
+ * edits — and a paragraph to depart to. */
+function chapterSideUsj(beside: MarkerContent): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      beside,
+      { type: "para", marker: "p", content: ["depart here"] },
+    ],
+  };
+}
+
+/** The documents the oracle edits; the root child after the chapter is the one edited — the
+ * first body paragraph, or a `\ca`/`\cp` span beside the chapter. */
+const CORPUS: { name: string; usj: Usj }[] = [
   {
     name: "closed char span",
-    content: ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+    usj: twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"]),
   },
   {
     name: "nested char span",
-    content: [
+    usj: twoParaUsj([
       "a ",
       {
         type: "char",
@@ -64,23 +99,23 @@ const CORPUS: { name: string; content: MarkerContent[] }[] = [
         content: ["one ", { type: "char", marker: "wj", content: ["two"] }, " three"],
       },
       " b",
-    ],
+    ]),
   },
   {
     name: "char span with an attribute",
-    content: ["a ", { type: "char", marker: "w", ...LEMMA, content: ["grace"] }, " b"],
+    usj: twoParaUsj(["a ", { type: "char", marker: "w", ...LEMMA, content: ["grace"] }, " b"]),
   },
   {
     name: "unclosed char span",
-    content: ["a ", { type: "char", marker: "bd", closed: "false", content: ["bold"] }],
+    usj: twoParaUsj(["a ", { type: "char", marker: "bd", closed: "false", content: ["bold"] }]),
   },
   {
     name: "verse",
-    content: [{ type: "verse", marker: "v", number: "1" }, "In the beginning"],
+    usj: twoParaUsj([{ type: "verse", marker: "v", number: "1" }, "In the beginning"]),
   },
   {
     name: "note",
-    content: [
+    usj: twoParaUsj([
       "a",
       {
         type: "note",
@@ -89,11 +124,19 @@ const CORPUS: { name: string; content: MarkerContent[] }[] = [
         content: [{ type: "char", marker: "ft", content: ["note text"] }],
       },
       " b",
-    ],
+    ]),
   },
   {
     name: "milestone",
-    content: ["a ", { type: "ms", marker: "qt-s" }, "b"],
+    usj: twoParaUsj(["a ", { type: "ms", marker: "qt-s" }, "b"]),
+  },
+  {
+    name: "\\ca span beside its chapter",
+    usj: chapterSideUsj({ type: "char", marker: "ca", content: ["3"] }),
+  },
+  {
+    name: "\\cp span beside its chapter",
+    usj: chapterSideUsj({ type: "char", marker: "cp", content: ["A"] }),
   },
 ];
 
@@ -183,24 +226,180 @@ async function depart(mounted: Mounted): Promise<void> {
   act(() => mounted.ref.current?.commitPendingMarkerEdits());
 }
 
+/** The marker lookup `Editor.tsx` classifies with when the host passes no stylesheet. */
+const editorMarkerLookup = createMarkerLookup(defaultStyleInfo);
+
+/** The position-translation context `Editor.tsx` builds, for `view`. Call outside a read. */
+function positionContext(lexical: LexicalEditor, view: ViewOptions): SettledPositionContext {
+  return {
+    pendedKeys: getPendedDisplayOwners(lexical) ?? new Set<NodeKey>(),
+    transientInput: undefined,
+    lastKnownCaret: undefined,
+    tier2: { viewOptions: view, getMarker: editorMarkerLookup },
+    nodes: [TypedMarkNode, ...usjReactNodes],
+    cache: { entries: new Map() },
+  };
+}
+
+/** One caret position: a text node's offset, and where it falls in the document's text — every
+ * text node's bytes concatenated in document order. */
+interface CaretPosition {
+  readonly node: TextNode;
+  readonly offset: number;
+  readonly position: number;
+}
+
+/** Every caret position in the document's text nodes. */
+function $caretPositions(): CaretPosition[] {
+  const out: CaretPosition[] = [];
+  let position = 0;
+  const visit = (node: LexicalNode): void => {
+    if ($isTextNode(node)) {
+      const length = node.getTextContentSize();
+      for (let offset = 0; offset <= length; offset += 1)
+        out.push({ node, offset, position: position + offset });
+      position += length;
+      return;
+    }
+    if ($isElementNode(node)) node.getChildren().forEach(visit);
+  };
+  visit($getRoot());
+  return out;
+}
+
+/** The document's text-node bytes, concatenated. */
+function $documentText(): string {
+  return $getRoot()
+    .getAllTextNodes()
+    .map((node) => node.getTextContent())
+    .join("");
+}
+
+/** What each live caret position reports as — `getSelection()`'s translation — with its document
+ * position. A node boundary is two caret positions at one document position. */
+function $reported(
+  context: SettledPositionContext,
+): { position: number; interior: boolean; location: string }[] {
+  const prepared = $prepareSettleScopes(context);
+  return $caretPositions().map(({ node, offset, position }) => ({
+    position,
+    interior: offset > 0 && offset < node.getTextContentSize(),
+    location: JSON.stringify($settledLocationFromLivePoint(prepared, node, offset)),
+  }));
+}
+
+/**
+ * Where each pending caret position's report goes back to — the translation `setSelection` and
+ * `setAnnotation` both run, resolved as `setSelection` resolves it — as a list of failures: a
+ * report that lands to the RIGHT of the position it came from, or one that will not resolve.
+ * Landing on the position itself, or on the closest representable position to its left, is the
+ * contract.
+ */
+function $roundTripFailures(context: SettledPositionContext, view: ViewOptions): string[] {
+  const prepared = $prepareSettleScopes(context);
+  const positions = $caretPositions();
+  const positionOf = (key: NodeKey, offset: number): number | undefined =>
+    positions.find((candidate) => candidate.node.getKey() === key && candidate.offset === offset)
+      ?.position;
+  const failures: string[] = [];
+  for (const { node, offset, position } of positions) {
+    const reported: UsjDocumentLocation | undefined = $settledLocationFromLivePoint(
+      prepared,
+      node,
+      offset,
+    );
+    if (!reported) continue;
+    const live = $liveSelectionFromSettled(context, prepared, { start: reported });
+    const anchor = live && $getRangeFromUsjSelection(live, view)?.anchor;
+    const landed = anchor && positionOf(anchor.key, anchor.offset);
+    if (landed === undefined || landed > position)
+      failures.push(`${position} -> ${JSON.stringify(reported)} -> ${landed ?? "nothing"}`);
+  }
+  return failures;
+}
+
+/** The length of the longest common prefix of `a` and `b`. */
+function commonPrefix(a: string, b: string): number {
+  let length = 0;
+  while (length < a.length && length < b.length && a[length] === b[length]) length += 1;
+  return length;
+}
+
+/**
+ * The caret positions inside a text node that report, while the edit is pending, a location the
+ * settled document only has to their RIGHT. Each such position is compared at the same bytes after
+ * the settle — the bytes both documents' texts start or end with, which the settle left in place —
+ * and its pending report must be the location those bytes report after the settle, or one a
+ * position to their left reports (the closest representable location to the left).
+ */
+function positionsReportedToTheRight(
+  before: { text: string; reported: { position: number; interior: boolean; location: string }[] },
+  after: { text: string; reported: { position: number; location: string }[] },
+): string[] {
+  const prefix = commonPrefix(before.text, after.text);
+  const suffix = Math.min(
+    commonPrefix([...before.text].reverse().join(""), [...after.text].reverse().join("")),
+    before.text.length - prefix,
+    after.text.length - prefix,
+  );
+  const failures: string[] = [];
+  for (const { position, interior, location } of before.reported) {
+    if (!interior) continue;
+    // Both bytes beside the position must be ones the settle left in place.
+    const settledPosition =
+      position < prefix
+        ? position
+        : position > before.text.length - suffix
+          ? position - before.text.length + after.text.length
+          : undefined;
+    if (settledPosition === undefined) continue;
+    const atOrLeft = after.reported.filter((report) => report.position <= settledPosition);
+    if (atOrLeft.some((report) => report.location === location)) continue;
+    const there = after.reported
+      .filter((report) => report.position === settledPosition)
+      .map((report) => report.location);
+    failures.push(`${position}: pending ${location}, settled ${there.join(" | ")}`);
+  }
+  return failures;
+}
+
 /** The edited paragraph of `usj`, spelled compactly for a failure message. */
 function bodyOf(usj: Usj | undefined): string {
   return JSON.stringify(usj?.content.slice(2, -1));
 }
 
-/** Rows whose listed keystrokes are known to diverge, each list with the reason it diverges. A
- * listed keystroke that stops diverging fails its row until it leaves the list. */
-const KNOWN_DIVERGENCES: { [row: string]: string[] } = {};
+/** Rewrite each view's expected-failures list from this run instead of comparing with it. */
+const WRITE = process.env.PENDING_SETTLED_ORACLE_WRITE === "1";
 
-/** Register the oracle's rows for `view` (an `ORACLE_VIEWS` name). */
-export function describePendingSettledOracle(view: string): void {
-  const rows = CORPUS.map(({ name, content }) => [`${name} (${view} view)`, content] as const);
+/** A view's expected-failures list: per row, the keystroke cases known to fail, by label. */
+interface ExpectedFailures {
+  [row: string]: string[];
+}
+
+function readExpectedFailures(listFile: URL): ExpectedFailures {
+  if (!existsSync(listFile)) return {};
+  const listed: ExpectedFailures = JSON.parse(readFileSync(listFile, "utf8"));
+  return listed;
+}
+
+/**
+ * Register the oracle's rows for `view` (an `ORACLE_VIEWS` name), compared with the cases
+ * `listFile` lists as known to fail: a failure the list does not name fails its row, and so does a
+ * listed case that no longer fails, so the list only shrinks. `PENDING_SETTLED_ORACLE_WRITE=1`
+ * rewrites the list from the run instead.
+ */
+export function describePendingSettledOracle(view: string, listFile: URL): void {
+  const rows = CORPUS.map(({ name, usj }) => [`${name} (${view} view)`, usj] as const);
+  const listed = readExpectedFailures(listFile);
+  const written: ExpectedFailures = {};
+  afterAll(() => {
+    if (WRITE) writeFileSync(listFile, `${JSON.stringify(written, null, 2)}\n`);
+  });
 
   describe(`pending getUsj() equals the settled document, for every single keystroke (${view} view)`, () => {
     it.each(rows)(
       "%s",
-      async (row, content) => {
-        const usj = twoParaUsj(content);
+      async (row, usj) => {
         const probe = await mountInView(usj, oracleView(view));
         const sites = probe.lexical.getEditorState().read($editSites);
         probe.unmount();
@@ -230,8 +429,16 @@ export function describePendingSettledOracle(view: string): void {
               mounted.unmount();
               continue;
             }
-            if ((getPendedDisplayOwners(mounted.lexical)?.size ?? 0) > 0) pendingCases += 1;
+            const isPending = (getPendedDisplayOwners(mounted.lexical)?.size ?? 0) > 0;
+            if (isPending) pendingCases += 1;
             const pending = mounted.ref.current?.getUsj();
+            const viewOptions = oracleView(view);
+            const pendingContext = positionContext(mounted.lexical, viewOptions);
+            const before = mounted.lexical.getEditorState().read(() => ({
+              text: $documentText(),
+              reported: $reported(pendingContext),
+              roundTrip: $roundTripFailures(pendingContext, viewOptions),
+            }));
             await depart(mounted);
             const settled = mounted.ref.current?.getUsj();
             if (JSON.stringify(pending) !== JSON.stringify(settled))
@@ -239,17 +446,34 @@ export function describePendingSettledOracle(view: string): void {
                 label,
                 `${label}\n    pending ${bodyOf(pending)}\n    settled ${bodyOf(settled)}`,
               );
+            const settledContext = positionContext(mounted.lexical, viewOptions);
+            const after = mounted.lexical.getEditorState().read(() => ({
+              text: $documentText(),
+              reported: $reported(settledContext),
+            }));
+            const moved = isPending ? positionsReportedToTheRight(before, after) : [];
+            const roundTrip = isPending ? before.roundTrip : [];
+            if (moved.length > 0 || roundTrip.length > 0)
+              mismatches.set(
+                `${label} [positions]`,
+                `${label} [positions]\n    ${[...moved, ...roundTrip].join("\n    ")}`,
+              );
             mounted.unmount();
           }
 
         expect(pendingCases, "no keystroke left an edit pending").toBeGreaterThan(0);
-        const known = new Set(KNOWN_DIVERGENCES[row] ?? []);
+        if (WRITE) {
+          if (mismatches.size > 0) written[row] = [...mismatches.keys()].sort();
+          return;
+        }
+        const known = new Set(listed[row] ?? []);
         expect(
           [...mismatches].filter(([label]) => !known.has(label)).map(([, detail]) => detail),
         ).toEqual([]);
-        // A known divergence that no longer diverges must leave the list, so the list only ever
-        // shrinks.
-        expect([...known].filter((label) => !mismatches.has(label))).toEqual([]);
+        expect(
+          [...known].filter((label) => !mismatches.has(label)),
+          "listed as failing but passing — rewrite the list",
+        ).toEqual([]);
       },
       300_000,
     );
