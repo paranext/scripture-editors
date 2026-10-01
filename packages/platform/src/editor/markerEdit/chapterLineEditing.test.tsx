@@ -550,3 +550,83 @@ describe("a caret on the chapter line", () => {
     });
   });
 });
+
+describe("inline insertion with a collapsed caret on the chapter line", () => {
+  // An inline insertion — a note, a character marker, a verse — has no block of its own to splice
+  // into at a chapter line (`ChapterNode.canBeEmpty()` is `false`), unlike a paragraph split, which
+  // `$splitOnChapterLine` already redirects. The caret paranext-core leaves after a chapter-marker
+  // correction sits exactly here: at the end of the chapter's glyph, just past its number.
+  const PLAIN_ONE_TWO: MarkerContent = { type: "para", marker: "p", content: ["one two"] };
+  const chapterThenPlainParaDoc: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [CHAPTER_2, PLAIN_ONE_TWO, POETRY_PARA],
+  };
+
+  // The default content `$insertNote`/`getUsjMarkerAction` build for a fresh marker inserted with
+  // no selected text to carry over, matching what the same markers settle to anywhere else in the
+  // document — this fix changes WHERE the marker lands, not what it is.
+  const FRESH_NOTE: MarkerContent = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [
+      { type: "char", marker: "fr", closed: "false", content: ["2:1 "] },
+      { type: "char", marker: "ft", closed: "false" },
+    ],
+  };
+  const FRESH_CHAR_ND: MarkerContent = { type: "char", marker: "nd" };
+  const FRESH_VERSE_1: MarkerContent = { type: "verse", marker: "v", number: "1" };
+
+  it.each([
+    ["a note", "f", FRESH_NOTE],
+    ["a character marker", "nd", FRESH_CHAR_ND],
+    ["a verse", "v", FRESH_VERSE_1],
+  ])(
+    "insertMarker for %s doesn't throw and lands at the next paragraph's content start",
+    async (_label, marker, inserted) => {
+      const { ref, lexical } = await mountStandardViewEditor(chapterThenPlainParaDoc, {
+        scrRef: GEN_2_1,
+      });
+      await onChapterLine(lexical, () => undefined);
+      await act(async () => {
+        ref.current?.insertMarker(marker);
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([
+        CHAPTER_2,
+        { type: "para", marker: "p", content: [inserted, "one two"] },
+        POETRY_PARA,
+      ]);
+    },
+  );
+
+  it("is a non-throwing no-op when no paragraph follows the chapter line", async () => {
+    const chapterOnlyDoc: Usj = { type: "USJ", version: "3.1", content: [CHAPTER_2] };
+    const { ref, lexical } = await mountStandardViewEditor(chapterOnlyDoc, { scrRef: GEN_2_1 });
+    await onChapterLine(lexical, () => undefined);
+    let key: string | undefined;
+    await act(async () => {
+      key = ref.current?.insertMarker("f");
+    });
+    expect(key).toBeUndefined();
+    expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2]);
+  });
+
+  it("applyMarkerMenuSelection for a note doesn't throw and lands at the next paragraph's content start", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterThenPlainParaDoc, {
+      scrRef: GEN_2_1,
+    });
+    await onChapterLine(lexical, () => undefined);
+    await act(async () => {
+      ref.current?.applyMarkerMenuSelection(
+        { marker: "f", kind: "note", isBasic: true },
+        { trigger: "backslash", literalPrefixLanded: false },
+      );
+    });
+    expect(ref.current?.getUsj()?.content).toEqual([
+      CHAPTER_2,
+      { type: "para", marker: "p", content: [FRESH_NOTE, "one two"] },
+      POETRY_PARA,
+    ]);
+  });
+});

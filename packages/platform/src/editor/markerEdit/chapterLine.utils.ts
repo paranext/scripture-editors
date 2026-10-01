@@ -7,15 +7,20 @@
  * chapter line (the merged text was kept on screen and silently dropped on save), and what removes
  * the chapter once every byte of its marker is deleted.
  *
- * Not being a block has one cost this module pays: with the caret inside a chapter line, Lexical
- * has no block to split, so a paragraph or line break requested there would land at the end of the
- * document instead. Every split is therefore handled here before Lexical attempts it. A paragraph
- * split starts a new paragraph after the chapter line, which is what Enter after `\c N` does in the
- * USFM text; a line break is refused, since a chapter line cannot hold one; and a paste or a drop
- * goes in as the user would type it, its lines starting paragraphs after the chapter line.
+ * Not being a block has two costs this module pays. First: with the caret inside a chapter line,
+ * Lexical has no block to split, so a paragraph or line break requested there would land at the end
+ * of the document instead. Every split is therefore handled here before Lexical attempts it. A
+ * paragraph split starts a new paragraph after the chapter line, which is what Enter after `\c N`
+ * does in the USFM text; a line break is refused, since a chapter line cannot hold one; and a paste
+ * or a drop goes in as the user would type it, its lines starting paragraphs after the chapter line.
+ * Second: an INLINE insertion (a note, a character marker, a verse, a milestone — anything built on
+ * `RangeSelection.insertNodes`) throws when the caret is on a chapter line, because Lexical requires
+ * a block `ElementNode` ancestor to splice into and a chapter line is not one. `$moveCaretOffChapterLine`
+ * relocates a collapsed caret off the line before such an insertion runs.
  */
 
 import { $setParaMarkerWithPrefix } from "./markerEditDeletion.utils";
+import { $chapterAdjacentAttributeNodes } from "./tier2Rebuild.utils";
 import { $insertPastedText } from "./whitespaceDisplay.plugin.utils";
 import { $findMatchingParent } from "@lexical/utils";
 import { $getSelection, $isRangeSelection, LexicalNode, RangeSelection } from "lexical";
@@ -23,10 +28,11 @@ import {
   $chapterGlyphTextNode,
   $createParaNode,
   $isChapterNode,
+  $isParaNode,
   ChapterNode,
   MarkerLookup,
 } from "shared";
-import { showParaMarkerPrefix, ViewOptions } from "shared-react";
+import { $advancePastParaPrefixes, showParaMarkerPrefix, ViewOptions } from "shared-react";
 
 /** The chapter line `node` is, or sits inside; `undefined` outside any chapter line. */
 function $chapterLineOf(node: LexicalNode): ChapterNode | undefined {
@@ -156,5 +162,52 @@ export function $pasteOnChapterLine(
   const caret = $getSelection();
   if (text && $isRangeSelection(caret))
     $insertPastedText(caret, text, isStructureProtected, armSplitExpected, getMarker);
+  return true;
+}
+
+/**
+ * Ensures a COLLAPSED caret is not sitting on a chapter line, relocating it to the chapter's own
+ * text when it is, for an inline insertion (a note, a character marker, a verse, a milestone —
+ * anything that isn't a paragraph split, which `$splitOnChapterLine` already handles) requested
+ * there. A chapter line is not a block `ElementNode` (`ChapterNode.canBeEmpty()` is `false`), so
+ * `RangeSelection.insertNodes` throws — "Expected node TextNode of type text to have a block
+ * ElementNode ancestor" — when asked to splice inline content at a caret inside one; this is the
+ * one place that relocation happens, called from every platform-side entry point an inline
+ * insertion can start from.
+ *
+ * The destination is the content start of the first `ParaNode` after the chapter line AND its
+ * adjacent attribute nodes ({@link $chapterAdjacentAttributeNodes} — an `\ca`/`\cp` span or a
+ * `\cp` paragraph right after the chapter is still the chapter's own material, not its text).
+ * Content start, not offset 0, so the caret lands after a visible paragraph marker prefix glyph
+ * rather than inside it: {@link $advancePastParaPrefixes} finds that boundary by scanning,
+ * whether or not the destination paragraph is showing one, falling back to the paragraph's own
+ * start when it has no prefix (or leading verse number) to skip.
+ *
+ * Returns `true` — the caret is now somewhere an inline insertion may proceed — both when it
+ * relocated a caret off a chapter line and when the caret was never on one to begin with, so
+ * callers can call this unconditionally ahead of every inline insertion rather than checking
+ * first. Returns `false` only when the caret sits on a chapter line with nowhere to move it (no
+ * paragraph follows the chapter's region): callers must treat that as a no-op and insert nothing,
+ * rather than letting the insertion run and throw.
+ *
+ * Deliberately narrower than {@link $chapterLineAtCaret}: a NON-collapsed selection that touches a
+ * chapter line is left exactly as it is, for the caller's own insertion logic to handle (or not).
+ *
+ * Mutating when it returns `true` for a caret that was on a chapter line: call inside
+ * `editor.update()`, before any inline insertion that assumes the caret already sits in a block's
+ * content.
+ */
+export function $moveCaretOffChapterLine(): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return true;
+  const chapter = $chapterLineOf(selection.focus.getNode());
+  if (!chapter) return true;
+
+  const region = $chapterAdjacentAttributeNodes(chapter);
+  const lastRegionNode: LexicalNode = region.length > 0 ? region[region.length - 1] : chapter;
+  const para = lastRegionNode.getNextSibling();
+  if (!$isParaNode(para)) return false;
+
+  if (!$advancePastParaPrefixes(para)) para.selectStart();
   return true;
 }

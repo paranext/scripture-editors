@@ -20,7 +20,7 @@
 import { $insertNoteForMarker, getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
 import { $applyParaMarker } from "../markerEdit/applyParaMarker.utils";
 import { LITERAL_TRIGGER_PREFIX_REGEX } from "../markerEdit/markerName.pattern";
-import { $splitOnChapterLine } from "../markerEdit/chapterLine.utils";
+import { $moveCaretOffChapterLine, $splitOnChapterLine } from "../markerEdit/chapterLine.utils";
 import { $splitParagraphAtCharStack } from "../markerEdit/charFormatting.utils";
 import { $handleEnterInNote } from "../markerEdit/markerEditNote.utils";
 import {
@@ -269,6 +269,10 @@ export function $applyMarkerMenuSelection(
   // host re-derive it from delta-doc coordinates (getInsertedNodeKey) — a wrong key there makes
   // replaceEmbedUpdate silently no-op. Same reason EditorRef.insertMarker returns it.
   if (NoteNode.isValidMarker(item.marker, deps.nodeOptions?.extraValidMarkers)) {
+    // A collapsed caret on an editable chapter line has no block to insert the note into (see
+    // `chapterLine.utils.ts`); relocate it to the chapter's own text first, or no-op when there
+    // is nowhere to relocate to.
+    if (!$moveCaretOffChapterLine()) return undefined;
     return $insertNoteForMarker(
       item.marker,
       reference,

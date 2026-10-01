@@ -67,6 +67,7 @@ import {
 } from "shared-react";
 import usjEditorAdaptor from "./usj-editor.adaptor";
 import { $coveredTextNodes } from "../markerEdit/charFormatting.utils";
+import { $moveCaretOffChapterLine } from "../markerEdit/chapterLine.utils";
 
 interface UsjMarkerActionResult {
   content: MarkerContent[];
@@ -270,6 +271,10 @@ export function getUsjMarkerAction(
     let insertedNoteKey: string | undefined;
     const action = (currentEditor: { editor: LexicalEditor; reference: SerializedVerseRef }) => {
       currentEditor.editor.update(() => {
+        // A collapsed caret on an editable chapter line has no block to insert the note into
+        // (see `chapterLine.utils.ts`); relocate it to the chapter's own text first, or no-op
+        // when there is nowhere to relocate to.
+        if (!$moveCaretOffChapterLine()) return;
         insertedNoteKey = $insertNoteForMarker(
           marker,
           currentEditor.reference,
@@ -292,6 +297,10 @@ export function getUsjMarkerAction(
     noteText?: string;
   }) => {
     currentEditor.editor.update(() => {
+      // A collapsed caret on an editable chapter line has no block to insert inline content into
+      // (see `chapterLine.utils.ts`); relocate it to the chapter's own text first, or no-op when
+      // there is nowhere to relocate to.
+      if (!$moveCaretOffChapterLine()) return;
       const selection = $getSelection();
       // A marker glyph's bytes are a picture of its node's own state, never operands. Re-express
       // the selection so no glyph is one, BEFORE any branch below reads the anchor: a caret parked
