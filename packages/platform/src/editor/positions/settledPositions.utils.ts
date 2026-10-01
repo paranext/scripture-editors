@@ -936,7 +936,65 @@ function $liveLocationFromSettled(
   }
   const point = $livePointInScope(context, prepared, target);
   const node = point && $getNodeByKey(point.key);
-  return node ? $getLocationFromNode(node, point.offset, prepared.viewOptions) : undefined;
+  return node ? $liveLocationOfPoint(node, point.offset, prepared.viewOptions) : undefined;
+}
+
+/** Every caret position in front of `node`'s `offset`, nearest first: the earlier offsets of a
+ * text node, then each earlier text node's offsets from its end, in document order. An element
+ * point stands in front of its child at `offset`. */
+function* $caretPointsBefore(
+  node: LexicalNode,
+  offset: number,
+): Generator<{ node: LexicalNode; offset: number }> {
+  let text: LexicalNode | null = node;
+  if ($isTextNode(node)) for (let at = offset; at >= 0; at -= 1) yield { node, offset: at };
+  else if ($isElementNode(node)) {
+    const child = node.getChildAtIndex(Math.min(offset, node.getChildrenSize()));
+    text = child ?? node;
+    if (!child) {
+      const last = node.getLastDescendant();
+      if ($isTextNode(last))
+        for (let at = last.getTextContentSize(); at >= 0; at -= 1) yield { node: last, offset: at };
+      text = last ?? node;
+    }
+  }
+  const texts = $getRoot().getAllTextNodes();
+  const index = texts.findIndex((candidate) => candidate.is(text));
+  const from =
+    index >= 0 ? index - 1 : texts.findIndex((candidate) => !candidate.isBefore(text)) - 1;
+  for (let at = from; at >= 0; at -= 1)
+    for (let offset = texts[at].getTextContentSize(); offset >= 0; offset -= 1)
+      yield { node: texts[at], offset };
+}
+
+/**
+ * The live location a live point is reported as, chosen so that resolving it lands on that point
+ * or the closest one to its left. A pending edit can leave live bytes the live location model has
+ * no spelling for — a space typed in front of a paragraph's `\p`, a byte typed into a closer — and
+ * there the point's own location resolves past it, onto the next byte the model can name; the
+ * position in front of it is then spelled from the nearest point to its left that resolves where
+ * it is.
+ *
+ * Read-only: call inside a read of the LIVE editor state.
+ */
+function $liveLocationOfPoint(
+  node: LexicalNode,
+  offset: number,
+  viewOptions: ViewOptions,
+): UsjDocumentLocation {
+  const own = $getLocationFromNode(node, offset, viewOptions);
+  const target = $pointOf([node, offset]);
+  if (!target) return own;
+  const resolvesAtOrBefore = (location: UsjDocumentLocation): boolean => {
+    const resolved = $pointOf($getNodeFromLocation(location, viewOptions));
+    return !!resolved && !target.isBefore(resolved);
+  };
+  if (resolvesAtOrBefore(own)) return own;
+  for (const point of $caretPointsBefore(node, offset)) {
+    const location = $getLocationFromNode(point.node, point.offset, viewOptions);
+    if (resolvesAtOrBefore(location)) return location;
+  }
+  return own;
 }
 
 /** A resolved `[node, offset]` as a point of the tree being read; a leaf that is neither text nor
