@@ -271,7 +271,7 @@ export function getUsjMarkerAction(
     let insertedNoteKey: string | undefined;
     const action = (currentEditor: { editor: LexicalEditor; reference: SerializedVerseRef }) => {
       currentEditor.editor.update(() => {
-        // A collapsed caret on an editable chapter line has no block to insert the note into
+        // A caret on an editable chapter line has no block to insert the note into
         // (see `chapterLine.utils.ts`); relocate it to the chapter's own text first, or no-op
         // when there is nowhere to relocate to.
         if (!$moveCaretOffChapterLine()) return;
@@ -297,7 +297,7 @@ export function getUsjMarkerAction(
     noteText?: string;
   }) => {
     currentEditor.editor.update(() => {
-      // A collapsed caret on an editable chapter line has no block to insert inline content into
+      // A caret on an editable chapter line has no block to insert inline content into
       // (see `chapterLine.utils.ts`); relocate it to the chapter's own text first, or no-op when
       // there is nowhere to relocate to.
       if (!$moveCaretOffChapterLine()) return;

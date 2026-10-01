@@ -16,7 +16,7 @@
  * Second: an INLINE insertion (a note, a character marker, a verse, a milestone — anything built on
  * `RangeSelection.insertNodes`) throws when the caret is on a chapter line, because Lexical requires
  * a block `ElementNode` ancestor to splice into and a chapter line is not one. `$moveCaretOffChapterLine`
- * relocates a collapsed caret off the line before such an insertion runs.
+ * relocates the caret off the line before such an insertion runs.
  */
 
 import { $setParaMarkerWithPrefix } from "./markerEditDeletion.utils";
@@ -166,7 +166,7 @@ export function $pasteOnChapterLine(
 }
 
 /**
- * Ensures a COLLAPSED caret is not sitting on a chapter line, relocating it to the chapter's own
+ * Ensures the caret is not sitting on a chapter line, relocating it to the chapter's own
  * text when it is, for an inline insertion (a note, a character marker, a verse, a milestone —
  * anything that isn't a paragraph split, which `$splitOnChapterLine` already handles) requested
  * there. A chapter line is not a block `ElementNode` (`ChapterNode.canBeEmpty()` is `false`), so
@@ -190,8 +190,11 @@ export function $pasteOnChapterLine(
  * paragraph follows the chapter's region): callers must treat that as a no-op and insert nothing,
  * rather than letting the insertion run and throw.
  *
- * Deliberately narrower than {@link $chapterLineAtCaret}: a NON-collapsed selection that touches a
- * chapter line is left exactly as it is, for the caller's own insertion logic to handle (or not).
+ * A selection lying wholly on one chapter line — part of the chapter number selected — is the same
+ * request and is relocated the same way: the chapter line cannot hold the new marker, and wrapping
+ * the selected bytes would take them out of the chapter number. A selection that runs from a
+ * chapter line into the text is left as it is; the insertions already step its ends out of the
+ * glyph text and act on the text it covers.
  *
  * Mutating when it returns `true` for a caret that was on a chapter line: call inside
  * `editor.update()`, before any inline insertion that assumes the caret already sits in a block's
@@ -199,9 +202,9 @@ export function $pasteOnChapterLine(
  */
 export function $moveCaretOffChapterLine(): boolean {
   const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return true;
+  if (!$isRangeSelection(selection)) return true;
   const chapter = $chapterLineOf(selection.focus.getNode());
-  if (!chapter) return true;
+  if (!chapter || !chapter.is($chapterLineOf(selection.anchor.getNode()))) return true;
 
   const region = $chapterAdjacentAttributeNodes(chapter);
   const lastRegionNode: LexicalNode = region.length > 0 ? region[region.length - 1] : chapter;

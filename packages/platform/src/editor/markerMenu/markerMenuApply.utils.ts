@@ -269,7 +269,7 @@ export function $applyMarkerMenuSelection(
   // host re-derive it from delta-doc coordinates (getInsertedNodeKey) — a wrong key there makes
   // replaceEmbedUpdate silently no-op. Same reason EditorRef.insertMarker returns it.
   if (NoteNode.isValidMarker(item.marker, deps.nodeOptions?.extraValidMarkers)) {
-    // A collapsed caret on an editable chapter line has no block to insert the note into (see
+    // A caret on an editable chapter line has no block to insert the note into (see
     // `chapterLine.utils.ts`); relocate it to the chapter's own text first, or no-op when there
     // is nowhere to relocate to.
     if (!$moveCaretOffChapterLine()) return undefined;

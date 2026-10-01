@@ -551,7 +551,7 @@ describe("a caret on the chapter line", () => {
   });
 });
 
-describe("inline insertion with a collapsed caret on the chapter line", () => {
+describe("inline insertion with the caret on the chapter line", () => {
   // An inline insertion — a note, a character marker, a verse — has no block of its own to splice
   // into at a chapter line (`ChapterNode.canBeEmpty()` is `false`), unlike a paragraph split, which
   // `$splitOnChapterLine` already redirects. The caret paranext-core leaves after a chapter-marker
@@ -589,6 +589,36 @@ describe("inline insertion with a collapsed caret on the chapter line", () => {
         scrRef: GEN_2_1,
       });
       await onChapterLine(lexical, () => undefined);
+      await act(async () => {
+        ref.current?.insertMarker(marker);
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([
+        CHAPTER_2,
+        { type: "para", marker: "p", content: [inserted, "one two"] },
+        POETRY_PARA,
+      ]);
+    },
+  );
+
+  // Selecting part of the chapter number — say its digit — and inserting there is the same request
+  // as a caret on the line: nothing on a chapter line can hold the new marker, and wrapping the
+  // selected digit would take it out of the chapter number.
+  it.each([
+    ["a note", "f", FRESH_NOTE],
+    ["a character marker", "nd", FRESH_CHAR_ND],
+  ])(
+    "insertMarker for %s over a selection inside the chapter glyph lands at the next paragraph's content start",
+    async (_label, marker, inserted) => {
+      const { ref, lexical } = await mountStandardViewEditor(chapterThenPlainParaDoc, {
+        scrRef: GEN_2_1,
+      });
+      await act(async () =>
+        lexical.update(() => {
+          // The trailing glyph byte is the separator space; the number's digit sits just before it.
+          const end = $glyph().getTextContentSize() - 1;
+          $glyph().select(end - 1, end);
+        }),
+      );
       await act(async () => {
         ref.current?.insertMarker(marker);
       });
