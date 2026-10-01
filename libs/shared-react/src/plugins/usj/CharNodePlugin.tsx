@@ -232,8 +232,17 @@ function $charTextNodeTransform(node: TextNode): void {
   if (index !== undefined) $dropPlaceholderByte(node, index);
 }
 
-/** Where in `text` (what `node`, an empty span's placeholder, holds now) the placeholder byte is:
- * beside the caret's insertion when the caret is in `node`, else its first or last byte. */
+/**
+ * Where in `text` (what `node`, an empty span's placeholder, holds now) the placeholder byte is:
+ * beside the caret's insertion when the caret is in `node`, else its first or last byte. Nothing
+ * else in this transform moves the caret, so a caret in `node` is where this update's own
+ * insertion left it — never where another span's strip put it.
+ *
+ * Without a caret in `node` (a host or collaborator edit) the inserted run is unknown, and a text
+ * that both starts and ends with an NBSP is ambiguous: `~b~` is `~b` typed in front of the
+ * placeholder or `b~` typed behind it. The first byte is taken, so an authored `~` inserted in
+ * front of a placeholder that way is lost and the placeholder kept (`b~`).
+ */
 function $placeholderIndex(node: TextNode, text: string): number | undefined {
   const selection = $getSelection();
   if (
@@ -252,23 +261,23 @@ function $placeholderIndex(node: TextNode, text: string): number | undefined {
   return undefined;
 }
 
-/** Removes the byte at `index` from `node`, keeping a caret in it on the same user byte. */
+/** Removes the byte at `index` from `node`. A selection point in `node` keeps its user byte; any
+ * other selection is left exactly where it is. */
 function $dropPlaceholderByte(node: TextNode, index: number): void {
   const selection = $getSelection();
-  const caret =
-    $isRangeSelection(selection) &&
-    selection.isCollapsed() &&
-    selection.anchor.key === node.getKey()
-      ? selection.anchor.offset
-      : undefined;
+  const points = $isRangeSelection(selection)
+    ? [selection.anchor, selection.focus].filter(
+        (point) => point.type === "text" && point.key === node.getKey(),
+      )
+    : [];
+  const offsets = points.map((point) => point.offset);
   const text = node.getTextContent();
   const writable = node.setTextContent(text.slice(0, index) + text.slice(index + 1));
   placeholderDroppedThisUpdate.add(writable);
-  if (caret === undefined) writable.selectEnd();
-  else {
-    const next = caret > index ? caret - 1 : caret;
-    writable.select(next, next);
-  }
+  points.forEach((point, i) => {
+    const offset = offsets[i];
+    point.set(writable.getKey(), offset > index ? offset - 1 : offset, "text");
+  });
 }
 
 /**

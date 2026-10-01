@@ -54,6 +54,7 @@ import {
   PASTE_COMMAND,
   RangeSelection,
   REDO_COMMAND,
+  TextNode,
   UNDO_COMMAND,
 } from "lexical";
 import {
@@ -550,6 +551,84 @@ describe("an annotation over a no-break space the text itself contains", () => {
       });
 
       expect(savedSpanContent(mounted)).toEqual(["a"]);
+    },
+  );
+
+  /** `\p x \wj \wj* m \nd \nd* y`: two empty spans in one paragraph. */
+  const twoEmptySpansUsj: Usj = twoParaUsj([
+    "x ",
+    { type: "char", marker: "wj", content: [] },
+    " m ",
+    { type: "char", marker: "nd", content: [] },
+    " y",
+  ]);
+
+  /** Each char span's placeholder text, in document order. Call inside a read or update. */
+  function $placeholders(): TextNode[] {
+    const found: TextNode[] = [];
+    const walk = (node: LexicalNode): void => {
+      if ($isCharNode(node)) {
+        const placeholder = node
+          .getChildren()
+          .find((child) => $isTextNode(child) && child.getTextContent() === NBSP);
+        if ($isTextNode(placeholder)) found.push(placeholder);
+      } else if ($isElementNode(node)) node.getChildren().forEach(walk);
+    };
+    walk($getRoot());
+    return found;
+  }
+
+  it.each(placeholderViews)(
+    "saves only the user's bytes when two empty spans are filled in one update (%s)",
+    async (name) => {
+      const mounted = await mountInView(twoEmptySpansUsj, oracleView(name));
+
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const [first, second] = $placeholders();
+          first.select(1, 1).insertText("a");
+          second.select(0, 0).insertText(`${NBSP}b`);
+        });
+        await Promise.resolve();
+      });
+
+      const para = mounted.ref.current?.getUsj()?.content?.[2];
+      if (!para || typeof para === "string") throw new Error("expected a paragraph");
+      const spans = (para.content ?? []).filter((item) => typeof item !== "string");
+      expect(spans.map((span) => (typeof span === "string" ? span : span.content))).toEqual([
+        ["a"],
+        [`${NBSP}b`],
+      ]);
+    },
+  );
+
+  it.each(placeholderViews)(
+    "leaves the user's caret where it is when an edit elsewhere fills an empty span (%s)",
+    async (name) => {
+      const mounted = await mountInView(emptySpanUsj, oracleView(name));
+      await act(async () => {
+        mounted.lexical.update(() => {
+          $textContaining(" y").select(2, 2);
+        });
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const placeholder = $placeholder();
+          if (!$isTextNode(placeholder)) throw new Error("expected text");
+          placeholder.setTextContent(`x${NBSP}`);
+        });
+        await Promise.resolve();
+      });
+
+      expect(savedSpanContent(mounted)).toEqual(["x"]);
+      mounted.lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        expect(selection.anchor.getNode().getTextContent()).toBe(" y");
+        expect(selection.anchor.offset).toBe(2);
+      });
     },
   );
 
