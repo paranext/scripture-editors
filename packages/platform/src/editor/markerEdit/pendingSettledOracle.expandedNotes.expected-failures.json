@@ -1,7 +1,4 @@
 {
-  "\\ca span beside its chapter (standard+expandedNotes view)": [
-    "marker \"\\\\ca*\"@0 type \" \" [positions]"
-  ],
   "\\cp span beside its chapter (standard+expandedNotes view)": [
     "marker \"\\\\cp*\"@3 type \"|\" [positions]"
   ]

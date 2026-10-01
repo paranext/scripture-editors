@@ -189,4 +189,29 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     // In front of the `3` is in the settled `\ca3` paragraph, not on the chapter.
     expect(roundTrip(mounted, view, $node, 0).reported?.jsonPath).toMatch(/^\$\.content\[2\]/);
   });
+
+  it("keeps a position at the end of a `\\ca` value when a space is typed in front of its closer", async () => {
+    // `\ca 3 \ca*` folds onto the chapter as altnumber `3`: the end of the value is in front of
+    // the typed space, where it was read from, not behind it.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { mounted } = await pendingEdit(usj, view, "\\ca*", " \\ca*", 1);
+    const $value = () => {
+      const value = $getRoot()
+        .getAllTextNodes()
+        .find((text) => text.getTextContent() === `${NBSP}3`);
+      if (!value) throw new Error("no \\ca value text");
+      return value;
+    };
+    const trip = roundTrip(mounted, view, $value, `${NBSP}3`.length);
+    expect(trip.to).toBe(trip.from);
+  });
 });

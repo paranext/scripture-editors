@@ -839,6 +839,63 @@ function $livePointInScope(
   prepared: PreparedScopes,
   target: Extract<SettledTarget, { kind: "scope" }>,
 ): FragmentPoint | undefined {
+  const point = $livePointThroughScope(context, prepared, target);
+  if (!point) return point;
+  // The end of a settled item names the byte before it, so it stays with that byte rather than
+  // with whatever the live bytes put after it.
+  const scratchLocation = withContentIndexes(target.location, target.scratchIndexes);
+  const isItemEnd = target.plan.scratch.getEditorState().read(() => {
+    const [node, offset] = $getNodeFromLocation(scratchLocation, prepared.viewOptions);
+    return (
+      $isTextNode(node) &&
+      offset !== undefined &&
+      offset > 0 &&
+      offset === node.getTextContentSize()
+    );
+  });
+  return isItemEnd ? $leftmostReporting(prepared, point, target.location) : point;
+}
+
+/**
+ * `point`, or the leftmost of the live positions just before it — across whitespace only — that
+ * reports `location` too. Whitespace a pending edit typed where the settled document has none
+ * (`\ca 3 \ca*`) gives one settled position several live ones, and the byte alignment lands on
+ * the one in front of the next word, which is right for a location that names that word; the end
+ * of an item names the byte before the whitespace instead.
+ *
+ * Read-only: call inside a read of the LIVE editor state.
+ */
+function $leftmostReporting(
+  prepared: PreparedScopes,
+  point: FragmentPoint,
+  location: UsjDocumentLocation,
+): FragmentPoint {
+  const node = $getNodeByKey(point.key);
+  if (point.type !== "text" || !$isTextNode(node)) return point;
+  const wanted = JSON.stringify(location);
+  let best = point;
+  let previous: { node: LexicalNode; offset: number } = { node, offset: point.offset };
+  for (const candidate of $caretPointsBefore(node, point.offset)) {
+    if (candidate.node.is(previous.node) && candidate.offset === previous.offset) continue;
+    // Stepping back within a node crosses the byte between; between two nodes, none.
+    if (candidate.node.is(previous.node)) {
+      const byte = candidate.node.getTextContent()[candidate.offset];
+      if (byte === undefined || !FRAGMENT_WS.test(byte)) break;
+    } else if (previous.offset !== 0) break;
+    previous = candidate;
+    const reported = $settledLocationFromLivePoint(prepared, candidate.node, candidate.offset);
+    if (JSON.stringify(reported) === wanted)
+      best = { key: candidate.node.getKey(), offset: candidate.offset, type: "text" };
+  }
+  return best;
+}
+
+/** {@link $livePointInScope} before the leftmost-reporting choice. */
+function $livePointThroughScope(
+  context: SettledPositionContext,
+  prepared: PreparedScopes,
+  target: Extract<SettledTarget, { kind: "scope" }>,
+): FragmentPoint | undefined {
   const { plan } = target;
   const { logger, viewOptions } = context.tier2;
   // A location on the note's own bytes names the note itself, not a byte of its content fragment,
