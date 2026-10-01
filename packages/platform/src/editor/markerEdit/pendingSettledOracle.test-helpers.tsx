@@ -37,6 +37,7 @@ import { SettledPositionContext } from "../positions/settledPositions.model";
 import { MarkerContent, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
+  $getNodeByKey,
   $getRoot,
   $getState,
   $isElementNode,
@@ -84,7 +85,7 @@ function chapterSideUsj(beside: MarkerContent): Usj {
 
 /** The documents the oracle edits; the root child after the chapter is the one edited — the
  * first body paragraph, or a `\ca`/`\cp` span beside the chapter. */
-const CORPUS: { name: string; usj: Usj }[] = [
+export const CORPUS: { name: string; usj: Usj }[] = [
   {
     name: "closed char span",
     usj: twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"]),
@@ -144,7 +145,7 @@ const CORPUS: { name: string; usj: Usj }[] = [
  * the keystroke does nothing there. */
 type Keystroke = (text: string, offset: number) => { text: string; caret: number } | undefined;
 
-const KEYSTROKES: { name: string; apply: Keystroke }[] = [
+export const KEYSTROKES: { name: string; apply: Keystroke }[] = [
   ...["x", " ", "*", "\\", "|"].map((character) => ({
     name: `type ${JSON.stringify(character)}`,
     apply: (text: string, offset: number) => ({
@@ -198,7 +199,7 @@ function $editSites(): { index: number; offset: number }[] {
 }
 
 /** The editable text nodes of the first body paragraph, in document order. */
-function $editableTexts(): TextNode[] {
+export function $editableTexts(): TextNode[] {
   const para = $getRoot().getChildren()[2];
   const out: TextNode[] = [];
   const visit = (node: LexicalNode): void => {
@@ -213,7 +214,7 @@ function $editableTexts(): TextNode[] {
 }
 
 /** Click into the second paragraph, blur, and commit whatever is still pending. */
-async function depart(mounted: Mounted): Promise<void> {
+export async function depart(mounted: Mounted): Promise<void> {
   await act(async () => {
     mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
     mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
@@ -230,7 +231,7 @@ async function depart(mounted: Mounted): Promise<void> {
 const editorMarkerLookup = createMarkerLookup(defaultStyleInfo);
 
 /** The position-translation context `Editor.tsx` builds, for `view`. Call outside a read. */
-function positionContext(lexical: LexicalEditor, view: ViewOptions): SettledPositionContext {
+export function positionContext(lexical: LexicalEditor, view: ViewOptions): SettledPositionContext {
   return {
     pendedKeys: getPendedDisplayOwners(lexical) ?? new Set<NodeKey>(),
     transientInput: undefined,
@@ -250,7 +251,7 @@ interface CaretPosition {
 }
 
 /** Every caret position in the document's text nodes. */
-function $caretPositions(): CaretPosition[] {
+export function $caretPositions(): CaretPosition[] {
   const out: CaretPosition[] = [];
   let position = 0;
   const visit = (node: LexicalNode): void => {
@@ -268,7 +269,7 @@ function $caretPositions(): CaretPosition[] {
 }
 
 /** The document's text-node bytes, concatenated. */
-function $documentText(): string {
+export function $documentText(): string {
   return $getRoot()
     .getAllTextNodes()
     .map((node) => node.getTextContent())
@@ -291,9 +292,11 @@ function $reported(
 /**
  * Where each pending caret position's report goes back to — the translation `setSelection` and
  * `setAnnotation` both run, resolved as `setSelection` resolves it — as a list of failures: a
- * report that lands to the RIGHT of the position it came from, or one that will not resolve.
- * Landing on the position itself, or on the closest representable position to its left, is the
- * contract.
+ * report that will not resolve, or one that lands to the RIGHT of the position it came from on a
+ * position that reports something else. Landing on the position itself, on the closest
+ * representable position to its left, or on a position that reports the same location (several
+ * live positions are one settled position where the settle collapses whitespace) is the contract:
+ * `getSelection()` after `setSelection()` hands the host back what it gave.
  */
 function $roundTripFailures(context: SettledPositionContext, view: ViewOptions): string[] {
   const prepared = $prepareSettleScopes(context);
@@ -312,7 +315,13 @@ function $roundTripFailures(context: SettledPositionContext, view: ViewOptions):
     const live = $liveSelectionFromSettled(context, prepared, { start: reported });
     const anchor = live && $getRangeFromUsjSelection(live, view)?.anchor;
     const landed = anchor && positionOf(anchor.key, anchor.offset);
-    if (landed === undefined || landed > position)
+    const landedNode = anchor && $getNodeByKey(anchor.key);
+    const reportsTheSame =
+      !!anchor &&
+      !!landedNode &&
+      JSON.stringify($settledLocationFromLivePoint(prepared, landedNode, anchor.offset)) ===
+        JSON.stringify(reported);
+    if (landed === undefined || (landed > position && !reportsTheSame))
       failures.push(`${position} -> ${JSON.stringify(reported)} -> ${landed ?? "nothing"}`);
   }
   return failures;
@@ -370,6 +379,8 @@ function bodyOf(usj: Usj | undefined): string {
 
 /** Rewrite each view's expected-failures list from this run instead of comparing with it. */
 const WRITE = process.env.PENDING_SETTLED_ORACLE_WRITE === "1";
+/** Print every failing case's detail, listed or not, with the document text before and after. */
+const DUMP = process.env.PENDING_SETTLED_ORACLE_DUMP === "1";
 
 /** A view's expected-failures list: per row, the keystroke cases known to fail, by label. */
 interface ExpectedFailures {
@@ -457,6 +468,11 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
               mismatches.set(
                 `${label} [positions]`,
                 `${label} [positions]\n    ${[...moved, ...roundTrip].join("\n    ")}`,
+              );
+            if (DUMP && mismatches.has(`${label} [positions]`))
+              // eslint-disable-next-line no-console -- PENDING_SETTLED_ORACLE_DUMP asks for this output.
+              console.info(
+                `DUMP ${row} :: ${mismatches.get(`${label} [positions]`)}\n    before ${JSON.stringify(before.text)}\n    after  ${JSON.stringify(after.text)}`,
               );
             mounted.unmount();
           }

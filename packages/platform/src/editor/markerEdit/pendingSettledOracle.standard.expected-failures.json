@@ -1,8 +1,5 @@
 {
   "closed char span (standard view)": [
-    "marker \"\\\\p\"@0 type \" \" [positions]",
-    "marker \"\\\\p\"@1 type \" \" [positions]",
-    "marker \"\\\\w\"@0 type \" \" [positions]",
     "marker \"\\\\w*\"@1 type \" \" [positions]",
     "marker \"\\\\w*\"@1 type \"*\" [positions]",
     "marker \"\\\\w*\"@1 type \"|\" [positions]",
@@ -10,10 +7,7 @@
     "marker \"\\\\w*\"@2 type \"|\" [positions]"
   ],
   "nested char span (standard view)": [
-    "marker \"\\\\+wj\"@1 Delete [positions]",
-    "marker \"\\\\+wj\"@2 Backspace [positions]",
     "marker \"\\\\+wj\"@2 Delete [positions]",
-    "marker \"\\\\+wj\"@2 type \"\\\\\" [positions]",
     "marker \"\\\\+wj\"@3 Backspace [positions]",
     "marker \"\\\\+wj*\"@1 type \" \" [positions]",
     "marker \"\\\\+wj*\"@1 type \"*\" [positions]",
@@ -26,7 +20,6 @@
     "marker \"\\\\+wj*\"@3 type \"|\" [positions]",
     "marker \"\\\\+wj*\"@4 type \" \" [positions]",
     "marker \"\\\\+wj*\"@4 type \"|\" [positions]",
-    "marker \"\\\\nd\"@0 type \" \" [positions]",
     "marker \"\\\\nd*\"@1 type \" \" [positions]",
     "marker \"\\\\nd*\"@1 type \"*\" [positions]",
     "marker \"\\\\nd*\"@1 type \"|\" [positions]",
@@ -34,55 +27,16 @@
     "marker \"\\\\nd*\"@2 type \"*\" [positions]",
     "marker \"\\\\nd*\"@2 type \"|\" [positions]",
     "marker \"\\\\nd*\"@3 type \" \" [positions]",
-    "marker \"\\\\nd*\"@3 type \"|\" [positions]",
-    "marker \"\\\\p\"@0 type \" \" [positions]",
-    "marker \"\\\\p\"@1 type \" \" [positions]"
+    "marker \"\\\\nd*\"@3 type \"|\" [positions]"
   ],
   "char span with an attribute (standard view)": [
-    "marker \"\\\\p\"@0 type \" \" [positions]",
-    "marker \"\\\\p\"@1 type \" \" [positions]",
-    "marker \"\\\\w\"@0 type \" \" [positions]",
     "marker \"\\\\w*\"@1 type \" \" [positions]",
     "marker \"\\\\w*\"@1 type \"*\" [positions]",
     "marker \"\\\\w*\"@1 type \"|\" [positions]",
     "marker \"\\\\w*\"@2 type \" \" [positions]",
     "marker \"\\\\w*\"@2 type \"|\" [positions]"
   ],
-  "unclosed char span (standard view)": [
-    "marker \"\\\\bd\"@0 type \" \" [positions]",
-    "marker \"\\\\p\"@0 type \" \" [positions]",
-    "marker \"\\\\p\"@1 type \" \" [positions]"
-  ],
-  "verse (standard view)": [
-    "marker \"\\\\p\"@0 type \" \" [positions]",
-    "marker \"\\\\p\"@1 type \" \" [positions]",
-    "verse \"\\\\v~1 \"@3 Delete [positions]",
-    "verse \"\\\\v~1 \"@4 Backspace [positions]"
-  ],
-  "note (standard view)": [
-    "marker \"\\\\p\"@0 Delete [positions]",
-    "marker \"\\\\p\"@0 type \" \" [positions]",
-    "marker \"\\\\p\"@0 type \"*\" [positions]",
-    "marker \"\\\\p\"@0 type \"\\\\\" [positions]",
-    "marker \"\\\\p\"@0 type \"x\" [positions]",
-    "marker \"\\\\p\"@0 type \"|\" [positions]",
-    "marker \"\\\\p\"@1 Backspace [positions]",
-    "marker \"\\\\p\"@1 Delete [positions]",
-    "marker \"\\\\p\"@1 type \" \" [positions]",
-    "marker \"\\\\p\"@1 type \"*\" [positions]",
-    "marker \"\\\\p\"@1 type \"\\\\\" [positions]",
-    "marker \"\\\\p\"@1 type \"x\" [positions]",
-    "marker \"\\\\p\"@1 type \"|\" [positions]",
-    "marker \"\\\\p\"@2 Backspace [positions]",
-    "marker \"\\\\p\"@2 type \"\\\\\" [positions]",
-    "marker \"\\\\p\"@2 type \"x\" [positions]",
-    "marker \"\\\\p\"@2 type \"|\" [positions]",
-    "text \" b\"@0 type \"\\\\\" [positions]",
-    "text \" b\"@1 type \"\\\\\" [positions]",
-    "text \" b\"@2 type \"\\\\\" [positions]",
-    "text \"a\"@0 type \"\\\\\" [positions]",
-    "text \"a\"@1 type \"\\\\\" [positions]"
-  ],
+  "note (standard view)": ["text \"a\"@0 type \"\\\\\" [positions]"],
   "milestone (standard view)": [
     "marker \"\\\\*\"@0 type \" \" [positions]",
     "marker \"\\\\*\"@0 type \"*\" [positions]",
@@ -101,8 +55,6 @@
     "marker \"\\\\*\"@2 type \"\\\\\" [positions]",
     "marker \"\\\\*\"@2 type \"x\" [positions]",
     "marker \"\\\\*\"@2 type \"|\" [positions]",
-    "marker \"\\\\p\"@0 type \" \" [positions]",
-    "marker \"\\\\p\"@1 type \" \" [positions]",
     "marker \"\\\\qt-s\"@0 Delete [positions]",
     "marker \"\\\\qt-s\"@0 type \" \" [positions]",
     "marker \"\\\\qt-s\"@0 type \"*\" [positions]",
@@ -144,7 +96,6 @@
   ],
   "\\ca span beside its chapter (standard view)": [
     "marker \"\\\\ca\"@0 Delete [positions]",
-    "marker \"\\\\ca\"@0 type \" \" [positions]",
     "marker \"\\\\ca\"@0 type \"*\" [positions]",
     "marker \"\\\\ca\"@0 type \"\\\\\" [positions]",
     "marker \"\\\\ca\"@0 type \"x\" [positions]",
@@ -181,16 +132,12 @@
     "marker \"\\\\ca*\"@3 type \"x\" [positions]",
     "marker \"\\\\ca*\"@3 type \"|\" [positions]",
     "text \"~3\"@0 Delete [positions]",
-    "text \"~3\"@0 type \" \" [positions]",
     "text \"~3\"@0 type \"*\" [positions]",
     "text \"~3\"@1 Backspace [positions]",
-    "text \"~3\"@1 type \" \" [positions]",
-    "text \"~3\"@1 type \"\\\\\" [positions]",
-    "text \"~3\"@2 type \" \" [positions]"
+    "text \"~3\"@1 type \"\\\\\" [positions]"
   ],
   "\\cp span beside its chapter (standard view)": [
     "marker \"\\\\cp\"@0 Delete [positions]",
-    "marker \"\\\\cp\"@0 type \" \" [positions]",
     "marker \"\\\\cp\"@0 type \"*\" [positions]",
     "marker \"\\\\cp\"@0 type \"\\\\\" [positions]",
     "marker \"\\\\cp\"@0 type \"x\" [positions]",
@@ -213,7 +160,6 @@
     "marker \"\\\\cp*\"@2 type \"*\" [positions]",
     "marker \"\\\\cp*\"@2 type \"\\\\\" [positions]",
     "marker \"\\\\cp*\"@2 type \"|\" [positions]",
-    "marker \"\\\\cp*\"@3 type \" \" [positions]",
     "marker \"\\\\cp*\"@3 type \"*\" [positions]",
     "marker \"\\\\cp*\"@3 type \"|\" [positions]",
     "marker \"\\\\cp*\"@4 type \" \" [positions]",
@@ -222,10 +168,8 @@
     "marker \"\\\\cp*\"@4 type \"x\" [positions]",
     "marker \"\\\\cp*\"@4 type \"|\" [positions]",
     "text \"~A\"@0 Delete [positions]",
-    "text \"~A\"@0 type \" \" [positions]",
     "text \"~A\"@0 type \"*\" [positions]",
     "text \"~A\"@1 Backspace [positions]",
-    "text \"~A\"@1 type \" \" [positions]",
     "text \"~A\"@1 type \"\\\\\" [positions]"
   ]
 }
