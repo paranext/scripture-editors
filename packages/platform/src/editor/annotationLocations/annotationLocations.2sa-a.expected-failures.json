@@ -2,7 +2,7 @@
   "stride": 10,
   "2SA": {
     "standard": {
-      "ops": 9317,
+      "ops": 9313,
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[1]['marker']|propertyOffset=4",
@@ -323,58 +323,45 @@
         "text(sep):\"\\u00a0\"@$.content[142].content[2].content[2]['marker']|propertyOffset=2"
       ],
       "failures": {
-        "standard|A|1|$.content[50].content[0]|$.content[50].content[1]|offset=0": [
-          "R2-ELEM-OFFSET-AS-TEXT(start)",
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "standard|A|2|$.content[46]['marker']|propertyOffset=3|$.content[46].content[1]|offset=0": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "standard|A|2|$.content[48]['marker']|propertyOffset=2|$.content[48].content[1]|offset=0": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "standard|A|25|$.content[133]['marker']|propertyOffset=0|$.content[135]": [
+        "standard|A|25|$.content[13].content[0]|offset=112|$.content[13].content[1].content[1]|offset=1": [
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
-        "standard|A|25|$.content[47].content[0]|offset=46|$.content[49].content[1]|offset=0": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "standard|A|3|$.content[134].content[0]|offset=13|$.content[134].content[0]|offset=16": [
+        "standard|A|50|$.content[12].content[1].content[0]['marker']|propertyOffset=1|$.content[12].content[1].content[3].content[0]|offset=9": [
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
-        "standard|A|50|$.content[12].content[1].content[0]|$.content[12].content[1].content[3].content[0]|offset=7": [
+        "standard|A|50|$.content[13].content[0]|offset=112|$.content[13].content[1]|closingMarkerOffset=0": [
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
-        "standard|A|50|$.content[13].content[0]|offset=110|$.content[13].content[1].content[2]|closingMarkerOffset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|A|50|$.content[133]['marker']|propertyOffset=0|$.content[135].content[1].content[0].content[0]|offset=0": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "standard|B|1|$.content[10].content[1]['category']|propertyOffset=3|$.content[10].content[1]['category']|propertyOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "standard|B|1|$.content[11].content[1]['category']|propertyOffset=3|$.content[11].content[1]['category']|propertyOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "standard|B|3|$.content[10].content[1]['caller']|propertyOffset=1|$.content[10].content[1]|keyName=category,keyOffset=0": [
+        "standard|B|1|$.content[10].content[1]['caller']|propertyOffset=1|$.content[10].content[1]|keyName=category": [
           "R2-ELEM-OFFSET-AS-TEXT(start)",
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "standard|B|3|$.content[10].content[1]['category']|propertyOffset=3|$.content[10].content[1]['category']|propertyOffset=6": [
+        "standard|B|1|$.content[10].content[1]['category']|propertyOffset=4|$.content[10].content[1]['category']|propertyOffset=5": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
-        "standard|B|3|$.content[11].content[1]['caller']|propertyOffset=1|$.content[11].content[1]|keyName=category,keyOffset=0": [
+        "standard|B|1|$.content[11].content[1]['category']|propertyOffset=5|$.content[11].content[1]['category']|propertyOffset=6": [
+          "R10-DECORATOR-DROPPED(end snaps in front)"
+        ],
+        "standard|B|1|$.content[11].content[1]|keyName=category|$.content[11].content[1]|keyName=category,keyOffset=0": [
+          "R10-DECORATOR-DROPPED(end snaps in front)"
+        ],
+        "standard|B|3|$.content[10].content[1]['caller']|propertyOffset=1|$.content[10].content[1]|keyName=category,keyOffset=1": [
           "R2-ELEM-OFFSET-AS-TEXT(start)",
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "standard|B|3|$.content[11].content[1]['category']|propertyOffset=3|$.content[11].content[1]['category']|propertyOffset=6": [
+        "standard|B|3|$.content[10].content[1]['category']|propertyOffset=4|$.content[10].content[1]|keyClosingMarkerOffset=0,keyName=category": [
+          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+        ],
+        "standard|B|3|$.content[11].content[1]['category']|propertyOffset=5|$.content[11].content[1]|keyClosingMarkerOffset=1,keyName=category": [
+          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+        ],
+        "standard|B|3|$.content[11].content[1]|keyName=category|$.content[11].content[1]|keyName=category,keyOffset=2": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ]
       }
     },
     "unformatted": {
-      "ops": 9334,
+      "ops": 9324,
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[1]['marker']|propertyOffset=4",
@@ -686,218 +673,14 @@
         "text(sep):\"\\u00a0\"@$.content[142].content[2].content[2]['marker']|propertyOffset=2"
       ],
       "failures": {
-        "unformatted|A|1|$.content[134].content[1]|$.content[135]": [
-          "R2-ELEM-OFFSET-AS-TEXT(start)",
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "unformatted|A|1|$.content[49].content[0]|$.content[49].content[1]|offset=0": [
-          "R2-ELEM-OFFSET-AS-TEXT(start)",
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "unformatted|A|1|$.content[84].content[0]|offset=12|$.content[84].content[0]|offset=13": [
+        "unformatted|A|1|$.content[84].content[0]|offset=5|$.content[84].content[0]|offset=6": [
           "R6-CORRUPT-figure-split",
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|2|$.content[134].content[1]|$.content[135]['marker']|propertyOffset=0": [
-          "R2-ELEM-OFFSET-AS-TEXT(start)",
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "unformatted|A|25|$.content[134].content[0]|offset=7|$.content[135].content[0]|offset=11": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|3|$.content[134].content[1]|$.content[135]['marker']|propertyOffset=1": [
-          "R2-ELEM-OFFSET-AS-TEXT(start)",
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "unformatted|A|50|$.content[132].content[0]|offset=96|$.content[135].content[0]|offset=6": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "unformatted|A|50|$.content[134].content[0]|offset=7|$.content[135].content[1].content[1].content[0]|offset=2": [
           "O2-LABEL-MOVES-ON-SPLIT"
         ]
       }
     },
     "visible+collapsed": {
-      "ops": 8698,
-      "anomalies": [
-        "byte label out of order: immutable-typed-text \"[immutable-typed-text:\\u00a0|TJ ]\" $.content[40]",
-        "byte label out of order: immutable-typed-text \"[immutable-typed-text:\\u00a0|sid=\\\"Some quote\\\" who=\\\"TJ\\\"]\" $.content[41]",
-        "byte label out of order: immutable-typed-text \"[immutable-typed-text:\\u00a0|Some quote]\" $.content[43]",
-        "byte label out of order: immutable-typed-text \"[immutable-typed-text:\\u00a0|Translator's section]\" $.content[44]",
-        "byte label out of order: immutable-typed-text \"[immutable-typed-text:\\u00a0|Translator's section]\" $.content[44]"
-      ],
-      "exempt": [
-        "text(sep):\"\\u00a0\"@$.content[10].content[1].content[0]",
-        "text(sep):\"\\u00a0\"@$.content[10].content[1].content[1]",
-        "text(sep):\"\\u00a0\"@$.content[10].content[1]|closingMarkerOffset=0",
-        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[0]",
-        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[1]",
-        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[2]",
-        "text(sep):\"\\u00a0\"@$.content[11].content[1]|closingMarkerOffset=0",
-        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[0]",
-        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[1]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[1]|offset=1",
-        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[3]",
-        "text(sep):\"\\u00a0\"@$.content[12].content[1]|closingMarkerOffset=0",
-        "text(sep):\"\\u00a0\"@$.content[13].content[1].content[0]",
-        "text(sep):\"\\u00a0\"@$.content[13].content[1].content[1]|offset=0",
-        "text(sep):\"\\u00a0\"@$.content[13].content[1].content[1]|offset=1",
-        "text(sep):\"\\u00a0\"@$.content[13].content[1]|closingMarkerOffset=0",
-        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[0]",
-        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[1]",
-        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[2]",
-        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1]|closingMarkerOffset=0",
-        "text(sep):\"\\u00a0\"@$.content[135].content[1].content[0]",
-        "text(sep):\"\\u00a0\"@$.content[135].content[1].content[1]",
-        "text(sep):\"\\u00a0\"@$.content[135].content[1]|closingMarkerOffset=0"
-      ],
-      "failures": {
-        "visible+collapsed|A|1|$.content[46].content[1]|offset=0|$.content[46].content[1]|offset=1": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "visible+collapsed|A|12|$.content[13].content[1]['caller']|propertyOffset=0|$.content[13].content[1].content[2].content[0]|offset=2": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|12|$.content[46].content[1]|offset=0|$.content[47].content[0]|offset=2": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "visible+collapsed|A|2|$.content[46].content[1]|offset=0|$.content[46].content[1]|offset=2": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "visible+collapsed|A|25|$.content[12].content[0]|offset=112|$.content[12].content[1].content[2].content[0]|offset=3": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|25|$.content[134].content[0]|offset=10|$.content[135].content[1].content[0]": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|25|$.content[47].content[0]|offset=30|$.content[48].content[1]|offset=0": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "visible+collapsed|A|3|$.content[17].content[0]|offset=28|$.content[17].content[1]|closingMarkerOffset=0": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)"
-        ],
-        "visible+collapsed|A|3|$.content[46].content[1]|offset=0|$.content[46].content[1]|offset=3": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "visible+collapsed|A|50|$.content[12].content[0]|offset=82|$.content[12].content[1].content[1]|offset=1": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|50|$.content[132].content[0]|offset=94|$.content[135].content[0]|offset=11": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|50|$.content[134].content[0]|offset=10|$.content[135].content[1].content[1].content[0]|offset=17": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|A|50|$.content[44].content[4]|offset=46|$.content[46].content[1]|offset=0": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "visible+collapsed|A|6|$.content[46].content[1]|offset=0|$.content[46].content[1]|offset=6": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "visible+collapsed|A|6|$.content[49].content[1]|offset=6|$.content[50].content[1]|offset=0": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "visible+collapsed|B|1|$.content[10].content[1]['category']|propertyOffset=0|$.content[10].content[1]['category']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[10].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[10].content[1]|keyClosingMarkerOffset=4,keyName=category": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[11].content[1]['category']|propertyOffset=6|$.content[11].content[1]|keyClosingMarkerOffset=0,keyName=category": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "visible+collapsed|B|1|$.content[11].content[1]|keyName=category,keyOffset=0|$.content[11].content[1]|keyName=category,keyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[32].content[1]['marker']|propertyOffset=2|$.content[32].content[1]|closingMarkerOffset=0": [
-          "R2-ELEM-OFFSET-AS-TEXT(end)",
-          "R2-ELEM-OFFSET-AS-TEXT(start)"
-        ],
-        "visible+collapsed|B|1|$.content[40].content[1]['who']|propertyOffset=0|$.content[40].content[1]['who']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[41].content[1]['marker']|propertyOffset=5|$.content[41].content[1]|keyName=sid,keyOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS",
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[41].content[1]['sid']|propertyOffset=4|$.content[41].content[1]['sid']|propertyOffset=5": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[41].content[1]|keyName=who,keyOffset=2|$.content[41].content[1]|keyName=who,keyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[43].content[1]['eid']|propertyOffset=1|$.content[43].content[1]['eid']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[44].content[1]['sid']|propertyOffset=0|$.content[44].content[1]['sid']|propertyOffset=1": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[44].content[1]['sid']|propertyOffset=10|$.content[44].content[1]['sid']|propertyOffset=11": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[44].content[1]['sid']|propertyOffset=20|$.content[44].content[1]|closingMarkerOffset=0": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|1|$.content[44].content[3]['eid']|propertyOffset=1|$.content[44].content[3]['eid']|propertyOffset=2": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|1|$.content[44].content[3]['eid']|propertyOffset=11|$.content[44].content[3]['eid']|propertyOffset=12": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[10].content[1]['category']|propertyOffset=0|$.content[10].content[1]['category']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[10].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[10].content[1].content[0]": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[11].content[1]['category']|propertyOffset=6|$.content[11].content[1]|keyClosingMarkerOffset=2,keyName=category": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "visible+collapsed|B|3|$.content[11].content[1]|keyName=category,keyOffset=0|$.content[11].content[1]|keyName=category,keyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[12].content[1].content[0]|closingMarkerOffset=5|$.content[12].content[1].content[2]": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "visible+collapsed|B|3|$.content[27].content[1]['marker']|propertyOffset=2|$.content[27].content[1]['link-href']|propertyOffset=1": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[40].content[1]['who']|propertyOffset=0|$.content[40].content[1]['who']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[41].content[1]['marker']|propertyOffset=5|$.content[41].content[1]|keyName=sid,keyOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS",
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[41].content[1]['sid']|propertyOffset=4|$.content[41].content[1]['sid']|propertyOffset=7": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[41].content[1]|keyName=who,keyOffset=2|$.content[41].content[1]['who']|propertyOffset=0": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[43].content[1]['eid']|propertyOffset=1|$.content[43].content[1]['eid']|propertyOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[44].content[1]['sid']|propertyOffset=0|$.content[44].content[1]['sid']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[44].content[1]['sid']|propertyOffset=10|$.content[44].content[1]['sid']|propertyOffset=13": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[44].content[1]['sid']|propertyOffset=20|$.content[44].content[1]|closingMarkerOffset=2": [
-          "R9-UNDISPLAYED-SNAP-INVERTS"
-        ],
-        "visible+collapsed|B|3|$.content[44].content[3]['eid']|propertyOffset=1|$.content[44].content[3]['eid']|propertyOffset=4": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "visible+collapsed|B|3|$.content[44].content[3]['eid']|propertyOffset=11|$.content[44].content[3]['eid']|propertyOffset=14": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ]
-      }
-    },
-    "paragraph-structure": {
-      "ops": 8683,
+      "ops": 8703,
       "anomalies": [],
       "exempt": [
         "text(sep):\"\\u00a0\"@$.content[10].content[1].content[0]",
@@ -925,28 +708,80 @@
         "text(sep):\"\\u00a0\"@$.content[135].content[1]|closingMarkerOffset=0"
       ],
       "failures": {
-        "paragraph-structure|A|1|$.content[48].content[0]|$.content[48].content[1]|offset=0": [
-          "R2-ELEM-OFFSET-AS-TEXT(start)",
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "paragraph-structure|A|1|$.content[49].content[1]|offset=0|$.content[49].content[1]|offset=1": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "paragraph-structure|A|1|$.content[84].content[0]|offset=12|$.content[84].content[0]|offset=13": [
+        "visible+collapsed|A|1|$.content[84].content[0]|offset=5|$.content[84].content[0]|offset=6": [
           "R6-CORRUPT-figure-split",
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
-        "paragraph-structure|A|12|$.content[13].content[1].content[0].content[0]|offset=0|$.content[13].content[1].content[2].content[0]|offset=5": [
+        "visible+collapsed|A|12|$.content[13].content[1]['caller']|propertyOffset=0|$.content[13].content[1].content[2].content[0]|offset=2": [
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
-        "paragraph-structure|A|12|$.content[49].content[1]|offset=0|$.content[50].content[1]|offset=0": [
-          "O3-UNMATCHED-MISLABEL"
+        "visible+collapsed|A|25|$.content[12].content[0]|offset=112|$.content[12].content[1].content[2].content[0]|offset=3": [
+          "O2-LABEL-MOVES-ON-SPLIT"
         ],
-        "paragraph-structure|A|2|$.content[49].content[1]|offset=0|$.content[49].content[1]|offset=2": [
-          "O3-UNMATCHED-MISLABEL"
+        "visible+collapsed|A|50|$.content[12].content[0]|offset=82|$.content[12].content[1].content[1]|offset=1": [
+          "O2-LABEL-MOVES-ON-SPLIT"
         ],
-        "paragraph-structure|A|2|$.content[50]|$.content[50].content[1]|offset=0": [
-          "O3-UNMATCHED-MISLABEL"
+        "visible+collapsed|B|1|$.content[10].content[1]['category']|propertyOffset=3|$.content[10].content[1]['category']|propertyOffset=4": [
+          "R10-DECORATOR-DROPPED(end snaps in front)"
+        ],
+        "visible+collapsed|B|1|$.content[11].content[1]['category']|propertyOffset=0|$.content[11].content[1]['category']|propertyOffset=1": [
+          "R10-DECORATOR-DROPPED(end snaps in front)"
+        ],
+        "visible+collapsed|B|1|$.content[11].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[11].content[1]|keyClosingMarkerOffset=4,keyName=category": [
+          "R10-DECORATOR-DROPPED(end snaps in front)"
+        ],
+        "visible+collapsed|B|1|$.content[27].content[1]['link-href']|propertyOffset=5|$.content[27].content[1]['link-href']|propertyOffset=6": [
+          "R10-DECORATOR-DROPPED(end snaps in front)"
+        ],
+        "visible+collapsed|B|3|$.content[10].content[1]['category']|propertyOffset=3|$.content[10].content[1]['category']|propertyOffset=6": [
+          "R10-DECORATOR-DROPPED(end snaps in front)"
+        ],
+        "visible+collapsed|B|3|$.content[10].content[1]['marker']|propertyOffset=1|$.content[10].content[1]|keyName=category": [
+          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
+        ],
+        "visible+collapsed|B|3|$.content[11].content[1]['category']|propertyOffset=0|$.content[11].content[1]['category']|propertyOffset=3": [
+          "R10-DECORATOR-DROPPED(end snaps in front)"
+        ],
+        "visible+collapsed|B|3|$.content[11].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[11].content[1].content[0]": [
+          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
+          "R9-UNDISPLAYED-SNAP-INVERTS"
+        ],
+        "visible+collapsed|B|3|$.content[27].content[1]['link-href']|propertyOffset=5|$.content[27].content[1]|closingMarkerOffset=0": [
+          "R10-DECORATOR-DROPPED(end snaps in front)"
+        ]
+      }
+    },
+    "paragraph-structure": {
+      "ops": 8684,
+      "anomalies": [],
+      "exempt": [
+        "text(sep):\"\\u00a0\"@$.content[10].content[1].content[0]",
+        "text(sep):\"\\u00a0\"@$.content[10].content[1].content[1]",
+        "text(sep):\"\\u00a0\"@$.content[10].content[1]|closingMarkerOffset=0",
+        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[0]",
+        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[1]",
+        "text(sep):\"\\u00a0\"@$.content[11].content[1].content[2]",
+        "text(sep):\"\\u00a0\"@$.content[11].content[1]|closingMarkerOffset=0",
+        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[0]",
+        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[1]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[1]|offset=1",
+        "text(sep):\"\\u00a0\"@$.content[12].content[1].content[3]",
+        "text(sep):\"\\u00a0\"@$.content[12].content[1]|closingMarkerOffset=0",
+        "text(sep):\"\\u00a0\"@$.content[13].content[1].content[0]",
+        "text(sep):\"\\u00a0\"@$.content[13].content[1].content[1]|offset=0",
+        "text(sep):\"\\u00a0\"@$.content[13].content[1].content[1]|offset=1",
+        "text(sep):\"\\u00a0\"@$.content[13].content[1]|closingMarkerOffset=0",
+        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[0]",
+        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[1]",
+        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1].content[2]",
+        "text(sep):\"\\u00a0\"@$.content[35].content[1].content[1]|closingMarkerOffset=0",
+        "text(sep):\"\\u00a0\"@$.content[135].content[1].content[0]",
+        "text(sep):\"\\u00a0\"@$.content[135].content[1].content[1]",
+        "text(sep):\"\\u00a0\"@$.content[135].content[1]|closingMarkerOffset=0"
+      ],
+      "failures": {
+        "paragraph-structure|A|12|$.content[13].content[1].content[0].content[0]|offset=0|$.content[13].content[1].content[2].content[0]|offset=5": [
+          "O2-LABEL-MOVES-ON-SPLIT"
         ],
         "paragraph-structure|A|25|$.content[12].content[0]|offset=113|$.content[12].content[1].content[3]": [
           "O2-LABEL-MOVES-ON-SPLIT"
@@ -954,63 +789,35 @@
         "paragraph-structure|A|25|$.content[13].content[0]|offset=102|$.content[13].content[1].content[1]|offset=1": [
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
-        "paragraph-structure|A|25|$.content[134]|$.content[135].content[0]|offset=5": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|25|$.content[49].content[1]|offset=0|$.content[50].content[1]|offset=13": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "paragraph-structure|A|3|$.content[49].content[1]|offset=0|$.content[49].content[1]|offset=3": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
         "paragraph-structure|A|50|$.content[12].content[0]|offset=83|$.content[12].content[1].content[2].content[0]|offset=0": [
           "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|50|$.content[132].content[0]|offset=83|$.content[135].content[0]|offset=0": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|50|$.content[134]|$.content[135].content[1].content[1].content[0]|offset=6": [
-          "O2-LABEL-MOVES-ON-SPLIT"
-        ],
-        "paragraph-structure|A|50|$.content[49].content[1]|offset=0|$.content[50].content[1]|offset=38": [
-          "O3-UNMATCHED-MISLABEL"
         ],
         "paragraph-structure|A|6|$.content[13].content[1].content[0].content[0]|offset=0|$.content[13].content[1].content[2]": [
           "O2-LABEL-MOVES-ON-SPLIT"
         ],
-        "paragraph-structure|A|6|$.content[45].content[0]|offset=15|$.content[46].content[1]|offset=0": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "paragraph-structure|A|6|$.content[49].content[1]|offset=0|$.content[49].content[1]|offset=6": [
-          "O3-UNMATCHED-MISLABEL"
-        ],
-        "paragraph-structure|B|1|$.content[10].content[1]['category']|propertyOffset=0|$.content[10].content[1]['category']|propertyOffset=1": [
+        "paragraph-structure|B|1|$.content[10].content[1]['category']|propertyOffset=3|$.content[10].content[1]['category']|propertyOffset=4": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
-        "paragraph-structure|B|1|$.content[10].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[10].content[1]|keyClosingMarkerOffset=4,keyName=category": [
+        "paragraph-structure|B|1|$.content[11].content[1]['category']|propertyOffset=0|$.content[11].content[1]['category']|propertyOffset=1": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
-        "paragraph-structure|B|1|$.content[11].content[1]['category']|propertyOffset=6|$.content[11].content[1]|keyClosingMarkerOffset=0,keyName=category": [
+        "paragraph-structure|B|1|$.content[11].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[11].content[1]|keyClosingMarkerOffset=4,keyName=category": [
+          "R10-DECORATOR-DROPPED(end snaps in front)"
+        ],
+        "paragraph-structure|B|3|$.content[10].content[1]['category']|propertyOffset=3|$.content[10].content[1]['category']|propertyOffset=6": [
+          "R10-DECORATOR-DROPPED(end snaps in front)"
+        ],
+        "paragraph-structure|B|3|$.content[10].content[1]['marker']|propertyOffset=1|$.content[10].content[1]|keyName=category": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
         ],
-        "paragraph-structure|B|1|$.content[11].content[1]|keyName=category,keyOffset=0|$.content[11].content[1]|keyName=category,keyOffset=1": [
+        "paragraph-structure|B|3|$.content[11].content[1]['category']|propertyOffset=0|$.content[11].content[1]['category']|propertyOffset=3": [
           "R10-DECORATOR-DROPPED(end snaps in front)"
         ],
-        "paragraph-structure|B|3|$.content[10].content[1]['category']|propertyOffset=0|$.content[10].content[1]['category']|propertyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[10].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[10].content[1].content[0]": [
+        "paragraph-structure|B|3|$.content[11].content[1]|keyClosingMarkerOffset=3,keyName=category|$.content[11].content[1].content[0]": [
           "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE",
           "R9-UNDISPLAYED-SNAP-INVERTS"
         ],
-        "paragraph-structure|B|3|$.content[11].content[1]['category']|propertyOffset=6|$.content[11].content[1]|keyClosingMarkerOffset=2,keyName=category": [
-          "R1a-CASE3-PARTIAL-INLINE-WRAPPED-WHOLE"
-        ],
-        "paragraph-structure|B|3|$.content[11].content[1]|keyName=category,keyOffset=0|$.content[11].content[1]|keyName=category,keyOffset=3": [
-          "R10-DECORATOR-DROPPED(end snaps in front)"
-        ],
-        "paragraph-structure|B|3|$.content[46]['marker']|propertyOffset=2|$.content[46].content[1]|offset=0": [
-          "O3-UNMATCHED-MISLABEL",
+        "paragraph-structure|B|3|$.content[27].content[1]['marker']|propertyOffset=2|$.content[27].content[1]['link-href']|propertyOffset=1": [
           "R9-UNDISPLAYED-SNAP-INVERTS"
         ]
       }
