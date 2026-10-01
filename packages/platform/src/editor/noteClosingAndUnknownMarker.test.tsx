@@ -298,6 +298,38 @@ describe("typing a note's own closer into an unclosed note", () => {
     ]);
   });
 
+  // A note that ends an unclosed char span is the one place the caret is put past it with an
+  // explicit element point (the span would otherwise draw it back into the note); placing it there
+  // must not keep the close from being reported.
+  it("reports the close when the note ends an unclosed char span", async () => {
+    const reported: Usj[] = [];
+    const { editorRef, lexical } = await renderEditor(
+      usjWith({
+        type: "char",
+        marker: "wj",
+        closed: "false",
+        content: ["stuff ", unclosedNote("alpha")],
+      } as MarkerObject),
+      undefined,
+      undefined,
+      (usj) => reported.push(usj),
+    );
+    const [key] = noteKeys(lexical);
+
+    await act(async () => editorRef.selectNoteTextOffset(key, 5));
+    await restCaret(lexical);
+    await act(async () => {
+      editorRef.commitTypedCloser("f");
+    });
+    await restCaret(lexical);
+
+    const wj = paraContent(reported.at(-1))?.[2];
+    const note = typeof wj === "object" ? wj.content?.at(-1) : undefined;
+    expect(typeof note === "object" ? note : undefined).toMatchObject({ type: "note" });
+    expect(typeof note === "object" && "closed" in note ? note.closed : undefined).toBeUndefined();
+    lexical.getEditorState().read(() => expect($onlyNote().getIsCollapsed()).toBe(true));
+  });
+
   it("closes it in a note editor too, and the text it is applied to shows it closed", async () => {
     const row = await renderEditor(usjWith(unclosedNote("alpha")), noteEditorOptions);
     await typeCloserAt(row.lexical, row.editorRef, 5);

@@ -2023,7 +2023,7 @@ function $closeNoteAtOwnCloser(
   if (anchorInNote) {
     if (note.getIsCollapsed() !== true && viewOptions?.isNoteShellEditable === false)
       $selectNote(note, viewOptions);
-    else $selectAfterNote(note);
+    else $selectAfterNote(note, { isContentChange: true });
   }
   return true;
 }

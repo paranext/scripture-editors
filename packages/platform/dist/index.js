@@ -16265,26 +16265,26 @@ function d_(e) {
   const r = e.getChildAtIndex(t - 1);
   E(r) && !Is(r) ? r.selectEnd() : e.select(t, t);
 }
-function hg(e) {
-  const t = e.getNextSibling();
-  if (E(t) && !Fs(t)) {
-    t.select(0, 0);
+function hg(e, { isContentChange: t = !1 } = {}) {
+  const r = e.getNextSibling();
+  if (E(r) && !Fs(r)) {
+    r.select(0, 0);
     return;
   }
-  const r = e.getParent();
-  if (!r)
+  const n = e.getParent();
+  if (!n)
     return;
-  const n = e.getIndexWithinParent() + 1;
-  Bl(r, n);
+  const i = e.getIndexWithinParent() + 1;
+  n.canBeEmpty() ? n.select(i, i) : Bl(n, i, { announce: !t });
 }
-function Bl(e, t) {
-  const r = e.getChildAtIndex(t - 1);
-  if (e.canBeEmpty() || !F(r) || r.getIsCollapsed() !== !0) {
+function Bl(e, t, { announce: r = !0 } = {}) {
+  const n = e.getChildAtIndex(t - 1);
+  if (!F(n) || n.getIsCollapsed() !== !0) {
     e.select(t, t);
     return;
   }
-  const n = ws();
-  n.anchor.set(e.getKey(), t, "element"), n.focus.set(e.getKey(), t, "element"), Nn(n), an().dispatchCommand(Kt, void 0);
+  const i = ws();
+  i.anchor.set(e.getKey(), t, "element"), i.focus.set(e.getKey(), t, "element"), Nn(i), r && an().dispatchCommand(Kt, void 0);
 }
 function Dd(e, t, r) {
   const n = Rr(e), i = f_(e, n);
@@ -23893,7 +23893,7 @@ function f1(e, { before: t, after: r }, n, i, s, o) {
     f.insertAfter(g), f = g;
   Mu(d, i);
   const p = e.getChildren();
-  return e.append(...u.getChildren()), p.forEach((g) => g.remove()), e.setCaller(u.getCaller()).setCategory(u.getCategory()).setUnknownAttributes(u.getUnknownAttributes()).setIsCollapsed(u.getIsCollapsed()), u.remove(), o && (e.getIsCollapsed() !== !0 && a?.isNoteShellEditable === !1 ? bc(e, a) : hg(e)), !0;
+  return e.append(...u.getChildren()), p.forEach((g) => g.remove()), e.setCaller(u.getCaller()).setCategory(u.getCategory()).setUnknownAttributes(u.getUnknownAttributes()).setIsCollapsed(u.getIsCollapsed()), u.remove(), o && (e.getIsCollapsed() !== !0 && a?.isNoteShellEditable === !1 ? bc(e, a) : hg(e, { isContentChange: !0 })), !0;
 }
 const ry = /* @__PURE__ */ new Set(["ca", "cp"]), Pu = "cp";
 function ny(e) {

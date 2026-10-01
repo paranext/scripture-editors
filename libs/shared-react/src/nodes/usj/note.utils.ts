@@ -545,8 +545,15 @@ function $selectCharContentEnd(charNode: CharNode) {
  * Mutating: call inside `editor.update()`.
  *
  * @param noteNode - The note node to put the caret after.
+ * @param options - `isContentChange`: set it when the calling update also changes the document
+ *   (closing a note, say). The caret then still goes past the note but its move is not announced
+ *   (see {@link $selectElementPoint}), since the repair that announcement triggers tags the whole
+ *   commit as a caret move and `onUsjChange` would skip the change with it.
  */
-export function $selectAfterNote(noteNode: NoteNode) {
+export function $selectAfterNote(
+  noteNode: NoteNode,
+  { isContentChange = false }: { isContentChange?: boolean } = {},
+) {
   const nodeAfter = noteNode.getNextSibling();
   // Landing in the following text rather than on the parent's element offset gives the caret a
   // text position to type into, the same reason $selectNote prefers `selectEnd()` on the node
@@ -563,38 +570,44 @@ export function $selectAfterNote(noteNode: NoteNode) {
   const parent = noteNode.getParent();
   if (!parent) return;
   const indexAfter = noteNode.getIndexWithinParent() + 1;
-  $selectElementPoint(parent, indexAfter);
+  // A paragraph's own `select` names the slot past the note; only a char span (which cannot be
+  // empty) descends into the note instead, so only there is the explicit element point needed.
+  if (parent.canBeEmpty()) parent.select(indexAfter, indexAfter);
+  else $selectElementPoint(parent, indexAfter, { announce: !isContentChange });
 }
 
 /**
  * Puts a collapsed caret at child slot `offset` of `element`, and keeps it at that slot when the
- * slot sits just past a collapsed note AND a plain `select()` would not land there on its own.
+ * slot sits just past a collapsed note.
  *
  * `ElementNode.select` on an element that cannot be empty - a char span - descends into the child
  * at its edge rather than naming the slot itself. At the end of a span that a collapsed note ends
  * (an unclosed `\wj`, whose missing closer leaves the note its last child), that child is the
  * note, and the descent comes to rest inside the note's hidden closing glyph: an invisible caret
- * whose next keystroke edits the note body. An element that CAN be empty (a paragraph) has no such
- * descent to guard against, so it always takes the plain path.
+ * whose next keystroke edits the note body.
  *
  * The slot past the note is where the caret belongs, and `TrailingNoteCaretGuardPlugin` gives it a
  * caret host to render in when it hears of the move on `SELECTION_CHANGE_COMMAND`. The move is
  * announced here, inside this update, because the browser's own report of it comes too late for an
  * inline span: the element point is written out to the DOM and read back, and reading a position at
  * the end of an inline element resolves it into that element's last text - the same hidden glyph.
- * Dispatching it here is reserved for that one hazard: a plain `select()` already lands correctly
- * everywhere else, and a caller whose OWN commit is still mutating content (closing a note, say)
- * would have that change swallowed by the commit-skipping tag the dispatch's own repair adds -
- * exactly what an unneeded dispatch must not risk.
+ * The guard's repair tags its whole commit as a caret move, which `onUsjChange` skips, so an
+ * update that also changes the document passes `announce: false`: the caret still lands past the
+ * note, but without the announcement the guard does not give it a host there.
  *
  * Mutating: call inside `editor.update()`.
  *
  * @param element - The element to place the caret in.
  * @param offset - The child slot to place it at.
+ * @param options - `announce` (default `true`): whether to dispatch `SELECTION_CHANGE_COMMAND`.
  */
-export function $selectElementPoint(element: ElementNode, offset: number): void {
+export function $selectElementPoint(
+  element: ElementNode,
+  offset: number,
+  { announce = true }: { announce?: boolean } = {},
+): void {
   const childBefore = element.getChildAtIndex(offset - 1);
-  if (element.canBeEmpty() || !$isNoteNode(childBefore) || childBefore.getIsCollapsed() !== true) {
+  if (!$isNoteNode(childBefore) || childBefore.getIsCollapsed() !== true) {
     element.select(offset, offset);
     return;
   }
@@ -602,7 +615,7 @@ export function $selectElementPoint(element: ElementNode, offset: number): void 
   selection.anchor.set(element.getKey(), offset, "element");
   selection.focus.set(element.getKey(), offset, "element");
   $setSelection(selection);
-  $getEditor().dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+  if (announce) $getEditor().dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
 }
 
 /**
