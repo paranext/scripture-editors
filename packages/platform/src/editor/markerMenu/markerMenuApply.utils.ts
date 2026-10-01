@@ -33,8 +33,22 @@ import { $isAtParagraphContentStart } from "./markerMenuContext.utils";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import { $findMatchingParent } from "@lexical/utils";
 import { $getEditor, $getSelection, $isRangeSelection, $isTextNode } from "lexical";
-import { $isMarkerNode, $isParaNode, LoggerBasic, NoteNode, ParaNode, StyleInfo } from "shared";
-import { showParaMarkerPrefix, UsjNodeOptions, ViewOptions } from "shared-react";
+import {
+  $isMarkerNode,
+  $isParaNode,
+  createMarkerLookup,
+  defaultStyleInfo,
+  LoggerBasic,
+  NoteNode,
+  ParaNode,
+  StyleInfo,
+} from "shared";
+import {
+  getDefaultViewOptions,
+  showParaMarkerPrefix,
+  UsjNodeOptions,
+  ViewOptions,
+} from "shared-react";
 import { MutableRefObject } from "react";
 
 /**
@@ -269,10 +283,16 @@ export function $applyMarkerMenuSelection(
   // host re-derive it from delta-doc coordinates (getInsertedNodeKey) — a wrong key there makes
   // replaceEmbedUpdate silently no-op. Same reason EditorRef.insertMarker returns it.
   if (NoteNode.isValidMarker(item.marker, deps.nodeOptions?.extraValidMarkers)) {
-    // A caret on an editable chapter line has no block to insert the note into (see
-    // `chapterLine.utils.ts`); relocate it to the chapter's own text first, or no-op when there
-    // is nowhere to relocate to.
-    if (!$moveCaretOffChapterLine()) return undefined;
+    // A caret on an editable chapter line has no block to insert the note into; move it to where
+    // content after the chapter number goes (see `chapterLine.utils.ts`).
+    if (
+      !$moveCaretOffChapterLine({
+        viewOptions: deps.viewOptions ?? getDefaultViewOptions(),
+        getMarker: createMarkerLookup(deps.styleInfo ?? defaultStyleInfo),
+        logger: deps.logger,
+      })
+    )
+      return undefined;
     return $insertNoteForMarker(
       item.marker,
       reference,

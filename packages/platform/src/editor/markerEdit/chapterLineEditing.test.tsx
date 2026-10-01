@@ -552,20 +552,20 @@ describe("a caret on the chapter line", () => {
 });
 
 describe("inline insertion with the caret on the chapter line", () => {
-  // An inline insertion — a note, a character marker, a verse — has no block of its own to splice
-  // into at a chapter line (`ChapterNode.canBeEmpty()` is `false`), unlike a paragraph split, which
-  // `$splitOnChapterLine` already redirects. The caret paranext-core leaves after a chapter-marker
-  // correction sits exactly here: at the end of the chapter's glyph, just past its number.
-  const PLAIN_ONE_TWO: MarkerContent = { type: "para", marker: "p", content: ["one two"] };
-  const chapterThenPlainParaDoc: Usj = {
-    type: "USJ",
-    version: "3.1",
-    content: [CHAPTER_2, PLAIN_ONE_TWO, POETRY_PARA],
-  };
+  // Content put after a chapter number goes where Paratext 9 puts it, which is also where typing it
+  // puts it: on a markerless line straight after the chapter line. A `\ca` that followed the
+  // chapter follows that content on the same line, and a `\cp` keeps its own line; neither is the
+  // chapter's attribute any more. Each expected document below is what ParatextData itself makes of
+  // the USFM in its label, read back as USJ (whitespace between items aside), so the editor and a
+  // Paratext 9 round trip agree. The caret Platform.Bible leaves after a chapter-marker correction
+  // sits on this line, just past the number.
+  const CHAPTER_2_CA_3: MarkerContent = { ...CHAPTER_2, altnumber: "3" };
+  const CHAPTER_2_CP_B: MarkerContent = { ...CHAPTER_2, pubnumber: "B" };
+  const CA_3: MarkerContent = { type: "char", marker: "ca", content: ["3"] };
+  const CP_B: MarkerContent = { type: "para", marker: "cp", content: ["B"] };
+  const docOf = (...content: MarkerContent[]): Usj => ({ type: "USJ", version: "3.1", content });
 
-  // The default content `$insertNote`/`getUsjMarkerAction` build for a fresh marker inserted with
-  // no selected text to carry over, matching what the same markers settle to anywhere else in the
-  // document — this fix changes WHERE the marker lands, not what it is.
+  // The default content a fresh marker gets when inserted with no selected text to carry over.
   const FRESH_NOTE: MarkerContent = {
     type: "note",
     marker: "f",
@@ -578,38 +578,66 @@ describe("inline insertion with the caret on the chapter line", () => {
   const FRESH_CHAR_ND: MarkerContent = { type: "char", marker: "nd" };
   const FRESH_VERSE_1: MarkerContent = { type: "verse", marker: "v", number: "1" };
 
-  it.each([
+  const insertions: [string, string, MarkerContent][] = [
     ["a note", "f", FRESH_NOTE],
     ["a character marker", "nd", FRESH_CHAR_ND],
     ["a verse", "v", FRESH_VERSE_1],
-  ])(
-    "insertMarker for %s doesn't throw and lands at the next paragraph's content start",
-    async (_label, marker, inserted) => {
-      const { ref, lexical } = await mountStandardViewEditor(chapterThenPlainParaDoc, {
+  ];
+
+  describe.each(insertions)("%s", (_label, marker, inserted) => {
+    it(`\\c 2 ^ → \\c 2 / ^: on a line of its own after the chapter line`, async () => {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2, VERSE_1_PARA), {
         scrRef: GEN_2_1,
       });
       await onChapterLine(lexical, () => undefined);
       await act(async () => {
         ref.current?.insertMarker(marker);
       });
-      expect(ref.current?.getUsj()?.content).toEqual([
-        CHAPTER_2,
-        { type: "para", marker: "p", content: [inserted, "one two"] },
-        POETRY_PARA,
-      ]);
-    },
-  );
+      expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, inserted, VERSE_1_PARA]);
+    });
 
-  // Selecting part of the chapter number — say its digit — and inserting there is the same request
-  // as a caret on the line: nothing on a chapter line can hold the new marker, and wrapping the
-  // selected digit would take it out of the chapter number.
-  it.each([
-    ["a note", "f", FRESH_NOTE],
-    ["a character marker", "nd", FRESH_CHAR_ND],
-  ])(
-    "insertMarker for %s over a selection inside the chapter glyph lands at the next paragraph's content start",
+    it(`\\c 2 ^ / \\ca 3\\ca* → \\c 2 / ^\\ca 3\\ca*: ahead of the \\ca, which stops being the chapter's`, async () => {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2_CA_3, VERSE_1_PARA), {
+        scrRef: GEN_2_1,
+      });
+      await onChapterLine(lexical, () => undefined);
+      await act(async () => {
+        ref.current?.insertMarker(marker);
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, inserted, CA_3, VERSE_1_PARA]);
+    });
+
+    it(`\\c 2 ^ / \\cp B → \\c 2 / ^ / \\cp B: between the chapter line and the \\cp`, async () => {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2_CP_B, VERSE_1_PARA), {
+        scrRef: GEN_2_1,
+      });
+      await onChapterLine(lexical, () => undefined);
+      await act(async () => {
+        ref.current?.insertMarker(marker);
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, inserted, CP_B, VERSE_1_PARA]);
+    });
+  });
+
+  // Where Platform.Bible leaves the caret after correcting a chapter marker, between the number
+  // and the glyph's trailing separator: still after the number, so the same place.
+  it("goes after the chapter number from a caret just past the number, too", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2, VERSE_1_PARA), {
+      scrRef: GEN_2_1,
+    });
+    await onChapterLine(lexical, () => undefined, 1);
+    await act(async () => {
+      ref.current?.insertMarker("f");
+    });
+    expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, FRESH_NOTE, VERSE_1_PARA]);
+  });
+
+  // Selecting part of the chapter number and inserting there is the same request: the marker's own
+  // bytes are never operands, so the number stays whole rather than being wrapped or replaced.
+  it.each(insertions.slice(0, 2))(
+    "inserts %s after the chapter number over a selection inside the chapter glyph",
     async (_label, marker, inserted) => {
-      const { ref, lexical } = await mountStandardViewEditor(chapterThenPlainParaDoc, {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2, VERSE_1_PARA), {
         scrRef: GEN_2_1,
       });
       await act(async () =>
@@ -622,28 +650,21 @@ describe("inline insertion with the caret on the chapter line", () => {
       await act(async () => {
         ref.current?.insertMarker(marker);
       });
-      expect(ref.current?.getUsj()?.content).toEqual([
-        CHAPTER_2,
-        { type: "para", marker: "p", content: [inserted, "one two"] },
-        POETRY_PARA,
-      ]);
+      expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, inserted, VERSE_1_PARA]);
     },
   );
 
-  it("is a non-throwing no-op when no paragraph follows the chapter line", async () => {
-    const chapterOnlyDoc: Usj = { type: "USJ", version: "3.1", content: [CHAPTER_2] };
-    const { ref, lexical } = await mountStandardViewEditor(chapterOnlyDoc, { scrRef: GEN_2_1 });
+  it("starts the chapter's text when nothing follows the chapter line", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2), { scrRef: GEN_2_1 });
     await onChapterLine(lexical, () => undefined);
-    let key: string | undefined;
     await act(async () => {
-      key = ref.current?.insertMarker("f");
+      ref.current?.insertMarker("f");
     });
-    expect(key).toBeUndefined();
-    expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2]);
+    expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, FRESH_NOTE]);
   });
 
-  it("applyMarkerMenuSelection for a note doesn't throw and lands at the next paragraph's content start", async () => {
-    const { ref, lexical } = await mountStandardViewEditor(chapterThenPlainParaDoc, {
+  it("puts a note picked from the marker menu in the same place", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2_CA_3, VERSE_1_PARA), {
       scrRef: GEN_2_1,
     });
     await onChapterLine(lexical, () => undefined);
@@ -653,10 +674,28 @@ describe("inline insertion with the caret on the chapter line", () => {
         { trigger: "backslash", literalPrefixLanded: false },
       );
     });
-    expect(ref.current?.getUsj()?.content).toEqual([
-      CHAPTER_2,
-      { type: "para", marker: "p", content: [FRESH_NOTE, "one two"] },
-      POETRY_PARA,
-    ]);
+    expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, FRESH_NOTE, CA_3, VERSE_1_PARA]);
   });
+
+  // Typing is the reference the insertions above follow; pinned so the two cannot drift apart.
+  it.each([
+    ["no attribute", CHAPTER_2, [CHAPTER_2, "X", VERSE_1_PARA]],
+    ["a \\ca", CHAPTER_2_CA_3, [CHAPTER_2, "X", CA_3, VERSE_1_PARA]],
+    ["a \\cp", CHAPTER_2_CP_B, [CHAPTER_2, "X", CP_B, VERSE_1_PARA]],
+  ])(
+    "text typed after the chapter number with %s lands the same way",
+    async (_label, chapter, expected) => {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(chapter, VERSE_1_PARA), {
+        scrRef: GEN_2_1,
+      });
+      await onChapterLine(lexical, () => undefined);
+      await act(async () => {
+        lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "X");
+      });
+      await act(async () => {
+        ref.current?.commitPendingMarkerEdits();
+      });
+      expect(ref.current?.getUsj()?.content).toEqual(expected);
+    },
+  );
 });

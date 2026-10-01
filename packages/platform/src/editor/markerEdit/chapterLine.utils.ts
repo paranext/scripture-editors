@@ -15,24 +15,23 @@
  * or a drop goes in as the user would type it, its lines starting paragraphs after the chapter line.
  * Second: an INLINE insertion (a note, a character marker, a verse, a milestone — anything built on
  * `RangeSelection.insertNodes`) throws when the caret is on a chapter line, because Lexical requires
- * a block `ElementNode` ancestor to splice into and a chapter line is not one. `$moveCaretOffChapterLine`
- * relocates the caret off the line before such an insertion runs.
+ * a block `ElementNode` ancestor to splice into and a chapter line is not one.
+ * `$moveCaretOffChapterLine` first moves the caret to where that content goes, as typing it would.
  */
 
 import { $setParaMarkerWithPrefix } from "./markerEditDeletion.utils";
-import { $chapterAdjacentAttributeNodes } from "./tier2Rebuild.utils";
+import { $rebuildChapter, Tier2Context } from "./tier2Rebuild.utils";
 import { $insertPastedText } from "./whitespaceDisplay.plugin.utils";
 import { $findMatchingParent } from "@lexical/utils";
-import { $getSelection, $isRangeSelection, LexicalNode, RangeSelection } from "lexical";
+import { $getRoot, $getSelection, $isRangeSelection, LexicalNode, RangeSelection } from "lexical";
 import {
   $chapterGlyphTextNode,
   $createParaNode,
   $isChapterNode,
-  $isParaNode,
   ChapterNode,
   MarkerLookup,
 } from "shared";
-import { $advancePastParaPrefixes, showParaMarkerPrefix, ViewOptions } from "shared-react";
+import { showParaMarkerPrefix, ViewOptions } from "shared-react";
 
 /** The chapter line `node` is, or sits inside; `undefined` outside any chapter line. */
 function $chapterLineOf(node: LexicalNode): ChapterNode | undefined {
@@ -166,51 +165,64 @@ export function $pasteOnChapterLine(
 }
 
 /**
- * Ensures the caret is not sitting on a chapter line, relocating it to the chapter's own
- * text when it is, for an inline insertion (a note, a character marker, a verse, a milestone —
- * anything that isn't a paragraph split, which `$splitOnChapterLine` already handles) requested
- * there. A chapter line is not a block `ElementNode` (`ChapterNode.canBeEmpty()` is `false`), so
- * `RangeSelection.insertNodes` throws — "Expected node TextNode of type text to have a block
- * ElementNode ancestor" — when asked to splice inline content at a caret inside one; this is the
- * one place that relocation happens, called from every platform-side entry point an inline
- * insertion can start from.
- *
- * The destination is the content start of the first `ParaNode` after the chapter line AND its
- * adjacent attribute nodes ({@link $chapterAdjacentAttributeNodes} — an `\ca`/`\cp` span or a
- * `\cp` paragraph right after the chapter is still the chapter's own material, not its text).
- * Content start, not offset 0, so the caret lands after a visible paragraph marker prefix glyph
- * rather than inside it: {@link $advancePastParaPrefixes} finds that boundary by scanning,
- * whether or not the destination paragraph is showing one, falling back to the paragraph's own
- * start when it has no prefix (or leading verse number) to skip.
- *
- * Returns `true` — the caret is now somewhere an inline insertion may proceed — both when it
- * relocated a caret off a chapter line and when the caret was never on one to begin with, so
- * callers can call this unconditionally ahead of every inline insertion rather than checking
- * first. Returns `false` only when the caret sits on a chapter line with nowhere to move it (no
- * paragraph follows the chapter's region): callers must treat that as a no-op and insert nothing,
- * rather than letting the insertion run and throw.
- *
- * A selection lying wholly on one chapter line — part of the chapter number selected — is the same
- * request and is relocated the same way: the chapter line cannot hold the new marker, and wrapping
- * the selected bytes would take them out of the chapter number. A selection that runs from a
- * chapter line into the text is left as it is; the insertions already step its ends out of the
- * glyph text and act on the text it covers.
- *
- * Mutating when it returns `true` for a caret that was on a chapter line: call inside
- * `editor.update()`, before any inline insertion that assumes the caret already sits in a block's
- * content.
+ * Stands in for the content an insertion puts after a chapter number while the chapter's bytes are
+ * re-tokenized (see {@link $moveCaretOffChapterLine}). A private-use character: the tokenizer reads
+ * it as ordinary text, and no real text holds it for the search that finds it again.
  */
-export function $moveCaretOffChapterLine(): boolean {
+const INSERTION_PLACEHOLDER = "\uE000";
+
+/**
+ * Prepares an inline insertion (a note, a character marker, a verse, a milestone — anything that
+ * isn't a paragraph split, which `$splitOnChapterLine` handles) requested with the caret on a
+ * chapter line, by moving the caret to where that content goes. A chapter line is not a block
+ * `ElementNode` (`ChapterNode.canBeEmpty()` is `false`), so `RangeSelection.insertNodes` throws —
+ * "Expected node TextNode of type text to have a block ElementNode ancestor" — when asked to splice
+ * inline content at a caret inside one.
+ *
+ * Content put after a chapter number goes where Paratext 9 puts it, which is also where typing it
+ * puts it: on a line of its own, with no paragraph marker, straight after the chapter line. A `\ca`
+ * that followed the chapter then follows that content on the same line, and a `\cp` stays on the
+ * next line; neither is the chapter's attribute any more, since something now stands between it and
+ * the `\c`. So `\c 1 ^\n\ca 2\ca*` becomes `\c 1\n^\ca 2\ca*`, and `\c 1 ^\n\cp 2` becomes
+ * `\c 1\n^\n\cp 2`. Rather than build that shape by hand, the chapter's bytes are re-tokenized with
+ * one character standing in for the content at the end of the chapter glyph (`$rebuildChapter`,
+ * the same settle that typing there runs), and the caret then takes that character's place.
+ *
+ * The content goes after the chapter number wherever on the line the caret is, and a selection
+ * lying wholly on the chapter line is treated the same way: the bytes of the marker itself are
+ * never operands for an insertion. A selection that runs from a chapter line into the text is left
+ * as it is; the insertions already step its ends out of the glyph text and act on the text it
+ * covers.
+ *
+ * Returns `true` when the insertion may go ahead — the caret was moved, or was never on a chapter
+ * line — and `false` when the chapter could not be re-tokenized (it carries attributes its bytes
+ * cannot re-derive), in which case the caller must insert nothing.
+ *
+ * Mutating: call inside `editor.update()`, before any inline insertion that assumes the caret
+ * already sits in a block's content.
+ *
+ * @param context What the chapter re-tokenize needs: the view's options, the stylesheet lookup,
+ *   and a logger.
+ */
+export function $moveCaretOffChapterLine(context: Tier2Context): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return true;
   const chapter = $chapterLineOf(selection.focus.getNode());
   if (!chapter || !chapter.is($chapterLineOf(selection.anchor.getNode()))) return true;
+  const glyph = $chapterGlyphTextNode(chapter);
+  if (!glyph) return false;
 
-  const region = $chapterAdjacentAttributeNodes(chapter);
-  const lastRegionNode: LexicalNode = region.length > 0 ? region[region.length - 1] : chapter;
-  const para = lastRegionNode.getNextSibling();
-  if (!$isParaNode(para)) return false;
-
-  if (!$advancePastParaPrefixes(para)) para.selectStart();
+  glyph.setTextContent(glyph.getTextContent() + INSERTION_PLACEHOLDER);
+  if (!$rebuildChapter(chapter, context)) {
+    glyph.setTextContent(glyph.getTextContent().slice(0, -INSERTION_PLACEHOLDER.length));
+    return false;
+  }
+  const holder = $getRoot()
+    .getAllTextNodes()
+    .find((node) => node.getTextContent().includes(INSERTION_PLACEHOLDER));
+  if (!holder) return false;
+  const offset = holder.getTextContent().indexOf(INSERTION_PLACEHOLDER);
+  holder.setTextContent(holder.getTextContent().replace(INSERTION_PLACEHOLDER, ""));
+  holder.select(offset, offset);
   return true;
 }
