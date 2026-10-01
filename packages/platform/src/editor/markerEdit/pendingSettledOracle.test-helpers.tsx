@@ -85,7 +85,7 @@ function chapterSideUsj(beside: MarkerContent): Usj {
 
 /** The documents the oracle edits; the root child after the chapter is the one edited — the
  * first body paragraph, or a `\ca`/`\cp` span beside the chapter. */
-export const CORPUS: { name: string; usj: Usj }[] = [
+const CORPUS: { name: string; usj: Usj }[] = [
   {
     name: "closed char span",
     usj: twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"]),
@@ -145,7 +145,7 @@ export const CORPUS: { name: string; usj: Usj }[] = [
  * the keystroke does nothing there. */
 type Keystroke = (text: string, offset: number) => { text: string; caret: number } | undefined;
 
-export const KEYSTROKES: { name: string; apply: Keystroke }[] = [
+const KEYSTROKES: { name: string; apply: Keystroke }[] = [
   ...["x", " ", "*", "\\", "|"].map((character) => ({
     name: `type ${JSON.stringify(character)}`,
     apply: (text: string, offset: number) => ({
@@ -199,7 +199,7 @@ function $editSites(): { index: number; offset: number }[] {
 }
 
 /** The editable text nodes of the first body paragraph, in document order. */
-export function $editableTexts(): TextNode[] {
+function $editableTexts(): TextNode[] {
   const para = $getRoot().getChildren()[2];
   const out: TextNode[] = [];
   const visit = (node: LexicalNode): void => {
@@ -214,7 +214,7 @@ export function $editableTexts(): TextNode[] {
 }
 
 /** Click into the second paragraph, blur, and commit whatever is still pending. */
-export async function depart(mounted: Mounted): Promise<void> {
+async function depart(mounted: Mounted): Promise<void> {
   await act(async () => {
     mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
     mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
@@ -269,7 +269,7 @@ export function $caretPositions(): CaretPosition[] {
 }
 
 /** The document's text-node bytes, concatenated. */
-export function $documentText(): string {
+function $documentText(): string {
   return $getRoot()
     .getAllTextNodes()
     .map((node) => node.getTextContent())
@@ -382,9 +382,10 @@ const WRITE = process.env.PENDING_SETTLED_ORACLE_WRITE === "1";
 /** Print every failing case's detail, listed or not, with the document text before and after. */
 const DUMP = process.env.PENDING_SETTLED_ORACLE_DUMP === "1";
 
-/** A view's expected-failures list: per row, the keystroke cases known to fail, by label. */
+/** A view's expected-failures list: per row, the keystroke cases known to fail, by label, each
+ * with the reason it is left failing. */
 interface ExpectedFailures {
-  [row: string]: string[];
+  [row: string]: { [label: string]: string };
 }
 
 function readExpectedFailures(listFile: URL): ExpectedFailures {
@@ -396,8 +397,9 @@ function readExpectedFailures(listFile: URL): ExpectedFailures {
 /**
  * Register the oracle's rows for `view` (an `ORACLE_VIEWS` name), compared with the cases
  * `listFile` lists as known to fail: a failure the list does not name fails its row, and so does a
- * listed case that no longer fails, so the list only shrinks. `PENDING_SETTLED_ORACLE_WRITE=1`
- * rewrites the list from the run instead.
+ * listed case that no longer fails, so the list only shrinks. Each listed case names the reason
+ * it is left failing. `PENDING_SETTLED_ORACLE_WRITE=1` rewrites the list from the run instead,
+ * keeping the reasons of the cases still listed.
  */
 export function describePendingSettledOracle(view: string, listFile: URL): void {
   const rows = CORPUS.map(({ name, usj }) => [`${name} (${view} view)`, usj] as const);
@@ -478,17 +480,27 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
           }
 
         expect(pendingCases, "no keystroke left an edit pending").toBeGreaterThan(0);
+        const reasons = listed[row] ?? {};
         if (WRITE) {
-          if (mismatches.size > 0) written[row] = [...mismatches.keys()].sort();
+          // A case still failing keeps the reason it was listed with; a new one is listed without
+          // one, which the comparison below rejects until it is given one.
+          if (mismatches.size > 0)
+            written[row] = Object.fromEntries(
+              [...mismatches.keys()].sort().map((label) => [label, reasons[label] ?? ""]),
+            );
           return;
         }
-        const known = new Set(listed[row] ?? []);
+        const known = new Set(Object.keys(reasons));
         expect(
           [...mismatches].filter(([label]) => !known.has(label)).map(([, detail]) => detail),
         ).toEqual([]);
         expect(
           [...known].filter((label) => !mismatches.has(label)),
           "listed as failing but passing — rewrite the list",
+        ).toEqual([]);
+        expect(
+          [...known].filter((label) => !reasons[label]),
+          "listed without the reason it is left failing",
         ).toEqual([]);
       },
       300_000,
