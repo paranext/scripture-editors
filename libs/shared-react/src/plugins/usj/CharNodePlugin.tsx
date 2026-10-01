@@ -4,7 +4,10 @@ import { deepEqual } from "fast-equals";
 import {
   $getEditor,
   $getNodeByKey,
+  $getSelection,
   $getState,
+  $isDecoratorNode,
+  $isRangeSelection,
   $isTextNode,
   LexicalEditor,
   NodeKey,
@@ -192,43 +195,99 @@ function $charNodeTransform(node: CharNode): void {
   }
 }
 
+/** Placeholder texts this update already dropped a byte from. Lexical re-runs a transform on a node
+ * it dirtied in the same update, while the last committed state still shows the span empty, so
+ * without this a pasted `~b` would lose its own leading NBSP on the second pass. A node is writable
+ * (one object) for the rest of its update, so the entry dies with that update's clone. */
+const placeholderDroppedThisUpdate = new WeakSet<TextNode>();
+
 /**
- * Remove 'empty' placeholder in CharNode once other text content is added.
+ * Drop an empty char span's placeholder NBSP once the user's own text arrives in it, whether the
+ * text lands behind the placeholder or in front of it (a host caret at an empty span's undisplayed
+ * attribute sits in front of it).
  *
- * Only a span that was EMPTY before this update (its one child exactly the placeholder) had a
- * placeholder to type into. A span whose text merely starts with a no-break space — the author's
- * own `~b`, or that text merged back together when an annotation mark around its `~` is removed —
- * keeps the byte. A span the update created has no earlier state, and is treated as before.
- * @param node - TextNode that might be a placeholder.
+ * Only a span that held nothing but its placeholder in the last committed state had one to type
+ * into, read through its read-only glyphs (the visible views frame it with them). A span whose text
+ * merely starts with a no-break space — the author's own `~b`, or that text merged back together
+ * when an annotation mark around its `~` is removed — keeps the byte. A span the update created has
+ * no earlier state: its only text loses a leading NBSP as before. The editable views are left
+ * alone: there the placeholder is the opener's separator, which the editor→USJ conversion strips.
+ * @param node - TextNode that might hold a placeholder.
  */
 function $charTextNodeTransform(node: TextNode): void {
   const parent = node.getParent();
-  if (!$isCharNode(parent) || parent.getChildrenSize() !== 1) return;
-
+  if (!$isCharNode(parent) || $rendersOwnGlyphs(parent)) return;
+  if (placeholderDroppedThisUpdate.has(node)) return;
   const text = node.getTextContent();
+  if (text.length < 2 || !text.includes(EMPTY_CHAR_PLACEHOLDER_TEXT)) return;
+  const placeholderKey = $placeholderKeyBeforeUpdate(parent.getKey());
+  if (placeholderKey === undefined) {
+    // A span this update created: its only text loses a leading placeholder byte.
+    if (parent.getChildrenSize() === 1 && text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT))
+      $dropPlaceholderByte(node, 0);
+    return;
+  }
+  if (placeholderKey !== node.getKey()) return;
+  const index = $placeholderIndex(node, text);
+  if (index !== undefined) $dropPlaceholderByte(node, index);
+}
+
+/** Where in `text` (what `node`, an empty span's placeholder, holds now) the placeholder byte is:
+ * beside the caret's insertion when the caret is in `node`, else its first or last byte. */
+function $placeholderIndex(node: TextNode, text: string): number | undefined {
+  const selection = $getSelection();
   if (
-    text.length > 1 &&
-    text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT) &&
-    $wasEmptyOrNew(parent.getKey())
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === node.getKey()
   ) {
-    node.setTextContent(text.slice(1));
-    node.selectEnd();
+    const { offset } = selection.anchor;
+    // Typed behind the placeholder: the caret ends at the text's end and the placeholder leads.
+    if (offset === text.length && text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT)) return 0;
+    // Typed in front of it: the placeholder is the byte right after the caret.
+    if (text[offset] === EMPTY_CHAR_PLACEHOLDER_TEXT) return offset;
+  }
+  if (text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT)) return 0;
+  if (text.endsWith(EMPTY_CHAR_PLACEHOLDER_TEXT)) return text.length - 1;
+  return undefined;
+}
+
+/** Removes the byte at `index` from `node`, keeping a caret in it on the same user byte. */
+function $dropPlaceholderByte(node: TextNode, index: number): void {
+  const selection = $getSelection();
+  const caret =
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === node.getKey()
+      ? selection.anchor.offset
+      : undefined;
+  const text = node.getTextContent();
+  const writable = node.setTextContent(text.slice(0, index) + text.slice(index + 1));
+  placeholderDroppedThisUpdate.add(writable);
+  if (caret === undefined) writable.selectEnd();
+  else {
+    const next = caret > index ? caret - 1 : caret;
+    writable.select(next, next);
   }
 }
 
-/** Whether the char span `key` held only its placeholder in the editor's last committed state, or
- * did not exist there. */
-function $wasEmptyOrNew(key: NodeKey): boolean {
+/**
+ * The key of the placeholder text the char span `key` held in the editor's last committed state,
+ * when that text was all it held besides read-only glyphs; `null` when the span held anything else,
+ * and `undefined` when the span did not exist there.
+ */
+function $placeholderKeyBeforeUpdate(key: NodeKey): NodeKey | null | undefined {
   return $getEditor()
     .getEditorState()
     .read(() => {
       const previous = $getNodeByKey(key);
-      if (!$isCharNode(previous)) return true;
-      const children = previous.getChildren();
-      return (
-        children.length === 1 &&
-        $isTextNode(children[0]) &&
-        children[0].getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT
-      );
+      if (!$isCharNode(previous)) return undefined;
+      const content = previous.getChildren().filter((child) => !$isDecoratorNode(child));
+      const [only] = content;
+      return content.length === 1 &&
+        $isTextNode(only) &&
+        only.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT
+        ? only.getKey()
+        : null;
     });
 }

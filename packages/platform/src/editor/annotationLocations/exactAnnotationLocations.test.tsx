@@ -443,25 +443,135 @@ describe("an annotation over a no-break space the text itself contains", () => {
     },
   );
 
-  it.each(["formatted", "hidden+expanded"])(
-    "still drops an empty span's placeholder once text is typed into it (%s)",
-    async (name) => {
-      const emptyUsj = twoParaUsj(["x ", { type: "char", marker: "wj", content: [] }, " y"]);
-      const mounted = await mountInView(emptyUsj, oracleView(name));
+  /** `\p x \wj \wj* y`: an empty span, which every view but the editable ones shows as a lone
+   * placeholder NBSP between read-only glyphs, or alone. */
+  const emptySpanUsj: Usj = twoParaUsj(["x ", { type: "char", marker: "wj", content: [] }, " y"]);
+  const placeholderViews = [
+    "visible",
+    "visible+collapsed",
+    "formatted",
+    "paragraph-structure",
+    "hidden+expanded",
+  ];
+
+  /** The empty span's placeholder text. Call inside a read or update. */
+  function $placeholder(): LexicalNode {
+    const placeholder = $onlyCharNode()
+      .getChildren()
+      .find((child) => $isTextNode(child) && child.getTextContent() === NBSP);
+    if (!placeholder) throw new Error("expected the empty span's placeholder");
+    return placeholder;
+  }
+
+  /** The empty span's content as saved. */
+  function savedSpanContent(mounted: MountedInView): MarkerContent[] | undefined {
+    const para = mounted.ref.current?.getUsj()?.content?.[2];
+    if (!para || typeof para === "string") throw new Error("expected a paragraph");
+    const span = para.content?.[1];
+    if (!span || typeof span === "string") throw new Error("expected the span");
+    return span.content;
+  }
+
+  it.each(
+    placeholderViews.flatMap((view) =>
+      [
+        { name: "typed behind it", offset: 1, typed: "a", saved: ["a"] },
+        { name: "typed in front of it", offset: 0, typed: "a", saved: ["a"] },
+        { name: "inserted behind it", offset: 1, typed: `${NBSP}b`, saved: [`${NBSP}b`] },
+        { name: "inserted in front of it", offset: 0, typed: `${NBSP}b`, saved: [`${NBSP}b`] },
+      ].map((row) => ({ ...row, view })),
+    ),
+  )(
+    "saves only the user's bytes when text is $name into an empty span ($view)",
+    async ({ view, offset, typed, saved }) => {
+      const mounted = await mountInView(emptySpanUsj, oracleView(view));
 
       await act(async () => {
         mounted.lexical.update(() => {
-          const char = $onlyCharNode();
-          const placeholder = char.getFirstChild();
-          if (!$isTextNode(placeholder)) throw new Error("expected the placeholder text");
-          placeholder.setTextContent(`${NBSP}a`);
+          const placeholder = $placeholder();
+          if (!$isTextNode(placeholder)) throw new Error("expected text");
+          placeholder.select(offset, offset).insertText(typed);
+        });
+        await Promise.resolve();
+      });
+
+      expect(savedSpanContent(mounted)).toEqual(saved);
+    },
+  );
+
+  it.each(placeholderViews)(
+    "saves only the pasted bytes when pasting into an empty span (%s)",
+    async (name) => {
+      const mounted = await mountInView(emptySpanUsj, oracleView(name));
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const placeholder = $placeholder();
+          if (!$isTextNode(placeholder)) throw new Error("expected text");
+          placeholder.select(1, 1);
+        });
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        mounted.lexical.dispatchCommand(
+          PASTE_COMMAND,
+          pasteEvent({ "text/plain": `${NBSP}b` }).event,
+        );
+        await Promise.resolve();
+      });
+
+      expect(savedSpanContent(mounted)).toEqual([`${NBSP}b`]);
+    },
+  );
+
+  it.each(placeholderViews)(
+    "saves only the typed byte after a host caret at an empty span's attribute (%s)",
+    async (name) => {
+      const jump: MarkerObject & { "link-href": string } = {
+        type: "char",
+        marker: "jmp",
+        "link-href": "GEN 1:1",
+      };
+      const mounted = await mountInView(twoParaUsj(["x ", jump, " y"]), oracleView(name));
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: propertyPath([2, 1], "link-href"), propertyOffset: 0 },
+        });
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("no range selection");
+          selection.insertText("a");
+        });
+        await Promise.resolve();
+      });
+
+      expect(savedSpanContent(mounted)).toEqual(["a"]);
+    },
+  );
+
+  it.each(["standard", "unformatted", ...placeholderViews])(
+    "never saves the placeholder a span emptied by a delete shows (%s)",
+    async (name) => {
+      const mounted = await mountInView(
+        twoParaUsj(["x ", { type: "char", marker: "wj", content: ["bc"] }, " y"]),
+        oracleView(name),
+      );
+
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const text = $textContaining("bc");
+          const start = text.getTextContent().indexOf("bc");
+          text.select(start, start + 2).removeText();
         });
         await Promise.resolve();
       });
 
       const para = mounted.ref.current?.getUsj()?.content?.[2];
-      if (!para || typeof para === "string") throw new Error("expected a paragraph");
-      expect(para.content?.[1]).toEqual({ type: "char", marker: "wj", content: ["a"] });
+      expect(JSON.stringify(para)).not.toContain(NBSP);
     },
   );
 
