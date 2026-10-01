@@ -506,8 +506,8 @@ describe("$settledUsj — expanded note scopes", () => {
       const callerNode = $createTextNode(getEditableCallerText("+"));
       // An implicitly-closed char span (no closing MarkerNode child, matching the
       // `closed="false"` footnote-content convention elsewhere in this test suite) — its own
-      // opening glyph gets renamed below, mirroring the settling note test, except this time the
-      // enclosing note stays collapsed, so the rename must never reach the tokenizer.
+      // opening glyph gets a nesting `+` typed below, an edit only a re-tokenization can apply,
+      // except this time the enclosing note stays collapsed, so it must never reach the tokenizer.
       const boldChar = $createCharNode("bd");
       boldChar.append($createMarkerNode("bd"), $createTextNode(`${NBSP}bold text`));
       note.append($createMarkerNode("f"), callerNode, boldChar, $createMarkerNode("f", "closing"));
@@ -523,11 +523,13 @@ describe("$settledUsj — expanded note scopes", () => {
       $getRoot().append(refusingPara, settlingPara);
     });
 
-    // Rename the char span's opening glyph inside the collapsed note, and the unrelated
+    // Nest the char span's opening glyph inside the collapsed note, and rename the unrelated
     // paragraph's own opening glyph, in the SAME update — both bare (no trailing space), which
     // Tier 1 unconditionally pends without ever needing a live caret/selection. Both scopes land
     // in the engine's live pended-owner set, proving the refusal below is a per-scope decision
-    // made inside `$settledNoteScope`, not a short-circuit that abandons the whole document.
+    // made inside `$settledNoteScope`, not a short-circuit that abandons the whole document. (A
+    // plain rename such as `\it` would not do: Tier 1 renames a span in place wherever it sits,
+    // collapsed note or not, so both settles apply it.)
     await act(async () => {
       editor.update(() => {
         const [refusingPara, settlingPara] = $getRoot().getChildren().filter($isParaNode);
@@ -537,7 +539,7 @@ describe("$settledUsj — expanded note scopes", () => {
         if (!boldChar) throw new Error("expected a char span inside the note");
         const boldGlyph = boldChar.getFirstChild();
         if (!$isMarkerNode(boldGlyph)) throw new Error("expected the char span's opening glyph");
-        $pendGlyphEdit(boldGlyph, "\\it");
+        $pendGlyphEdit(boldGlyph, "\\+bd");
 
         const settlingGlyph = settlingPara?.getFirstChild();
         if (!$isMarkerNode(settlingGlyph)) throw new Error("expected settlingPara's prefix glyph");

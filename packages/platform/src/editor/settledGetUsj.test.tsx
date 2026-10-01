@@ -399,6 +399,39 @@ const pendingShapes: PendingShape[] = [
     },
   },
   {
+    // A CLOSED span's opener renamed: the settle renames the closer with it, so `getUsj()` while
+    // pending must too — re-tokenizing `\wx grace\w*` would instead leave the old closer
+    // unmatched.
+    name: "closed char span's opening glyph renamed",
+    usj: twoParaUsj(["start ", { type: "char", marker: "w", content: ["grace"] }, " end"]),
+    $edit: () => {
+      const glyph = $textContaining("grace").getPreviousSibling();
+      if (!$isMarkerNode(glyph)) throw new Error("expected the span's opening glyph");
+      glyph.setTextContent("\\wj");
+      glyph.select(3, 3);
+    },
+  },
+  {
+    // The same screen bytes with the typed name byte at the start of the content instead, in
+    // front of the separator — the span renames the same way.
+    name: "name byte typed in front of a closed char span's separator",
+    usj: twoParaUsj(["start ", { type: "char", marker: "w", content: ["grace"] }, " end"]),
+    $edit: () => {
+      const content = $textContaining("grace");
+      content.setTextContent(`j${NBSP}grace`);
+      content.select(1, 1);
+    },
+  },
+  {
+    name: "closed char span's opener renamed to an unknown marker",
+    usj: twoParaUsj(["start ", { type: "char", marker: "w", content: ["grace"] }, " end"]),
+    $edit: () => {
+      const content = $textContaining("grace");
+      content.setTextContent(`x${NBSP}grace`);
+      content.select(1, 1);
+    },
+  },
+  {
     name: "half-typed attribute run appended to a char span",
     usj: twoParaUsj(["start ", { type: "char", marker: "nd", content: ["name"] }, " end"]),
     $edit: () => $textContaining("name").setTextContent(" name|stuf"),

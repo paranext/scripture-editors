@@ -32,7 +32,11 @@ import { deserializeSerializedEditorState } from "../adaptors/editor-usj.adaptor
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
 import { TransientInput } from "../editor.model";
 import { BARE_OPENER_REGEX } from "./markerName.pattern";
-import { $unknownSplitRejoinScope } from "./markerEditTier1.utils";
+import {
+  $pendingCharOpenerRename,
+  $unknownSplitRejoinScope,
+  CharOpenerRename,
+} from "./markerEditTier1.utils";
 import { $serializeExpandedNoteContent, ATOMIC_SENTINEL } from "./settleShared.utils";
 import {
   $buildChapterFragment,
@@ -913,6 +917,32 @@ export function $applySettledNoteGlyphRename(
 }
 
 /**
+ * Applies a pending char opener rename ({@link $pendingCharOpenerRename}) to the serialized copy —
+ * the read-only mirror of `$applyCharOpenerRename` (markerEditTier1.utils.ts): the span takes the
+ * new marker, its opening glyph and closer are re-spelled with it, and name bytes typed at the
+ * start of the content leave the content text, as they move into the glyph on the live side. The
+ * span keeps its place, so nothing around it is rebuilt.
+ */
+export function $applySettledCharOpenerRename(
+  rename: CharOpenerRename,
+  sites: Map<NodeKey, SerializedSite>,
+): void {
+  const { char, glyph, closer, newMarker, nameInContent } = rename;
+  const charSite = sites.get(char.getKey());
+  if (charSite) (charSite.node as SerializedLexicalNode & { marker?: string }).marker = newMarker;
+  const glyphSite = sites.get(glyph.getKey());
+  if (glyphSite) rewriteSettledGlyphMarker(glyphSite.node, newMarker);
+  const closerSite = closer && sites.get(closer.getKey());
+  if (closerSite) rewriteSettledGlyphMarker(closerSite.node, newMarker);
+  const textSite = nameInContent && sites.get(nameInContent.text.getKey());
+  const text = textSite && serializedText(textSite.node);
+  if (textSite && nameInContent && text !== undefined)
+    (textSite.node as SerializedLexicalNode & { text: string }).text = text.slice(
+      nameInContent.length,
+    );
+}
+
+/**
  * The serialized nodes a settled chapter becomes — or `undefined` when the settle refuses.
  * Mirrors `$rebuildChapter` (tier2Rebuild.utils.ts) read-only, decision for decision: the same
  * fragment, the same must-still-be-a-chapter guard, the same sid carry-over, and the same
@@ -1000,6 +1030,9 @@ export interface SettleScopes {
   chapterScopes: Map<NodeKey, ChapterNode>;
   /** The note-own-glyph renames among the pended keys, keyed by the note's key. */
   noteGlyphRenames: Map<NodeKey, NoteGlyphRename>;
+  /** The char opener renames Tier 1 applies in place, keyed by the span's key. They rebuild no
+   * scope: the span is renamed where it stands. */
+  charOpenerRenames: Map<NodeKey, CharOpenerRename>;
   /** Pended, emptied optbreak husks — removed outright rather than rebuilt. */
   husks: UnknownNode[];
   huskKeys: Set<NodeKey>;
@@ -1021,6 +1054,7 @@ export function $collectSettleScopes(
   const noteScopes = new Map<NodeKey, NoteNode>();
   const chapterScopes = new Map<NodeKey, ChapterNode>();
   const noteGlyphRenames = new Map<NodeKey, NoteGlyphRename>();
+  const charOpenerRenames = new Map<NodeKey, CharOpenerRename>();
   const addScope = (scope: ParaNode | NoteNode | ChapterNode) => {
     if ($isNoteNode(scope)) noteScopes.set(scope.getKey(), scope);
     else if ($isChapterNode(scope)) chapterScopes.set(scope.getKey(), scope);
@@ -1029,6 +1063,12 @@ export function $collectSettleScopes(
   for (const key of pendedKeys) {
     const node = $getNodeByKey(key);
     if (!node?.isAttached()) continue;
+    // An in-place char opener rename re-tokenizes nothing on the live side either.
+    const charRename = $pendingCharOpenerRename(node, context.getMarker);
+    if (charRename) {
+      charOpenerRenames.set(charRename.char.getKey(), charRename);
+      continue;
+    }
     const scope = $settleScopeForNode(node);
     if (!scope) continue;
     addScope(scope);
@@ -1068,6 +1108,7 @@ export function $collectSettleScopes(
     noteScopes,
     chapterScopes,
     noteGlyphRenames,
+    charOpenerRenames,
     husks,
     huskKeys: new Set(husks.map((husk) => husk.getKey())),
   };
@@ -1169,12 +1210,20 @@ export function $settledUsj(
   const transient = $verifiedTransientLiteral(transientInput, lastKnownCaret);
   if (pendedKeys.size === 0 && !transient) return undefined;
 
-  const { paraScopes, noteScopes, chapterScopes, noteGlyphRenames, husks, huskKeys } =
-    $collectSettleScopes(pendedKeys, context, transient);
+  const {
+    paraScopes,
+    noteScopes,
+    chapterScopes,
+    noteGlyphRenames,
+    charOpenerRenames,
+    husks,
+    huskKeys,
+  } = $collectSettleScopes(pendedKeys, context, transient);
   if (
     paraScopes.size === 0 &&
     noteScopes.size === 0 &&
     chapterScopes.size === 0 &&
+    charOpenerRenames.size === 0 &&
     husks.length === 0
   )
     return undefined;
@@ -1186,6 +1235,7 @@ export function $settledUsj(
   // passes below — see `$applySettledNoteGlyphRename`'s own doc comment for why the two never
   // conflict (disjoint JSON regions of the same note).
   for (const rename of noteGlyphRenames.values()) $applySettledNoteGlyphRename(rename, sites);
+  for (const rename of charOpenerRenames.values()) $applySettledCharOpenerRename(rename, sites);
 
   // Notes FIRST: a settled note that also rides inside a settling paragraph is preserved there as
   // a sentinel, and the paragraph pass substitutes the very serialized subtree this pass has just

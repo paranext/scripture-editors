@@ -9,6 +9,7 @@
  * Standard view. Typing is per-character `insertText` at the live selection; a Backspace is the
  * removal of the one character before the caret, as jsdom cannot run `deleteCharacter`.
  */
+import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $textContaining, contentPath, twoParaUsj } from "../positions/positions.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -40,6 +41,8 @@ import { AnnotationRange } from "shared-react";
 import { describe, expect, it } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
+/** What the settle helpers need from a mount, in Standard view or any other. */
+type SettleMounted = Pick<Mounted, "ref" | "lexical">;
 
 const WORD_PARA_INDEX = 2;
 
@@ -96,7 +99,7 @@ async function typeChars(lexical: LexicalEditor, text: string, afterEach?: () =>
 /** Click into the second paragraph, then settle the way an abandoned edit does: blur, then commit
  * whatever is still pending. The click is the user gesture a history restore waits for before it
  * settles anything. */
-async function depart(mounted: Mounted): Promise<void> {
+async function depart(mounted: SettleMounted): Promise<void> {
   await act(async () => {
     mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
     mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
@@ -149,7 +152,7 @@ function $paraWithMarker(marker: string): LexicalNode {
 }
 
 /** Screen bytes == saved bytes: the live `marker` paragraph shows exactly what the file gets. */
-function expectScreenIsSaved(mounted: Mounted, marker: string): void {
+function expectScreenIsSaved(mounted: SettleMounted, marker: string): void {
   const saved = paraOf(mounted.ref.current?.getUsj(), marker);
   expect(screenBytes(mounted.lexical, () => $paraWithMarker(marker))).toBe(usfmOf(saved));
 }
@@ -383,47 +386,87 @@ describe("typing over a span's separator", () => {
     expectScreenIsSaved(mounted, "p");
     expectScreenIsSaved(mounted, "grace");
   });
+});
 
-  it("renames the marker when typing lands between the glyph and the separator", async () => {
-    // The caret at the very start of `⍽grace` types into the glyph: `\wx`. The span is renamed
-    // on departure, and the screen shows what the file gets.
-    const mounted = await mountStandardViewEditor(wordUsj("w"));
-    await selectIn(mounted.lexical, "grace", 0, 0);
-    await typeChars(mounted.lexical, "x");
+describe("typing between a span's glyph and its separator", () => {
+  // The caret right after `\w` (in front of the separator) extends the marker NAME: the screen reads
+  // `\wx grace\w*`, and an opener rename renames its closer, so the span settles as
+  // `\wx grace\wx*`. The typed byte can land in the glyph (`\wx` + `⍽grace`) or at the start of
+  // the content text (`\w` + `x⍽grace`) depending on where the editor resolves the caret; the
+  // same screen bytes settle the same way from both, and `getUsj()` while the edit is pending
+  // already returns that settled document.
+  const rows: [shape: string, view: string, character: string][] = [
+    ["glyph", "standard", "x"],
+    ["content", "standard", "x"],
+    ["glyph", "standard", "j"],
+    ["content", "standard", "j"],
+    ["glyph", "unformatted", "x"],
+    ["content", "unformatted", "x"],
+  ];
 
-    await depart(mounted);
-    const settled = mounted.ref.current?.getUsj();
-    expect(paraOf(settled, "p").content?.[1]).toMatchObject({
-      type: "char",
-      marker: "wx",
-      content: ["grace"],
-    });
-    expectScreenIsSaved(mounted, "p");
-  });
+  it.each(rows)(
+    "renames the opener and its closer (typed into the %s, %s view, `%s`)",
+    async (shape, view, character) => {
+      const mounted: SettleMounted =
+        view === "standard"
+          ? await mountStandardViewEditor(wordUsj("w"))
+          : await mountInView(wordUsj("w"), oracleView(view));
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const content = $textContaining("grace");
+          if (shape === "content") {
+            content.setTextContent(`${character}${NBSP}grace`);
+            content.select(1, 1);
+            return;
+          }
+          content.select(0, 0);
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.insertText(character);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const renamed = `w${character}`;
+      const expected = [
+        "In the ",
+        { type: "char", marker: renamed, content: ["grace"] },
+        " of God",
+      ];
+      const pending = mounted.ref.current?.getUsj();
+      expect(paraOf(pending, "p").content).toEqual(expected);
 
-  it("renames the marker when content text starts with the typed byte before the separator", async () => {
-    // The same bytes held by the content text instead of the glyph (`\w` + `x⍽grace`): the sync
-    // may not heal them into `\w⍽x⍽grace`, because they spell `\wx`.
-    const mounted = await mountStandardViewEditor(wordUsj("w"));
+      await depart(mounted);
+      const settled = mounted.ref.current?.getUsj();
+      expect(paraOf(settled, "p").content).toEqual(expected);
+      expect(settled).toEqual(pending);
+      expect(screenBytes(mounted.lexical, $firstSpan)).toBe(`\\${renamed} grace\\${renamed}*`);
+      expectScreenIsSaved(mounted, "p");
+    },
+  );
+
+  it("ends the new name at the separator in the unformatted view", async () => {
+    // `\wj b\wj*` with `a` typed in front of the separator: the name is `wja`, never `wja b`.
+    const mounted = await mountInView(
+      twoParaUsj(["x ", { type: "char", marker: "wj", content: ["b"] }, " y"]),
+      oracleView("unformatted"),
+    );
     await act(async () => {
       mounted.lexical.update(() => {
-        const content = $textContaining("grace");
-        content.setTextContent(`x${NBSP}grace`);
+        const content = $textContaining("b");
+        content.setTextContent(`a${NBSP}b`);
         content.select(1, 1);
       });
       await Promise.resolve();
     });
+    const expected = ["x ", { type: "char", marker: "wja", content: ["b"] }, " y"];
     const pending = mounted.ref.current?.getUsj();
+    expect(paraOf(pending, "p").content).toEqual(expected);
 
     await depart(mounted);
     const settled = mounted.ref.current?.getUsj();
-    expect(paraOf(settled, "wx").content).toEqual([
-      "grace",
-      { type: "unmatched", marker: "w*" },
-      " of God",
-    ]);
+    expect(paraOf(settled, "p").content).toEqual(expected);
     expect(settled).toEqual(pending);
-    expectScreenIsSaved(mounted, "wx");
+    expectScreenIsSaved(mounted, "p");
   });
 });
 

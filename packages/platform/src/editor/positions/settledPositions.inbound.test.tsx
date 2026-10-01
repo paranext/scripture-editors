@@ -655,3 +655,33 @@ describe("identity", () => {
     expect(translated).toEqual(direct);
   });
 });
+
+describe("a char opener renamed by name bytes typed in front of its separator", () => {
+  // `\w` + `x⍽grace`: the settled span is `\wx grace\wx*`, so its `grace` sits two bytes further
+  // into the live content text than its settled offsets say.
+  it("maps a settled offset in the renamed span's text past the typed name", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(
+      twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"]),
+    );
+    let key = "";
+    await act(async () => {
+      lexical.update(() => {
+        const content = $textContaining("grace");
+        content.setTextContent(`x${NBSP}grace`);
+        content.select(1, 1);
+        key = content.getKey();
+      });
+      await Promise.resolve();
+    });
+    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBeGreaterThan(0);
+    const context = settledPositionContext(lexical);
+    const charIndex = settledCharIndex(settledPara(ref.current?.getUsj(), 2));
+
+    const point = livePoint(lexical, context, {
+      jsonPath: contentPath([2, charIndex, 0]),
+      offset: "gr".length,
+    });
+
+    expect(point).toEqual({ key, offset: `x${NBSP}gr`.length, type: "text" });
+  });
+});

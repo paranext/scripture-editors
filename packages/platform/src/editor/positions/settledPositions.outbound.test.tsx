@@ -1022,3 +1022,72 @@ describe("a caret at a verse text's start", () => {
     expect(ref.current?.getSelection()).toEqual({ start: textStart });
   });
 });
+
+describe("a char opener renamed by name bytes typed in front of its separator", () => {
+  // `\w grace\w*` with `x` typed right after `\w`: the screen reads `\wx⍽grace\w*` whether the `x`
+  // landed in the glyph or at the start of the content text, and both settle to `\wx grace\wx*`.
+  // Every screen position reports the same settled location from either shape, and a position in
+  // the content reports against the settled `grace`, not against the pending text's own offsets.
+  const usj = twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"]);
+
+  async function pendingRename(shape: "glyph" | "content") {
+    const mounted = await mountStandardViewEditor(usj);
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const content = $textContaining("grace");
+        if (shape === "content") {
+          content.setTextContent(`x${NBSP}grace`);
+          content.select(1, 1);
+          return;
+        }
+        const glyph = content.getPreviousSibling();
+        if (!$isMarkerNode(glyph)) throw new Error("expected the opening glyph");
+        glyph.setTextContent("\\wx");
+        glyph.select(3, 3);
+      });
+      await Promise.resolve();
+    });
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    return { ...mounted, context: settledPositionContext(mounted.lexical) };
+  }
+
+  /** The live (node, offset) of each screen position from the glyph's `\` to the end of `grace`. */
+  function $screenPoints(): { node: LexicalNode; offset: number }[] {
+    const content = $textContaining("grace");
+    const glyph = content.getPreviousSibling();
+    if (!glyph) throw new Error("expected the opening glyph");
+    const points: { node: LexicalNode; offset: number }[] = [];
+    for (let offset = 0; offset < glyph.getTextContentSize(); offset += 1)
+      points.push({ node: glyph, offset });
+    for (let offset = 0; offset <= content.getTextContentSize(); offset += 1)
+      points.push({ node: content, offset });
+    return points;
+  }
+
+  it("reports every screen position the same from both shapes", async () => {
+    const reported: (UsjDocumentLocation | undefined)[][] = [];
+    for (const shape of ["glyph", "content"] as const) {
+      const { lexical, context } = await pendingRename(shape);
+      reported.push(
+        lexical.getEditorState().read(() => {
+          const prepared = $prepareSettleScopes(context);
+          return $screenPoints().map(({ node, offset }) =>
+            $settledLocationFromLivePoint(prepared, node, offset),
+          );
+        }),
+      );
+    }
+    expect(reported[1]).toEqual(reported[0]);
+  });
+
+  it("reports a caret in the content against the settled text", async () => {
+    const { lexical, context, ref } = await pendingRename("content");
+    const para = settledPara(ref.current?.getUsj(), 2);
+    const spanIndex = settledCharIndex(para);
+    const location = settledLocation(lexical, context, () => ({
+      node: $textContaining("grace"),
+      offset: `x${NBSP}gr`.length,
+    }));
+    expect(location).toEqual({ jsonPath: contentPath([2, spanIndex, 0]), offset: "gr".length });
+  });
+});
