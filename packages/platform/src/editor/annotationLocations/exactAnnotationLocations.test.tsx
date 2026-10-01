@@ -1481,13 +1481,19 @@ describe("inbound resolution for annotations", () => {
   // All of a collapsed note's content is hidden behind its caller, and an annotation on any of it
   // is held only by the hidden bytes it names (Paratext 9 shows no annotation inside a closed
   // note): never by the caller, which shows only what a range naming the caller itself holds.
-  const collapsedContentRanges: { name: string; range: AnnotationRange }[] = [
+  // `held` is what each range holds: the hidden bytes it names, by view (`*` for the rest).
+  const collapsedContentRanges: {
+    name: string;
+    range: AnnotationRange;
+    held: { [view: string]: string };
+  }[] = [
     {
       name: "the note's \\fr text",
       range: {
         start: { jsonPath: `${notePath}.content[0].content[0]`, offset: 0 },
         end: { jsonPath: `${notePath}.content[0].content[0]`, offset: 4 },
       },
+      held: { "*": "1:12" },
     },
     {
       name: "the note's \\ft text",
@@ -1495,6 +1501,7 @@ describe("inbound resolution for annotations", () => {
         start: { jsonPath: `${notePath}.content[1].content[0]`, offset: 1 },
         end: { jsonPath: `${notePath}.content[1].content[0]`, offset: 4 },
       },
+      held: { "*": "ome" },
     },
     {
       name: "the \\ft closer",
@@ -1502,6 +1509,7 @@ describe("inbound resolution for annotations", () => {
         start: { jsonPath: `${notePath}.content[1]`, closingMarkerOffset: 0 },
         end: { jsonPath: `${notePath}.content[1]`, closingMarkerOffset: 3 },
       },
+      held: { "*": "", standard: "\\ft", "visible+collapsed": "[immutable-typed-text]" },
     },
     {
       name: "the category value",
@@ -1509,6 +1517,7 @@ describe("inbound resolution for annotations", () => {
         start: { jsonPath: `${notePath}['category']`, propertyOffset: 1 },
         end: { jsonPath: `${notePath}['category']`, propertyOffset: 4 },
       },
+      held: { "*": "" },
     },
     {
       name: "the category key",
@@ -1516,6 +1525,7 @@ describe("inbound resolution for annotations", () => {
         start: { jsonPath: notePath, keyName: "category" },
         end: { jsonPath: notePath, keyName: "category", keyOffset: 2 },
       },
+      held: { "*": "" },
     },
     {
       name: "the category closer",
@@ -1523,6 +1533,7 @@ describe("inbound resolution for annotations", () => {
         start: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 0 },
         end: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 4 },
       },
+      held: { "*": "" },
     },
   ];
   it.each(
@@ -1531,11 +1542,11 @@ describe("inbound resolution for annotations", () => {
     ),
   )(
     "keeps an annotation on $name off the collapsed note's caller ($view)",
-    async ({ view, range }) => {
+    async ({ view, range, held }) => {
       const result = await annotateInView(categoryNoteUsj, view, range);
 
       expect(result.logs.filter((log) => log.includes("Failed to find"))).toEqual([]);
-      expect(result.held).not.toContain("[immutable-note-caller]");
+      expect(result.held).toBe(held[view] ?? held["*"]);
     },
   );
 
