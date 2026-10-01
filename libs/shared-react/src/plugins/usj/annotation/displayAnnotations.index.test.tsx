@@ -49,14 +49,16 @@ const THEME = { typedMark: "editor-typed-mark", typedMarkOverlap: "editor-typed-
 let lastContainer: HTMLElement | undefined;
 let lastRelease: (() => void) | undefined;
 
-function setup() {
+function setup(
+  onError: (error: Error) => void = (error) => {
+    throw error;
+  },
+) {
   const editor = createEditor({
     namespace: "DisplayAnnotationIndexTest",
     nodes: [TypedMarkNode, ...usjReactNodes],
     theme: THEME,
-    onError: (error) => {
-      throw error;
-    },
+    onError,
   });
   const container = document.createElement("div");
   lastContainer = container;
@@ -303,8 +305,9 @@ describe("the display-annotation index", () => {
     release();
   });
 
-  it("still reports the second annotation, and re-throws, when the first's onRemove throws", () => {
-    const { editor, release } = setup();
+  it("still reports the second annotation, and hands the first's error to the editor after the commit, when the first's onRemove throws", async () => {
+    const onError = vi.fn();
+    const { editor, release } = setup(onError);
     const error = new Error("boom");
     const onRemoveA = vi.fn(() => {
       throw error;
@@ -324,11 +327,22 @@ describe("the display-annotation index", () => {
       },
       { discrete: true },
     );
-    expect(() => {
-      editor.update(() => $getRoot().clear(), { discrete: true });
-    }).toThrow(error);
+    // Registered after the index's own listener, so it runs after the report in the same commit.
+    const laterListener = vi.fn();
+    const unregisterLater = editor.registerUpdateListener(laterListener);
+    const onUpdate = vi.fn();
+
+    editor.update(() => $getRoot().clear(), { discrete: true, onUpdate });
+
     expect(onRemoveA).toHaveBeenCalledTimes(1);
     expect(onRemoveB).toHaveBeenCalledTimes(1);
+    expect(laterListener).toHaveBeenCalledTimes(1);
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(editor.getEditorState().read(() => $getRoot().getChildrenSize())).toBe(0);
+    await Promise.resolve();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(error);
+    unregisterLater();
     release();
   });
 

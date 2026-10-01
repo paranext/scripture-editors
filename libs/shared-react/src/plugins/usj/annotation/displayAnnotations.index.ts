@@ -364,8 +364,7 @@ function createIndex(editor: LexicalEditor): Entry {
       return;
     }
     if (tags.has(HISTORIC_TAG)) return;
-    let firstError: unknown;
-    let hasError = false;
+    const errors: unknown[] = [];
     for (const annotationKey of candidates) {
       if (holderCount(annotationKey) > 0) continue;
       const [type, id] = parseIndexKey(annotationKey);
@@ -381,13 +380,16 @@ function createIndex(editor: LexicalEditor): Entry {
       try {
         onRemove(type, id, "destroyed", text);
       } catch (error) {
-        if (!hasError) {
-          firstError = error;
-          hasError = true;
-        }
+        errors.push(error);
       }
     }
-    if (hasError) throw firstError;
+    // Thrown from here, a host's error would skip the commit's later update listeners, its
+    // deferred `onUpdate` callbacks and its queued updates. The editor's error handler gets it
+    // once the commit is done instead.
+    for (const error of errors)
+      queueMicrotask(() =>
+        editor._onError(error instanceof Error ? error : new Error(String(error))),
+      );
   }
 
   /** `setAnnotation` begins a new lifecycle: its loss is reported afresh. */

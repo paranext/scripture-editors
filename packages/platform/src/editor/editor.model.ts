@@ -276,7 +276,10 @@ export interface EditorRef {
    * annotation split across several carriers that all leave in the same edit reports their text
    * joined in document order; carriers lost across separate edits report only the text of the
    * piece(s) still present at the last one. Undo, redo, and a `setUsj` reload report nothing;
-   * setting the id again starts a fresh reporting cycle for it.
+   * setting the id again starts a fresh reporting cycle for it. An `onRemove` that throws while the
+   * editor reports a `"destroyed"` after an edit does not stop that edit or the other reports: the
+   * error is handed to the editor's error handler, which rethrows it, in a microtask once the edit
+   * has been committed.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.
