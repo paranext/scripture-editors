@@ -1657,9 +1657,9 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
     it("claims a protected paste and applies the same byte rules an unprotected one gets", async () => {
       // Protection governs selection replacement and paragraph splitting, not marker BYTES: the
       // marker engine has no protection gate, so pasted `\marker` literals tokenize in both modes
-      // exactly as typed ones do. What the old decline lost was the byte normalization — the
-      // `\c`/`\id` strip in particular, whose absence let a protected paste create a second chapter
-      // node and poison every save.
+      // exactly as typed ones do, including the `\c`/`\id` strip. Skipping that normalization in
+      // protected mode would let a protected paste create a second chapter node and poison every
+      // save.
       const { editor } = await protectedHost();
       await pasteAt(editor, { "text/plain": `\\c 7 pasted tail${NBSP}end` });
 
@@ -1669,7 +1669,8 @@ describe("paste normalization ($handlePasteForStandardView)", () => {
         const content = $getRoot().getTextContent().replaceAll(NBSP, " ");
         // The chapter token and its number are gone; every byte around them survives, and the
         // pasted NBSP — adjacent to no marker token — is read as data and takes the `~` display form
-        // a typed data-NBSP gets. Both are normalization the protected mode used to skip entirely.
+        // a typed data-NBSP gets. Both are normalization protected mode must still apply, exactly as
+        // an unprotected paste does.
         expect(content).not.toContain("\\c");
         expect(content).toBe("\\p hello pasted tail~end world");
       });

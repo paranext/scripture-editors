@@ -177,6 +177,10 @@ it. Separators hold nothing — they have no position of their own. The settle c
 representations by bytes: kept or re-spelled bytes carry their annotation to the settled
 counterpart, discarded bytes drop it. `getUsj()` carries no display-byte annotation.
 
+The wrap measures coverage by caret order: an inline element moves into a mark only when the range
+covers it whole; otherwise its text is split and its glyphs hold the annotation. The wrap tags its
+update (`TYPED_MARK_WRAP_TAG`) so no transform takes the text it splits for typed text.
+
 ### `\cat` is the attribute marker the stylesheet does not declare
 
 `ATTRIBUTE_MARKERS` holds `ca`, `cp`, `va`, `vp`, and `cat`. All but `cat` are also usfm.sty

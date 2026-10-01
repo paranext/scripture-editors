@@ -296,7 +296,11 @@ export function $wrapSelectionInTypedMarkNode(
       // Now that we have a target node for wrapping with a mark, we can run through special cases.
       if (targetNode && targetNode.is(currentNodeParent)) {
         // The current node is a child of the target node to be wrapped, there is nothing to do
-        // here.
+        // here. This is also why a range starting ON an inline element's opening glyph never moves
+        // the element whole, even when the range covers it in full: the glyph branch above already
+        // set `currentNodeParent` to the element, so this guard is true the moment Case 3 considers
+        // the element itself as a target. The whole-element move and this glyph-start case hold the
+        // same bytes either way; they are deliberately uneven in mark count, not a gap to close.
         continue;
       }
       // Tagged here too, for Case 3's whole-element move (Case 1 already tagged its own split

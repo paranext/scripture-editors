@@ -171,6 +171,9 @@ marker glyph, a verse or chapter number, a note caller, an attribute run such as
 overlap class whenever two annotations of one type are on it, even if the parts of it they name
 do not overlap. Style annotations by class, never by the `mark` element name.
 
+An annotation over part of a char span or note highlights only that part of its text; the span's
+glyphs it touches are painted whole.
+
 ### Comment Styles
 
 These follow a similar patter to [Annotation Styles](#annotation-styles). If a comment is overlapping it will have both CSS classnames `editor-typed-mark-internal-comment` and `editor-typed-markOverlap-internal-comment`. If it's not overlapping it still has the first classname. Annotations and comments are the same when considering if it's overlapping.

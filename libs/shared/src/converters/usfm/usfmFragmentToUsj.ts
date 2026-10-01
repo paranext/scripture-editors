@@ -81,9 +81,7 @@ const PERIPH_TITLE_ATTRIBUTE = "alt";
 /**
  * Table cell marker names: `t` + header/cell (`h`/`c`) + optional alignment infix (`r`/`c`) +
  * starting column + optional span end column (`th1`, `tc13`, `thr5`, `thc3-4`, `tcr1-4`).
- * ParatextData derives the cell's alignment and span from the name alone; whether a name IS a
- * cell (`UsfmParser.IsCell`) follows the marker's classification instead — Character-typed
- * (usfm.sty types every cell marker Character) or undeclared to the stylesheet — in an open row.
+ * ParatextData derives the whole cell shape from the name alone — no stylesheet entry needed.
  */
 const TABLE_CELL_MARKER_REGEX = /^t[hc]([rc]?)(\d+)(?:-(\d+))?$/;
 
@@ -1338,12 +1336,9 @@ export function usfmFragmentToUsjContent(
       }
       case "para": {
         // ---- table assembly ----
-        // `\tr` reaches assembly as a para token. A cell marker reaches it as a para token
-        // when the sheet does not declare it (a ranged cell such as `\tc1-2`, or a sheet with
-        // no table markers) and as a charOpen token when it does (usfm.sty types every cell
-        // Character; see the charOpen case). Table shapes never engage inside note content —
-        // a row/cell marker there keeps its plain resolution, and ParatextData builds no
-        // tables there either.
+        // Row/cell markers reach assembly as para tokens (paragraph styles, or unknown to
+        // the sheet). Table shapes never engage inside note content — a row/cell marker
+        // there keeps its plain resolution, and ParatextData builds no tables there either.
         const tableEligible = !note && !isNoteContext;
         if (tableEligible && token.marker === TABLE_ROW_MARKER) {
           closeCharStack();

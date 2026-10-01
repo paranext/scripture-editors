@@ -662,7 +662,8 @@ describe("display bytes the design holds whole", () => {
 
     // The closer is a standalone content item (not text-run-coalesced), so it is named by the
     // gaps on either side of it in its paragraph's own content array — in front of it (index 1)
-    // through behind it (index 2) — the same content-array-gap addressing R2's audit repro uses.
+    // through behind it (index 2) — the same content-array-gap addressing any element-point range
+    // end uses generally.
     await act(async () => {
       mounted.ref.current?.setAnnotation(
         {
