@@ -579,10 +579,10 @@ function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
  *    takes this branch when its marker is an immutable decorator, deliberately: it is the state
  *    `EmptyVerseCaretGuardPlugin` detects and repairs with a caret host of its own, and the caret
  *    must not borrow the next verse's text. An EDITABLE marker of an empty verse takes (2) instead.
- *    The guard does not act there (the next verse's marker is itself text), and an element point
- *    between two marker text nodes comes apart: Lexical resolves its own selection to the end of
- *    this marker, but the DOM caret it draws to the start of the next one, so the next read of the
- *    DOM selection moves the caret into the next verse's marker.
+ *    The guard does not act there: the next verse's marker is itself text, so the boundary has a
+ *    text host — offset 0 of that marker — which Lexical may or may not then normalize back to the
+ *    end of this one, depending on when the selection is next read. Only the end of this marker is
+ *    in this verse, so that is where the caret goes.
  */
 function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   const para = verse.getParent();
