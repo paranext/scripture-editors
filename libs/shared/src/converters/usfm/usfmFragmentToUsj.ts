@@ -467,6 +467,21 @@ export const ATTRIBUTE_MARKERS: {
 };
 
 /**
+ * The order a target's attribute markers fold in, by USJ node type. ParatextData folds each one
+ * ONCE, in this order, from the tokens directly after the target: the Chapter case asks for one
+ * `\ca` and then one `\cp` (UsfmParser.cs:320-321), the Verse case one `\va` and then one `\vp`
+ * (:338-339), a note or sidebar one `\cat` (:378-386, :473-481). A second `\ca`, or a `\ca` after
+ * the `\cp`, is left for the parser to process as an ordinary marker, so its bytes stay in the
+ * document rather than overwriting the attribute an earlier span set.
+ */
+const ATTRIBUTE_FOLD_ORDER: { readonly [targetType: string]: readonly string[] } = {
+  chapter: ["ca", "cp"],
+  verse: ["va", "vp"],
+  note: ["cat"],
+  sidebar: ["cat"],
+};
+
+/**
  * The attribute-marker entry for `marker`, or undefined if there is none.
  *
  * Goes through `Object.hasOwn` rather than indexing directly: a marker whose name collides with an
@@ -939,6 +954,14 @@ export function usfmFragmentToUsjContent(
   // The most recent chapter/verse/note object, still "receptive": an adjacent attribute
   // marker folds onto it as an attribute. Any real content clears it.
   let attrTarget: MarkerObject | undefined;
+  // How far through its target's fold order (`ATTRIBUTE_FOLD_ORDER`) the receptive window has
+  // folded: each attribute marker folds once, and only after the ones before it.
+  let attrFoldedThrough = -1;
+  /** Open the receptive window on `target`, which has folded nothing yet. */
+  const receiveAttributes = (target: MarkerObject) => {
+    attrTarget = target;
+    attrFoldedThrough = -1;
+  };
   // Whitespace-only text held while attrTarget is receptive: structural (dropped) if an
   // attribute marker follows; ordinary content (flushed) otherwise.
   let heldWhitespace = "";
@@ -1169,8 +1192,8 @@ export function usfmFragmentToUsjContent(
           //
           // What DOES re-enter the window is a foldable PARA token, and `cp` is the only
           // `shape: "para"` attribute marker \u2014 so that means a degenerate duplicate `\cp` on one
-          // chapter, which does still fold across the materialized empty para (probed). Closing
-          // the window here would add a branch for a shape no document has.
+          // chapter. It does not fold: the empty span was the chapter's one `\cp`
+          // (`ATTRIBUTE_FOLD_ORDER`), and ParatextData folds neither of the two.
           startParagraph(attrCapture.marker);
           attrCapture = undefined;
         } else {
@@ -1279,7 +1302,13 @@ export function usfmFragmentToUsjContent(
       } else if (token.kind === "charOpen" || token.kind === "para") {
         const foldable =
           token.kind === "para" || !token.isNested ? attributeMarker(token.marker) : undefined;
-        if (foldable && foldable.targetTypes.includes(attrTarget.type)) {
+        const foldIndex = ATTRIBUTE_FOLD_ORDER[attrTarget.type]?.indexOf(token.marker) ?? -1;
+        if (
+          foldable &&
+          foldable.targetTypes.includes(attrTarget.type) &&
+          foldIndex > attrFoldedThrough
+        ) {
+          attrFoldedThrough = foldIndex;
           // Whitespace between the target and its attribute marker is structural — dropped.
           heldWhitespace = "";
           attrCapture = {
@@ -1384,7 +1413,7 @@ export function usfmFragmentToUsjContent(
           blockTarget().push(opened);
           sidebar = opened;
           para = undefined;
-          attrTarget = sidebar; // receptive to \cat (directly after \esb only)
+          receiveAttributes(sidebar); // receptive to \cat (directly after \esb only)
           atChapterRootScope = false;
           break;
         }
@@ -1423,7 +1452,7 @@ export function usfmFragmentToUsjContent(
         closeNote(false);
         const verse: MarkerObject = { type: "verse", marker: VERSE_MARKER, number: token.number };
         pushContent(verse);
-        attrTarget = verse; // receptive to \va/\vp
+        receiveAttributes(verse); // receptive to \va/\vp
         break;
       }
       case "chapter": {
@@ -1442,7 +1471,7 @@ export function usfmFragmentToUsjContent(
           number: token.number,
         };
         result.push(chapter);
-        attrTarget = chapter; // receptive to \ca/\cp
+        receiveAttributes(chapter); // receptive to \ca/\cp
         atChapterRootScope = true;
         break;
       }
@@ -1455,7 +1484,7 @@ export function usfmFragmentToUsjContent(
         note = { type: "note", marker: token.marker, caller: token.caller, content: [] };
         noteBaseDepth = charStack.length;
         target.push(note);
-        attrTarget = note; // receptive to \cat (right after the caller only)
+        receiveAttributes(note); // receptive to \cat (right after the caller only)
         break;
       }
       case "charOpen": {

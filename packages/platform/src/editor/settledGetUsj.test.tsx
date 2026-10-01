@@ -255,6 +255,50 @@ describe("settled getUsj — uniform settling", () => {
   });
 });
 
+describe("settled getUsj — a second \\cp beside a chapter keeps its bytes", () => {
+  it("settles `\\cp A\\cp|*` as pubnumber `A` and a `\\cp` paragraph holding `|*`", async () => {
+    // A `|` typed into the closer of the `\cp A\cp*` beside a chapter spells a second `\cp`.
+    // ParatextData folds only the first `\cp` into the chapter (UsfmParser.cs:321) and keeps the
+    // second as an ordinary paragraph; the `A` must not be lost to the second one.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "cp", content: ["A"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { ref, lexical } = await mountStandardViewEditor(usj);
+    await act(async () => {
+      lexical.update(() => {
+        const closer = $getRoot()
+          .getAllTextNodes()
+          .find((node) => $isMarkerNode(node) && node.getTextContent() === "\\cp*");
+        if (!closer) throw new Error("expected the \\cp closer");
+        closer.setTextContent("\\cp|*");
+        closer.select(4, 4);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const pending = ref.current?.getUsj();
+    expect(pending?.content.slice(1, 3)).toEqual([
+      { type: "chapter", marker: "c", number: "1", pubnumber: "A" },
+      { type: "para", marker: "cp", content: ["|*"] },
+    ]);
+
+    await act(async () => {
+      lexical.update(() => $textContaining("depart here").select(0, 0));
+      await Promise.resolve();
+    });
+    act(() => lexical.getRootElement()?.blur());
+    act(() => ref.current?.commitPendingMarkerEdits());
+    expect(ref.current?.getUsj()).toEqual(pending);
+  });
+});
+
 /** One pending-edit shape: how to create it, from a document the harness loads. */
 interface PendingShape {
   readonly name: string;

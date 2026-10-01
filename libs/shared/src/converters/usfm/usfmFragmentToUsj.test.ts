@@ -534,6 +534,97 @@ describe("usfmFragmentToUsjContent — verse, chapter, note, milestone, attribut
       ]);
     });
 
+    // ParatextData folds each attribute marker ONCE, in order: UsfmParser's Chapter case asks for
+    // one `\ca` and then one `\cp` (UsfmParser.cs:320-321), its Verse case one `\va` then one
+    // `\vp` (:338-339), and FindOtherVerseOrChapterNumber (:548-576) consumes only the tokens
+    // directly in front of it. A second span is left for the parser to process as an ordinary
+    // marker — its bytes stay in the document.
+    it.each([
+      [
+        "a second \\ca stays a char span",
+        "\\c 1 \\ca 2\\ca*\\ca 3\\ca*",
+        [
+          { type: "chapter", marker: "c", number: "1", altnumber: "2" },
+          { type: "char", marker: "ca", content: ["3"] },
+        ],
+      ],
+      [
+        "a second \\cp stays a paragraph",
+        "\\c 1 \\cp A\\cp B",
+        [
+          { type: "chapter", marker: "c", number: "1", pubnumber: "A" },
+          { type: "para", marker: "cp", content: ["B"] },
+        ],
+      ],
+      [
+        "a second \\cp whose text is `|*` stays a paragraph",
+        "\\c 1 \\cp A\\cp|*",
+        [
+          { type: "chapter", marker: "c", number: "1", pubnumber: "A" },
+          { type: "para", marker: "cp", content: ["|*"] },
+        ],
+      ],
+      [
+        "a \\cp after an empty one stays a paragraph",
+        "\\c 1\n\\cp \n\\cp A\n\\p b",
+        [
+          { type: "chapter", marker: "c", number: "1" },
+          { type: "para", marker: "cp" },
+          { type: "para", marker: "cp", content: ["A"] },
+          { type: "para", marker: "p", content: ["b"] },
+        ],
+      ],
+      [
+        "a second \\va stays a char span",
+        "\\p \\v 1 \\va 2\\va*\\va 3\\va*",
+        [
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "verse", marker: "v", number: "1", altnumber: "2" },
+              { type: "char", marker: "va", content: ["3"] },
+            ],
+          },
+        ],
+      ],
+      [
+        "a \\va after a folded \\vp stays a char span",
+        "\\p \\v 1 \\vp A\\vp*\\va 2\\va*",
+        [
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "verse", marker: "v", number: "1", pubnumber: "A" },
+              { type: "char", marker: "va", content: ["2"] },
+            ],
+          },
+        ],
+      ],
+      [
+        "a second \\cat stays a char span in the note",
+        "\\p \\f + \\cat a\\cat*\\cat b\\cat*\\f*",
+        [
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              {
+                type: "note",
+                marker: "f",
+                caller: "+",
+                category: "a",
+                content: [{ type: "char", marker: "cat", content: ["b"] }],
+              },
+            ],
+          },
+        ],
+      ],
+    ])("folds each attribute marker once, in order: %s", (_name, usfm, expected) => {
+      expect(usfmFragmentToUsjContent(usfm)).toEqual(expected);
+    });
+
     it("keeps a non-adjacent \\ca standalone (its own char marker)", () => {
       expect(usfmFragmentToUsjContent("\\p a \\ca 2\\ca* b")).toEqual([
         {

@@ -1,5 +1,1 @@
-{
-  "\\cp span beside its chapter (standard+expandedNotes view)": {
-    "marker \"\\\\cp*\"@3 type \"|\" [positions]": "The settle drops bytes here, so their positions have no settled counterpart: the chapter fold keeps only the last of two \\cp spans (`\\cp A\\cp|*` saves pubnumber `|*` and loses `A`), and what two \\ca/\\cp spans after one \\c should settle to needs a product ruling."
-  }
-}
+{}
