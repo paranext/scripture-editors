@@ -33,6 +33,7 @@ import {
   $createTypedMarkNode,
   $isTypedMarkNode,
   listenForTypedMarkRemovalReports,
+  setTypedMarkRemovalSilenced,
   takeTypedMarkRemovalReports,
   TypedMarkNode,
   TypedMarkOnMouseEnter,
@@ -494,6 +495,27 @@ describe("TypedMarkNode", () => {
 
       expect(takeTypedMarkRemovalReports(editor)).toEqual([[testType1, testID1]]);
       expect(takeTypedMarkRemovalReports(editor)).toEqual([]);
+      stopListening();
+    });
+
+    it("keeps a type and an id apart when silencing, even when both contain the NUL character", () => {
+      const nul = String.fromCharCode(0);
+      const onRemove = vi.fn();
+      const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode]);
+      const stopListening = listenForTypedMarkRemovalReports(editor);
+      setTypedMarkRemovalSilenced(editor, "t", `a${nul}b`, true);
+      editor.update(
+        () => {
+          const markNode = $createTypedMarkNode({});
+          markNode.addID(`t${nul}a`, "b", undefined, onRemove);
+          $getRoot().append($createParaNode().append(markNode.append($createTextNode("x"))));
+          markNode.remove();
+        },
+        { discrete: true },
+      );
+
+      expect(onRemove).toHaveBeenCalledTimes(1);
+      expect(onRemove).toHaveBeenCalledWith(`t${nul}a`, "b", "destroyed", "x");
       stopListening();
     });
 

@@ -186,8 +186,10 @@ export function takeTypedMarkRemovalReports(editor: LexicalEditor): [type: strin
 /** Per editor, the `type`/`id` pairs whose removal no mark reports any more. */
 const silencedRemovals = new WeakMap<LexicalEditor, Set<string>>();
 
+/** One key per `type`/`id` pair. JSON, not a delimiter join: a type or id may itself contain any
+ * delimiter character, NUL included. */
 function removalKey(type: string, id: string): string {
-  return `${type}\u0000${id}`;
+  return JSON.stringify([type, id]);
 }
 
 /**
