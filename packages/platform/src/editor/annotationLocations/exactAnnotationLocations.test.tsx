@@ -1050,6 +1050,91 @@ describe("inbound resolution for annotations", () => {
     expect(result.held).toBe(held);
   });
 
+  const emptyJump: MarkerObject & { "link-href": string } = {
+    type: "char",
+    marker: "jmp",
+    "link-href": "GEN 1:1",
+  };
+  /** `\p jmp \jmp |GEN 1:1\jmp* end` — an empty span whose only bytes after its opening glyph are
+   * its attribute, which only Standard view displays. */
+  const emptyJumpUsj: Usj = twoParaUsj(["jmp ", emptyJump, " end"]);
+  const jumpPath = "$.content[2].content[1]";
+  const hrefPath = `${jumpPath}['link-href']`;
+
+  // The opening glyph of an empty span stands for the span's undisplayed attributes, which USFM
+  // spells between it and the closer: a range naming any of their bytes holds the glyph whole. The
+  // views without glyphs show only the span's placeholder, which no attribute byte names.
+  it.each<{ name: string; view: string; range: AnnotationRange; held: string }>([
+    {
+      name: "inside the attribute value",
+      view: "visible",
+      range: {
+        start: { jsonPath: hrefPath, propertyOffset: 5 },
+        end: { jsonPath: hrefPath, propertyOffset: 6 },
+      },
+      held: "[immutable-typed-text]",
+    },
+    {
+      name: "inside the attribute value through the closer",
+      view: "visible+collapsed",
+      range: {
+        start: { jsonPath: hrefPath, propertyOffset: 5 },
+        end: { jsonPath: jumpPath, closingMarkerOffset: 0 },
+      },
+      held: "[immutable-typed-text]",
+    },
+    {
+      name: "the marker name's end through the value's start, over the `|`",
+      view: "visible",
+      range: {
+        start: { jsonPath: `${jumpPath}['marker']`, propertyOffset: 3 },
+        end: { jsonPath: hrefPath, propertyOffset: 0 },
+      },
+      held: "[immutable-typed-text]",
+    },
+    {
+      name: "the value's end through the closer, which names nothing",
+      view: "visible",
+      range: {
+        start: { jsonPath: hrefPath, propertyOffset: 7 },
+        end: { jsonPath: jumpPath, closingMarkerOffset: 0 },
+      },
+      held: "",
+    },
+    {
+      name: "the undisplayed marker name into the undisplayed value",
+      view: "formatted",
+      range: {
+        start: { jsonPath: `${jumpPath}['marker']`, propertyOffset: 2 },
+        end: { jsonPath: hrefPath, propertyOffset: 1 },
+      },
+      held: "",
+    },
+    {
+      name: "the undisplayed marker name into the undisplayed value",
+      view: "hidden+expanded",
+      range: {
+        start: { jsonPath: `${jumpPath}['marker']`, propertyOffset: 2 },
+        end: { jsonPath: hrefPath, propertyOffset: 1 },
+      },
+      held: "",
+    },
+  ])("resolves an empty span's attribute: $name ($view)", async ({ view, range, held }) => {
+    const result = await annotateInView(emptyJumpUsj, view, range);
+
+    expect(result.held).toBe(held);
+    if (held) expect(result.decorators).toEqual(["\\jmp"]);
+  });
+
+  it("holds nothing for a range inside a span's undisplayed attribute when the span has content (visible)", async () => {
+    const result = await annotateInView(lemmaUsj, "visible", {
+      start: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 1 },
+      end: { jsonPath: propertyPath([2, 1], "lemma"), propertyOffset: 3 },
+    });
+
+    expect(result.held).toBe("");
+  });
+
   it.each<{
     name: string;
     view: string;

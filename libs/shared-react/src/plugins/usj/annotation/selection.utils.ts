@@ -70,6 +70,8 @@ import {
   $noteEditableCallerNode,
   $ownerOfRunPiece,
   $shouldIgnoreNodeForContentIndexes,
+  canonicalAttributeText,
+  type CharNode,
   closingMarkerText,
   defaultMarkerAttribute,
   displayRunDescriptor,
@@ -1242,12 +1244,15 @@ interface StandInPiece {
  * The bytes a read-only decorator stands for, its own displayed bytes first, then the undisplayed
  * bytes USFM spells between it and the next byte the view shows — bytes the caret behind the
  * decorator steps over, so they have no position of their own in the view. A read-only caller
- * stands for its note's category (`+ \cat People\cat*`) when no run displays it. `undefined` when
- * `owner` has no decorator that stands for undisplayed bytes.
+ * stands for its note's category (`+ \cat People\cat*`) when no run displays it, and an empty
+ * char span's read-only opening glyph for the span's attributes (`\jmp |GEN 1:1`), which only an
+ * editable view displays. `undefined` when `owner` has no decorator that stands for undisplayed
+ * bytes.
  */
 function $standInPieces(
   owner: LexicalNode,
 ): { decorator: LexicalNode; pieces: StandInPiece[] } | undefined {
+  if ($isCharNode(owner)) return $emptySpanStandIn(owner);
   if (!$isNoteNode(owner)) return undefined;
   const category = owner.getCategory();
   const caller = owner
@@ -1280,6 +1285,46 @@ function $standInPieces(
         ],
       },
       { text: closingMarkerText(markerName), spans: closingGlyphSpans(keyName) },
+    ],
+  };
+}
+
+/** The pieces an empty span's read-only opening glyph stands for: the glyph, then the span's
+ * attributes as Standard view spells them (`|GEN 1:1`), when no byte the view shows spells them. */
+function $emptySpanStandIn(
+  char: CharNode,
+): { decorator: LexicalNode; pieces: StandInPiece[] } | undefined {
+  const opener = char.getFirstChild();
+  if (!opener || !$isVisibleMarkerNode(opener)) return undefined;
+  const openerBytes = $displayBytesOf(opener);
+  if (openerBytes?.spans[0]?.bytes.kind !== "marker" || !openerBytes.owner.is(char))
+    return undefined;
+  const isEmpty = char
+    .getChildren()
+    .every(
+      (child) =>
+        $isDisplayByteDecorator(child) ||
+        ($isTextNode(child) && $shouldIgnoreNodeForContentIndexes(child)),
+    );
+  if (!isEmpty) return undefined;
+  const defaultAttribute = defaultMarkerAttribute(char.getMarker());
+  const text = canonicalAttributeText(char.getUnknownAttributes() ?? {}, defaultAttribute);
+  if (!text) return undefined;
+  const attributeSpans = pipeAttributeSpans(text, 1, defaultAttribute);
+  const isDisplayed = $displayByteCarriers(char).some((carrier) =>
+    $displayBytesOf(carrier)?.spans.some((span) =>
+      attributeSpans.some((attributeSpan) => isSameByteKind(span.bytes, attributeSpan.bytes)),
+    ),
+  );
+  if (isDisplayed) return undefined;
+  return {
+    decorator: opener,
+    pieces: [
+      { text: opener.getTextContent(), spans: openerBytes.spans },
+      {
+        text,
+        spans: [{ start: 0, base: 0, bytes: { kind: "precedingText" } }, ...attributeSpans],
+      },
     ],
   };
 }
@@ -2021,7 +2066,14 @@ function $nearestPointAfterContent(
         ];
       return [node, content ? content.getIndexWithinParent() + 1 : 0];
     }
-    if (lastChild && $isTextNode(lastChild)) return [lastChild, lastChild.getTextContent().length];
+    // An empty span's placeholder is no content either: the content ends in front of it.
+    if (lastChild && $isTextNode(lastChild))
+      return [
+        lastChild,
+        !$displayBytesOf(lastChild) && $shouldIgnoreNodeForContentIndexes(lastChild)
+          ? 0
+          : lastChild.getTextContentSize(),
+      ];
   }
 
   // A decorator (e.g. ImmutableChapterNode) or an element with no children: the start of what
