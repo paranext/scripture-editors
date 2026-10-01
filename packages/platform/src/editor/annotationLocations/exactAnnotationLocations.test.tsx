@@ -1368,9 +1368,9 @@ describe("inbound resolution for annotations", () => {
   ]);
   const notePath = "$.content[2].content[1]";
 
-  // A read-only caller decorator stands for the note's undisplayed category, the bytes USFM spells
-  // between the caller and the note's content: a range naming any of them holds the caller whole,
-  // and a range naming none (the caller's end through the `\cat` backslash's front) holds nothing.
+  // An undisplayed category names nothing, as Paratext 9 never anchors an annotation to `\cat`:
+  // only a range naming the caller's own bytes holds the caller, whatever category bytes it also
+  // names, and a location inside the category resolves behind the caller.
   it.each<{ name: string; view: string; range: AnnotationRange; held: string }>([
     {
       name: "inside the category value",
@@ -1379,7 +1379,7 @@ describe("inbound resolution for annotations", () => {
         start: { jsonPath: `${notePath}['category']`, propertyOffset: 3 },
         end: { jsonPath: `${notePath}['category']`, propertyOffset: 4 },
       },
-      held: "[immutable-note-caller]",
+      held: "",
     },
     {
       name: "inside the category value",
@@ -1388,7 +1388,7 @@ describe("inbound resolution for annotations", () => {
         start: { jsonPath: `${notePath}['category']`, propertyOffset: 4 },
         end: { jsonPath: `${notePath}['category']`, propertyOffset: 5 },
       },
-      held: "[immutable-note-caller]",
+      held: "",
     },
     {
       name: "the `\\cat` backslash",
@@ -1397,7 +1397,7 @@ describe("inbound resolution for annotations", () => {
         start: { jsonPath: notePath, keyName: "category" },
         end: { jsonPath: notePath, keyName: "category", keyOffset: 0 },
       },
-      held: "[immutable-note-caller]",
+      held: "",
     },
     {
       name: "the note's undisplayed marker name through the `\\cat` backslash",
@@ -1415,10 +1415,10 @@ describe("inbound resolution for annotations", () => {
         start: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 3 },
         end: { jsonPath: `${notePath}.content[0]` },
       },
-      held: "[immutable-note-caller]",
+      held: "",
     },
     {
-      name: "the caller's end through the `\\cat` backslash's front, which names nothing",
+      name: "the caller's end through the `\\cat` backslash's front",
       view: "standard",
       range: {
         start: { jsonPath: `${notePath}['caller']`, propertyOffset: 1 },
@@ -1433,13 +1433,157 @@ describe("inbound resolution for annotations", () => {
         start: { jsonPath: `${notePath}['caller']`, propertyOffset: 1 },
         end: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
       },
+      held: "",
+    },
+    {
+      name: "the caller through the category key",
+      view: "standard",
+      range: {
+        start: { jsonPath: `${notePath}['caller']`, propertyOffset: 0 },
+        end: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
+      },
       held: "[immutable-note-caller]",
     },
-  ])("holds a note's caller for a range $name ($view)", async ({ view, range, held }) => {
+    {
+      name: "the text before the note into the category value",
+      view: "formatted",
+      range: {
+        start: { jsonPath: "$.content[2].content[0]", offset: 2 },
+        end: { jsonPath: `${notePath}['category']`, propertyOffset: 3 },
+      },
+      held: "xt[immutable-note-caller]",
+    },
+    {
+      name: "the category value into the note's text",
+      view: "formatted",
+      range: {
+        start: { jsonPath: `${notePath}['category']`, propertyOffset: 3 },
+        end: { jsonPath: `${notePath}.content[1].content[0]`, offset: 4 },
+      },
+      held: "1:12 Some",
+    },
+    {
+      name: "the category key into the note's text",
+      view: "visible",
+      range: {
+        start: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
+        end: { jsonPath: `${notePath}.content[0].content[0]`, offset: 4 },
+      },
+      held: "[immutable-typed-text]1:12",
+    },
+  ])("holds an undisplayed category as nothing: $name ($view)", async ({ view, range, held }) => {
     const result = await annotateInView(categoryNoteUsj, view, range);
 
+    expect(result.logs.filter((log) => log.includes("Failed to find"))).toEqual([]);
     expect(result.held).toBe(held);
   });
+
+  // All of a collapsed note's content is hidden behind its caller, and an annotation on any of it
+  // is held only by the hidden bytes it names (Paratext 9 shows no annotation inside a closed
+  // note): never by the caller, which shows only what a range naming the caller itself holds.
+  const collapsedContentRanges: { name: string; range: AnnotationRange }[] = [
+    {
+      name: "the note's \\fr text",
+      range: {
+        start: { jsonPath: `${notePath}.content[0].content[0]`, offset: 0 },
+        end: { jsonPath: `${notePath}.content[0].content[0]`, offset: 4 },
+      },
+    },
+    {
+      name: "the note's \\ft text",
+      range: {
+        start: { jsonPath: `${notePath}.content[1].content[0]`, offset: 1 },
+        end: { jsonPath: `${notePath}.content[1].content[0]`, offset: 4 },
+      },
+    },
+    {
+      name: "the \\ft closer",
+      range: {
+        start: { jsonPath: `${notePath}.content[1]`, closingMarkerOffset: 0 },
+        end: { jsonPath: `${notePath}.content[1]`, closingMarkerOffset: 3 },
+      },
+    },
+    {
+      name: "the category value",
+      range: {
+        start: { jsonPath: `${notePath}['category']`, propertyOffset: 1 },
+        end: { jsonPath: `${notePath}['category']`, propertyOffset: 4 },
+      },
+    },
+    {
+      name: "the category key",
+      range: {
+        start: { jsonPath: notePath, keyName: "category" },
+        end: { jsonPath: notePath, keyName: "category", keyOffset: 2 },
+      },
+    },
+    {
+      name: "the category closer",
+      range: {
+        start: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 0 },
+        end: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 4 },
+      },
+    },
+  ];
+  it.each(
+    ["standard", "formatted", "paragraph-structure", "visible+collapsed"].flatMap((view) =>
+      collapsedContentRanges.map((row) => ({ ...row, view })),
+    ),
+  )(
+    "keeps an annotation on $name off the collapsed note's caller ($view)",
+    async ({ view, range }) => {
+      const result = await annotateInView(categoryNoteUsj, view, range);
+
+      expect(result.logs.filter((log) => log.includes("Failed to find"))).toEqual([]);
+      expect(result.held).not.toContain("[immutable-note-caller]");
+    },
+  );
+
+  it.each<{ name: string; view: string; location: UsjDocumentLocation }>([
+    {
+      name: "a category key",
+      view: "standard",
+      location: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
+    },
+    {
+      name: "a category value",
+      view: "formatted",
+      location: { jsonPath: `${notePath}['category']`, propertyOffset: 2 },
+    },
+    {
+      name: "a category closer",
+      view: "visible",
+      location: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 2 },
+    },
+  ])(
+    "puts a caret at $name the view does not display behind the caller ($view)",
+    async ({ view, location }) => {
+      const mounted = await mountInView(categoryNoteUsj, oracleView(view));
+
+      await act(async () => {
+        mounted.ref.current?.setSelection({ start: location });
+        await Promise.resolve();
+      });
+
+      mounted.lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        expect(selection.isCollapsed()).toBe(true);
+        const caller = $firstOfType(
+          $getRoot(),
+          (node): node is LexicalNode => node.getType() === "immutable-note-caller",
+        );
+        if (!caller) throw new Error("expected a caller decorator");
+        // The same position however it is spelled: an element point, or the text point it becomes.
+        const behind = $createPoint(
+          caller.getParentOrThrow().getKey(),
+          caller.getIndexWithinParent() + 1,
+          "element",
+        );
+        expect(selection.anchor.isBefore(behind) || behind.isBefore(selection.anchor)).toBe(false);
+      });
+    },
+  );
 
   const emptyJump: MarkerObject & { "link-href": string } = {
     type: "char",

@@ -266,6 +266,11 @@ export interface EditorRef {
    * `getUsj()` carries no annotation state for a display byte, a save and reload then keeps the
    * content `<mark>`'s bytes but loses the glyph's own highlighting.
    *
+   * A collapsed note's content, all of it hidden behind its caller, holds what a range names there
+   * without showing it, as Paratext 9 shows no annotation inside a closed note: the caller holds
+   * the annotation only when the range names the caller itself. A note's category the view does
+   * not display names nothing, so a range inside it holds nothing.
+   *
    * `onRemove`: each `<mark>` reports its own removal when it goes away — one call per `<mark>`,
    * whatever else still holds the annotation — and only once: a `<mark>` an undo brings back stays
    * quiet when it goes again. Beyond that, the annotation's last holder — a `<mark>` or a display

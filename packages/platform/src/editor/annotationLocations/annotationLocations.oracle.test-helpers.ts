@@ -7,7 +7,9 @@
  * view, notes expanded, where every USFM byte is on screen): every byte there gets the locations
  * in front of and behind it, their first-appearance order is the document order of settled
  * locations (the universe), and a byte of the view under test covers the universe ranks between
- * its two labels. Inbound mapping is never used to decide what is expected.
+ * its two labels. Inbound mapping is never used to decide what is expected. One product rule is
+ * stated outright rather than derived: a note's category that the view under test does not
+ * display names nothing ({@link undisplayedCategoryRanks}).
  *
  * The failures that exist are recorded per corpus and view in a committed expected-failure list;
  * {@link expectOracleMatchesList} fails on a failure the list does not name, on a listed entry that
@@ -190,6 +192,33 @@ export interface OracleRunOptions {
 
 const INLINE_TYPES = new Set(["char", "note", "unknown"]);
 
+/** A label on a note's category: its value, or its `\cat` key, marker or closer. */
+const CATEGORY_LABEL = /\['category'\]|[|,]keyName=category(,|$)/;
+
+/** The path of the element a category label belongs to. */
+function categoryOwner(label: string): string {
+  return label.replace(/\['category'\].*$/, "").replace(/\|.*$/, "");
+}
+
+/**
+ * The universe ranks of every note category no byte of the view under test displays. They name
+ * nothing an annotation can hold, as Paratext 9 never anchors one to `\cat`: a collapsed note
+ * shows nothing of its content but its caller, and an expanded note in a view without editable
+ * markers leaves its category out. Stated here rather than derived, because the caret behind a
+ * read-only caller steps over the category to the note's content, so the caller's byte covers the
+ * category's ranks.
+ */
+function undisplayedCategoryRanks(universe: OracleUniverse, info: ByteInfo[]): Set<number> {
+  const displayed = new Set(
+    info.filter((byte) => CATEGORY_LABEL.test(byte.label)).map((byte) => categoryOwner(byte.label)),
+  );
+  const ranks = new Set<number>();
+  universe.labels.forEach((label, rank) => {
+    if (CATEGORY_LABEL.test(label) && !displayed.has(categoryOwner(label))) ranks.add(rank);
+  });
+  return ranks;
+}
+
 /** `text` with every character outside printable ASCII written as a backslash-u escape of its
  * hex code point, so the committed lists hold no invisible bytes such as an NBSP separator. */
 function asciiOnly(text: string): string {
@@ -275,6 +304,7 @@ export async function runOracle(
   if (producible.length === 0) throw new Error(`${corpusName} ${viewName}: no settled locations`);
   const usj0 = JSON.stringify(mounted.ref.current?.getUsj());
   const holdable = (i: number): boolean => !info[i].separator && !info[i].soft;
+  const namesNothing = new Set([...universe.sep, ...undisplayedCategoryRanks(universe, info)]);
   /** Byte indexes of each inline element, by key. */
   const inlineBytes = new Map<string, number[]>();
   info.forEach((byte, i) =>
@@ -333,7 +363,7 @@ export async function runOracle(
       info.forEach((byte, i) => {
         if (!holdable(i)) return;
         for (let r = Math.max(byte.s, lo); r < Math.min(byte.e, hi); r++)
-          if (!universe.sep.has(r)) {
+          if (!namesNothing.has(r)) {
             expected.add(i);
             return;
           }

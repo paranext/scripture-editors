@@ -1053,6 +1053,8 @@ export function $getNodeFromLocation(
       : $pointFromDisplayBytes(node, { kind: "attributeMarker", keyName }, 0);
     if (point) return point;
 
+    const behindCaller = $behindReadOnlyCaller(node, keyName);
+    if (behindCaller) return behindCaller;
     const bareValueStart = $bareValueStart(node, keyName);
     if (bareValueStart) return bareValueStart;
     // A milestone key no byte displays resolves in front of the milestone, where its values and
@@ -1073,7 +1075,7 @@ export function $getNodeFromLocation(
     );
     if (point) return point;
 
-    return $nearestPointAfterContent(node);
+    return $behindReadOnlyCaller(node, location.keyName) ?? $nearestPointAfterContent(node);
   }
 
   // Handle UsjMarkerLocation - position at the beginning of the opening marker
@@ -1128,6 +1130,8 @@ export function $getNodeFromLocation(
     // caller, not the space after it): the end of those bytes.
     const pastDisplayed = $endOfDecoratorBytes(node, wanted, location.propertyOffset);
     if (pastDisplayed) return pastDisplayed;
+    const behindCaller = $behindReadOnlyCaller(node, propertyName);
+    if (behindCaller) return behindCaller;
 
     if ($isElementNode(node)) {
       // An attribute the view does not display is placed where USFM spells it — after the
@@ -1239,55 +1243,12 @@ interface StandInPiece {
 /**
  * The bytes a read-only decorator stands for, its own displayed bytes first, then the undisplayed
  * bytes USFM spells between it and the next byte the view shows — bytes the caret behind the
- * decorator steps over, so they have no position of their own in the view. A read-only caller
- * stands for its note's category (`+ \cat People\cat*`) when no run displays it, and an empty
- * char span's read-only opening glyph for the span's attributes (`\jmp |GEN 1:1`), which only an
- * editable view displays. `undefined` when `owner` has no decorator that stands for undisplayed
- * bytes.
- */
-function $standInPieces(
-  owner: LexicalNode,
-): { decorator: LexicalNode; pieces: StandInPiece[] } | undefined {
-  if ($isCharNode(owner)) return $emptySpanStandIn(owner);
-  if (!$isNoteNode(owner)) return undefined;
-  const category = owner.getCategory();
-  const caller = owner
-    .getChildren()
-    .find((child) => child.getType() === IMMUTABLE_NOTE_CALLER_NODE_TYPE);
-  const run = ATTRIBUTE_MARKER_RUNS.cat;
-  if (!caller || !category || !run || $displaysAttributeKey(owner, run.keyName)) return undefined;
-  const { markerName, keyName } = run;
-  return {
-    decorator: caller,
-    pieces: [
-      {
-        text: owner.getCaller(),
-        spans: [{ start: 0, base: 0, bytes: { kind: "property", property: "caller" } }],
-      },
-      {
-        text: openingMarkerText(markerName),
-        spans: [
-          { start: 0, base: 0, bytes: { kind: "attributeMarker", keyName } },
-          { start: 1, base: 0, bytes: { kind: "attributeKey", keyName } },
-        ],
-      },
-      {
-        // The separator before the value is the space after the attribute marker, which counts
-        // into that marker name's offset space — the editable run's value spelling.
-        text: ` ${category}`,
-        spans: [
-          { start: 0, base: markerName.length, bytes: { kind: "attributeKey", keyName } },
-          { start: 1, base: 0, bytes: { kind: "property", property: keyName } },
-        ],
-      },
-      { text: closingMarkerText(markerName), spans: closingGlyphSpans(keyName) },
-    ],
-  };
-}
-
-/**
- * The pieces an empty span's read-only opening glyph stands for: the glyph, then the span's
- * attributes as Standard view spells them (`|GEN 1:1`), when no byte the view shows spells them.
+ * decorator steps over, so they have no position of their own in the view. Only an empty char
+ * span's read-only opening glyph stands for any: the glyph, then the span's attributes as Standard
+ * view spells them (`|GEN 1:1`), when no byte the view shows spells them. A note's caller stands
+ * for nothing it does not display: an undisplayed category names nothing
+ * ({@link $behindReadOnlyCaller}).
+ *
  * Only an EMPTY span: with content, the caret behind the glyph reports that content, so the
  * attributes (spelled after it) lie outside the glyph's locations — between the content's end and
  * the closer, where no byte names them and a range inside them holds nothing.
@@ -1330,20 +1291,9 @@ function $emptySpanStandIn(
   };
 }
 
-/** Whether any byte the view shows spells `owner`'s attribute key `keyName`. */
-function $displaysAttributeKey(owner: LexicalNode, keyName: string): boolean {
-  return $displayByteCarriers(owner).some((carrier) => {
-    const bytes = $displayBytesOf(carrier);
-    return (
-      !!bytes?.owner.is(owner) &&
-      bytes.spans.some((span) => isSameByteKind(span.bytes, { kind: "attributeKey", keyName }))
-    );
-  });
-}
-
 /**
  * Where `location` falls among the bytes a read-only decorator of `owner` stands for
- * ({@link $standInPieces}), counted in holdable bytes — each piece's edge whitespace, like a text
+ * ({@link $emptySpanStandIn}), counted in holdable bytes — each piece's edge whitespace, like a text
  * carrier's, names nothing. `undefined` when `owner` has no such decorator or the location names
  * none of those bytes.
  */
@@ -1351,7 +1301,7 @@ function $standInPosition(
   owner: LexicalNode,
   location: UsjDocumentLocation,
 ): DecoratorBytePosition | undefined {
-  const standIn = $standInPieces(owner);
+  const standIn = $isCharNode(owner) ? $emptySpanStandIn(owner) : undefined;
   const named = standIn && wholeDecoratorByteOf(location);
   if (!standIn || !named) return undefined;
   let total = 0;
@@ -2134,6 +2084,26 @@ function $endOfDecoratorBytes(
       : undefined;
   }
   return undefined;
+}
+
+/**
+ * Where a location on a note's category resolves when no byte the view shows spells it: behind the
+ * note's read-only caller, the closest position to its left, since USFM spells the category
+ * between the caller and the content (`\f + \cat People\cat* \ft …`). The category has no
+ * position of its own there and names nothing an annotation can hold — Paratext 9 never anchors an
+ * annotation to it either. `undefined` for any other key, or a note with no caller decorator.
+ */
+function $behindReadOnlyCaller(
+  owner: LexicalNode,
+  keyName: string,
+): [LexicalNode, number] | undefined {
+  if (!$isNoteNode(owner) || keyName !== ATTRIBUTE_MARKER_RUNS.cat?.keyName) return undefined;
+  const caller = owner
+    .getChildren()
+    .find((child) => child.getType() === IMMUTABLE_NOTE_CALLER_NODE_TYPE);
+  if (!caller) return undefined;
+  const [parent, index] = $pointBeside(caller, true);
+  return parent && index !== undefined ? [parent, index] : undefined;
 }
 
 /** The element point in front of `node` in its parent, or after it when `after`. */
