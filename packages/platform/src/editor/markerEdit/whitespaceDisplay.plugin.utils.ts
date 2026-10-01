@@ -423,8 +423,12 @@ const PLAIN_OPENER_TOKEN = new RegExp(
  * keeps a user from TYPING — Platform.Bible's marker menu disables exactly this set under protection
  * — and pasted text re-tokenizes into real markers the same way typed text does, so without this a
  * paste could add a verse or split a paragraph that the keyboard could not. Character markers, notes
- * and figures are content and stay, as does any marker the stylesheet does not know: its bytes are
- * the user's, and nothing says they are structure.
+ * and figures are content and stay. A marker the stylesheet does not know stays too — its bytes
+ * cannot be classified, and dropping bytes a strip cannot classify loses user content — but a known
+ * gap remains under protection: in body text the tokenizer reads an unrecognized marker as a
+ * PARAGRAPH regardless of the stylesheet, the same as PT9's `DetermineUnknownTokenType`
+ * (`usfmFragmentToUsj.ts`), so a protected paste of an unknown marker can still split the paragraph,
+ * exactly as typing it would.
  *
  * Each token goes with the one space that separates it from the text after it, so `aa \v 9 bb`
  * becomes `aa bb` and `\p text` becomes `text`.
@@ -541,10 +545,31 @@ function $isSelectionWithinOneAttributeNode(selection: RangeSelection): boolean 
  * attribute-run end of the range. A multi-line payload landing in body content this way therefore
  * still collapses per newline instead of splitting the paragraph; splitting a paragraph the removal
  * has just cut a char span in half in is the corruption this path exists to avoid.
+ *
+ * Structure protection applies to BOTH shapes, unlike the two rules above: a value-byte paste
+ * settles its `\v`/paragraph-marker bytes into a real verse or a split paragraph exactly as a typed
+ * one would (measured: a `\v 9` typed or pasted into a `\va` value re-tokenizes into a real verse
+ * node, and a `\p` there splits the paragraph, stranding the run's own closer as an unmatched
+ * marker in the new one) — protection's rule that a protected paste never adds structure outranks
+ * the paste-≡-typing carve-out for exactly the bytes that would become structure, so
+ * {@link stripPastedBlockMarkers} runs on both branches under protection.
  */
-function $insertPastedTextIntoAttributeContext(selection: RangeSelection, text: string): void {
+function $insertPastedTextIntoAttributeContext(
+  selection: RangeSelection,
+  text: string,
+  isStructureProtected: boolean,
+  getMarker: MarkerLookup,
+): void {
   const valueBytes = $isSelectionWithinOneAttributeNode(selection);
-  const resolved = valueBytes ? text : normalizePastedNbsp(stripPastedChapterAndBookId(text));
+  const resolved = valueBytes
+    ? isStructureProtected
+      ? stripPastedBlockMarkers(text, getMarker)
+      : text
+    : normalizePastedNbsp(
+        isStructureProtected
+          ? stripPastedBlockMarkers(stripPastedChapterAndBookId(text), getMarker)
+          : stripPastedChapterAndBookId(text),
+      );
   // Nothing survived the strip, so there is nothing to replace the selection with — see
   // `$handlePasteForStandardView`.
   if (resolved) selection.insertText(resolved.replace(/\n/g, " "));
@@ -629,9 +654,11 @@ function $insertPastedTextIntoAttributeContext(selection: RangeSelection, text: 
  * sits outside. Attribute value bytes are never rich content — a user cannot "type formatting"
  * into one either — so this handler must always claim a paste touching one and insert it as plain
  * text ({@link $insertPastedTextIntoAttributeContext}), regardless of what other MIME flavors the
- * clipboard also carries. A protected document needs no special case in that branch: inserting one
- * `insertText` with each newline collapsed to a space is already exactly what protection asks for,
- * and the selection refusal above has already declined the shapes it owns. One further precedence is unaffected by this suspension: the CRITICAL-priority in-note
+ * clipboard also carries. A protected document DOES need special handling in that branch:
+ * `$insertPastedTextIntoAttributeContext` strips structure markers under protection the same way
+ * the body-content path does, because a value-byte paste that re-tokenizes its `\v`/paragraph-marker
+ * bytes (the paste-≡-typing carve-out above) would otherwise add the very structure protection
+ * exists to keep out. One further precedence is unaffected by this suspension: the CRITICAL-priority in-note
  * multi-line `PASTE_COMMAND` claim (`MarkerEditPlugin.tsx`) still runs BEFORE this handler and
  * still wins for a multi-line payload whose selection touches EXPANDED note content — an attribute
  * run that happens to sit inside an expanded note's content is reached by this handler (and this
@@ -676,7 +703,7 @@ export function $handlePasteForStandardView(
   if (!$isRangeSelection(selection)) return false;
   event?.preventDefault();
   if (inAttributeContext) {
-    $insertPastedTextIntoAttributeContext(selection, text);
+    $insertPastedTextIntoAttributeContext(selection, text, isStructureProtected, getMarker);
     return true;
   }
   $insertPastedText(selection, text, isStructureProtected, armSplitExpected, getMarker);

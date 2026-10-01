@@ -33,13 +33,14 @@ import { $dfs } from "@lexical/utils";
 import {
   $getRoot,
   $getSelection,
+  $getState,
   $isRangeSelection,
   $isTextNode,
   LexicalEditor,
   PASTE_COMMAND,
   TextNode,
 } from "lexical";
-import { $isParaNode, NBSP } from "shared";
+import { $isAttributeRunNode, $isParaNode, NBSP, textTypeState } from "shared";
 import { StructureProtectionMode } from "shared-react";
 
 // jsdom implements neither `ClipboardEvent` nor `DragEvent`; Lexical's own paste fallback
@@ -482,5 +483,129 @@ describe("structure markers in a structure-protected paste", () => {
     const usj = ref.current?.getUsj();
     expect(firstParaContent(usj)).toEqual([hostContent[0], "Before aa bb ccafter"]);
     expect($paraCount(usj)).toBe(2);
+  });
+});
+
+// `$insertPastedTextIntoAttributeContext` (whitespaceDisplay.plugin.utils.ts) is the OTHER branch
+// `$handlePasteForStandardView` sends a paste to whenever the selection touches attribute-display
+// text (a verse's `\va`/`\vp` run here; a char span's `|attrs` run and a milestone's attribute run
+// share the same textType "attribute" tag). It never ran `stripPastedBlockMarkers`, so a pasted
+// `\v`/paragraph marker there re-tokenized into real structure even under protection — this block
+// pins that it now does.
+describe("structure markers in an attribute run under protection", () => {
+  /** A host paragraph whose verse carries a `\va` alternate-number attribute run — editable marker
+   * mode always builds a `\va value\va*` triplet when `altnumber` is set. */
+  const hostContentWithAttrRun: ParaContent = [
+    { type: "verse", marker: "v", number: "18", altnumber: "18a" } as unknown as MarkerObject,
+    "Before after",
+  ];
+
+  /** The `\va` run's own value text — the one TextNode tagged textType "attribute". */
+  function $vaValueText(): TextNode {
+    const para = $getRoot().getChildren().filter($isParaNode)[0];
+    const run = para.getChildren().find($isAttributeRunNode);
+    if (!run) throw new Error("expected the \\va attribute run");
+    const value = run
+      .getChildren()
+      .find(
+        (node): node is TextNode =>
+          $isTextNode(node) && $getState(node, textTypeState) === "attribute",
+      );
+    if (!value) throw new Error("expected the \\va run's value text");
+    return value;
+  }
+
+  /** Collapsed caret at the end of the `\va` run's value text — WHOLLY inside the attribute node
+   * ({@link $isSelectionWithinOneAttributeNode} is true for any collapsed caret there): sub-case
+   * (b), the paste-≡-typed value-byte shape. */
+  function $placeInsideAttrRun(): void {
+    const value = $vaValueText();
+    value.select(value.getTextContentSize(), value.getTextContentSize());
+  }
+
+  /** A range from the end of the `\va` run's value text into the following prose — TOUCHES the run
+   * without staying wholly inside it: sub-case (a), the body-content shape. */
+  function $placeAcrossAttrRunIntoProse(): void {
+    $placeInsideAttrRun();
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+    const para = $getRoot().getChildren().filter($isParaNode)[0];
+    const prose = para
+      .getChildren()
+      .find(
+        (node): node is TextNode => $isTextNode(node) && node.getTextContent().includes("Before"),
+      );
+    if (!prose) throw new Error("expected the prose text node");
+    selection.focus.set(prose.getKey(), 3, "text");
+  }
+
+  describe("sub-case (b): a collapsed caret wholly within the \\va run's value", () => {
+    it("strips a pasted verse, keeping the text", async () => {
+      const { usj } = await pasteInto(
+        "protected",
+        { "text/plain": "x \\v 9 y" },
+        $placeInsideAttrRun,
+        hostContentWithAttrRun,
+      );
+      expect(firstParaContent(usj)).toEqual([
+        { type: "verse", marker: "v", number: "18", altnumber: "18ax y" },
+        "Before after",
+      ]);
+    });
+
+    it("keeps the verse when protection is off", async () => {
+      const { usj } = await pasteInto(
+        "off",
+        { "text/plain": "x \\v 9 y" },
+        $placeInsideAttrRun,
+        hostContentWithAttrRun,
+      );
+      expect(firstParaContent(usj)).toEqual([
+        { type: "verse", marker: "v", number: "18" },
+        {
+          type: "char",
+          marker: "va",
+          content: ["18ax ", { type: "verse", marker: "v", number: "9" }, "y"],
+        },
+        "Before after",
+      ]);
+    });
+
+    // Unlike a verse, which re-tokenizes in place, a paragraph marker SPLITS — and before this fix
+    // the split landed mid-run, stranding the `\va` run's own closer as an unmatched marker in the
+    // new paragraph.
+    it("strips a pasted paragraph marker, not splitting the paragraph", async () => {
+      const { usj } = await pasteInto(
+        "protected",
+        { "text/plain": "x \\p y" },
+        $placeInsideAttrRun,
+        hostContentWithAttrRun,
+      );
+      expect(firstParaContent(usj)).toEqual([
+        { type: "verse", marker: "v", number: "18", altnumber: "18ax y" },
+        "Before after",
+      ]);
+      expect($paraCount(usj)).toBe(2);
+    });
+  });
+
+  describe("sub-case (a): a selection that only touches the \\va run", () => {
+    // The range runs from inside the value through the run's own closer into the prose that
+    // follows, so (independent of this fix — see `$insertPastedTextIntoAttributeContext`'s doc
+    // comment) removing it takes the closer with it: what survives lands as the run's own
+    // closer-less content, the pre-existing "touches a run" shape. The point pinned here is that
+    // no verse 9 is among it.
+    it("strips a pasted verse, keeping the text", async () => {
+      const { usj } = await pasteInto(
+        "protected",
+        { "text/plain": "x \\v 9 y" },
+        $placeAcrossAttrRunIntoProse,
+        hostContentWithAttrRun,
+      );
+      expect(firstParaContent(usj)).toEqual([
+        { type: "verse", marker: "v", number: "18" },
+        { type: "char", marker: "va", closed: "false", content: ["18ax yore after"] },
+      ]);
+    });
   });
 });
