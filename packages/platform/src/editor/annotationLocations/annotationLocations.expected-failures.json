@@ -196,7 +196,7 @@
   },
   "edges": {
     "standard": {
-      "ops": 297,
+      "ops": 495,
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[0]['number']|propertyOffset=1",
@@ -204,13 +204,15 @@
         "verse*(soft):\" \"@$.content[1].content[0]['number']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[1].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[2]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[2].content[1]['marker']|propertyOffset=2",
-        "text*(soft):\" \"@$.content[3]['number']|propertyOffset=1"
+        "text(sep):\"\\u00a0\"@$.content[2].content[1]['marker']|propertyOffset=1",
+        "text(sep):\"\\u00a0\"@$.content[3]['marker']|propertyOffset=1",
+        "text(sep):\"\\u00a0\"@$.content[3].content[1]['marker']|propertyOffset=2",
+        "text*(soft):\" \"@$.content[4]['number']|propertyOffset=1"
       ],
       "failures": {}
     },
     "standard+expandedNotes": {
-      "ops": 297,
+      "ops": 495,
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[0]['number']|propertyOffset=1",
@@ -218,13 +220,15 @@
         "verse*(soft):\" \"@$.content[1].content[0]['number']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[1].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[2]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[2].content[1]['marker']|propertyOffset=2",
-        "text*(soft):\" \"@$.content[3]['number']|propertyOffset=1"
+        "text(sep):\"\\u00a0\"@$.content[2].content[1]['marker']|propertyOffset=1",
+        "text(sep):\"\\u00a0\"@$.content[3]['marker']|propertyOffset=1",
+        "text(sep):\"\\u00a0\"@$.content[3].content[1]['marker']|propertyOffset=2",
+        "text*(soft):\" \"@$.content[4]['number']|propertyOffset=1"
       ],
       "failures": {}
     },
     "unformatted": {
-      "ops": 297,
+      "ops": 495,
       "anomalies": [],
       "exempt": [
         "text*(soft):\" \"@$.content[0]['number']|propertyOffset=1",
@@ -232,37 +236,39 @@
         "verse*(soft):\" \"@$.content[1].content[0]['number']|propertyOffset=1",
         "text(sep):\"\\u00a0\"@$.content[1].content[1]['marker']|propertyOffset=2",
         "text(sep):\"\\u00a0\"@$.content[2]['marker']|propertyOffset=1",
-        "text(sep):\"\\u00a0\"@$.content[2].content[1]['marker']|propertyOffset=2",
-        "text*(soft):\" \"@$.content[3]['number']|propertyOffset=1"
+        "text(sep):\"\\u00a0\"@$.content[2].content[1]['marker']|propertyOffset=1",
+        "text(sep):\"\\u00a0\"@$.content[3]['marker']|propertyOffset=1",
+        "text(sep):\"\\u00a0\"@$.content[3].content[1]['marker']|propertyOffset=2",
+        "text*(soft):\" \"@$.content[4]['number']|propertyOffset=1"
       ],
       "failures": {}
     },
     "visible": {
-      "ops": 200,
+      "ops": 374,
       "anomalies": [],
       "exempt": [],
       "failures": {}
     },
     "visible+collapsed": {
-      "ops": 200,
+      "ops": 374,
       "anomalies": [],
       "exempt": [],
       "failures": {}
     },
     "formatted": {
-      "ops": 191,
+      "ops": 365,
       "anomalies": [],
       "exempt": [],
       "failures": {}
     },
     "paragraph-structure": {
-      "ops": 191,
+      "ops": 365,
       "anomalies": [],
       "exempt": [],
       "failures": {}
     },
     "hidden+expanded": {
-      "ops": 191,
+      "ops": 365,
       "anomalies": [],
       "exempt": [],
       "failures": {}

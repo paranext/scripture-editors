@@ -474,12 +474,12 @@ function precedesOpeningCharGlyph(
 }
 
 /**
- * Whether the lone-NBSP text `nodes[index]` is content an annotation mark holds — the serialized
- * twin of `$isNbspContentInMark` (node.utils.ts), which says why: a direct child of a mark
- * (`inMark`), untagged, not where a char opener's separator sits, and, inside a char span, not the
- * span's only content.
+ * Whether the lone-NBSP text `nodes[index]` is content an annotation mark split off — the
+ * serialized twin of `$isNbspContentAtMark` (node.utils.ts), which says why: a direct child of a
+ * mark (`inMark`) or a direct sibling of one, untagged, not where a char opener's separator sits,
+ * and, inside a char span, not the span's only content.
  */
-function isNbspContentInMark(
+function isNbspContentAtMark(
   nodes: SerializedLexicalNode[],
   index: number,
   precedingSibling: SerializedLexicalNode | undefined,
@@ -487,7 +487,12 @@ function isNbspContentInMark(
   inMark: boolean,
 ): boolean {
   const node = nodes[index];
-  if (!inMark || !isSerializedTextNode(node) || node.text !== NBSP) return false;
+  if (!isSerializedTextNode(node) || node.text !== NBSP) return false;
+  const atMark =
+    inMark ||
+    isSerializedTypedMarkNode(nodes[index - 1]) ||
+    isSerializedTypedMarkNode(nodes[index + 1]);
+  if (!atMark) return false;
   if (node[NODE_STATE_KEY]?.textType !== undefined) return false;
   if (precedesOpeningCharGlyph(nodes, index, precedingSibling, enclosingChar)) return false;
   return !enclosingChar || hasOtherCharContent(enclosingChar.children, node);
@@ -568,7 +573,7 @@ function recurseNodes(
   // The effective previous sibling for `nodes[0]`, when `nodes` is a TypedMarkNode's own
   // unwrapped children — see `precedesOpeningCharGlyph`.
   precedingSibling?: SerializedLexicalNode,
-  // Whether `nodes` are a TypedMarkNode's own children — see `isNbspContentInMark`.
+  // Whether `nodes` are a TypedMarkNode's own children — see `isNbspContentAtMark`.
   inMark = false,
 ): MarkerContent[] | undefined {
   const markers: MarkerContent[] = [];
@@ -724,16 +729,16 @@ function recurseNodes(
           // text node stands in for THREE presentation shapes — the tagged separators the
           // forward adaptor builds, the empty-char placeholder, and an orphaned structural
           // prefix a split or deletion strands in its own (untagged) node. The one content shape
-          // told apart is a no-break space an annotation mark split off content text
-          // (`isNbspContentInMark`). Any other CONTENT string which is exactly one NBSP is
-          // dropped too; fixing that needs a per-context story for the untagged shapes, not a
-          // tag test alone. The forward side keeps its own output clear of the ambiguity:
-          // `createPara` leaves a spaces-only paragraph-leading string plain instead of
-          // rewriting a lone " " into exactly this shape, so in standard view only an authored
-          // lone-NBSP data string (displayed as `~`, never as a bare NBSP node) is at stake —
-          // leaving the drop to genuinely structural nodes.
+          // told apart is a no-break space an annotation mark split off content text, inside the
+          // mark or beside it (`isNbspContentAtMark`). Any other CONTENT string which is exactly
+          // one NBSP is dropped too; fixing that needs a per-context story for the untagged
+          // shapes, not a tag test alone. The forward side keeps its own output clear of the
+          // ambiguity: `createPara` leaves a spaces-only paragraph-leading string plain instead
+          // of rewriting a lone " " into exactly this shape, so in standard view only an
+          // authored lone-NBSP data string (displayed as `~`, never as a bare NBSP node) is at
+          // stake — leaving the drop to genuinely structural nodes.
           (serializedTextNode.text !== NBSP ||
-            isNbspContentInMark(nodes, index, precedingSibling, enclosingChar, inMark)) &&
+            isNbspContentAtMark(nodes, index, precedingSibling, enclosingChar, inMark)) &&
           // The untagged NBSP-`|` form of milestone attribute text. Text right after a char span's
           // opening glyph is never that: its NBSP is the span's separator, and a `|…` after it is
           // content the attribute grammar left literal (`\w |lemma="g"grace\w*` — Paratext 9

@@ -32,6 +32,7 @@ import {
   $isMarkerTrailingSeparator,
   $isTypedMarkNode,
   LoggerBasic,
+  NBSP,
 } from "shared";
 import {
   $getLocationFromNode,
@@ -435,7 +436,10 @@ export const richUsj: Usj = usj([
 ]);
 
 /** Document edges: a chapter first, a verse first in its paragraph, a char span ending the
- * document's last paragraph, and a chapter last. */
+ * document's last paragraph, and a chapter last. Plus no-break spaces the text itself contains, at
+ * the edges of words a range can name on either side: leading a paragraph's text, French
+ * punctuation (`mot~:`), a number (`1~000`), ending a text before a char span, leading and ending
+ * a char span's content, and between two words (`a~b`). */
 export const edgesUsj: Usj = usj([
   { type: "chapter", marker: "c", number: "1" },
   {
@@ -444,6 +448,15 @@ export const edgesUsj: Usj = usj([
     content: [
       { type: "verse", marker: "v", number: "1" },
       { type: "char", marker: "wj", content: ["first"] },
+    ],
+  },
+  {
+    type: "para",
+    marker: "p",
+    content: [
+      `${NBSP}mot${NBSP}: 1${NBSP}000 end${NBSP}`,
+      { type: "char", marker: "w", content: [`${NBSP}a${NBSP}`] },
+      ` a${NBSP}b`,
     ],
   },
   { type: "para", marker: "p", content: ["x ", { type: "char", marker: "bd", content: ["tail"] }] },

@@ -7,6 +7,7 @@
 import {
   $byteLoc,
   $byteNodes,
+  $byteWalk,
   $heldBytes,
   $heldIndexes,
   edgesUsj,
@@ -16,6 +17,7 @@ import {
   mountInView,
   oracleView,
   ORACLE_TYPE,
+  ORACLE_VIEWS,
   richUsj,
 } from "./annotationLocations.test-helpers";
 import { copyEvent, pasteEvent } from "../markerEdit/markerEdit.test-helpers";
@@ -34,6 +36,7 @@ import {
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
 import {
+  ContentJsonPath,
   MarkerContent,
   MarkerObject,
   Usj,
@@ -697,6 +700,100 @@ describe("an annotation over a no-break space the text itself contains", () => {
       expect(milestones).toHaveLength(2);
     },
   );
+});
+
+describe("an annotation beside a no-break space the text itself contains", () => {
+  const textPath = "$.content[2].content[0]";
+  const at = (
+    start: number,
+    end: number,
+    jsonPath: ContentJsonPath = textPath,
+  ): AnnotationRange => ({
+    start: { jsonPath, offset: start },
+    end: { jsonPath, offset: end },
+  });
+  const wordPath = "$.content[2].content[1].content[0]";
+  /** Each shape leaves exactly one content no-break space outside every mark. */
+  const shapes: { name: string; content: MarkerContent[]; ranges: AnnotationRange[] }[] = [
+    { name: "end~, over end", content: [`end${NBSP}`], ranges: [at(0, 3)] },
+    { name: "~end, over end", content: [`${NBSP}end`], ranges: [at(1, 4)] },
+    { name: "a~b, over a and over b", content: [`a${NBSP}b`], ranges: [at(0, 1), at(2, 3)] },
+    { name: "mot~:, over mot and over :", content: [`mot${NBSP}:`], ranges: [at(0, 3), at(4, 5)] },
+    { name: "1~000, over 1 and over 000", content: [`1${NBSP}000`], ranges: [at(0, 1), at(2, 5)] },
+    {
+      name: "\\w a~\\w*, over a",
+      content: ["x ", { type: "char", marker: "w", content: [`a${NBSP}`] }, " y"],
+      ranges: [at(0, 1, wordPath)],
+    },
+  ];
+
+  it.each(ORACLE_VIEWS.flatMap(({ name: view }) => shapes.map((shape) => ({ ...shape, view }))))(
+    "keeps it, and every label, when $name is set and removed ($view)",
+    async ({ view, content, ranges }) => {
+      const viewOptions = oracleView(view);
+      const mounted = await mountInView(twoParaUsj(content), viewOptions);
+      const labels = (): string[] =>
+        mounted.lexical
+          .getEditorState()
+          .read(() => $byteWalk(viewOptions).map((byte) => `${byte.ch} ${byte.label}`));
+      const before = mounted.ref.current?.getUsj();
+      const labelsBefore = labels();
+
+      await act(async () => {
+        ranges.forEach((range, i) =>
+          mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, `side${i}`),
+        );
+        await Promise.resolve();
+      });
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
+      expect(labels()).toEqual(labelsBefore);
+
+      await act(async () => {
+        ranges.forEach((_, i) => mounted.ref.current?.removeAnnotation(ORACLE_TYPE, `side${i}`));
+        await Promise.resolve();
+      });
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
+      mounted.unmount();
+    },
+  );
+
+  it("keeps a paragraph's leading space, displayed as a no-break space, beside a mark (standard)", async () => {
+    const mounted = await mountInView(twoParaUsj([" word"]), oracleView("standard"));
+    const before = mounted.ref.current?.getUsj();
+
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(at(1, 5), ORACLE_TYPE, "lead");
+      await Promise.resolve();
+    });
+
+    expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "lead"))).toBe("word");
+    expect(mounted.ref.current?.getUsj()).toEqual(before);
+  });
+
+  it("keeps it through a settle elsewhere in the paragraph (unformatted)", async () => {
+    const mounted = await mountInView(
+      twoParaUsj([`a${NBSP}b should be`]),
+      oracleView("unformatted"),
+    );
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(at(0, 1), ORACLE_TYPE, "a");
+      mounted.ref.current?.setAnnotation(at(2, 3), ORACLE_TYPE, "b");
+      await Promise.resolve();
+    });
+
+    // The text after the mark over `b` is ` should be`, its own node.
+    await typeOver(mounted.lexical, "should be", " should be \\bd x\\bd*");
+    settleByBlurAndCommit(mounted);
+
+    const para = mounted.ref.current?.getUsj()?.content?.[2];
+    if (!para || typeof para === "string") throw new Error("expected a paragraph");
+    expect(para.content?.[0]).toBe(`a${NBSP}b should be `);
+    expect(spanContentIn(mounted.ref.current?.getUsj(), "bd")).toEqual(["x"]);
+    mounted.lexical.getEditorState().read(() => {
+      expect($heldBytes(HELD_TYPE, "a")).toBe("a");
+      expect($heldBytes(HELD_TYPE, "b")).toBe("b");
+    });
+  });
 });
 
 /** The text of every mark holding `type`/`id`, in document order. Call inside a read. */

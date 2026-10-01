@@ -76,7 +76,7 @@ import {
   $isUnknownNode,
   $isVerseNode,
   $isMarkerTrailingSeparator,
-  $isNbspContentInMark,
+  $isNbspContentAtMark,
   $isTypedMarkNode,
   $milestoneAttributeRunPieces,
   $verseAttributeRunPieces,
@@ -224,7 +224,7 @@ export function toFragmentText(text: string): string {
  *   that is EXACTLY one NBSP (the engine-owned spacer / empty-char placeholder shape, which
  *   serialization also treats as structural — the lone-NBSP byte test in editor-usj.adaptor.ts)
  *   unless it is a no-break space an annotation mark split off content (`isNbspContent`, from
- *   `$isNbspContentInMark`), and the one structural leading NBSP fused onto a char span's first
+ *   `$isNbspContentAtMark`), and the one structural leading NBSP fused onto a char span's first
  *   content child (`structuralLead` — the twin of the conversion's positional separator strip,
  *   `precedesOpeningCharGlyph` in editor-usj.adaptor.ts).
  *
@@ -1075,7 +1075,7 @@ function $appendNodesFragment(
               $textNodeFragmentText(node),
               viewOptions,
               structuralLead,
-              $isNbspContentInMark(node),
+              $isNbspContentAtMark(node),
             ),
       );
     } else if ($isElementNode(node)) {

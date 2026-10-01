@@ -998,27 +998,33 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
     // "" / NBSP are presentation-only; a bare cursor host (EmptyVerseCaretGuardPlugin) likewise
     // carries no content, so it must not shift annotation content indexes while it rests.
     if (text === "" || isCursorPlaceholderOnly(text)) return true;
-    if (text === NBSP) return !$isNbspContentInMark(node);
+    if (text === NBSP) return !$isNbspContentAtMark(node);
   }
   return false;
 }
 
 /**
- * Whether `node`, a text that is exactly one NBSP, is content an annotation mark holds rather than
- * a display spacer. A lone-NBSP text is normally presentation — a char span's separator or spacer,
- * or an empty span's placeholder — but a range can name a single no-break space the text itself
- * contains (`Tilde~should`), and the wrap then splits it into a mark of its own. The wrap moves
- * only named bytes into a mark and leaves a char opener's separator outside it, so a lone NBSP
- * directly inside a mark is content unless it sits where a char opener's separator does, or a char
- * span has no other content for it to be part of (the placeholder's shape). The editor→USJ
- * conversion (`editor-usj.adaptor.ts`) keeps exactly these as content, by the same rule on
- * serialized nodes.
+ * Whether `node`, a text that is exactly one NBSP, is content an annotation mark split off rather
+ * than a display spacer. A lone-NBSP text is normally presentation — a char span's separator or
+ * spacer, or an empty span's placeholder — but text can contain a no-break space of its own
+ * (`Tilde~should`, French `mot~:`, `1~000`), and the wrap splits content text at a range's edges:
+ * a range naming just that space makes it a mark of its own, and a range ending or starting right
+ * beside it (`end~` over `end`, `a~b` over `a` and over `b`) leaves it a node of its own outside
+ * the mark. The wrap moves only named bytes into a mark and leaves a char opener's separator out of
+ * it, so a lone NBSP directly inside a mark, or directly beside one, is content unless it sits
+ * where a char opener's separator does, or a char span has no other content for it to be part of
+ * (the placeholder's shape). The editor→USJ conversion (`editor-usj.adaptor.ts`) keeps exactly
+ * these as content, by the same rule on serialized nodes.
  *
  * Read-only: call inside `editor.getEditorState().read(...)` or an update.
  */
-export function $isNbspContentInMark(node: TextNode): boolean {
+export function $isNbspContentAtMark(node: TextNode): boolean {
   if (node.getTextContent() !== NBSP || $getState(node, textTypeState) !== undefined) return false;
-  if (!$isTypedMarkNode(node.getParent()) || $charSeparatorPrefixLength(node) > 0) return false;
+  const atMark =
+    $isTypedMarkNode(node.getParent()) ||
+    $isTypedMarkNode(node.getPreviousSibling()) ||
+    $isTypedMarkNode(node.getNextSibling());
+  if (!atMark || $charSeparatorPrefixLength(node) > 0) return false;
   const owner = $getLogicalParent(node);
   return !$isCharNode(owner) || $hasOtherCharContent(owner, node);
 }
