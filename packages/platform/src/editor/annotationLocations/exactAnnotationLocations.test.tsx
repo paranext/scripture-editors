@@ -959,6 +959,97 @@ describe("inbound resolution for annotations", () => {
     if (decorators) expect(result.decorators).toEqual(decorators);
   });
 
+  /** `\p Text\f + \cat things\cat* \fr 1:12 \ft Some text.\f* after` — a note whose category no
+   * view but Standard with notes expanded displays. */
+  const categoryNoteUsj: Usj = twoParaUsj([
+    "Text",
+    {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      category: "things",
+      content: [
+        { type: "char", marker: "fr", content: ["1:12 "] },
+        { type: "char", marker: "ft", content: ["Some text."] },
+      ],
+    },
+    " after",
+  ]);
+  const notePath = "$.content[2].content[1]";
+
+  // A read-only caller decorator stands for the note's undisplayed category, the bytes USFM spells
+  // between the caller and the note's content: a range naming any of them holds the caller whole,
+  // and a range naming none (the caller's end through the `\cat` backslash's front) holds nothing.
+  it.each<{ name: string; view: string; range: AnnotationRange; held: string }>([
+    {
+      name: "inside the category value",
+      view: "visible",
+      range: {
+        start: { jsonPath: `${notePath}['category']`, propertyOffset: 3 },
+        end: { jsonPath: `${notePath}['category']`, propertyOffset: 4 },
+      },
+      held: "[immutable-note-caller]",
+    },
+    {
+      name: "inside the category value",
+      view: "standard",
+      range: {
+        start: { jsonPath: `${notePath}['category']`, propertyOffset: 4 },
+        end: { jsonPath: `${notePath}['category']`, propertyOffset: 5 },
+      },
+      held: "[immutable-note-caller]",
+    },
+    {
+      name: "the `\\cat` backslash",
+      view: "standard",
+      range: {
+        start: { jsonPath: notePath, keyName: "category" },
+        end: { jsonPath: notePath, keyName: "category", keyOffset: 0 },
+      },
+      held: "[immutable-note-caller]",
+    },
+    {
+      name: "the note's undisplayed marker name through the `\\cat` backslash",
+      view: "formatted",
+      range: {
+        start: { jsonPath: `${notePath}['marker']`, propertyOffset: 1 },
+        end: { jsonPath: notePath, keyName: "category" },
+      },
+      held: "[immutable-note-caller]",
+    },
+    {
+      name: "the `\\cat*` closer through the note's content",
+      view: "visible",
+      range: {
+        start: { jsonPath: notePath, keyName: "category", keyClosingMarkerOffset: 3 },
+        end: { jsonPath: `${notePath}.content[0]` },
+      },
+      held: "[immutable-note-caller]",
+    },
+    {
+      name: "the caller's end through the `\\cat` backslash's front, which names nothing",
+      view: "standard",
+      range: {
+        start: { jsonPath: `${notePath}['caller']`, propertyOffset: 1 },
+        end: { jsonPath: notePath, keyName: "category" },
+      },
+      held: "",
+    },
+    {
+      name: "the caller's end through the category key",
+      view: "standard",
+      range: {
+        start: { jsonPath: `${notePath}['caller']`, propertyOffset: 1 },
+        end: { jsonPath: notePath, keyName: "category", keyOffset: 1 },
+      },
+      held: "[immutable-note-caller]",
+    },
+  ])("holds a note's caller for a range $name ($view)", async ({ view, range, held }) => {
+    const result = await annotateInView(categoryNoteUsj, view, range);
+
+    expect(result.held).toBe(held);
+  });
+
   it.each<{
     name: string;
     view: string;

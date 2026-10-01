@@ -1195,9 +1195,10 @@ function holdableBytePosition(text: string, offset: number): { before: number; t
 /**
  * {@link $getNodeFromLocation}'s point, and where the location falls among a read-only decorator's
  * bytes when it names one past the decorator's first: a byte of a glyph, attribute or collapsed
- * caller decorator, measured in the bytes the decorator displays; or any byte of a verse or
- * chapter decorator other than its marker's backslash, since such a decorator displays its owner
- * whole ({@link $wholeDecoratorPosition}).
+ * caller decorator, measured in the bytes the decorator displays, together with the undisplayed
+ * bytes it stands for ({@link $standInPosition}); or any byte of a verse or chapter decorator other
+ * than its marker's backslash, since such a decorator displays its owner whole
+ * ({@link $wholeDecoratorPosition}).
  */
 function $getPointFromLocation(
   location: UsjDocumentLocation,
@@ -1205,6 +1206,11 @@ function $getPointFromLocation(
 ): LocatedPoint {
   const point = $getNodeFromLocation(location, viewOptions);
   const [node, offset] = point;
+  if (!isUsjTextContentLocation(location)) {
+    const owner = $navigateToNode(location.jsonPath, hasStandardViewWhitespace(viewOptions));
+    const standIn = owner && $standInPosition(owner, location);
+    if (standIn) return standIn.before > 0 ? { point, insideDecorator: standIn } : { point };
+  }
   if (node && offset !== undefined && offset > 0 && $isDisplayByteDecorator(node)) {
     const text = $decoratorDisplayText(node);
     return {
@@ -1224,6 +1230,103 @@ function $decoratorDisplayText(node: LexicalNode): string {
   if (node.getType() !== IMMUTABLE_NOTE_CALLER_NODE_TYPE) return node.getTextContent();
   const note = node.getParent();
   return $isNoteNode(note) ? note.getCaller() : "";
+}
+
+/** One run of the bytes a read-only decorator stands for, spelled as Standard view displays it. */
+interface StandInPiece {
+  text: string;
+  spans: DisplayByteSpan[];
+}
+
+/**
+ * The bytes a read-only decorator stands for, its own displayed bytes first, then the undisplayed
+ * bytes USFM spells between it and the next byte the view shows — bytes the caret behind the
+ * decorator steps over, so they have no position of their own in the view. A read-only caller
+ * stands for its note's category (`+ \cat People\cat*`) when no run displays it. `undefined` when
+ * `owner` has no decorator that stands for undisplayed bytes.
+ */
+function $standInPieces(
+  owner: LexicalNode,
+): { decorator: LexicalNode; pieces: StandInPiece[] } | undefined {
+  if (!$isNoteNode(owner)) return undefined;
+  const category = owner.getCategory();
+  const caller = owner
+    .getChildren()
+    .find((child) => child.getType() === IMMUTABLE_NOTE_CALLER_NODE_TYPE);
+  const run = ATTRIBUTE_MARKER_RUNS.cat;
+  if (!caller || !category || !run || $displaysAttributeKey(owner, run.keyName)) return undefined;
+  const { markerName, keyName } = run;
+  return {
+    decorator: caller,
+    pieces: [
+      {
+        text: owner.getCaller(),
+        spans: [{ start: 0, base: 0, bytes: { kind: "property", property: "caller" } }],
+      },
+      {
+        text: openingMarkerText(markerName),
+        spans: [
+          { start: 0, base: 0, bytes: { kind: "attributeMarker", keyName } },
+          { start: 1, base: 0, bytes: { kind: "attributeKey", keyName } },
+        ],
+      },
+      {
+        // The separator before the value is the space after the attribute marker, which counts
+        // into that marker name's offset space — the editable run's value spelling.
+        text: ` ${category}`,
+        spans: [
+          { start: 0, base: markerName.length, bytes: { kind: "attributeKey", keyName } },
+          { start: 1, base: 0, bytes: { kind: "property", property: keyName } },
+        ],
+      },
+      { text: closingMarkerText(markerName), spans: closingGlyphSpans(keyName) },
+    ],
+  };
+}
+
+/** Whether any byte the view shows spells `owner`'s attribute key `keyName`. */
+function $displaysAttributeKey(owner: LexicalNode, keyName: string): boolean {
+  return $displayByteCarriers(owner).some((carrier) => {
+    const bytes = $displayBytesOf(carrier);
+    return (
+      !!bytes?.owner.is(owner) &&
+      bytes.spans.some((span) => isSameByteKind(span.bytes, { kind: "attributeKey", keyName }))
+    );
+  });
+}
+
+/**
+ * Where `location` falls among the bytes a read-only decorator of `owner` stands for
+ * ({@link $standInPieces}), counted in holdable bytes — each piece's edge whitespace, like a text
+ * carrier's, names nothing. `undefined` when `owner` has no such decorator or the location names
+ * none of those bytes.
+ */
+function $standInPosition(
+  owner: LexicalNode,
+  location: UsjDocumentLocation,
+): DecoratorBytePosition | undefined {
+  const standIn = $standInPieces(owner);
+  const named = standIn && wholeDecoratorByteOf(location);
+  if (!standIn || !named) return undefined;
+  let total = 0;
+  let before: number | undefined;
+  for (const { text, spans } of standIn.pieces) {
+    const bytes: DisplayBytes = { owner, spans, length: text.length };
+    if (before === undefined) {
+      const index = spans.findIndex(
+        (span, i) =>
+          isSameByteKind(span.bytes, named.bytes) &&
+          named.offset >= span.base &&
+          named.offset <= highestSpanOffset(bytes, i),
+      );
+      if (index >= 0) {
+        const at = spans[index].start + (named.offset - spans[index].base);
+        before = total + holdableBytePosition(text, at).before;
+      }
+    }
+    total += holdableBytePosition(text, 0).total;
+  }
+  return before === undefined ? undefined : { decorator: standIn.decorator, before, total };
 }
 
 /**
