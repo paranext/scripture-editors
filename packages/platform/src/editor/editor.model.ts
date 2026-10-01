@@ -56,13 +56,13 @@ export interface CommitTypedMarkerOptions {
 }
 
 /**
- * Options for {@link EditorRef.setUsj}.
+ * EXPERIMENTAL: Options for {@link EditorRef.setUsj}.
  *
  * @public
  */
 export interface SetUsjOptions {
   /**
-   * Load the document even when the editor already holds it. Defaults to `false`.
+   * EXPERIMENTAL: Load the document even when the editor already holds it. Defaults to `false`.
    *
    * Pass `true` to correct what is on screen while a marker edit may be in progress. The editor
    * keeps two versions of its document while such an edit is in progress: what is on screen, and
@@ -179,7 +179,8 @@ export interface EditorRef {
    * history survive: the document {@link EditorRef.getUsj} returns now (what is on screen), or,
    * while a marker edit is in progress, the editor's own record from before that edit — so a host
    * re-sending the text as it was does not throw the edit away. Pass `options.force` to load it
-   * regardless (see {@link SetUsjOptions.force}).
+   * regardless (see {@link SetUsjOptions.force}). `options` is EXPERIMENTAL
+   * (see {@link SetUsjOptions}).
    */
   setUsj(usj: Usj, options?: SetUsjOptions): void;
   /**
