@@ -22,7 +22,7 @@ import {
   REMOVE_TEXT_COMMAND,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
-import { mergeRegister } from "@lexical/utils";
+import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import { useEffect } from "react";
 import {
   $caretHostAtBoundary,
@@ -154,15 +154,6 @@ export function $shouldRefuseBookPrefixDeletion(isBackward: boolean): boolean {
 }
 
 /**
- * The `BookNode` enclosing `node` — its top-level ancestor, when that ancestor is a book — covering
- * a node nested inside the `\id` line's own character spans or notes, not only a direct child.
- */
-function $getEnclosingBook(node: LexicalNode): BookNode | null {
-  const top = node.getTopLevelElement();
-  return $isBookNode(top) ? top : null;
-}
-
-/**
  * `DELETE_LINE_COMMAND`'s own fix for the case {@link $shouldRefuseBookPrefixDeletion} does not
  * catch: a COLLAPSED caret already past the boundary, mid-content, on the `\id` line. Lexical's own
  * `RangeSelection.deleteLine` extends the selection to the DOM's own visual line boundary before
@@ -189,7 +180,7 @@ function $clampLineDeletionPastBookPrefix(isBackward: boolean): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
 
-  const book = $getEnclosingBook(selection.anchor.getNode());
+  const book = $findMatchingParent(selection.anchor.getNode(), $isBookNode);
   if (!book || !$isBookPrefixNode(book.getFirstChild())) return false;
 
   selection.modify("extend", isBackward, "lineboundary");
