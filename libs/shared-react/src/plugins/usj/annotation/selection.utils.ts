@@ -139,8 +139,9 @@ export function $getRangeFromUsjSelection(
   }
 
   // Find the start and end nodes with offsets based on the location.
-  const startAt = $getPointFromLocation(start, viewOptions);
-  const endAt = end === start ? startAt : $getPointFromLocation(end, viewOptions);
+  const forAnnotation = !!options?.forAnnotation;
+  const startAt = $getPointFromLocation(start, viewOptions, forAnnotation);
+  const endAt = end === start ? startAt : $getPointFromLocation(end, viewOptions, forAnnotation);
   const [startNode, startOffset] = startAt.point;
   const [endNode, endOffset] = endAt.point;
   if (!startNode || !endNode || startOffset === undefined || endOffset === undefined)
@@ -1197,18 +1198,19 @@ function holdableBytePosition(text: string, offset: number): { before: number; t
 /**
  * {@link $getNodeFromLocation}'s point, and where the location falls among a read-only decorator's
  * bytes when it names one past the decorator's first: a byte of a glyph, attribute or collapsed
- * caller decorator, measured in the bytes the decorator displays, together with the undisplayed
- * bytes it stands for ({@link $standInPosition}); or any byte of a verse or chapter decorator other
- * than its marker's backslash, since such a decorator displays its owner whole
- * ({@link $wholeDecoratorPosition}).
+ * caller decorator, measured in the bytes the decorator displays — and, for an annotation
+ * (`forAnnotation`), together with the undisplayed bytes it stands for ({@link $standInPosition});
+ * or any byte of a verse or chapter decorator other than its marker's backslash, since such a
+ * decorator displays its owner whole ({@link $wholeDecoratorPosition}).
  */
 function $getPointFromLocation(
   location: UsjDocumentLocation,
   viewOptions: ViewOptions | undefined,
+  forAnnotation: boolean,
 ): LocatedPoint {
   const point = $getNodeFromLocation(location, viewOptions);
   const [node, offset] = point;
-  if (!isUsjTextContentLocation(location)) {
+  if (forAnnotation && !isUsjTextContentLocation(location)) {
     const owner = $navigateToNode(location.jsonPath, hasStandardViewWhitespace(viewOptions));
     const standIn = owner && $standInPosition(owner, location);
     if (standIn) return standIn.before > 0 ? { point, insideDecorator: standIn } : { point };
@@ -1289,8 +1291,13 @@ function $standInPieces(
   };
 }
 
-/** The pieces an empty span's read-only opening glyph stands for: the glyph, then the span's
- * attributes as Standard view spells them (`|GEN 1:1`), when no byte the view shows spells them. */
+/**
+ * The pieces an empty span's read-only opening glyph stands for: the glyph, then the span's
+ * attributes as Standard view spells them (`|GEN 1:1`), when no byte the view shows spells them.
+ * Only an EMPTY span: with content, the caret behind the glyph reports that content, so the
+ * attributes (spelled after it) lie outside the glyph's locations — between the content's end and
+ * the closer, where no byte names them and a range inside them holds nothing.
+ */
 function $emptySpanStandIn(
   char: CharNode,
 ): { decorator: LexicalNode; pieces: StandInPiece[] } | undefined {

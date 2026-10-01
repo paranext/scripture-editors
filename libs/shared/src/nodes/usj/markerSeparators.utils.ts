@@ -100,11 +100,10 @@ export function $isSeparatorPrefixHostText(node: LexicalNode | null | undefined)
  * The separator is display state the editor→USJ conversion strips, so that byte is not part of
  * the span's USJ text: anything that measures content or maps between live and settled text
  * offsets must skip it, or every offset inside a char span is off by one. Shape-based on purpose
- * — glyph adjacency, not view options, which this layer does not see. Standard view's strip
- * (`precedesOpeningCharGlyph` in `editor-usj.adaptor.ts`) decides the same way over the serialized
- * tree, so an authored `~` right after a nested closer survives the export. The editable
- * non-Standard strip in `createCharMarker` is still the coarser "first coalesced string starts
- * with NBSP" rule and can disagree with this one while a span's opening glyph is mid-edit.
+ * — glyph adjacency, not view options, which this layer does not see. The editor→USJ
+ * conversion's strip (`precedesOpeningCharGlyph` in `editor-usj.adaptor.ts`, every editable view)
+ * decides the same way over the serialized tree, so an authored `~` right after a nested closer,
+ * or leading a span's content once a mark split the separator off, survives the export.
  *
  * Read-only: safe inside `editor.update()` or either read form.
  */

@@ -220,14 +220,13 @@ export function toFragmentText(text: string): string {
  * - Unformatted (editable without the standard whitespace mapping): a content NBSP IS the data
  *   byte. It is spelled `~` — the tokenizer's input convention (`usjText` maps `~` back to NBSP,
  *   PT9 UsfmParser) — so a settle that rewrites the paragraph round-trips it instead of
- *   corrupting it to a plain space. Two structural shapes still flatten to " " even here:
- *   a node that is EXACTLY one NBSP (the engine-owned spacer / empty-char placeholder shape,
- *   which serialization also treats as structural — the lone-NBSP byte test in
- *   editor-usj.adaptor.ts) unless it is a no-break space an annotation mark split off content
- *   (`isNbspContent`, from `$isNbspContentInMark`), and the one structural leading NBSP fused
- *   onto a char span's first
- *   content child (`structuralLead` — the positional twin of `createCharMarker`'s non-standard
- *   first-string strip in editor-usj.adaptor.ts).
+ *   corrupting it to a plain space. Two structural shapes still flatten to " " even here: a node
+ *   that is EXACTLY one NBSP (the engine-owned spacer / empty-char placeholder shape, which
+ *   serialization also treats as structural — the lone-NBSP byte test in editor-usj.adaptor.ts)
+ *   unless it is a no-break space an annotation mark split off content (`isNbspContent`, from
+ *   `$isNbspContentInMark`), and the one structural leading NBSP fused onto a char span's first
+ *   content child (`structuralLead` — the twin of the conversion's positional separator strip,
+ *   `precedesOpeningCharGlyph` in editor-usj.adaptor.ts).
  *
  * ONE definition for every fragment producer: the mutating rebuilds and the read-only settle both
  * build their fragments through `$appendNodesFragment` below, so the mirror can never flatten a
