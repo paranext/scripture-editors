@@ -15,6 +15,7 @@ import {
   LexicalEditor,
   PASTE_COMMAND,
   RangeSelection,
+  REMOVE_TEXT_COMMAND,
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
@@ -1096,6 +1097,38 @@ describe("a non-collapsed selection spanning the prefix narrows instead of losin
       if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
       expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
       expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}x`);
+    });
+  });
+
+  // deleteByDrag and composition-driven deletes both resolve to REMOVE_TEXT_COMMAND rather than
+  // DELETE_CHARACTER_COMMAND, and RichTextPlugin's own handler for it calls
+  // `selection.removeText()` against whatever selection is current — the same loss a non-collapsed
+  // Backspace would cause without the narrowing above.
+  it("REMOVE_TEXT_COMMAND removes only the content; the prefix is still the book's first child", async () => {
+    let book!: BookNode;
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        content = $createTextNode("Genesis");
+        book = $createBookLine("GEN", content);
+        $getRoot().append(book);
+      },
+      <ParaMarkerPrefixCursorGuardPlugin />,
+    );
+    updateSelection(editor, book, 0, content, 7); // "Genesis" is 7 chars
+
+    editor.update(
+      () => {
+        editor.dispatchCommand(REMOVE_TEXT_COMMAND, null);
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      const rootBook = $getRoot().getFirstChild();
+      if (!$isBookNode(rootBook)) throw new Error("expected a BookNode");
+      expect(rootBook.getFirstChild()).toBeInstanceOf(ImmutableTypedTextNode);
+      expect(rootBook.getTextContent()).toBe(`\\id GEN${NBSP}`);
     });
   });
 

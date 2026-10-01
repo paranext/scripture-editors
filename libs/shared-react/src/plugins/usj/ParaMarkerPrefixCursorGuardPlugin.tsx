@@ -19,6 +19,7 @@ import {
   LexicalNode,
   PASTE_COMMAND,
   RangeSelection,
+  REMOVE_TEXT_COMMAND,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { mergeRegister } from "@lexical/utils";
@@ -211,11 +212,14 @@ function $clampLineDeletionPastBookPrefix(isBackward: boolean): boolean {
 
 /**
  * Narrows the current selection past the book's own prefix ({@link $narrowSelectionPastBookPrefix})
- * before `CONTROLLED_TEXT_INSERTION_COMMAND`, `PASTE_COMMAND` or `CUT_COMMAND` runs — each of those
- * resolves to `RangeSelection.insertText()`/`removeText()` against whatever selection is current,
- * and a selection spanning the prefix loses it the same way an un-narrowed delete would. Always
- * returns `false`: this never claims the command, only corrects the selection those commands' own
- * handlers (registered lower) go on to read.
+ * before `CONTROLLED_TEXT_INSERTION_COMMAND`, `PASTE_COMMAND`, `CUT_COMMAND` or `REMOVE_TEXT_COMMAND`
+ * runs — each of those resolves to `RangeSelection.insertText()`/`removeText()` against whatever
+ * selection is current, and a selection spanning the prefix loses it the same way an un-narrowed
+ * delete would. `REMOVE_TEXT_COMMAND` is the one of the four with no dedicated key binding: Lexical
+ * routes drag-move deletion (`deleteByDrag`) and composition-driven deletes (an IME replacing a
+ * selected range) through it rather than `DELETE_CHARACTER_COMMAND`. Always returns `false`: this
+ * never claims the command, only corrects the selection those commands' own handlers (registered
+ * lower) go on to read.
  */
 function $narrowSelectionBeforeCommand(): boolean {
   const selection = $getSelection();
@@ -318,10 +322,11 @@ function $keepBookPrefixFirst(book: BookNode): void {
  * before it — is narrowed past it rather than refused, for `DELETE_CHARACTER_COMMAND`,
  * `DELETE_WORD_COMMAND`, `DELETE_LINE_COMMAND` (all three via
  * {@link $shouldRefuseBookPrefixDeletion}'s own non-collapsed branch), and — since typing over such
- * a selection or pasting/cutting it away is the same removal, just through
- * `RangeSelection.insertText()`/`removeText()` instead of a delete command —
- * `CONTROLLED_TEXT_INSERTION_COMMAND`, `PASTE_COMMAND` and `CUT_COMMAND` too, each narrowed by
- * {@link $narrowSelectionBeforeCommand} ahead of every other handler registered for them.
+ * a selection, pasting/cutting it away, drag-moving it, or replacing it mid-composition is the same
+ * removal, just through `RangeSelection.insertText()`/`removeText()` instead of a delete command —
+ * `CONTROLLED_TEXT_INSERTION_COMMAND`, `PASTE_COMMAND`, `CUT_COMMAND` and `REMOVE_TEXT_COMMAND` too,
+ * each narrowed by {@link $narrowSelectionBeforeCommand} ahead of every other handler registered for
+ * them.
  *
  * A collapsed caret that a keyboard move leaves in FRONT of the book's prefix (Home) is moved past
  * it on `SELECTION_CHANGE_COMMAND` ({@link $guardCaretBeforeBookPrefix}), and anything that still
@@ -384,6 +389,14 @@ export function ParaMarkerPrefixCursorGuardPlugin(): null {
         COMMAND_PRIORITY_CRITICAL,
       ),
       editor.registerCommand(CUT_COMMAND, $narrowSelectionBeforeCommand, COMMAND_PRIORITY_CRITICAL),
+      // REMOVE_TEXT_COMMAND is how drag-move deletion and composition-driven deletes reach a
+      // non-collapsed selection — neither goes through DELETE_CHARACTER_COMMAND — so it needs the
+      // same narrowing the other three selection-replacing commands get above.
+      editor.registerCommand(
+        REMOVE_TEXT_COMMAND,
+        $narrowSelectionBeforeCommand,
+        COMMAND_PRIORITY_CRITICAL,
+      ),
     );
   }, [editor]);
 
