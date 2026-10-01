@@ -670,6 +670,23 @@ export interface EditorOptions {
    */
   styleInfo?: StyleInfo;
   /**
+   * Most text one copy or cut may take, in UTF-16 code units (`String.length`). Fractions round
+   * down; negative or `NaN` means `0`; `undefined` means no limit.
+   *
+   * While set:
+   * - A copy or cut that fits the limit is a normal copy or cut, except that Standard view leaves
+   *   out the editor's own `application/x-lexical-editor` clipboard format.
+   * - One over the limit is shortened silently. It keeps the selection's start and never splits a
+   *   character, marker, note or construct (a table, figure or sidebar), so it may take less than
+   *   the limit, or nothing. Standard view and the Markers view fit the USFM they copy; other views
+   *   write plain text of what they show.
+   * - A limited cut removes only what it copied, except that in Standard view a cut ending inside a
+   *   character style also removes the style's closing marker, as any Standard-view cut does.
+   * - The Select All shortcut is blocked, except in other text fields.
+   * - `0` blocks copy and cut.
+   */
+  copyLimit?: number;
+  /**
    * EXPERIMENTAL: Delay in milliseconds before pending marker edits settle in place while the
    * user is idle (Paratext 9's debounced-reformat cadence), in editable marker modes. Defaults
    * to 1000 when undefined. `0` settles on the first tick after each edit; `-1` disables the
