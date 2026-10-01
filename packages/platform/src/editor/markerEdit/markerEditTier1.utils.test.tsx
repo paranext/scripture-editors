@@ -1761,4 +1761,42 @@ describe("Tier 1 note-caller leading attribute (map-derived)", () => {
       "ft",
     );
   });
+
+  /** The note's serialized content after typing `typed` right after the caller's separator. */
+  async function noteContentAfterTypingPastCaller(typed: string) {
+    const { editor, callerText } = await mountExpandedNote();
+    await typeInCallerText(editor, callerText, getEditableCallerText("+").length, typed);
+    initializeDeserialize(undefined);
+    const usj = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
+    const para = usj?.content?.[0];
+    const noteUsj = typeof para === "object" ? para.content?.[1] : undefined;
+    if (typeof noteUsj !== "object") throw new Error("expected the note in the serialized USJ");
+    return { editor, callerText, content: noteUsj.content };
+  }
+
+  it("saves a space typed after the caller collapsed into the caller's separator, as Paratext 9 reformats `\\f +  ` to `\\f + `", async () => {
+    const { editor, callerText, content } = await noteContentAfterTypingPastCaller(" ");
+
+    // Shown while editing, as any other space run is until it is saved...
+    editor.getEditorState().read(() => {
+      expect(callerText.getTextContent()).toBe(getEditableCallerText("+"));
+      expect(callerText.getNextSibling()?.getTextContent()).toBe(" ");
+    });
+    // ...and collapsed when saved.
+    expect(content).toHaveLength(1);
+    expect(typeof content?.[0] === "object" ? content[0].marker : undefined).toBe("ft");
+  });
+
+  it("keeps what follows such a space as the note's own content", async () => {
+    const { content } = await noteContentAfterTypingPastCaller(" xy");
+
+    expect(content?.[0]).toBe("xy");
+    expect(typeof content?.[1] === "object" ? content[1].marker : undefined).toBe("ft");
+  });
+
+  it("keeps a no-break space typed after the caller", async () => {
+    const { content } = await noteContentAfterTypingPastCaller("~");
+
+    expect(content?.[0]).toBe(NBSP);
+  });
 });

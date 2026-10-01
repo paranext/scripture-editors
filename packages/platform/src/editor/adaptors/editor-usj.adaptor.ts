@@ -305,6 +305,28 @@ function createTableCellMarker(
   });
 }
 
+/**
+ * Standard view's space-run collapse (see {@link normalizeSpaceRuns}) across the seam between a
+ * note's caller and its content. The USFM writer puts one space after the caller, so content that
+ * starts with plain spaces (`\f +  text`, a space typed after an expanded note's caller) makes a
+ * run that no single text node holds; Paratext 9 collapses it to `\f + text` on reformat, as it
+ * does any other run. An NBSP is not a space run and stays. Not for a note with a category: its
+ * `\cat …\cat*` is written between the caller and the content, so a space at the start of the
+ * content follows `\cat*` and is the note's own (`\f + \cat things\cat* \fr …`).
+ *
+ * @param content - The note's serialized content.
+ * @returns `content` without leading plain spaces in its first string, dropping a string that held
+ *   nothing else.
+ */
+function collapseSpacesAfterCaller(
+  content: MarkerContent[] | undefined,
+): MarkerContent[] | undefined {
+  const first = content?.[0];
+  if (!content || typeof first !== "string" || !first.startsWith(" ")) return content;
+  const trimmed = first.replace(/^ +/, "");
+  return trimmed ? [trimmed, ...content.slice(1)] : content.slice(1);
+}
+
 function createNoteMarker(
   node: SerializedNoteNode,
   content: MarkerContent[] | undefined,
@@ -532,14 +554,22 @@ function recurseNodes(
           ),
         );
         break;
-      case NoteNode.getType():
+      case NoteNode.getType(): {
+        const noteContent = recurseNodes(
+          serializedNoteNode.children,
+          viewOptions,
+          serializedNoteNode.caller,
+        );
         markers.push(
           createNoteMarker(
             serializedNoteNode,
-            recurseNodes(serializedNoteNode.children, viewOptions, serializedNoteNode.caller),
+            isStandardView(viewOptions) && serializedNoteNode.category === undefined
+              ? collapseSpacesAfterCaller(noteContent)
+              : noteContent,
           ),
         );
         break;
+      }
       case AttributeRunNode.getType():
       case ImmutableTypedTextNode.getType():
       case ImmutableNoteCallerNode.getType():

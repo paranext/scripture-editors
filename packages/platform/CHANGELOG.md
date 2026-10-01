@@ -165,6 +165,10 @@ refused. The public surface grew substantially; nothing was removed.
   leaves the caret after the note instead of inside its hidden content.
 - `getNoteOps`, `getOpsAfterNote` and `takeOpsAfterNote` no longer break an update in progress when
   a host calls them from a callback that runs during one.
+- Standard view saves spaces at the start of a note's content as part of the caller's separator
+  (`\f +  text` saves as `\f + text`, as Paratext 9 reformats it), so a space typed after an
+  expanded note's caller no longer becomes note content. A note with a category keeps a space after
+  its `\cat*`, and a no-break space (`~`) stays.
 - A forward Delete through an opening glyph removes one character at a time: the press that
   removes the glyph's last character keeps its separator as the text's own space and leaves the
   caret where it was, instead of also removing the separator and jumping to the end of the span.
