@@ -45,6 +45,9 @@ import { describe, expect, it } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountInView>>;
 
+/** A char span's attribute, spread in because `MarkerObject` declares no attribute fields. */
+const LEMMA: { [attribute: string]: string } = { lemma: "g" };
+
 /** The documents the oracle edits; each one's first body paragraph is the one edited. */
 const CORPUS: { name: string; content: MarkerContent[] }[] = [
   {
@@ -65,7 +68,7 @@ const CORPUS: { name: string; content: MarkerContent[] }[] = [
   },
   {
     name: "char span with an attribute",
-    content: ["a ", { type: "char", marker: "w", lemma: "g", content: ["grace"] }, " b"],
+    content: ["a ", { type: "char", marker: "w", ...LEMMA, content: ["grace"] }, " b"],
   },
   {
     name: "unclosed char span",
