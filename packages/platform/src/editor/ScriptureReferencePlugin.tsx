@@ -576,8 +576,13 @@ function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
  *    only the first-child chain is followed, never a later sibling. A note is never descended into —
  *    a caller is an annotation hanging off the verse, not the start of its text;
  * 4. the boundary's element point. An empty verse (nothing follows, or the next verse marker does)
- *    always takes this branch, deliberately: it is the state `EmptyVerseCaretGuardPlugin` detects
- *    and repairs with a caret host of its own, and the caret must not borrow the next verse's text.
+ *    takes this branch when its marker is an immutable decorator, deliberately: it is the state
+ *    `EmptyVerseCaretGuardPlugin` detects and repairs with a caret host of its own, and the caret
+ *    must not borrow the next verse's text. An EDITABLE marker of an empty verse takes (2) instead.
+ *    The guard does not act there (the next verse's marker is itself text), and an element point
+ *    between two marker text nodes comes apart: Lexical resolves its own selection to the end of
+ *    this marker, but the DOM caret it draws to the start of the next one, so the next read of the
+ *    DOM selection moves the caret into the next verse's marker.
  */
 function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   const para = verse.getParent();
@@ -589,7 +594,10 @@ function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   // caret-host question, which would otherwise answer with the NEXT verse's marker.
   const opening = para.getChildAtIndex(contentStart);
   if (!opening || $isSomeVerseNode(opening)) {
-    $placeCaretAtBoundary(para, contentStart);
+    if ($isTextNode(verse)) {
+      const markerEnd = verse.getTextContentSize();
+      verse.select(markerEnd, markerEnd);
+    } else $placeCaretAtBoundary(para, contentStart);
     return;
   }
 
