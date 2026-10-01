@@ -8,7 +8,6 @@ import { isCharKindMarker, isParaKindMarker } from "./markerKind.utils";
 import {
   BARE_OPENER_REGEX,
   CLOSER_FORM_REGEX,
-  NAME_BEFORE_SEPARATOR_REGEX,
   OPENER_NAME_REGEX,
   OPENER_NAME_SPAN_REGEX,
   TERMINATED_OPENER_REGEX,
@@ -25,6 +24,7 @@ import {
   $getSelection,
   $getState,
   $isRangeSelection,
+  $isRootOrShadowRoot,
   $isTextNode,
   LexicalNode,
   NodeKey,
@@ -42,8 +42,6 @@ import {
   $isMilestoneNode,
   $isNoteNode,
   $isParaNode,
-  $isSeparatorPrefixHostText,
-  $isTypedMarkNode,
   $isVerseNode,
   $chapterAltnumberRunPieces,
   $chapterPubnumberRunPieces,
@@ -457,10 +455,10 @@ export function $applyOpenerRename(
 
 /**
  * A pending rename of a char span's opener that Tier 1 applies in place, renaming the closer with
- * it ({@link $applyOpenerRename}'s char branch). The new name is spelled by the opening glyph's
- * bytes plus any name bytes the user typed at the very start of the content, in front of the
- * separator: the caret right after `\w` can resolve to the end of the glyph (`\wx` + `⍽grace`) or
- * to the start of the content text (`\w` + `x⍽grace`), and both put `\wx grace` on screen.
+ * it ({@link $applyOpenerRename}'s char branch): the opening glyph's bytes spell a new name.
+ * Name bytes typed at the very start of the content, in front of the separator, are moved into the
+ * glyph as they are typed (`$movePushedNameIntoGlyph`, markerEditTier2Trigger.utils.ts), so they
+ * reach this rename too.
  */
 export interface CharOpenerRename {
   readonly char: CharNode;
@@ -469,23 +467,14 @@ export interface CharOpenerRename {
   readonly closer: MarkerNode | undefined;
   /** The marker name the span takes, without the nesting `+`. */
   readonly newMarker: string;
-  /** The content text holding name bytes in front of the separator, and how many there are. */
-  readonly nameInContent: { readonly text: TextNode; readonly length: number } | undefined;
-}
-
-/** The text right after `glyph`, read through any annotation marks. */
-function $textAfterGlyph(glyph: MarkerNode): LexicalNode | null {
-  let node = glyph.getNextSibling();
-  while ($isTypedMarkNode(node)) node = node.getFirstChild();
-  return node;
 }
 
 /**
- * The char opener rename `node`'s pend stands for, or `undefined` when there is none or Tier 1
- * would not apply it in place. `node` is the span's opening glyph or the span itself (the key a
- * content-side separator gap pends). The in-place conditions are {@link $applyOpenerRename}'s own:
- * the glyph and the tree agree about nesting, the new name is char-kind (or unknown), and the
- * glyph's marker is its span's. Anything else re-tokenizes, on both settle paths.
+ * The char opener rename `node`'s pend stands for, or `undefined` when `node` is not a char span's
+ * opening glyph, its bytes are not a bare opener, or Tier 1 would not apply the rename in place.
+ * The in-place conditions are {@link $applyOpenerRename}'s own: the glyph and the tree agree about
+ * nesting, the new name is char-kind (or unknown), and the glyph's marker is its span's. Anything
+ * else re-tokenizes, on both settle paths.
  *
  * Shared by the mutating settle ({@link $resolvePendingMarkers}) and the read-only one
  * (`$collectSettleScopes`, virtualSettle.utils.ts), so `getUsj()` while the edit is pending and the
@@ -497,36 +486,19 @@ export function $pendingCharOpenerRename(
   node: LexicalNode,
   getMarkerFn: MarkerLookup,
 ): CharOpenerRename | undefined {
-  const char = $isCharNode(node) ? node : node.getParent();
-  if (!$isCharNode(char)) return undefined;
-  const glyph = char.getFirstChild();
-  if (!$isMarkerNode(glyph) || glyph.getMarkerSyntax() !== "opening") return undefined;
-  if (!$isCharNode(node) && !glyph.is(node)) return undefined;
-  const bare = BARE_OPENER_REGEX.exec(glyph.getTextContent());
+  if (!$isMarkerNode(node) || node.getMarkerSyntax() !== "opening") return undefined;
+  const char = node.getParent();
+  if (!$isCharNode(char) || !char.getFirstChild()?.is(node)) return undefined;
+  const bare = BARE_OPENER_REGEX.exec(node.getTextContent());
   if (!bare) return undefined;
-  let typedMarker = bare[1];
-  let nameInContent: CharOpenerRename["nameInContent"];
-  const content = $textAfterGlyph(glyph);
-  if ($isSeparatorPrefixHostText(content)) {
-    const pushed = NAME_BEFORE_SEPARATOR_REGEX.exec(content.getTextContent());
-    if (pushed) {
-      typedMarker += pushed[1];
-      nameInContent = { text: content, length: pushed[1].length };
-    }
-  }
-  if (typedMarker.startsWith("+") !== glyph.getNested()) return undefined;
+  const typedMarker = bare[1];
+  if (typedMarker.startsWith("+") !== node.getNested()) return undefined;
   if (!isCharKindMarker(typedMarker, getMarkerFn)) return undefined;
-  const oldMarker = glyph.getMarker();
+  const oldMarker = node.getMarker();
   if (char.getMarker() !== oldMarker) return undefined;
   const newMarker = typedMarker.replace(/^\+/, "");
   if (!$renamesTheMarkerName(oldMarker, newMarker)) return undefined;
-  return {
-    char,
-    glyph,
-    closer: $charCloserOf(char, oldMarker),
-    newMarker,
-    nameInContent,
-  };
+  return { char, glyph: node, closer: $charCloserOf(char, oldMarker), newMarker };
 }
 
 /** The LAST closing glyph among `char`'s children named `marker` — the closer an opener rename
@@ -537,38 +509,6 @@ function $charCloserOf(char: CharNode, marker: string): MarkerNode | undefined {
     .filter($isMarkerNode)
     .filter((child) => child.getMarkerSyntax() === "closing" && child.getMarker() === marker)
     .at(-1);
-}
-
-/**
- * Apply `rename` ({@link $pendingCharOpenerRename}): name bytes typed at the start of the content
- * move into the glyph, where the screen already shows them as part of the name, and the span is
- * renamed in place with its closer. A selection point in those bytes moves with them, so the
- * caret stays on the character it was on.
- *
- * Mutating: call inside `editor.update()`.
- *
- * @returns Whether the editor state was mutated.
- */
-export function $applyCharOpenerRename(
-  rename: CharOpenerRename,
-  context: MarkerEditContext,
-): boolean {
-  const { glyph, nameInContent, newMarker } = rename;
-  if (nameInContent) {
-    const { text, length } = nameInContent;
-    const moved = text.getTextContent().slice(0, length);
-    const glyphLength = glyph.getTextContentSize();
-    const selection = $getSelection();
-    const points = $isRangeSelection(selection) ? [selection.anchor, selection.focus] : [];
-    const onText = points.filter((point) => point.key === text.getKey());
-    text.setTextContent(text.getTextContent().slice(length));
-    glyph.setTextContent(glyph.getTextContent() + moved);
-    for (const point of onText) {
-      if (point.offset <= length) point.set(glyph.getKey(), glyphLength + point.offset, "text");
-      else point.set(text.getKey(), point.offset - length, "text");
-    }
-  }
-  return $applyOpenerRename(glyph, glyph.getNested() ? `+${newMarker}` : newMarker, context);
 }
 
 /**
@@ -678,12 +618,15 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
   // sanctioned optimization), applied immediately so the typed character never rides styled
   // inside the span until a departure settles it. Same shape as $verseNodeTransform's rest
   // split. Scoped to the span's OWN last-child closer; every other closer divergence (damage,
-  // retype, run closers) pends below.
+  // retype, run closers) pends below. A span at the document root (a `\ca`/`\cp` beside its
+  // chapter) has no block to hold the split-off text, so its bytes pend instead and the chapter's
+  // settle re-tokenizes them.
   if (node.getMarkerSyntax() === "closing") {
     const parent = node.getParent();
     const canonical = closingMarkerText(node.getMarker(), node.getNested());
     if (
       $isCharNode(parent) &&
+      !$isRootOrShadowRoot(parent.getParent()) &&
       node.getMarker() === parent.getMarker() &&
       parent.getLastChild()?.is(node) &&
       text.startsWith(canonical) &&
@@ -1268,17 +1211,7 @@ export function $settlePendedDisplayOwner(
   // rule, so the settle and the sync never disagree about a gap; its predicate lives beside the
   // tokenizer's name scan (usfmFragmentToUsj.ts) so the two can never drift.
   let separatorHealed = false;
-  let renamed = false;
-  // Name bytes typed in front of a char opener's separator (`\w` + `x⍽grace`) extend the marker
-  // name the screen shows, so they settle as the opener rename they spell — opener and closer
-  // renamed in place — exactly as the same bytes typed into the glyph do.
-  const charRename = $isCharNode(node)
-    ? $pendingCharOpenerRename(node, context.getMarker)
-    : undefined;
-  if (charRename) {
-    renamed = $applyCharOpenerRename(charRename, context);
-    mutated = renamed || mutated;
-  } else if ($isCharNode(node)) {
+  if ($isCharNode(node)) {
     const gapBytes = $openerSeparatorGapFollowingBytes(node);
     if (gapBytes !== undefined && !$hasRenamingSeparatorGap(node)) {
       $syncOpenerSeparators(node);
@@ -1339,8 +1272,7 @@ export function $settlePendedDisplayOwner(
     if ($runDiverges(descriptor, descriptor.scanPieces(node), descriptor.expectedPieces(node)))
       hasGenuineDivergence = true;
   }
-  if ((migrated || separatorHealed || renamed) && !hasGenuineDivergence)
-    return { handled: true, mutated };
+  if ((migrated || separatorHealed) && !hasGenuineDivergence) return { handled: true, mutated };
   // `handled: false` here regardless of `mutated`: the caller no longer discards `mutated` on this
   // path (see `$resolvePendingMarkers`) — it still falls through to its own re-tokenize arm
   // ($requestTier2ForNode), the existing, already-safe default for an owner whose pend wasn't (or
@@ -1454,11 +1386,7 @@ export function $resolvePendingMarkers(
       const text = node.getTextContent();
       if ($isCanonicalMarkerNode(node)) continue;
       const bare = BARE_OPENER_REGEX.exec(text);
-      // A char span's opener renames with any name bytes typed at the start of its content, so
-      // a glyph and a content edit that put the same name on screen settle the same way.
-      const charRename = $pendingCharOpenerRename(node, context.getMarker);
-      if (charRename) mutated = $applyCharOpenerRename(charRename, context) || mutated;
-      else if (node.getMarkerSyntax() === "opening" && bare)
+      if (node.getMarkerSyntax() === "opening" && bare)
         mutated = $applyOpenerRename(node, bare[1], context) || mutated;
       else if (
         settleReason === "idle" &&

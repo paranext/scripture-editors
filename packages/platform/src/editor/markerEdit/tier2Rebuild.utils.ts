@@ -226,7 +226,10 @@ export function toFragmentText(text: string): string {
  *   unless it is a no-break space an annotation mark split off content (`isNbspContent`, from
  *   `$isNbspContentAtMark`), and the one structural leading NBSP fused onto a char span's first
  *   content child (`structuralLead` — the twin of the conversion's positional separator strip,
- *   `precedesOpeningCharGlyph` in editor-usj.adaptor.ts).
+ *   `precedesOpeningCharGlyph` in editor-usj.adaptor.ts). When that first content child has LOST
+ *   its separator, its leading bytes run on as the opener's marker name, and the name ends at the
+ *   first space the screen shows — an NBSP there included, which flattens to " " so the name never
+ *   swallows it (`\wLord⍽God` reads as `\wLord` followed by `God`, as `\wLord God` does).
  *
  * ONE definition for every fragment producer: the mutating rebuilds and the read-only settle both
  * build their fragments through `$appendNodesFragment` below, so the mirror can never flatten a
@@ -243,8 +246,15 @@ export function contentFragmentText(
   if (text === NBSP && !isNbspContent) return " ";
   const hasLead = structuralLead && text.startsWith(NBSP);
   const body = hasLead ? text.slice(1) : text;
+  const runOnName = structuralLead && !hasLead ? NAME_ENDING_AT_NBSP_REGEX.exec(body) : null;
+  if (runOnName)
+    return `${runOnName[0]} ${body.slice(runOnName[0].length + 1).replaceAll(NBSP, "~")}`;
   return (hasLead ? " " : "") + body.replaceAll(NBSP, "~");
 }
+
+/** Leading bytes the tokenizer's name scan runs through (anything but whitespace, a zero-width
+ * space, `\`, `|` and `*`), when an NBSP is what ends them. */
+const NAME_ENDING_AT_NBSP_REGEX = /^[^\s\u200B\\|*]+(?=\u00A0)/;
 
 /**
  * A TextNode's contribution to the rebuild fragment. The para-prefix trailing-space node is

@@ -50,7 +50,6 @@ import {
   $signatureOf,
   countSentinels,
   countSerializedSentinels,
-  contentFragmentText,
   cutFragment,
   extractLeadingCategoryFold,
   FragmentAccumulator,
@@ -1003,9 +1002,9 @@ function $preserveCharInFragment(
 /**
  * `fragment` with each pending in-place char opener rename ({@link $pendingCharOpenerRename})
  * applied to the bytes it spans, the way the live settle renames those spans before anything
- * re-tokenizes the scope (`$resolvePendingMarkers` settles them first): the opening glyph spells
- * the new name, the name bytes typed in front of the separator leave the content, and the closer
- * is re-spelled with the new name. A span the new name leaves unrecoverable from its bytes (a
+ * re-tokenizes the scope (`$resolvePendingMarkers` settles them first): the opening glyph already
+ * spells the new name, and the closer is re-spelled with it. A span the new name leaves
+ * unrecoverable from its bytes (a
  * marker the stylesheet does not declare) is preserved whole instead, as the live re-tokenize
  * preserves the renamed span; the scope's preserved runs then carry its renamed serialized copy
  * ({@link $applySettledCharOpenerRename}). A rename outside `fragment` changes nothing.
@@ -1018,7 +1017,7 @@ export function $fragmentWithCharOpenerRenames(
   context: Tier2Context,
 ): FragmentAccumulator {
   let result = fragment;
-  for (const { char, glyph, closer, newMarker, nameInContent } of renames?.values() ?? []) {
+  for (const { char, glyph, closer, newMarker } of renames?.values() ?? []) {
     if (!result.spans.some((span) => span.key === glyph.getKey())) continue;
     if ($charNeedsSentinelAs(char, newMarker, context.getMarker)) {
       result = $preserveCharInFragment(result, char);
@@ -1030,49 +1029,27 @@ export function $fragmentWithCharOpenerRenames(
         closer.getKey(),
         toFragmentText(serializedMarkerGlyphText(newMarker, "closing", closer.getNested())),
       );
-    if (nameInContent)
-      result = replaceSpanBytes(
-        result,
-        nameInContent.text.getKey(),
-        contentFragmentText(
-          nameInContent.text.getTextContent().slice(nameInContent.length),
-          context.viewOptions,
-          true,
-        ),
-      );
-    result = replaceSpanBytes(
-      result,
-      glyph.getKey(),
-      toFragmentText(serializedMarkerGlyphText(newMarker, "opening", glyph.getNested())),
-    );
   }
   return result;
 }
 
 /**
  * Applies a pending char opener rename ({@link $pendingCharOpenerRename}) to the serialized copy —
- * the read-only mirror of `$applyCharOpenerRename` (markerEditTier1.utils.ts): the span takes the
- * new marker, its opening glyph and closer are re-spelled with it, and name bytes typed at the
- * start of the content leave the content text, as they move into the glyph on the live side. The
- * span keeps its place, so nothing around it is rebuilt.
+ * the read-only mirror of `$applyOpenerRename`'s char branch (markerEditTier1.utils.ts): the span
+ * takes the new marker, and its opening glyph and closer are re-spelled with it. The span keeps its
+ * place, so nothing around it is rebuilt.
  */
 export function $applySettledCharOpenerRename(
   rename: CharOpenerRename,
   sites: Map<NodeKey, SerializedSite>,
 ): void {
-  const { char, glyph, closer, newMarker, nameInContent } = rename;
+  const { char, glyph, closer, newMarker } = rename;
   const charSite = sites.get(char.getKey());
   if (charSite) (charSite.node as SerializedLexicalNode & { marker?: string }).marker = newMarker;
   const glyphSite = sites.get(glyph.getKey());
   if (glyphSite) rewriteSettledGlyphMarker(glyphSite.node, newMarker);
   const closerSite = closer && sites.get(closer.getKey());
   if (closerSite) rewriteSettledGlyphMarker(closerSite.node, newMarker);
-  const textSite = nameInContent && sites.get(nameInContent.text.getKey());
-  const text = textSite && serializedText(textSite.node);
-  if (textSite && nameInContent && text !== undefined)
-    (textSite.node as SerializedLexicalNode & { text: string }).text = text.slice(
-      nameInContent.length,
-    );
 }
 
 /**
@@ -1085,10 +1062,14 @@ export function $settledChapterScope(
   chapter: ChapterNode,
   context: Tier2Context,
   transient: TransientLiteral | undefined,
+  charRenames?: ReadonlyMap<NodeKey, CharOpenerRename>,
 ): SerializedLexicalNode[] | undefined {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
-  const out = $buildChapterFragment(chapter, getMarkerFn, viewOptions);
-  if (!out) return undefined;
+  const built = $buildChapterFragment(chapter, getMarkerFn, viewOptions);
+  if (!built) return undefined;
+  // A `\ca`/`\cp` span beside the chapter renamed in place is renamed before the live settle
+  // re-tokenizes the region, as in a paragraph scope.
+  const out = $fragmentWithCharOpenerRenames(built, charRenames, context);
   const tokenized = $fragmentWithoutTransient(out, transient);
   const content: MarkerContent[] = usfmFragmentToUsjContent(tokenized.text, {
     getMarker: getMarkerFn,
@@ -1409,7 +1390,7 @@ export function $settledUsj(
     const site = sites.get(chapter.getKey());
     if (!site) continue;
     const regionSize = 1 + $chapterAdjacentAttributeNodes(chapter).length;
-    const rebuilt = $settledChapterScope(chapter, context, transient);
+    const rebuilt = $settledChapterScope(chapter, context, transient, charOpenerRenames);
     if (!rebuilt) continue;
     const index = site.siblings.indexOf(site.node);
     if (index < 0) continue;

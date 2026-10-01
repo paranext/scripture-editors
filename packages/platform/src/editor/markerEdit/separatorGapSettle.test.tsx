@@ -9,7 +9,13 @@
  * Standard view. Typing is per-character `insertText` at the live selection; a Backspace is the
  * removal of the one character before the caret, as jsdom cannot run `deleteCharacter`.
  */
-import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import {
+  $heldBytes,
+  HELD_TYPE,
+  mountInView,
+  ORACLE_TYPE,
+  oracleView,
+} from "../annotationLocations/annotationLocations.test-helpers";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import { $textContaining, contentPath, twoParaUsj } from "../positions/positions.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -444,6 +450,63 @@ describe("typing between a span's glyph and its separator", () => {
     },
   );
 
+  it.each(["standard", "standard+expandedNotes", "unformatted"])(
+    "reads and places positions in the span's text against the settled span (%s view)",
+    async (view) => {
+      const mounted = await mountInView(wordUsj("w"), oracleView(view));
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const content = $textContaining("grace");
+          content.setTextContent(`x${NBSP}grace`);
+          content.select(1, 1);
+        });
+        await Promise.resolve();
+      });
+      const settledText = contentPath([WORD_PARA_INDEX, 1, 0]);
+
+      // The caret after `gr` reports the settled `gr|ace`.
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const content = $textContaining("grace");
+          const offset = content.getTextContent().indexOf("grace") + "gr".length;
+          content.select(offset, offset);
+        });
+        await Promise.resolve();
+      });
+      expect(mounted.ref.current?.getSelection()?.start).toEqual({
+        jsonPath: settledText,
+        offset: "gr".length,
+      });
+
+      // The settled `gr|ace` places the caret there.
+      await act(async () => {
+        mounted.ref.current?.setSelection({ start: { jsonPath: settledText, offset: 2 } });
+        await Promise.resolve();
+      });
+      const caret = mounted.lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return undefined;
+        const node = selection.anchor.getNode();
+        return node.getTextContent().slice(0, selection.anchor.offset);
+      });
+      expect(caret?.endsWith("gr")).toBe(true);
+
+      // An annotation on the settled `rac` holds exactly those bytes.
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(
+          {
+            start: { jsonPath: settledText, offset: 1 },
+            end: { jsonPath: settledText, offset: 4 },
+          },
+          ORACLE_TYPE,
+          "rac",
+        );
+        await Promise.resolve();
+      });
+      expect(mounted.lexical.getEditorState().read(() => $heldBytes(HELD_TYPE, "rac"))).toBe("rac");
+    },
+  );
+
   it("ends the new name at the separator in the unformatted view", async () => {
     // `\wj b\wj*` with `a` typed in front of the separator: the name is `wja`, never `wja b`.
     const mounted = await mountInView(
@@ -673,5 +736,39 @@ describe("deleting a span's separator", () => {
     ]);
     expect(settled).toEqual(pending);
     expectScreenIsSaved(mounted, "ndLORD");
+  });
+});
+
+describe("deleting the separator of a span whose text holds an authored no-break space", () => {
+  // Unformatted shows an authored no-break space as the byte itself, so `\w Lord~God\w*` with its
+  // separator deleted reads `\wLord⍽God` — the same screen as `\w Lord God\w*` with its separator
+  // deleted, and the two settle alike: the name ends at the space, as a new paragraph marker.
+  it.each([
+    ["an authored no-break space", `Lord${NBSP}God`],
+    ["a space", "Lord God"],
+  ])("settles as the name the bytes spell (%s)", async (_name, text) => {
+    const mounted = await mountInView(
+      twoParaUsj(["In the ", { type: "char", marker: "w", content: [text] }, " of old"]),
+      oracleView("unformatted"),
+    );
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const content = $textContaining("God");
+        expect(content.getTextContent().startsWith(NBSP)).toBe(true);
+        content.setTextContent(content.getTextContent().slice(1));
+        content.select(0, 0);
+      });
+      await Promise.resolve();
+    });
+    const pending = mounted.ref.current?.getUsj();
+
+    await depart(mounted);
+    const settled = mounted.ref.current?.getUsj();
+    expect(paraOf(settled, "wLord").content).toEqual([
+      "God",
+      { type: "unmatched", marker: "w*" },
+      " of old",
+    ]);
+    expect(settled).toEqual(pending);
   });
 });

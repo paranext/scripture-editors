@@ -365,11 +365,12 @@ function $planForParas(
 function $planForChapter(
   chapter: ChapterNode,
   built: FragmentAccumulator | undefined,
+  scopes: SettleScopes,
   context: SettledPositionContext,
   transient: TransientLiteral | undefined,
 ): SettleScopePlan | undefined {
   const { liveFragment, liveCut } = $cutLiveFragment(built, transient);
-  const rebuilt = $settledChapterScope(chapter, context.tier2, transient);
+  const rebuilt = $settledChapterScope(chapter, context.tier2, transient, scopes.charOpenerRenames);
   if (!rebuilt) return undefined;
   const liveNodes = [chapter, ...$chapterAdjacentAttributeNodes(chapter)];
   // A chapter region with any preserved node at all is refused outright by `$buildChapterFragment`,
@@ -377,18 +378,18 @@ function $planForChapter(
   return $planFrom("chapter", liveNodes, liveFragment, liveCut, rebuilt, undefined, context);
 }
 
-/** The plan for a paragraph whose only pending changes re-tokenize nothing: emptied optbreak
- * husks, spliced out with the text they split rejoined, and char spans renamed in place
- * ({@link $applyInPlaceRenames}) — exactly as the read-only settle's own husk and rename passes do
- * it. A note settling inside the paragraph is settled into the serialized copy first, for the same
- * reason {@link $planForParas} does it: the note rides through as a preserved node, and a settled
- * path into it is resolved against THIS tree, so a paragraph carrying the pending note resolves
- * the note's settled content indexes against the wrong children. */
-function $planForUnrebuiltPara(
+/** The plan for a paragraph whose only pending change is an emptied optbreak husk — nothing
+ * re-tokenizes, the dead husk is simply spliced out and the text it split is rejoined, exactly as
+ * the read-only settle's own husk pass does it. A note settling inside the paragraph is settled
+ * into the serialized copy first, for the same reason {@link $planForParas} does it: the note
+ * rides through as a preserved node, and a settled path into it is resolved against THIS tree, so
+ * a paragraph carrying the pending note resolves the note's settled content indexes against the
+ * wrong children. A char span renamed in place needs no plan of its own: it keeps its place and
+ * its content, so a position in it addresses the same content either side of the settle. */
+function $planForHuskOnlyPara(
   para: ParaNode | ImpliedParaNode,
   liveFragment: FragmentAccumulator | undefined,
   husks: readonly LexicalNode[],
-  renamed: boolean,
   scopes: SettleScopes,
   context: SettledPositionContext,
   transient: TransientLiteral | undefined,
@@ -418,7 +419,7 @@ function $planForUnrebuiltPara(
     spliceHusk(site.siblings, index);
     splicedKeys.add(husk.getKey());
   }
-  if (splicedKeys.size === 0 && !renamed) return undefined;
+  if (splicedKeys.size === 0) return undefined;
   const carried = liveFragment && carriedPreservedRuns(liveFragment, sites, splicedKeys);
   return $planFrom("para", [para], liveFragment, undefined, [serialized], carried, context);
 }
@@ -594,7 +595,7 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
         chapter.getKey(),
         "chapter",
         [chapter, ...$chapterAdjacentAttributeNodes(chapter)],
-        (fragment) => $planForChapter(chapter, fragment, context, transient),
+        (fragment) => $planForChapter(chapter, fragment, scopes, context, transient),
       ),
       true,
     );
@@ -602,28 +603,18 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
   // paragraph's rebuild; only a husk removed on its own needs a plan of its own.
   // The root's implied paragraph is a paragraph for this purpose too: `$settledUsj` splices a husk
   // out of it like any other, so its top-level items shift just the same.
-  // A char span renamed in place is the same: only a paragraph no other plan covers needs one.
-  const unrebuiltParas = new Map<
-    NodeKey,
-    { para: ParaNode | ImpliedParaNode; husks: LexicalNode[]; renamed: boolean }
-  >();
-  const unrebuiltEntry = (node: LexicalNode) => {
-    const para = node.getTopLevelElement();
-    if (!($isParaNode(para) || $isImpliedParaNode(para)) || $isPlanned(node, byLiveKey))
-      return undefined;
-    const entry = unrebuiltParas.get(para.getKey()) ?? { para, husks: [], renamed: false };
-    unrebuiltParas.set(para.getKey(), entry);
-    return entry;
-  };
-  for (const husk of scopes.husks) unrebuiltEntry(husk)?.husks.push(husk);
-  for (const { char } of scopes.charOpenerRenames.values()) {
-    const entry = unrebuiltEntry(char);
-    if (entry) entry.renamed = true;
+  const huskParas = new Map<NodeKey, { para: ParaNode | ImpliedParaNode; husks: LexicalNode[] }>();
+  for (const husk of scopes.husks) {
+    const para = husk.getTopLevelElement();
+    if (!($isParaNode(para) || $isImpliedParaNode(para)) || $isPlanned(husk, byLiveKey)) continue;
+    const entry = huskParas.get(para.getKey()) ?? { para, husks: [] };
+    entry.husks.push(husk);
+    huskParas.set(para.getKey(), entry);
   }
-  for (const [key, { para, husks, renamed }] of unrebuiltParas)
+  for (const [key, { para, husks }] of huskParas)
     record(
       planned(key, "para", [para], (fragment) =>
-        $planForUnrebuiltPara(para, fragment, husks, renamed, scopes, context, transient),
+        $planForHuskOnlyPara(para, fragment, husks, scopes, context, transient),
       ),
       true,
     );

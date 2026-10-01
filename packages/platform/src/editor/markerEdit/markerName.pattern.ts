@@ -81,15 +81,11 @@ export const OPENER_NAME_SPAN_REGEX = new RegExp(
 );
 
 /**
- * The leading text of a char span's CONTENT when the user typed marker-name bytes in front of the
- * opener's separator: `x` in `x⍽grace` right after `\w`. Group 1 is those bytes; the NBSP after
- * them is the separator they pushed along, which still ends the name, so the screen reads
- * `\wx grace`. Only the NBSP qualifies — a separator that was deleted or typed over leaves a gap
- * whose bytes re-tokenize instead.
+ * An ENTIRE run of marker-name bytes — what the user typed in front of a char opener's separator
+ * when it belongs to the opener's name (markerEditTier2Trigger.utils.ts's
+ * `$movePushedNameIntoGlyph`).
  */
-export const NAME_BEFORE_SEPARATOR_REGEX = new RegExp(
-  String.raw`^([${ENGINE_MARKER_NAME_BYTES}]+)\u00A0`,
-);
+export const MARKER_NAME_BYTES_REGEX = new RegExp(String.raw`^[${ENGINE_MARKER_NAME_BYTES}]+$`);
 
 /**
  * A backslash sequence ANYWHERE in text, completed by a space/NBSP separator or a `*` closer —

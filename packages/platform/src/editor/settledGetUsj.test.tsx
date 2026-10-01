@@ -449,24 +449,49 @@ const pendingShapes: PendingShape[] = [
       },
     }),
   ),
-  ...["j", "x"].map(
-    (character): PendingShape => ({
-      // A name byte typed in front of the span's separator, beside a literal that re-tokenizes
-      // the same paragraph: the span keeps the rename it settles to on its own.
-      name: `name byte \`${character}\` in front of a span's separator beside a pending literal`,
+  ...["wj", "wx"].map(
+    (renamed): PendingShape => ({
+      // A span's opener renamed beside a literal that re-tokenizes the same paragraph and was
+      // pended FIRST: the live settle renames the span in place before it re-tokenizes, whichever
+      // key it reaches first, so the rebuild reads the renamed closer.
+      name: `char span renamed to \\${renamed} after a pending literal`,
       usj: twoParaUsj(["start ", { type: "char", marker: "w", content: ["grace"] }, " end"]),
       $edit: () => {
-        // The literal is pended first, so the live settle reaches it before the span unless it
-        // settles the in-place rename first.
         const tail = $textContaining(" end");
         tail.setTextContent(" end \\zz");
         $reportDestroyedDisplayOwner(tail);
-        const content = $textContaining("grace");
-        content.setTextContent(`${character}${NBSP}grace`);
-        $reportDestroyedDisplayOwner(content.getParentOrThrow());
+        const glyph = $textContaining("grace").getPreviousSibling();
+        if (!$isMarkerNode(glyph)) throw new Error("expected the span's opening glyph");
+        glyph.setTextContent(`\\${renamed}`);
+        $reportDestroyedDisplayOwner(glyph);
       },
     }),
   ),
+  {
+    // A `\ca` span beside its chapter, renamed while its value is also being edited: both pends
+    // settle in the chapter's scope, and the rename applies before the region re-tokenizes.
+    name: "\\ca span beside its chapter renamed while its value is edited",
+    usj: {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    },
+    $edit: () => {
+      const span = $getRoot().getChildren().find($isCharNode);
+      const glyph = span?.getFirstChild();
+      const value = glyph?.getNextSibling();
+      if (!$isMarkerNode(glyph) || !$isTextNode(value)) throw new Error("expected the \\ca span");
+      value.setTextContent(`${value.getTextContent()}4`);
+      $reportDestroyedDisplayOwner(value);
+      glyph.setTextContent("\\cax");
+      $reportDestroyedDisplayOwner(glyph);
+    },
+  },
   {
     name: "half-typed attribute run appended to a char span",
     usj: twoParaUsj(["start ", { type: "char", marker: "nd", content: ["name"] }, " end"]),

@@ -354,7 +354,9 @@ const differentialShapes: DifferentialShape[] = [
       view,
       usj: twoParaUsj(["x ", { type: "char", marker: "wj", content: ["b"] }, " y"]),
       $edit: () => {
-        $textContaining("b").setTextContent(`a${NBSP}b`);
+        const content = $textContaining("b");
+        content.setTextContent(`a${NBSP}b`);
+        content.select(1, 1);
       },
     },
     ...[

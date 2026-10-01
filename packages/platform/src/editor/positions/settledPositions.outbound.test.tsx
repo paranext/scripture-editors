@@ -1025,9 +1025,10 @@ describe("a caret at a verse text's start", () => {
 
 describe("a char opener renamed by name bytes typed in front of its separator", () => {
   // `\w grace\w*` with `x` typed right after `\w`: the screen reads `\wx⍽grace\w*` whether the `x`
-  // landed in the glyph or at the start of the content text, and both settle to `\wx grace\wx*`.
-  // Every screen position reports the same settled location from either shape, and a position in
-  // the content reports against the settled `grace`, not against the pending text's own offsets.
+  // was typed at the end of the glyph or at the start of the content text (where it moves into the
+  // glyph as it is typed), and both settle to `\wx grace\wx*`. Every screen position reports the
+  // same settled location from either, and a position in the content reports against the settled
+  // `grace`.
   const usj = twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"]);
 
   async function pendingRename(shape: "glyph" | "content") {
@@ -1086,7 +1087,7 @@ describe("a char opener renamed by name bytes typed in front of its separator", 
     const spanIndex = settledCharIndex(para);
     const location = settledLocation(lexical, context, () => ({
       node: $textContaining("grace"),
-      offset: `x${NBSP}gr`.length,
+      offset: `${NBSP}gr`.length,
     }));
     expect(location).toEqual({ jsonPath: contentPath([2, spanIndex, 0]), offset: "gr".length });
   });
