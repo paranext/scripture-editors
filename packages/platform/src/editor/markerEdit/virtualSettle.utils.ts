@@ -1116,7 +1116,13 @@ export function $settledUsj(
     // a bare-opener rename Tier 1 would route to `$applyOpenerRename` — see
     // `$noteGlyphRenameTarget`'s own doc comment for what that shape looks like.
     const scope = $settleScopeForNode(transient.node);
-    if (scope) addScope(scope);
+    // A scope the widening pass above already CLAIMED (the rejoin's artifact, or its book/para
+    // predecessor) is already going to settle through the widened scope — `$settledBookLine`/
+    // `$settledParaNodes` both receive `transient` directly, so the declaration still reaches it.
+    // Adding it again here would re-enter it as its own single-paragraph scope, and a rebuild of
+    // the artifact ALONE that happens to tokenize to more than one block would then splice into
+    // the document TWICE: once joined into the widened scope, once as its own duplicate.
+    if (scope && !claimed.has(scope.getKey())) addScope(scope);
   }
   const husks = $emptiedOptbreakHusksOf(pendedKeys);
   if (

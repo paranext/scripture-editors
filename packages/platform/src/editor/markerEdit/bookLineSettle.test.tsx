@@ -32,7 +32,9 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $createMarkerNode,
   $createNoteNode,
+  $createParaNode,
   $createVerseNode,
   $isBookNode,
   $isChapterNode,
@@ -43,12 +45,16 @@ import {
   BookNode,
   getMarker as bundledGetMarker,
   getVisibleOpenMarkerText,
+  MarkerNode,
   NBSP,
   NoteNode,
 } from "shared";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
-import { $createBookLine } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
+import {
+  $createBookLine,
+  baseTestEnvironment,
+} from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 
 // jsdom implements no layout, so `Range.prototype.getBoundingClientRect` is absent and Lexical's
 // post-commit scroll-into-view throws from outside any test's promise chain. Same stub the sibling
@@ -357,6 +363,41 @@ describe("the `\\id` line's settle scope", () => {
     );
     expect(noteEntry).toBeDefined();
     expect(JSON.stringify(settledBook)).not.toContain("￼");
+  });
+
+  // An unknown-split artifact that rejoins the line is claimed into the book's own trailing
+  // paragraphs AND, while a transient declaration still names a node inside it, re-added to the
+  // single-paragraph scopes `$settledParaNodes` rebuilds on its own — the paragraph's content then
+  // gets rebuilt twice, once joined into the line and once alone.
+  it("rejoining a split artifact into the line doesn't ALSO rebuild it as its own paragraph", async () => {
+    // Built directly, with no MarkerEditPlugin mounted: the engine's own live healing would
+    // otherwise normalize this shape away before the scope computation under test ever ran. The
+    // glyph's bytes already name an inline marker ("nd" is a char marker, not block-shaped), so
+    // `$unknownSplitRejoinScope` sees the split as ready to rejoin once its key is pended.
+    let glyph!: MarkerNode;
+    let content!: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      glyph = $createMarkerNode("n").setTextContent("\\nd ");
+      content = $createTextNode("abc \\ip def");
+      $getRoot().append($createBookLine("GEN"), $createParaNode("n").append(glyph, content));
+      // A verified transient declaration anchored to the artifact's OWN content — the shape a
+      // palette insertion mid-typing leaves behind, independent of the pended glyph above.
+      content.select(content.getTextContentSize(), content.getTextContentSize());
+    });
+
+    const editorState = editor.getEditorState();
+    const serializedState = editorState.toJSON();
+    const settled = editorState.read(() =>
+      $settledUsj(serializedState, new Set([glyph.getKey()]), context, {
+        input: { kind: "marker-literal", run: "f" },
+        nodeKey: content.getKey(),
+      }),
+    );
+
+    const blocks = (settled?.content ?? []).filter(
+      (entry): entry is MarkerObject => typeof entry !== "string",
+    );
+    expect(blocks.filter((block) => block.marker === "ip")).toHaveLength(1);
   });
 
   it("carries a verse's sid over across a live rebuild of the line, like $rebuildParas does", async () => {
