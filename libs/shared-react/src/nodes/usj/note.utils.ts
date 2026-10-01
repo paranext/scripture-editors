@@ -404,7 +404,9 @@ export function $createWholeNote(
   if (viewOptions?.markerMode === "editable" && !isCollapsed) {
     if (caller === "") note.append(...contentNodes);
     else {
-      callerNode = $createTextNode(getEditableCallerText(note.__caller));
+      // Unmergeable, or Lexical folds content text that starts right after it into the caller on
+      // the first edit, and the caller then saves as content.
+      callerNode = $createTextNode(getEditableCallerText(note.__caller)).toggleUnmergeable();
       if (isShellAtomic) callerNode.setMode("token");
       note.append(callerNode, ...contentNodes);
     }

@@ -912,7 +912,9 @@ export const editorStateGen1v1Editable = {
               {
                 type: "text",
                 text: ` +${NBSP}`,
-                detail: 0,
+                // Unmergeable (Lexical's `toggleUnmergeable` flag), so content text after the
+                // caller is never folded into it.
+                detail: 2,
                 format: 0,
                 mode: "normal",
                 style: "",

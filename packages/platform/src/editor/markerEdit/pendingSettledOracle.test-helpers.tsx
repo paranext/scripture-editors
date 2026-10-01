@@ -185,33 +185,9 @@ function bodyOf(usj: Usj | undefined): string {
   return JSON.stringify(usj?.content.slice(2, -1));
 }
 
-/**
- * An edit to the opening glyph of a note's first char span that leaves plain text in front of the
- * span. The live settle's rebuilt content then begins with plain text, which Lexical merges into
- * the note's editable caller text beside it (` +⍽` + `x`): the caller no longer reads as one, so
- * the saved note carries ` + x` as content and writes its caller twice. `getUsj()` while pending
- * shows the content the bytes mean.
- */
-const CALLER_MERGE_DIVERGENCES = [
-  ...["x", " ", "*", "\\", "|"]
-    .map((character) => `type ${JSON.stringify(character)}`)
-    .map((keystroke) => `marker "\\\\ft"@0 ${keystroke}`),
-  'marker "\\\\ft"@0 Delete',
-  'marker "\\\\ft"@1 type " "',
-  'marker "\\\\ft"@1 type "\\\\"',
-  'marker "\\\\ft"@1 type "|"',
-  'marker "\\\\ft"@1 Backspace',
-  'marker "\\\\ft"@2 type " "',
-  'marker "\\\\ft"@2 type "|"',
-  'marker "\\\\ft"@2 Delete',
-  'marker "\\\\ft"@3 Backspace',
-];
-
-/** Rows whose listed keystrokes are known to diverge, each list with its reason above. */
-const KNOWN_DIVERGENCES: { [row: string]: string[] } = {
-  "note (standard+expandedNotes view)": CALLER_MERGE_DIVERGENCES,
-  "note (unformatted view)": CALLER_MERGE_DIVERGENCES,
-};
+/** Rows whose listed keystrokes are known to diverge, each list with the reason it diverges. A
+ * listed keystroke that stops diverging fails its row until it leaves the list. */
+const KNOWN_DIVERGENCES: { [row: string]: string[] } = {};
 
 /** Register the oracle's rows for `view` (an `ORACLE_VIEWS` name). */
 export function describePendingSettledOracle(view: string): void {
