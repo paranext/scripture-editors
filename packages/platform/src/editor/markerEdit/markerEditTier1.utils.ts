@@ -1004,6 +1004,13 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
     context.pendingKeys.delete(node.getKey());
     return true;
   }
+  if (text === "" && note.getCaller() !== "") {
+    // Every byte of the caller deleted: the note keeps its caller, so the screen shows it again
+    // ({@link $restoreRemovedNoteCaller} for the node removed outright).
+    context.pendingKeys.delete(node.getKey());
+    $restoreCallerText(node, note.getCaller());
+    return true;
+  }
   const match = NOTE_CALLER_TEXT_REGEX.exec(text);
   if (!match) return false; // other damage keeps today's behavior (literal machinery)
   const [, caller] = match;
@@ -1011,6 +1018,61 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
   note.setCaller(caller); // PT9 GetNextWord: whole word, valid or not
   node.setTextContent(getEditableCallerText(caller));
   return true;
+}
+
+/** Rewrite `node` as `caller`'s editable caller text, keeping a caret that was in it at the
+ * caller's end — where the note's content starts. */
+function $restoreCallerText(node: TextNode, caller: string): void {
+  const selection = $getSelection();
+  const hadCaret =
+    $isRangeSelection(selection) &&
+    [selection.anchor, selection.focus].some((point) => point.key === node.getKey());
+  const text = getEditableCallerText(caller);
+  node.setTextContent(text);
+  if (hadCaret) node.select(text.length, text.length);
+}
+
+/**
+ * Put back an expanded note's editable caller text when the node holding it was removed (a range
+ * deletion over the caller, or Backspace across it): a note keeps its caller, and without its
+ * text the screen shows `\fnote text\f*` while the file gets `\f + note text\f*`. The caller
+ * text is the note's one unmergeable text child (`toggleUnmergeable`, given it by both note
+ * builders), so a slot holding any other node — content text included — has lost it, unless that
+ * node spells the caller exactly (a shape built without the flag). Only a
+ * note whose opening glyph is intact: deleting the glyph unwraps the note
+ * (`$noteDeletionTransform`).
+ *
+ * Mutating: call inside `editor.update()` (runs from MarkerEditPlugin's NoteNode transform).
+ */
+export function $restoreRemovedNoteCaller(note: NoteNode, context: MarkerEditContext): void {
+  if (!note.isAttached() || note.getIsCollapsed() !== false) return;
+  const caller = note.getCaller();
+  if (caller === "" || !leadingAttributeNames(note.getMarker())?.includes("caller")) return;
+  const children = note.getChildren();
+  let slot = 0;
+  while (slot < children.length) {
+    const child = children[slot];
+    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
+    slot++;
+  }
+  if (slot === 0) return;
+  const occupant = children[slot];
+  if (
+    $isTextNode(occupant) &&
+    !$isMarkerNode(occupant) &&
+    (occupant.isUnmergeable() || occupant.getTextContent() === getEditableCallerText(caller))
+  )
+    return;
+  const callerNode = $createTextNode(getEditableCallerText(caller)).toggleUnmergeable();
+  if (context.viewOptions?.isNoteShellEditable === false) callerNode.setMode("token");
+  children[slot - 1].insertAfter(callerNode);
+  const selection = $getSelection();
+  if (
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === children[slot - 1].getKey()
+  )
+    callerNode.select(callerNode.getTextContentSize(), callerNode.getTextContentSize());
 }
 
 /**
