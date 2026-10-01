@@ -304,7 +304,16 @@ function $planForNote(
   $applyInPlaceRenames(scopes, sites);
   // A refusal leaves the serialized note untouched, which is the settle saying this scope is
   // already what it settles to — no plan, so positions in it address the live tree directly.
-  if (!$applySettledNoteScope(note, sites, context.tier2, scopes.huskKeys, transient))
+  if (
+    !$applySettledNoteScope(
+      note,
+      sites,
+      context.tier2,
+      scopes.huskKeys,
+      transient,
+      scopes.charOpenerRenames,
+    )
+  )
     return undefined;
   const carried = built && carriedPreservedRuns(built, sites, scopes.huskKeys);
   return $planFrom("note", [note], liveFragment, liveCut, [serialized], carried, context);
@@ -329,9 +338,23 @@ function $planForParas(
   $notesWithin(paras)
     .filter((note) => scopes.noteScopes.has(note.getKey()))
     .forEach((note) =>
-      $applySettledNoteScope(note, sites, context.tier2, scopes.huskKeys, transient),
+      $applySettledNoteScope(
+        note,
+        sites,
+        context.tier2,
+        scopes.huskKeys,
+        transient,
+        scopes.charOpenerRenames,
+      ),
     );
-  const rebuilt = $settledParaScope(paras, sites, context.tier2, scopes.huskKeys, transient);
+  const rebuilt = $settledParaScope(
+    paras,
+    sites,
+    context.tier2,
+    scopes.huskKeys,
+    transient,
+    scopes.charOpenerRenames,
+  );
   if (!rebuilt) return undefined;
   const carried = built && carriedPreservedRuns(built, sites, scopes.huskKeys);
   return $planFrom("para", paras, liveFragment, liveCut, rebuilt, carried, context);
@@ -377,7 +400,14 @@ function $planForUnrebuiltPara(
   $notesWithin([para])
     .filter((note) => scopes.noteScopes.has(note.getKey()))
     .forEach((note) =>
-      $applySettledNoteScope(note, sites, context.tier2, scopes.huskKeys, transient),
+      $applySettledNoteScope(
+        note,
+        sites,
+        context.tier2,
+        scopes.huskKeys,
+        transient,
+        scopes.charOpenerRenames,
+      ),
     );
   const splicedKeys = new Set<NodeKey>();
   for (const husk of husks) {

@@ -31,7 +31,7 @@
 import { deserializeSerializedEditorState } from "../adaptors/editor-usj.adaptor";
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
 import { TransientInput } from "../editor.model";
-import { BARE_OPENER_REGEX } from "./markerName.pattern";
+import { BARE_OPENER_REGEX, UNTERMINATED_MARKER_TAIL } from "./markerName.pattern";
 import {
   $pendingCharOpenerRename,
   $unknownSplitRejoinScope,
@@ -44,11 +44,13 @@ import {
   $buildParaScopeFragment,
   $carryMarksIntoSerialized,
   $chapterAdjacentAttributeNodes,
+  $charNeedsSentinelAs,
   $isRebuildSentinel,
   $settleScopeForNode,
   $signatureOf,
   countSentinels,
   countSerializedSentinels,
+  contentFragmentText,
   cutFragment,
   extractLeadingCategoryFold,
   FragmentAccumulator,
@@ -59,6 +61,7 @@ import {
   serializedText,
   serializedType,
   Tier2Context,
+  toFragmentText,
 } from "./tier2Rebuild.utils";
 import {
   MarkerContent,
@@ -89,6 +92,7 @@ import {
   $isUnknownNode,
   $isVerseNode,
   ChapterNode,
+  CharNode,
   MarkerLookup,
   MarkerNode,
   isSerializedVerseNode,
@@ -505,12 +509,15 @@ export function $settledParaScope(
   context: Tier2Context,
   huskKeys: ReadonlySet<NodeKey>,
   transient: TransientLiteral | undefined,
+  charRenames?: ReadonlyMap<NodeKey, CharOpenerRename>,
 ): SerializedLexicalNode[] | undefined {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
   // The SHARED scope join (`$buildParaScopeFragment`, tier2Rebuild.utils.ts), so the settled output
-  // a consumer reads is built from the same bytes the mutating rebuild would tokenize.
-  const fragment = $buildParaScopeFragment(paras, getMarkerFn, viewOptions);
-  if (!fragment) return undefined;
+  // a consumer reads is built from the same bytes the mutating rebuild would tokenize — including
+  // any span the live settle renames in place before it re-tokenizes.
+  const built = $buildParaScopeFragment(paras, getMarkerFn, viewOptions);
+  if (!built) return undefined;
+  const fragment = $fragmentWithCharOpenerRenames(built, charRenames, context);
   const tokenized = $fragmentWithoutTransient(fragment, transient);
   const content: MarkerContent[] = usfmFragmentToUsjContent(tokenized.text, {
     getMarker: getMarkerFn,
@@ -623,6 +630,7 @@ export function $settledNoteScope(
   context: Tier2Context,
   huskKeys: ReadonlySet<NodeKey>,
   transient: TransientLiteral | undefined,
+  charRenames?: ReadonlyMap<NodeKey, CharOpenerRename>,
 ):
   | {
       /** Fresh content children to splice in — absent when the content is already a fixed point
@@ -638,8 +646,9 @@ export function $settledNoteScope(
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
   const built = $buildNoteFragment(note, getMarkerFn, viewOptions);
   if (!built) return undefined;
-  const { out, contentNodes } = built;
+  const { contentNodes } = built;
   if (contentNodes.length === 0) return undefined;
+  const out = $fragmentWithCharOpenerRenames(built.out, charRenames, context);
   const tokenized = $fragmentWithoutTransient(out, transient);
   const content: MarkerContent[] = usfmFragmentToUsjContent(tokenized.text, {
     getMarker: getMarkerFn,
@@ -916,6 +925,130 @@ export function $applySettledNoteGlyphRename(
   if (closerSite) rewriteSettledGlyphMarker(closerSite.node, newMarker);
 }
 
+/** `fragment` with `[start, end)` replaced by `bytes`, every span re-stated against the new text:
+ * a span before the range keeps its place, a span after it moves with the text, and a span that
+ * overlaps it stretches over the new bytes. */
+function replaceFragmentBytes(
+  fragment: FragmentAccumulator,
+  start: number,
+  end: number,
+  bytes: string,
+): FragmentAccumulator {
+  const delta = bytes.length - (end - start);
+  return {
+    text: fragment.text.slice(0, start) + bytes + fragment.text.slice(end),
+    spans: fragment.spans.map((span) => {
+      if (span.end <= start) return span;
+      if (span.start >= end) return { ...span, start: span.start + delta, end: span.end + delta };
+      return {
+        ...span,
+        start: Math.min(span.start, start),
+        end: span.end >= end ? span.end + delta : start + bytes.length,
+      };
+    }),
+    sentinels: fragment.sentinels,
+  };
+}
+
+/** Replace the bytes of the span keyed `key` in `fragment` with `bytes`; `fragment` itself when it
+ * has no such span. */
+function replaceSpanBytes(
+  fragment: FragmentAccumulator,
+  key: NodeKey,
+  bytes: string,
+): FragmentAccumulator {
+  const span = fragment.spans.find((candidate) => candidate.key === key && !candidate.isSentinel);
+  return span ? replaceFragmentBytes(fragment, span.start, span.end, bytes) : fragment;
+}
+
+/** Every key in `node`'s subtree, `node` included. */
+function $keysOfSubtree(node: LexicalNode, out = new Set<NodeKey>()): Set<NodeKey> {
+  out.add(node.getKey());
+  if ($isElementNode(node)) node.getChildren().forEach((child) => $keysOfSubtree(child, out));
+  return out;
+}
+
+/**
+ * `fragment` with the whole of `char`'s bytes replaced by one preserved-node placeholder — the
+ * bytes the fragment builder spells for a span it preserves rather than re-tokenizes
+ * (`pushSentinel`, tier2Rebuild.utils.ts) — and `char` as that placeholder's run, in its place
+ * among the fragment's runs.
+ */
+function $preserveCharInFragment(
+  fragment: FragmentAccumulator,
+  char: CharNode,
+): FragmentAccumulator {
+  const keys = $keysOfSubtree(char);
+  const inChar = fragment.spans.filter((span) => keys.has(span.key));
+  if (inChar.length === 0) return fragment;
+  const start = Math.min(...inChar.map((span) => span.start));
+  const end = Math.max(...inChar.map((span) => span.end));
+  const runsBefore = fragment.spans.filter((span) => span.isSentinel && span.start < start).length;
+  const runsInside = inChar.filter((span) => span.isSentinel).length;
+  const separator = UNTERMINATED_MARKER_TAIL.test(fragment.text.slice(0, start)) ? " " : "";
+  const replaced = replaceFragmentBytes(fragment, start, end, separator + ATOMIC_SENTINEL);
+  const sentinelStart = start + separator.length;
+  const sentinels = [...fragment.sentinels];
+  sentinels.splice(runsBefore, runsInside, [char]);
+  return {
+    text: replaced.text,
+    spans: [
+      ...replaced.spans.filter((span) => !keys.has(span.key)),
+      { key: char.getKey(), start: sentinelStart, end: sentinelStart + 1, isSentinel: true },
+    ].sort((a, b) => a.start - b.start),
+    sentinels,
+  };
+}
+
+/**
+ * `fragment` with each pending in-place char opener rename ({@link $pendingCharOpenerRename})
+ * applied to the bytes it spans, the way the live settle renames those spans before anything
+ * re-tokenizes the scope (`$resolvePendingMarkers` settles them first): the opening glyph spells
+ * the new name, the name bytes typed in front of the separator leave the content, and the closer
+ * is re-spelled with the new name. A span the new name leaves unrecoverable from its bytes (a
+ * marker the stylesheet does not declare) is preserved whole instead, as the live re-tokenize
+ * preserves the renamed span; the scope's preserved runs then carry its renamed serialized copy
+ * ({@link $applySettledCharOpenerRename}). A rename outside `fragment` changes nothing.
+ *
+ * Read-only: call inside a read of the live state.
+ */
+export function $fragmentWithCharOpenerRenames(
+  fragment: FragmentAccumulator,
+  renames: ReadonlyMap<NodeKey, CharOpenerRename> | undefined,
+  context: Tier2Context,
+): FragmentAccumulator {
+  let result = fragment;
+  for (const { char, glyph, closer, newMarker, nameInContent } of renames?.values() ?? []) {
+    if (!result.spans.some((span) => span.key === glyph.getKey())) continue;
+    if ($charNeedsSentinelAs(char, newMarker, context.getMarker)) {
+      result = $preserveCharInFragment(result, char);
+      continue;
+    }
+    if (closer)
+      result = replaceSpanBytes(
+        result,
+        closer.getKey(),
+        toFragmentText(serializedMarkerGlyphText(newMarker, "closing", closer.getNested())),
+      );
+    if (nameInContent)
+      result = replaceSpanBytes(
+        result,
+        nameInContent.text.getKey(),
+        contentFragmentText(
+          nameInContent.text.getTextContent().slice(nameInContent.length),
+          context.viewOptions,
+          true,
+        ),
+      );
+    result = replaceSpanBytes(
+      result,
+      glyph.getKey(),
+      toFragmentText(serializedMarkerGlyphText(newMarker, "opening", glyph.getNested())),
+    );
+  }
+  return result;
+}
+
 /**
  * Applies a pending char opener rename ({@link $pendingCharOpenerRename}) to the serialized copy —
  * the read-only mirror of `$applyCharOpenerRename` (markerEditTier1.utils.ts): the span takes the
@@ -1162,11 +1295,12 @@ export function $applySettledNoteScope(
   context: Tier2Context,
   huskKeys: ReadonlySet<NodeKey>,
   transient: TransientLiteral | undefined,
+  charRenames?: ReadonlyMap<NodeKey, CharOpenerRename>,
 ): boolean {
   const site = sites.get(note.getKey());
   const noteChildren = site ? serializedChildren(site.node) : undefined;
   if (!site || !noteChildren) return false;
-  const built = $settledNoteScope(note, sites, context, huskKeys, transient);
+  const built = $settledNoteScope(note, sites, context, huskKeys, transient, charRenames);
   if (!built) return false;
   // The category fold's result patches the serialized note's OWN field — the settled USJ a
   // consumer reads must carry the category the displayed bytes fold to, not the stale state.
@@ -1244,12 +1378,19 @@ export function $settledUsj(
   // co-settling note's own rebuild from resurrecting a husk living in its content — see
   // `carriedPreservedRuns`'s own doc comment.
   for (const note of noteScopes.values())
-    $applySettledNoteScope(note, sites, context, huskKeys, transient);
+    $applySettledNoteScope(note, sites, context, huskKeys, transient, charOpenerRenames);
 
   for (const paras of paraScopes.values()) {
     const site = sites.get(paras[0].getKey());
     if (!site) continue;
-    const rebuilt = $settledParaScope(paras, sites, context, huskKeys, transient);
+    const rebuilt = $settledParaScope(
+      paras,
+      sites,
+      context,
+      huskKeys,
+      transient,
+      charOpenerRenames,
+    );
     if (!rebuilt) continue;
     const index = site.siblings.indexOf(site.node);
     if (index < 0) continue;

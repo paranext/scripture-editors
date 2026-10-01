@@ -30,7 +30,14 @@ import {
 } from "../adaptors/usj-editor.adaptor";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $createRangeSelection, $getRoot, $isTextNode, LexicalEditor, TextNode } from "lexical";
+import {
+  $createRangeSelection,
+  $getRoot,
+  $setSelection,
+  $isTextNode,
+  LexicalEditor,
+  TextNode,
+} from "lexical";
 import {
   $chapterGlyphTextNode,
   $isChapterNode,
@@ -336,6 +343,52 @@ const differentialShapes: DifferentialShape[] = [
     usj: twoParaUsj([`one${NBSP}two`]),
     $edit: () => $pendGlyphEdit($paraGlyph(0), "\\q1"),
   },
+  ...(["standard", "unformatted"] as const).flatMap((view): DifferentialShape[] => [
+    {
+      // A name byte typed in front of a char span's separator renames the span in place, closer
+      // with it — and the name ends at the separator, never running on into the content.
+      name: `${view}: name byte typed in front of a span's separator`,
+      expectSettled: (settled) => {
+        expect(bytes(settled)).toContain('{"type":"char","marker":"wja","content":["b"]}');
+      },
+      view,
+      usj: twoParaUsj(["x ", { type: "char", marker: "wj", content: ["b"] }, " y"]),
+      $edit: () => {
+        $textContaining("b").setTextContent(`a${NBSP}b`);
+      },
+    },
+    ...[
+      ["wj", true],
+      ["wx", true],
+      ["wj", false],
+      ["wx", false],
+    ].map(
+      ([renamed, withComment]): DifferentialShape => ({
+        // The same kind of rename beside a typed literal that re-tokenizes the paragraph: the
+        // paragraph is rebuilt around the renamed span (preserved whole when the new name is one
+        // the stylesheet does not declare), and a comment on the span's text stays on it.
+        name: `${view}: \\w renamed to \\${renamed} beside a pending literal${withComment ? ", with a comment on its text" : ""}`,
+        expectSettled: (settled) => {
+          expect(bytes(settled)).toContain(`"marker":"${renamed}"`);
+          expect(bytes(settled)).not.toContain('"unmatched"');
+          if (withComment) expect(bytes(settled)).toContain('"sid":"c1"');
+        },
+        view,
+        usj: twoParaUsj(["x ", { type: "char", marker: "w", content: ["grace"] }, " y"]),
+        $edit: () => {
+          if (withComment) $commentOver("grace", "c1");
+          const glyph = $getRoot()
+            .getAllTextNodes()
+            .find((node) => $isMarkerNode(node) && node.getTextContent() === "\\w");
+          if (!glyph) throw new Error("expected the span's opening glyph");
+          $pendGlyphEdit(glyph, `\\${renamed}`);
+          // Caret-less, as an abandoned edit leaves it: an unterminated literal stays pending.
+          $textContaining(" y").setTextContent(" y \\zz");
+          $setSelection(null);
+        },
+      }),
+    ),
+  ]),
   {
     // A nested (`\+`) char literal typed inside a char span: nesting resolution runs inside the
     // paragraph scope, and both halves must produce the same nested-span structure.

@@ -431,6 +431,42 @@ const pendingShapes: PendingShape[] = [
       content.select(1, 1);
     },
   },
+  ...["wj", "wx"].map(
+    (renamed): PendingShape => ({
+      // Two pends in one paragraph, as an undo restores them: the live settle renames the span in
+      // place (closer with it) and renames the paragraph, so the settled read must too, rather
+      // than re-tokenizing the paragraph over the span's old closer.
+      name: `char span renamed to \\${renamed} beside a pending paragraph rename`,
+      usj: twoParaUsj(["start ", { type: "char", marker: "w", content: ["grace"] }, " end"]),
+      $edit: () => {
+        const glyph = $textContaining("grace").getPreviousSibling();
+        if (!$isMarkerNode(glyph)) throw new Error("expected the span's opening glyph");
+        glyph.setTextContent(`\\${renamed}`);
+        $reportDestroyedDisplayOwner(glyph);
+        const paraGlyph = $paraGlyph(0);
+        paraGlyph.setTextContent("\\q1");
+        $reportDestroyedDisplayOwner(paraGlyph);
+      },
+    }),
+  ),
+  ...["j", "x"].map(
+    (character): PendingShape => ({
+      // A name byte typed in front of the span's separator, beside a literal that re-tokenizes
+      // the same paragraph: the span keeps the rename it settles to on its own.
+      name: `name byte \`${character}\` in front of a span's separator beside a pending literal`,
+      usj: twoParaUsj(["start ", { type: "char", marker: "w", content: ["grace"] }, " end"]),
+      $edit: () => {
+        // The literal is pended first, so the live settle reaches it before the span unless it
+        // settles the in-place rename first.
+        const tail = $textContaining(" end");
+        tail.setTextContent(" end \\zz");
+        $reportDestroyedDisplayOwner(tail);
+        const content = $textContaining("grace");
+        content.setTextContent(`${character}${NBSP}grace`);
+        $reportDestroyedDisplayOwner(content.getParentOrThrow());
+      },
+    }),
+  ),
   {
     name: "half-typed attribute run appended to a char span",
     usj: twoParaUsj(["start ", { type: "char", marker: "nd", content: ["name"] }, " end"]),

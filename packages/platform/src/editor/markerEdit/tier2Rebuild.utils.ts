@@ -477,8 +477,21 @@ export function $isRebuildSentinel(node: LexicalNode, getMarkerFn: MarkerLookup)
  * becomes a category only by round-tripping through the file.
  */
 function $charNeedsSentinel(char: CharNode, getMarkerFn: MarkerLookup): boolean {
+  return $charNeedsSentinelAs(char, char.getMarker(), getMarkerFn);
+}
+
+/**
+ * {@link $charNeedsSentinel} for `char` as it will be once renamed to `marker` — the read-only
+ * settle's question about a span a pending rename has not renamed yet.
+ *
+ * Read-only: call inside a read or an update.
+ */
+export function $charNeedsSentinelAs(
+  char: CharNode,
+  marker: string,
+  getMarkerFn: MarkerLookup,
+): boolean {
   if ($hasUnrecoverableAttributes(char)) return true;
-  const marker = char.getMarker();
   return !isAttributeMarker(marker) && getMarkerFn(marker) === undefined;
 }
 

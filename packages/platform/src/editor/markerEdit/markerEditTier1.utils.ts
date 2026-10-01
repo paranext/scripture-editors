@@ -1361,7 +1361,20 @@ export function $resolvePendingMarkers(
   let mutated = false;
   if (context.pendingKeys.size === 0) return mutated;
   const exceptKeys = $exceptKeysAround(exceptKey);
-  const keys = [...context.pendingKeys].filter((key) => !exceptKeys.has(key));
+  // In-place char opener renames settle first, so a re-tokenize of the same scope later in the
+  // pass reads the renamed span rather than its old closer — whichever key was pended first. The
+  // read-only settle applies them the same way (`$fragmentWithCharOpenerRenames`).
+  const pended = [...context.pendingKeys].filter((key) => !exceptKeys.has(key));
+  const renameKeys = new Set(
+    pended.filter((key) => {
+      const node = $getNodeByKey(key);
+      return !!node?.isAttached() && !!$pendingCharOpenerRename(node, context.getMarker);
+    }),
+  );
+  const keys = [
+    ...pended.filter((key) => renameKeys.has(key)),
+    ...pended.filter((key) => !renameKeys.has(key)),
+  ];
   // Owners already routed through their settle in THIS pass. Several pended PIECES can map to one
   // owner (a verse's `\va` and `\vp` values are two runs sharing one owner identity, and every
   // attribute value pends under its own key — $textNodeTier2Transform), and the settle is not
