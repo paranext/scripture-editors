@@ -371,12 +371,18 @@ export declare interface EditorRef {
   /** Redo the last undone action. */
   redo(): void;
   /**
-   * Cut the selected text.
+   * Cut the selected text. With nothing selected it does nothing and the clipboard keeps whatever
+   * it already held — see {@link EditorRef.copy}.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
    */
   cut(): void;
-  /** Copy the selected text. */
+  /**
+   * Copy the selected text. With nothing selected — no selection, or a collapsed caret — it does
+   * nothing and the clipboard keeps whatever it already held, rather than receiving a placeholder
+   * character the editor never contained. A selection made programmatically immediately before this
+   * call still copies: the guard reads the live selection, not the last committed one.
+   */
   copy(): void;
   /**
    * Paste text at the current cursor position.
@@ -493,8 +499,10 @@ export declare interface EditorRef {
    * A position names the byte in front of which it sits, and maps through whatever contains that
    * byte on its own side. Where one side has bytes the other lacks, the position in front of them
    * snaps LEFT to the nearest byte both sides share, and the position just past them is exact —
-   * one aligner serves both directions, and each end of a range resolves on its own. Outbound,
-   * every real caret has a location: this returns `undefined` only when there is no selection,
+   * one aligner serves both directions, and each end of a range resolves on its own. A caret behind
+   * a verse number's (or a note caller's) trailing space reports the first byte after it — a
+   * verse's text at offset 0, the next marker — since that space has no position of its own.
+   * Outbound, every real caret has a location: this returns `undefined` only when there is no selection,
    * never because a position could not be translated. Typed bytes a pending edit holds that the
    * settled document carries as an attribute — a typed `\cat …\cat*` becomes a note's `category`,
    * a typed figure's `|src="…"` its `file` — are reported as that attribute's location. With
@@ -541,16 +549,31 @@ export declare interface EditorRef {
    * whitespace the editor shows between a marker and its content is never annotated. Setting an
    * annotation never changes the document, a position, or what `getSelection` reports.
    *
-   * `onRemove`: each `<mark>` reports its own removal — one call per `<mark>`. Display bytes report
-   * only for an annotation no `<mark>` reports:
-   * - `"removed"`, once, when `removeAnnotation` or setting the same id again takes it off display
-   *   bytes while no `<mark>` holds it.
-   * - `"destroyed"`, once, when its last display byte leaves the document (an edit, a
-   *   collaborator's edit, or a settle that discards those bytes) — but only for an annotation that
-   *   has never held a `<mark>` since it was set. One that held a `<mark>` at any moment reports
-   *   destruction through its marks alone: once they are gone, nothing reports the later loss of
-   *   its display bytes. That includes a range set over a pending edit (`|lemma="grace"` still
-   *   typed as text, so wrapped in a `<mark>`) that the settle then carries onto display bytes.
+   * The annotation holds exactly the bytes the range names. A range into part of a char span, note
+   * or figure holds only the part it names: the span's own text is marked piece by piece and its
+   * marker glyphs hold the annotation; a span the range covers whole is marked whole. A collapsed
+   * range holds nothing. The whitespace a marker or number ends in is never held — a separator and
+   * a carrier's own edge whitespace are excepted the same way, whether the range passes over them
+   * or ends exactly there. A char span's opening or closing glyph can end up holding the annotation
+   * on its own this way — as a display byte, not inside the `<mark>` that holds its content — from
+   * a range starting exactly on the glyph, or from any settle of the span's paragraph; since
+   * `getUsj()` carries no annotation state for a display byte, a save and reload then keeps the
+   * content `<mark>`'s bytes but loses the glyph's own highlighting.
+   *
+   * `onRemove`: each `<mark>` reports its own removal when it goes away — one call per `<mark>`,
+   * whatever else still holds the annotation — and only once: a `<mark>` an undo brings back stays
+   * quiet when it goes again. Beyond that, the annotation's last holder — a `<mark>` or a display
+   * byte — leaving the document without any `<mark>` having reported the annotation's removal since
+   * it was set fires ONE more report, through its display bytes: `"removed"` when
+   * `removeAnnotation` or setting the same id again takes it away, `"destroyed"` when it drops out
+   * of the document (an edit, a collaborator's edit, or a settle that discards those bytes). An
+   * annotation split across several carriers that all leave in the same edit reports their text
+   * joined in document order; carriers lost across separate edits report only the text of the
+   * piece(s) still present at the last one. A collapsed note caller's text is the note's caller.
+   * Undo, redo, and a `setUsj` reload report nothing; setting the id again starts a fresh reporting
+   * cycle for it. An `onRemove` that throws while the editor reports a `"destroyed"` after an edit
+   * does not stop that edit or the other reports: the error is handed to the editor's error
+   * handler, which rethrows it, in a microtask once the edit has been committed.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.
