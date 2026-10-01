@@ -144,4 +144,27 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     expect(trip.reported).toMatchObject({ closingMarkerOffset: "\\+j".length });
     expect(trip.to).toBe(trip.from);
   });
+
+  it("keeps a position in front of a note that a typed marker now opens a paragraph before", async () => {
+    // `\a` typed in front of the note settles as a paragraph marker, with the note as the new
+    // paragraph's first content; the end of its name is in front of the note.
+    const { mounted, $node } = await pendingEdit(
+      [
+        "a",
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ type: "char", marker: "ft", content: ["note text"] }],
+        },
+        " b",
+      ],
+      view,
+      "a",
+      "\\a",
+      1,
+    );
+    for (let offset = 0; offset <= "\\a".length; offset += 1)
+      expectBackInPlace(roundTrip(mounted, view, $node, offset));
+  });
 });

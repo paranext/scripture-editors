@@ -1,5 +1,4 @@
 {
-  "note (standard+expandedNotes view)": ["text \"a\"@0 type \"\\\\\" [positions]"],
   "\\ca span beside its chapter (standard+expandedNotes view)": [
     "marker \"\\\\ca\"@0 Delete [positions]",
     "marker \"\\\\ca\"@0 type \"*\" [positions]",

@@ -1578,7 +1578,7 @@ export function $resolveFragmentByteAnchor(
   // (inner text not addressable) or a closing marker glyph (see $isClosingMarkerSpan) — in which
   // case the position belongs at the start of the NEXT addressable span.
   let needNextAddressable = false;
-  outer: for (const span of spans) {
+  outer: for (const [index, span] of spans.entries()) {
     const spanLength = span.end - span.start;
     const addressable = !span.isSentinel && (addressDisplayBytes || !$isClosingMarkerSpan(span));
     if (needNextAddressable) {
@@ -1605,8 +1605,10 @@ export function $resolveFragmentByteAnchor(
     if (remainingNonWs === 0 && remainingWs === 0) {
       // Satisfied exactly at this span's end. A caret prefers the end of the span the walk
       // finished in over the start of the next; a byte position prefers the span whose bytes it
-      // names, which is the next one.
-      if (addressable && !addressDisplayBytes) {
+      // names, which is the next one — unless that is a preserved node's placeholder, whose front
+      // no position can name, where the end of this span is the same place.
+      const nextIsSentinel = spans[index + 1]?.isSentinel === true;
+      if (addressable && (!addressDisplayBytes || nextIsSentinel)) {
         best = { key: span.key, offset: spanLength };
         break;
       }
