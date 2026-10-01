@@ -563,29 +563,39 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         if (extraTag) $addUpdateTag(extraTag);
         $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
       },
-      { discrete: true },
-    );
-    // An empty (or fully no-op) `ops` leaves `$applyUpdate` with nothing to change, and the
-    // update above then commits nothing - disarm rather than leave the listener armed for
-    // whatever commit happens next.
-    unregisterTagRelease?.();
-    if (!holdsFocus && editorRef.current) clearStaleDomSelection(editorRef.current);
-    const editorState = editorRef.current?.getEditorState();
-    if (!editorState) return;
+      {
+        discrete: true,
+        // Reads the committed state and reports the change from `onUpdate` rather than right
+        // after this call, because `editor.update()` does not always run synchronously: a caller
+        // reached from inside another commit's own update listener (a host's `onUsjChange`
+        // calling back into `takeOpsAfterNote`, say) finds the editor already mid-commit, so
+        // Lexical queues this discrete update and applies it only once that outer commit's
+        // listeners finish. `onUpdate` fires exactly when THIS update's own commit lands, whether
+        // that is synchronously (the ordinary case, before `editor.update()` even returns) or
+        // after such a deferral, so the report is correct either way - and the unfocused tag
+        // release is disarmed only once the commit it guards has actually happened, never before.
+        onUpdate: () => {
+          unregisterTagRelease?.();
+          if (!holdsFocus && editorRef.current) clearStaleDomSelection(editorRef.current);
+          const editorState = editorRef.current?.getEditorState();
+          if (!editorState) return;
 
-    const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
-    if (newUsj) {
-      const isEdited = !deepEqual(editedUsjRef.current, newUsj);
-      if (isEdited) editedUsjRef.current = newUsj;
-      if (isEdited || !deepEqual(usj, newUsj)) {
-        // "apply" coordinates: `$applyUpdate` placed the inserted node by interpreting the
-        // retain with its own traversals (every embed opaque), so the reverse lookup must
-        // count the same way to find the node that was actually inserted.
-        const insertedNodeKey = getInsertedNodeKey(ops, editorState, "apply");
-        lastNotifiedUsjRef.current = newUsj;
-        onUsjChange?.(newUsj, ops, source, insertedNodeKey);
-      }
-    }
+          const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
+          if (newUsj) {
+            const isEdited = !deepEqual(editedUsjRef.current, newUsj);
+            if (isEdited) editedUsjRef.current = newUsj;
+            if (isEdited || !deepEqual(usj, newUsj)) {
+              // "apply" coordinates: `$applyUpdate` placed the inserted node by interpreting the
+              // retain with its own traversals (every embed opaque), so the reverse lookup must
+              // count the same way to find the node that was actually inserted.
+              const insertedNodeKey = getInsertedNodeKey(ops, editorState, "apply");
+              lastNotifiedUsjRef.current = newUsj;
+              onUsjChange?.(newUsj, ops, source, insertedNodeKey);
+            }
+          }
+        },
+      },
+    );
   }
 
   // Built as a plain object (rebuilt per render, same as the previous inline useImperativeHandle
@@ -1085,26 +1095,35 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       });
     },
     getNoteOps(noteKeyOrIndex) {
-      return editorRef.current?.read(() => {
-        const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
-        if (!noteNode) return undefined;
+      const editor = editorRef.current;
+      return editor
+        ? readLatest(editor, () => {
+            const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+            if (!noteNode) return undefined;
 
-        return $getParticularNodeOps(noteNode);
-      });
+            return $getParticularNodeOps(noteNode);
+          })
+        : undefined;
     },
     getOpsAfterNote(noteKeyOrIndex) {
-      return editorRef.current?.read(() => {
-        const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
-        return noteNode ? $getOpsAfterNote(noteNode) : undefined;
-      });
+      const editor = editorRef.current;
+      return editor
+        ? readLatest(editor, () => {
+            const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+            return noteNode ? $getOpsAfterNote(noteNode) : undefined;
+          })
+        : undefined;
     },
     takeOpsAfterNote(noteKeyOrIndex) {
-      const found = editorRef.current?.read(() => {
-        const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
-        if (!noteNode) return undefined;
-        const notePosition = $getOTPositionOfNode(noteNode, "apply");
-        return { ops: $getOpsAfterNote(noteNode), notePosition };
-      });
+      const editor = editorRef.current;
+      const found = editor
+        ? readLatest(editor, () => {
+            const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+            if (!noteNode) return undefined;
+            const notePosition = $getOTPositionOfNode(noteNode, "apply");
+            return { ops: $getOpsAfterNote(noteNode), notePosition };
+          })
+        : undefined;
       if (!found) return undefined;
       const { ops, notePosition } = found;
       if (ops.length === 0 || notePosition === undefined) return ops;

@@ -59,13 +59,18 @@ async function spanEnvironment(closed: boolean) {
     () => {
       note = $createCollapsedNote();
       stuff = $createTextNode("stuff ");
-      wj = $createCharNode("wj", closed ? undefined : { closed: "false" }).append(
-        $createMarkerNode("wj", "opening"),
-        stuff,
-        note,
+      wj = $createCharNode("wj", closed ? undefined : { closed: "false" });
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("before "),
+          wj.append(
+            $createMarkerNode("wj", "opening"),
+            stuff,
+            note,
+            ...(closed ? [$createMarkerNode("wj", "closing")] : []),
+          ),
+        ),
       );
-      if (closed) wj.append($createMarkerNode("wj", "closing"));
-      $getRoot().append($createParaNode("p").append($createTextNode("before "), wj));
     },
     <>
       <ArrowNavigationPlugin viewOptions={getViewOptions(STANDARD_VIEW_MODE)} />

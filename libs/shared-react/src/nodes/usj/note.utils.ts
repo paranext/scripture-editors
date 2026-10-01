@@ -19,17 +19,22 @@ import { $isSomeVerseNode } from "./node-react.utils";
 import { UsjNodeOptions } from "./usj-node-options.model";
 import { $dfs, $findMatchingParent } from "@lexical/utils";
 import {
+  $createRangeSelection,
   $createTextNode,
   $getCharacterOffsets,
+  $getEditor,
   $getNodeByKey,
   $getSelection,
   $getState,
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   $setState,
+  ElementNode,
   LexicalNode,
   RangeSelection,
+  SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
 import {
@@ -558,7 +563,46 @@ export function $selectAfterNote(noteNode: NoteNode) {
   const parent = noteNode.getParent();
   if (!parent) return;
   const indexAfter = noteNode.getIndexWithinParent() + 1;
-  parent.select(indexAfter, indexAfter);
+  $selectElementPoint(parent, indexAfter);
+}
+
+/**
+ * Puts a collapsed caret at child slot `offset` of `element`, and keeps it at that slot when the
+ * slot sits just past a collapsed note AND a plain `select()` would not land there on its own.
+ *
+ * `ElementNode.select` on an element that cannot be empty - a char span - descends into the child
+ * at its edge rather than naming the slot itself. At the end of a span that a collapsed note ends
+ * (an unclosed `\wj`, whose missing closer leaves the note its last child), that child is the
+ * note, and the descent comes to rest inside the note's hidden closing glyph: an invisible caret
+ * whose next keystroke edits the note body. An element that CAN be empty (a paragraph) has no such
+ * descent to guard against, so it always takes the plain path.
+ *
+ * The slot past the note is where the caret belongs, and `TrailingNoteCaretGuardPlugin` gives it a
+ * caret host to render in when it hears of the move on `SELECTION_CHANGE_COMMAND`. The move is
+ * announced here, inside this update, because the browser's own report of it comes too late for an
+ * inline span: the element point is written out to the DOM and read back, and reading a position at
+ * the end of an inline element resolves it into that element's last text - the same hidden glyph.
+ * Dispatching it here is reserved for that one hazard: a plain `select()` already lands correctly
+ * everywhere else, and a caller whose OWN commit is still mutating content (closing a note, say)
+ * would have that change swallowed by the commit-skipping tag the dispatch's own repair adds -
+ * exactly what an unneeded dispatch must not risk.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @param element - The element to place the caret in.
+ * @param offset - The child slot to place it at.
+ */
+export function $selectElementPoint(element: ElementNode, offset: number): void {
+  const childBefore = element.getChildAtIndex(offset - 1);
+  if (element.canBeEmpty() || !$isNoteNode(childBefore) || childBefore.getIsCollapsed() !== true) {
+    element.select(offset, offset);
+    return;
+  }
+  const selection = $createRangeSelection();
+  selection.anchor.set(element.getKey(), offset, "element");
+  selection.focus.set(element.getKey(), offset, "element");
+  $setSelection(selection);
+  $getEditor().dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
 }
 
 /**

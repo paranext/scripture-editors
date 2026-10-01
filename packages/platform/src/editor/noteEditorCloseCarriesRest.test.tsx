@@ -4,7 +4,7 @@
  * note editor's paragraph holds nothing but the note, so `EditorRef.getOpsAfterNote` is how the
  * host reads that text back, to apply it after the note in the Scripture text.
  */
-import { EditorOptions } from "./editor.model";
+import { EditorOptions, EditorRef } from "./editor.model";
 import { noteKeys, options, renderEditor, requireDefined } from "./noteEditorRef.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -206,6 +206,62 @@ describe("closing an unclosed note in the middle, in a note editor", () => {
 
     expect(row.editorRef.takeOpsAfterNote(0)).toEqual([]);
     expect(row.editorRef.takeOpsAfterNote(5)).toBeUndefined();
+  });
+
+  // A host that wires its save path through `onUsjChange` may call `takeOpsAfterNote` right from
+  // that callback - the closer's own commit is what makes the trailing text appear, and reacting
+  // to it immediately, in the same breath, is the natural place to take it. The call reaches
+  // `applyOps` while this editor's `_updating` is still set (Lexical holds it for every update
+  // listener's duration), so the removal's own discrete update queues instead of running inline -
+  // `getUsj()`/`onUsjChange` have to reflect it anyway, not the stale pre-removal state.
+  it("lets a host call takeOpsAfterNote from inside onUsjChange, with the removal visible immediately", async () => {
+    const refHolder: { editorRef?: EditorRef } = {};
+    const onUsjChangeCalls: Usj[] = [];
+    const onUsjChange = (usj: Usj) => {
+      onUsjChangeCalls.push(usj);
+      const after = refHolder.editorRef?.getOpsAfterNote(0);
+      if (after && after.length > 0) refHolder.editorRef?.takeOpsAfterNote(0);
+    };
+    const row = await renderEditor(noteEditorStartUsj, noteEditorOptions, undefined, onUsjChange);
+    refHolder.editorRef = row.editorRef;
+
+    const text = await renderEditor(scriptureUsj);
+    const loaded = requireDefined(text.editorRef.getNoteOps(0), "note ops");
+    await act(async () => row.editorRef.applyUpdate([loaded[0]]));
+
+    await act(async () => row.editorRef.selectNoteTextOffset(0, 5));
+    await restCaret(row.lexical);
+    // The marker palette commits a typed closer in one update, as the hosts do - the one update
+    // whose own `onUsjChange` call is where the reentrant `takeOpsAfterNote` runs.
+    await act(async () => {
+      row.editorRef.commitTypedCloser("f");
+    });
+    await restCaret(row.lexical);
+
+    const notePara = row.editorRef.getUsj()?.content[0];
+    expect(typeof notePara === "object" ? notePara.content : undefined).toEqual([
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "ft", closed: "false", content: ["alpha"] }],
+      },
+    ]);
+    expect(row.editorRef.getOpsAfterNote(0)).toEqual([]);
+
+    // One of the onUsjChange calls - the removal's own - reports the paragraph with the trailing
+    // text already gone, not just the eventual getUsj() read above.
+    const reportedRemoval = onUsjChangeCalls.some((usj) => {
+      const para = usj.content[0];
+      const content = typeof para === "object" ? para.content : undefined;
+      return (
+        Array.isArray(content) &&
+        content.length === 1 &&
+        typeof content[0] === "object" &&
+        content[0].type === "note"
+      );
+    });
+    expect(reportedRemoval).toBe(true);
   });
 });
 

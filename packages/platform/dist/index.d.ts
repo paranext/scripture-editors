@@ -946,6 +946,11 @@ export declare interface EditorRef {
    * these ops after the note op in {@link EditorRef.replaceEmbedUpdate} puts that text after the
    * note in the editor the note is applied to.
    *
+   * Safe to call from a host callback that runs during an update it is itself driving - such as
+   * `onSelectionChange` - rather than only between updates: it reads the latest state directly in
+   * that case instead of going through a plain read, which would force-flush the open update and
+   * crash it.
+   *
    * @param noteKeyOrIndex - The note key or document-order index (see
    *   {@link EditorRef.getNoteIndex}).
    * @returns The operations (empty when nothing follows the note), or `undefined` when there is no
@@ -962,6 +967,11 @@ export declare interface EditorRef {
    * that text back the way they were - the note open again, holding the text. Were the removal its
    * own step, the first undo would bring the text back after the note, where the host would take it
    * again.
+   *
+   * Safe to call from a host callback that runs during an update it is itself driving - such as
+   * `onSelectionChange` - rather than only between updates: the ops are found the same way
+   * {@link EditorRef.getOpsAfterNote} finds them, reading the latest state directly instead of
+   * going through a plain read, which would force-flush the open update and crash it.
    *
    * @param noteKeyOrIndex - The note key or document-order index (see
    *   {@link EditorRef.getNoteIndex}).

@@ -952,14 +952,19 @@ describe("TrailingNoteCaretGuardPlugin", () => {
           () => {
             before = $createTextNode("before ");
             note = $createTrailingNote();
-            wj = $createCharNode("wj", closed ? undefined : { closed: "false" }).append(
-              $createMarkerNode("wj", "opening"),
-              $createTextNode("stuff "),
-              note,
-            );
-            if (closed) wj.append($createMarkerNode("wj", "closing"));
+            wj = $createCharNode("wj", closed ? undefined : { closed: "false" });
             para = $createParaNode("p");
-            $getRoot().append(para.append(before, wj));
+            $getRoot().append(
+              para.append(
+                before,
+                wj.append(
+                  $createMarkerNode("wj", "opening"),
+                  $createTextNode("stuff "),
+                  note,
+                  ...(closed ? [$createMarkerNode("wj", "closing")] : []),
+                ),
+              ),
+            );
           },
           <TrailingNoteCaretGuardPlugin />,
         );

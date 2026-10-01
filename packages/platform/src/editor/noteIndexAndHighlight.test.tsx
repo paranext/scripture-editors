@@ -305,3 +305,29 @@ describe("EditorRef.highlightNote", () => {
     expect(highlightedCallers(container)).toEqual([callerOf(container, 0)]);
   });
 });
+
+describe("EditorRef.getNoteOps / getOpsAfterNote / takeOpsAfterNote from inside an update", () => {
+  // Same hazard as the mid-update case above: a host callback (`onSelectionChange`, say) reached
+  // from a command the update dispatches finds the editor still mid-commit, so a plain `read()`
+  // there would freeze it and crash the write that follows.
+  it("read mid-update without freezing it, so a later write in the same turn still succeeds", async () => {
+    const { editorRef, lexical } = await renderEditor(threeNotesUsj);
+    const [first, second, third] = noteKeys(lexical);
+    let noteOps: ReturnType<EditorRef["getNoteOps"]>;
+    let opsAfter: ReturnType<EditorRef["getOpsAfterNote"]>;
+    let taken: ReturnType<EditorRef["takeOpsAfterNote"]>;
+    await act(async () => {
+      lexical.update(() => {
+        $getNodeByKey(first)?.remove();
+        noteOps = editorRef.getNoteOps(second);
+        opsAfter = editorRef.getOpsAfterNote(third);
+        taken = editorRef.takeOpsAfterNote(third);
+        const secondNote = $getNodeByKey(second);
+        if ($isNoteNode(secondNote)) secondNote.setIsCollapsed(false);
+      });
+    });
+    expect(noteOps).toBeDefined();
+    expect(opsAfter).toEqual(taken);
+    expect(taken).toEqual([{ insert: "end" }]);
+  });
+});

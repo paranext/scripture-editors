@@ -69,6 +69,21 @@ const noteEditorOptions: EditorOptions = {
   },
 };
 
+/**
+ * Unformatted (Markers) view: notes render expanded, but — unlike `noteEditorOptions` above —
+ * nothing governs the shell through its own UI (`isNoteShellEditable` is left unset), the shape
+ * Unformatted view always builds.
+ */
+const unformattedOptions: EditorOptions = {
+  ...options,
+  view: {
+    markerMode: "editable",
+    noteMode: "expanded",
+    hasSpacing: false,
+    isFormattedFont: false,
+  },
+};
+
 function usjWith(noteObject: MarkerObject, after: string[] = []): Usj {
   return {
     type: "USJ",
@@ -225,6 +240,61 @@ describe("typing a note's own closer into an unclosed note", () => {
         content: [{ type: "char", marker: "ft", closed: "false", content: ["alpha"] }],
       },
       " beta",
+    ]);
+  });
+
+  it("in Unformatted view, lands the caret in the paragraph after the note rather than back inside \\ft", async () => {
+    const { editorRef, lexical } = await renderEditor(
+      usjWith(unclosedNote("alpha beta")),
+      unformattedOptions,
+    );
+
+    await typeCloserAt(lexical, editorRef, 5);
+    await typeText(lexical, "Z");
+    await restCaret(lexical);
+
+    expect(paraContent(editorRef.getUsj())).toEqual([
+      { type: "verse", marker: "v", number: "1" },
+      "before ",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "ft", closed: "false", content: ["alpha"] }],
+      },
+      "Z beta",
+    ]);
+  });
+
+  // The real app's marker palette lands the typed closer and performs the close in ONE commit
+  // (`EditorRef.commitTypedCloser`), not the char-by-char sequence `typeCloserAt` simulates above -
+  // the caret placement has to land the same way through that path too.
+  it("does the same through commitTypedCloser, the marker palette's one-update close", async () => {
+    const { editorRef, lexical } = await renderEditor(
+      usjWith(unclosedNote("alpha beta")),
+      unformattedOptions,
+    );
+    const [key] = noteKeys(lexical);
+
+    await act(async () => editorRef.selectNoteTextOffset(key, 5));
+    await restCaret(lexical);
+    await act(async () => {
+      editorRef.commitTypedCloser("f");
+    });
+    await restCaret(lexical);
+    await typeText(lexical, "Z");
+    await restCaret(lexical);
+
+    expect(paraContent(editorRef.getUsj())).toEqual([
+      { type: "verse", marker: "v", number: "1" },
+      "before ",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "ft", closed: "false", content: ["alpha"] }],
+      },
+      "Z beta",
     ]);
   });
 

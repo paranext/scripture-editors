@@ -11,7 +11,7 @@ import { $isMarkerNode, $isNoteNode, leadingAttributeNames } from "shared";
  * list: `f`/`fe`/`ef`/`efe`/`x`/`ex`), and a collapsed note never does - its caller is an atomic
  * `ImmutableNoteCallerNode`.
  *
- * Read-only: call inside `editor.read()` or an update.
+ * Read-only: call inside `editor.update()` or `editor.getEditorState().read()`.
  */
 export function $isNoteCallerSlot(node: LexicalNode): boolean {
   const note = node.getParent();

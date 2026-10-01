@@ -83,6 +83,33 @@ const usj: Usj = {
   ],
 };
 
+/**
+ * The note is the LAST child of an unclosed `\wj` char span (no `\wj*`), so it has no next
+ * sibling to land the caret in or before - `selectAfterNote` falls back to a child-slot position
+ * on the span itself, one past the note.
+ */
+const usjNoteEndsUnclosedSpan: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+    { type: "chapter", marker: "c", number: "1" },
+    {
+      type: "para",
+      marker: "p",
+      content: [
+        { type: "verse", marker: "v", number: "1" },
+        {
+          type: "char",
+          marker: "wj",
+          closed: "false",
+          content: ["before ", note("alpha")],
+        },
+      ],
+    },
+  ],
+};
+
 /** The same paragraph, but with the note ending its verse so a VERSE GLYPH follows it. */
 const usjNoteBeforeVerse: Usj = {
   type: "USJ",
@@ -225,6 +252,21 @@ describe("EditorRef.selectAfterNote", () => {
     expect(caretFocusType(lexical)).toBe("para");
     const { focusOffset, noteIndexInParent } = caretOffsetAndNoteIndexInParent(lexical);
     expect(focusOffset).toBe(noteIndexInParent + 1);
+  });
+
+  it("stays out of the note's hidden content when it ends an unclosed span", async () => {
+    // `ElementNode.select` on a span that cannot be empty descends into the child at an edge
+    // offset rather than naming the slot itself, and at the end of this span that child is the
+    // collapsed note - a trap `selectAfterNote` has to route around rather than land in.
+    const { editorRef, lexical } = await renderEditor(usjNoteEndsUnclosedSpan);
+
+    await act(async () => editorRef.selectAfterNote(0));
+
+    lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect($findMatchingParent(selection.anchor.getNode(), $isNoteNode)).toBeNull();
+    });
   });
 
   it("does not pull DOM focus into an editor the user is not in", async () => {
@@ -900,6 +942,9 @@ describe("EditorRef.selectAfterNote reports the new reference while unfocused", 
     // settle before the test's own move, so this measures selectAfterNote's report and not an
     // artifact of the mount sequence still being in flight.
     await flushQueuedEvents();
+    // This test mounts its own <Editorial> (for onScrRefChange) rather than the shared
+    // renderEditor, which strips `children`, so the cleaner EditorRefPlugin-child handle isn't
+    // reachable — read the editor off the mounted DOM.
     const lexical = getEmbeddedLexicalEditor(container);
     const rootElement = requireDefined(lexical.getRootElement(), "root element");
     expect(rootElement.contains(rootElement.ownerDocument.activeElement)).toBe(false);

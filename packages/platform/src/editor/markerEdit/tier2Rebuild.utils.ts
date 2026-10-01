@@ -42,6 +42,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $findFirstAncestorNoteNode,
   $hasUnrecoverableAttributes,
   $isAttributeRunNode,
   $isChapterNode,
@@ -457,9 +458,8 @@ function $charNeedsSentinel(char: CharNode, getMarkerFn: MarkerLookup): boolean 
 
 /** Whether `node` is inside a note's content. */
 function $isInsideNote(node: LexicalNode): boolean {
-  for (let parent = node.getParent(); parent; parent = parent.getParent())
-    if ($isNoteNode(parent)) return true;
-  return false;
+  const parent = node.getParent();
+  return parent !== null && $findFirstAncestorNoteNode(parent) !== undefined;
 }
 
 /** Whether a char span carries attributes other than the derived `closed` flag. */
@@ -1966,8 +1966,14 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
  * `splitUnclosedNoteAtOwnCloser`), rebuilt in the view's own note mode - so a view that collapses
  * its closed notes now shows this one as its caller - followed by whatever came after the closer,
  * as paragraph content. The caret, when it was in the note, goes where the user was typing: past
- * the note when it collapsed, else at the end of its content. Preserve-or-refuse: `false` with the
- * note untouched when the rebuilt shape cannot carry every preserved node.
+ * the note whenever it collapsed OR nothing governs its shell through its own UI - which is every
+ * ordinary close, including Unformatted view's expanded notes - so the next keystroke joins the
+ * paragraph rather than extending the note's last run. Only a host whose note editor owns the
+ * shell (`ViewOptions.isNoteShellEditable: false`) keeps the caret IN the note: there, the text
+ * that followed the closer is about to be taken out of this editor entirely (see
+ * `EditorRef.getOpsAfterNote`/`takeOpsAfterNote`), and the caret has to stay put for that. Preserve-
+ * or-refuse: `false` with the note untouched when the rebuilt shape cannot carry every preserved
+ * node.
  */
 function $closeNoteAtOwnCloser(
   note: NoteNode,
@@ -2015,8 +2021,9 @@ function $closeNoteAtOwnCloser(
     .setIsCollapsed(closedNote.getIsCollapsed());
   closedNote.remove();
   if (anchorInNote) {
-    if (note.getIsCollapsed() === true) $selectAfterNote(note);
-    else $selectNote(note, viewOptions);
+    if (note.getIsCollapsed() !== true && viewOptions?.isNoteShellEditable === false)
+      $selectNote(note, viewOptions);
+    else $selectAfterNote(note);
   }
   return true;
 }

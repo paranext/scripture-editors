@@ -31,7 +31,9 @@ refused. The public surface grew substantially; nothing was removed.
   the first right after the new embed, once the old one is deleted.
 - `EditorRef.takeOpsAfterNote` — removes what follows a note in its paragraph and returns its
   operations, as part of the undo step that left it there, so one undo puts a typed closer and the
-  text it moved back as they were.
+  text it moved back as they were. Both are safe to call from a host callback such as
+  `onSelectionChange` or `onUsjChange`: a removal made from inside `onUsjChange` shows in `getUsj()`
+  and is reported by its own `onUsjChange`.
 - `EditorRef.highlightNote` — applies PT9's selected-caller style (class `caller_highlight`: a
   yellow fill with thin blue top and bottom borders) to one note's caller at a time, through
   `NoteCallerHighlightPlugin`; purely presentational, and `undefined` clears it. A host that
@@ -152,7 +154,29 @@ refused. The public surface grew substantially; nothing was removed.
 - After typing an undeclared marker (`\df `) the caret stays where it was typed instead of landing
   in the next closing glyph.
 - A drag across a protected note shell that is typed or deleted over leaves the shell intact.
-
+- In a note editor that protects the note's shell (`isNoteShellEditable: false`), a forward Delete
+  with the caret just before the note no longer removes its opening glyph and unwraps the note;
+  a forward Delete with the caret right after the caller deletes the content that follows it; and a
+  forward line delete in content that wraps onto more lines stops at the end of the visual line
+  rather than at the note's closer.
+- Typing a note's own closer (`\f*`) in a view that shows the note expanded (Unformatted) leaves the
+  caret after the note, so what is typed next joins the paragraph instead of the note's last run.
+- `selectAfterNote` on a note that ends an unclosed char span (`\wj … \f + …\f*` with no `\wj*`)
+  leaves the caret after the note instead of inside its hidden content.
+- `getNoteOps`, `getOpsAfterNote` and `takeOpsAfterNote` no longer break an update in progress when
+  a host calls them from a callback that runs during one.
+- A forward Delete through an opening glyph removes one character at a time: the press that
+  removes the glyph's last character keeps its separator as the text's own space and leaves the
+  caret where it was, instead of also removing the separator and jumping to the end of the span.
+- Backspace, a word delete or a line delete with the caret at a protected note shell's trailing
+  edge (`isNoteShellEditable: false`) no longer removes the caller; such a delete is refused or
+  stops at the shell's edge.
+- A note's closing glyph is protected where its shell is (`isNoteShellEditable: false`): a caret
+  in, on or past the closer moves to the end of the note's content, and Backspace, forward Delete
+  and typing over a range can no longer remove or prepend to it.
+- An undeclared marker typed in a note that has a `\cat` run stays a sibling of the run it ends,
+  instead of being spliced back inside the open `\ft` (shown as `\+df`) with the caret landing on
+  the `\cat`.
 - `onUsjChange` reports `insertedNodeKey` only for a node the change added. An edit inside an
   existing note (an unclosed note, which renders expanded) was reported as inserting that note.
 - Applying a note to an editor that shows it collapsed keeps text written directly in the note
@@ -163,7 +187,6 @@ refused. The public surface grew substantially; nothing was removed.
   after the note instead of losing it.
 - Deleting the backslash of a char marker the stylesheet does not declare turns it back into text,
   as it does for a declared marker.
-
 - Typing into an EXPANDED note that holds no content at all (`\f + \f*`) makes what is typed the
   note's content (`\f + text\f*`, no run marker added), where the note's caller is protected from
   typing (`isNoteShellEditable: false`, as in a host's note editor). The keystroke used to land in
@@ -234,6 +257,6 @@ refused. The public surface grew substantially; nothing was removed.
   `+` in the saved USJ.
 - `applyUpdate` keeps a nested char span that opens a run (`\ft \+nd LORD\+nd* said`): it builds
   the nested span with its glyphs inside it, as it already did for one mid-run, and no longer
-  loses it. Text continuing a closed run lands inside the run's closing glyph.
+  loses it. Text continuing a closed run lands inside the run, ahead of its closing glyph.
 - The note-shell and trailing-note caret guards release their cursor-change tag after a
   correction, so the keystroke right after it reaches `onUsjChange`.

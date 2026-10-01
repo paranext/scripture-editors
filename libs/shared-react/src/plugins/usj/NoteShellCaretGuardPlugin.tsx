@@ -1,6 +1,6 @@
 import { releaseTagsAfterNextCommit } from "./editorUpdate.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $findMatchingParent, mergeRegister } from "@lexical/utils";
+import { mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createPoint,
@@ -30,6 +30,7 @@ import {
 } from "lexical";
 import { useEffect, useRef } from "react";
 import {
+  $findFirstAncestorNoteNode,
   $isMarkerNode,
   $isNoteNode,
   $noteEditableCallerNode,
@@ -278,13 +279,19 @@ function $setCollapsed(selection: RangeSelection, point: PointType): void {
   selection.focus.set(point.key, point.offset, point.type);
 }
 
+/** The note with a protected shell that `node` is, or sits inside, or `undefined`. */
+function $protectedNoteOf(node: LexicalNode): NoteNode | undefined {
+  const note = $findFirstAncestorNoteNode(node);
+  return note && $noteShellNodes(note).length > 0 ? note : undefined;
+}
+
 /** Every expanded note with a protected shell that the range reaches into. */
 function $protectedNotesIn(selection: RangeSelection): NoteNode[] {
   const notes: NoteNode[] = [];
   const add = (node: LexicalNode) => {
-    const note = $isNoteNode(node) ? node : $findMatchingParent(node, $isNoteNode);
-    if (!$isNoteNode(note) || notes.some((known) => known.is(note))) return;
-    if ($noteShellNodes(note).length > 0) notes.push(note);
+    const note = $protectedNoteOf(node);
+    if (!note || notes.some((known) => known.is(note))) return;
+    notes.push(note);
   };
   add(selection.anchor.getNode());
   add(selection.focus.getNode());
@@ -340,12 +347,6 @@ function $narrowSelectionOutOfShell(selection: RangeSelection): boolean {
   return true;
 }
 
-/** The note with a protected shell that `node` is, or sits inside, or `undefined`. */
-function $protectedNoteOf(node: LexicalNode): NoteNode | undefined {
-  const note = $isNoteNode(node) ? node : $findMatchingParent(node, $isNoteNode);
-  return $isNoteNode(note) && $noteShellNodes(note).length > 0 ? note : undefined;
-}
-
 /** The text between two points of the document, `from` before `to`. */
 function $textBetween(from: PointType, to: PointType): string {
   const range = $createRangeSelection();
@@ -371,16 +372,54 @@ function lineTopOf(editor: LexicalEditor, point: PointType): number | undefined 
 }
 
 /**
- * Decides a DELETE of a COLLAPSED caret in a note whose shell is protected: `true` when the delete is
- * handled here (refused, or narrowed and done), `false` to let it run.
+ * Whether `a` and `b` are drawn on measurably different visual lines — far enough apart that a
+ * line-granularity delete between them should stop at the nearer one rather than reaching across
+ * into the other. `false` (treat as the same line) whenever either point cannot be measured,
+ * which keeps the caller's existing clamp as the default when there is no layout to check it
+ * against.
+ */
+function $onDifferentLines(editor: LexicalEditor, a: PointType, b: PointType): boolean {
+  const topA = lineTopOf(editor, a);
+  const topB = lineTopOf(editor, b);
+  return topA !== undefined && topB !== undefined && Math.abs(topA - topB) >= 1;
+}
+
+/**
+ * The node directly after `point`: the child at its offset for an ELEMENT point, or, for a TEXT
+ * point resting at its node's end, that node's next sibling. `undefined` for a text point
+ * anywhere else, where "directly after" is still inside the same node rather than a sibling.
+ */
+function $nodeAfter(point: PointType): LexicalNode | undefined {
+  if (point.type === "element") {
+    const parent = point.getNode();
+    return $isElementNode(parent) ? (parent.getChildAtIndex(point.offset) ?? undefined) : undefined;
+  }
+  const node = point.getNode();
+  return node.getTextContentSize() === point.offset
+    ? (node.getNextSibling() ?? undefined)
+    : undefined;
+}
+
+/**
+ * Decides a DELETE of a COLLAPSED caret touching a note whose shell is protected: `true` when the
+ * delete is handled here (refused, or narrowed and done), `false` to let it run.
  *
- * A caret is never inside the shell, but it rests at the shell's trailing edge - the start of the
- * note's content, where the caret guard itself puts it - and a backward delete from there takes the
- * whole caller, a `token` node deleted as one. So a backward delete with no text between the shell
- * and the caret is refused. A word or line delete that would run on past the content into the shell
- * (nothing but separators and punctuation before the caret, or a caret on the shell's own line)
- * deletes back to the shell's edge instead. Everything else, and every forward delete from the
- * content, is the ordinary delete.
+ * A caret resting just outside the note, with the note directly ahead, refuses a forward delete
+ * too: deleting from there would eat the opening glyph and unwrap the whole note, the same damage
+ * a delete from inside the shell would do.
+ *
+ * A caret is never inside the shell itself, but it rests at the shell's trailing edge - the start
+ * of the note's content, where the caret guard itself puts it. A backward delete from there takes
+ * the whole caller, a `token` node deleted as one, so it is refused whenever no text lies between
+ * the edge and the caret. A forward delete from that same position is not refused outright: it is
+ * the start of an ordinary delete into the note's content, handled below like any other caret past
+ * the shell.
+ *
+ * A word delete that would run on past the content into the shell or the closing glyph (nothing
+ * but separators and punctuation between the caret and it) deletes back to that edge instead. A
+ * line delete does the same UNLESS the two ends are measurably on different visual lines, in which
+ * case the delete is left to run on its own line rather than reaching across into the next one.
+ * Everything else is the ordinary delete.
  */
 function $guardCollapsedDeletion(
   editor: LexicalEditor,
@@ -395,35 +434,34 @@ function $guardCollapsedDeletion(
     return true;
   }
   const note = $protectedNoteOf(caret.getNode());
-  if (!note) return false;
+  if (!note) {
+    if (isBackward) return false;
+    const after = $nodeAfter(selection.focus);
+    return $isNoteNode(after) && $noteShellNodes(after).length > 0;
+  }
   if ($shellAt(caret)) return true;
   const edge = $shellTrailingEdge(note);
-  const caretIsPastShell = edge.isBefore(caret) && !edge.is(caret);
-  if (!caretIsPastShell) return true;
-  if (!isBackward) {
-    const closer = $closingGlyph(note);
-    if (!closer) return false;
-    const closerStart = $createPoint(closer.getKey(), 0, "text");
-    const ahead = $textBetween(caret, closerStart);
-    if (ahead === "") return true;
+  if (isBackward) {
+    if (!(edge.isBefore(caret) && !edge.is(caret))) return true;
+    const between = $textBetween(edge, caret);
+    if (between === "") return true;
     if (granularity === "character") return false;
-    if (granularity === "word" && /[\p{L}\p{N}]/u.test(ahead)) return false;
-    // A word or line delete that would run on into the closer deletes up to it instead.
-    selection.focus.set(closerStart.key, closerStart.offset, closerStart.type);
+    if (granularity === "word" && /[\p{L}\p{N}]/u.test(between)) return false;
+    if (granularity === "line" && $onDifferentLines(editor, edge, caret)) return false;
+    selection.anchor.set(edge.key, edge.offset, edge.type);
     selection.removeText();
     return true;
   }
-  const between = $textBetween(edge, caret);
-  if (between === "") return true;
+  if (caret.isBefore(edge)) return true;
+  const closer = $closingGlyph(note);
+  if (!closer) return false;
+  const closerStart = $createPoint(closer.getKey(), 0, "text");
+  const ahead = $textBetween(caret, closerStart);
+  if (ahead === "") return true;
   if (granularity === "character") return false;
-  if (granularity === "word" && /[\p{L}\p{N}]/u.test(between)) return false;
-  if (granularity === "line") {
-    const edgeTop = lineTopOf(editor, edge);
-    const caretTop = lineTopOf(editor, caret);
-    if (edgeTop !== undefined && caretTop !== undefined && Math.abs(edgeTop - caretTop) >= 1)
-      return false;
-  }
-  selection.anchor.set(edge.key, edge.offset, edge.type);
+  if (granularity === "word" && /[\p{L}\p{N}]/u.test(ahead)) return false;
+  if (granularity === "line" && $onDifferentLines(editor, caret, closerStart)) return false;
+  selection.focus.set(closerStart.key, closerStart.offset, closerStart.type);
   selection.removeText();
   return true;
 }

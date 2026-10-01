@@ -39,11 +39,13 @@ import {
   $getSelection,
   $isRangeSelection,
   $isTextNode,
+  COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   DELETE_CHARACTER_COMMAND,
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
   KEY_DOWN_COMMAND,
+  LexicalCommand,
   LexicalEditor,
   SELECTION_CHANGE_COMMAND,
   TextNode,
@@ -192,6 +194,40 @@ function expectShellIntact(editor: LexicalEditor) {
   expect(note.marker).toBe("f");
   expect(note.caller).toBe("+");
   return note;
+}
+
+/**
+ * Dispatches a delete command and reports whether the SHELL GUARD refused it, without letting an
+ * unrefused command reach Lexical's own default handler: deleting real text from a collapsed
+ * caret needs the DOM selection's `modify`, which jsdom does not implement and would crash the
+ * test rather than no-op. A trap registered just below the guard's `COMMAND_PRIORITY_CRITICAL`
+ * (but above the default handler's `COMMAND_PRIORITY_EDITOR`) catches an unrefused command there
+ * instead and reports it undone — real text is never actually touched either way.
+ */
+async function dispatchGuardedDelete(
+  editor: LexicalEditor,
+  command: LexicalCommand<boolean>,
+  isBackward: boolean,
+): Promise<boolean> {
+  let reachedDefaultHandler = false;
+  const unregister = editor.registerCommand(
+    command,
+    () => {
+      reachedDefaultHandler = true;
+      return true;
+    },
+    COMMAND_PRIORITY_LOW,
+  );
+  try {
+    await act(async () => {
+      editor.update(() => {
+        editor.dispatchCommand(command, isBackward);
+      });
+    });
+  } finally {
+    unregister();
+  }
+  return !reachedDefaultHandler;
 }
 
 describe("expanded note shell", () => {
@@ -432,26 +468,208 @@ describe("expanded note shell", () => {
     }
 
     it.each([
-      ["a Backspace at the shell's edge", caretAtShellEdge, DELETE_CHARACTER_COMMAND],
+      ["a Backspace at the shell's edge", caretAtShellEdge, DELETE_CHARACTER_COMMAND, true, true],
       [
         "a Backspace at the content's first glyph",
         caretAtContentGlyphStart,
         DELETE_CHARACTER_COMMAND,
+        true,
+        true,
       ],
-      ["a word delete at the shell's edge", caretAtShellEdge, DELETE_WORD_COMMAND],
-      ["a line delete at the shell's edge", caretAtShellEdge, DELETE_LINE_COMMAND],
-    ] as const)("keeps the shell under %s", async (_label, placeCaret, command) => {
+      ["a word delete at the shell's edge", caretAtShellEdge, DELETE_WORD_COMMAND, true, true],
+      ["a line delete at the shell's edge", caretAtShellEdge, DELETE_LINE_COMMAND, true, true],
+      [
+        "a forward Delete at the shell's edge",
+        caretAtShellEdge,
+        DELETE_CHARACTER_COMMAND,
+        false,
+        false,
+      ],
+      [
+        "a forward word delete at the shell's edge",
+        caretAtShellEdge,
+        DELETE_WORD_COMMAND,
+        false,
+        false,
+      ],
+    ] as const)(
+      "keeps the shell under %s",
+      async (_label, placeCaret, command, isBackward, refusesDelete) => {
+        const { editor } = await mount(protectedShell);
+        await placeCaret(editor);
+
+        const handled = await dispatchGuardedDelete(editor, command, isBackward);
+
+        // A refused delete is handled right here and removes nothing. One the guard lets through
+        // is left for the ordinary command chain, which this guard never touches either way, so
+        // there is nothing further to assert about it in this headless environment.
+        expect(handled).toBe(refusesDelete);
+        const note = expectShellIntact(editor);
+        if (refusesDelete) expect(JSON.stringify(note.content)).toContain("A note");
+      },
+    );
+
+    /**
+     * Mount with a note that HAS a closing glyph. Every other case in this file uses `mount`'s
+     * `closed="false"` fixture, which builds an unclosed note (no `\f*`); omitting that attribute
+     * is what gives the note a closer for a forward delete to clamp against.
+     */
+    async function mountWithCloser(view: ViewOptions) {
+      initializeSerialize(undefined, undefined);
+      initializeDeserialize(undefined);
+      reset();
+      const state = serializeEditorState(noteUsx(""), view);
+      return baseTestEnvironment(
+        JSON.stringify({ root: state.root }),
+        <>
+          <MarkerEditPlugin viewOptions={view} />
+          <NoteShellCaretGuardPlugin />
+        </>,
+      );
+    }
+
+    /**
+     * Stubs `Range.prototype.getClientRects` so a range starting in one of `tops`' containers
+     * reports that `top`; any other container falls back to the real (empty, in jsdom)
+     * implementation. This is the one DOM measurement the guard's line comparison reads, so
+     * stubbing it is what lets a test say two caret positions are, or are not, on the same line.
+     */
+    function stubLineTops(tops: Map<Node, number>): () => void {
+      const original = Range.prototype.getClientRects;
+      Range.prototype.getClientRects = function (this: Range) {
+        const top = tops.get(this.startContainer);
+        return top === undefined ? original.call(this) : ([{ top }] as unknown as DOMRectList);
+      };
+      return () => {
+        Range.prototype.getClientRects = original;
+      };
+    }
+
+    /**
+     * The DOM text nodes `lineTopOf` measures for the shell's trailing edge (the caller) and the
+     * note's closing glyph — the two points a forward line-delete compares.
+     */
+    function lineTopContainers(editor: LexicalEditor): { caller: Node; closer: Node } {
+      let callerKey = "";
+      let closerKey = "";
+      editor.getEditorState().read(() => {
+        const note = findOnlyNote($getRoot());
+        callerKey = requireDefined($noteEditableCallerNode(note), "caller").getKey();
+        const closer = note.getLastChild();
+        closerKey = requireDefined(
+          $isTextNode(closer) ? closer : undefined,
+          "closing glyph",
+        ).getKey();
+      });
+      return {
+        caller: requireDefined(
+          editor.getElementByKey(callerKey)?.firstChild ?? undefined,
+          "caller DOM container",
+        ),
+        closer: requireDefined(
+          editor.getElementByKey(closerKey)?.firstChild ?? undefined,
+          "closer DOM container",
+        ),
+      };
+    }
+
+    it("does not clamp a forward LINE delete when the closer is on a different visual line", async () => {
+      const { editor } = await mountWithCloser(protectedShell);
+      await caretAtShellEdge(editor);
+      const { caller, closer } = lineTopContainers(editor);
+      const restoreLineTops = stubLineTops(
+        new Map([
+          [caller, 0],
+          [closer, 40],
+        ]),
+      );
+
+      let handled: boolean;
+      try {
+        handled = await dispatchGuardedDelete(editor, DELETE_LINE_COMMAND, false);
+      } finally {
+        restoreLineTops();
+      }
+
+      expect(handled).toBe(false);
+      const note = expectShellIntact(editor);
+      expect(JSON.stringify(note.content)).toContain("A note");
+    });
+
+    it("still stops a forward LINE delete at the closer when the lines match", async () => {
+      const { editor } = await mountWithCloser(protectedShell);
+      await caretAtShellEdge(editor);
+      const { caller, closer } = lineTopContainers(editor);
+      const restoreLineTops = stubLineTops(
+        new Map([
+          [caller, 0],
+          [closer, 0],
+        ]),
+      );
+
+      let handled: boolean;
+      try {
+        handled = await dispatchGuardedDelete(editor, DELETE_LINE_COMMAND, false);
+      } finally {
+        restoreLineTops();
+      }
+
+      expect(handled).toBe(true);
+      const note = expectShellIntact(editor);
+      // The clamp removes the whole content run up to the closer; USJ drops an empty `content`
+      // array entirely, so `note.content` itself may be `undefined` rather than an empty one.
+      expect(JSON.stringify(note.content ?? null)).not.toContain("A note");
+    });
+  });
+
+  describe("under a forward Delete with the caret outside the note", () => {
+    /** The note, its parent paragraph, and the note's own index within it. */
+    function $noteAndIndex() {
+      const note = findOnlyNote($getRoot());
+      return { note, parent: note.getParentOrThrow(), index: note.getIndexWithinParent() };
+    }
+
+    /** Caret as a TEXT point at the end of the text immediately before the note. */
+    async function caretAtTextEndBeforeNote(editor: LexicalEditor) {
+      await act(async () => {
+        editor.update(() => {
+          const { note } = $noteAndIndex();
+          const before = note.getPreviousSibling();
+          const text = requireDefined(
+            $isTextNode(before) ? before : undefined,
+            "text before the note",
+          );
+          text.select(text.getTextContentSize(), text.getTextContentSize());
+        });
+      });
+    }
+
+    /**
+     * Caret as an ELEMENT point on the paragraph, right before the note — what a leftward arrow
+     * out of the note's own content leaves it at (`$placeCaretAtBoundary`).
+     */
+    async function caretAtParagraphBoundaryBeforeNote(editor: LexicalEditor) {
+      await act(async () => {
+        editor.update(() => {
+          const { parent, index } = $noteAndIndex();
+          parent.select(index, index);
+        });
+      });
+    }
+
+    it.each([
+      ["a text point", caretAtTextEndBeforeNote],
+      ["an element point", caretAtParagraphBoundaryBeforeNote],
+    ] as const)("keeps the note whole with the caret as %s", async (_label, placeCaret) => {
       const { editor } = await mount(protectedShell);
       await placeCaret(editor);
 
-      await act(async () => {
-        editor.update(() => {
-          editor.dispatchCommand(command, true);
-        });
-      });
+      const handled = await dispatchGuardedDelete(editor, DELETE_CHARACTER_COMMAND, false);
 
-      const note = expectShellIntact(editor);
-      expect(JSON.stringify(note.content)).toContain("A note");
+      // Refused: a forward delete from here would otherwise eat the `\f` opener and unwrap the
+      // whole note into plain paragraph text.
+      expect(handled).toBe(true);
+      expectShellIntact(editor);
     });
   });
 
