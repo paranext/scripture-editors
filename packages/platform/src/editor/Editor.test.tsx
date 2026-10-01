@@ -42,6 +42,7 @@ import {
 import { createRef, PropsWithChildren, ReactElement, RefObject, useEffect, useState } from "react";
 import {
   $isBookNode,
+  $isChapterNode,
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
@@ -1832,6 +1833,88 @@ describe("formatPara (standard view)", () => {
       // of the selection's reach (nor anything outside it) was deleted.
       expect(book.getTextContent()).toContain("Te");
       expect(newPara.getTextContent()).toContain("st Book");
+    });
+  });
+
+  // The sibling walk's stopping point must be the selection's end BLOCK, not the nearest
+  // paragraph ancestor: a `\c` chapter sits between the book and a later paragraph as an ordinary
+  // root-level sibling, and when the selection's end point lands on the chapter itself (it has no
+  // text children of its own to select into), there is no paragraph ancestor to find at all.
+  it("retags every paragraph up to a selection ending ON the chapter, which stays a ChapterNode", async () => {
+    const titlesUsj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+        { type: "para", marker: "h", content: ["Genesis"] },
+        { type: "para", marker: "mt1", content: ["The First Book of Moses"] },
+        { type: "chapter", marker: "c", number: "1" },
+        {
+          type: "para",
+          marker: "p",
+          content: [{ type: "verse", marker: "v", number: "1" }, "text"],
+        },
+      ],
+    };
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={titlesUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+
+    // Select forward: anchor in the book's own text, focus an element point on the chapter (it
+    // has no text of its own for the selection to land in).
+    act(() => {
+      lexical.update(() => {
+        const bookText = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("Test Book"));
+        const chapter = $getRoot().getChildren().find($isChapterNode);
+        if (!bookText || !$isTextNode(bookText)) throw new Error("seed book text node not found");
+        if (!chapter) throw new Error("expected a ChapterNode");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(bookText.getKey(), 4, "text");
+        selection.focus = $createPoint(chapter.getKey(), 0, "element");
+        $setSelection(selection);
+        expect(selection.isBackward()).toBe(false);
+      });
+    });
+    await act(async () => {
+      ref.current?.formatPara("p");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    lexical.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected the BookNode to remain at the root");
+      // The split inserts its own new paragraph (the book's tail, already tagged "p") directly
+      // after the book, ahead of the two title paragraphs under test.
+      const [splitTail, titleOne, titleTwo, chapter, versePara] = $getRoot().getChildren().slice(1);
+      if (!$isParaNode(splitTail)) throw new Error("expected the split's own new ParaNode");
+      expect(splitTail.getTextContent()).toContain("Book");
+      if (!$isParaNode(titleOne) || !$isParaNode(titleTwo))
+        throw new Error("expected the title paragraphs to remain ParaNodes");
+      expect(titleOne.getMarker()).toBe("p");
+      expect(titleOne.getTextContent()).toContain("Genesis");
+      expect(titleTwo.getMarker()).toBe("p");
+      expect(titleTwo.getTextContent()).toContain("First Book of Moses");
+      // The chapter is never retagged — it stays a ChapterNode, not converted to a paragraph.
+      if (!$isChapterNode(chapter)) throw new Error("expected the ChapterNode to remain");
+      expect(chapter.getNumber()).toBe("1");
+      // The paragraph AFTER the chapter was outside the selection and keeps its own marker.
+      if (!$isParaNode(versePara)) throw new Error("expected the verse ParaNode to remain");
+      expect(versePara.getMarker()).toBe("p");
+      expect(versePara.getTextContent()).toContain("text");
     });
   });
 

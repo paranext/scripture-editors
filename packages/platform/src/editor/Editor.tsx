@@ -790,19 +790,24 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             // retag below is meaningless against a point whose node is gone.
             const endNode = $getNodeByKey(originalEnd.key);
             if (!endNode?.isAttached()) return;
-            const endPara = $findMatchingParent(endNode, $isParaNode);
-            if (!endPara) return;
+            // The TOP-LEVEL block the selection ends in, not the nearest PARAGRAPH ancestor: the
+            // end point can land in a non-paragraph root sibling — a `\c` chapter line — which has
+            // no paragraph ancestor to find at all.
+            const endBlock = endNode.getTopLevelElement();
+            if (!endBlock) return;
             const newPara = book.getNextSibling();
             if (!$isParaNode(newPara)) return;
-            // Retag every PARAGRAPH between the split's new paragraph and the one the original
+            // Retag every PARAGRAPH between the split's new paragraph and the block the original
             // selection reached, one at a time — never as a single selection spanning the whole
             // reach: a `\c` chapter marker sits between the book and its first paragraph as a
             // root-level sibling like any of them, and `$setBlocksType` has no notion of "skip
             // this sibling" — given a selection that merely passes over a chapter on its way to a
-            // later paragraph, it converts the chapter into a paragraph right along with them.
+            // later paragraph, it converts the chapter into a paragraph right along with them. The
+            // `$isParaNode(sibling)` guard below is what keeps the chapter itself from ever being
+            // retagged even when it is the END block the walk stops at.
             let sibling: LexicalNode | null = newPara.getNextSibling();
             while (sibling) {
-              const isEndPara = sibling.is(endPara);
+              const isEndBlock = sibling.is(endBlock);
               const next = sibling.getNextSibling();
               if ($isParaNode(sibling)) {
                 const paraSelection = $createRangeSelection();
@@ -811,7 +816,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
                 $setSelection(paraSelection);
                 $retagBlocksInSelection(paraSelection, blockMarker, viewOptions);
               }
-              if (isEndPara) break;
+              if (isEndBlock) break;
               sibling = next;
             }
             return;
