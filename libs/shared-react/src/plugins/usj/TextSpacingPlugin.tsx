@@ -188,9 +188,10 @@ function $textNodeInUnknownTransform(node: TextNode, editor: LexicalEditor): voi
   const unknownNode = node.getParent();
   if (!$isUnknownNode(unknownNode) || !node.isAttached()) return;
 
-  // A mark wrap splits caption text into pieces that are new nodes but no new text. The tag
-  // covers the whole update, so text typed in that same update would stay too; no update both
-  // wraps and takes typing.
+  // A mark wrap splits caption text into pieces that are new nodes but no new text. Lexical
+  // unions the tags of every update batched into one commit, so the skip covers the whole commit:
+  // text typed into a figure in an update batched with a wrap would stay in the figure too. A
+  // host's annotation call and DOM input arrive in separate tasks, so they are not batched.
   if ($hasUpdateTag(TYPED_MARK_WRAP_TAG)) return;
 
   // Only text planted inside a PRE-EXISTING opaque block is an intrusion (e.g. typing into a
