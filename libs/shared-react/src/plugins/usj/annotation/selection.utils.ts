@@ -38,6 +38,7 @@ import {
 import {
   $chapterGlyphTextNode,
   $charSeparatorPrefixLength,
+  $decoratorDisplayText,
   $getLogicalContentItems,
   $getLogicalIndexOfChild,
   $getLogicalParent,
@@ -1227,13 +1228,6 @@ function $getPointFromLocation(
   if (!$isImmutableVerseNode(owner) && !$isImmutableChapterNode(owner)) return { point };
   const insideDecorator = $wholeDecoratorPosition(owner, location);
   return insideDecorator && insideDecorator.before > 0 ? { point, insideDecorator } : { point };
-}
-
-/** The text a display-byte decorator shows: a collapsed caller shows its note's caller. */
-function $decoratorDisplayText(node: LexicalNode): string {
-  if (node.getType() !== IMMUTABLE_NOTE_CALLER_NODE_TYPE) return node.getTextContent();
-  const note = node.getParent();
-  return $isNoteNode(note) ? note.getCaller() : "";
 }
 
 /** One run of the bytes a read-only decorator stands for, spelled as Standard view displays it. */

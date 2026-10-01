@@ -464,9 +464,32 @@ describe("a collapsed note's caller", () => {
       start: { jsonPath: propertyPath([2, 1], "caller"), propertyOffset: 0 },
       end: { jsonPath: propertyPath([2, 1], "caller"), propertyOffset: 1 },
     });
-    // A collapsed caller is a decorator: its own text is empty, so the covered text is too.
-    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": [""] });
+    expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["+"] });
     expect(mounted.ref.current?.getUsj()).toEqual(usj);
+  });
+
+  it("reports the caller it displays when the annotation is removed", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const note: MarkerObject = {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [{ type: "char", marker: "ft", content: ["note body"] }],
+    };
+    const mounted = await mountStandardViewEditor(twoParaUsj(["before ", note, " after"]));
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: propertyPath([2, 1], "caller"), propertyOffset: 0 },
+        end: { jsonPath: propertyPath([2, 1], "caller"), propertyOffset: 1 },
+      },
+      "1",
+      onRemove,
+    );
+
+    await act(async () => mounted.ref.current?.removeAnnotation("test", "1"));
+
+    expect(onRemove.mock.calls).toEqual([["external-test", "1", "removed", "+"]]);
   });
 });
 

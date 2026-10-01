@@ -174,9 +174,17 @@ export function $removeDisplayAnnotation(node: LexicalNode, type: string, id: st
   return true;
 }
 
-/** The bytes `annotation` covers on `node` — the node's whole text for a decorator. */
+/** The text a display-byte node shows: its own text, except that a collapsed caller (a decorator
+ * whose own text is empty) shows its note's caller. */
+export function $decoratorDisplayText(node: LexicalNode): string {
+  if (node.getType() !== IMMUTABLE_NOTE_CALLER_NODE_TYPE) return node.getTextContent();
+  const note = node.getParent();
+  return $isNoteNode(note) ? note.getCaller() : "";
+}
+
+/** The bytes `annotation` covers on `node` — everything a decorator shows, for a decorator. */
 export function $coveredDisplayText(node: LexicalNode, annotation: DisplayAnnotation): string {
-  const text = node.getTextContent();
+  const text = $decoratorDisplayText(node);
   return annotation.start === annotation.end ? text : text.slice(annotation.start, annotation.end);
 }
 
