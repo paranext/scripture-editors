@@ -260,8 +260,9 @@ export interface EditorRef {
    * (`<typedMark>-<type>`, `<typedMarkOverlap>-<type>` where two ids of a type overlap,
    * `annotationId-<id>`) plus `display-annotation`. A part of one is painted with a CSS Custom
    * Highlight instead, which the editor styles from the same class rules: it copies the
-   * properties a highlight can paint (`background-color`, `color`, `text-decoration`,
-   * `text-shadow`) and draws a bottom border as an underline. Other properties and `:hover` rules
+   * properties a highlight can paint (`background-color`, `color`, a `text-decoration` that draws
+   * a line, `text-shadow`) and otherwise draws a bottom border as an underline. Other properties
+   * and `:hover` rules
    * apply only to elements, and the rules must not depend on ancestors inside the editable content.
    * Where the browser has no highlight API, a display byte is painted whole. Find painted
    * annotations with {@link EditorRef.getAnnotationRanges}, not by class.
@@ -269,7 +270,14 @@ export interface EditorRef {
    * A read-only glyph, verse number or chapter number (the views without editable markers) holds
    * and paints exactly the part of what it shows that the range names. A range that names only
    * bytes such a glyph stands for without showing them (a verse's `\va` where markers are hidden)
-   * holds the annotation on it but paints nothing.
+   * holds the annotation on it but paints nothing, and gets no click or hover; its `onRemove` text
+   * is the bytes it holds (`12a`).
+   *
+   * Display bytes keep the annotation through an edit the way text does: a hold follows the bytes
+   * it holds (a collaborator renumbering `\v 12` to `\v 13` keeps a hold on `1`), and is dropped,
+   * reporting `"destroyed"`, once none of them is left (a hold on `2`). The one exception is a
+   * glyph that comes to render no text at all (a note caller a collapse draws through CSS): it
+   * holds the annotation whole.
    *
    * The annotation holds exactly the bytes the range names. A range into part of a char span, note
    * or figure holds only the part it names: the span's own text is marked piece by piece and its

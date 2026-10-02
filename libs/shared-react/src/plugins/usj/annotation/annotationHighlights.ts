@@ -104,6 +104,13 @@ export function highlightDeclarations(probe: Element, baseline: Element): string
   return declarations;
 }
 
+/**
+ * Set apart this copy of the module's highlight names from any other copy's: the highlight
+ * registry and the page are shared, and two bundles, or a module a hot reload loads again, each
+ * count painters from 0.
+ */
+const MODULE_TOKEN = Math.random().toString(36).slice(2, 10);
+
 let nextPainterId = 0;
 
 /** One registered highlight: the ranges painting one class set. */
@@ -127,7 +134,7 @@ export interface LeafHighlight {
 /** Partial-text painting for one editor: highlight registration, ranges per leaf, and the
  * translated stylesheet. */
 export class AnnotationHighlighter {
-  private readonly prefix = `editor-annotation-${nextPainterId++}`;
+  private readonly prefix = `editor-annotation-${MODULE_TOKEN}-${nextPainterId++}`;
   private readonly byClassSet = new Map<string, ClassSetHighlight>();
   private readonly byLeaf = new Map<NodeKey, LeafHighlight[]>();
   private nextName = 0;

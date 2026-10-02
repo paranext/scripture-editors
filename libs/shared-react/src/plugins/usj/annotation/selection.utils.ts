@@ -105,8 +105,8 @@ import {
  * @param viewOptions - The editor's view options, which decide how its text maps to USJ offsets
  *   (see {@link $getNodeFromLocation}).
  * @param options - `forAnnotation`: resolve the range an annotation holds rather than a selection.
- *   A selection takes a read-only decorator whole or not at all, so an annotation's end inside one
- *   takes the whole decorator, its start there keeps it unless only the decorator's trailing
+ *   A selection cannot point inside a read-only decorator, so an annotation's end inside one
+ *   passes over the whole decorator, its start there keeps it unless only the decorator's trailing
  *   separator follows, and a range between two of its separators holds nothing; `decoratorHolds`
  *   then says which part of it the range names. Without it, each end
  *   resolves as a caret at that location does ({@link $getNodeFromLocation}).
@@ -193,11 +193,14 @@ interface RangeEnd {
 }
 
 /**
- * The edges of an annotation's range. A read-only decorator is held whole or not at all, so an end
- * inside one decides by the bytes it names: the range's first end is in front of the decorator
- * unless nothing but its trailing separator follows, its last end is behind it unless nothing but
- * separators precede, and two ends inside the same decorator with no byte between them name
- * nothing. Ends not inside a decorator keep their edges; the range keeps its direction.
+ * The edges of the selection an annotation's range is wrapped through. A selection cannot point
+ * inside a read-only decorator, so an end inside one moves to the decorator's edge, deciding by the
+ * bytes it names: the range's first end goes in front of the decorator unless nothing but its
+ * trailing separator follows, its last end behind it unless nothing but separators precede, and two
+ * ends inside the same decorator with no byte between them name nothing. That only decides whether
+ * the selection passes over the decorator; which of its bytes the annotation then holds is the part
+ * the range names ({@link $collectDecoratorHolds}). Ends not inside a decorator keep their edges;
+ * the range keeps its direction.
  */
 function $annotationEdges(
   start: RangeEnd,

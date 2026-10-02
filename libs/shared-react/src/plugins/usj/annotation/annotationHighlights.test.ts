@@ -357,6 +357,33 @@ describe("AnnotationHighlighter measuring", () => {
   });
 });
 
+describe("AnnotationHighlighter names", () => {
+  it("never collide between two copies of the module, as two bundles or a hot reload load", async () => {
+    vi.resetModules();
+    const copy = await import("./annotationHighlights");
+    const api = getHighlightApi();
+    if (!api) throw new Error("the test setup provides a highlight registry");
+    const parent = container();
+    const text = document.createElement("span");
+    text.textContent = "ab";
+    parent.append(text);
+    const first = new AnnotationHighlighter(api, () => parent);
+    const second = new copy.AnnotationHighlighter(api, () => parent);
+    cleanups.push(
+      () => first.dispose(),
+      () => second.dispose(),
+    );
+    const piece = (start: number) => {
+      const range = rangeOverText(text, start, start + 1);
+      if (!range) throw new Error("the text renders two characters");
+      return { classNames: ["x"], annotations: ["a"], range, text: "ab"[start] };
+    };
+    first.setLeaf("k", [piece(0)]);
+    second.setLeaf("k", [piece(1)]);
+    expect(CSS.highlights.size).toBe(2);
+  });
+});
+
 describe("rangeOverText", () => {
   it("spans characters across the text nodes an element renders", () => {
     const element = container();
