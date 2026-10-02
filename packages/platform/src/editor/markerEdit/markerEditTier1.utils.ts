@@ -629,7 +629,7 @@ function $moveOuterGlyphSpaceOut(glyph: MarkerNode): boolean {
     if (caret !== undefined && caret > kept.length) {
       const offset = caret - kept.length;
       holder.select(offset, offset);
-    } else if (!$isPlainNoteText(holder)) holder.select(space.length, space.length);
+    }
     return true;
   }
   const spaceStart = holder.getTextContentSize();

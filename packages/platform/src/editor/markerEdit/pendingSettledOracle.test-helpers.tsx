@@ -1283,7 +1283,10 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                   const selection = $getSelection();
                   if (!$isRangeSelection(selection)) return;
                   if (keystroke.extend === "all") {
-                    mounted.lexical.dispatchCommand(SELECT_ALL_COMMAND, undefined);
+                    mounted.lexical.dispatchCommand(
+                      SELECT_ALL_COMMAND,
+                      new KeyboardEvent("keydown", { key: "a", ctrlKey: true }),
+                    );
                     return;
                   }
                   const para = $getRoot().getChildren()[2];

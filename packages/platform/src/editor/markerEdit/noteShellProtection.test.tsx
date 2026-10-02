@@ -787,7 +787,10 @@ describe("a range selection beside a protected note shell", () => {
     const { editor } = await mount(protectedShell, "");
     const outside = outsideTheNote(editor);
     await act(async () => {
-      editor.dispatchCommand(SELECT_ALL_COMMAND, undefined);
+      editor.dispatchCommand(
+        SELECT_ALL_COMMAND,
+        new KeyboardEvent("keydown", { key: "a", ctrlKey: true }),
+      );
     });
     await act(async () => {
       editor.update(() => {
