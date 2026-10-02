@@ -25896,7 +25896,7 @@ function y1(e) {
   if (!t) return;
   const r = e.getIndexWithinParent() + 1, n = t.getChildAtIndex(r);
   if (!n || he(n)) {
-    Ht(t, r);
+    A(e) ? e.selectEnd() : Ht(t, r);
     return;
   }
   const i = As(t, r);
@@ -25905,8 +25905,7 @@ function y1(e) {
     return;
   }
   if (A(e)) {
-    const o = e.getTextContentSize();
-    e.select(o, o);
+    e.selectEnd();
     return;
   }
   const s = D(n) && !V(n) ? my(n) : void 0;
