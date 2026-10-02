@@ -83,10 +83,16 @@ export interface ViewOptions {
   /** Is the text in a formatted font. */
   isFormattedFont: boolean;
   /**
-   * When false, an expanded note's SHELL — its opening marker glyph and its caller — is rendered
-   * atomic: the caret cannot enter it and typing cannot change it. Only meaningful in `editable`
-   * marker mode with an expanded note, which is the one shape that renders those bytes as ordinary
-   * editable text.
+   * When false, an expanded note's SHELL — its opening marker glyph, its caller and its closing
+   * glyph — is rendered atomic: the caret cannot enter it and typing cannot change it. Only
+   * meaningful in `editable` marker mode with an expanded note, which is the one shape that renders
+   * those bytes as ordinary editable text.
+   *
+   * Use it only for a document that holds just that note (the footnote popover's): the note is
+   * treated as the only thing being edited. A caret beside the note, in front of it or past it, is pulled
+   * into its content, an arrow key cannot carry the caret across the shell out of the note, a
+   * range that touches the note is kept to its content, and no edit removes the note. Text around
+   * such a note cannot be reached by the keyboard.
    *
    * For a host that governs the marker and the caller through its own UI (Paratext 10's footnote
    * editor has a dropdown for each, and Paratext 9 works the same way), leaving them typeable is a

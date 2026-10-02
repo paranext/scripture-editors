@@ -277,7 +277,6 @@ export function DecoratorBoundarySelectionPlugin(): null {
     // a root-scoped listener misses the start of a real drag and the first snap is materialized into
     // the DOM, which is exactly what stops a drag dead. A press with no editor selection behind it
     // costs nothing: the flag is only ever read while repairing a selection inside the editor.
-    // (`NoteShellCaretGuardPlugin` registers all three on the document for the same reason.)
     //
     // `release` opens an `editor.update()` from a DOM listener, a deliberate exception to the rule
     // that mutations enter through commands (`NoteNodePlugin` and `ContextMenuPlugin` make the same

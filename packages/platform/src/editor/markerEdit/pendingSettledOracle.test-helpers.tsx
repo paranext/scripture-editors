@@ -22,11 +22,11 @@
  * In the footnote popover's view, whose note shell is `token` glyphs a user cannot splice, each
  * glyph is also visited at its two ends: a character typed with the caret placed there, and
  * Backspace or Delete removing the glyph's character the way Lexical removes a `token` node, whole.
- * Every caret there is placed as a click, which the shell's caret guard answers; a place it does
- * not let a caret rest (past the note's closer) is not edited. Each caret in the note's content
- * is also extended into a range the keyboard makes (Shift with an arrow, Home or End, and
- * select-all) and the range typed over or removed. And since the popover saves only its note, a
- * keystroke made in the note must leave everything outside it as loaded.
+ * Every caret there is placed with a selection change announced, which the shell's caret guard
+ * answers; a place it does not let a caret rest (beside or past the note's shell) is not edited.
+ * Each caret in the note's content is also extended into a range the keyboard makes (Shift with an
+ * arrow, Home or End, and select-all) and the range typed over or removed. And since the popover
+ * saves only its note, a keystroke made in the note must leave everything outside it as loaded.
  * And the delete-then-type gesture is also typed as two history entries and followed by leaving and
  * then Undo (or Undo, Undo and Redo), which brings back the document between the two keystrokes
  * without running a single transform; that document is then held to the same contract.
@@ -324,8 +324,8 @@ const KEYSTROKES: KeystrokeCase[] = [
 
 /**
  * The keystrokes at a protected note shell's glyphs (`token` nodes), which a user cannot splice:
- * a character typed with the caret placed at either end of one by a click — so the shell's caret
- * guard moves a caret it does not allow there — and Backspace at its end or
+ * a character typed with the caret placed at either end of one — the selection change announced,
+ * so the shell's caret guard moves a caret it does not allow there — and Backspace at its end or
  * Delete at its front, which Lexical's `deleteCharacter` turns into removing a one-character range
  * reaching into the glyph (the native selection's `modify`, which jsdom lacks, is what extends it).
  */
@@ -916,7 +916,7 @@ function normalizeUsfm(text: string, keepRuns = false): UsfmBytes {
         append(byte);
       } else if (isUsfmSpace(byte)) {
         if (out.length > 0 && out.at(-1) !== "\n" && (keepRuns || out.at(-1) !== " ")) append(" ");
-      } else if (byte !== "​") append(byte);
+      } else if (byte !== "\u200B") append(byte);
       continue;
     }
     const [token, , name, closing] = marker;
@@ -1230,20 +1230,17 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
             let applied = false;
             let place: string | undefined;
             let isInNote = false;
-            // In the popover's view a caret is placed the way a click places it: the pointer is down
-            // while the selection change is announced, so the shell's caret guard reads it as a
-            // destination and moves it where it may rest. A splice at a place the guard does not
-            // let a caret rest is no keystroke a user can make there, and is skipped.
-            const isClick = view === PROTECTED_NOTE_SHELL_VIEW && !("deletes" in keystroke);
-            const doc = mounted.lexical.getRootElement()?.ownerDocument ?? document;
-            if (isClick && !("character" in keystroke)) {
+            // In the popover's view every caret placement is announced as a selection change, as a
+            // click or an arrow press announces it, so the shell's caret guard moves a caret it
+            // does not let rest there. A splice at such a place is no keystroke a user can make
+            // there, and is skipped.
+            const isAnnounced = view === PROTECTED_NOTE_SHELL_VIEW && !("deletes" in keystroke);
+            if (isAnnounced && !("character" in keystroke)) {
               await act(async () => {
-                doc.dispatchEvent(new Event("pointerdown", { bubbles: true }));
                 mounted.lexical.update(() => {
                   (shell ? $shellTexts() : $editableTexts())[index].select(offset, offset);
                   mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
                 });
-                doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
               });
               const isReachable = mounted.lexical.getEditorState().read(() => {
                 const selection = $getSelection();
@@ -1260,8 +1257,6 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
               }
             }
             await act(async () => {
-              if (isClick && "character" in keystroke)
-                doc.dispatchEvent(new Event("pointerdown", { bubbles: true }));
               mounted.lexical.update(() => {
                 const node = (shell ? $shellTexts() : $editableTexts())[index];
                 const text = node.getTextContent();
@@ -1320,7 +1315,8 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                   if (offset !== 0 && offset !== text.length) return;
                   applied = true;
                   node.select(offset, offset);
-                  if (isClick) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+                  if (isAnnounced)
+                    mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
                   return;
                 }
                 const result = keystroke.apply(text, offset);
@@ -1329,8 +1325,6 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 node.setTextContent(result.text);
                 node.select(result.caret, result.caret);
               });
-              if (isClick && "character" in keystroke)
-                doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
               await Promise.resolve();
               await Promise.resolve();
             });
