@@ -172,9 +172,10 @@ describe("annotations held on a carrier", () => {
         $addDisplayAnnotation(run, "spelling", "a", 1, 3);
         $addDisplayAnnotation(run, "spelling", "a", 2, 6);
         $addDisplayAnnotation(run, "grammar", "b", 0, 1);
+        // Kept in the order their bytes come.
         expect($displayAnnotationsOf(run)).toEqual([
-          { type: "spelling", id: "a", start: 1, end: 6 },
           { type: "grammar", id: "b", start: 0, end: 1 },
+          { type: "spelling", id: "a", start: 1, end: 6 },
         ]);
         expect($displayAnnotationIdsAt(run, "spelling", 4)).toEqual(["a"]);
         expect($displayAnnotationIdsAt(run, "grammar", 4)).toEqual([]);

@@ -628,6 +628,28 @@ describe("the display-annotation index", () => {
     release();
   });
 
+  it("reports every hold of one annotation on a decorator, in document order, once it leaves", () => {
+    const { editor, release } = setup();
+    const onRemove = vi.fn();
+    let verse!: ImmutableVerseNode;
+    editor.update(
+      () => {
+        // A verse stands for `\v 12\va12a\va*`: the `1` of its number and its alternate number,
+        // set in reverse order and apart, so two holds.
+        verse = $createImmutableVerseNode("12").setAltnumber("12a");
+        $getRoot().append($createParaNode().append(verse));
+        $addDisplayAnnotation(verse, "external-spelling", "a", 8, 11);
+        $addDisplayAnnotation(verse, "external-spelling", "a", 3, 4);
+        $registerDisplayAnnotation("external-spelling", "a", { onRemove });
+      },
+      { discrete: true },
+    );
+    editor.update(() => verse.getLatest().remove(), { discrete: true });
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(onRemove).toHaveBeenCalledWith("external-spelling", "a", "destroyed", "112a");
+    release();
+  });
+
   it("reports the full covered text of every carrier, joined in document order, once the last one leaves", () => {
     const { editor, release } = setup();
     const onRemove = vi.fn();

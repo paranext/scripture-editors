@@ -177,11 +177,14 @@ export function $displayAnnotationsOf(node: LexicalNode): DisplayAnnotation[] {
   return stored.map((annotation) => $drawnHold(node, annotation));
 }
 
+/** Store `annotations` on `node` in the order their bytes come (a whole hold first), so a reader
+ * that joins them gets them in document order. */
 function $writeAnnotations(node: LexicalNode, annotations: DisplayAnnotation[]): void {
+  const ordered = [...annotations].sort((a, b) => a.start - b.start || a.end - b.end);
   $setState(
     node,
     displayAnnotationsState,
-    annotations.length > 0 ? { basis: $storageText(node), annotations } : undefined,
+    ordered.length > 0 ? { basis: $storageText(node), annotations: ordered } : undefined,
   );
 }
 

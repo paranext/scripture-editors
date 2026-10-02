@@ -242,10 +242,11 @@ function createIndex(editor: LexicalEditor): Entry {
     const text = holders
       .map((node) => {
         if ($isTypedMarkNode(node)) return node.getTextContent();
-        const annotation = $displayAnnotationsOf(node).find(
-          (candidate) => candidate.type === type && candidate.id === id,
-        );
-        return annotation ? $coveredDisplayText(node, annotation) : "";
+        // Every hold of it on the node, in the order their bytes come.
+        return $displayAnnotationsOf(node)
+          .filter((candidate) => candidate.type === type && candidate.id === id)
+          .map((annotation) => $coveredDisplayText(node, annotation))
+          .join("");
       })
       .join("");
     coveredText.set(annotationKey, text);
