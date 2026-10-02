@@ -299,6 +299,64 @@ describe("AnnotationHighlighter, deciding whether a class set needs measuring", 
   });
 });
 
+describe("AnnotationHighlighter measuring", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function highlighterIn(parent: HTMLElement) {
+    const api = getHighlightApi();
+    if (!api) throw new Error("the test setup provides a highlight registry");
+    const text = document.createElement("span");
+    text.textContent = "abc";
+    parent.append(text);
+    const highlighter = new AnnotationHighlighter(api, () => parent);
+    cleanups.push(() => highlighter.dispose());
+    const paint = (key: string, classNames: string[]) => {
+      const range = rangeOverText(text, 0, 1);
+      if (!range) throw new Error("the text renders a character");
+      highlighter.setLeaf(key, [{ classNames, annotations: [key], range, text: "a" }]);
+    };
+    return { highlighter, paint };
+  }
+
+  it("puts every probe in place before reading any, so the page lays out once", async () => {
+    stylesheet(
+      ".m1 { color: rgb(1, 1, 1); } .m2 { color: rgb(2, 2, 2); } .m3 { color: rgb(3, 3, 3); }",
+    );
+    const parent = container();
+    const { paint } = highlighterIn(parent);
+    const original = window.getComputedStyle.bind(window);
+    const probesInPlace: number[] = [];
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+      probesInPlace.push(parent.querySelectorAll("[data-editor-annotation-probes] > *").length);
+      return original(element, pseudo);
+    });
+    paint("a", ["m1"]);
+    paint("b", ["m2"]);
+    paint("c", ["m3"]);
+    await Promise.resolve();
+    // Three probes and the baseline, all there from the first read on.
+    expect(probesInPlace.length).toBeGreaterThan(0);
+    expect(new Set(probesInPlace)).toEqual(new Set([4]));
+  });
+
+  it("keeps its measurements when another editor writes its own highlight stylesheet", async () => {
+    stylesheet(".first { color: rgb(1, 1, 1); } .second { color: rgb(2, 2, 2); }");
+    const first = highlighterIn(container());
+    const second = highlighterIn(container());
+    first.paint("a", ["first"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const measured = vi.spyOn(window, "getComputedStyle");
+    second.paint("b", ["second"]);
+    // The second editor's render, then any observer delivery and re-render it would cause.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(highlightCss()).toContain("rgb(2, 2, 2)");
+    expect(measured.mock.calls.some(([element]) => element.classList.contains("first"))).toBe(
+      false,
+    );
+  });
+});
+
 describe("rangeOverText", () => {
   it("spans characters across the text nodes an element renders", () => {
     const element = container();

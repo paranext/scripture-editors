@@ -236,18 +236,26 @@ export class AnnotationHighlighter {
     probes.replaceChildren();
     const baseline = document.createElement("span");
     probes.append(baseline);
-    const rules: string[] = [];
-    for (const [key, { name, classNames }] of this.byClassSet) {
-      let declarations = this.measured.get(key);
+    // Every probe goes in before any is read, so the page recalculates styles once, not once per
+    // class set.
+    const unmeasured: [string, HTMLElement][] = [];
+    for (const [key, { classNames }] of this.byClassSet) {
+      if (this.measured.has(key)) continue;
       // A class set no rule names styles nothing: no need to measure it.
-      if (!declarations && !this.isNamedByRule(document, classNames)) declarations = [];
-      if (!declarations) {
-        const probe = document.createElement("span");
-        probe.className = classNames.join(" ");
-        probes.append(probe);
-        declarations = highlightDeclarations(probe, baseline);
-        this.measured.set(key, declarations);
+      if (!this.isNamedByRule(document, classNames)) {
+        this.measured.set(key, []);
+        continue;
       }
+      const probe = document.createElement("span");
+      probe.className = classNames.join(" ");
+      unmeasured.push([key, probe]);
+    }
+    probes.append(...unmeasured.map(([, probe]) => probe));
+    for (const [key, probe] of unmeasured)
+      this.measured.set(key, highlightDeclarations(probe, baseline));
+    const rules: string[] = [];
+    for (const [key, { name }] of this.byClassSet) {
+      const declarations = this.measured.get(key) ?? [];
       if (declarations.length > 0)
         rules.push(`::highlight(${name}) { ${declarations.join("; ")}; }`);
     }
@@ -257,7 +265,7 @@ export class AnnotationHighlighter {
     const text = rules.join("\n");
     if (!this.style?.isConnected) {
       this.style = document.createElement("style");
-      this.style.setAttribute("data-editor-annotation-highlights", this.prefix);
+      this.style.setAttribute(HIGHLIGHT_STYLESHEET_ATTRIBUTE, this.prefix);
       document.head.append(this.style);
     }
     if (this.style.textContent !== text) this.style.textContent = text;
@@ -301,21 +309,19 @@ export class AnnotationHighlighter {
     this.queueRender();
   }
 
-  /** Measure again when a stylesheet or the page's theme changes; never for this painter's own
-   * stylesheet, which `render` writes. */
+  /** Measure again when a stylesheet or the page's theme changes; never for an editor highlight
+   * stylesheet (this painter's or another editor's), which only styles highlights. */
   private observe(document: Document): void {
     if (this.observer) return;
     const view = document.defaultView;
     if (!view) return;
     this.observer = new view.MutationObserver((records) => {
-      const own = this.style;
-      const isOwn = (record: MutationRecord) => {
-        if (!own) return false;
-        if (record.target === own || own.contains(record.target)) return true;
+      const isHighlightStylesheetChange = (record: MutationRecord) => {
+        if (isInHighlightStylesheet(record.target)) return true;
         const moved = [...record.addedNodes, ...record.removedNodes];
-        return moved.length > 0 && moved.every((node) => node === own);
+        return moved.length > 0 && moved.every(isInHighlightStylesheet);
       };
-      if (records.every(isOwn)) return;
+      if (records.every(isHighlightStylesheetChange)) return;
       this.forgetStyles();
     });
     this.observer.observe(document.head, { childList: true, characterData: true, subtree: true });
@@ -333,10 +339,27 @@ interface RuleScan {
   unreadable: boolean;
 }
 
-/** The page's stylesheets: its `<style>` and `<link>` sheets, and any it adopted. */
+/** The attribute on every editor highlight stylesheet, whose value is its painter's prefix. */
+const HIGHLIGHT_STYLESHEET_ATTRIBUTE = "data-editor-annotation-highlights";
+
+/** Whether `node` is, or is inside, an editor highlight stylesheet. */
+function isInHighlightStylesheet(node: Node): boolean {
+  for (let current: Node | null = node; current; current = current.parentNode)
+    if (isElement(current) && current.hasAttribute(HIGHLIGHT_STYLESHEET_ATTRIBUTE)) return true;
+  return false;
+}
+
+function isElement(node: Node): node is Element {
+  return node.nodeType === node.ELEMENT_NODE;
+}
+
+/** The page's stylesheets: its `<style>` and `<link>` sheets, and any it adopted — except the
+ * editor highlight stylesheets, which name no annotation class. */
 function pageStylesheets(document: Document): CSSStyleSheet[] {
   const adopted = "adoptedStyleSheets" in document ? document.adoptedStyleSheets : [];
-  return [...document.styleSheets, ...adopted];
+  return [...document.styleSheets, ...adopted].filter(
+    (sheet) => !sheet.ownerNode || !isInHighlightStylesheet(sheet.ownerNode),
+  );
 }
 
 /** Each of the page's stylesheets' top-level rule count, `-1` for one that cannot be read. */
