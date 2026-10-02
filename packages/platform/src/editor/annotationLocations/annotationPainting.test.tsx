@@ -553,6 +553,39 @@ describe("annotation painting on read-only decorators", () => {
         mounted.unmount();
       });
 
+      /** A collaborator's change to the verse's alternate number. */
+      const setAltnumber = (mounted: MountedInView, altnumber: string | undefined) =>
+        act(async () => {
+          mounted.lexical.update(
+            () => {
+              $addUpdateTag(DELTA_CHANGE_TAG);
+              const verse = $dfs()
+                .map(({ node }) => node)
+                .find($isImmutableVerseNode);
+              verse?.setAltnumber(altnumber);
+            },
+            { discrete: true },
+          );
+          await Promise.resolve();
+        });
+
+      it("follows the bytes an undisplayed hold holds through a collaborator's edit", async () => {
+        const { mounted, b } = await mountBoth();
+        // `12a` to `13b`: only the `1` is left.
+        await setAltnumber(mounted, "13b");
+        expect(b.onRemove).not.toHaveBeenCalled();
+        await act(async () => mounted.ref.current?.removeAnnotation(ORACLE_TYPE, "B"));
+        expect(b.onRemove).toHaveBeenCalledWith(HELD_TYPE, "B", "removed", "1");
+        mounted.unmount();
+      });
+
+      it("drops, and reports destroyed, an undisplayed hold whose bytes a collaborator removes", async () => {
+        const { mounted, b } = await mountBoth();
+        await setAltnumber(mounted, undefined);
+        expect(b.onRemove.mock.calls).toEqual([[HELD_TYPE, "B", "destroyed", "12a"]]);
+        mounted.unmount();
+      });
+
       it("names the bytes an undisplayed hold holds when it is removed", async () => {
         const { mounted, b } = await mountBoth();
         await act(async () => mounted.ref.current?.removeAnnotation(ORACLE_TYPE, "B"));

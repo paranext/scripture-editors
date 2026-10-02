@@ -160,8 +160,9 @@ function $coversWhole(element: ElementNode, start: LeafCaret, end: LeafCaret): b
 export interface DecoratorHold {
   start: number;
   end: number;
-  /** For a hold showing none of its bytes (`start === end`): the bytes it holds. */
-  text?: string;
+  /** For a hold showing none of its bytes (`start === end`): which of the decorator's holdable
+   * bytes it holds, `[start, end)` (`$decoratorHoldableText`). */
+  undisplayed?: [number, number];
 }
 
 /** How {@link $wrapSelectionInTypedMarkNode} holds what a selection cannot point inside of. */
@@ -173,7 +174,7 @@ export interface TypedMarkWrapOptions {
 
 /**
  * The `[start, end)` bytes of carrier `node` the range from `start` to `end` covers, or
- * `undefined` when it covers none; `{ undisplayed }`, naming the bytes, for a decorator held only
+ * `undefined` when it covers none; `{ undisplayed }`, naming which of its holdable bytes, for a decorator held only
  * for bytes it does not show. A decorator is covered only when the range passes over it: over the part `holds` names, or
  * all the text it renders without its edge whitespace (whole, `[0, 0]`, when it renders none, as a
  * caller CSS draws). A text carrier's covered bytes are clamped to its holdable range
@@ -184,14 +185,16 @@ function $coveredCarrierRange(
   start: LeafCaret,
   end: LeafCaret,
   holds: ReadonlyMap<NodeKey, DecoratorHold> | undefined,
-): [number, number] | { undisplayed: string } | undefined {
+): [number, number] | { undisplayed: [number, number] } | undefined {
   if (!$isDisplayAnnotationCarrier(node)) return undefined;
   const [from, to] = $coveredOffsets(node, start, end);
   if (to <= from) return undefined;
   if (!$isTextNode(node)) {
     const hold = holds?.get(node.getKey());
     if (hold)
-      return hold.end > hold.start ? [hold.start, hold.end] : { undisplayed: hold.text ?? "" };
+      return hold.end > hold.start
+        ? [hold.start, hold.end]
+        : { undisplayed: hold.undisplayed ?? [0, 0] };
     return trimmedTextRange($decoratorRenderedText(node));
   }
   const [low, high] = $carrierHoldableRange(node);
@@ -232,8 +235,10 @@ export function $wrapSelectionInTypedMarkNode(
     // then onto whatever the user's NEXT edit turns out to be.
     $addUpdateTag(TYPED_MARK_WRAP_TAG);
     if (Array.isArray(covered)) $addDisplayAnnotation(node, type, id, covered[0], covered[1]);
-    else
-      $addDisplayAnnotation(node, type, id, 0, 0, { undisplayed: true, text: covered.undisplayed });
+    else {
+      const [from, to] = covered.undisplayed;
+      $addDisplayAnnotation(node, type, id, from, to, { undisplayed: true });
+    }
     carrierAnnotated = true;
   };
   let currentNodeParent;

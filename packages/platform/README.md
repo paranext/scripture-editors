@@ -180,7 +180,8 @@ class marks only the text two annotations of one type share. To measure or scrol
 annotation, use `getAnnotationRanges(type, id)`: a class lookup misses display bytes painted with a
 highlight. An annotation on display bytes follows the bytes it holds through an edit (a
 collaborator renumbering a verse) and is dropped, with `onRemove` reporting `"destroyed"`, once none
-of them is left.
+of them is left; a change only in how the same bytes are drawn (a note caller while its note is
+collapsed) keeps it.
 
 ### Comment Styles
 

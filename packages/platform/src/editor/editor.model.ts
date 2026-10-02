@@ -275,9 +275,11 @@ export interface EditorRef {
    *
    * Display bytes keep the annotation through an edit the way text does: a hold follows the bytes
    * it holds (a collaborator renumbering `\v 12` to `\v 13` keeps a hold on `1`), and is dropped,
-   * reporting `"destroyed"`, once none of them is left (a hold on `2`). The one exception is a
-   * glyph that comes to render no text at all (a note caller a collapse draws through CSS): it
-   * holds the annotation whole.
+   * reporting `"destroyed"`, once none of them is left (a hold on `2`). A hold on bytes a glyph
+   * does not show follows those bytes the same way. A change only in how a glyph draws the same
+   * bytes (a hidden caller `-` shown as `*` while its note is collapsed, a caller CSS draws) keeps
+   * the hold and reports nothing: it is held whole while its bytes are not drawn, and exactly
+   * again once they are.
    *
    * The annotation holds exactly the bytes the range names. A range into part of a char span, note
    * or figure holds only the part it names: the span's own text is marked piece by piece and its

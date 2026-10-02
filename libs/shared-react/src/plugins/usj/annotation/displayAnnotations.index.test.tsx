@@ -1,4 +1,5 @@
 import { usjReactNodes } from "../../../nodes/usj";
+import { $createImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
 import {
   $createImmutableVerseNode,
   ImmutableVerseNode,
@@ -19,6 +20,7 @@ import {
   createEditor,
   HISTORIC_TAG,
   LexicalEditor,
+  LexicalNode,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   TextNode,
 } from "lexical";
@@ -26,9 +28,11 @@ import {
   $addDisplayAnnotation,
   $createCharNode,
   $createMarkerNode,
+  $createNoteNode,
   $createParaNode,
   $createTypedMarkNode,
   $displayAnnotationsOf,
+  $isNoteNode,
   $registerDisplayAnnotation,
   $removeDisplayAnnotation,
   $wrapSelectionInTypedMarkNode,
@@ -524,6 +528,43 @@ describe("the display-annotation index", () => {
     text.nodeValue = `${ZWSP}13${ZWSP}`;
     await Promise.resolve();
     expect(highlighted().map(({ text }) => text)).toEqual(["1"]);
+    release();
+  });
+
+  it("keeps a hold on a hidden caller through collapsing and expanding its note, reporting nothing", () => {
+    const { editor, release } = setup();
+    const onRemove = vi.fn();
+    let caller!: LexicalNode;
+    let note!: LexicalNode;
+    editor.update(
+      () => {
+        // `-` shows as `-` while the note is expanded and as `*` while it is collapsed.
+        caller = $createImmutableNoteCallerNode("-");
+        note = $createNoteNode("f", "-", false).append(caller);
+        $getRoot().append($createParaNode().append(note));
+        $addDisplayAnnotation(caller, "external-spelling", "a", 0, 1);
+        $registerDisplayAnnotation("external-spelling", "a", { onRemove });
+      },
+      { discrete: true },
+    );
+    const held = () =>
+      editor.getEditorState().read(() => $displayAnnotationsOf(caller.getLatest()));
+    const toggle = () =>
+      editor.update(
+        () => {
+          const latest = note.getLatest();
+          if ($isNoteNode(latest)) latest.toggleIsCollapsed();
+          // The caller renders from its note, so it is drawn again with it.
+          caller.getLatest().markDirty();
+        },
+        { discrete: true },
+      );
+
+    toggle();
+    expect(held()).toEqual([expect.objectContaining({ id: "a", start: 0, end: 0 })]);
+    toggle();
+    expect(held()).toEqual([expect.objectContaining({ id: "a", start: 0, end: 1 })]);
+    expect(onRemove).not.toHaveBeenCalled();
     release();
   });
 

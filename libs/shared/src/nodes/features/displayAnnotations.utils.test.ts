@@ -22,13 +22,14 @@ import {
   deleteDisplayAnnotationRegistration,
   getDisplayAnnotationRegistration,
   registerDisplayAnnotationBasis,
+  setDecoratorHoldableTextReader,
 } from "./displayAnnotations.utils.js";
 import { $createImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
 import { $createImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
 import { $createMarkerNode } from "./MarkerNode.js";
 import { TypedMarkNode } from "./TypedMarkNode.js";
 import { $createTextNode, $getRoot, $getState, $setState, LexicalNode, TextNode } from "lexical";
-import { vi } from "vitest";
+import { onTestFinished, vi } from "vitest";
 
 describe("mapRangeThroughEdit", () => {
   it.each<[string, string, number, number, [number, number] | undefined]>([
@@ -266,12 +267,9 @@ describe("annotations held on what a decorator renders", () => {
         expect($displayAnnotationsOf(glyph)).toEqual([
           expect.objectContaining({ start: 3, end: 4 }),
         ]);
-        // Rendered without text (as a collapsed caller CSS draws): nothing on screen can be split,
-        // so the decorator is held whole rather than the annotation lost.
+        // A glyph's text is its bytes: emptying it leaves none of the held bytes.
         glyph.setTextContent("");
-        expect($displayAnnotationsOf(glyph)).toEqual([
-          expect.objectContaining({ start: 0, end: 0 }),
-        ]);
+        expect($displayAnnotationsOf(glyph)).toEqual([]);
       },
       { discrete: true },
     );
@@ -317,15 +315,44 @@ describe("annotations held on what a decorator renders", () => {
 
   it("names the bytes an undisplayed hold holds, not what the decorator shows", () => {
     const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    setDecoratorHoldableTextReader(() => "\\wG5485");
+    onTestFinished(() => setDecoratorHoldableTextReader(undefined));
     editor.update(
       () => {
         const glyph = $createImmutableTypedTextNode("marker", "\\w");
         $getRoot().append($createParaNode().append(glyph));
-        $addDisplayAnnotation(glyph, "spelling", "a", 0, 0, { undisplayed: true, text: "G5485" });
+        // `[2, 7)` of the bytes the glyph stands for: its empty span's attribute value.
+        $addDisplayAnnotation(glyph, "spelling", "a", 2, 7, { undisplayed: true });
         expect($coveredDisplayText(glyph, $displayAnnotationsOf(glyph)[0])).toBe("G5485");
       },
       { discrete: true },
     );
+  });
+
+  it("follows an undisplayed hold's bytes through an edit of them, and drops it with them", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    let standsFor = "\\wG5485";
+    setDecoratorHoldableTextReader(() => standsFor);
+    onTestFinished(() => setDecoratorHoldableTextReader(undefined));
+    let glyph!: LexicalNode;
+    editor.update(
+      () => {
+        glyph = $createImmutableTypedTextNode("marker", "\\w");
+        $getRoot().append($createParaNode().append(glyph));
+        $addDisplayAnnotation(glyph, "spelling", "a", 2, 7, { undisplayed: true });
+      },
+      { discrete: true },
+    );
+    const covered = () =>
+      editor
+        .getEditorState()
+        .read(() =>
+          $displayAnnotationsOf(glyph).map((annotation) => $coveredDisplayText(glyph, annotation)),
+        );
+    standsFor = "\\wG5486";
+    expect(covered()).toEqual(["G548"]);
+    standsFor = "\\w";
+    expect(covered()).toEqual([]);
   });
 
   it("names what a decorator held whole renders, without its edge whitespace", () => {

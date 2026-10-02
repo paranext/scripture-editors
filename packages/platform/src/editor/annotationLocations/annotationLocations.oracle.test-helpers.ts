@@ -586,7 +586,12 @@ export async function runOracle(
             const holds =
               whole ||
               annotations.some(
-                (annotation) => annotation.start <= unit.char && unit.char < annotation.end,
+                // An undisplayed hold's offsets index the bytes the decorator stands for, not
+                // the characters it renders.
+                (annotation) =>
+                  !annotation.undisplayed &&
+                  annotation.start <= unit.char &&
+                  unit.char < annotation.end,
               );
             if (holds) held.set(i, "carrier");
             if (shown.whole || shown.chars.has(unit.char)) painted.add(i);

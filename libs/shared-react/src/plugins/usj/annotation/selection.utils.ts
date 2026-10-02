@@ -250,9 +250,8 @@ function $collectDecoratorHolds(
     if (to <= from) return;
     const held = $renderedDecoratorHold(inside.decorator, from, to);
     if (!held) return;
-    // A hold showing none of its bytes keeps their text, since nothing on screen spells it.
-    if (held.start === held.end)
-      held.text = $decoratorHoldableText(inside.decorator).slice(from, to);
+    // A hold showing none of its bytes keeps which of them it holds, since nothing on screen does.
+    if (held.start === held.end) held.undisplayed = [from, to];
     holds.set(inside.decorator.getKey(), held);
   };
   if (first) hold(first, first.before, sameDecorator && last ? last.before : first.total);
@@ -1456,7 +1455,7 @@ function $wholeDecoratorTokens(
  * then its attributes, or the bytes any other decorator displays — each without its edge
  * whitespace.
  */
-function $decoratorHoldableText(decorator: LexicalNode): string {
+export function $readDecoratorHoldableText(decorator: LexicalNode): string {
   if ($isImmutableVerseNode(decorator) || $isImmutableChapterNode(decorator))
     return $wholeDecoratorTokens(decorator)
       .map(({ text }) => text)
