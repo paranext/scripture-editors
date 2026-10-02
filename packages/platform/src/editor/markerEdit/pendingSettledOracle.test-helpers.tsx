@@ -22,6 +22,9 @@
  * In the footnote popover's view, whose note shell is `token` glyphs a user cannot splice, each
  * glyph is also visited at its two ends: a character typed with the caret placed there, and
  * Backspace or Delete removing the glyph's character the way Lexical removes a `token` node, whole.
+ * Every caret there is placed as a click, which the shell's caret guard answers; a place it does
+ * not let a caret rest (past the note's closer) is not edited. And since the popover saves only
+ * its note, a keystroke made in the note must leave everything outside it as loaded.
  * And the delete-then-type gesture is also typed as two history entries and followed by leaving and
  * then Undo (or Undo, Undo and Redo), which brings back the document between the two keystrokes
  * without running a single transform; that document is then held to the same contract.
@@ -1113,6 +1116,20 @@ export function $screenBytes(): string | undefined {
   return lines === undefined ? undefined : asUsfmBytes(lines);
 }
 
+/** The edited paragraph of `usj` with its notes taken out, spelled as one string. */
+function outsideNotes(usj: Usj | undefined): string {
+  const para = usj?.content[2];
+  const content = typeof para === "object" ? (para.content ?? []) : [];
+  return JSON.stringify(content.filter((item) => typeof item !== "object" || item.type !== "note"));
+}
+
+/** Whether `node` is inside a note. */
+function $hasNoteAncestor(node: LexicalNode): boolean {
+  for (let parent = node.getParent(); parent; parent = parent.getParent())
+    if ($isNoteNode(parent)) return true;
+  return false;
+}
+
 /** The edited paragraph of `usj`, spelled compactly for a failure message. */
 function bodyOf(usj: Usj | undefined): string {
   return JSON.stringify(usj?.content.slice(2, -1));
@@ -1157,6 +1174,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
       async (row, usj) => {
         const probe = await mountInView(usj, pendingOracleView(view));
         const sites = probe.lexical.getEditorState().read($editSites);
+        const loadedOutsideNotes = outsideNotes(probe.ref.current?.getUsj());
         probe.unmount();
 
         const mismatches = new Map<string, string>();
@@ -1171,16 +1189,43 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
             let label = "";
             let applied = false;
             let place: string | undefined;
-            // At a shell glyph, the caret is placed the way a click places it: the pointer is down
+            let isInNote = false;
+            // In the popover's view a caret is placed the way a click places it: the pointer is down
             // while the selection change is announced, so the shell's caret guard reads it as a
-            // destination.
-            const isShellClick = shell && "character" in keystroke;
+            // destination and moves it where it may rest. A splice at a place the guard does not
+            // let a caret rest is no keystroke a user can make there, and is skipped.
+            const isClick = view === PROTECTED_NOTE_SHELL_VIEW && !("deletes" in keystroke);
             const doc = mounted.lexical.getRootElement()?.ownerDocument ?? document;
+            if (isClick && !("character" in keystroke)) {
+              await act(async () => {
+                doc.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+                mounted.lexical.update(() => {
+                  (shell ? $shellTexts() : $editableTexts())[index].select(offset, offset);
+                  mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+                });
+                doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
+              });
+              const isReachable = mounted.lexical.getEditorState().read(() => {
+                const selection = $getSelection();
+                const node = (shell ? $shellTexts() : $editableTexts())[index];
+                return (
+                  $isRangeSelection(selection) &&
+                  selection.anchor.key === node.getKey() &&
+                  selection.anchor.offset === offset
+                );
+              });
+              if (!isReachable) {
+                mounted.unmount();
+                continue;
+              }
+            }
             await act(async () => {
-              if (isShellClick) doc.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+              if (isClick && "character" in keystroke)
+                doc.dispatchEvent(new Event("pointerdown", { bubbles: true }));
               mounted.lexical.update(() => {
                 const node = (shell ? $shellTexts() : $editableTexts())[index];
                 const text = node.getTextContent();
+                isInNote = shell || $hasNoteAncestor(node);
                 label = `${shell ? "shell " : ""}${node.getType()} ${JSON.stringify(text.replaceAll(NBSP, "~"))}@${offset} ${keystroke.name}`;
                 if ("deletes" in keystroke) {
                   if (offset !== (keystroke.deletes === "before" ? text.length : 0)) return;
@@ -1205,7 +1250,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                   if (offset !== 0 && offset !== text.length) return;
                   applied = true;
                   node.select(offset, offset);
-                  if (shell) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+                  if (isClick) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
                   return;
                 }
                 const result = keystroke.apply(text, offset);
@@ -1214,7 +1259,8 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 node.setTextContent(result.text);
                 node.select(result.caret, result.caret);
               });
-              if (isShellClick) doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
+              if (isClick && "character" in keystroke)
+                doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
               await Promise.resolve();
               await Promise.resolve();
             });
@@ -1278,6 +1324,17 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                   `${label} [same place]\n    saved ${JSON.stringify(saved)}\n    but ${first.label} saved ${JSON.stringify(first.saved)}`,
                 );
             }
+            // The popover saves only its note, so a keystroke made in the note must leave
+            // everything outside it as loaded: a byte that lands there is lost on save.
+            if (
+              view === PROTECTED_NOTE_SHELL_VIEW &&
+              isInNote &&
+              outsideNotes(settled) !== loadedOutsideNotes
+            )
+              mismatches.set(
+                `${label} [outside the note]`,
+                `${label} [outside the note]\n    settled ${bodyOf(settled)}`,
+              );
             if (JSON.stringify(pending) !== JSON.stringify(settled))
               mismatches.set(
                 label,
@@ -1328,6 +1385,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 `${label} [positions]`,
                 `${label} [same place]`,
                 `${label} [respelled]`,
+                `${label} [outside the note]`,
               ])
                 if (mismatches.has(key))
                   // eslint-disable-next-line no-console -- PENDING_SETTLED_ORACLE_DUMP asks for this output.
