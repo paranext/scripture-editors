@@ -9,7 +9,6 @@ import { mountInView, oracleView } from "../annotationLocations/annotationLocati
 import { IDLE_SETTLE_DELAY_MS } from "./MarkerEditPlugin";
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
-import { act } from "@testing-library/react";
 import {
   $getRoot,
   $getSelection,
@@ -28,6 +27,13 @@ import {
   NBSP,
   NoteNode,
 } from "shared";
+import Editor from "../Editor";
+import { EditorRef } from "../editor.model";
+import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
+import { act, render } from "@testing-library/react";
+import Delta from "quill-delta";
+import { createRef } from "react";
+import { DeltaOpInsertNoteEmbed, getEditorDelta } from "shared-react";
 import { describe, expect, it, vi } from "vitest";
 
 /** `\p a\f + note text\f* b`: the note's content starts with plain text. */
@@ -450,5 +456,94 @@ describe.each(["standard+expandedNotes", "unformatted"])(
           ),
         ).toMatchObject(note);
     });
+  },
+);
+
+describe.each(["standard+expandedNotes", "unformatted"])(
+  "a waiting note caller's change ops (%s view)",
+  (view) => {
+    /** Mount `usj`, composing every change op it announces through `onUsjChange` onto the
+     * document's ops at load, the way a collaborating peer's copy is kept. */
+    async function mountComposing(usj: Usj) {
+      const ref = createRef<EditorRef>();
+      const lexicalRef = createRef<LexicalEditor>();
+      const peer: { doc: Delta } = { doc: new Delta() };
+      let unmount: (() => void) | undefined;
+      await act(async () => {
+        ({ unmount } = render(
+          <Editor
+            ref={ref}
+            defaultUsj={usj}
+            options={{ view: oracleView(view) }}
+            onUsjChange={(_usj, ops) => {
+              if (ops) peer.doc = peer.doc.compose(new Delta(ops));
+            }}
+          >
+            <EditorRefPlugin editorRef={lexicalRef} />
+          </Editor>,
+        ));
+      });
+      const lexical = lexicalRef.current;
+      if (!lexical || !unmount) throw new Error("mount failed");
+      peer.doc = getEditorDelta(lexical.getEditorState());
+      return { ref, lexical, peer, unmount };
+    }
+
+    /** The peer's note: its caller and its content's text, as the ops spell them. */
+    function peerNote(doc: Delta): { caller?: string; text: string } {
+      const embed = doc.ops.find((op) => typeof op.insert === "object" && "note" in op.insert);
+      const note = (embed as DeltaOpInsertNoteEmbed | undefined)?.insert.note;
+      if (!note) throw new Error("no note embed in the peer's ops");
+      const text = (note.contents?.ops ?? [])
+        .map((op) => (typeof op.insert === "string" ? op.insert : ""))
+        .join("");
+      return { caller: note.caller, text };
+    }
+
+    /** The saved note: its caller and its (plain) content's text. */
+    function usjNote(usj: Usj | undefined): { caller?: string; text: string } {
+      const note = savedNote(usj);
+      return {
+        caller: note.caller,
+        text: (note.content ?? []).map((item) => (typeof item === "string" ? item : "")).join(""),
+      };
+    }
+
+    it.each([
+      ["its caller deleted", ` ${NBSP}`, 1],
+      ["its separator deleted", " +", 2],
+      ["its caller deleted and a byte typed behind its slot", ` ${NBSP}x`, 3],
+      ["a byte typed after its separator", ` +${NBSP}x`, 4],
+      ["the whole caller typed over", "x", 1],
+      ["a byte typed onto the caller word", ` +x${NBSP}`, 3],
+    ])(
+      "reproduce getUsj() while it waits and once it settles: %s",
+      async (_name, damaged, caret) => {
+        const mounted = await mountComposing(plainNoteUsj);
+        await act(async () => {
+          mounted.lexical.update(() => {
+            const caller = $callerSlot();
+            caller.setTextContent(damaged);
+            caller.select(caret, caret);
+          });
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        // The ops agree with the document they are diffs of, and with what `getUsj()` reads.
+        expect(mounted.peer.doc).toEqual(getEditorDelta(mounted.lexical.getEditorState()));
+        expect(peerNote(mounted.peer.doc)).toEqual(usjNote(mounted.ref.current?.getUsj()));
+
+        await act(async () => {
+          mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
+          mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        act(() => mounted.ref.current?.commitPendingMarkerEdits());
+        expect(mounted.peer.doc).toEqual(getEditorDelta(mounted.lexical.getEditorState()));
+        expect(peerNote(mounted.peer.doc)).toEqual(usjNote(mounted.ref.current?.getUsj()));
+        mounted.unmount();
+      },
+    );
   },
 );

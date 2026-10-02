@@ -16,12 +16,12 @@ import {
 } from "lexical";
 import { Op } from "quill-delta";
 import {
+  $getLogicalParent,
   $isAttributeRunNode,
   $isCharNode,
   $isCursorPlaceholderOnlyText,
   $isDescendantOf,
   $isImmutableUnmatchedNode,
-  $isMarkerNode,
   $isMilestoneNode,
   $isNoteNode,
   $isParaLikeNode,
@@ -30,8 +30,8 @@ import {
   $isSomeChapterNode,
   $isSynthesizedMarkerNode,
   $isUnknownNode,
+  $noteEditableCallerNode,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
-  getEditableCallerText,
   ImmutableUnmatchedNode,
   MilestoneNode,
   NODE_ATTRIBUTE_PREFIX,
@@ -39,6 +39,7 @@ import {
   ParaLikeNode,
   SomeChapterNode,
   textTypeState,
+  typedCallerBytes,
 } from "shared";
 
 /**
@@ -578,20 +579,19 @@ function $isEmptyCharPlaceholderText(node: TextNode): boolean {
 }
 
 /**
- * Mirror of editor-delta.adaptor.ts's positional note-caller skip: the editable-mode caller text
- * directly after a glyph-fronted note's opening glyph, which the ops stream never emits. The
- * positional guard keeps a pathological content text that merely EQUALS the caller text
- * (elsewhere in the note) counting normally.
+ * When `node` is an expanded note's editable caller text, the bytes of it that are the note's
+ * CONTENT — none for the caller's own spelling, and for a caller that waits as the user left it
+ * (deleted, or typed into, while the caret is at it) the bytes typed into it, spelled as the
+ * content they settle into — or `undefined` when `node` is no caller text.
+ *
+ * The same split the editor→USJ conversion makes (`$noteEditableCallerNode` finds the caller
+ * text, `typedCallerBytes` its typed bytes), so the ops stream, the delta-doc length it is counted
+ * in, and `getUsj()` all read a waiting caller alike.
  */
-function $isEditableNoteCallerText(node: TextNode): boolean {
-  const parent = node.getParent();
-  if (!$isNoteNode(parent)) return false;
-  const previousSibling = node.getPreviousSibling();
-  return (
-    $isMarkerNode(previousSibling) &&
-    previousSibling === parent.getFirstChild() &&
-    node.getTextContent() === getEditableCallerText(parent.getCaller())
-  );
+export function $editableNoteCallerContent(node: TextNode): string | undefined {
+  const note = $getLogicalParent(node);
+  if (!$isNoteNode(note) || !$noteEditableCallerNode(note)?.is(node)) return undefined;
+  return typedCallerBytes(node.getTextContent(), note.getCaller());
 }
 
 /**
@@ -610,6 +610,8 @@ function $isEditableNoteCallerText(node: TextNode): boolean {
 export function $isFastPathContentText(node: TextNode): boolean {
   return (
     !$isDisplayRunPiece(node) &&
+    // A caller's typed bytes are respelled as the content they settle into, never sent raw.
+    $editableNoteCallerContent(node) === undefined &&
     $getNodeOTContribution(node, "delta-doc") === node.getTextContentSize()
   );
 }
@@ -677,13 +679,15 @@ function $getNodeOTContribution(node: LexicalNode, coordinates: OTCoordinateSyst
         // The remaining ops-stream exclusions, so this side and $handleTextNodes count the same
         // bytes (docs/standard-view-invariants.md §II — extend the shared list, never fork it):
         // the legacy NBSP-`|` byte-prefixed attribute text the ops stream still honors for
-        // pre-state-tag peers and persisted deltas, the empty-char placeholder, and the
-        // editable-mode note caller in caller position.
+        // pre-state-tag peers and persisted deltas, and the empty-char placeholder. The
+        // editable-mode note caller counts only its content bytes, below.
         nodeText.startsWith(NODE_ATTRIBUTE_PREFIX) ||
-        $isEmptyCharPlaceholderText(node) ||
-        $isEditableNoteCallerText(node))
+        $isEmptyCharPlaceholderText(node))
     )
       return 0;
+    const callerContent =
+      coordinates === "delta-doc" ? $editableNoteCallerContent(node) : undefined;
+    if (callerContent !== undefined) return callerContent.length;
     return node.getTextContentSize();
   }
 

@@ -1,5 +1,6 @@
 import { $isSomeVerseNode, SomeVerseNode } from "../../../nodes/usj/node-react.utils";
 import {
+  $editableNoteCallerContent,
   $hasAttributeRunAncestor,
   $isElementNodeClosing,
   $isOwnParaPrefixGlyph,
@@ -43,7 +44,6 @@ import {
   charIdState,
   CharNode,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
-  getEditableCallerText,
   isCursorPlaceholderOnly,
   ImmutableUnmatchedNode,
   MilestoneNode,
@@ -299,19 +299,15 @@ function $handleTextNodes(
   // A bare cursor host (EmptyVerseCaretGuardPlugin) is collab-invisible: its insertion is never
   // emitted, so it must never appear in a delta op either.
   if (isCursorPlaceholderOnly(text)) return;
-  // A glyph-fronted note (first child is a MarkerNode) is the editable-mode shape; only
-  // there does the caller render as a plain text child, and always in CALLER POSITION —
-  // immediately after the opening glyph. The positional guard keeps a pathological content
-  // text node that merely EQUALS the caller text (elsewhere in the note) flowing into ops.
-  const previousSibling = currentNode.getPreviousSibling();
-  if (
-    $isNoteNode(parent) &&
-    $isMarkerNode(previousSibling) &&
-    previousSibling === parent.getFirstChild() &&
-    text === getEditableCallerText(parent.getCaller())
-  ) {
-    return;
+  // An expanded note's editable caller text is presentation of the note's `caller` attribute, so
+  // none of its own bytes are content; only bytes typed into a caller that waits as the user left
+  // them are, as the editor→USJ conversion reads them ({@link $editableNoteCallerContent}).
+  const callerContent = $editableNoteCallerContent(currentNode);
+  if (callerContent !== undefined) {
+    if (!callerContent) return;
+    text = callerContent;
   }
+  const previousSibling = currentNode.getPreviousSibling();
 
   const parentCharNode = $isCharNode(parent) ? parent : undefined;
   // Strip the structural NBSP separator that editable-mode char spans glue onto their
