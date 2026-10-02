@@ -694,6 +694,9 @@ function createIndex(editor: LexicalEditor): Entry {
       highlighter?.noticeStylesheetChanges();
       if (dirtyLeaves.size === 0 && dirtyElements.size === 0) return;
       refreshPaint([...dirtyLeaves, ...dirtyElements.keys()]);
+      // That checked every highlight against the DOM the commit (and any decorator it rendered)
+      // left, so the content observer need not check them again for those writes.
+      contentObserver?.takeRecords();
     }),
     // Also paints what the mutation listeners above found already in the document.
     editor.registerRootListener((root) => {

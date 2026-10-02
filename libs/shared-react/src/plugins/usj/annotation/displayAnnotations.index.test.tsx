@@ -502,6 +502,20 @@ describe("the display-annotation index", () => {
     release();
   });
 
+  it("checks its highlights once per edit, not again for the DOM writes the commit made", async () => {
+    const { editor, run, release } = setup();
+    wrap(editor, run, 1, 6, "external-spelling", "a");
+    await Promise.resolve();
+    const reads = vi.spyOn(Range.prototype, "toString");
+    editor.update(() => run.getLatest().setTextContent("|xgrace"), { discrete: true });
+    const afterCommit = reads.mock.calls.length;
+    expect(afterCommit).toBeGreaterThan(0);
+    await Promise.resolve();
+    expect(reads.mock.calls.length).toBe(afterCommit);
+    reads.mockRestore();
+    release();
+  });
+
   it("follows a decorator's text when it renders after the commit that changed it", async () => {
     const { editor, release } = setup();
     let verse!: ImmutableVerseNode;
