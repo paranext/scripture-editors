@@ -278,6 +278,23 @@ describe("expanded note shell", () => {
     });
   });
 
+  it("sends a CLICK at the shell's very front to the place in front of the note", async () => {
+    const { editor } = await mount(protectedShell);
+
+    // In front of `\f` and at the end of the text before the note are one place on screen, so a
+    // click there types where the end of that text would.
+    await clickCaretInShell(editor, $opener, 0);
+    await typeText(editor, "X");
+
+    const usj = usjOf(editor);
+    const note = findUsjNote(usj?.content);
+    expect(note.content).toEqual([
+      { type: "char", marker: "ft", closed: "false", content: ["A note"] },
+    ]);
+    const para = usj?.content.find((item) => typeof item === "object" && item.type === "para");
+    expect(typeof para === "object" ? para.content : undefined).toContain("textX");
+  });
+
   it("crosses the shell in one hop coming back out of the note's content", async () => {
     const { editor } = await mount(protectedShell);
 

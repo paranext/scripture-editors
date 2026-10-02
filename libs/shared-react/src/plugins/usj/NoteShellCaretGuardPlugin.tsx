@@ -165,6 +165,12 @@ function $shellAt(point: PointType): NoteNode | undefined {
   return $isShellTrailingEdge(note, node, point.offset) ? undefined : note;
 }
 
+/** Whether `point` is at the shell's leading edge — the caret position just in front of `\f`. */
+function $isShellLeadingEdge(note: NoteNode, point: PointType): boolean {
+  const first = $noteShellNodes(note)[0];
+  return first !== undefined && first.is(point.getNode()) && point.offset === 0;
+}
+
 /** Whether `point` is at the shell's trailing edge — the caret position just past `\f + `. */
 function $isShellTrailingEdge(note: NoteNode, node: LexicalNode, offset: number): boolean {
   const shell = $noteShellNodes(note);
@@ -187,7 +193,8 @@ function $placeAtShellTrailingEdge(note: NoteNode): void {
  * instead of trapping the caret against it.
  *
  * `isPointerGesture` says the caret was placed by a pointer, which is a destination rather than a
- * direction: such a caret always goes to the content, the position the user was pointing into.
+ * direction: such a caret goes to the content, the position the user was pointing into — or, at
+ * the shell's leading edge, to the position before the note, which is the same place on screen.
  *
  * Returns `true` when the selection was corrected.
  *
@@ -214,7 +221,11 @@ export function $guardCaretOutOfNoteShell(isPointerGesture = false): boolean {
 
   const note = $shellAt(selection.anchor);
   if (!note) return false;
-  if (!isPointerGesture && $arrivedFromContentSide(note)) {
+  // A pointer at the shell's leading edge names the place in front of the note: on screen it is
+  // one place with the end of whatever precedes the note.
+  if (
+    isPointerGesture ? $isShellLeadingEdge(note, selection.anchor) : $arrivedFromContentSide(note)
+  ) {
     const parent = note.getParent();
     if (!parent) return false;
     $placeCaretAtBoundary(parent, note.getIndexWithinParent());
@@ -283,7 +294,8 @@ function $movePointPastShell(point: PointType, note: NoteNode, toStart: boolean)
  * content: that one lands before the whole note, so the shell is crossed in a single hop rather
  * than trapping the caret against it.
  *
- * A pointer is held to a destination, never a direction. It is read from the pointer being DOWN
+ * A pointer is held to a destination, never a direction: it lands in the content, or before the
+ * note when it lands at the shell's very front. It is read from the pointer being DOWN
  * when the selection lands, which is the order a click delivers (`pointerdown`, then the selection
  * change, then `pointerup`) — the click event itself arrives too late to answer in the same update,
  * and correcting twice would let other selection listeners see the wrong position in between.
