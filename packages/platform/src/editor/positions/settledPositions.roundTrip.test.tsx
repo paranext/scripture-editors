@@ -207,6 +207,42 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     expect(trip.again).toEqual(trip.reported);
   });
 
+  it("keeps a position in a nested span the settle un-nests", async () => {
+    // Deleting the `\` of `\nd` leaves the inner span on its own: `\+wj two\+wj*` settles as
+    // `\wj two\wj*`, and every byte but the `+` is still where it was.
+    const { mounted } = await pendingEdit(
+      [
+        "a ",
+        {
+          type: "char",
+          marker: "nd",
+          content: ["one ", { type: "char", marker: "wj", content: ["two"] }, " three"],
+        },
+        " b",
+      ],
+      view,
+      "\\nd",
+      "nd",
+      0,
+    );
+    const $text = (bytes: string) => () => {
+      const found = $getRoot()
+        .getAllTextNodes()
+        .find((text) => text.getTextContent() === bytes);
+      if (!found) throw new Error(`no text node spelling ${JSON.stringify(bytes)}`);
+      return found;
+    };
+    const twoEnd = roundTrip(mounted, view, $text(`${NBSP}two`), `${NBSP}two`.length);
+    expect(twoEnd.reported).toMatchObject({ offset: "two".length });
+    expect(twoEnd.to).toBe(twoEnd.from);
+    // In front of `w`, of `j`, and past the name: the settled glyph's own name offsets.
+    for (const offset of [2, 3, 4]) {
+      const trip = roundTrip(mounted, view, $text("\\+wj"), offset);
+      expect(trip.reported).toMatchObject({ propertyOffset: offset - 2 });
+      expect(trip.to).toBe(trip.from);
+    }
+  });
+
   it("keeps a position in front of a note that a typed marker now opens a paragraph before", async () => {
     // `\a` typed in front of the note settles as a paragraph marker, with the note as the new
     // paragraph's first content; the end of its name is in front of the note.

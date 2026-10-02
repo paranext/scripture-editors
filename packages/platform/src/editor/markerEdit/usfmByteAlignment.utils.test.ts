@@ -108,6 +108,24 @@ describe("alignUsfmBytes", () => {
     expect(mapCount(a, 5, "live")).toBe(3);
     expect(mapCount(a, 7, "live")).toBe(5);
   });
+
+  it("lines up every byte but a nesting `+` the settle drops or adds", () => {
+    // `\nd` deleted: its nested span settles un-nested, both its markers losing their `+`.
+    const live = nows("nd one \\+wj two\\+wj* three\\nd*");
+    const settled = nows("nd one \\wj two\\wj* three\\nd*");
+    const a = alignUsfmBytes(live, settled);
+    expectTiles(a, live.length, settled.length);
+    const plus = live.indexOf("+");
+    expect(mapCount(a, plus, "live")).toBeUndefined(); // in front of the `+`
+    expect(mapCountSnapped(a, plus, "live")).toBe(plus);
+    expect(mapCount(a, plus + 1, "live")).toBe(plus); // in front of `w`
+    expect(mapCount(a, live.indexOf("two") + 3, "live")).toBe(settled.indexOf("two") + 3);
+    expect(mapCount(a, live.length, "live")).toBe(settled.length);
+    // And the other way round: a span the settle nests gains them.
+    const b = alignUsfmBytes(settled, live);
+    expectTiles(b, settled.length, live.length);
+    expect(mapCount(b, settled.indexOf("two"), "live")).toBe(live.indexOf("two"));
+  });
 });
 
 describe("the boundary rule: a count maps through the segment holding the byte in front of it", () => {

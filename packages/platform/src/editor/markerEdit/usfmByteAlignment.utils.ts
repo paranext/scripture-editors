@@ -4,9 +4,10 @@
  * Both sides are the same USFM except where the settle re-spells an attribute section — a lone
  * default attribute written by name collapses to its bare value, a reserved key or an overridden
  * duplicate name is dropped, a duplicate name's survivor takes the first duplicate's slot (so it
- * can move ahead of attributes typed before it), a figure's `file` is written `src` — and where the
- * settled side spells a preserved node as one placeholder byte that the live side spells out as the
- * literal it came from. Everything here is built from those two facts rather than guessed from a
+ * can move ahead of attributes typed before it), a figure's `file` is written `src` — where it adds
+ * or drops a marker's nesting `+` (`\+wj` un-nested to `\wj`), and where the settled side spells
+ * a preserved node as one placeholder byte that the live side spells out as the literal it came
+ * from. Everything here is built from those two facts rather than guessed from a
  * text diff, so a repeated word can never be matched to the wrong occurrence.
  *
  * Inputs are NON-WHITESPACE bytes: a byte anchor counts only those, and the settle is free to move
@@ -54,6 +55,8 @@ export interface ScopeAlignmentResult {
 
 const ATTRIBUTE_START = "|";
 const MARKER_START = "\\";
+/** The byte that marks a char marker as nested inside another span (`\+wj`). */
+const NESTING = "+";
 /** `name="value"` with whitespace already removed. */
 const PAIR = /([-\w]+)="(.*?)"/g;
 /** Names the settle never keeps: the tokenizer's reserved USJ keys (`RESERVED_NODE_KEYS`,
@@ -335,6 +338,23 @@ function walk(
       out.push(i, i + 1, j, j + 1, true);
       i += 1;
       j += 1;
+      continue;
+    }
+    // A nesting `+` one side's marker has and the other's does not: the settle un-nests a span
+    // whose enclosing span is gone (`\+wj` → `\wj`) and nests one a span now encloses. The `+`
+    // has no counterpart; the marker's name and everything after it still line up.
+    if (
+      live[i - 1] === MARKER_START &&
+      settled[j - 1] === MARKER_START &&
+      (live[i] === NESTING) !== (settled[j] === NESTING)
+    ) {
+      if (live[i] === NESTING) {
+        out.push(i, i + 1, j, j, false);
+        i += 1;
+      } else {
+        out.push(i, i, j, j + 1, false);
+        j += 1;
+      }
       continue;
     }
     // A divergence nothing above explains. In prefix mode the literal ends with the next copy of
