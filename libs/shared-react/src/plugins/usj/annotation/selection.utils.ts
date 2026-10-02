@@ -1588,8 +1588,8 @@ function $locationFromNode(
 ): UsjDocumentLocation {
   // Past the front of the bytes typed into a waiting note caller text is in those bytes, which
   // are the note's content (`$typedNoteCallerRange`): the content's location, not the caller's.
-  const typedCaller = $typedNoteCallerRange(node);
-  if (typedCaller && offset > typedCaller.start) {
+  const typedCaller = $isTextNode(node) ? $typedNoteCallerRange(node) : undefined;
+  if ($isTextNode(node) && typedCaller && offset > typedCaller.start) {
     const typed = $getLogicalTextLocation(node, offset, collapsesSpaceRuns);
     if (typed)
       return {
