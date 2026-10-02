@@ -33,6 +33,7 @@ import {
 } from "lexical";
 import {
   $caretHoldsRunSite,
+  $createMarkerNode,
   $hasRenamingSeparatorGap,
   $isAttributeRunNode,
   $isCanonicalMarkerNode,
@@ -1277,6 +1278,64 @@ export function $restoreRemovedNoteCaller(note: NoteNode, context: MarkerEditCon
       (selection.anchor.key === note.getKey() && selection.anchor.offset === slot))
   )
     $selectNoteContentStart(note, callerNode);
+}
+
+/**
+ * Keep a protected note shell's closing glyph where the screen needs it: last in the note, and
+ * there at all. The shell is protected when the host governs it (`ViewOptions.isNoteShellEditable:
+ * false`), which builds its glyphs in `token` mode — read off the opener's mode, as the caret guard
+ * reads it. Such a closer is not text the user edits, so nothing the keyboard does may leave the
+ * screen disagreeing with the closed note the file keeps:
+ *
+ * - Backspace after it, or Delete in front of it, removes a `token` node whole. The note stays
+ *   closed (its `closed` attribute says so, not the glyph), so the glyph is put back.
+ * - Text inserted at its end lands inside the note, behind it — Lexical puts an insertion at a
+ *   `token` node's trailing boundary in a new sibling of that node. The screen shows it after the
+ *   note, so that is where it goes.
+ * - Text inserted at its front lands as a note child in front of it. When the content span before
+ *   it shows no closer of its own (`\ft`, whose bytes run on to the note's closer), the screen
+ *   shows the text as that span's and a reload reads it so; it joins the span.
+ *
+ * An unclosed note (`closed="false"`) has no closer by construction and is left alone.
+ *
+ * Mutating: call inside `editor.update()` (runs from MarkerEditPlugin's NoteNode transform).
+ */
+export function $keepProtectedNoteCloser(note: NoteNode): void {
+  if (!note.isAttached() || note.getIsCollapsed() !== false) return;
+  const children = note.getChildren();
+  const opener = children.find(
+    (child) => $isMarkerNode(child) && child.getMarkerSyntax() === "opening",
+  );
+  if (!$isMarkerNode(opener) || opener.getMode() !== "token") return;
+  if (note.getUnknownAttributes()?.closed === "false") return;
+
+  let closer = children.find(
+    (child): child is MarkerNode => $isMarkerNode(child) && child.getMarkerSyntax() === "closing",
+  );
+  if (!closer) {
+    closer = $createMarkerNode(note.getMarker(), "closing");
+    closer.setMode("token");
+    note.append(closer);
+  }
+
+  // Behind the closer: after the note, in order.
+  let after: LexicalNode = note;
+  for (let behind = closer.getNextSibling(); behind; behind = closer.getNextSibling()) {
+    after.insertAfter(behind);
+    after = behind;
+  }
+
+  // In front of it, as a note child: into the closer-less span the screen shows it in.
+  const front = closer.getPreviousSibling();
+  const span = front?.getPreviousSibling();
+  if (
+    $isPlainNoteText(front) &&
+    $isCharNode(span) &&
+    !span
+      .getChildren()
+      .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing")
+  )
+    span.append(front);
 }
 
 /**

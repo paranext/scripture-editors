@@ -583,7 +583,9 @@ describe("the popover's protected note shell", () => {
       const ops = requireDefined(popover.editorRef.getNoteOps(0), "popover note ops");
       expect(ops).toHaveLength(1);
       expect(ops[0]).not.toHaveProperty(["insert", "note", "closed"]);
-      expect(JSON.stringify(ops[0])).toContain('"X"');
+      // Typed at the closer's front, the keystroke ends the `\fv` span the screen shows it in: that
+      // span has no closer of its own, so its bytes run on to the note's.
+      expect(JSON.stringify(ops[0])).toContain('"2X"');
     },
     30000,
   );

@@ -18,6 +18,7 @@
  * each case here puts a caret somewhere in the shell, types, and checks the note.
  */
 import {
+  $noteContentText,
   findOnlyNote,
   findUsjNote,
   noteUsx,
@@ -44,7 +45,13 @@ import {
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
-import { $isMarkerNode, $noteEditableCallerNode, getEditableCallerText, NoteNode } from "shared";
+import {
+  $isMarkerNode,
+  $noteEditableCallerNode,
+  getEditableCallerText,
+  NBSP,
+  NoteNode,
+} from "shared";
 import { $isLiteralNoteShell } from "./tier2Rebuild.utils";
 import { NoteShellCaretGuardPlugin, ViewOptions } from "shared-react";
 // Reaching inside only for tests.
@@ -345,10 +352,16 @@ describe("a closed note's closing glyph, with the shell protected", () => {
         expect($closer(note).getTextContent()).toBe("\\f*");
         expect($closer(note).getMode()).toBe("token");
       });
-      // The keystroke is the note's content: at its end, in front of the closer it was typed in.
+      // The keystroke is the note's content: at its end, in front of the closer it was typed in —
+      // the end of the `\ft` span, which shows no closer of its own.
       const note = findUsjNote(usjOf(editor)?.content);
       expect(note).not.toHaveProperty("closed");
-      expect(note.content?.at(-1)).toBe("X");
+      expect(note.content?.at(-1)).toEqual({
+        type: "char",
+        marker: "ft",
+        closed: "false",
+        content: ["A noteX"],
+      });
     },
   );
 
@@ -369,6 +382,150 @@ describe("a closed note's closing glyph, with the shell protected", () => {
       expect(selection.anchor.getNode().is(closer)).toBe(true);
       expect(selection.anchor.offset).toBe(closer.getTextContentSize());
     });
+  });
+
+  /** The paragraph holding the note as the screen shows it, a no-break space read as a space. */
+  function $noteParagraphText(): string {
+    const para = requireDefined(findOnlyNote($getRoot()).getParent(), "note paragraph");
+    return para
+      .getAllTextNodes()
+      .map((node) => node.getTextContent())
+      .join("")
+      .replaceAll(NBSP, " ");
+  }
+
+  /** What the file gets for the note and the text after it: the note, and the paragraph's tail. */
+  function savedNoteAndTail(editor: LexicalEditor) {
+    const usj = usjOf(editor);
+    const para = requireDefined(
+      usj?.content.find(
+        (item) =>
+          typeof item === "object" &&
+          item.type === "para" &&
+          item.content?.some((child) => typeof child === "object" && child.type === "note"),
+      ),
+      "note paragraph in USJ",
+    );
+    if (typeof para !== "object") throw new Error("expected the paragraph object");
+    const content = para.content ?? [];
+    const noteIndex = content.findIndex(
+      (child) => typeof child === "object" && child.type === "note",
+    );
+    return { note: findUsjNote(content), tail: content.slice(noteIndex + 1) };
+  }
+
+  /**
+   * Remove one character of the closer the way Backspace or Delete does: Lexical's
+   * `deleteCharacter` extends the selection over the next character with the native selection's
+   * `modify` — which jsdom does not implement — and then removes the range. The range is that
+   * extension: `[from, to]` offsets into the closer, from the caret's side.
+   */
+  async function deleteCloserCharacter(
+    editor: LexicalEditor,
+    anchor: (note: NoteNode) => { node: TextNode; offset: number },
+    focusOffset: (closer: TextNode) => number,
+  ): Promise<void> {
+    await act(async () => {
+      editor.update(() => {
+        const note = findOnlyNote($getRoot());
+        const from = anchor(note);
+        const closer = $closer(note);
+        from.node.select(from.offset, from.offset);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        selection.focus.set(closer.getKey(), focusOffset(closer), "text");
+        selection.removeText();
+      });
+    });
+  }
+
+  it.each([
+    [
+      "Delete at the end of the note's text",
+      (note: NoteNode) => {
+        const node = $noteContentText(note);
+        return { node, offset: node.getTextContentSize() };
+      },
+      () => 1,
+    ],
+    [
+      "Backspace at its end",
+      (note: NoteNode) => {
+        const node = $closer(note);
+        return { node, offset: node.getTextContentSize() };
+      },
+      (closer: TextNode) => closer.getTextContentSize() - 1,
+    ],
+  ])("is still there, on screen as in the file, after %s", async (_label, anchor, focusOffset) => {
+    const { editor } = await mount(protectedShell, "");
+
+    await deleteCloserCharacter(editor, anchor, focusOffset);
+
+    editor.getEditorState().read(() => {
+      const note = findOnlyNote($getRoot());
+      expect($closer(note).getMode()).toBe("token");
+      expect($noteParagraphText()).toMatch(/\\ft A note\\f\* after$/);
+      // The caret is left in the note, in front of the closer: the next Backspace reaches the
+      // note's text rather than the closer again.
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      const { anchor } = selection;
+      const closer = $closer(note);
+      expect(
+        anchor.getNode().is(note)
+          ? anchor.offset <= closer.getIndexWithinParent()
+          : note.isParentOf(anchor.getNode()) && anchor.getNode().isBefore(closer),
+      ).toBe(true);
+    });
+    const { note, tail } = savedNoteAndTail(editor);
+    expect(note).not.toHaveProperty("closed");
+    expect(note.content).toEqual([
+      { type: "char", marker: "ft", closed: "false", content: ["A note"] },
+    ]);
+    expect(tail).toEqual([" after"]);
+  });
+
+  it("sends text typed at its end after the note, where the screen shows it", async () => {
+    const { editor } = await mount(protectedShell, "");
+    await act(async () => {
+      editor.update(() => {
+        $closer(findOnlyNote($getRoot())).selectEnd();
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertText("X");
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      expect($noteParagraphText()).toMatch(/\\ft A note\\f\*X after$/);
+      // Nothing behind the closer, inside the note.
+      expect($isMarkerNode(findOnlyNote($getRoot()).getLastChild())).toBe(true);
+    });
+    const { note, tail } = savedNoteAndTail(editor);
+    expect(note.content).toEqual([
+      { type: "char", marker: "ft", closed: "false", content: ["A note"] },
+    ]);
+    expect(tail).toEqual(["X after"]);
+  });
+
+  it("puts text typed at its front in the span the screen shows it in", async () => {
+    const { editor } = await mount(protectedShell, "");
+    await act(async () => {
+      editor.update(() => {
+        $closer(findOnlyNote($getRoot())).select(0, 0);
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertText("X");
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      expect($noteParagraphText()).toMatch(/\\ft A noteX\\f\* after$/);
+    });
+    // The `\ft` has no closer of its own, so its bytes run on to the note's: a reload reads `X` as
+    // the end of that span, and so must the file now.
+    const { note } = savedNoteAndTail(editor);
+    expect(note.content).toEqual([
+      { type: "char", marker: "ft", closed: "false", content: ["A noteX"] },
+    ]);
   });
 
   it("is never re-tokenized as a damaged literal", async () => {

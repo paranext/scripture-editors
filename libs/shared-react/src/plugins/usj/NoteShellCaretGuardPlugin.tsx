@@ -62,9 +62,12 @@ function $protectedCloser(note: NoteNode): TextNode | undefined {
 
 /**
  * The note whose protected closer `point` rests strictly inside, or `undefined`. Both of the
- * closer's ends are caret positions: Lexical redirects an insertion at either boundary of a
- * `token` node to the sibling side — the note's content in front of it, or what follows the note —
- * while an insertion strictly inside replaces the closer outright and leaves the note unclosed.
+ * closer's ends are caret positions. Lexical puts an insertion at either boundary of a `token`
+ * node in a new text node beside it, inside the note: in front of the closer, or behind it. The
+ * marker-editing engine's note transform settles each where the screen shows it — behind the
+ * closer is after the note, and in front of it is the end of a content span that shows no closer
+ * of its own. An insertion strictly inside replaces the closer outright, which nothing could put
+ * back where it was typed, so the caret is never left there.
  */
 function $closerInteriorAt(point: PointType): NoteNode | undefined {
   if (point.type !== "text") return undefined;

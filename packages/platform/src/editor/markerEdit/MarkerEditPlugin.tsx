@@ -20,6 +20,7 @@ import {
   $chapterNodeTransform,
   $markerNodeTransform,
   $restoreRemovedNoteCaller,
+  $keepProtectedNoteCloser,
   $resolvePendingMarkers,
   $unmatchedNodeTransform,
   $verseNodeTransform,
@@ -862,6 +863,7 @@ export function MarkerEditPlugin({
         if (editor.isComposing()) return;
         $noteDeletionTransform(node, context);
         $restoreRemovedNoteCaller(node, context);
+        $keepProtectedNoteCloser(node);
         // Self-healing `\cat` category run + the grace/pend pairing, exactly the shape the
         // MilestoneNode transform above uses: a NoteNode exists in every markerMode, so the cat
         // sync is registered HERE, gated by this whole plugin's markerMode-"editable" check —
