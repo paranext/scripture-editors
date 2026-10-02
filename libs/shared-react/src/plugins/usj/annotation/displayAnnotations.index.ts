@@ -681,6 +681,8 @@ function createIndex(editor: LexicalEditor): Entry {
     editor.registerUpdateListener(reportDestroyed),
     registerDisplayAnnotationBasis(editor, [ImmutableVerseNode, ImmutableNoteCallerNode]),
     editor.registerUpdateListener(({ dirtyLeaves, dirtyElements }) => {
+      // A rule a host inserts or a stylesheet it adopts changes no DOM an observer could see.
+      highlighter?.noticeStylesheetChanges();
       if (dirtyLeaves.size === 0 && dirtyElements.size === 0) return;
       refreshPaint([...dirtyLeaves, ...dirtyElements.keys()]);
     }),

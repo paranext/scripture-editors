@@ -176,7 +176,7 @@ describe("AnnotationHighlighter", () => {
     const range = rangeOverText(text, 7, 12);
     if (!range) throw new Error("the text renders 12 characters");
     highlighter.setLeaf("k", [
-      { classNames: ["editor-typed-mark-external-x"], annotations: ["a"], range },
+      { classNames: ["editor-typed-mark-external-x"], annotations: ["a"], range, text: "grace" },
     ]);
     await Promise.resolve();
     const [[name, highlight]] = [...CSS.highlights];
@@ -193,7 +193,9 @@ describe("AnnotationHighlighter", () => {
     const { highlighter, text } = setup();
     const range = rangeOverText(text, 0, 1);
     if (!range) throw new Error("the text renders 12 characters");
-    highlighter.setLeaf("k", [{ classNames: ["annotationId-a:b"], annotations: ["a"], range }]);
+    highlighter.setLeaf("k", [
+      { classNames: ["annotationId-a:b"], annotations: ["a"], range, text: "|" },
+    ]);
     await Promise.resolve();
     expect(highlightCss()).toContain("background-color: rgb(4, 5, 6)");
   });
@@ -203,7 +205,7 @@ describe("AnnotationHighlighter", () => {
     const { highlighter, text } = setup();
     const range = rangeOverText(text, 0, 1);
     if (!range) throw new Error("the text renders 12 characters");
-    highlighter.setLeaf("k", [{ classNames: ["unstyled"], annotations: ["a"], range }]);
+    highlighter.setLeaf("k", [{ classNames: ["unstyled"], annotations: ["a"], range, text: "|" }]);
     await Promise.resolve();
     expect(highlightCss()).toBe("");
   });
@@ -213,7 +215,7 @@ describe("AnnotationHighlighter", () => {
     const { highlighter, text } = setup();
     const range = rangeOverText(text, 0, 1);
     if (!range) throw new Error("the text renders 12 characters");
-    highlighter.setLeaf("k", [{ classNames: ["x"], annotations: ["a"], range }]);
+    highlighter.setLeaf("k", [{ classNames: ["x"], annotations: ["a"], range, text: "|" }]);
     await Promise.resolve();
     expect(highlightCss()).toContain("rgb(1, 2, 3)");
 
@@ -221,6 +223,79 @@ describe("AnnotationHighlighter", () => {
     // The page's MutationObserver delivery, then the queued render.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(highlightCss()).toContain("rgb(7, 8, 9)");
+  });
+});
+
+describe("AnnotationHighlighter, deciding whether a class set needs measuring", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** Paint one character with `className`, and report whether a probe with it was measured. */
+  async function measures(className: string, change?: () => void): Promise<boolean> {
+    const api = getHighlightApi();
+    if (!api) throw new Error("the test setup provides a highlight registry");
+    const parent = container();
+    const text = document.createElement("span");
+    text.textContent = "|";
+    parent.append(text);
+    const highlighter = new AnnotationHighlighter(api, () => parent);
+    cleanups.push(() => highlighter.dispose());
+    const measured = vi.spyOn(window, "getComputedStyle");
+    const range = rangeOverText(text, 0, 1);
+    if (!range) throw new Error("the text renders a character");
+    highlighter.setLeaf("k", [{ classNames: [className], annotations: ["a"], range, text: "|" }]);
+    await Promise.resolve();
+    if (change) {
+      measured.mockClear();
+      change();
+      highlighter.noticeStylesheetChanges();
+      await Promise.resolve();
+    }
+    return measured.mock.calls.some(([element]) => element.classList.contains(className));
+  }
+
+  it("measures a class set a nested rule names", async () => {
+    stylesheet(".outer { .nested-only { background-color: rgb(1, 2, 3); } }");
+    expect(await measures("nested-only")).toBe(true);
+  });
+
+  it("measures every class set while a stylesheet cannot be read", async () => {
+    const style = stylesheet(".elsewhere { color: rgb(1, 2, 3); }");
+    const sheet = style.sheet;
+    if (!sheet) throw new Error("the style element has a sheet");
+    Object.defineProperty(sheet, "cssRules", {
+      configurable: true,
+      get: () => {
+        throw new DOMException("cross-origin", "SecurityError");
+      },
+    });
+    // jsdom's own cascade reads the same rules, so the measurement itself is stubbed.
+    vi.spyOn(window, "getComputedStyle").mockReturnValue(document.createElement("span").style);
+    expect(await measures("unnamed-anywhere")).toBe(true);
+  });
+
+  it("measures a class set an adopted stylesheet names", async () => {
+    const adopted = new CSSStyleSheet();
+    adopted.replaceSync(".adopted-only { color: rgb(1, 2, 3); }");
+    Object.defineProperty(document, "adoptedStyleSheets", {
+      configurable: true,
+      value: [adopted],
+    });
+    cleanups.push(() => Reflect.deleteProperty(document, "adoptedStyleSheets"));
+    expect(await measures("adopted-only")).toBe(true);
+  });
+
+  it("measures a class set a rule inserted later names", async () => {
+    const style = stylesheet(".other { color: rgb(1, 2, 3); }");
+    expect(
+      await measures("inserted-later", () =>
+        style.sheet?.insertRule(".inserted-later { color: rgb(4, 5, 6); }"),
+      ),
+    ).toBe(true);
+  });
+
+  it("still skips a class set no readable rule names", async () => {
+    stylesheet(".other { color: rgb(1, 2, 3); }");
+    expect(await measures("unnamed-anywhere")).toBe(false);
   });
 });
 

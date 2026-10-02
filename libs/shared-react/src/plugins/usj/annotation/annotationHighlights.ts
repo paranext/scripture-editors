@@ -138,8 +138,10 @@ export class AnnotationHighlighter {
   private disposed = false;
   /** Each class set's declarations as last measured; cleared when a stylesheet changes. */
   private readonly measured = new Map<string, string[]>();
-  /** Every style rule selector in the page, joined; cleared when a stylesheet changes. */
-  private selectors: string | undefined;
+  /** What the page's style rules name; cleared when a stylesheet changes. */
+  private rules: RuleScan | undefined;
+  /** How many rules each of the page's stylesheets held when `rules` was read. */
+  private ruleCounts: string | undefined;
 
   constructor(
     private readonly api: HighlightApi,
@@ -261,13 +263,42 @@ export class AnnotationHighlighter {
     if (this.style.textContent !== text) this.style.textContent = text;
   }
 
-  /** Whether any style rule's selector names one of `classNames`. Errs toward yes. */
+  /**
+   * Whether any style rule's selector names one of `classNames`. Errs toward yes: a substring match
+   * counts, and every class set counts while any rule cannot be read.
+   */
   private isNamedByRule(document: Document, classNames: readonly string[]): boolean {
-    this.selectors ??= [...document.styleSheets].flatMap(selectorTexts).join("\n");
-    const selectors = this.selectors;
-    return classNames.some(
-      (name) => selectors.includes(name) || selectors.includes(name.replace(/[^\w-]/g, "\\$&")),
+    if (!this.rules) {
+      this.rules = scanRules(pageStylesheets(document));
+      this.ruleCounts = ruleCountsOf(document);
+    }
+    const { selectors, unreadable } = this.rules;
+    return (
+      unreadable ||
+      classNames.some(
+        (name) => selectors.includes(name) || selectors.includes(name.replace(/[^\w-]/g, "\\$&")),
+      )
     );
+  }
+
+  /**
+   * Measure again if a stylesheet's rule count changed since the rules were last read: `insertRule`,
+   * `deleteRule` and adopting a stylesheet change no DOM, so no observer sees them. Only each
+   * stylesheet's top-level count is compared, which keeps this cheap enough to call on every
+   * commit; a rule inserted inside a group rule is seen at the next stylesheet change.
+   */
+  noticeStylesheetChanges(): void {
+    if (this.disposed || this.ruleCounts === undefined) return;
+    const document = this.probeParent()?.ownerDocument;
+    if (!document || ruleCountsOf(document) === this.ruleCounts) return;
+    this.forgetStyles();
+  }
+
+  private forgetStyles(): void {
+    this.measured.clear();
+    this.rules = undefined;
+    this.ruleCounts = undefined;
+    this.queueRender();
   }
 
   /** Measure again when a stylesheet or the page's theme changes; never for this painter's own
@@ -285,9 +316,7 @@ export class AnnotationHighlighter {
         return moved.length > 0 && moved.every((node) => node === own);
       };
       if (records.every(isOwn)) return;
-      this.measured.clear();
-      this.selectors = undefined;
-      this.queueRender();
+      this.forgetStyles();
     });
     this.observer.observe(document.head, { childList: true, characterData: true, subtree: true });
     const themed = { attributes: true, attributeFilter: ["class", "style", "data-theme"] };
@@ -296,20 +325,72 @@ export class AnnotationHighlighter {
   }
 }
 
-/** The selector texts of every style rule in `sheet` or a rule group inside it; none for a sheet
- * whose rules cannot be read. */
-function selectorTexts(sheet: CSSStyleSheet | CSSGroupingRule): string[] {
-  let rules: CSSRuleList;
-  try {
-    rules = sheet.cssRules;
-  } catch {
-    return [];
-  }
-  return [...rules].flatMap((rule) => {
-    if (rule instanceof CSSStyleRule) return [rule.selectorText];
-    if (rule instanceof CSSGroupingRule) return selectorTexts(rule);
-    return [];
-  });
+/** What a page's style rules name. */
+interface RuleScan {
+  /** Every style rule's selector, joined. */
+  selectors: string;
+  /** Whether some rules could not be read: a cross-origin stylesheet, or an import not loaded. */
+  unreadable: boolean;
+}
+
+/** The page's stylesheets: its `<style>` and `<link>` sheets, and any it adopted. */
+function pageStylesheets(document: Document): CSSStyleSheet[] {
+  const adopted = "adoptedStyleSheets" in document ? document.adoptedStyleSheets : [];
+  return [...document.styleSheets, ...adopted];
+}
+
+/** Each of the page's stylesheets' top-level rule count, `-1` for one that cannot be read. */
+function ruleCountsOf(document: Document): string {
+  return pageStylesheets(document)
+    .map((sheet) => {
+      try {
+        return sheet.cssRules.length;
+      } catch {
+        return -1;
+      }
+    })
+    .join(",");
+}
+
+function hasRules(rule: CSSRule): rule is CSSRule & { cssRules: CSSRuleList } {
+  return "cssRules" in rule;
+}
+
+function isImport(rule: CSSRule): rule is CSSRule & { styleSheet: CSSStyleSheet | null } {
+  return "styleSheet" in rule;
+}
+
+function hasSelector(rule: CSSRule): rule is CSSRule & { selectorText: string } {
+  return "selectorText" in rule && typeof rule.selectorText === "string";
+}
+
+/**
+ * Read every style rule `sheets` hold, at any depth: inside group rules (`@media`, `@supports`,
+ * `@layer`), nested inside other style rules, and in imported stylesheets. Rules are recognized by
+ * shape rather than by class, so a stylesheet from another window's realm reads the same.
+ */
+function scanRules(sheets: Iterable<CSSStyleSheet>): RuleScan {
+  const selectors: string[] = [];
+  let unreadable = false;
+  const visit = (holder: { readonly cssRules: CSSRuleList }) => {
+    let rules: CSSRuleList;
+    try {
+      rules = holder.cssRules;
+    } catch {
+      unreadable = true;
+      return;
+    }
+    for (const rule of rules) {
+      if (hasSelector(rule)) selectors.push(rule.selectorText);
+      if (isImport(rule)) {
+        if (rule.styleSheet) visit(rule.styleSheet);
+        else unreadable = true;
+      }
+      if (hasRules(rule)) visit(rule);
+    }
+  };
+  for (const sheet of sheets) visit(sheet);
+  return { selectors: selectors.join("\n"), unreadable };
 }
 
 function classSetKey(classNames: readonly string[]): string {
