@@ -543,11 +543,36 @@ export declare interface EditorRef {
    *
    * A range may cover display bytes as well as text: a marker glyph, a verse or chapter number, a
    * note caller, or an attribute run's text (`|lemma="grace"`, `\va 3\va*`, a milestone's
-   * `|who="Pilate"`). Text is wrapped in a `<mark>`; display bytes keep their own element, which
-   * holds the annotation and gets the same class names (`<typedMark>-<type>`, `annotationId-<id>`)
-   * plus `display-annotation`, painted whole even where the range covers only part of it. The
-   * whitespace the editor shows between a marker and its content is never annotated. Setting an
-   * annotation never changes the document, a position, or what `getSelection` reports.
+   * `|who="Pilate"`). Text is wrapped in a `<mark>`; display bytes keep their own element and hold
+   * the annotation themselves. Setting an annotation never changes the document, a position, or
+   * what `getSelection` reports.
+   *
+   * Painting is exact: an annotation paints the bytes it holds, plus the whitespace the editor
+   * shows between two of them in one paragraph (a marker's separator, a verse number's trailing
+   * space) — never whitespace at its edges, and never the rest of a display byte it holds only part
+   * of. A display byte painted over all of its text gets the same class names a `<mark>` gets
+   * (`<typedMark>-<type>`, `<typedMarkOverlap>-<type>` where two ids of a type overlap,
+   * `annotationId-<id>`) plus `display-annotation`. A part of one is painted with a CSS Custom
+   * Highlight instead, which the editor styles from the same class rules: it copies the
+   * properties a highlight can paint (`background-color`, `color`, a `text-decoration` that draws
+   * a line, `text-shadow`) and otherwise draws a bottom border as an underline. Other properties
+   * and `:hover` rules apply only to elements, and the rules must not depend on ancestors inside
+   * the editable content. Where the browser has no highlight API, a display byte is painted whole.
+   * Find painted annotations with {@link EditorRef.getAnnotationRanges}, not by class.
+   *
+   * A read-only glyph, verse number or chapter number (the views without editable markers) holds
+   * and paints exactly the part of what it shows that the range names. A range that names only
+   * bytes such a glyph stands for without showing them (a verse's `\va` where markers are hidden)
+   * holds the annotation on it but paints nothing, and gets no click or hover; its `onRemove` text
+   * is the bytes it holds (`12a`).
+   *
+   * Display bytes keep the annotation through an edit the way text does: a hold follows the bytes
+   * it holds (a collaborator renumbering `\v 12` to `\v 13` keeps a hold on `1`), and is dropped,
+   * reporting `"destroyed"`, once none of them is left (a hold on `2`). A hold on bytes a glyph
+   * does not show follows those bytes the same way. A change only in how a glyph draws the same
+   * bytes (a hidden caller `-` shown as `*` while its note is collapsed, a caller CSS draws) keeps
+   * the hold and reports nothing: it is held whole while its bytes are not drawn, and exactly
+   * again once they are, whatever else is set on it meanwhile.
    *
    * The annotation holds exactly the bytes the range names. A range into part of a char span, note
    * or figure holds only the part it names: the span's own text is marked piece by piece and its
@@ -560,20 +585,25 @@ export declare interface EditorRef {
    * `getUsj()` carries no annotation state for a display byte, a save and reload then keeps the
    * content `<mark>`'s bytes but loses the glyph's own highlighting.
    *
+   * A collapsed note's content, all of it hidden behind its caller, holds what a range names there
+   * without showing it, as Paratext 9 shows no annotation inside a closed note: the caller holds
+   * the annotation only when the range names the caller itself. A note's category the view does
+   * not display names nothing, so a range inside it holds nothing.
+   *
    * `onRemove`: each `<mark>` reports its own removal when it goes away — one call per `<mark>`,
    * whatever else still holds the annotation — and only once: a `<mark>` an undo brings back stays
    * quiet when it goes again. Beyond that, the annotation's last holder — a `<mark>` or a display
    * byte — leaving the document without any `<mark>` having reported the annotation's removal since
    * it was set fires ONE more report, through its display bytes: `"removed"` when
    * `removeAnnotation` or setting the same id again takes it away, `"destroyed"` when it drops out
-   * of the document (an edit, a collaborator's edit, or a settle that discards those bytes). An
-   * annotation split across several carriers that all leave in the same edit reports their text
-   * joined in document order; carriers lost across separate edits report only the text of the
+   * of the document (an edit, a collaborator's edit, or a settle that discards those bytes). That
+   * report's text is every `<mark>`'s and carrier's text joined in document order when they all
+   * leave in the same edit; holders lost across separate edits leave only the text of the
    * piece(s) still present at the last one. A collapsed note caller's text is the note's caller.
    * Undo, redo, and a `setUsj` reload report nothing; setting the id again starts a fresh reporting
-   * cycle for it. An `onRemove` that throws while the editor reports a `"destroyed"` after an edit
-   * does not stop that edit or the other reports: the error is handed to the editor's error
-   * handler, which rethrows it, in a microtask once the edit has been committed.
+   * cycle for it. An `onRemove` that throws — in a `<mark>`'s own report or in the one more
+   * report — does not stop the edit or call that removed the annotation, or the other reports: the
+   * error is handed to the editor's error handler, which rethrows it, in a later microtask.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.
@@ -623,6 +653,19 @@ export declare interface EditorRef {
    * @param id - ID of the annotation.
    */
   removeAnnotation(type: string, id: string): void;
+  /**
+   * DOM ranges over everything an annotation paints: each `<mark>` that holds its text, each
+   * display byte it holds (only the part it holds), and the whitespace painted between them — in
+   * document order, empty when nothing paints it. Measure, scroll to or hit-test an annotation with
+   * these; an element lookup by its `annotationId-<id>` class misses the display bytes painted
+   * with a highlight.
+   *
+   * @remarks **Live**: the ranges are over the editor's current DOM, including marker text the
+   *   user is still typing; take them again after the next edit.
+   * @param type - Type of the annotation.
+   * @param id - ID of the annotation.
+   */
+  getAnnotationRanges(type: string, id: string): Range[];
   /**
    * Format the paragraph at the current cursor position with the given block marker.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
@@ -1915,10 +1958,16 @@ export declare interface ViewOptions {
   /** Is the text in a formatted font. */
   isFormattedFont: boolean;
   /**
-   * When false, an expanded note's SHELL — its opening marker glyph and its caller — is rendered
-   * atomic: the caret cannot enter it and typing cannot change it. Only meaningful in `editable`
-   * marker mode with an expanded note, which is the one shape that renders those bytes as ordinary
-   * editable text.
+   * When false, an expanded note's SHELL — its opening marker glyph, its caller and its closing
+   * glyph — is rendered atomic: the caret cannot enter it and typing cannot change it. Only
+   * meaningful in `editable` marker mode with an expanded note, which is the one shape that renders
+   * those bytes as ordinary editable text.
+   *
+   * Use it only for a document that holds just that note (the footnote popover's): the note is
+   * treated as the only thing being edited. A caret beside the note, in front of it or past it, is pulled
+   * into its content, an arrow key cannot carry the caret across the shell out of the note, a
+   * range that touches the note is kept to its content, and no edit removes the note. Text around
+   * such a note cannot be reached by the keyboard.
    *
    * For a host that governs the marker and the caller through its own UI (Paratext 10's footnote
    * editor has a dropdown for each, and Paratext 9 works the same way), leaving them typeable is a
