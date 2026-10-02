@@ -73,6 +73,7 @@ import {
   MarkerType,
   NoteNode,
   ParaNode,
+  NBSP,
   textTypeState,
   VerseNode,
 } from "shared";
@@ -904,28 +905,36 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
 // "word" beside the map's caller declaration, exactly as the verse regexes tokenize the number.
 const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+$/;
 
+// The caller text taken apart: leading whitespace, the word (no whitespace, no backslash), the
+// whitespace after it, and whatever follows.
+const NOTE_CALLER_PARTS_REGEX = /^([ \u00A0]*)([^ \u00A0\\]*)([ \u00A0]*)([\s\S]*)$/;
+
 /**
  * Tier-1 arm for an expanded note's editable caller text — the note-marker family's leading
  * attribute (the markers map declares `caller` on `f`/`fe`/`ef`/`efe`/`x`/`ex`;
- * `leadingAttributeNames`, `shared`) — giving the caller the same one-rule treatment as a
- * verse's number: whitespace between the marker and the value is structural and collapses, so
- * an extra typed space cannot demote the caller (`\f  +` is still caller `+`), and the caller
- * RETAGS to the typed word (PT9 GetNextWord: whole word, valid or not) exactly as `\v 1a`
- * retags the number. Without this arm the edited bytes were unreachable by any settle: nothing
- * pended them, the note-scoped rebuild refuses a non-canonical caller shape outright
- * (`$buildNoteFragment`), and serialization leaked the whole diverged caller text into note
- * content (the reverse adaptor only drops a byte-exact caller).
+ * `leadingAttributeNames`, `shared`). Whatever the user does to it, the screen ends showing the
+ * note's caller and the file gets the same bytes:
  *
- * Scope-guarded to shapes with BOTH flanking whitespace runs still present: a deleted flanking
- * separator is separator-deletion territory (the tokenize-identity rule), not whitespace
- * collapse, and falls through to the existing machinery untouched. Collapsed notes never reach
- * this arm — their caller is an atomic `ImmutableNoteCallerNode`, not editable text.
+ * - A whole word between whitespace runs (`\f  x `) is the caller, RETAGGED to the typed word
+ *   (PT9 GetNextWord: whole word, valid or not), exactly as `\v 1a` retags the number; the
+ *   whitespace around it is structural and collapses.
+ * - Anything else is damage to the caller's own bytes: the note keeps its caller, and its text is
+ *   put back. Bytes the user typed into it beyond the caller — after its separator, onto its
+ *   word, or over all of it — are content, and move to the start of the note's content, where the
+ *   screen shows them. A caret in those bytes moves with them; a caret anywhere else past the
+ *   caller lands at the content's start, so the next keystroke is content too.
+ *
+ * Only the caller TEXT is handled — the unmergeable text child the note builders make (a text
+ * spelling the caller exactly counts too, for a shape built without the flag). Content text that
+ * happens to sit in the caller's slot because the caller was removed is never taken for it
+ * ({@link $restoreRemovedNoteCaller} puts the caller back in front of it). Collapsed notes never
+ * reach this arm — their caller is an atomic `ImmutableNoteCallerNode`, not editable text.
  *
  * Mutating: call inside `editor.update()` (runs from the TextNode catch-all transform,
  * `$textNodeTier2Transform`).
  *
- * @returns Whether `node` is an expanded note's caller-slot text and this arm consumed the
- *   edit (including the nothing-to-do canonical case).
+ * @returns Whether `node` is an expanded note's caller text and this arm consumed the edit
+ *   (including the nothing-to-do canonical case).
  */
 export function $noteCallerTextTransform(node: TextNode, context: MarkerEditContext): boolean {
   const note = node.getParent();
@@ -942,37 +951,84 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
     slot++;
   }
   if (!node.is(children[slot])) return false;
+  const caller = note.getCaller();
   const text = node.getTextContent();
-  if (text === getEditableCallerText(note.getCaller())) {
+  if (text === getEditableCallerText(caller)) {
     context.pendingKeys.delete(node.getKey());
     return true;
   }
-  if (text === "" && note.getCaller() !== "") {
-    // Every byte of the caller deleted: the note keeps its caller, so the screen shows it again
-    // ({@link $restoreRemovedNoteCaller} for the node removed outright).
-    context.pendingKeys.delete(node.getKey());
-    $restoreCallerText(node, note.getCaller());
-    return true;
-  }
-  const match = NOTE_CALLER_TEXT_REGEX.exec(text);
-  if (!match) return false; // other damage keeps today's behavior (literal machinery)
-  const [, caller] = match;
+  if (!node.isUnmergeable() || caller === "") return false;
   context.pendingKeys.delete(node.getKey());
-  note.setCaller(caller); // PT9 GetNextWord: whole word, valid or not
+  const retagged = NOTE_CALLER_TEXT_REGEX.exec(text);
+  if (retagged) {
+    note.setCaller(retagged[1]); // PT9 GetNextWord: whole word, valid or not
+    node.setTextContent(getEditableCallerText(retagged[1]));
+    return true;
+  }
+  const [, lead, word, trail, rest] = NOTE_CALLER_PARTS_REGEX.exec(text) ?? ["", "", "", "", text];
+  // The bytes past the caller's own: a word that is not (or does not start with) the caller is
+  // typed content, and so is everything after the word's whitespace.
+  const wordRest = word.startsWith(caller) ? word.slice(caller.length) : word;
+  const moved = wordRest ? wordRest + trail.replaceAll(NBSP, " ") + rest : rest;
+  const movedStart = wordRest
+    ? lead.length + (word.length - wordRest.length)
+    : lead.length + word.length + trail.length;
+  const selection = $getSelection();
+  const caret =
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === node.getKey()
+      ? selection.anchor.offset
+      : undefined;
   node.setTextContent(getEditableCallerText(caller));
+  const content = moved ? $prependNoteContent(note, node, moved) : undefined;
+  if (caret === undefined) return true;
+  if (content && caret >= movedStart) {
+    const offset = Math.min(caret - movedStart, moved.length);
+    content.select(offset, offset);
+  } else $selectNoteContentStart(note, node);
   return true;
 }
 
-/** Rewrite `node` as `caller`'s editable caller text, keeping a caret that was in it at the
- * caller's end — where the note's content starts. */
-function $restoreCallerText(node: TextNode, caller: string): void {
-  const selection = $getSelection();
-  const hadCaret =
-    $isRangeSelection(selection) &&
-    [selection.anchor, selection.focus].some((point) => point.key === node.getKey());
-  const text = getEditableCallerText(caller);
-  node.setTextContent(text);
-  if (hadCaret) node.select(text.length, text.length);
+/** The node the note's content starts at: the first child after its caller text and the caller's
+ * `\cat` display run, or `null` when the note has no content. */
+function $noteContentStart(note: NoteNode, callerNode: TextNode): LexicalNode | null {
+  const { wrapper, closer } = $noteCategoryRunPieces(note);
+  return (wrapper ?? closer ?? callerNode).getNextSibling();
+}
+
+/** Whether `node` is plain content text a typed byte can join. */
+function $isPlainNoteText(node: LexicalNode | null): node is TextNode {
+  return (
+    $isTextNode(node) &&
+    node.getType() === TextNode.getType() &&
+    node.getMode() === "normal" &&
+    !node.isUnmergeable() &&
+    $getState(node, textTypeState) !== "attribute"
+  );
+}
+
+/** Put `bytes` at the start of the note's content — joining a plain text that starts it, or as
+ * a text of their own — and return the text holding them (they start at its offset 0). */
+function $prependNoteContent(note: NoteNode, callerNode: TextNode, bytes: string): TextNode {
+  const start = $noteContentStart(note, callerNode);
+  if ($isPlainNoteText(start)) {
+    start.setTextContent(bytes + start.getTextContent());
+    return start;
+  }
+  const text = $createTextNode(bytes);
+  if (start) start.insertBefore(text);
+  else note.append(text);
+  return text;
+}
+
+/** Put the caret at the start of the note's content: offset 0 of a text that starts it, or the
+ * boundary in front of whatever else does. */
+function $selectNoteContentStart(note: NoteNode, callerNode: TextNode): void {
+  const start = $noteContentStart(note, callerNode);
+  if ($isPlainNoteText(start)) start.select(0, 0);
+  else if (start) note.select(start.getIndexWithinParent(), start.getIndexWithinParent());
+  else note.select(note.getChildrenSize(), note.getChildrenSize());
 }
 
 /**
@@ -1009,13 +1065,16 @@ export function $restoreRemovedNoteCaller(note: NoteNode, context: MarkerEditCon
   const callerNode = $createTextNode(getEditableCallerText(caller)).toggleUnmergeable();
   if (context.viewOptions?.isNoteShellEditable === false) callerNode.setMode("token");
   children[slot - 1].insertAfter(callerNode);
+  // A caret left at the glyph's end or the note's boundary there lands at the content's start, so
+  // the next keystroke is content rather than caller.
   const selection = $getSelection();
   if (
     $isRangeSelection(selection) &&
     selection.isCollapsed() &&
-    selection.anchor.key === children[slot - 1].getKey()
+    (selection.anchor.key === children[slot - 1].getKey() ||
+      (selection.anchor.key === note.getKey() && selection.anchor.offset === slot))
   )
-    callerNode.select(callerNode.getTextContentSize(), callerNode.getTextContentSize());
+    $selectNoteContentStart(note, callerNode);
 }
 
 /**

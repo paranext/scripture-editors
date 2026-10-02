@@ -1654,7 +1654,8 @@ describe("Tier 1 note-caller leading attribute (map-derived)", () => {
     let callerText!: TextNode;
     const environment = await testEnvironmentExpanded(() => {
       note = $createNoteNode("f", "+", false);
-      callerText = $createTextNode(getEditableCallerText("+"));
+      // Unmergeable, as both note builders make the caller text.
+      callerText = $createTextNode(getEditableCallerText("+")).toggleUnmergeable();
       const ft = $createCharNode("ft");
       ft.setUnknownAttributes({ closed: "false" });
       $getRoot().append(
@@ -1726,10 +1727,9 @@ describe("Tier 1 note-caller leading attribute (map-derived)", () => {
     });
   });
 
-  it("leaves a caller with a deleted flanking separator alone (not whitespace collapse)", async () => {
-    // Deleting a flanking separator is separator-deletion territory (the tokenize-identity
-    // rule), not whitespace collapse — the arm is scope-guarded to shapes with BOTH flanking
-    // whitespace runs present, and everything else keeps today's behavior untouched.
+  it("puts back a caller whose flanking separator was deleted", async () => {
+    // The caller's own bytes damaged: the note keeps its caller and the screen shows it again,
+    // since the writer emits `\f + ` whatever the caller text holds.
     const { editor, note, callerText } = await mountExpandedNote();
 
     await act(async () =>
@@ -1740,7 +1740,7 @@ describe("Tier 1 note-caller leading attribute (map-derived)", () => {
 
     editor.getEditorState().read(() => {
       expect(note.getCaller()).toBe("+");
-      expect(callerText.getTextContent()).toBe(`+${NBSP}`);
+      expect(callerText.getTextContent()).toBe(getEditableCallerText("+"));
     });
   });
 });

@@ -17,7 +17,13 @@ import {
   LexicalEditor,
   TextNode,
 } from "lexical";
-import { $isNoteNode, $noteEditableCallerNode, getEditableCallerText, NoteNode } from "shared";
+import {
+  $isNoteNode,
+  $noteEditableCallerNode,
+  getEditableCallerText,
+  NBSP,
+  NoteNode,
+} from "shared";
 import { describe, expect, it } from "vitest";
 
 /** `\p a\f + note text\f* b`: the note's content starts with plain text. */
@@ -133,3 +139,112 @@ describe.each(
     expect(savedNote(mounted.ref.current?.getUsj())).toEqual(loaded);
   });
 });
+
+/** The bytes the live note shows, with display no-break spaces read as the spaces they stand for
+ * and whitespace runs collapsed, as USFM reads them. */
+function $noteScreen(): string {
+  return $liveNote().getTextContent().replaceAll(NBSP, " ").replace(/\s+/g, " ");
+}
+
+/** The USFM the saved note writes, whitespace runs collapsed. */
+function noteUsfm(note: MarkerObject): string {
+  const inner = (items: MarkerContent[] | undefined): string =>
+    (items ?? [])
+      .map((item) =>
+        typeof item === "string"
+          ? item
+          : `\\${item.marker} ${inner(item.content)}${item.closed === "false" ? "" : `\\${item.marker}*`}`,
+      )
+      .join("");
+  return `\\${note.marker} ${note.caller} ${inner(note.content)}\\${note.marker}*`.replace(
+    /\s+/g,
+    " ",
+  );
+}
+
+/** The screen shows what the file gets, and the caller's bytes are the caller's only. */
+function expectNoteScreenIsSaved(lexical: LexicalEditor, saved: MarkerObject): void {
+  expect(lexical.getEditorState().read($noteScreen)).toBe(noteUsfm(saved));
+}
+
+describe.each(["standard+expandedNotes", "unformatted"])(
+  "a note's caller partly damaged (%s view)",
+  (view) => {
+    /** Rewrite the caller text to `damaged`, caret at `caret` in it (or at the content's start). */
+    async function damage(damaged: string, caret: number | "content") {
+      const mounted = await mountInView(plainNoteUsj, oracleView(view));
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const caller = $callerSlot();
+          caller.setTextContent(damaged);
+          if (caret === "content") $textContaining("note text").select(0, 0);
+          else caller.select(caret, caret);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      return mounted;
+    }
+
+    it.each([
+      ["its separator deleted", " +", "content" as const, "note text"],
+      ["its caller deleted too", " ", "content" as const, "note text"],
+      ["a byte typed after its separator", ` +${NBSP}x`, 4, "xnote text"],
+      ["the whole caller typed over", "x", 1, "xnote text"],
+      ["a byte typed onto the caller word", " +x", 3, "xnote text"],
+    ])(
+      "keeps the caller and moves no caller byte into content: %s",
+      async (_name, damaged, caret, content) => {
+        const mounted = await damage(damaged, caret);
+        const saved = savedNote(mounted.ref.current?.getUsj());
+        expect(saved.caller).toBe("+");
+        expect(saved.content).toEqual([content]);
+        expect(callerText(mounted.lexical)).toBe(getEditableCallerText("+"));
+        expectNoteScreenIsSaved(mounted.lexical, saved);
+      },
+    );
+
+    it("lands the caret at the content's start once the caller is put back, so typing is content", async () => {
+      const mounted = await damage(" ", 1);
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.insertText("x");
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const saved = savedNote(mounted.ref.current?.getUsj());
+      expect(saved).toMatchObject({ caller: "+", content: ["xnote text"] });
+      expectNoteScreenIsSaved(mounted.lexical, saved);
+    });
+  },
+);
+
+describe.each(["standard+expandedNotes", "unformatted"])(
+  "a note's caller removed beside content that reads like a caller (%s view)",
+  (view) => {
+    it("never takes the content for the caller", async () => {
+      const usj = twoParaUsj([
+        "a",
+        { type: "note", marker: "f", caller: "+", content: [" q "] },
+        " b",
+      ]);
+      const mounted = await mountInView(usj, oracleView(view));
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const caller = $callerSlot();
+          const glyph = caller.getPreviousSibling();
+          caller.remove();
+          if ($isTextNode(glyph))
+            glyph.select(glyph.getTextContentSize(), glyph.getTextContentSize());
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const saved = savedNote(mounted.ref.current?.getUsj());
+      expect(saved).toMatchObject({ caller: "+", content: [" q "] });
+      expectNoteScreenIsSaved(mounted.lexical, saved);
+    });
+  },
+);
