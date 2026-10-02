@@ -548,8 +548,15 @@ export function $noteDeletionTransform(note: NoteNode, context: MarkerEditContex
     // A note whose shell the host governs (`ViewOptions.isNoteShellEditable: false`, built as
     // `token` glyphs) is not text the user edits: Delete in front of it, which Lexical turns into
     // removing the whole opening glyph, gets its opener back rather than unwrapping the note — the
-    // host (the footnote popover) edits and saves that note alone.
-    if (children.some((child) => $isTextNode(child) && child.getMode() === "token")) {
+    // host (the footnote popover) edits and saves that note alone. Read off the mode of what is left
+    // of the shell — the caller text the opener stood in front of, or the closing glyph — as the
+    // caret guard and the closer's transform read the opener's.
+    const first = children[0];
+    const last = children[children.length - 1];
+    if (
+      ($isTextNode(first) && first.isUnmergeable() && first.getMode() === "token") ||
+      ($isMarkerNode(last) && last.getMarkerSyntax() === "closing" && last.getMode() === "token")
+    ) {
       const opener = $createMarkerNode(note.getMarker());
       opener.setMode("token");
       const first = note.getFirstChild();

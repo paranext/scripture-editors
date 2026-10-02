@@ -36,6 +36,7 @@ import editorUsjAdaptor, {
 } from "../adaptors/editor-usj.adaptor";
 import { act } from "@testing-library/react";
 import {
+  $createTextNode,
   $getRoot,
   $getSelection,
   $isRangeSelection,
@@ -49,6 +50,7 @@ import {
 } from "lexical";
 import {
   $isMarkerNode,
+  $isNoteNode,
   $noteEditableCallerNode,
   getEditableCallerText,
   NBSP,
@@ -352,6 +354,28 @@ describe("expanded note shell", () => {
     });
     const note = findUsjNote(usjOf(editor)?.content);
     expect(note).toMatchObject({ marker: "f", caller: "+" });
+  });
+
+  it("unwraps an editable note whose opener is deleted, whatever its content's text modes", async () => {
+    const { editor } = await mount(expandedEditable);
+    // Only the note's own shell says whether the host governs it: an atomic text in the content
+    // does not make an editable shell a protected one.
+    await act(async () => {
+      editor.update(() => {
+        const note = findOnlyNote($getRoot());
+        const caller = requireDefined($noteEditableCallerNode(note), "caller");
+        caller.insertAfter($createTextNode("x").setMode("token"));
+        $opener(note).remove();
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getRoot()
+          .getAllTextNodes()
+          .some((node) => $isNoteNode(node.getParent())),
+      ).toBe(false);
+    });
   });
 
   it("leaves an editable shell alone, caret and keystroke both", async () => {
