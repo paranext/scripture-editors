@@ -576,8 +576,16 @@ function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
  *    only the first-child chain is followed, never a later sibling. A note is never descended into —
  *    a caller is an annotation hanging off the verse, not the start of its text;
  * 4. the boundary's element point. An empty verse (nothing follows, or the next verse marker does)
- *    always takes this branch, deliberately: it is the state `EmptyVerseCaretGuardPlugin` detects
- *    and repairs with a caret host of its own, and the caret must not borrow the next verse's text.
+ *    takes this branch when its marker is an immutable decorator, deliberately: it is the state
+ *    `EmptyVerseCaretGuardPlugin` detects and repairs with a caret host of its own, and the caret
+ *    must not borrow the next verse's text. An EDITABLE marker of an empty verse takes (2) instead.
+ *    The guard does not act there. Only the end of this verse's own marker is in this verse, so
+ *    that is where the caret goes, whichever shape the empty verse has:
+ *    - the next verse's marker follows: it is itself text, so the boundary has a text host — offset
+ *      0 of that marker — which Lexical may or may not normalize back to the end of this one,
+ *      depending on when the selection is next read, and which is the next verse's;
+ *    - the verse ends its paragraph: nothing follows, so no host exists, and the marker's end is
+ *      the one text point that belongs to this verse.
  */
 function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   const para = verse.getParent();
@@ -589,7 +597,8 @@ function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   // caret-host question, which would otherwise answer with the NEXT verse's marker.
   const opening = para.getChildAtIndex(contentStart);
   if (!opening || $isSomeVerseNode(opening)) {
-    $placeCaretAtBoundary(para, contentStart);
+    if ($isTextNode(verse)) verse.selectEnd();
+    else $placeCaretAtBoundary(para, contentStart);
     return;
   }
 
@@ -601,8 +610,7 @@ function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
 
   // Content the caret must stay in front of, with nothing at the boundary able to carry a point.
   if ($isTextNode(verse)) {
-    const markerEnd = verse.getTextContentSize();
-    verse.select(markerEnd, markerEnd);
+    verse.selectEnd();
     return;
   }
 

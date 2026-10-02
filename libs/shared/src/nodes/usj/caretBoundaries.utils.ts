@@ -63,6 +63,11 @@ import { $isTextNode, ElementNode, TextNode } from "lexical";
  * Deliberately forward-looking: text preceding the boundary occupies the same screen location at its
  * own end, but it is not what this answers. See the module's convention.
  *
+ * Read-only: safe to call from a read or an update. A caller placing a caret directly after a verse
+ * marker must handle an EDITABLE next verse marker itself — it is a text node, so it is returned
+ * here as the host, which puts the caret in the next verse's marker node (at the same screen
+ * location as the end of this verse's marker).
+ *
  * @param parent - The element whose children the boundary lies between.
  * @param index - The boundary: the index of the child that follows it.
  */
@@ -74,6 +79,10 @@ export function $caretHostAtBoundary(parent: ElementNode, index: number): TextNo
 /**
  * Collapse the caret to the boundary before `parent`'s child at `index`: offset 0 of the text node
  * hosting it, or the element point when nothing hosts it.
+ *
+ * Mutating: call inside `editor.update()`. Like `$caretHostAtBoundary`, it selects offset 0 of an
+ * editable next verse marker when one follows the boundary, so a caller placing a caret directly
+ * after a verse marker must handle that case itself.
  *
  * @param parent - The element whose children the boundary lies between.
  * @param index - The boundary: the index of the child that follows it.
