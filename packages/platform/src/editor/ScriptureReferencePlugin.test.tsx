@@ -408,6 +408,9 @@ describe("ScriptureReferencePlugin", () => {
       expect(mockOnScrRefChange).not.toHaveBeenCalled();
     });
 
+    // Documents intended behavior; it cannot fail without the placement code. With nothing after the
+    // marker, the old element point and the marker-end point converge once Lexical commits the
+    // update, so no assertion on the outcome tells them apart.
     it("rests at the end of the editable verse marker for an empty verse that ends its paragraph", async () => {
       const { editor, setScrRef } = await testEnvironment(
         scrRef,
