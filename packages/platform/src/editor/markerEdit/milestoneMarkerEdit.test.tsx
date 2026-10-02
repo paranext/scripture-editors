@@ -25,7 +25,15 @@ import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $dfs } from "@lexical/utils";
 import { $getRoot, $getSelection, $isRangeSelection, LexicalEditor, TextNode } from "lexical";
-import { $isMarkerNode, $isMilestoneNode, NBSP, usfmFragmentToUsjContent } from "shared";
+import {
+  $isMarkerNode,
+  $isMilestoneNode,
+  getPendedDisplayOwners,
+  NBSP,
+  usfmFragmentToUsjContent,
+} from "shared";
+import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { twoParaUsj } from "../positions/positions.test-helpers";
 
 const viewOptions = requireStandardViewOptions();
 
@@ -308,3 +316,41 @@ describe("a departure settle leaves the caret where the user put it", () => {
     expect(msOf(ref.current?.getUsj())?.who).toBe("stuff");
   });
 });
+
+describe.each(["standard", "unformatted"])(
+  "text typed at the end of a milestone's closer (%s view)",
+  (view) => {
+    it("follows the milestone at once, so the document holds it while the caret is there", async () => {
+      // `\qt-s\*b` with `b` deleted and `x` typed: the caret lands at the closer's end, and `x`
+      // there reads as text after the milestone — which the document holds without waiting for a
+      // departure, so its position is one a host can hand back.
+      const mounted = await mountInView(
+        twoParaUsj(["a ", { type: "ms", marker: "qt-s" }, "b"]),
+        oracleView(view),
+      );
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const closer = $getRoot()
+            .getAllTextNodes()
+            .find((text) => text.getTextContent() === "\\*");
+          if (!closer) throw new Error("no milestone closer");
+          closer.setTextContent("\\*x");
+          closer.select(3, 3);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBe(0);
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual(
+        usfmFragmentToUsjContent("\\p a \\qt-s\\*xb")[0],
+      );
+      mounted.lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no caret");
+        expect(selection.anchor.getNode().getTextContent()).toBe("xb");
+        expect(selection.anchor.offset).toBe(1);
+      });
+      mounted.unmount();
+    });
+  },
+);

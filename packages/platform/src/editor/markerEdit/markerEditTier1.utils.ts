@@ -667,6 +667,10 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
       return;
     }
   }
+  if ($splitTextTypedAfterMilestone(node)) {
+    context.pendingKeys.delete(node.getKey());
+    return;
+  }
   // Closer / selfClosing: one-way authority — closer edits never rename the span. Damage or
   // retype ALWAYS pends and settles through Tier 2 on caret departure/Enter/blur
   // ($resolvePendingMarkers), never in the editing commit. An opener has a genuine completion
@@ -681,6 +685,45 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
   // explicit closer — see paranext-core's footnote-util test USJ), and the adaptor skips the
   // closing glyph for such spans, exactly as it does for auto-closed notes.
   context.pendingKeys.add(node.getKey());
+}
+
+/**
+ * Split text typed at the very END of an intact milestone's `\*` (`\qt-s\*x`) off to follow the
+ * milestone, as the closer arm of {@link $markerNodeTransform} does for a char span's closer: the
+ * name scan ends at the `*`, so the bytes re-tokenize as plain text after the milestone, and the
+ * split is that re-tokenization applied now. Left in the glyph until a departure settled it, the
+ * typed byte had no place in the document's model while it waited — a host handing back its
+ * position could not land on it. Only the run's last piece qualifies, in a block that can hold the
+ * text.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the text was split off.
+ */
+function $splitTextTypedAfterMilestone(glyph: MarkerNode): boolean {
+  if (glyph.getMarkerSyntax() !== "selfClosing") return false;
+  if (!$isMilestoneNode($ownerOfRunPiece(glyph)?.owner)) return false;
+  const canonical = closingMarkerText("");
+  const text = glyph.getTextContent();
+  if (!text.startsWith(canonical) || text.length === canonical.length) return false;
+  const wrapper = glyph.getParent();
+  const runEnd = $isAttributeRunNode(wrapper) ? wrapper : glyph;
+  if ($isAttributeRunNode(wrapper) && !wrapper.getLastChild()?.is(glyph)) return false;
+  const block = runEnd.getParent();
+  if (!block || $isRootOrShadowRoot(block)) return false;
+  const selection = $getSelection();
+  const caretOffset =
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === glyph.getKey() &&
+    selection.anchor.offset > canonical.length
+      ? selection.anchor.offset - canonical.length
+      : undefined;
+  const rest = $createTextNode(text.slice(canonical.length));
+  glyph.setTextContent(canonical);
+  runEnd.insertAfter(rest);
+  if (caretOffset !== undefined) rest.select(caretOffset, caretOffset);
+  return true;
 }
 
 /**
