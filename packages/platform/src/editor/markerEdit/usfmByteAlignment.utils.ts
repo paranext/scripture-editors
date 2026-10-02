@@ -369,9 +369,9 @@ function walk(
       continue;
     }
     // A divergence nothing above explains. In prefix mode the literal ends with the next copy of
-    // the spelling's closing marker; with none to find (or the divergence inside that marker), the
-    // rest of the spelling has no live bytes and the literal ends here. Otherwise the rest lines
-    // up from the back.
+    // the spelling's closing marker, and the bytes up to it line up by the ends they share; with
+    // none to find (or the divergence inside that marker), the rest of the spelling has no live
+    // bytes and the literal ends here. Otherwise the rest lines up from the back.
     if (options.prefix) {
       const closerAt = settled.lastIndexOf(MARKER_START);
       const closer = closerAt >= j ? settled.slice(closerAt) : undefined;
@@ -380,7 +380,7 @@ function walk(
         out.push(i, i, j, settled.length, false);
         return i;
       }
-      out.push(i, found, j, closerAt, false);
+      out.pushStretch(live.slice(i, found), i, settled.slice(j, closerAt), j);
       out.push(found, found + closer.length, closerAt, settled.length, true);
       return found + closer.length;
     }

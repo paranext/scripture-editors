@@ -271,6 +271,44 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     expect(trip.to).toBe(trip.from);
   });
 
+  // Notes are collapsed in the standard view, where their glyphs are not typed into.
+  it.runIf(view !== "standard")(
+    "keeps a position in a note's content when a byte typed into its opener makes it a literal",
+    async () => {
+      // `\f\` settles with the typed `\` moved behind the caller, into the note's content; the
+      // `\ft` span after it is the same bytes in both documents.
+      const { mounted } = await pendingEdit(
+        [
+          "a",
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note text"] }],
+          },
+          " b",
+        ],
+        view,
+        "\\f",
+        "\\f\\",
+        3,
+      );
+      const $ft = () => {
+        const found = $getRoot()
+          .getAllTextNodes()
+          .find((text) => text.getTextContent() === "\\ft");
+        if (!found) throw new Error("no \\ft glyph");
+        return found;
+      };
+      for (const offset of [1, 2, 3]) {
+        const trip = roundTrip(mounted, view, $ft, offset);
+        expect(trip.reported).toMatchObject({ propertyOffset: offset - 1 });
+        expect(trip.reported?.jsonPath).toMatch(/\['marker'\]$/);
+        expect(trip.to).toBe(trip.from);
+      }
+    },
+  );
+
   it("keeps a position in front of a note that a typed marker now opens a paragraph before", async () => {
     // `\a` typed in front of the note settles as a paragraph marker, with the note as the new
     // paragraph's first content; the end of its name is in front of the note.
