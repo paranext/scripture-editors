@@ -76,6 +76,7 @@ import {
   MarkerLookup,
   MarkerNode,
   MarkerType,
+  NBSP,
   NoteNode,
   openingMarkerText,
   ParaNode,
@@ -967,6 +968,10 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
 // "word" beside the map's caller declaration, exactly as the verse regexes tokenize the number.
 const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+$/;
 
+// A caller text holding more than one word: whitespace run, the first word, whitespace run, and
+// the rest — which has a word of its own and no `\`.
+const NOTE_CALLER_WORDS_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+([^\\]*[^ \u00A0\\][^\\]*)$/;
+
 /**
  * Tier-1 arm for an expanded note's editable caller text — the note-marker family's leading
  * attribute (the markers map declares `caller` on `f`/`fe`/`ef`/`efe`/`x`/`ex`;
@@ -976,6 +981,9 @@ const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+$/;
  * - A whole word between whitespace runs (`\f  x `) is the caller, RETAGGED to the typed word
  *   (PT9 GetNextWord: whole word, valid or not), exactly as `\v 1a` retags the number; the
  *   whitespace around it is structural and collapses.
+ * - Several words where the caller's own word is gone (it was deleted, and words were typed or
+ *   pasted in its place): the first is the caller, retagged the same way, and the rest starts the
+ *   note's content, the gap after it kept as the screen shows it.
  * - Anything else is damage to the caller's own bytes: the note keeps its caller, and its text is
  *   put back, with the bytes the user typed into it moved to the start of the note's content (see
  *   `$settleNoteCallerText`). While the collapsed caret is at a caller some of whose own bytes are
@@ -1025,6 +1033,11 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
     node.setTextContent(getEditableCallerText(retagged[1]));
     return true;
   }
+  const words = NOTE_CALLER_WORDS_REGEX.exec(text);
+  if (words && typedCallerRange(text, caller).missing) {
+    $retagNoteCallerToFirstWord(node, note, words[1], words[2]);
+    return true;
+  }
   if ($movePushedNameIntoNoteGlyph(node, caller)) return true;
   // A caller whose own bytes are gone waits as typed while the caret is at it: the next keystroke
   // may make it a caller word again (Paratext 9's delete-then-type retag). The departure puts it
@@ -1043,6 +1056,39 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
   }
   $settleNoteCallerText(node, note);
   return true;
+}
+
+/**
+ * Retag an expanded note's caller text `node` to `word`, the first of the words it holds (PT9
+ * GetNextWord), and move `rest`, the bytes after the whitespace following that word, to the start
+ * of the note's content, spelled as content reads them (a no-break space as the space it stands
+ * for). A caret in `rest` moves with it; a caret anywhere else in the text lands at the end of
+ * the new caller.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $retagNoteCallerToFirstWord(
+  node: TextNode,
+  note: NoteNode,
+  word: string,
+  rest: string,
+): void {
+  const restStart = node.getTextContentSize() - rest.length;
+  const selection = $getSelection();
+  const caret =
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === node.getKey()
+      ? selection.anchor.offset
+      : undefined;
+  note.setCaller(word);
+  node.setTextContent(getEditableCallerText(word));
+  const content = $prependNoteContent(note, node, rest.replaceAll(NBSP, " "));
+  if (caret === undefined) return;
+  if (caret >= restStart) {
+    const offset = caret - restStart;
+    content.select(offset, offset);
+  } else node.select(node.getTextContentSize(), node.getTextContentSize());
 }
 
 /**

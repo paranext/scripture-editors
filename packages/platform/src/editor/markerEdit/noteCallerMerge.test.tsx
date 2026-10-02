@@ -288,6 +288,34 @@ describe.each(["standard+expandedNotes", "unformatted"])(
       }
     });
 
+    it.each([
+      ["in front of the slot's space", 1, "def note text"],
+      ["behind the slot's space", 2, "defnote text"],
+    ])(
+      "takes the first of several words pasted into an emptied caller as the caller, %s",
+      async (_at, caret, content) => {
+        const mounted = await damage(` ${NBSP}`, caret);
+        await act(async () => {
+          mounted.lexical.update(() => {
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) selection.insertText("abc def");
+          });
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        // Paratext 9 reads the caller as the next word after the marker; what follows it is the
+        // note's content, with the gap the screen shows between them and the old content.
+        const pending = savedNote(mounted.ref.current?.getUsj());
+        expect(pending).toMatchObject({ caller: "abc", content: [content] });
+        expectNoteScreenIsSaved(mounted.lexical, pending);
+        await depart(mounted);
+        const saved = savedNote(mounted.ref.current?.getUsj());
+        expect(saved).toEqual(pending);
+        expect(callerText(mounted.lexical)).toBe(getEditableCallerText("abc"));
+        expectNoteScreenIsSaved(mounted.lexical, saved);
+      },
+    );
+
     it.each(["Undo", "Undo, then Redo"])(
       "settles a waiting caller that %s brings back once the caret leaves",
       async (gesture) => {
