@@ -75,6 +75,7 @@ import {
   $isChapterNode,
   $isCharNode,
   $isImmutableUnmatchedNode,
+  isSerializedImmutableUnmatchedNode,
   $isImpliedParaNode,
   $isMarkerNode,
   $isMilestoneNode,
@@ -736,8 +737,16 @@ function $appendSignature(
       // Tagged for the same reason as marker glyphs: an unmatched element's BYTES are identical
       // to the literal text it resolves from (`\*` typed as text vs the flagged element), so a
       // bare-text contribution would make that resolution signature-invisible and the
-      // fixed-point refusal would block it forever.
-      out.push(SIGNATURE_OPEN, "unmatched", toFragmentText(node.getTextContent()), SIGNATURE_CLOSE);
+      // fixed-point refusal would block it forever. Its stored marker is part of it too: bytes
+      // typed into the element (`\qt-s*` → `\qt-sx*`) re-tokenize into an element spelling them
+      // the same way, and only the marker the file gets tells the two apart.
+      out.push(
+        SIGNATURE_OPEN,
+        "unmatched",
+        toFragmentText(node.getTextContent()),
+        node.getMarker(),
+        SIGNATURE_CLOSE,
+      );
     } else if ($isRebuildSentinel(node, getMarkerFn)) {
       out.push(ATOMIC_SENTINEL);
     } else if ($isLineBreakNode(node)) {
@@ -1044,7 +1053,8 @@ function appendSerializedSignature(
       // Tagged, mirroring `$appendSignature`'s unmatched branch — the bare-text fallback below
       // would otherwise match this node's `.text` field and make the literal→flagged-element
       // resolution signature-invisible on the JSON side.
-      out.push(SIGNATURE_OPEN, "unmatched", toFragmentText(serializedText(node) ?? ""));
+      const marker = isSerializedImmutableUnmatchedNode(node) ? node.marker : "";
+      out.push(SIGNATURE_OPEN, "unmatched", toFragmentText(serializedText(node) ?? ""), marker);
       out.push(SIGNATURE_CLOSE);
       continue;
     }
