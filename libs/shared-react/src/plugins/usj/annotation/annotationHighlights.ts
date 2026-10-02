@@ -167,26 +167,38 @@ export class AnnotationHighlighter {
     return [...this.byLeaf.keys()];
   }
 
-  /** Replace leaf `key`'s painted pieces. */
+  /**
+   * Replace leaf `key`'s painted pieces. The new pieces are added before the old ones are let go,
+   * so a class set the leaf keeps using keeps its highlight, name and priority, and the stylesheet
+   * is not rewritten.
+   */
   setLeaf(key: NodeKey, pieces: LeafHighlight[]): void {
-    this.clearLeaf(key);
-    if (pieces.length === 0) return;
+    const previous = this.byLeaf.get(key) ?? [];
     for (const piece of pieces) this.use(piece.classNames).highlight.add(piece.range);
-    this.byLeaf.set(key, pieces);
+    if (pieces.length > 0) this.byLeaf.set(key, pieces);
+    else this.byLeaf.delete(key);
+    this.release(previous, new Set(pieces.map(({ range }) => range)));
   }
 
   clearLeaf(key: NodeKey): void {
-    for (const piece of this.byLeaf.get(key) ?? []) {
+    const previous = this.byLeaf.get(key) ?? [];
+    this.byLeaf.delete(key);
+    this.release(previous, new Set());
+  }
+
+  /** Let go of `pieces`, keeping in their highlights any range in `kept`; a class set no piece
+   * uses any more is unregistered. */
+  private release(pieces: readonly LeafHighlight[], kept: ReadonlySet<Range>): void {
+    for (const piece of pieces) {
       const entry = this.byClassSet.get(classSetKey(piece.classNames));
       if (!entry) continue;
-      entry.highlight.delete(piece.range);
+      if (!kept.has(piece.range)) entry.highlight.delete(piece.range);
       if (--entry.uses > 0) continue;
       this.api.registry.delete(entry.name);
       classNamesByHighlight.delete(entry.name);
       this.byClassSet.delete(classSetKey(piece.classNames));
       this.queueRender();
     }
-    this.byLeaf.delete(key);
   }
 
   dispose(): void {

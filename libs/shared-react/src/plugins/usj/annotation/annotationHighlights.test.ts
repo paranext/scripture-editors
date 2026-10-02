@@ -188,6 +188,25 @@ describe("AnnotationHighlighter", () => {
     expect([...CSS.highlights]).toEqual([]);
   });
 
+  it("keeps a class set's highlight, name and priority when its only leaf is painted again", async () => {
+    stylesheet(".x { background-color: rgb(1, 2, 3); }");
+    const { highlighter, text } = setup();
+    const paint = () => {
+      const range = rangeOverText(text, 0, 1);
+      if (!range) throw new Error("the text renders 12 characters");
+      highlighter.setLeaf("k", [{ classNames: ["x"], annotations: ["a"], range, text: "|" }]);
+    };
+    paint();
+    await Promise.resolve();
+    const [[name, highlight]] = [...CSS.highlights];
+    const css = highlightCss();
+    paint();
+    await Promise.resolve();
+    expect([...CSS.highlights]).toEqual([[name, highlight]]);
+    expect(highlight.size).toBe(1);
+    expect(highlightCss()).toBe(css);
+  });
+
   it("styles a class set a rule names only through an escaped selector", async () => {
     stylesheet(".annotationId-a\\:b { background-color: rgb(4, 5, 6); }");
     const { highlighter, text } = setup();
