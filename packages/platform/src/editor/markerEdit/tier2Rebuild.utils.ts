@@ -63,6 +63,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $chapterGlyphTextNode,
   $hasUnrecoverableAttributes,
   $isAttributeRunNode,
   $isChapterNode,
@@ -1104,11 +1105,15 @@ function $appendNodesFragment(
       pushText(out, node, " ");
     } else if ($isTextNode(node)) {
       // Glyph-adjacent structural text (the para-prefix separator, attribute runs — whose own
-      // leading NBSP is the file's real separator byte before `|…`) keeps the blanket
-      // NBSP-to-space flattening in every view; everything else is a content run, where the
-      // flattening is view-dependent (see `contentFragmentText`).
+      // leading NBSP is the file's real separator byte before `|…`, a chapter's `\c N` glyph
+      // text — whose NBSP is the separator after `\c`) keeps the blanket NBSP-to-space
+      // flattening in every view; everything else is a content run, where the flattening is
+      // view-dependent (see `contentFragmentText`).
+      const parent = node.getParent();
       const isStructuralRun =
-        $isMarkerTrailingSeparator(node) || $getState(node, textTypeState) === "attribute";
+        $isMarkerTrailingSeparator(node) ||
+        $getState(node, textTypeState) === "attribute" ||
+        ($isChapterNode(parent) && !!$chapterGlyphTextNode(parent)?.is(node));
       const structuralLead = consumeCharLead() && !isStructuralRun;
       pushText(
         out,
