@@ -70,6 +70,7 @@ import {
   $isTextNode,
   LexicalNode,
   PointType,
+  TextNode,
 } from "lexical";
 import { LoggerBasic } from "shared";
 import {
@@ -1097,16 +1098,60 @@ function $liveLocationOfPoint(
   const own = $getLocationFromNode(node, offset, viewOptions);
   const target = $pointOf([node, offset]);
   if (!target) return own;
+  const resolvesTo = (location: UsjDocumentLocation): PointType | undefined =>
+    $pointOf($getNodeFromLocation(location, viewOptions));
+  const ownResolved = resolvesTo(own);
+  if (ownResolved?.is(target)) return own;
+  // A caret at a text's end is also the caret at the start of the text after it, and the other
+  // way round: where the point's own spelling does not resolve back to it (a token separator's
+  // end), the same position spelled from the other side can, and is exact.
+  const twin = $twinCaret(node, offset);
+  if (twin) {
+    const location = $getLocationFromNode(twin.node, twin.offset, viewOptions);
+    if (resolvesTo(location)?.is($createPoint(twin.node.getKey(), twin.offset, "text")))
+      return location;
+  }
   const resolvesAtOrBefore = (location: UsjDocumentLocation): boolean => {
-    const resolved = $pointOf($getNodeFromLocation(location, viewOptions));
+    const resolved = resolvesTo(location);
     return !!resolved && !target.isBefore(resolved);
   };
-  if (resolvesAtOrBefore(own)) return own;
+  if (ownResolved && !target.isBefore(ownResolved)) return own;
   for (const point of $caretPointsBefore(node, offset)) {
     const location = $getLocationFromNode(point.node, point.offset, viewOptions);
     if (resolvesAtOrBefore(location)) return location;
   }
   return own;
+}
+
+/**
+ * The other caret at `node`'s `offset` when it sits on a text node's edge: the start of the text
+ * right after a text's end, or the end of the text right before a text's start — with nothing
+ * between them, inside the same top-level block. `undefined` anywhere else.
+ *
+ * Read-only: call inside a read.
+ */
+function $twinCaret(
+  node: LexicalNode,
+  offset: number,
+): { node: TextNode; offset: number } | undefined {
+  if (!$isTextNode(node)) return undefined;
+  const isEnd = offset === node.getTextContentSize();
+  if (!isEnd && offset !== 0) return undefined;
+  let current: LexicalNode = node;
+  let next = isEnd ? current.getNextSibling() : current.getPreviousSibling();
+  while (!next) {
+    const parent = current.getParent();
+    if (!parent || $isRootNode(parent) || $isRootNode(parent.getParent())) return undefined;
+    current = parent;
+    next = isEnd ? current.getNextSibling() : current.getPreviousSibling();
+  }
+  while ($isElementNode(next)) {
+    const child: LexicalNode | null = isEnd ? next.getFirstChild() : next.getLastChild();
+    if (!child) return undefined;
+    next = child;
+  }
+  if (!$isTextNode(next)) return undefined;
+  return { node: next, offset: isEnd ? 0 : next.getTextContentSize() };
 }
 
 /** A resolved `[node, offset]` as a point of the tree being read; a leaf that is neither text nor
@@ -1658,15 +1703,24 @@ export function $settledLocationFromLivePoint(
   const plan = prepared.planContaining(node);
   if (plan) return $settledLocationInScope(prepared, plan, node, offset);
   const renamed = prepared.renamedClosers.get(node.getKey());
-  if (renamed)
+  if (renamed) {
+    // Restated after the live closer's own location is taken: the settled offset can run past the
+    // live closer's end (`\w*` renamed `\wx*`), and the live node would clamp it.
+    const location = $getLocationFromNode(node, offset, prepared.viewOptions);
     return settledTopTranslated(
       prepared,
-      $getLocationFromNode(
-        node,
-        glyphOffsetAcross(renamed.live, renamed.settled, offset),
-        prepared.viewOptions,
-      ),
+      isUsjClosingMarkerLocation(location)
+        ? {
+            ...location,
+            closingMarkerOffset: glyphOffsetAcross(
+              renamed.live,
+              renamed.settled,
+              location.closingMarkerOffset,
+            ),
+          }
+        : location,
     );
+  }
   // The document end is spelled on the document's last token, which a pending last block settles
   // into a different one.
   const lastBlock = $isRootNode(node) && offset >= node.getChildrenSize() && node.getLastChild();

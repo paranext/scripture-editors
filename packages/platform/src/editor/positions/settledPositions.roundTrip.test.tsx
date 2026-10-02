@@ -147,6 +147,47 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     expect(trip.to).toBe(trip.from);
   });
 
+  it("keeps the end of the closer of a span a pending opener rename lengthens", async () => {
+    const { mounted, $node: $opener } = await pendingEdit(
+      ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      view,
+      "\\w",
+      "\\wx",
+      3,
+    );
+    // `\w*` settles as `\wx*`: its end is closer offset 4 in the settled document.
+    const $closer = () => {
+      const closer = $opener().getParentOrThrow().getLastChild();
+      if (!(closer instanceof TextNode)) throw new Error("expected the span's closer");
+      return closer;
+    };
+    const trip = roundTrip(mounted, view, $closer, "\\w*".length);
+    expect(trip.reported).toMatchObject({ closingMarkerOffset: "\\wx*".length });
+    expect(trip.to).toBe(trip.from);
+  });
+
+  it("keeps a position at a paragraph's content start when its marker glyph is damaged", async () => {
+    // `x\p` settles as a paragraph `\p x` before this one; the start of `In the` is behind the
+    // separator, not in front of it at the end of the glyph.
+    const { mounted } = await pendingEdit(
+      ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      view,
+      "\\p",
+      "x\\p",
+      1,
+    );
+    const $content = () => {
+      const content = $getRoot()
+        .getAllTextNodes()
+        .find((text) => text.getTextContent() === "In the ");
+      if (!content) throw new Error("no paragraph content");
+      return content;
+    };
+    const trip = roundTrip(mounted, view, $content, 0);
+    expect(trip.to).toBe(trip.from);
+    expect(trip.again).toEqual(trip.reported);
+  });
+
   it("keeps a position in front of a note that a typed marker now opens a paragraph before", async () => {
     // `\a` typed in front of the note settles as a paragraph marker, with the note as the new
     // paragraph's first content; the end of its name is in front of the note.
