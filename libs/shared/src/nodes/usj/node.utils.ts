@@ -68,7 +68,7 @@ import {
   $isContentTransparent,
   $isSplicedImpliedPara,
 } from "./logicalParent.utils.js";
-import { closingMarkerText, openingMarkerText } from "./markerText.utils.js";
+import { closingMarkerText, openingMarkerText, typedCallerRange } from "./markerText.utils.js";
 import { collapsedSpaceRunRanges } from "./spaceRuns.utils.js";
 import {
   EMPTY_CHAR_PLACEHOLDER_TEXT,
@@ -122,14 +122,16 @@ export interface LogicalTextSegment {
   /** Logical offset within the text item at which this segment's CONTENT starts. */
   start: number;
   /**
-   * How many of `node`'s leading characters are presentation rather than content (0 or 1) — a
-   * char span's structural separator NBSP, which the editor→USJ conversion strips.
+   * How many of `node`'s leading characters are presentation rather than content — a char span's
+   * structural separator NBSP, which the editor→USJ conversion strips, or the caller's own bytes in
+   * front of the bytes typed into a note's caller text ({@link $typedNoteCallerRange}).
    */
   lead: number;
   /**
-   * The characters after the lead that the editor→USJ conversion drops when it collapses a space
-   * run, as ascending local `[start, end)` ranges (see `collapsedSpaceRunRanges`). Empty unless
-   * the editor's serialization collapses runs.
+   * The characters after the lead that the editor→USJ conversion drops — a collapsed space run's
+   * extra characters (see `collapsedSpaceRunRanges`; none unless the editor's serialization
+   * collapses runs), and the caller's own bytes behind typed caller bytes — as ascending local
+   * `[start, end)` ranges.
    */
   collapsed: readonly (readonly [number, number])[];
   /** How many characters the segment contributes to the item: the node's kept characters. */
@@ -943,6 +945,26 @@ function getSelectionStartNodeInner(selection: BaseSelection | null): LexicalNod
 }
 
 /**
+ * The bytes the user typed into an expanded note's editable caller text, as a local `[start,
+ * end)` range of `node` — or `undefined` when `node` is no such caller text, or holds none. Such a
+ * text waits as typed while the caret is at it (the marker-edit engine's caller transform), and
+ * the editor→USJ conversion reads it as the departure will leave it: the note keeps its caller,
+ * and the typed bytes start the note's content. The logical content model reads it the same way,
+ * so a position in those bytes is a position in the content.
+ *
+ * Read-only: safe inside `editor.update()` or either read form.
+ */
+export function $typedNoteCallerRange(
+  node: LexicalNode,
+): { start: number; end: number } | undefined {
+  if (!$isTextNode(node)) return undefined;
+  const note = $getLogicalParent(node);
+  if (!$isNoteNode(note) || !$noteEditableCallerNode(note)?.is(node)) return undefined;
+  const { start, end } = typedCallerRange(node.getTextContent(), note.getCaller());
+  return start < end ? { start, end } : undefined;
+}
+
+/**
  * Checks whether a node is presentation-only and therefore not part of USJ content:
  * line breaks, marker scaffolding (editable and visible), marker-trailing-space or
  * attribute text (as a plain TextNode or as an opaque block's folded ImmutableTypedTextNode
@@ -984,14 +1006,14 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
   // An expanded note's editable caller (` + `) is display the conversion drops. Anchored to the
   // caller SLOT — the child right after the note's leading opening glyph(s), the same slot the
   // note-content rebuild reads — so note content that happens to spell the caller is still
-  // content. The conversion matches those bytes ANYWHERE in the note and so drops such content
-  // outright; it is the side that should narrow to this rule.
+  // content. A caller text holding bytes the user typed into it is content too, for exactly those
+  // bytes ({@link $typedNoteCallerRange}).
   if (
     $isTextNode(node) &&
     $isNoteNode(logicalParent) &&
     $noteEditableCallerNode(logicalParent)?.is(node)
   )
-    return true;
+    return !$typedNoteCallerRange(node);
   if ($isTextNode(node)) {
     const textType = $getState(node, textTypeState);
     if (textType === MARKER_TRAILING_SPACE_TEXT_TYPE || textType === "attribute") return true;
@@ -1181,12 +1203,17 @@ function $measureTextItem(nodes: TextNode[], collapsesSpaceRuns: boolean): Logic
     // A char span's separator NBSP is a prefix of its first content text and the exporter strips
     // it before anything else, so it occupies no USJ offset and never belongs to a space run —
     // see $charSeparatorPrefixLength.
-    const lead = $charSeparatorPrefixLength(node);
-    const collapsed = collapsesSpaceRuns
-      ? collapsedSpaceRunRanges(node.getTextContent().slice(lead)).map(
+    // A caller text holding typed bytes contributes only those bytes: the caller's own bytes in
+    // front of them are its lead, and any behind them are dropped too.
+    const typed = $typedNoteCallerRange(node);
+    const lead = typed ? typed.start : $charSeparatorPrefixLength(node);
+    const keptEnd = typed ? typed.end : node.getTextContentSize();
+    const collapsed: (readonly [number, number])[] = collapsesSpaceRuns
+      ? collapsedSpaceRunRanges(node.getTextContent().slice(lead, keptEnd)).map(
           ([start, end]) => [start + lead, end + lead] as const,
         )
       : [];
+    if (keptEnd < node.getTextContentSize()) collapsed.push([keptEnd, node.getTextContentSize()]);
     const segmentLength =
       node.getTextContentSize() -
       lead -

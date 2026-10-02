@@ -534,3 +534,41 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     expect(trip.to).toBe(trip.from);
   });
 });
+
+describe.each(["standard+expandedNotes", "unformatted"])(
+  "a note's caller waiting with bytes typed into it (%s view)",
+  (view) => {
+    // The caller's separator deleted and `x` typed: ` +x` waits as typed while the caret is there,
+    // and the departure puts the caller back and moves `x` to the note's content — which the
+    // document already reads. A position in or after the typed bytes is a content position.
+    const content: MarkerContent[] = [
+      "a",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "ft", content: ["note text"] }],
+      },
+      " b",
+    ];
+
+    it("reports a position after the typed byte where the byte is in the content", async () => {
+      const { mounted, $node } = await pendingEdit(content, view, ` +${NBSP}`, " +x", 3);
+      const trip = roundTrip(mounted, view, $node, 3);
+      expect(trip.reported).toEqual({ jsonPath: "$.content[2].content[1].content[0]", offset: 1 });
+      expectBackInPlace(trip);
+      mounted.unmount();
+    });
+
+    it("keeps the caller's own bytes the caller's", async () => {
+      const { mounted, $node } = await pendingEdit(content, view, ` +${NBSP}`, " +x", 3);
+      const trip = roundTrip(mounted, view, $node, 1);
+      expect(trip.reported).toEqual({
+        jsonPath: "$.content[2].content[1]['caller']",
+        propertyOffset: 0,
+      });
+      expectBackInPlace(trip);
+      mounted.unmount();
+    });
+  },
+);

@@ -72,6 +72,7 @@ import {
   $noteEditableCallerNode,
   $ownerOfRunPiece,
   $shouldIgnoreNodeForContentIndexes,
+  $typedNoteCallerRange,
   canonicalAttributeText,
   type CharNode,
   closingMarkerText,
@@ -1585,6 +1586,18 @@ function $locationFromNode(
   offset: number,
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation {
+  // Past the front of the bytes typed into a waiting note caller text is in those bytes, which
+  // are the note's content (`$typedNoteCallerRange`): the content's location, not the caller's.
+  const typedCaller = $typedNoteCallerRange(node);
+  if (typedCaller && offset > typedCaller.start) {
+    const typed = $getLogicalTextLocation(node, offset, collapsesSpaceRuns);
+    if (typed)
+      return {
+        jsonPath: usjJsonPathFromIndexes([...$getJsonPathIndexes(typed.parent), typed.index]),
+        offset: typed.offset,
+      };
+  }
+
   // Behind a glyph's own trailing separator the next byte is the first one after the glyph, and a
   // separator has no position of its own: the caret names that byte (the same answer the
   // paragraph separator gives, below).
