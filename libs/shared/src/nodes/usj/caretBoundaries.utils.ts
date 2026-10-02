@@ -65,7 +65,8 @@ import { $isTextNode, ElementNode, TextNode } from "lexical";
  *
  * Read-only: safe to call from a read or an update. A caller placing a caret directly after a verse
  * marker must handle an EDITABLE next verse marker itself — it is a text node, so it is returned
- * here as the host, and a caret at its offset 0 reports the NEXT verse.
+ * here as the host, which puts the caret in the next verse's marker node (at the same screen
+ * location as the end of this verse's marker).
  *
  * @param parent - The element whose children the boundary lies between.
  * @param index - The boundary: the index of the child that follows it.
