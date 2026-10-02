@@ -156,6 +156,53 @@ function $trailingNoteUnderUnresolvedSelection(
   return landed ? $asTrailingCollapsedNote($findMatchingParent(landed, $isNoteNode)) : undefined;
 }
 
+/** The collapsed note `point` is inside (or on), or `undefined`. */
+function $collapsedNoteAt(point: PointType): NoteNode | undefined {
+  const note = $findMatchingParent(point.getNode(), $isNoteNode);
+  return note?.getIsCollapsed() === true ? note : undefined;
+}
+
+/**
+ * Takes the whole of a collapsed note into a range whose end lies inside it, and returns whether it
+ * changed the selection.
+ *
+ * A collapsed note is one atom on screen, so a range can only mean all of it or none of it. The
+ * browser has no position to put inside the note's hidden content, and "select to the end of the
+ * document" (or to the start) from a note-ended paragraph answers with the position at the start of
+ * that content. Copying, cutting or typing over such a range then handles half a note: the
+ * clipboard carries `\f + ` with the note's content missing, and a deletion leaves the rest of it
+ * behind. A range end inside a collapsed note moves to the near side of the note on the end that
+ * is inside: the start before it, the end past it.
+ *
+ * A range with both ends inside the same note is left alone; whoever made that selection (the
+ * marker menu working inside a footnote) meant the content. A caret is left alone for the same
+ * reason.
+ *
+ * Mutating (moves the selection): call inside `editor.update()` or a command handler.
+ */
+export function $takeCollapsedNotesIntoRange(): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  const startNote = $collapsedNoteAt(start);
+  const endNote = $collapsedNoteAt(end);
+  if (startNote && endNote && startNote.is(endNote)) return false;
+  let changed = false;
+  const startParent = startNote?.getParent();
+  if (startNote && startParent) {
+    start.set(startParent.getKey(), startNote.getIndexWithinParent(), "element");
+    changed = true;
+  }
+  const endParent = endNote?.getParent();
+  if (endNote && endParent) {
+    end.set(endParent.getKey(), endNote.getIndexWithinParent() + 1, "element");
+    changed = true;
+  }
+  return changed;
+}
+
 /**
  * Keeps a visible caret at the end of a block that a collapsed note ends, and keeps it out of the
  * note's hidden content.
@@ -208,6 +255,13 @@ export function TrailingNoteCaretGuardPlugin(): null {
       editor.registerCommand(
         SELECTION_CHANGE_COMMAND,
         () => {
+          if ($takeCollapsedNotesIntoRange()) {
+            // Only the selection moves, so the commit is tagged and the tag released like the
+            // caret repairs below.
+            $addUpdateTag(CURSOR_CHANGE_TAG);
+            releaseTagsAfterNextCommit(editor, CURSOR_CHANGE_TAG);
+            return false;
+          }
           const note = $trailingNoteUnderUnresolvedSelection(editor.getRootElement());
           if (note) $repairPast(note);
           return false;

@@ -417,6 +417,127 @@ describe("TrailingNoteCaretGuardPlugin", () => {
     });
   });
 
+  describe("a range with an end inside a collapsed note", () => {
+    /** `\p before |note|` with the document's own text before and after, the note collapsed. */
+    async function mountRangeEnvironment(after = "") {
+      let before: TextNode;
+      let note: NoteNode;
+      let body: TextNode;
+      let para: ParaNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          before = $createTextNode("before ");
+          body = $createTextNode("note body");
+          note = $createNoteNode("f", "+").append(
+            $createMarkerNode("f", "opening"),
+            $createImmutableNoteCallerNode("+", "note preview"),
+            $createMarkerTrailingSeparator(),
+            $createCharNode("ft").append($createMarkerNode("ft", "opening"), body),
+            $createMarkerNode("f", "closing"),
+          );
+          para = $createParaNode("p");
+          $getRoot().append(para.append(before, note, ...(after ? [$createTextNode(after)] : [])));
+        },
+        <TrailingNoteCaretGuardPlugin />,
+      );
+      return { editor, before: before!, note: note!, body: body!, para: para! };
+    }
+
+    async function select(
+      editor: LexicalEditor,
+      anchor: [LexicalNode, number, "text" | "element"],
+      focus: [LexicalNode, number, "text" | "element"],
+    ) {
+      await act(async () => {
+        editor.update(() => {
+          const range = $createRangeSelection();
+          range.anchor.set(anchor[0].getKey(), anchor[1], anchor[2]);
+          range.focus.set(focus[0].getKey(), focus[1], focus[2]);
+          $setSelection(range);
+        });
+      });
+      await dispatchSelectionChange(editor);
+    }
+
+    /** The selection's two points as `[node, offset]`, in document order, or `undefined`. */
+    function orderedPoints(editor: LexicalEditor) {
+      return editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return undefined;
+        const [start, end] = selection.isBackward()
+          ? [selection.focus, selection.anchor]
+          : [selection.anchor, selection.focus];
+        return {
+          start: { key: start.key, offset: start.offset },
+          end: { key: end.key, offset: end.offset },
+        };
+      });
+    }
+
+    // The browser answers "select to the end of the document" with the position at the START of a
+    // collapsed note's hidden content, since it has no layout to put a position in.
+    it("takes the whole note when a forward range ends inside it", async () => {
+      const { editor, before, note, body, para } = await mountRangeEnvironment();
+
+      await select(editor, [before, 0, "text"], [body, 0, "text"]);
+
+      const points = orderedPoints(editor);
+      expect(points).toEqual({
+        start: { key: before.getKey(), offset: 0 },
+        end: {
+          key: para.getKey(),
+          offset: editor.getEditorState().read(() => note.getIndexWithinParent() + 1),
+        },
+      });
+    });
+
+    it("takes the whole note when a backward range ends inside it", async () => {
+      const { editor, before, note, body, para } = await mountRangeEnvironment(" after");
+      const after = editor.getEditorState().read(() => note.getNextSibling()!);
+
+      await select(editor, [after, 3, "text"], [body, 0, "text"]);
+
+      const points = orderedPoints(editor);
+      expect(points?.start).toEqual({
+        key: para.getKey(),
+        offset: editor.getEditorState().read(() => note.getIndexWithinParent()),
+      });
+      expect(points?.end).toEqual({ key: after.getKey(), offset: 3 });
+      expect(before).toBeDefined();
+    });
+
+    it("takes the whole note when a range starts inside it", async () => {
+      const { editor, note, body, para } = await mountRangeEnvironment(" after");
+      const after = editor.getEditorState().read(() => note.getNextSibling()!);
+
+      await select(editor, [body, 0, "text"], [after, 3, "text"]);
+
+      expect(orderedPoints(editor)?.start).toEqual({
+        key: para.getKey(),
+        offset: editor.getEditorState().read(() => note.getIndexWithinParent()),
+      });
+    });
+
+    it("leaves a range alone when both its ends are inside the same note", async () => {
+      const { editor, body } = await mountRangeEnvironment();
+
+      await select(editor, [body, 1, "text"], [body, 4, "text"]);
+
+      expect(orderedPoints(editor)).toEqual({
+        start: { key: body.getKey(), offset: 1 },
+        end: { key: body.getKey(), offset: 4 },
+      });
+    });
+
+    it("does not touch a caret inside the note", async () => {
+      const { editor, body } = await mountRangeEnvironment();
+
+      await select(editor, [body, 2, "text"], [body, 2, "text"]);
+
+      expect(orderedPoints(editor)?.start).toEqual({ key: body.getKey(), offset: 2 });
+    });
+  });
+
   it("puts typed text after the note and strips the placeholder", async () => {
     let para: ParaNode;
     let note: NoteNode;
