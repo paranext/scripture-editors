@@ -166,6 +166,8 @@ refused. The public surface grew substantially; nothing was removed.
 - A selection that reaches into a collapsed note (select to the end of the document from a paragraph
   that a footnote ends) takes the whole note, since only its caller is on screen. Copying it
   carried `\f + ` with the note's content missing, and cutting or typing over it left half a note.
+- End, Ctrl+End and Cmd+Down in a block that a collapsed note ends leave the caret past the note.
+  The browser selected the note instead, so the next typing, paste or deletion replaced it.
 - `getNoteOps`, `getOpsAfterNote` and `takeOpsAfterNote` no longer break an update in progress when
   a host calls them from a callback that runs during one.
 - Standard view saves spaces at the start of a note's content as part of the caller's separator

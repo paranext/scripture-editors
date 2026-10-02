@@ -20,6 +20,7 @@ import {
   $isTextNode,
   $setSelection,
   BLUR_COMMAND,
+  KEY_DOWN_COMMAND,
   LexicalEditor,
   LexicalNode,
   SELECTION_CHANGE_COMMAND,
@@ -535,6 +536,89 @@ describe("TrailingNoteCaretGuardPlugin", () => {
       await select(editor, [body, 2, "text"], [body, 2, "text"]);
 
       expect(orderedPoints(editor)?.start).toEqual({ key: body.getKey(), offset: 2 });
+    });
+  });
+
+  describe("a jump to the end of the line or document that selects a trailing note", () => {
+    /** Press `init` through the key command, as the editor sees a keydown before the browser acts. */
+    async function pressEnd(editor: LexicalEditor, init: KeyboardEventInit) {
+      await act(async () => {
+        editor.dispatchCommand(
+          KEY_DOWN_COMMAND,
+          new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }),
+        );
+      });
+    }
+
+    /** What a browser answers when there is no position past a note: the note itself, selected. */
+    async function selectNote(editor: LexicalEditor, para: ParaNode) {
+      await act(async () => {
+        editor.update(() => {
+          const range = $createRangeSelection();
+          const end = para.getChildrenSize();
+          range.anchor.set(para.getKey(), end - 1, "element");
+          range.focus.set(para.getKey(), end, "element");
+          $setSelection(range);
+        });
+      });
+      await dispatchSelectionChange(editor);
+    }
+
+    function selectionIsCaretPastNote(editor: LexicalEditor, para: ParaNode) {
+      return editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+        const host = para.getLastChild();
+        return $isTextNode(host) && selection.anchor.key === host.getKey();
+      });
+    }
+
+    async function mountTrailingNote() {
+      let para: ParaNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          para = $createParaNode("p");
+          $getRoot().append(para.append($createTextNode("before "), $createTrailingNote()));
+        },
+        <TrailingNoteCaretGuardPlugin />,
+      );
+      return { editor, para: para! };
+    }
+
+    it.each([
+      ["Control+End", { key: "End", ctrlKey: true }],
+      ["End", { key: "End" }],
+      ["Meta+ArrowDown", { key: "ArrowDown", metaKey: true }],
+    ])("leaves the caret past the note after %s", async (_name, init) => {
+      const { editor, para } = await mountTrailingNote();
+
+      await pressEnd(editor, init);
+      await selectNote(editor, para);
+
+      expect(selectionIsCaretPastNote(editor, para)).toBe(true);
+    });
+
+    it("keeps a note selected by some other gesture", async () => {
+      const { editor, para } = await mountTrailingNote();
+
+      await selectNote(editor, para);
+
+      editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        expect($isRangeSelection(selection) && selection.isCollapsed()).toBe(false);
+      });
+    });
+
+    it("keeps a selection that Shift+End made", async () => {
+      const { editor, para } = await mountTrailingNote();
+
+      await pressEnd(editor, { key: "End", shiftKey: true });
+      await selectNote(editor, para);
+
+      editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        expect($isRangeSelection(selection) && selection.isCollapsed()).toBe(false);
+      });
     });
   });
 

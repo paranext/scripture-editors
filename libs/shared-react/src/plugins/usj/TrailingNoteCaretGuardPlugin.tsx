@@ -9,14 +9,16 @@ import {
   $isElementNode,
   $isRangeSelection,
   CLICK_COMMAND,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_EDITOR,
   getDOMSelectionFromTarget,
   isDOMNode,
+  KEY_DOWN_COMMAND,
   LexicalNode,
   PointType,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { $isCursorPlaceholderOnlyText, $isNoteNode, CURSOR_CHANGE_TAG, NoteNode } from "shared";
 
 /**
@@ -204,6 +206,45 @@ export function $takeCollapsedNotesIntoRange(): boolean {
 }
 
 /**
+ * How long after an End key press a selection change is still its answer. A browser answers within
+ * the same task; the margin covers a busy frame.
+ */
+const END_KEY_ANSWER_MS = 500;
+
+/**
+ * Whether `event` is a press that moves the caret to the end of the line or the document, with
+ * nothing that would extend a selection (Shift) or select by word (Alt): End, Ctrl+End, and
+ * Cmd+Down on a Mac.
+ */
+function isCaretToEndKey(event: KeyboardEvent): boolean {
+  if (event.shiftKey || event.altKey) return false;
+  return event.key === "End" || (event.key === "ArrowDown" && event.metaKey);
+}
+
+/**
+ * The collapsed trailing note that the selection spans exactly (a range from just before it to just
+ * past it in its parent), or `undefined`.
+ *
+ * This is the browser's answer to a jump to the end of a block that a collapsed note ends: no
+ * caret position exists past a note whose only rendered part is its caller, so it selects the note
+ * instead. Typing, pasting or deleting then replaces the note.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`.
+ */
+function $selectedTrailingNote(): NoteNode | undefined {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || selection.isCollapsed()) return undefined;
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  if (start.type !== "element" || end.type !== "element" || start.key !== end.key) return undefined;
+  if (end.offset !== start.offset + 1) return undefined;
+  const parent = start.getNode();
+  if (!$isElementNode(parent)) return undefined;
+  return $asTrailingCollapsedNote(parent.getChildAtIndex(start.offset));
+}
+
+/**
  * Keeps a visible caret at the end of a block that a collapsed note ends, and keeps it out of the
  * note's hidden content.
  *
@@ -237,6 +278,8 @@ export function $takeCollapsedNotesIntoRange(): boolean {
 export function TrailingNoteCaretGuardPlugin(): null {
   const [editor] = useLexicalComposerContext();
   const $repairCaret = useTransientCaretHost($trailingNoteCaretAnchor);
+  /** When the last key press was one that moves the caret to the end, for the selection it causes. */
+  const endKeyPressedAt = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     // Command handlers already run inside an update, so the tag has to be added to that one rather
@@ -252,9 +295,29 @@ export function TrailingNoteCaretGuardPlugin(): null {
     };
 
     return mergeRegister(
+      editor.registerCommand<KeyboardEvent>(
+        KEY_DOWN_COMMAND,
+        (event) => {
+          endKeyPressedAt.current = isCaretToEndKey(event) ? performance.now() : undefined;
+          return false;
+        },
+        // Only observes the press, and must see it whether or not a handler further down claims it.
+        COMMAND_PRIORITY_CRITICAL,
+      ),
       editor.registerCommand(
         SELECTION_CHANGE_COMMAND,
         () => {
+          const jumpedToEnd =
+            endKeyPressedAt.current !== undefined &&
+            performance.now() - endKeyPressedAt.current < END_KEY_ANSWER_MS;
+          if (jumpedToEnd) {
+            // The caret belongs past the note, where the guard hosts it, not on the note.
+            const selected = $selectedTrailingNote();
+            if (selected) {
+              $repairPast(selected);
+              return false;
+            }
+          }
           if ($takeCollapsedNotesIntoRange()) {
             // Only the selection moves, so the commit is tagged and the tag released like the
             // caret repairs below.
