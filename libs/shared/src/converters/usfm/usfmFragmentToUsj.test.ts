@@ -2312,7 +2312,7 @@ describe("usfmFragmentToUsjContent — a preserved-node placeholder reads as the
   // A preserved node's own USFM starts with `\`, so ParatextData reads its bytes as the start of a
   // marker: whatever word was being read in front of it ends there, and a note or verse marker ends
   // the note before it. The placeholder must parse the same way the node's own bytes do.
-  const PLACEHOLDER = "￼";
+  const PLACEHOLDER = "\uFFFC";
   const footnote = "\\f + \\ft note\\f*";
 
   /** `content` with every item `isPreserved` picks spelled as a placeholder, adjacent text joined —
@@ -2364,10 +2364,32 @@ describe("usfmFragmentToUsjContent — a preserved-node placeholder reads as the
     ]);
   });
 
-  it("leaves a note with no caller word when the placeholder follows its separator", () => {
+  it("fills an empty caller with `+` when a placeholder follows the note marker's separator", () => {
+    const real = usfmFragmentToUsjContent(`\\p \\x ${footnote} b`);
+
     expect(
       usfmFragmentToUsjContent(`\\p \\x ${PLACEHOLDER} b`, { placeholders: ["note"] }),
-    ).toEqual(withPlaceholders(usfmFragmentToUsjContent(`\\p \\x ${footnote} b`), isFootnote));
+    ).toEqual(withPlaceholders(real, isFootnote));
+    // ParatextData reads the caller with `GetNextWord`, finds no word before the `\\f`, and writes
+    // `caller=""` (UsxUsfmParserSink.StartNote); the `\\f` then closes the `\\x`. The tokenizer
+    // gives `+` instead: the editable caller machinery reads a note with an empty caller as having
+    // no caller text, so the text in its caller slot settles into the note's content.
+    expect(real).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "note", marker: "x", caller: "+", closed: "false" },
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note"], closed: "false" }],
+          },
+          " b",
+        ],
+      },
+    ]);
   });
 
   it("ends a verse number", () => {
