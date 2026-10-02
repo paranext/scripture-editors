@@ -429,11 +429,12 @@ describe("$wrapSelectionInTypedMarkNode() covers exactly the bytes the range nam
   });
 
   it("holds a decorator, undisplayed, for a range naming only bytes it does not show", () => {
+    // `\\w*` shows its three bytes; positions past them name bytes it stands for unshown.
     const holds = (decorator: LexicalNode) => ({
-      decoratorHolds: new Map([[decorator.getKey(), { start: 2, end: 2 }]]),
+      decoratorHolds: new Map([[decorator.getKey(), { start: 3, end: 5 }]]),
     });
     expect(at(wrapBesideDecorator(overDecorator, "\\w*", holds))).toEqual([
-      { start: 0, end: 0, undisplayed: true },
+      { start: 3, end: 5, undisplayed: true },
     ]);
   });
 

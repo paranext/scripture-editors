@@ -22,7 +22,7 @@ import {
   deleteDisplayAnnotationRegistration,
   getDisplayAnnotationRegistration,
   registerDisplayAnnotationBasis,
-  setDecoratorHoldableTextReader,
+  setDecoratorBytesReader,
 } from "./displayAnnotations.utils.js";
 import { $createImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
 import { $createImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
@@ -289,24 +289,30 @@ describe("annotations held on what a decorator renders", () => {
     );
   });
 
-  it("holds a decorator for bytes it does not show until a shown range replaces it", () => {
+  /** Stand `\\w` for `\\w` and then `bytes()`, which it does not show, for the current test. */
+  function standFor(bytes: () => string): void {
+    setDecoratorBytesReader({
+      holdableText: () => `\\w${bytes()}`,
+      renderedOffset: (_, index) => (index < 2 ? index : undefined),
+    });
+    onTestFinished(() => setDecoratorBytesReader(undefined));
+  }
+
+  it("reads a hold on bytes a decorator does not show as undisplayed, and one over both as the part shown", () => {
     const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    standFor(() => "G5485");
     editor.update(
       () => {
-        const glyph = $createImmutableTypedTextNode("marker", "\\nd");
+        const glyph = $createImmutableTypedTextNode("marker", "\\w");
         $getRoot().append($createParaNode().append(glyph));
-        $addDisplayAnnotation(glyph, "spelling", "a", 0, 0, { undisplayed: true });
+        $addDisplayAnnotation(glyph, "spelling", "a", 2, 7);
         expect($displayAnnotationsOf(glyph)).toEqual([
-          { type: "spelling", id: "a", start: 0, end: 0, undisplayed: true },
+          { type: "spelling", id: "a", start: 2, end: 7, undisplayed: true },
         ]);
-        $addDisplayAnnotation(glyph, "spelling", "a", 1, 3);
+        // Touching the undisplayed hold, so merged with it: read as the shown `w`.
+        $addDisplayAnnotation(glyph, "spelling", "a", 1, 2);
         expect($displayAnnotationsOf(glyph)).toEqual([
-          { type: "spelling", id: "a", start: 1, end: 3 },
-        ]);
-        // A shown range is never replaced by an undisplayed one.
-        $addDisplayAnnotation(glyph, "spelling", "a", 0, 0, { undisplayed: true });
-        expect($displayAnnotationsOf(glyph)).toEqual([
-          { type: "spelling", id: "a", start: 1, end: 3 },
+          { type: "spelling", id: "a", start: 1, end: 2 },
         ]);
       },
       { discrete: true },
@@ -315,14 +321,13 @@ describe("annotations held on what a decorator renders", () => {
 
   it("names the bytes an undisplayed hold holds, not what the decorator shows", () => {
     const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
-    setDecoratorHoldableTextReader(() => "\\wG5485");
-    onTestFinished(() => setDecoratorHoldableTextReader(undefined));
+    standFor(() => "G5485");
     editor.update(
       () => {
         const glyph = $createImmutableTypedTextNode("marker", "\\w");
         $getRoot().append($createParaNode().append(glyph));
         // `[2, 7)` of the bytes the glyph stands for: its empty span's attribute value.
-        $addDisplayAnnotation(glyph, "spelling", "a", 2, 7, { undisplayed: true });
+        $addDisplayAnnotation(glyph, "spelling", "a", 2, 7);
         expect($coveredDisplayText(glyph, $displayAnnotationsOf(glyph)[0])).toBe("G5485");
       },
       { discrete: true },
@@ -331,15 +336,14 @@ describe("annotations held on what a decorator renders", () => {
 
   it("follows an undisplayed hold's bytes through an edit of them, and drops it with them", () => {
     const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
-    let standsFor = "\\wG5485";
-    setDecoratorHoldableTextReader(() => standsFor);
-    onTestFinished(() => setDecoratorHoldableTextReader(undefined));
+    let standsFor = "G5485";
+    standFor(() => standsFor);
     let glyph!: LexicalNode;
     editor.update(
       () => {
         glyph = $createImmutableTypedTextNode("marker", "\\w");
         $getRoot().append($createParaNode().append(glyph));
-        $addDisplayAnnotation(glyph, "spelling", "a", 2, 7, { undisplayed: true });
+        $addDisplayAnnotation(glyph, "spelling", "a", 2, 7);
       },
       { discrete: true },
     );
@@ -349,9 +353,9 @@ describe("annotations held on what a decorator renders", () => {
         .read(() =>
           $displayAnnotationsOf(glyph).map((annotation) => $coveredDisplayText(glyph, annotation)),
         );
-    standsFor = "\\wG5486";
+    standsFor = "G5486";
     expect(covered()).toEqual(["G548"]);
-    standsFor = "\\w";
+    standsFor = "";
     expect(covered()).toEqual([]);
   });
 
@@ -372,11 +376,11 @@ describe("annotations held on what a decorator renders", () => {
     expect(
       displayAnnotationsState.parse({
         basis: "x",
-        annotations: [{ type: "t", id: "i", start: 0, end: 0, undisplayed: true, text: "12a" }],
+        annotations: [{ type: "t", id: "i", start: 0, end: 0, undisplayed: true }],
       }),
     ).toEqual({
       basis: "x",
-      annotations: [{ type: "t", id: "i", start: 0, end: 0, undisplayed: true, text: "12a" }],
+      annotations: [{ type: "t", id: "i", start: 0, end: 0, undisplayed: true }],
     });
     expect(
       displayAnnotationsState.parse({

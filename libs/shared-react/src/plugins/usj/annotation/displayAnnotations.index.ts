@@ -8,6 +8,7 @@
 
 import { ImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { ImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
+import { $renderedOffsetOf } from "./decoratorHolds.utils";
 import { $readDecoratorHoldableText } from "./selection.utils";
 import {
   AnnotationHighlighter,
@@ -48,7 +49,7 @@ import {
   ImmutableUnmatchedNode,
   MarkerNode,
   registerDisplayAnnotationBasis,
-  setDecoratorHoldableTextReader,
+  setDecoratorBytesReader,
   clearTypedMarkRemovalSilences,
   forgetTypedMarkCallbacks,
   listenForTypedMarkRemovalReports,
@@ -133,7 +134,10 @@ interface Entry {
 const entries = new WeakMap<LexicalEditor, Entry>();
 
 function createIndex(editor: LexicalEditor): Entry {
-  setDecoratorHoldableTextReader($readDecoratorHoldableText);
+  setDecoratorBytesReader({
+    holdableText: $readDecoratorHoldableText,
+    renderedOffset: $renderedOffsetOf,
+  });
   const keysByAnnotation = new Map<string, Set<NodeKey>>();
   const annotationsByKey = new Map<NodeKey, DisplayAnnotation[]>();
   /** The marks holding each annotation, and the annotations each mark holds. */

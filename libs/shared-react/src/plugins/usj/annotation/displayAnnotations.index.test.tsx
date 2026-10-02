@@ -523,8 +523,8 @@ describe("the display-annotation index", () => {
       () => {
         verse = $createImmutableVerseNode("12");
         $getRoot().append($createParaNode().append(verse));
-        // `1` of the rendered number, which zero-width spaces pad.
-        $addDisplayAnnotation(verse, "external-spelling", "a", 1, 2);
+        // `1` of the number: a verse stands for `\v 12`, whatever it renders.
+        $addDisplayAnnotation(verse, "external-spelling", "a", 3, 4);
       },
       { discrete: true },
     );
@@ -579,6 +579,41 @@ describe("the display-annotation index", () => {
     toggle();
     expect(held()).toEqual([expect.objectContaining({ id: "a", start: 0, end: 1 })]);
     expect(onRemove).not.toHaveBeenCalled();
+    release();
+  });
+
+  it("keeps a hold on a hidden caller exact through another hold added while its note is collapsed", () => {
+    const { editor, release } = setup();
+    let caller!: LexicalNode;
+    let note!: LexicalNode;
+    editor.update(
+      () => {
+        caller = $createImmutableNoteCallerNode("-");
+        note = $createNoteNode("f", "-", false).append(caller);
+        $getRoot().append($createParaNode().append(note));
+        $addDisplayAnnotation(caller, "external-spelling", "a", 0, 1);
+      },
+      { discrete: true },
+    );
+    const toggle = () =>
+      editor.update(
+        () => {
+          const latest = note.getLatest();
+          if ($isNoteNode(latest)) latest.toggleIsCollapsed();
+          caller.getLatest().markDirty();
+        },
+        { discrete: true },
+      );
+    toggle();
+    // While the note is collapsed (`-` drawn as `*`), another annotation is set on the caller.
+    editor.update(() => $addDisplayAnnotation(caller.getLatest(), "external-spelling", "b", 0, 1), {
+      discrete: true,
+    });
+    toggle();
+    expect(editor.getEditorState().read(() => $displayAnnotationsOf(caller.getLatest()))).toEqual([
+      expect.objectContaining({ id: "a", start: 0, end: 1 }),
+      expect.objectContaining({ id: "b", start: 0, end: 1 }),
+    ]);
     release();
   });
 

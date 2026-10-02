@@ -278,7 +278,7 @@ export interface EditorRef {
    * does not show follows those bytes the same way. A change only in how a glyph draws the same
    * bytes (a hidden caller `-` shown as `*` while its note is collapsed, a caller CSS draws) keeps
    * the hold and reports nothing: it is held whole while its bytes are not drawn, and exactly
-   * again once they are.
+   * again once they are, whatever else is set on it meanwhile.
    *
    * The annotation holds exactly the bytes the range names. A range into part of a char span, note
    * or figure holds only the part it names: the span's own text is marked piece by piece and its

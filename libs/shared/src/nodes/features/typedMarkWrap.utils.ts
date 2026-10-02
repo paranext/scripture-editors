@@ -15,12 +15,11 @@ import { $isVerseNode } from "../usj/VerseNode.js";
 import {
   $addDisplayAnnotation,
   $carrierHoldableRange,
-  $decoratorRenderedText,
+  $decoratorHoldableText,
   $isAttributeDisplayRun,
   $isDisplayAnnotationCarrier,
   $isElementOwnerRunAnchor,
   $registerDisplayAnnotation,
-  trimmedTextRange,
 } from "./displayAnnotations.utils.js";
 import { $isImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
 import { $isMarkerNode } from "./MarkerNode.js";
@@ -153,16 +152,12 @@ function $coversWhole(element: ElementNode, start: LeafCaret, end: LeafCaret): b
 }
 
 /**
- * Where a range holds a read-only decorator it ends inside of, in the decorator's rendered text:
- * `[start, end)`, or `start === end` when the range names none of the bytes it shows (only bytes it
- * stands for, such as a hidden `\va`).
+ * Where a range holds a read-only decorator it ends inside of: `[start, end)` of the holdable bytes
+ * the decorator stands for (`$decoratorHoldableText`), shown or not.
  */
 export interface DecoratorHold {
   start: number;
   end: number;
-  /** For a hold showing none of its bytes (`start === end`): which of the decorator's holdable
-   * bytes it holds, `[start, end)` (`$decoratorHoldableText`). */
-  undisplayed?: [number, number];
 }
 
 /** How {@link $wrapSelectionInTypedMarkNode} holds what a selection cannot point inside of. */
@@ -174,28 +169,25 @@ export interface TypedMarkWrapOptions {
 
 /**
  * The `[start, end)` bytes of carrier `node` the range from `start` to `end` covers, or
- * `undefined` when it covers none; `{ undisplayed }`, naming which of its holdable bytes, for a decorator held only
- * for bytes it does not show. A decorator is covered only when the range passes over it: over the part `holds` names, or
- * all the text it renders without its edge whitespace (whole, `[0, 0]`, when it renders none, as a
- * caller CSS draws). A text carrier's covered bytes are clamped to its holdable range
- * ({@link $carrierHoldableRange}), so a glyph's own edge whitespace is never held.
+ * `undefined` when it covers none. A decorator is covered only when the range passes over it, and
+ * its bytes are the holdable bytes it stands for (`$decoratorHoldableText`): the part `holds`
+ * names, or all of them (whole, `[0, 0]`, when it stands for none). A text carrier's covered bytes
+ * are clamped to its holdable range ({@link $carrierHoldableRange}), so a glyph's own edge
+ * whitespace is never held.
  */
 function $coveredCarrierRange(
   node: LexicalNode,
   start: LeafCaret,
   end: LeafCaret,
   holds: ReadonlyMap<NodeKey, DecoratorHold> | undefined,
-): [number, number] | { undisplayed: [number, number] } | undefined {
+): [number, number] | undefined {
   if (!$isDisplayAnnotationCarrier(node)) return undefined;
   const [from, to] = $coveredOffsets(node, start, end);
   if (to <= from) return undefined;
   if (!$isTextNode(node)) {
     const hold = holds?.get(node.getKey());
-    if (hold)
-      return hold.end > hold.start
-        ? [hold.start, hold.end]
-        : { undisplayed: hold.undisplayed ?? [0, 0] };
-    return trimmedTextRange($decoratorRenderedText(node));
+    if (hold) return [hold.start, hold.end];
+    return [0, $decoratorHoldableText(node).length];
   }
   const [low, high] = $carrierHoldableRange(node);
   const clamped: [number, number] = [Math.max(from, low), Math.min(to, high)];
@@ -234,11 +226,7 @@ export function $wrapSelectionInTypedMarkNode(
     // byte must never add this tag, or it rides into the update's own selection-only commit and
     // then onto whatever the user's NEXT edit turns out to be.
     $addUpdateTag(TYPED_MARK_WRAP_TAG);
-    if (Array.isArray(covered)) $addDisplayAnnotation(node, type, id, covered[0], covered[1]);
-    else {
-      const [from, to] = covered.undisplayed;
-      $addDisplayAnnotation(node, type, id, from, to, { undisplayed: true });
-    }
+    $addDisplayAnnotation(node, type, id, covered[0], covered[1]);
     carrierAnnotated = true;
   };
   let currentNodeParent;

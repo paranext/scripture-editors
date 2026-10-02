@@ -110,86 +110,89 @@ function sameAnnotation(a: DisplayAnnotation, type: string, id: string): boolean
   return a.type === type && a.id === id;
 }
 
-/** A carrier's text now, and for a decorator the holdable bytes it stands for now. */
-interface CarrierNow {
-  text: string;
-  bytes: string | undefined;
-}
-
-/** Whether `held` was measured against the bytes `now` stands for, however they are drawn. */
-function sameBytes(held: DisplayAnnotations, now: CarrierNow): boolean {
-  if (held.bytes === undefined || now.bytes === undefined) return held.basis === now.text;
-  return held.bytes === now.bytes;
-}
-
 /**
- * `held`'s annotations re-measured against the carrier as it is `now`.
- *
- * - An edit of the bytes (a text carrier's text, or the bytes a decorator stands for, as a
- *   collaborator's renumber changes them) maps each range through a character alignment, dropping
- *   any with no byte left (see `mapRangeThroughEdit`). An undisplayed hold maps through the
- *   decorator's holdable bytes the same way.
- * - A change only in how a decorator draws the same bytes (a hidden caller `-` shown as `*` while
- *   its note is collapsed, a caller CSS draws) keeps every hold: a range still drawn maps onto
- *   where it is drawn now, and one not drawn is held whole meanwhile. The stored basis is kept, so
- *   the range is exact again once the bytes are drawn as before.
+ * `held`'s ranges re-measured against `basis`, the carrier's storage text now, through a character
+ * alignment, dropping any with no byte left (see `mapRangeThroughEdit`). A whole-decorator hold
+ * (`[0, 0]`) stays whole.
  */
-function remapped(held: DisplayAnnotations, now: CarrierNow): DisplayAnnotation[] {
-  const unchanged = sameBytes(held, now);
-  if (held.basis === now.text && unchanged) return held.annotations;
-  const alignment = alignCharacters(held.basis, now.text);
-  const byteAlignment =
-    unchanged || held.bytes === undefined || now.bytes === undefined
-      ? undefined
-      : alignCharacters(held.bytes, now.bytes);
+function remapped(held: DisplayAnnotations, basis: string): DisplayAnnotation[] {
+  if (held.basis === basis) return held.annotations;
+  const alignment = alignCharacters(held.basis, basis);
   return held.annotations.flatMap((annotation) => {
-    if (annotation.undisplayed) {
-      if (!byteAlignment) return [annotation];
-      const mapped = mapRangeThroughAlignment(byteAlignment, annotation.start, annotation.end);
-      return mapped ? [{ ...annotation, start: mapped[0], end: mapped[1] }] : [];
-    }
     if (annotation.start === annotation.end) return [annotation];
-    if (held.basis === now.text) return [annotation];
     const mapped = mapRangeThroughAlignment(alignment, annotation.start, annotation.end);
-    if (mapped) return [{ ...annotation, start: mapped[0], end: mapped[1] }];
-    return unchanged ? [{ ...annotation, start: 0, end: 0 }] : [];
+    return mapped ? [{ ...annotation, start: mapped[0], end: mapped[1] }] : [];
   });
 }
 
-/** The text a carrier's offsets measure: a text's own, or what a decorator renders. */
+/**
+ * The text a carrier's stored ranges index: a text's own, or the holdable bytes a decorator stands
+ * for ({@link $decoratorHoldableText}). A decorator's holds are kept in its bytes, not in what it
+ * renders, so a change only in how it draws them (a hidden caller `-` drawn as `*` while its note
+ * is collapsed) never moves or widens one, whatever is written meanwhile.
+ */
+function $storageText(node: LexicalNode): string {
+  return $isDecoratorNode(node) ? $decoratorHoldableText(node) : node.getTextContent();
+}
+
+/** The text a carrier's offsets measure as read: a text's own, or what a decorator renders. */
 function $carrierText(node: LexicalNode): string {
   return $isDecoratorNode(node) ? $decoratorRenderedText(node) : node.getTextContent();
 }
 
-function $carrierNow(node: LexicalNode): CarrierNow {
-  return {
-    text: $carrierText(node),
-    bytes: $isDecoratorNode(node) ? $decoratorHoldableText(node) : undefined,
-  };
+/** `node`'s holds as stored, measured against its current storage text ({@link $storageText}). */
+function $storedAnnotations(node: LexicalNode): DisplayAnnotation[] {
+  const held = $getState(node, displayAnnotationsState);
+  return held ? remapped(held, $storageText(node)) : [];
 }
 
-/** The annotations `node` holds, measured against its CURRENT text. Read-only. */
+/**
+ * A decorator's hold of holdable bytes `[start, end)` as it is drawn now: the rendered characters
+ * of the bytes it shows; whole (`[0, 0]`) when one of them is drawn without text (a caller CSS
+ * draws, a hidden caller drawn as `*`); and, when it shows none of them, the same holdable range
+ * marked `undisplayed`.
+ */
+function $drawnHold(node: LexicalNode, annotation: DisplayAnnotation): DisplayAnnotation {
+  if (annotation.start === annotation.end) return annotation;
+  let start: number | undefined;
+  let end: number | undefined;
+  for (let index = annotation.start; index < annotation.end; index++) {
+    const offset = bytesReader.renderedOffset(node, index);
+    if (offset === "drawn") return { type: annotation.type, id: annotation.id, start: 0, end: 0 };
+    if (offset === undefined) continue;
+    start = Math.min(start ?? offset, offset);
+    end = Math.max(end ?? offset + 1, offset + 1);
+  }
+  if (start === undefined || end === undefined) return { ...annotation, undisplayed: true };
+  return { type: annotation.type, id: annotation.id, start, end };
+}
+
+/**
+ * The annotations `node` holds, measured against its CURRENT text — for a decorator, against what
+ * it renders now ({@link $drawnHold}). Read-only.
+ */
 export function $displayAnnotationsOf(node: LexicalNode): DisplayAnnotation[] {
-  const held = $getState(node, displayAnnotationsState);
-  if (!held) return [];
-  return remapped(held, $carrierNow(node));
+  const stored = $storedAnnotations(node);
+  if (!$isDecoratorNode(node)) return stored;
+  return stored.map((annotation) => $drawnHold(node, annotation));
 }
 
 function $writeAnnotations(node: LexicalNode, annotations: DisplayAnnotation[]): void {
-  if (annotations.length === 0) {
-    $setState(node, displayAnnotationsState, undefined);
-    return;
-  }
-  const { text, bytes } = $carrierNow(node);
   $setState(
     node,
     displayAnnotationsState,
-    bytes === undefined ? { basis: text, annotations } : { basis: text, bytes, annotations },
+    annotations.length > 0 ? { basis: $storageText(node), annotations } : undefined,
   );
 }
 
-/** Reads the holdable bytes a decorator stands for; see {@link setDecoratorHoldableTextReader}. */
-export type DecoratorHoldableTextReader = (decorator: LexicalNode) => string;
+/** How the bytes a decorator stands for are read; see {@link setDecoratorBytesReader}. */
+export interface DecoratorBytesReader {
+  /** The holdable bytes the decorator stands for: the bytes positions inside it count in. */
+  holdableText(decorator: LexicalNode): string;
+  /** Where holdable byte `index` renders: an offset into the decorator's rendered text, `"drawn"`
+   * when it is shown but not as text, or `undefined` when the decorator does not show it. */
+  renderedOffset(decorator: LexicalNode, index: number): number | "drawn" | undefined;
+}
 
 /** What a decorator displays without edge whitespace; what it renders, for one whose own text is
  * empty (a chapter number). */
@@ -201,32 +204,40 @@ function $displayedHoldableText(decorator: LexicalNode): string {
   return rendered.slice(start, end);
 }
 
-let holdableTextReader: DecoratorHoldableTextReader = $displayedHoldableText;
+/** A decorator stands for what it displays, drawn where its rendered text spells it. */
+const displayedBytesReader: DecoratorBytesReader = {
+  holdableText: $displayedHoldableText,
+  renderedOffset: (decorator, index) => {
+    const holdable = $displayedHoldableText(decorator);
+    if (index >= holdable.length) return undefined;
+    const rendered = $decoratorRenderedText(decorator);
+    const [lead] = trimmedTextRange(rendered);
+    return rendered.slice(lead, lead + holdable.length) === holdable ? lead + index : "drawn";
+  },
+};
+
+let bytesReader: DecoratorBytesReader = displayedBytesReader;
 
 /**
- * Set how the holdable bytes a decorator stands for are read: the bytes positions inside it count
- * in, and an undisplayed hold indexes. Those bytes depend on display structure this package does
- * not know (a verse's `\va` tokens, an empty span's attributes), so the package that does sets
- * it once; until then, a decorator stands for what it displays, without edge whitespace. The
- * reader must be a pure function of the node. `undefined` restores that default.
+ * Set how the bytes a decorator stands for are read and where each is drawn. They depend on display
+ * structure this package does not know (a verse's `\va` tokens, an empty span's attributes), so the
+ * package that does sets it once; until then, a decorator stands for what it displays, without edge
+ * whitespace. The reader must be a pure function of the node. `undefined` restores that default.
  */
-export function setDecoratorHoldableTextReader(
-  reader: DecoratorHoldableTextReader | undefined,
-): void {
-  holdableTextReader = reader ?? $displayedHoldableText;
+export function setDecoratorBytesReader(reader: DecoratorBytesReader | undefined): void {
+  bytesReader = reader ?? displayedBytesReader;
 }
 
-/** The holdable bytes `decorator` stands for ({@link setDecoratorHoldableTextReader}). */
+/** The holdable bytes `decorator` stands for ({@link setDecoratorBytesReader}). */
 export function $decoratorHoldableText(decorator: LexicalNode): string {
-  return holdableTextReader(decorator);
+  return bytesReader.holdableText(decorator);
 }
 
 /**
- * Hold `type`/`id` on `node` over `[start, end)` (`0, 0` for a whole decorator), merged with any
- * range of the same annotation it overlaps or touches. `undisplayed` holds a decorator for bytes it
- * does not show, `[start, end)` of its holdable bytes (see `DisplayAnnotation`), merged with any
- * such hold of the same annotation; a displayed range of the same annotation on the node replaces
- * it. Mutating: call inside `editor.update()`.
+ * Hold `type`/`id` on `node` over `[start, end)`, merged with any range of the same annotation it
+ * overlaps or touches. On a decorator, `[start, end)` index the holdable bytes it stands for
+ * ({@link $decoratorHoldableText}), shown or not, and `0, 0` holds it whole. Every other hold on
+ * the node is kept exactly as stored. Mutating: call inside `editor.update()`.
  */
 export function $addDisplayAnnotation(
   node: LexicalNode,
@@ -234,27 +245,10 @@ export function $addDisplayAnnotation(
   id: string,
   start: number,
   end: number,
-  options: { undisplayed?: boolean } = {},
 ): void {
-  const held = $displayAnnotationsOf(node);
-  if (options.undisplayed) {
-    const same = held.filter((annotation) => sameAnnotation(annotation, type, id));
-    if (same.some((annotation) => !annotation.undisplayed)) return;
-    const merged: DisplayAnnotation = {
-      type,
-      id,
-      start: Math.min(start, ...same.map((annotation) => annotation.start)),
-      end: Math.max(end, ...same.map((annotation) => annotation.end)),
-      undisplayed: true,
-    };
-    const others = held.filter((annotation) => !sameAnnotation(annotation, type, id));
-    $writeAnnotations(node, [...others, merged]);
-    return;
-  }
   let merged: DisplayAnnotation = { type, id, start, end };
   const others: DisplayAnnotation[] = [];
-  for (const annotation of held) {
-    if (sameAnnotation(annotation, type, id) && annotation.undisplayed) continue;
+  for (const annotation of $storedAnnotations(node)) {
     if (
       sameAnnotation(annotation, type, id) &&
       annotation.start <= merged.end &&
@@ -272,7 +266,7 @@ export function $addDisplayAnnotation(
 
 /** Drop every range of `type`/`id` from `node`; `true` when there was one. Mutating. */
 export function $removeDisplayAnnotation(node: LexicalNode, type: string, id: string): boolean {
-  const annotations = $displayAnnotationsOf(node);
+  const annotations = $storedAnnotations(node);
   const kept = annotations.filter((annotation) => !sameAnnotation(annotation, type, id));
   if (kept.length === annotations.length) return false;
   $writeAnnotations(node, kept);
@@ -325,19 +319,21 @@ export function trimmedTextRange(text: string): [number, number] {
 }
 
 /**
- * The bytes `annotation` holds on `node`: its range of the node's text, or of what a decorator
- * renders; for a hold on bytes a decorator does not show, those bytes; for a decorator held whole,
- * all it renders without its edge whitespace, or the glyph it shows when it renders no text (a
- * collapsed note's caller).
+ * The bytes `annotation` (as {@link $displayAnnotationsOf} reads it) holds on `node`: its range of
+ * the node's text, or of what a decorator renders; for a hold on bytes a decorator does not show,
+ * those bytes; for a decorator held whole, the bytes it stands for (a collapsed note's caller, not
+ * the `*` or nothing drawn for it), or what it renders when it stands for none.
  */
 export function $coveredDisplayText(node: LexicalNode, annotation: DisplayAnnotation): string {
   if (annotation.undisplayed)
     return $decoratorHoldableText(node).slice(annotation.start, annotation.end);
   if (annotation.start !== annotation.end)
     return $carrierText(node).slice(annotation.start, annotation.end);
+  const holdable = $decoratorHoldableText(node);
+  if (holdable) return holdable;
   const rendered = $decoratorRenderedText(node);
   const [start, end] = trimmedTextRange(rendered);
-  return end > start ? rendered.slice(start, end) : $decoratorDisplayText(node);
+  return rendered.slice(start, end);
 }
 
 /** The ids of `type` whose range on `node` holds the caret offset `offset`. */
@@ -354,18 +350,15 @@ export function $displayAnnotationIdsAt(node: LexicalNode, type: string, offset:
 }
 
 /**
- * Re-measure `node`'s annotations against its current text (a decorator's rendered text) and store
- * that text as their basis, so a range follows its bytes through typing, a sync rewrite, a split or
+ * Re-measure `node`'s annotations against its current storage text (a decorator's holdable bytes)
+ * and store that text as their basis, so a range follows its bytes through typing, a sync rewrite, a split or
  * a collaborator's renumber, and a range its bytes left stays dropped. Idempotent. The body of the
  * node transform `registerDisplayAnnotationBasis` registers; mutating.
  */
 export function $syncDisplayAnnotationBasis(node: LexicalNode): void {
   const held = $getState(node, displayAnnotationsState);
-  if (!held) return;
-  const now = $carrierNow(node);
-  // Only drawn differently: the stored basis keeps each range exact for when it is drawn as before.
-  if (sameBytes(held, now)) return;
-  $writeAnnotations(node, remapped(held, now));
+  if (!held || held.basis === $storageText(node)) return;
+  $writeAnnotations(node, remapped(held, $storageText(node)));
 }
 
 /** Host callbacks for an annotation held on display bytes, which has no mark node to keep them. */

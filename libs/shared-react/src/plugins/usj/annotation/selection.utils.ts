@@ -2,7 +2,6 @@ import { $isImmutableVerseNode, ImmutableVerseNode } from "../../../nodes/usj/Im
 import { $isSomeVerseNode } from "../../../nodes/usj/node-react.utils";
 import { hasStandardViewWhitespace, ViewOptions } from "../../../views/view-options.utils";
 import { $blockToUsj, $getBlockUnits, $usjToBlock } from "./blockVerseLocations.utils";
-import { $renderedDecoratorHold } from "./decoratorHolds.utils";
 import { AnnotationRange, SelectionRange } from "./selection.model";
 import {
   type PropertyJsonPath,
@@ -111,7 +110,7 @@ import {
  *   then says which part of it the range names. Without it, each end
  *   resolves as a caret at that location does ({@link $getNodeFromLocation}).
  *   `decoratorHolds` (with `forAnnotation`): filled, per decorator key, with the part of each
- *   read-only decorator an end falls inside of, in its rendered text, for
+ *   read-only decorator an end falls inside of, in the holdable bytes it stands for, for
  *   `$wrapSelectionInTypedMarkNode` to hold exactly that part.
  * @returns A new editor RangeSelection object if the conversion is successful, or `undefined` if
  *   the required nodes or offsets cannot be found.
@@ -247,12 +246,7 @@ function $collectDecoratorHolds(
       : $isBeforeInDocument(end, start);
   const [first, last] = reversed ? [endInside, startInside] : [startInside, endInside];
   const hold = (inside: DecoratorBytePosition, from: number, to: number) => {
-    if (to <= from) return;
-    const held = $renderedDecoratorHold(inside.decorator, from, to);
-    if (!held) return;
-    // A hold showing none of its bytes keeps which of them it holds, since nothing on screen does.
-    if (held.start === held.end) held.undisplayed = [from, to];
-    holds.set(inside.decorator.getKey(), held);
+    if (to > from) holds.set(inside.decorator.getKey(), { start: from, end: to });
   };
   if (first) hold(first, first.before, sameDecorator && last ? last.before : first.total);
   if (last && !sameDecorator) hold(last, 0, last.before);

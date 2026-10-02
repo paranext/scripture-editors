@@ -8,11 +8,12 @@
 import { createState } from "lexical";
 
 /**
- * One annotation on a carrier: `[start, end)` offsets into the carrier's text — for a decorator,
- * into the text it renders. `start === end === 0` holds a decorator whole. `undisplayed` holds a
- * decorator for bytes it stands for but does not show (a verse's `\va` in a view that hides it):
- * held, but never painted; its `[start, end)` then index the decorator's holdable bytes
- * (`$decoratorHoldableText`) instead.
+ * One annotation on a carrier: `[start, end)` offsets into the carrier's text. A decorator's holds
+ * are stored as offsets into the holdable bytes it stands for (`$decoratorHoldableText`), and read
+ * (`$displayAnnotationsOf`) as offsets into the text it renders. `start === end === 0` holds a
+ * decorator whole. `undisplayed` marks, as read, a decorator held only for bytes it stands for but
+ * does not show (a verse's `\va` in a view that hides it): held, but never painted; its
+ * `[start, end)` then still index the holdable bytes.
  */
 export interface DisplayAnnotation {
   type: string;
@@ -22,14 +23,10 @@ export interface DisplayAnnotation {
   undisplayed?: boolean;
 }
 
-/**
- * A carrier's annotations, the carrier text their offsets were measured against, and — for a
- * decorator — the holdable bytes it stood for then, which tell an edit of those bytes from a
- * change in how they are drawn.
- */
+/** A carrier's annotations, and the text their stored offsets were measured against: a text
+ * carrier's text, or a decorator's holdable bytes. */
 export interface DisplayAnnotations {
   basis: string;
-  bytes?: string;
   annotations: DisplayAnnotation[];
 }
 
@@ -48,10 +45,9 @@ function isDisplayAnnotation(value: unknown): value is DisplayAnnotation {
 export const displayAnnotationsState = createState("displayAnnotations", {
   parse: (value: unknown): DisplayAnnotations | undefined => {
     if (typeof value !== "object" || value === null) return undefined;
-    const { basis, bytes, annotations } = value as { [key: string]: unknown };
+    const { basis, annotations } = value as { [key: string]: unknown };
     if (typeof basis !== "string" || !Array.isArray(annotations)) return undefined;
     if (!annotations.every(isDisplayAnnotation)) return undefined;
-    if (typeof bytes === "string") return { basis, bytes, annotations };
     return { basis, annotations };
   },
 });
