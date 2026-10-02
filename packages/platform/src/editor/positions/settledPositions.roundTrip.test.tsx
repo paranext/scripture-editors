@@ -243,6 +243,34 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     }
   });
 
+  it("keeps a position in front of a nesting `+` the settle drops", async () => {
+    // The `+` deleted from the opener `\+wj`: the span settles un-nested, and its closer `\+wj*`
+    // as `\wj*`. Behind the closer's `\` is settled offset 1 — in front of the `+`, not past it.
+    const { mounted, $node: $opener } = await pendingEdit(
+      [
+        "a ",
+        {
+          type: "char",
+          marker: "nd",
+          content: ["one ", { type: "char", marker: "wj", content: ["two"] }, " three"],
+        },
+        " b",
+      ],
+      view,
+      "\\+wj",
+      "\\wj",
+      1,
+    );
+    const $closer = () => {
+      const closer = $opener().getParentOrThrow().getLastChild();
+      if (!(closer instanceof TextNode)) throw new Error("expected the span's closer");
+      return closer;
+    };
+    const trip = roundTrip(mounted, view, $closer, 1);
+    expect(trip.reported).toMatchObject({ closingMarkerOffset: 1 });
+    expect(trip.to).toBe(trip.from);
+  });
+
   it("keeps a position in front of a note that a typed marker now opens a paragraph before", async () => {
     // `\a` typed in front of the note settles as a paragraph marker, with the note as the new
     // paragraph's first content; the end of its name is in front of the note.

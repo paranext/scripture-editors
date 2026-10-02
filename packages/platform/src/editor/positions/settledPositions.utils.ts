@@ -42,7 +42,12 @@ import {
   SettledOnlyRun,
   SettledRunMember,
 } from "../markerEdit/settledOnlyRuns.utils";
-import { ByteAlignment, mapCount, mapCountSnapped } from "../markerEdit/usfmByteAlignment.utils";
+import {
+  ByteAlignment,
+  mapCount,
+  mapCountSnapped,
+  mapSettledCountBeforeNesting,
+} from "../markerEdit/usfmByteAlignment.utils";
 import { SettledPositionContext, SettleScopePlan } from "./settledPositions.model";
 import { PreparedScopes } from "./settledScopes.utils";
 import {
@@ -739,23 +744,38 @@ function $livePointFromAnchor(
   anchor: CaretByteAnchor,
   atWordByte: boolean,
   location: UsjDocumentLocation,
+  viewOptions: ViewOptions,
   logger: LoggerBasic | undefined,
 ): FragmentPoint | undefined {
   const sides = pairedSides(plan);
   if (!sides) return $liveScopeFront(plan, logger);
   const addressDisplayBytes = !isUsjTextContentLocation(location);
   const crossed = anchorAcrossLiteralsSnapped(sides.alignment, anchor, "toLive");
-  // A byte inside a closing glyph the user is still editing (`\ w*`) is a place the caret rests,
-  // and a settled position on that byte is that place — caret addressing would move it past the
-  // glyph, onto the content after it.
-  const glyph = $closingGlyphByte(sides.liveFragment, crossed);
-  if (glyph) return cutCorrected(plan, glyph);
-  const liveAnchor = $withWsRunIn(sides.liveFragment, crossed, addressDisplayBytes);
-  const point = $resolveFragmentByteAnchor(sides.liveFragment, liveAnchor, {
-    addressDisplayBytes,
-  });
-  if (!point) return $liveScopeFront(plan, logger);
-  return cutCorrected(plan, atWordByte ? advancePastWhitespace(sides.liveFragment, point) : point);
+  const pointFor = (at: CaretByteAnchor): FragmentPoint | undefined => {
+    // A byte inside a closing glyph the user is still editing (`\ w*`) is a place the caret
+    // rests, and a settled position on that byte is that place — caret addressing would move it
+    // past the glyph, onto the content after it.
+    const glyph = $closingGlyphByte(sides.liveFragment, at);
+    if (glyph) return cutCorrected(plan, glyph);
+    const point = $resolveFragmentByteAnchor(
+      sides.liveFragment,
+      $withWsRunIn(sides.liveFragment, at, addressDisplayBytes),
+      { addressDisplayBytes },
+    );
+    return cutCorrected(
+      plan,
+      point && atWordByte ? advancePastWhitespace(sides.liveFragment, point) : point,
+    );
+  };
+  // A nesting `+` the settle drops stands between two live positions the settled one stands for;
+  // the closest to the left is in front of it, when the live document can spell a position there.
+  const leftmost = mapSettledCountBeforeNesting(sides.alignment, anchor.nonWsBefore);
+  if (leftmost < crossed.nonWsBefore) {
+    const point = pointFor({ ...crossed, nonWsBefore: leftmost });
+    const node = point && $getNodeByKey(point.key);
+    if (point && node && $exactLiveLocationAt(node, point.offset, viewOptions)) return point;
+  }
+  return pointFor(crossed) ?? $liveScopeFront(plan, logger);
 }
 
 /** The live point for a settled point that landed inside a preserved node run. */
@@ -791,6 +811,7 @@ function $livePointInPreservedRun(
           resolved.noteAnchor.anchor,
           resolved.noteAnchor.atWordByte,
           location,
+          prepared.viewOptions,
           logger,
         )
       : $liveScopeFront(notePlan, logger);
@@ -956,7 +977,14 @@ function $livePointThroughScope(
       resolved.atWordByte ? advancePastWhitespace(sides.liveFragment, point) : point,
     );
   }
-  return $livePointFromAnchor(plan, resolved.anchor, resolved.atWordByte, target.location, logger);
+  return $livePointFromAnchor(
+    plan,
+    resolved.anchor,
+    resolved.atWordByte,
+    target.location,
+    viewOptions,
+    logger,
+  );
 }
 
 /**
@@ -1125,21 +1153,9 @@ function $liveLocationOfPoint(
   const own = $getLocationFromNode(node, offset, viewOptions);
   const target = $pointOf([node, offset]);
   if (!target) return own;
-  const resolvesTo = (location: UsjDocumentLocation): PointType | undefined =>
-    $pointOf($getNodeFromLocation(location, viewOptions));
-  if (resolvesTo(own)?.is(target)) return own;
-  /** `at`'s own location, when it resolves back to `at` — or to the same caret on the other side
-   * of a node edge. */
-  const exactAt = (at: LexicalNode, atOffset: number): UsjDocumentLocation | undefined => {
-    const location = $getLocationFromNode(at, atOffset, viewOptions);
-    const resolved = resolvesTo(location);
-    if (!resolved) return undefined;
-    if (resolved.is($createPoint(at.getKey(), atOffset, "text"))) return location;
-    const twin = $twinCaret(at, atOffset);
-    return twin && resolved.is($createPoint(twin.node.getKey(), twin.offset, "text"))
-      ? location
-      : undefined;
-  };
+  if ($pointOf($getNodeFromLocation(own, viewOptions))?.is(target)) return own;
+  const exactAt = (at: LexicalNode, atOffset: number): UsjDocumentLocation | undefined =>
+    $exactLiveLocationAt(at, atOffset, viewOptions);
   // A caret at a text's end is also the caret at the start of the text after it, and the other
   // way round: where the point's own spelling does not resolve back to it (a token separator's
   // end), the same position spelled from the other side can, and is exact.
@@ -1152,6 +1168,28 @@ function $liveLocationOfPoint(
     if (location) return location;
   }
   return own;
+}
+
+/**
+ * The live location of the caret at a text node's `offset`, when it resolves back to that caret —
+ * or to the same caret on the other side of a node edge; `undefined` when the live location model
+ * has no spelling for the caret there (bytes typed into a glyph).
+ *
+ * Read-only: call inside a read of the LIVE editor state.
+ */
+function $exactLiveLocationAt(
+  node: LexicalNode,
+  offset: number,
+  viewOptions: ViewOptions,
+): UsjDocumentLocation | undefined {
+  const location = $getLocationFromNode(node, offset, viewOptions);
+  const resolved = $pointOf($getNodeFromLocation(location, viewOptions));
+  if (!resolved) return undefined;
+  if (resolved.is($createPoint(node.getKey(), offset, "text"))) return location;
+  const twin = $twinCaret(node, offset);
+  return twin && resolved.is($createPoint(twin.node.getKey(), twin.offset, "text"))
+    ? location
+    : undefined;
 }
 
 /**

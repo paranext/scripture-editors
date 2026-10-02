@@ -5,6 +5,7 @@ import {
   ByteAlignment,
   mapCount,
   mapCountSnapped,
+  mapSettledCountBeforeNesting,
   PLACEHOLDER,
 } from "./usfmByteAlignment.utils";
 
@@ -121,6 +122,10 @@ describe("alignUsfmBytes", () => {
     expect(mapCount(a, plus + 1, "live")).toBe(plus); // in front of `w`
     expect(mapCount(a, live.indexOf("two") + 3, "live")).toBe(settled.indexOf("two") + 3);
     expect(mapCount(a, live.length, "live")).toBe(settled.length);
+    // Back from the settled side, in front of the name: in front of the `+`, not past it.
+    expect(mapCount(a, plus, "settled")).toBe(plus + 1);
+    expect(mapSettledCountBeforeNesting(a, plus)).toBe(plus);
+    expect(mapSettledCountBeforeNesting(a, plus + 1)).toBe(plus + 2);
     // And the other way round: a span the settle nests gains them.
     const b = alignUsfmBytes(settled, live);
     expectTiles(b, settled.length, live.length);

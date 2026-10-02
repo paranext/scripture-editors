@@ -25,6 +25,8 @@ export interface AlignedSegment {
   readonly settledEnd: number;
   /** The two sides spell the same bytes here, one for one. */
   readonly same: boolean;
+  /** A nesting `+` one side's marker has and the other's does not. */
+  readonly nesting?: boolean;
 }
 
 /**
@@ -77,12 +79,21 @@ class SegmentList {
     settledStart: number,
     settledEnd: number,
     same: boolean,
+    nesting = false,
   ) {
     if (liveStart === liveEnd && settledStart === settledEnd) return;
     const last = this.segments[this.segments.length - 1];
     if (same && last?.same && last.liveEnd === liveStart && last.settledEnd === settledStart)
       this.segments[this.segments.length - 1] = { ...last, liveEnd, settledEnd };
-    else this.segments.push({ liveStart, liveEnd, settledStart, settledEnd, same });
+    else
+      this.segments.push({
+        liveStart,
+        liveEnd,
+        settledStart,
+        settledEnd,
+        same,
+        ...(nesting ? { nesting } : {}),
+      });
   }
 
   /** Two stretches that differ somewhere: the bytes both begin with, and then the bytes both end
@@ -349,10 +360,10 @@ function walk(
       (live[i] === NESTING) !== (settled[j] === NESTING)
     ) {
       if (live[i] === NESTING) {
-        out.push(i, i + 1, j, j, false);
+        out.push(i, i + 1, j, j, false, true);
         i += 1;
       } else {
-        out.push(i, i, j, j + 1, false);
+        out.push(i, i, j, j + 1, false, true);
         j += 1;
       }
       continue;
@@ -491,4 +502,22 @@ export function mapCountSnapped(
     return segment.same ? otherStart + (count - start) : otherStart;
   }
   return lengths(alignment, from)[1];
+}
+
+/**
+ * {@link mapCountSnapped} from the settled side to the live side, landing in FRONT of a nesting
+ * `+` the settled side does not have rather than past it: the settled count in front of a marker
+ * name stands for both live counts around the `+`, and the closest one to the left is in front of
+ * it (`\wj*` offset 1 is `\+wj*` offset 1, behind the `\`).
+ */
+export function mapSettledCountBeforeNesting(alignment: ByteAlignment, count: number): number {
+  const live = mapCountSnapped(alignment, count, "settled");
+  const nesting = alignment.segments.find(
+    (segment) =>
+      segment.nesting &&
+      segment.settledStart === count &&
+      segment.settledEnd === count &&
+      segment.liveEnd === live,
+  );
+  return nesting ? nesting.liveStart : live;
 }
