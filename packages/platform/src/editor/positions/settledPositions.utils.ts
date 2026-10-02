@@ -1602,10 +1602,10 @@ function $scratchLocationFromLivePoint(
 /**
  * A resolved scratch point's location. The scratch holds one scope's settled root children and
  * nothing after them, so the boundary past its last child — where a position past a root-level
- * preserved run such as a sidebar lands — is the scratch's document end, which
- * `$getLocationFromNode` spells one past the final newline. In the settled document the scope need
- * not be last, so that boundary is spelled where the scope's last byte ends instead: at the end of
- * its last leaf.
+ * preserved run such as a sidebar lands, or past the closer of a span that ends the scope — is the
+ * scratch's document end, which `$getLocationFromNode` spells one past the final newline. In the
+ * settled document the scope need not be last, so that boundary is spelled where the scope's last
+ * byte ends instead: at the end of its last leaf.
  *
  * Read-only: call inside a read of the scratch tree.
  */
@@ -1615,8 +1615,12 @@ function $scratchPointLocation(
 ): UsjDocumentLocation | undefined {
   const node = $getNodeByKey(point.key);
   if (!node) return undefined;
+  // Past an element's last child, when nothing in the scratch follows it: the scratch's end.
   const last =
-    $isRootNode(node) && point.offset >= node.getChildrenSize() && node.getLastDescendant();
+    $isElementNode(node) &&
+    point.offset >= node.getChildrenSize() &&
+    ($isRootNode(node) || node.getLastDescendant()?.is($getRoot().getLastDescendant())) &&
+    node.getLastDescendant();
   if (last)
     return $getLocationFromNode(
       last,

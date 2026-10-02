@@ -387,6 +387,32 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     expect(roundTrip(mounted, view, $node, 0).reported?.jsonPath).toMatch(/^\$\.content\[2\]/);
   });
 
+  it("keeps the end of a `\\ca` span's closer when the span ends its settle scope", async () => {
+    // `x` typed in front of `\ca` settles beside the chapter as text, with the span after it; the
+    // span's closer ends the chapter's scope, and its end is closer offset 4, not one past it.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { mounted } = await pendingEdit(usj, view, "\\ca", "x\\ca", 1);
+    const $closer = () => {
+      const closer = $getRoot()
+        .getAllTextNodes()
+        .find((text) => text.getTextContent() === "\\ca*");
+      if (!closer) throw new Error("no \\ca closer");
+      return closer;
+    };
+    const trip = roundTrip(mounted, view, $closer, "\\ca*".length);
+    expect(trip.reported).toMatchObject({ closingMarkerOffset: "\\ca*".length });
+    expect(trip.to).toBe(trip.from);
+  });
+
   it("keeps a position at the end of a `\\ca` value when a space is typed in front of its closer", async () => {
     // `\ca 3 \ca*` folds onto the chapter as altnumber `3`: the end of the value is in front of
     // the typed space, where it was read from, not behind it.
