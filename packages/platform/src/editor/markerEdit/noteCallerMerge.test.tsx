@@ -339,3 +339,64 @@ describe.each(["standard+expandedNotes", "unformatted"])(
     });
   },
 );
+
+describe.each(["standard+expandedNotes", "unformatted"])(
+  "a byte typed between a note's opening glyph and its caller (%s view)",
+  (view) => {
+    // The caret between `\f` and its caller text can sit at the glyph's end or at the caller text's
+    // front, and a selection listener moves the second onto the first before the next keystroke.
+    // The two look the same on screen, so a byte typed at either saves the same file: a name byte
+    // or `*` reads with the marker in front of it; `\`, `|` and a space go to the caller's side,
+    // where a byte that makes no caller word is content and the caller keeps its own.
+    const usj = twoParaUsj([
+      "a",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "ft", content: ["note text"] }],
+      },
+      " b",
+    ]);
+    const span = { type: "char", marker: "ft", content: ["note text"] };
+    it.each([
+      ["x", undefined],
+      ["*", undefined],
+      ["\\", { caller: "+", content: ["\\", span] }],
+      ["|", { caller: "+", content: ["|", span] }],
+      [" ", { caller: "+", content: [span] }],
+    ])("%j saves the same at the glyph's end and at the caller's front", async (byte, note) => {
+      const saved: unknown[] = [];
+      for (const caret of ["glyph end", "caller front"]) {
+        const mounted = await mountInView(usj, oracleView(view));
+        await act(async () => {
+          mounted.lexical.update(() => {
+            const caller = $callerSlot();
+            if (caret === "caller front") {
+              caller.setTextContent(byte + caller.getTextContent());
+              caller.select(1, 1);
+              return;
+            }
+            const glyph = caller.getPreviousSibling();
+            if (!$isTextNode(glyph)) throw new Error("expected the note's opening glyph");
+            glyph.setTextContent(glyph.getTextContent() + byte);
+            glyph.select(glyph.getTextContentSize(), glyph.getTextContentSize());
+          });
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        await depart(mounted);
+        saved.push(mounted.ref.current?.getUsj()?.content[2]);
+        mounted.unmount();
+      }
+      expect(saved[0]).toEqual(saved[1]);
+      const para = saved[0];
+      if (note && typeof para === "object" && para !== null && "content" in para)
+        expect(
+          (para.content as MarkerContent[]).find(
+            (item) => typeof item === "object" && item.type === "note",
+          ),
+        ).toMatchObject(note);
+    });
+  },
+);

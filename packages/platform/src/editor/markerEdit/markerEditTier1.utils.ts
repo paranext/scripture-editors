@@ -7,6 +7,7 @@
 import { isCharKindMarker, isParaKindMarker } from "./markerKind.utils";
 import {
   BARE_OPENER_REGEX,
+  BYTES_READ_WITH_MARKER_REGEX,
   CLOSER_FORM_REGEX,
   OPENER_NAME_REGEX,
   OPENER_NAME_SPAN_REGEX,
@@ -75,6 +76,7 @@ import {
   MarkerNode,
   MarkerType,
   NoteNode,
+  openingMarkerText,
   ParaNode,
   textTypeState,
   VerseNode,
@@ -602,7 +604,7 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
   if (node.getMarkerSyntax() === "opening") {
     // A `|` or space typed at the glyph's end belongs behind the separator, where the same
     // keystroke lands with the caret at the content's front.
-    if ($moveGlyphTailBehindSeparator(node)) {
+    if ($moveGlyphTailBehindSeparator(node) || $moveNoteGlyphTailToCaller(node)) {
       context.pendingKeys.delete(node.getKey());
       return;
     }
@@ -971,6 +973,7 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
     node.setTextContent(getEditableCallerText(retagged[1]));
     return true;
   }
+  if ($movePushedNameIntoNoteGlyph(node, caller)) return true;
   // A caller whose own bytes are gone waits as typed while the caret is at it: the next keystroke
   // may make it a caller word again (Paratext 9's delete-then-type retag). The departure puts it
   // back, as below, and the document reads that way meanwhile. Only a text that still starts with
@@ -987,6 +990,69 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
     return true;
   }
   $settleNoteCallerText(node, note);
+  return true;
+}
+
+/**
+ * Move the name bytes or `*` the user just typed at the very front of an expanded note's caller
+ * text — in front of the separator after the note's marker — into the note's opening glyph. That
+ * caret and the one at the glyph's end are one place on screen, and the bytes read `\fx` or `\f*`
+ * there: a marker edit, which the glyph settles. A `\` is left to the caller text's own arm, which
+ * moves it to the content, as it does a `\` typed at the glyph's end
+ * ({@link $moveNoteGlyphTailToCaller}): read with the marker it would leave the note no caller and
+ * the caller's bytes as content.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the bytes moved.
+ */
+function $movePushedNameIntoNoteGlyph(callerNode: TextNode, caller: string): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const { anchor } = selection;
+  if (anchor.key !== callerNode.getKey() || anchor.type !== "text") return false;
+  const text = callerNode.getTextContent();
+  const pushed = text.slice(0, anchor.offset);
+  if (text.slice(anchor.offset) !== getEditableCallerText(caller)) return false;
+  if (!BYTES_READ_WITH_MARKER_REGEX.test(pushed) || pushed.includes("\\")) return false;
+  const glyph = callerNode.getPreviousSibling();
+  if (!$isMarkerNode(glyph) || glyph.getMarkerSyntax() !== "opening") return false;
+  if (!BARE_OPENER_REGEX.test(glyph.getTextContent())) return false;
+  const glyphText = glyph.getTextContent() + pushed;
+  callerNode.setTextContent(getEditableCallerText(caller));
+  glyph.setTextContent(glyphText);
+  glyph.select(glyphText.length, glyphText.length);
+  return true;
+}
+
+/**
+ * Move a `|`, `\` or whitespace the user just typed at the end of an expanded note's opening glyph
+ * to the front of its caller text: that caret and the one at the caller text's front are one place
+ * on screen, and these bytes do not read with the marker (`\f` before them is still `\f`). The
+ * caller text's own arm then settles them as typed there — a space into the separator, the others
+ * to the start of the note's content, the caller keeping its own bytes.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the bytes moved.
+ */
+function $moveNoteGlyphTailToCaller(glyph: MarkerNode): boolean {
+  const note = glyph.getParent();
+  if (!$isNoteNode(note) || note.getIsCollapsed() !== false) return false;
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const text = glyph.getTextContent();
+  const { anchor } = selection;
+  if (anchor.key !== glyph.getKey() || anchor.offset !== text.length) return false;
+  const spelled = openingMarkerText(glyph.getMarker());
+  const tail = text.slice(spelled.length);
+  if (!text.startsWith(spelled) || !/^[|\\\s]+$/.test(tail)) return false;
+  const callerNode = glyph.getNextSibling();
+  if (!$isTextNode(callerNode) || $isMarkerNode(callerNode) || !callerNode.isUnmergeable())
+    return false;
+  glyph.setTextContent(spelled);
+  callerNode.setTextContent(tail + callerNode.getTextContent());
+  callerNode.select(tail.length, tail.length);
   return true;
 }
 
