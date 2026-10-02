@@ -9,16 +9,21 @@ import { mountInView, oracleView } from "../annotationLocations/annotationLocati
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { MarkerContent } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, CLICK_COMMAND, LexicalEditor } from "lexical";
+import { $getRoot, $isElementNode, CLICK_COMMAND, LexicalEditor, TextNode } from "lexical";
 import { $isMarkerNode, NBSP } from "shared";
 import { describe, expect, it } from "vitest";
+
+/** The edited paragraph's text nodes, in document order. */
+function $editedTexts(): TextNode[] {
+  const para = $getRoot().getChildren()[2];
+  if (!$isElementNode(para)) throw new Error("expected the edited paragraph");
+  return para.getAllTextNodes();
+}
 
 /** The edited paragraph's bytes as the screen shows them, a no-break space read as a space. */
 function screenOf(lexical: LexicalEditor): string {
   return lexical.getEditorState().read(() =>
-    $getRoot()
-      .getChildren()[2]
-      .getAllTextNodes()
+    $editedTexts()
       .map((node) => node.getTextContent())
       .join("")
       .replaceAll(NBSP, " "),
@@ -95,10 +100,9 @@ describe.each([
     const loaded = mounted.ref.current?.getUsj();
     await act(async () => {
       mounted.lexical.update(() => {
-        const node = $getRoot()
-          .getChildren()[2]
-          .getAllTextNodes()
-          .find((text) => $isMarkerNode(text) && text.getTextContent() === glyph);
+        const node = $editedTexts().find(
+          (text) => $isMarkerNode(text) && text.getTextContent() === glyph,
+        );
         if (!node) throw new Error(`glyph ${glyph} not found`);
         const text = node.getTextContent();
         node.setTextContent(at === "front" ? ` ${text}` : `${text} `);

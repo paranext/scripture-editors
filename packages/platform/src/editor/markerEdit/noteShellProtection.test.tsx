@@ -403,7 +403,10 @@ describe("a closed note's closing glyph, with the shell protected", () => {
 
   /** The paragraph holding the note as the screen shows it, a no-break space read as a space. */
   function $noteParagraphText(): string {
-    const para = requireDefined(findOnlyNote($getRoot()).getParent(), "note paragraph");
+    const para = requireDefined(
+      findOnlyNote($getRoot()).getParent() ?? undefined,
+      "note paragraph",
+    );
     return para
       .getAllTextNodes()
       .map((node) => node.getTextContent())
