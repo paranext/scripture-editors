@@ -108,6 +108,7 @@ import {
   NBSP,
   NoteNode,
   ParaNode,
+  PreservedNodeKind,
   textTypeState,
   TypedMarkNode,
   TypedMarkOnClick,
@@ -115,6 +116,7 @@ import {
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
   usfmFragmentToUsjContent,
+  UsfmFragmentOptions,
   VerseNode,
 } from "shared";
 import {
@@ -189,14 +191,13 @@ function pushText(out: FragmentAccumulator, node: LexicalNode, text: string): vo
 }
 
 function pushSentinel(out: FragmentAccumulator, nodes: LexicalNode[]): void {
-  // A placeholder glued to an unterminated marker token would be absorbed into the marker NAME
-  // (`\wj` + U+FFFC scans as unknown marker "wj￼"), vanishing from the tokenized text and
-  // tripping the sentinel-count abort — so a deleted separator before a preserved node (a note,
-  // milestone, or attribute span right after an opener) could never settle. Emit the separator
-  // the tokenizer expects after an opening marker; it is structural there (consumed by the
-  // opener's separator scan), and mid-word placements (`wa` + note + `tta`) are unaffected.
-  // After a bare `\` it is not structural — the tokenizer keeps `\ ` as text — so it is spelled
-  // as a no-break space no other fragment byte is, and {@link tokenizeFragment} takes it back out.
+  // The tokenizer ends a marker name at a placeholder, as it does at the `\` the node's own bytes
+  // start with. A preserved node directly after an opener whose separator was deleted (a note,
+  // milestone, or attribute span right after `\wj`) is still spelled with the separator the file
+  // writes after an opening marker; it is structural there (consumed by the opener's separator
+  // scan), and mid-word placements (`wa` + note + `tta`) are unaffected. After a bare `\` it is
+  // not structural — the tokenizer keeps `\ ` as text — so it is spelled as a no-break space no
+  // other fragment byte is, and {@link tokenizeFragment} takes it back out.
   const tail = UNTERMINATED_MARKER_TAIL.exec(out.text)?.[0];
   if (tail !== undefined) out.text += tail === "\\" ? NBSP : " ";
   out.spans.push({
@@ -234,18 +235,30 @@ function withoutBareBackslashSeparators(content: MarkerContent[]): MarkerContent
   return content;
 }
 
+/** What the preserved node run behind a placeholder stands for, as the tokenizer reads it. */
+function preservedNodeKind(run: LexicalNode[]): PreservedNodeKind {
+  if ($isNoteNode(run[0])) return "note";
+  if ($isVerseNode(run[0])) return "verse";
+  return "other";
+}
+
 /**
- * Tokenize a rebuild fragment's text. Every settle that tokenizes a fragment holding preserved-node
- * placeholders goes through here, so a bare `\` the user left in front of a preserved node stays
- * exactly that: the separator `pushSentinel` emits to keep the placeholder out of the marker-name
- * scan is not a byte of the document, and the file reads `\` directly followed by the node's own
- * marker the same way.
+ * Tokenize a rebuild fragment. Every settle that tokenizes a fragment holding preserved-node
+ * placeholders goes through here, so each placeholder parses as the node it stands for (a note or
+ * a verse ends the note open in front of it), and a bare `\` the user left in front of a preserved
+ * node stays exactly that: the separator `pushSentinel` spells after it is not a byte of the
+ * document, and the file reads `\` directly followed by the node's own marker the same way.
  */
 export function tokenizeFragment(
-  text: string,
-  options: Parameters<typeof usfmFragmentToUsjContent>[1],
+  fragment: FragmentAccumulator,
+  options: Omit<UsfmFragmentOptions, "placeholders">,
 ): MarkerContent[] {
-  return withoutBareBackslashSeparators(usfmFragmentToUsjContent(text, options));
+  return withoutBareBackslashSeparators(
+    usfmFragmentToUsjContent(fragment.text, {
+      ...options,
+      placeholders: fragment.sentinels.map(preservedNodeKind),
+    }),
+  );
 }
 
 /**
@@ -1731,6 +1744,13 @@ export function $resolveFragmentByteAnchor(
         best = { key: span.key, offset: spanLength };
         break;
       }
+      // Past one preserved node and in front of the next: neither has a byte a position can rest
+      // on, and the next addressable span is past the second node, so the position is the
+      // boundary between the two.
+      if (span.isSentinel && nextIsSentinel) {
+        const between = $pointAfterSentinelRun(span);
+        if (between) return between;
+      }
       if (addressable) endOfSatisfied = { key: span.key, offset: spanLength };
       needNextAddressable = true;
     }
@@ -2619,7 +2639,7 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
   // destroys and are transparent to re-tokenization, so nothing else would bring them back.
   const markRanges = $captureMarkByteRanges(paras, combined, undefined, $getEditor());
 
-  const content: MarkerContent[] = tokenizeFragment(combined.text, {
+  const content: MarkerContent[] = tokenizeFragment(combined, {
     getMarker: getMarkerFn,
   });
   if (content.length === 0) {
@@ -2839,7 +2859,7 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   // expanded note exactly as it can in a paragraph.
   const markRanges = $captureMarkByteRanges(contentNodes, out, undefined, $getEditor());
 
-  const content: MarkerContent[] = tokenizeFragment(out.text, {
+  const content: MarkerContent[] = tokenizeFragment(out, {
     getMarker: getMarkerFn,
     isNoteContext: true,
   });
@@ -3473,7 +3493,7 @@ export function $idleSettleWouldDiscardCaretHeldBytes(
   if (!caretInScope) return false;
   const fragment = $buildParaFragment(scope, getMarkerFn, viewOptions);
   if (!fragment) return false;
-  const content = usfmFragmentToUsjContent(fragment.text, { getMarker: getMarkerFn });
+  const content = tokenizeFragment(fragment, { getMarker: getMarkerFn });
   if (content.length === 0) return false;
   const counts = new Map<string, number>();
   for (const ch of fragment.text)

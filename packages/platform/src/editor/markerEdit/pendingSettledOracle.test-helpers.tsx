@@ -279,7 +279,7 @@ function $editableTexts(): TextNode[] {
 }
 
 /** Click into the second paragraph, blur, and commit whatever is still pending. */
-async function depart(mounted: Mounted): Promise<void> {
+export async function depart(mounted: Mounted): Promise<void> {
   await act(async () => {
     mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
     mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
@@ -822,13 +822,13 @@ function unrespelledChange(pending: string, settled: string): string | undefined
 }
 
 /** Normalized lines as one string: where blocks break is spelled by their markers. */
-function withoutLineBreaks(lines: string): string {
+export function withoutLineBreaks(lines: string): string {
   return lines.replaceAll("\n", "");
 }
 
 /** The settled document's chapter and edited blocks — everything but the book line and the
  * paragraph the caret departs to — as the file gets them, one normalized line per block. */
-function savedBytes(usj: Usj | undefined): string {
+export function savedBytes(usj: Usj | undefined): string {
   const lines = (usj?.content ?? [])
     .slice(1, -1)
     .map((item) => (isBlockItem(item) ? "\n" : "") + usfmOf(item))
@@ -860,7 +860,7 @@ function $isBlockNode(node: LexicalNode): boolean {
 
 /** The same blocks as the screen shows them, one normalized line per block; `undefined` when the
  * screen hides bytes the file has (a collapsed note's caller and content). */
-function $screenBytes(): string | undefined {
+export function $screenBytes(): string | undefined {
   const blocks = $getRoot().getChildren().slice(1, -1);
   const hidesBytes = (node: LexicalNode): boolean =>
     ($isNoteNode(node) && node.getIsCollapsed()) ||

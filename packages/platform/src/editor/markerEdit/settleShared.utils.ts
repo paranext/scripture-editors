@@ -22,6 +22,7 @@ import {
   MarkerSyntax,
   NBSP,
   NoteNode,
+  PRESERVED_NODE_PLACEHOLDER,
 } from "shared";
 import { ViewOptions } from "shared-react";
 
@@ -29,9 +30,10 @@ import { ViewOptions } from "shared-react";
  * The U+FFFC OBJECT REPLACEMENT CHARACTER that stands for exactly one PRESERVED (sentinel) node
  * wherever a rebuild's bytes are tokenized, signed, or compared. Both settles emit it into the
  * fragment text they hand the tokenizer and both splice the real nodes back over it afterwards, so
- * it must be the same character on both sides.
+ * it must be the same character on both sides — and the tokenizer's own placeholder, which it reads
+ * as the node it stands for.
  */
-export const ATOMIC_SENTINEL = "￼";
+export const ATOMIC_SENTINEL = PRESERVED_NODE_PLACEHOLDER;
 
 /**
  * A CharNode's own direct child, for signature purposes, given that child's display text as it

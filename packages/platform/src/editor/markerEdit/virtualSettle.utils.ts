@@ -518,7 +518,7 @@ export function $settledParaScope(
   if (!built) return undefined;
   const fragment = $fragmentWithCharOpenerRenames(built, charRenames, context);
   const tokenized = $fragmentWithoutTransient(fragment, transient);
-  const content: MarkerContent[] = tokenizeFragment(tokenized.text, {
+  const content: MarkerContent[] = tokenizeFragment(tokenized, {
     getMarker: getMarkerFn,
   });
   if (content.length === 0) return undefined;
@@ -649,7 +649,7 @@ export function $settledNoteScope(
   if (contentNodes.length === 0) return undefined;
   const out = $fragmentWithCharOpenerRenames(built.out, charRenames, context);
   const tokenized = $fragmentWithoutTransient(out, transient);
-  const content: MarkerContent[] = tokenizeFragment(tokenized.text, {
+  const content: MarkerContent[] = tokenizeFragment(tokenized, {
     getMarker: getMarkerFn,
     isNoteContext: true,
   });
@@ -1070,7 +1070,7 @@ export function $settledChapterScope(
   // re-tokenizes the region, as in a paragraph scope.
   const out = $fragmentWithCharOpenerRenames(built, charRenames, context);
   const tokenized = $fragmentWithoutTransient(out, transient);
-  const content: MarkerContent[] = tokenizeFragment(tokenized.text, {
+  const content: MarkerContent[] = tokenizeFragment(tokenized, {
     getMarker: getMarkerFn,
   });
   const [freshChapter] = content;
