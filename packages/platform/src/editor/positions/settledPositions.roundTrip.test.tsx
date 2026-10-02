@@ -235,6 +235,11 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     const twoEnd = roundTrip(mounted, view, $text(`${NBSP}two`), `${NBSP}two`.length);
     expect(twoEnd.reported).toMatchObject({ offset: "two".length });
     expect(twoEnd.to).toBe(twoEnd.from);
+    // Behind the `\`, in front of the `+` the settled `\wj` does not have: the same settled
+    // position as in front of `w`, handed back there — across only the dropped `+`.
+    const behindBackslash = roundTrip(mounted, view, $text("\\+wj"), 1);
+    expect(behindBackslash.reported).toMatchObject({ propertyOffset: 0 });
+    expect(behindBackslash.to).toBe((behindBackslash.from ?? 0) + 1);
     // In front of `w`, of `j`, and past the name: the settled glyph's own name offsets.
     for (const offset of [2, 3, 4]) {
       const trip = roundTrip(mounted, view, $text("\\+wj"), offset);

@@ -30,7 +30,7 @@
  * location to their left. And every report, handed back the way `setSelection` and `setAnnotation`
  * hand a host's location in, lands on the position it came from, on one across whitespace only that
  * reports the same, or on the closest position to its left the report names — never across a byte
- * to its right.
+ * to its right that the settled document has.
  *
  * One test file per view registers the oracle for that view
  * (`pendingSettledOracle.<view>.test.tsx`), so the views run in parallel.
@@ -38,6 +38,7 @@
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { $prepareSettleScopes } from "../positions/settledScopes.utils";
+import { $anchorForPoint } from "./tier2Rebuild.utils";
 import {
   $liveSelectionFromSettled,
   $settledLocationFromLivePoint,
@@ -329,7 +330,9 @@ function isWhitespaceBetween(text: string, a: number, b: number): boolean {
  * gave, from:
  *
  * - a position across whitespace only, on either side (several live positions are one settled
- *   position where whitespace the settle drops was typed);
+ *   position where whitespace the settle drops was typed), or to its right across only bytes the
+ *   settled document does not have (a nesting `+` the settle drops), which are one settled
+ *   position too;
  * - or, for a position that reports a location to its LEFT, the closest position to its left that
  *   reports it: every position from the landing up to the one the report came from reports it.
  *
@@ -360,6 +363,25 @@ function $roundTripFailures(context: SettledPositionContext, view: ViewOptions):
     positions.findIndex(
       (candidate) => candidate.node.getKey() === key && candidate.offset === offset,
     );
+  /** Whether every byte from caret `from` to caret `to` is one the settled document does not have
+   * — a live-only byte in the scope's byte alignment, such as a nesting `+` the settle drops — so
+   * the two are one position in settled terms. */
+  const crossesOnlyUnsettledBytes = (from: number, to: number): boolean => {
+    const plan = prepared.planContaining(positions[from].node);
+    if (!plan || plan !== prepared.planContaining(positions[to].node)) return false;
+    const { liveFragment, alignment } = plan;
+    if (!liveFragment || !alignment) return false;
+    const start = $anchorForPoint(liveFragment, positions[from].node, positions[from].offset);
+    const end = $anchorForPoint(liveFragment, positions[to].node, positions[to].offset);
+    if (!start || !end || end.anchor.nonWsBefore <= start.anchor.nonWsBefore) return false;
+    for (let count = start.anchor.nonWsBefore; count < end.anchor.nonWsBefore; count += 1) {
+      const segment = alignment.segments.find(
+        (candidate) => candidate.liveStart <= count && count < candidate.liveEnd,
+      );
+      if (!segment || segment.same || segment.settledEnd > segment.settledStart) return false;
+    }
+    return true;
+  };
   const failures: string[] = [];
   positions.forEach(({ node, offset, position }, index) => {
     const reported: UsjDocumentLocation | undefined = $settledLocationFromLivePoint(
@@ -383,6 +405,7 @@ function $roundTripFailures(context: SettledPositionContext, view: ViewOptions):
       (landed === position ||
         (reports[landedIndex] === wanted &&
           (isWhitespaceBetween(text, landed, position) ||
+            (landedIndex > index && crossesOnlyUnsettledBytes(index, landedIndex)) ||
             (landedIndex < index &&
               reports.slice(landedIndex, index + 1).every((report) => report === wanted)))) ||
         (landed <= named &&
