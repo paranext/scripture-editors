@@ -42,6 +42,7 @@ import {
   defaultMarkerAttribute,
   getPendedDisplayOwners,
   NBSP,
+  usfmFragmentToUsjContent,
 } from "shared";
 import { AnnotationRange } from "shared-react";
 import { describe, expect, it } from "vitest";
@@ -772,3 +773,48 @@ describe("deleting the separator of a span whose text holds an authored no-break
     expect(settled).toEqual(pending);
   });
 });
+
+describe.each(["standard", "unformatted"])(
+  "a char opener's separator deleted, then a name byte typed (%s view)",
+  (view) => {
+    it("settles as the bytes the screen shows, not as a rename beside a missing separator", async () => {
+      // `\w grace\w*`: Delete takes the separator, and `x` typed at the caret lands at the glyph's
+      // end. The screen shows `\wxgrace\w*` — one marker name running into the content — so the
+      // file gets that, not `\wx grace\wx*`.
+      const usj = twoParaUsj([
+        "In the ",
+        { type: "char", marker: "w", content: ["grace"] },
+        " of God",
+      ]);
+      const mounted = await mountInView(usj, oracleView(view));
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const content = $textContaining("grace");
+          content.setTextContent("grace");
+          content.select(0, 0);
+        });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.insertText("x");
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const pending = mounted.ref.current?.getUsj()?.content[2];
+      await act(async () => {
+        mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
+        mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      act(() => mounted.ref.current?.commitPendingMarkerEdits());
+      const settled = mounted.ref.current?.getUsj()?.content[2];
+      expect(settled).toEqual(usfmFragmentToUsjContent("\\p In the \\wxgrace\\w* of God")[0]);
+      expect(pending).toEqual(settled);
+      mounted.unmount();
+    });
+  },
+);

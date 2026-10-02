@@ -429,6 +429,12 @@ export function $applyOpenerRename(
     if (!isValidKind) {
       return $requestTier2ForNode(node, context);
     }
+    // With the span's separator gone and the bytes after it running into the new name
+    // (`\wx` + `grace`), the screen spells another marker than the rename would: the bytes settle
+    // as they read, by re-tokenizing.
+    if ($isCharNode(parent) && $hasRenamingSeparatorGap(parent)) {
+      return $requestTier2ForNode(node, context);
+    }
     const oldMarker = node.getMarker();
     if (parent.getMarker() !== oldMarker) {
       // Tree shape doesn't match the simple opener-owns-parent assumption: e.g. the collab
@@ -478,8 +484,9 @@ export interface CharOpenerRename {
  * The char opener rename `node`'s pend stands for, or `undefined` when `node` is not a char span's
  * opening glyph, its bytes are not a bare opener, or Tier 1 would not apply the rename in place.
  * The in-place conditions are {@link $applyOpenerRename}'s own: the glyph and the tree agree about
- * nesting, the new name is char-kind (or unknown), and the glyph's marker is its span's. Anything
- * else re-tokenizes, on both settle paths.
+ * nesting, the new name is char-kind (or unknown), the glyph's marker is its span's, and the span
+ * has no separator gap whose bytes run into the name. Anything else re-tokenizes, on both settle
+ * paths.
  *
  * Shared by the mutating settle ({@link $resolvePendingMarkers}) and the read-only one
  * (`$collectSettleScopes`, virtualSettle.utils.ts), so `getUsj()` while the edit is pending and the
@@ -503,6 +510,7 @@ export function $pendingCharOpenerRename(
   if (char.getMarker() !== oldMarker) return undefined;
   const newMarker = typedMarker.replace(/^\+/, "");
   if (!$renamesTheMarkerName(oldMarker, newMarker)) return undefined;
+  if ($hasRenamingSeparatorGap(char)) return undefined;
   return { char, glyph: node, closer: $charCloserOf(char, oldMarker), newMarker };
 }
 
