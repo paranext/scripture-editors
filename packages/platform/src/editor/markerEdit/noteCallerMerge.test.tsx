@@ -204,6 +204,16 @@ describe.each(["standard+expandedNotes", "unformatted"])(
       },
     );
 
+    it("moves only the typed backslash into content when it is typed in front of the caller word", async () => {
+      // A `\` cannot start a word, so ` \+⍽` is no retag; the caller's own `+` stays the caller's.
+      const mounted = await damage(` \\+${NBSP}`, 2);
+      const saved = savedNote(mounted.ref.current?.getUsj());
+      expect(saved.caller).toBe("+");
+      expect(callerText(mounted.lexical)).toBe(getEditableCallerText("+"));
+      expect(mounted.lexical.getEditorState().read($noteScreen)).toBe("\\f + \\note text\\f*");
+      expectNoteScreenIsSaved(mounted.lexical, saved);
+    });
+
     it("lands the caret at the content's start once the caller is put back, so typing is content", async () => {
       const mounted = await damage(" ", 1);
       await act(async () => {

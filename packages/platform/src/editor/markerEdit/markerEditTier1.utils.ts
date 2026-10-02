@@ -905,10 +905,6 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
 // "word" beside the map's caller declaration, exactly as the verse regexes tokenize the number.
 const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+$/;
 
-// The caller text taken apart: leading whitespace, the word (no whitespace, no backslash), the
-// whitespace after it, and whatever follows.
-const NOTE_CALLER_PARTS_REGEX = /^([ \u00A0]*)([^ \u00A0\\]*)([ \u00A0]*)([\s\S]*)$/;
-
 /**
  * Tier-1 arm for an expanded note's editable caller text — the note-marker family's leading
  * attribute (the markers map declares `caller` on `f`/`fe`/`ef`/`efe`/`x`/`ex`;
@@ -919,9 +915,9 @@ const NOTE_CALLER_PARTS_REGEX = /^([ \u00A0]*)([^ \u00A0\\]*)([ \u00A0]*)([\s\S]
  *   (PT9 GetNextWord: whole word, valid or not), exactly as `\v 1a` retags the number; the
  *   whitespace around it is structural and collapses.
  * - Anything else is damage to the caller's own bytes: the note keeps its caller, and its text is
- *   put back. Bytes the user typed into it beyond the caller — after its separator, onto its
- *   word, or over all of it — are content, and move to the start of the note's content, where the
- *   screen shows them. A caret in those bytes moves with them; a caret anywhere else past the
+ *   put back. Bytes the user typed into it — after its separator, onto its word, in front of it
+ *   (a `\`, which no word starts with), or over all of it — are content, and move to the start of
+ *   the note's content, where the screen shows them; the caller's own bytes never do. A caret in those bytes moves with them; a caret anywhere else past the
  *   caller lands at the content's start, so the next keystroke is content too.
  *
  * Only the caller TEXT is handled — the unmergeable text child the note builders make (a text
@@ -965,14 +961,24 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
     node.setTextContent(getEditableCallerText(retagged[1]));
     return true;
   }
-  const [, lead, word, trail, rest] = NOTE_CALLER_PARTS_REGEX.exec(text) ?? ["", "", "", "", text];
-  // The bytes past the caller's own: a word that is not (or does not start with) the caller is
-  // typed content, and so is everything after the word's whitespace.
-  const wordRest = word.startsWith(caller) ? word.slice(caller.length) : word;
-  const moved = wordRest ? wordRest + trail.replaceAll(NBSP, " ") + rest : rest;
-  const movedStart = wordRest
-    ? lead.length + (word.length - wordRest.length)
-    : lead.length + word.length + trail.length;
+  // The bytes typed into the caller text: what is left once the bytes it still starts and ends
+  // with, from the caller's own spelling, are set aside.
+  const canonical = getEditableCallerText(caller);
+  let movedStart = 0;
+  while (
+    movedStart < text.length &&
+    movedStart < canonical.length &&
+    text[movedStart] === canonical[movedStart]
+  )
+    movedStart += 1;
+  let kept = 0;
+  while (
+    kept < text.length - movedStart &&
+    kept < canonical.length - movedStart &&
+    text[text.length - 1 - kept] === canonical[canonical.length - 1 - kept]
+  )
+    kept += 1;
+  const moved = text.slice(movedStart, text.length - kept).replaceAll(NBSP, " ");
   const selection = $getSelection();
   const caret =
     $isRangeSelection(selection) &&
