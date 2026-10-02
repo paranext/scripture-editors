@@ -424,6 +424,22 @@ function $roundTripFailures(context: SettledPositionContext, view: ViewOptions):
   return failures;
 }
 
+/** A marker token: `\`, an optional `+`, a name, an optional `*`. */
+const MARKER_TOKEN_REGEX = /\\\+?[\w-]*\*?/g;
+
+/**
+ * `boundary` moved off a marker token `text` has across it: to the token's start for the front end
+ * of a shared stretch, to its end for the back one.
+ */
+function outsideMarkerToken(text: string, boundary: number, end: "front" | "back"): number {
+  for (const match of text.matchAll(MARKER_TOKEN_REGEX)) {
+    const start = match.index;
+    const stop = start + match[0].length;
+    if (start < boundary && boundary < stop) return end === "front" ? start : stop;
+  }
+  return boundary;
+}
+
 /** The length of the longest common prefix of `a` and `b`. */
 function commonPrefix(a: string, b: string): number {
   let length = 0;
@@ -443,11 +459,35 @@ function positionsReportedAwayFromTheirBytes(
   before: { text: string; reported: PositionReport[] },
   after: { text: string; reported: PositionReport[] },
 ): string[] {
-  const prefix = commonPrefix(before.text, after.text);
-  const suffix = Math.min(
+  // The bytes both texts start and end with. Where the changed bytes could equally be placed a
+  // little further left or right (a settle inserting `\p⍽` in front of a `\` the user typed), the
+  // bytes they could slide over are not known to be the same ones, so neither end claims them.
+  const longestPrefix = commonPrefix(before.text, after.text);
+  const longestSuffix = Math.min(
     commonPrefix([...before.text].reverse().join(""), [...after.text].reverse().join("")),
-    before.text.length - prefix,
-    after.text.length - prefix,
+    before.text.length,
+    after.text.length,
+  );
+  // A marker token either text has across an end is not the same bytes on both sides either: a
+  // `\` the user typed reads as the first byte of a `\p` the settle supplied.
+  const shorter = Math.min(before.text.length, after.text.length);
+  // Only bytes added or removed outright (no byte changed in place) can slide.
+  const canSlide =
+    before.text.length !== after.text.length && longestPrefix + longestSuffix >= shorter;
+  const sharedPrefix = canSlide ? shorter - longestSuffix : longestPrefix;
+  const prefix = Math.min(
+    outsideMarkerToken(before.text, sharedPrefix, "front"),
+    outsideMarkerToken(after.text, sharedPrefix, "front"),
+  );
+  const suffix = Math.min(
+    longestSuffix,
+    before.text.length - longestPrefix,
+    after.text.length - longestPrefix,
+  );
+  const shift = after.text.length - before.text.length;
+  const suffixStart = Math.max(
+    outsideMarkerToken(before.text, before.text.length - suffix, "back"),
+    outsideMarkerToken(after.text, after.text.length - suffix, "back") - shift,
   );
   const settledAt = (position: number): (string | undefined)[] =>
     after.reported
@@ -459,7 +499,7 @@ function positionsReportedAwayFromTheirBytes(
     const settledPosition =
       position < prefix
         ? position
-        : position > before.text.length - suffix
+        : position > suffixStart
           ? position - before.text.length + after.text.length
           : undefined;
     if (settledPosition === undefined) continue;

@@ -345,6 +345,15 @@ function walk(
       j = settledEnd;
       continue;
     }
+    // A marker the settled side spells twice in a row where the live side spells it once: the
+    // tokenizer supplied the first copy (` \p` settles as a `\p` paragraph holding the space,
+    // ahead of the paragraph the typed glyph still opens), so the live marker is the second.
+    const supplied = settled[j] === MARKER_START ? suppliedMarkerAt(live, i, settled, j) : 0;
+    if (supplied > 0) {
+      out.push(i, i, j, j + supplied, false);
+      j += supplied;
+      continue;
+    }
     if (live[i] === settled[j]) {
       out.push(i, i + 1, j, j + 1, true);
       i += 1;
@@ -390,6 +399,27 @@ function walk(
   const end = options.prefix ? i : live.length;
   out.push(i, end, j, settled.length, false);
   return end;
+}
+
+/** A marker token — `\`, an optional nesting `+`, a name — starting at a position. */
+const MARKER_TOKEN = /\\\+?[\w-]+/y;
+
+/**
+ * The length of the marker token at `settled[j]` when the settled side spells it twice in a row and
+ * the live side, at `live[i]`, only once — the first settled copy is one the tokenizer supplied —
+ * or 0.
+ */
+function suppliedMarkerAt(live: string, i: number, settled: string, j: number): number {
+  MARKER_TOKEN.lastIndex = j;
+  const token = MARKER_TOKEN.exec(settled)?.[0];
+  // Only a token the next marker ends — nothing between it and its copy — is one spelled twice:
+  // these are non-whitespace bytes, so a name runs straight on into content that follows it.
+  if (!token || settled[j + token.length] !== MARKER_START) return 0;
+  return settled.startsWith(token, j + token.length) &&
+    live.startsWith(token, i) &&
+    !live.startsWith(token, i + token.length)
+    ? token.length
+    : 0;
 }
 
 /** Shift a literal's inner segments so their live side counts from the literal's own start. */

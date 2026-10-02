@@ -185,6 +185,26 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     expect(trip.to).toBe(trip.from);
   });
 
+  it("keeps a paragraph's own marker when a space typed in front of it starts a paragraph", async () => {
+    // ` \p` settles as a paragraph of its own holding the space, with a `\p` the tokenizer
+    // supplies, in front of the edited paragraph; the typed glyph's `\p` is still that paragraph's.
+    const { mounted, $node } = await pendingEdit(
+      ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      view,
+      "\\p",
+      " \\p",
+      1,
+    );
+    const inName = roundTrip(mounted, view, $node, 2);
+    expect(inName.reported).toEqual({ jsonPath: "$.content[3]['marker']", propertyOffset: 0 });
+    expect(inName.to).toBe(inName.from);
+    // Behind the typed space is in front of the paragraph the glyph opens — not among the supplied
+    // paragraph's own bytes.
+    const afterSpace = roundTrip(mounted, view, $node, 1);
+    expect(afterSpace.reported).toEqual({ jsonPath: "$.content[3]" });
+    expect(afterSpace.to).toBe(afterSpace.from);
+  });
+
   it("keeps a position at a paragraph's content start when its marker glyph is damaged", async () => {
     // `x\p` settles as a paragraph `\p x` before this one; the start of `In the` is behind the
     // separator, not in front of it at the end of the glyph.

@@ -110,6 +110,17 @@ describe("alignUsfmBytes", () => {
     expect(mapCount(a, 7, "live")).toBe(5);
   });
 
+  it("pairs a marker with its own copy, not one the tokenizer supplies in front of it", () => {
+    // ` \p` typed: the space settles as a paragraph of its own, opened by a supplied `\p`.
+    const live = nows(" \\p In the");
+    const settled = nows("\\p   \\p In the");
+    const a = alignUsfmBytes(live, settled);
+    expectTiles(a, live.length, settled.length);
+    expect(mapCount(a, 0, "live")).toBe(2); // in front of the live `\p`: the second settled one
+    expect(mapCount(a, 1, "live")).toBe(3);
+    expect(mapCount(a, 0, "settled")).toBeUndefined(); // the supplied `\p` has no live bytes
+  });
+
   it("lines up every byte but a nesting `+` the settle drops or adds", () => {
     // `\nd` deleted: its nested span settles un-nested, both its markers losing their `+`.
     const live = nows("nd one \\+wj two\\+wj* three\\nd*");

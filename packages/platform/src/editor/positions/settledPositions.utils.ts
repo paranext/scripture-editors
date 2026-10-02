@@ -1579,7 +1579,13 @@ function $scratchLocationFromLivePoint(
     return plan.scratch
       .getEditorState()
       .read(() => $settledLocationInSpelling(literal.run, literal.within, viewOptions));
-  const crossed = anchorAcrossLiteralsSnapped(alignment, anchored.anchor, "toSettled");
+  const crossed = $wsRunAcrossSuppliedBytes(
+    alignment,
+    liveFragment,
+    scratchFragment,
+    anchored.anchor,
+    anchorAcrossLiteralsSnapped(alignment, anchored.anchor, "toSettled"),
+  );
   // The mirror of the inbound addressing choice, decided the same way: a live position that names
   // USFM bytes wants the settled spelling of those bytes, including the ones no caret can rest
   // in; a position in ordinary content is a caret, and keeps the caret's own addressing — which
@@ -1605,6 +1611,52 @@ function $scratchLocationFromLivePoint(
     const point = $resolveFragmentByteAnchor(scratchFragment, anchor, { addressDisplayBytes });
     return point && $scratchPointLocation(point, viewOptions);
   });
+}
+
+/** How many whitespace bytes stand directly in front of a fragment's `count`th non-whitespace
+ * byte (or its end). */
+function wsRunInFrontOf(text: string, count: number): number {
+  let seen = 0;
+  let run = 0;
+  for (const byte of text) {
+    if (FRAGMENT_WS.test(byte)) {
+      run += 1;
+      continue;
+    }
+    if (seen === count) return run;
+    seen += 1;
+    run = 0;
+  }
+  return run;
+}
+
+/**
+ * `crossed` — a live anchor restated in settled bytes — with its whitespace run counted back from
+ * the byte it stands in front of, when settled-only bytes (a `\p` the tokenizer supplies) sit
+ * right before that byte: the live whitespace run then sits in front of the same byte, and
+ * counting it from the bytes before would put the position among the supplied bytes' own
+ * whitespace instead.
+ */
+function $wsRunAcrossSuppliedBytes(
+  alignment: ByteAlignment,
+  liveFragment: FragmentAccumulator,
+  scratchFragment: FragmentAccumulator,
+  live: CaretByteAnchor,
+  crossed: CaretByteAnchor,
+): CaretByteAnchor {
+  const followsSupplied = alignment.segments.some(
+    (segment) =>
+      !segment.same &&
+      segment.liveStart === segment.liveEnd &&
+      segment.settledEnd > segment.settledStart &&
+      segment.settledEnd === crossed.nonWsBefore,
+  );
+  if (!followsSupplied) return crossed;
+  const wsAfter = wsRunInFrontOf(liveFragment.text, live.nonWsBefore) - live.wsRun;
+  return {
+    ...crossed,
+    wsRun: Math.max(0, wsRunInFrontOf(scratchFragment.text, crossed.nonWsBefore) - wsAfter),
+  };
 }
 
 /**
