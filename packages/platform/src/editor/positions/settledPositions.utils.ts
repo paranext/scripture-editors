@@ -84,6 +84,7 @@ import {
   $isImpliedParaNode,
   $isMarkerNode,
   $isNoteNode,
+  $noteEditableCallerNode,
 } from "shared";
 import {
   $getJsonPathIndexes,
@@ -1637,8 +1638,27 @@ function $exactSettledLocationInScope(
   if (plan.kind === "note") {
     // The note's own marker, caller and closing glyph are outside the content fragment, and a
     // content settle hands them through unchanged: the same location, at the note's settled path.
+    const note = plan.liveNodes[0];
+    // The end of the caller text is also the front of the content: the settled note spells it from
+    // the content, so it crosses as the content's first position does.
+    const twin =
+      $isNoteNode(note) &&
+      $noteEditableCallerNode(note)?.is(node) &&
+      offset === node.getTextContentSize()
+        ? $twinCaret(node, offset)
+        : undefined;
+    if (
+      twin &&
+      !$isOwnBytesLocationOf(
+        $getLocationFromNode(twin.node, twin.offset, prepared.viewOptions),
+        note,
+      )
+    ) {
+      const fromContent = $exactSettledLocationInScope(prepared, plan, twin.node, twin.offset);
+      if (typeof fromContent === "object") return fromContent;
+    }
     const location = $getLocationFromNode(node, offset, prepared.viewOptions);
-    if ($isOwnBytesLocationOf(location, plan.liveNodes[0])) {
+    if ($isOwnBytesLocationOf(location, note)) {
       const settledPath = $settledScopePath(prepared, plan);
       return settledPath && withContentIndexes(location, settledPath);
     }

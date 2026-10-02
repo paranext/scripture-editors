@@ -309,6 +309,41 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     },
   );
 
+  it.runIf(view !== "standard")(
+    "reports the end of a note's caller as the front of its content, as the settled note does",
+    async () => {
+      // `x` typed in front of `\ft` settles as text starting the note's content; the end of the
+      // caller text is in front of it.
+      const { mounted } = await pendingEdit(
+        [
+          "a",
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note text"] }],
+          },
+          " b",
+        ],
+        view,
+        "\\ft",
+        "x\\ft",
+        1,
+      );
+      const caller = ` +${NBSP}`;
+      const $caller = () => {
+        const found = $getRoot()
+          .getAllTextNodes()
+          .find((text) => text.getTextContent() === caller);
+        if (!found) throw new Error("no caller text");
+        return found;
+      };
+      const trip = roundTrip(mounted, view, $caller, caller.length);
+      expect(trip.reported).toEqual({ jsonPath: "$.content[2].content[1].content[0]", offset: 0 });
+      expect(trip.to).toBe(trip.from);
+    },
+  );
+
   it("keeps a position in front of a note that a typed marker now opens a paragraph before", async () => {
     // `\a` typed in front of the note settles as a paragraph marker, with the note as the new
     // paragraph's first content; the end of its name is in front of the note.
