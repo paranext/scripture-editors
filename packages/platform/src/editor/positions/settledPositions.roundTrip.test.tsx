@@ -310,6 +310,34 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
   );
 
   it.runIf(view !== "standard")(
+    "keeps a position in bytes typed into a note's closer, which settle as its content",
+    async () => {
+      // `x\f*` settles with `x` the note's last content; in front of it, and inside the closer
+      // after it, are places in the closer the live note still shows.
+      const { mounted, $node } = await pendingEdit(
+        [
+          "a",
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note text"] }],
+          },
+          " b",
+        ],
+        view,
+        "\\f*",
+        "x\\f*",
+        1,
+      );
+      for (let offset = 0; offset <= "x\\f*".length; offset += 1) {
+        const trip = roundTrip(mounted, view, $node, offset);
+        expect(trip.to).toBe(trip.from);
+      }
+    },
+  );
+
+  it.runIf(view !== "standard")(
     "reports the end of a note's caller as the front of its content, as the settled note does",
     async () => {
       // `x` typed in front of `\ft` settles as text starting the note's content; the end of the

@@ -969,6 +969,14 @@ function $livePointThroughScope(
       },
       addressDisplayBytes,
     );
+    // Literal bytes the user typed into a closing glyph (`x\f*`) are bytes of that glyph live, a
+    // place the caret rests even at the glyph's front; caret addressing would move past the glyph.
+    const inGlyph = $resolveFragmentByteAnchor(sides.liveFragment, liveAnchor, {
+      addressDisplayBytes: true,
+    });
+    const glyph = inGlyph && $getNodeByKey(inGlyph.key);
+    if (inGlyph && $isMarkerNode(glyph) && glyph.getMarkerSyntax() !== "opening")
+      return cutCorrected(plan, inGlyph);
     const point = $resolveFragmentByteAnchor(sides.liveFragment, liveAnchor, {
       addressDisplayBytes,
     });
