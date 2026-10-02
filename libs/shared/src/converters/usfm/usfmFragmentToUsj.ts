@@ -44,8 +44,8 @@
  * attribute list that does not parse — degrades to the plain char/para output
  * the marker classification produces on its own.
  *
- * Input is USFM text: `~` means NBSP; U+FFFC sentinels (atomic-node placeholders
- * from the Tier 2 fragment builder) ride through as ordinary text characters.
+ * Input is USFM text: `~` means NBSP; each {@link PRESERVED_NODE_PLACEHOLDER} stands for one node
+ * the caller keeps out of the bytes (see {@link UsfmFragmentOptions.placeholders}).
  */
 
 import { NBSP, PARA_MARKER_DEFAULT, ZWSP } from "../../nodes/usj/node-constants.js";
@@ -56,6 +56,24 @@ import { MarkerLookup } from "../../utils/usfm/styleInfo.js";
 import { MarkerType } from "../../utils/usfm/usfmTypes.js";
 import { MarkerContent, MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 
+/**
+ * The character a caller puts in a fragment in place of one node it keeps out of the bytes (a
+ * collapsed note, a milestone the tokenizer cannot re-derive, …) and puts back over the parsed
+ * output afterwards. The placeholder itself lands in the output as one text character.
+ *
+ * The node's own bytes start with a marker, so the placeholder parses the way that marker's `\`
+ * does: it ends any word being read in front of it — a marker name, a note caller, a verse or
+ * chapter number — exactly as ParatextData's `UsfmToken.Tokenize` ends one at a `\`.
+ */
+export const PRESERVED_NODE_PLACEHOLDER = "\uFFFC";
+
+/**
+ * What a {@link PRESERVED_NODE_PLACEHOLDER} stands for, as far as parsing around it depends on it.
+ * A note or a verse ends the note open in front of it (ParatextData `UsfmParser` closes the note at
+ * either marker); anything else is content wherever it lands.
+ */
+export type PreservedNodeKind = "note" | "verse" | "other";
+
 export interface UsfmFragmentOptions {
   /** Marker classification lookup; defaults to the bundled usfm.sty-derived `getMarker`. */
   getMarker?: MarkerLookup;
@@ -65,6 +83,11 @@ export interface UsfmFragmentOptions {
    * CHARACTER inside a note, PARAGRAPH in body text.
    */
   isNoteContext?: boolean;
+  /**
+   * What each {@link PRESERVED_NODE_PLACEHOLDER} in the fragment stands for, in fragment order. A
+   * placeholder with no entry stands for something other than a note or a verse.
+   */
+  placeholders?: readonly PreservedNodeKind[];
 }
 
 const VERSE_MARKER = "v";
@@ -121,7 +144,9 @@ type Token =
   | { kind: "chapter"; number: string }
   | { kind: "note"; marker: string; caller: string }
   | { kind: "milestone"; marker: string; attributes?: { [attributeName: string]: string } }
-  | { kind: "optbreak" }; // USFM discretionary line break `//`
+  | { kind: "optbreak" } // USFM discretionary line break `//`
+  // A placeholder for a note or a verse: it ends an open note the way the node's own marker does.
+  | { kind: "noteEndingPlaceholder" };
 
 /**
  * PT9 `UsfmToken.IsNonSemanticWhiteSpace`: everything .NET counts as whitespace EXCEPT IDEOGRAPHIC
@@ -257,7 +282,7 @@ function scanMarkerName(fragment: string, start: number): { name: string; next: 
   let index = start;
   while (index < fragment.length) {
     const ch = fragment[index];
-    if (ch === "\\" || ch === "|") break;
+    if (ch === "\\" || ch === "|" || ch === PRESERVED_NODE_PLACEHOLDER) break;
     if (ch === "*") {
       index++;
       break;
@@ -289,20 +314,49 @@ export function isMilestoneHeuristicName(name: string): boolean {
   return STYLESHEET_MILESTONE_NAME_REGEX.test(name) || isMilestoneCommentMarker(name);
 }
 
-/** PT9 `GetNextWord`: skip leading whitespace, take up to whitespace or `\`. */
+/** PT9 `GetNextWord`: skip leading whitespace, take up to whitespace or `\` — or a placeholder,
+ * which stands for bytes that start with `\`. */
 function getNextWord(fragment: string, start: number): { word: string; next: number } {
   let index = start;
   while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
   const wordStart = index;
-  while (index < fragment.length && !/[\s\u00A0\u200B\\]/.test(fragment[index])) index++;
+  while (
+    index < fragment.length &&
+    fragment[index] !== PRESERVED_NODE_PLACEHOLDER &&
+    !/[\s\u00A0\u200B\\]/.test(fragment[index])
+  )
+    index++;
   const word = fragment.slice(wordStart, index);
   while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
   return { word, next: index };
 }
 
-function tokenize(fragment: string, getMarkerFn: MarkerLookup, isNoteContext: boolean): Token[] {
+/** The fragment offsets of the placeholders that stand for a note or a verse, in order. */
+function noteEndingPlaceholderOffsets(
+  fragment: string,
+  placeholders: readonly PreservedNodeKind[],
+): number[] {
+  const offsets: number[] = [];
+  let ordinal = 0;
+  for (let offset = 0; offset < fragment.length; offset++) {
+    if (fragment[offset] !== PRESERVED_NODE_PLACEHOLDER) continue;
+    const kind = placeholders[ordinal];
+    ordinal++;
+    if (kind === "note" || kind === "verse") offsets.push(offset);
+  }
+  return offsets;
+}
+
+function tokenize(
+  fragment: string,
+  getMarkerFn: MarkerLookup,
+  isNoteContext: boolean,
+  placeholders: readonly PreservedNodeKind[],
+): Token[] {
   const tokens: Token[] = [];
   let index = 0;
+  const noteEnding = noteEndingPlaceholderOffsets(fragment, placeholders);
+  let nextNoteEnding = 0;
   // PT9 resolves an unknown marker against the OPEN ELEMENT STACK, not against the fragment it
   // started in (`State.Stack.Exists(e => e.Type == Note)`, UsfmParser.cs). A note opened inside
   // this fragment puts one on that stack just as surely as being handed note content does, so
@@ -327,8 +381,17 @@ function tokenize(fragment: string, getMarkerFn: MarkerLookup, isNoteContext: bo
 
   while (index < fragment.length) {
     if (fragment[index] !== "\\") {
+      while (nextNoteEnding < noteEnding.length && noteEnding[nextNoteEnding] < index)
+        nextNoteEnding++;
+      if (noteEnding[nextNoteEnding] === index) {
+        openNoteMarker = undefined;
+        tokens.push({ kind: "noteEndingPlaceholder" });
+        index++;
+        continue;
+      }
       const nextMarker = fragment.indexOf("\\", index);
-      const end = nextMarker === -1 ? fragment.length : nextMarker;
+      let end = nextMarker === -1 ? fragment.length : nextMarker;
+      if (nextNoteEnding < noteEnding.length) end = Math.min(end, noteEnding[nextNoteEnding]);
       pushTextWithOptbreaks(regularizeSpaces(fragment.slice(index, end)));
       index = end;
       continue;
@@ -1109,7 +1172,12 @@ export function usfmFragmentToUsjContent(
     figCapture = undefined;
   };
 
-  const tokens = tokenize(fragment, options?.getMarker ?? getMarker, isNoteContext);
+  const tokens = tokenize(
+    fragment,
+    options?.getMarker ?? getMarker,
+    isNoteContext,
+    options?.placeholders ?? [],
+  );
   for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
     const token = tokens[tokenIndex];
 
@@ -1552,6 +1620,10 @@ export function usfmFragmentToUsjContent(
         break;
       case "optbreak":
         pushContent({ type: "optbreak" });
+        break;
+      case "noteEndingPlaceholder":
+        closeNote(false);
+        pushContent(PRESERVED_NODE_PLACEHOLDER);
         break;
     }
   }

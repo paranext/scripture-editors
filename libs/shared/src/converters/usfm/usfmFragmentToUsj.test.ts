@@ -7,6 +7,7 @@ import {
 import { NBSP } from "../../nodes/usj/node-constants.js";
 import { defaultStyleInfo } from "../../utils/usfm/defaultStyleInfo.js";
 import { createMarkerLookup, StyleInfo } from "../../utils/usfm/styleInfo.js";
+import { MarkerContent, MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 
 describe("usfmFragmentToUsjContent — core", () => {
   it("tokenizes a plain paragraph", () => {
@@ -2304,5 +2305,98 @@ describe("usfmFragmentToUsjContent — peripheral divisions (\\periph)", () => {
       },
       { type: "para", marker: "mt1", content: ["The Title"] },
     ]);
+  });
+});
+
+describe("usfmFragmentToUsjContent — a preserved-node placeholder reads as the marker it stands for", () => {
+  // A preserved node's own USFM starts with `\`, so ParatextData reads its bytes as the start of a
+  // marker: whatever word was being read in front of it ends there, and a note or verse marker ends
+  // the note before it. The placeholder must parse the same way the node's own bytes do.
+  const PLACEHOLDER = "￼";
+  const footnote = "\\f + \\ft note\\f*";
+
+  /** `content` with every item `isPreserved` picks spelled as a placeholder, adjacent text joined —
+   * what the same bytes parse to when that node is handed over as a placeholder instead. */
+  function withPlaceholders(
+    content: MarkerContent[],
+    isPreserved: (item: MarkerObject) => boolean,
+  ): MarkerContent[] {
+    const result: MarkerContent[] = [];
+    for (const item of content) {
+      const next =
+        typeof item === "string"
+          ? item
+          : isPreserved(item)
+            ? PLACEHOLDER
+            : item.content
+              ? { ...item, content: withPlaceholders(item.content, isPreserved) }
+              : item;
+      const last = result[result.length - 1];
+      if (typeof next === "string" && typeof last === "string")
+        result[result.length - 1] = last + next;
+      else result.push(next);
+    }
+    return result;
+  }
+  const isFootnote = (item: MarkerObject) => item.type === "note" && item.marker === "f";
+
+  it("ends a note's caller word, and the note it stands for closes the note before it", () => {
+    const real = usfmFragmentToUsjContent(`\\p \\x a${footnote} b`);
+
+    expect(
+      usfmFragmentToUsjContent(`\\p \\x a${PLACEHOLDER} b`, { placeholders: ["note"] }),
+    ).toEqual(withPlaceholders(real, isFootnote));
+    expect(real).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "note", marker: "x", caller: "a", closed: "false" },
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note"], closed: "false" }],
+          },
+          " b",
+        ],
+      },
+    ]);
+  });
+
+  it("leaves a note with no caller word when the placeholder follows its separator", () => {
+    expect(
+      usfmFragmentToUsjContent(`\\p \\x ${PLACEHOLDER} b`, { placeholders: ["note"] }),
+    ).toEqual(withPlaceholders(usfmFragmentToUsjContent(`\\p \\x ${footnote} b`), isFootnote));
+  });
+
+  it("ends a verse number", () => {
+    expect(
+      usfmFragmentToUsjContent(`\\p \\v 1${PLACEHOLDER} b`, { placeholders: ["note"] }),
+    ).toEqual(withPlaceholders(usfmFragmentToUsjContent(`\\p \\v 1${footnote} b`), isFootnote));
+  });
+
+  it("ends a marker name", () => {
+    const isMilestone = (item: MarkerObject) => item.type === "ms";
+
+    expect(usfmFragmentToUsjContent(`\\p \\wj${PLACEHOLDER} b\\wj*`)).toEqual(
+      withPlaceholders(usfmFragmentToUsjContent("\\p \\wj\\qt-s\\* b\\wj*"), isMilestone),
+    );
+  });
+
+  it("closes an open note when it stands for a verse", () => {
+    const isVerse = (item: MarkerObject) => item.type === "verse";
+
+    expect(
+      usfmFragmentToUsjContent(`\\p \\f + \\ft a ${PLACEHOLDER}b`, { placeholders: ["verse"] }),
+    ).toEqual(withPlaceholders(usfmFragmentToUsjContent("\\p \\f + \\ft a \\v 2 b"), isVerse));
+  });
+
+  it("stays inside an open note when it stands for anything else", () => {
+    const isMilestone = (item: MarkerObject) => item.type === "ms";
+
+    expect(usfmFragmentToUsjContent(`\\p \\f + \\ft a ${PLACEHOLDER}b\\f*`)).toEqual(
+      withPlaceholders(usfmFragmentToUsjContent("\\p \\f + \\ft a \\qt-s\\*b\\f*"), isMilestone),
+    );
   });
 });
