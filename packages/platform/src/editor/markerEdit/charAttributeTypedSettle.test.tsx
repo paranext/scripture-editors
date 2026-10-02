@@ -17,6 +17,8 @@
  */
 
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
+import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { requireDefined, viewOptions } from "./markerEdit.test-helpers";
 import { initialize as initializeSerialize, reset } from "../adaptors/usj-editor.adaptor";
 import editorUsjAdaptor, {
@@ -421,3 +423,62 @@ describe("typing a closing marker keeps the span's default attribute", () => {
     expectSettlesLikeTokenizer(editor, `\\p \\w grace|G5485\\w*`);
   });
 });
+
+describe.each(["standard", "unformatted"])(
+  "a byte typed in front of a span's separator (%s view)",
+  (view) => {
+    it("stays in front of the content, and the separator stays a separator", async () => {
+      // `|` typed with the caret between `\w` and its separator: the attribute section starts the
+      // span's content, and the separator in front of it is not part of the lemma's value.
+      const mounted = await mountInView(
+        twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"]),
+        oracleView(view),
+      );
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const content = $textContaining("grace");
+          content.setTextContent(`|${NBSP}grace`);
+          content.select(1, 1);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const char = mounted.ref.current?.getUsj()?.content[2];
+      const span = typeof char === "object" ? char.content?.[1] : undefined;
+      expect(span).toMatchObject({ type: "char", marker: "w", lemma: "grace" });
+      mounted.unmount();
+    });
+
+    it("leaves a `\\ca` value as typed when a space goes in front of its separator", async () => {
+      // `\ca 3\ca*` beside its chapter, a space typed between `\ca` and its separator: the value
+      // folds onto the chapter as `3`, with no separator byte in it.
+      const mounted = await mountInView(
+        {
+          type: "USJ",
+          version: "3.1",
+          content: [
+            { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+            { type: "chapter", marker: "c", number: "1" },
+            { type: "char", marker: "ca", content: ["3"] },
+            { type: "para", marker: "p", content: ["depart here"] },
+          ],
+        },
+        oracleView(view),
+      );
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const value = $textContaining("3");
+          value.setTextContent(` ${NBSP}3`);
+          value.select(1, 1);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(mounted.ref.current?.getUsj()?.content[1]).toMatchObject({
+        type: "chapter",
+        altnumber: "3",
+      });
+      mounted.unmount();
+    });
+  },
+);

@@ -1,12 +1,1 @@
-{
-  "closed char span (unformatted view)": {
-    "text \"~grace\"@0 type \"|\" [positions]": "Unformatted view: `|` typed in front of content that starts with a no-break space makes that space part of a default attribute's value. The settled value holds it as data, while the attribute section's alignment drops it as whitespace, so the value's bytes do not line up and its positions report the value's start."
-  },
-  "char span with an attribute (unformatted view)": {
-    "text \"~grace\"@0 type \"|\" [positions]": "Unformatted view: `|` typed in front of content that starts with a no-break space makes that space part of a default attribute's value. The settled value holds it as data, while the attribute section's alignment drops it as whitespace, so the value's bytes do not line up and its positions report the value's start."
-  },
-  "\\ca span beside its chapter (unformatted view)": {
-    "text \"~3\"@0 type \" \" [positions]": "Unformatted view: a no-break space in front of a `\\ca` value is data in the settled altnumber but the live run's separator, so positions on either side of it disagree by that byte.",
-    "text \"~3\"@0 type \"|\" [positions]": "Unformatted view: a no-break space in front of a `\\ca` value is data in the settled altnumber but the live run's separator, so positions on either side of it disagree by that byte."
-  }
-}
+{}

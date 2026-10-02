@@ -271,8 +271,32 @@ export function $syncOpenerSeparators(char: CharNode): void {
       return;
     }
     const next = child.getNextSibling();
-    if ($isTextNode(next)) $prefixSeparator(next);
+    if (!$isTextNode(next)) return;
+    if (!$moveTypedBytesBehindSeparator(next)) $prefixSeparator(next);
   });
+}
+
+/**
+ * Bytes typed with the caret between an opening glyph and its separator (`\w|⍽grace`, caret
+ * behind the `|`): the separator is still there, behind them, so they move behind it rather than
+ * a second separator going in front of them — which would leave the first one inside the content
+ * (a lemma ` grace` where the user typed `|grace`). Recognized by the caret sitting right after
+ * the typed bytes, on the separator; a text whose separator was deleted has no such caret and is
+ * prefixed as usual.
+ *
+ * @returns Whether the bytes were moved.
+ */
+function $moveTypedBytesBehindSeparator(text: TextNode): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const { anchor } = selection;
+  if (anchor.type !== "text" || anchor.key !== text.getKey() || anchor.offset === 0) return false;
+  const content = text.getTextContent();
+  if (content[anchor.offset] !== NBSP) return false;
+  const typed = content.slice(0, anchor.offset);
+  text.setTextContent(NBSP + typed + content.slice(anchor.offset + 1));
+  text.select(anchor.offset + 1, anchor.offset + 1);
+  return true;
 }
 
 /** Prefix `text` with the separator NBSP, keeping any selection point inside it on the same
