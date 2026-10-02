@@ -11,7 +11,7 @@ import { createState } from "lexical";
  * One annotation on a carrier: `[start, end)` offsets into the carrier's text — for a decorator,
  * into the text it renders. `start === end === 0` holds a decorator whole. `undisplayed` holds a
  * decorator for bytes it stands for but does not show (a verse's `\va` in a view that hides it):
- * held, but never painted.
+ * held, but never painted; `text` names those bytes.
  */
 export interface DisplayAnnotation {
   type: string;
@@ -19,6 +19,7 @@ export interface DisplayAnnotation {
   start: number;
   end: number;
   undisplayed?: boolean;
+  text?: string;
 }
 
 /** A carrier's annotations, and the carrier text their offsets were measured against. */
@@ -29,13 +30,14 @@ export interface DisplayAnnotations {
 
 function isDisplayAnnotation(value: unknown): value is DisplayAnnotation {
   if (typeof value !== "object" || value === null) return false;
-  const { type, id, start, end, undisplayed } = value as { [key: string]: unknown };
+  const { type, id, start, end, undisplayed, text } = value as { [key: string]: unknown };
   return (
     typeof type === "string" &&
     typeof id === "string" &&
     Number.isInteger(start) &&
     Number.isInteger(end) &&
-    (undisplayed === undefined || typeof undisplayed === "boolean")
+    (undisplayed === undefined || typeof undisplayed === "boolean") &&
+    (text === undefined || typeof text === "string")
   );
 }
 

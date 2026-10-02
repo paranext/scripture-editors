@@ -246,7 +246,11 @@ function $collectDecoratorHolds(
   const hold = (inside: DecoratorBytePosition, from: number, to: number) => {
     if (to <= from) return;
     const held = $renderedDecoratorHold(inside.decorator, from, to);
-    if (held) holds.set(inside.decorator.getKey(), held);
+    if (!held) return;
+    // A hold showing none of its bytes keeps their text, since nothing on screen spells it.
+    if (held.start === held.end)
+      held.text = $decoratorHoldableText(inside.decorator).slice(from, to);
+    holds.set(inside.decorator.getKey(), held);
   };
   if (first) hold(first, first.before, sameDecorator && last ? last.before : first.total);
   if (last && !sameDecorator) hold(last, 0, last.before);
@@ -1409,16 +1413,17 @@ function wholeDecoratorByteOf(
   return undefined;
 }
 
-/** The tokens a verse or chapter decorator displays, in USFM order, with how many bytes each
- * spells. A chapter's `\cp` is a line of its own, with no closer. */
+/** The tokens a verse or chapter decorator displays, in USFM order, with the bytes each spells
+ * and how many. A chapter's `\cp` is a line of its own, with no closer. */
 function $wholeDecoratorTokens(
   decorator: ImmutableVerseNode | ImmutableChapterNode,
-): { bytes: DisplayByteKind; length: number }[] {
-  const tokens: { bytes: DisplayByteKind; length: number }[] = [
-    { bytes: { kind: "marker" }, length: 1 },
+): { bytes: DisplayByteKind; text: string; length: number }[] {
+  const token = (bytes: DisplayByteKind, text: string) => ({ bytes, text, length: text.length });
+  const tokens = [
+    token({ kind: "marker" }, "\\"),
     // The space after the marker name is inside the glyph Standard view spells, so it counts.
-    { bytes: { kind: "property", property: "marker" }, length: decorator.getMarker().length + 1 },
-    { bytes: { kind: "property", property: "number" }, length: decorator.getNumber().length },
+    token({ kind: "property", property: "marker" }, `${decorator.getMarker()} `),
+    token({ kind: "property", property: "number" }, decorator.getNumber()),
   ];
   const isChapter = $isImmutableChapterNode(decorator);
   const runs = isChapter
@@ -1430,17 +1435,34 @@ function $wholeDecoratorTokens(
     const value = keyName === "altnumber" ? decorator.getAltnumber() : decorator.getPubnumber();
     if (value === undefined) continue;
     tokens.push(
-      { bytes: { kind: "attributeMarker", keyName }, length: 1 },
-      { bytes: { kind: "attributeKey", keyName }, length: markerName.length },
-      { bytes: { kind: "property", property: keyName }, length: value.length },
+      token({ kind: "attributeMarker", keyName }, "\\"),
+      token({ kind: "attributeKey", keyName }, markerName),
+      token({ kind: "property", property: keyName }, value),
     );
     if (!(isChapter && keyName === "pubnumber"))
-      tokens.push({
-        bytes: { kind: "closingAttributeMarker", keyName },
-        length: closingMarkerText(markerName).length,
-      });
+      tokens.push(
+        token({ kind: "closingAttributeMarker", keyName }, closingMarkerText(markerName)),
+      );
   }
   return tokens;
+}
+
+/**
+ * The holdable bytes read-only `decorator` stands for, in the order positions inside it count them
+ * ({@link DecoratorBytePosition}): a verse's or chapter's tokens, an empty span's opening glyph and
+ * then its attributes, or the bytes any other decorator displays — each without its edge
+ * whitespace.
+ */
+function $decoratorHoldableText(decorator: LexicalNode): string {
+  if ($isImmutableVerseNode(decorator) || $isImmutableChapterNode(decorator))
+    return $wholeDecoratorTokens(decorator)
+      .map(({ text }) => text)
+      .join("");
+  const owner = decorator.getParent();
+  const standIn = $isCharNode(owner) ? $emptySpanStandIn(owner) : undefined;
+  if (standIn?.decorator.is(decorator))
+    return standIn.pieces.map(({ text }) => text.trim()).join("");
+  return $decoratorDisplayText(decorator).trim();
 }
 
 /**

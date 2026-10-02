@@ -242,8 +242,10 @@ function createIndex(editor: LexicalEditor): Entry {
   }
 
   /** Whether pointer `event` on leaf `key` falls on the part annotation `annotationKey` paints
-   * there — anywhere on an element painted whole. */
+   * there — anywhere on an element painted whole. Never for an annotation that paints nothing
+   * there, such as one held only for bytes a decorator does not show. */
   function hits(key: NodeKey, annotationKey: string, event: MouseEvent): boolean {
+    if (!annotationsByLeaf.get(key)?.has(annotationKey)) return false;
     if (wholeLeaves.has(key)) return true;
     return (highlighter?.leafHighlights(key) ?? []).some(
       (piece) =>

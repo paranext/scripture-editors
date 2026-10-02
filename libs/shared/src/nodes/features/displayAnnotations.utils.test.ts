@@ -300,15 +300,41 @@ describe("annotations held on what a decorator renders", () => {
     );
   });
 
+  it("names the bytes an undisplayed hold holds, not what the decorator shows", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    editor.update(
+      () => {
+        const glyph = $createImmutableTypedTextNode("marker", "\\w");
+        $getRoot().append($createParaNode().append(glyph));
+        $addDisplayAnnotation(glyph, "spelling", "a", 0, 0, { undisplayed: true, text: "G5485" });
+        expect($coveredDisplayText(glyph, $displayAnnotationsOf(glyph)[0])).toBe("G5485");
+      },
+      { discrete: true },
+    );
+  });
+
+  it("names what a decorator held whole renders, without its edge whitespace", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    editor.update(
+      () => {
+        const glyph = $createImmutableTypedTextNode("marker", "\\p ");
+        $getRoot().append($createParaNode().append(glyph));
+        $addDisplayAnnotation(glyph, "spelling", "a", 0, 0);
+        expect($coveredDisplayText(glyph, $displayAnnotationsOf(glyph)[0])).toBe("\\p");
+      },
+      { discrete: true },
+    );
+  });
+
   it("reads an undisplayed hold back from serialized state", () => {
     expect(
       displayAnnotationsState.parse({
         basis: "x",
-        annotations: [{ type: "t", id: "i", start: 0, end: 0, undisplayed: true }],
+        annotations: [{ type: "t", id: "i", start: 0, end: 0, undisplayed: true, text: "12a" }],
       }),
     ).toEqual({
       basis: "x",
-      annotations: [{ type: "t", id: "i", start: 0, end: 0, undisplayed: true }],
+      annotations: [{ type: "t", id: "i", start: 0, end: 0, undisplayed: true, text: "12a" }],
     });
     expect(
       displayAnnotationsState.parse({

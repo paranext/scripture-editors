@@ -456,6 +456,78 @@ describe("annotation painting on read-only decorators", () => {
       mounted.unmount();
     });
 
+    describe("beside an annotation that paints the decorator whole", () => {
+      /** `Before \v 12 \va 12a\va* In`. */
+      const besideUsj: Usj = {
+        type: "USJ",
+        version: "3.1",
+        content: [
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              "Before ",
+              { type: "verse", marker: "v", number: "12", altnumber: "12a" },
+              "In",
+            ],
+          },
+        ],
+      };
+      const besideAlt = "$.content[0].content[1]['altnumber']";
+
+      async function mountBoth() {
+        const mounted = await mountInView(besideUsj, oracleView("hidden+expanded"));
+        const a = { onClick: vi.fn(), onRemove: vi.fn<TypedMarkOnRemove>() };
+        const b = { onClick: vi.fn(), onRemove: vi.fn<TypedMarkOnRemove>() };
+        await act(async () => {
+          // Across the verse: the gap fill paints the verse whole.
+          mounted.ref.current?.setAnnotation(
+            {
+              start: { jsonPath: "$.content[0].content[0]", offset: 2 },
+              end: { jsonPath: "$.content[0].content[2]", offset: 1 },
+            },
+            ORACLE_TYPE,
+            "A",
+            a,
+          );
+          // Only bytes the verse stands for but does not show.
+          mounted.ref.current?.setAnnotation(
+            {
+              start: { jsonPath: besideAlt, propertyOffset: 0 },
+              end: { jsonPath: besideAlt, propertyOffset: 3 },
+            },
+            ORACLE_TYPE,
+            "B",
+            b,
+          );
+          await Promise.resolve();
+        });
+        const verseKey = mounted.lexical.getEditorState().read(() =>
+          $dfs()
+            .find(({ node }) => $isImmutableVerseNode(node))
+            ?.node.getKey(),
+        );
+        const verse = verseKey ? mounted.lexical.getElementByKey(verseKey) : null;
+        if (!verse) throw new Error("the verse renders");
+        return { mounted, a, b, verse };
+      }
+
+      it("sends a click on the decorator only to the annotation it paints", async () => {
+        const { mounted, a, b, verse } = await mountBoth();
+        verse.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        expect(a.onClick).toHaveBeenCalledTimes(1);
+        expect(b.onClick).not.toHaveBeenCalled();
+        mounted.unmount();
+      });
+
+      it("names the bytes an undisplayed hold holds when it is removed", async () => {
+        const { mounted, b } = await mountBoth();
+        await act(async () => mounted.ref.current?.removeAnnotation(ORACLE_TYPE, "B"));
+        expect(b.onRemove).toHaveBeenCalledWith(HELD_TYPE, "B", "removed", "12a");
+        mounted.unmount();
+      });
+    });
+
     it("paints only what the decorator shows of a range over shown and unshown bytes", async () => {
       const mounted = await mountInView(altUsj, oracleView("hidden+expanded"));
       await annotate(

@@ -154,8 +154,8 @@ function $writeAnnotations(node: LexicalNode, annotations: DisplayAnnotation[]):
 /**
  * Hold `type`/`id` on `node` over `[start, end)` (`0, 0` for a whole decorator), merged with any
  * range of the same annotation it overlaps or touches. `undisplayed` holds a decorator for bytes it
- * does not show (see `DisplayAnnotation`); a displayed range of the same annotation on the node
- * replaces it. Mutating: call inside `editor.update()`.
+ * does not show, which `text` names (see `DisplayAnnotation`); a displayed range of the same
+ * annotation on the node replaces it. Mutating: call inside `editor.update()`.
  */
 export function $addDisplayAnnotation(
   node: LexicalNode,
@@ -163,12 +163,14 @@ export function $addDisplayAnnotation(
   id: string,
   start: number,
   end: number,
-  options: { undisplayed?: boolean } = {},
+  options: { undisplayed?: boolean; text?: string } = {},
 ): void {
   const held = $displayAnnotationsOf(node);
   if (options.undisplayed) {
     if (held.some((annotation) => sameAnnotation(annotation, type, id))) return;
-    $writeAnnotations(node, [...held, { type, id, start: 0, end: 0, undisplayed: true }]);
+    const undisplayed: DisplayAnnotation = { type, id, start: 0, end: 0, undisplayed: true };
+    if (options.text) undisplayed.text = options.text;
+    $writeAnnotations(node, [...held, undisplayed]);
     return;
   }
   let merged: DisplayAnnotation = { type, id, start, end };
@@ -244,11 +246,19 @@ export function trimmedTextRange(text: string): [number, number] {
   return [start, end];
 }
 
-/** The bytes `annotation` covers on `node`: its range of the node's text, or of what a decorator
- * renders — everything a decorator shows, for one held whole or for bytes it does not show. */
+/**
+ * The bytes `annotation` holds on `node`: its range of the node's text, or of what a decorator
+ * renders; for a hold on bytes a decorator does not show, those bytes; for a decorator held whole,
+ * all it renders without its edge whitespace, or the glyph it shows when it renders no text (a
+ * collapsed note's caller).
+ */
 export function $coveredDisplayText(node: LexicalNode, annotation: DisplayAnnotation): string {
-  if (annotation.start === annotation.end) return $decoratorDisplayText(node);
-  return $carrierText(node).slice(annotation.start, annotation.end);
+  if (annotation.undisplayed) return annotation.text ?? "";
+  if (annotation.start !== annotation.end)
+    return $carrierText(node).slice(annotation.start, annotation.end);
+  const rendered = $decoratorRenderedText(node);
+  const [start, end] = trimmedTextRange(rendered);
+  return end > start ? rendered.slice(start, end) : $decoratorDisplayText(node);
 }
 
 /** The ids of `type` whose range on `node` holds the caret offset `offset`. */

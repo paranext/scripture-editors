@@ -160,6 +160,8 @@ function $coversWhole(element: ElementNode, start: LeafCaret, end: LeafCaret): b
 export interface DecoratorHold {
   start: number;
   end: number;
+  /** For a hold showing none of its bytes (`start === end`): the bytes it holds. */
+  text?: string;
 }
 
 /** How {@link $wrapSelectionInTypedMarkNode} holds what a selection cannot point inside of. */
@@ -171,8 +173,8 @@ export interface TypedMarkWrapOptions {
 
 /**
  * The `[start, end)` bytes of carrier `node` the range from `start` to `end` covers, or
- * `undefined` when it covers none; `"undisplayed"` for a decorator held only for bytes it does not
- * show. A decorator is covered only when the range passes over it: over the part `holds` names, or
+ * `undefined` when it covers none; `{ undisplayed }`, naming the bytes, for a decorator held only
+ * for bytes it does not show. A decorator is covered only when the range passes over it: over the part `holds` names, or
  * all the text it renders without its edge whitespace (whole, `[0, 0]`, when it renders none, as a
  * caller CSS draws). A text carrier's covered bytes are clamped to its holdable range
  * ({@link $carrierHoldableRange}), so a glyph's own edge whitespace is never held.
@@ -182,13 +184,14 @@ function $coveredCarrierRange(
   start: LeafCaret,
   end: LeafCaret,
   holds: ReadonlyMap<NodeKey, DecoratorHold> | undefined,
-): [number, number] | "undisplayed" | undefined {
+): [number, number] | { undisplayed: string } | undefined {
   if (!$isDisplayAnnotationCarrier(node)) return undefined;
   const [from, to] = $coveredOffsets(node, start, end);
   if (to <= from) return undefined;
   if (!$isTextNode(node)) {
     const hold = holds?.get(node.getKey());
-    if (hold) return hold.end > hold.start ? [hold.start, hold.end] : "undisplayed";
+    if (hold)
+      return hold.end > hold.start ? [hold.start, hold.end] : { undisplayed: hold.text ?? "" };
     return trimmedTextRange($decoratorRenderedText(node));
   }
   const [low, high] = $carrierHoldableRange(node);
@@ -228,9 +231,9 @@ export function $wrapSelectionInTypedMarkNode(
     // byte must never add this tag, or it rides into the update's own selection-only commit and
     // then onto whatever the user's NEXT edit turns out to be.
     $addUpdateTag(TYPED_MARK_WRAP_TAG);
-    if (covered === "undisplayed")
-      $addDisplayAnnotation(node, type, id, 0, 0, { undisplayed: true });
-    else $addDisplayAnnotation(node, type, id, covered[0], covered[1]);
+    if (Array.isArray(covered)) $addDisplayAnnotation(node, type, id, covered[0], covered[1]);
+    else
+      $addDisplayAnnotation(node, type, id, 0, 0, { undisplayed: true, text: covered.undisplayed });
     carrierAnnotated = true;
   };
   let currentNodeParent;
