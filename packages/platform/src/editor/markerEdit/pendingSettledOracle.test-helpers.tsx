@@ -6,12 +6,12 @@
  *
  * For each document in a small corpus of paragraph, char span (plain, nested, with attributes,
  * beside a chapter), note, verse and milestone shapes, in each view, every editable text node of
- * the edited block is visited at every offset of a glyph-like node (marker glyphs, verse glyphs, attribute runs)
- * and at the first and last two offsets of plain text — the positions around marker glyphs and
- * separators. At each, one keystroke is applied to the bytes at that node: a name character, a
- * space, `*`, `\`, `|`, the removal of the character before (Backspace) or after (Delete) it, or —
- * once per node — `x` typed over the node's whole text (a caller, a glyph, a word selected and
- * replaced).
+ * the edited block is visited at every offset of a glyph-like node (marker glyphs, verse glyphs,
+ * attribute runs) and at the first and last two offsets of plain text — the positions around
+ * marker glyphs and separators. At each, one keystroke is applied to the bytes at that node: a
+ * name character, a space, `*`, `\`, `|`, the removal of the character before (Backspace) or after
+ * (Delete) it, or — once per node — `x` typed over the node's whole text (a caller, a glyph, a word
+ * selected and replaced).
  * Typing is a direct splice into the node rather than `insertText`, so both nodes on either side
  * of a boundary are exercised: the editor can resolve a caret at a glyph's end to the end of the
  * glyph or to the start of the next text, and the two must settle alike. At every node boundary
@@ -22,9 +22,14 @@
  * `commitPendingMarkerEdits()`.
  *
  * After the settle, the screen must show what the file gets: the settled blocks' text, and the USFM
- * the settled document writes, carry the same bytes once whitespace — which a settle may place or
- * drop where a USFM reader treats it as structural — is set aside. Blocks showing a collapsed note,
- * whose caller and content the screen does not show, are not compared.
+ * the settled document writes, carry the same bytes, whitespace included, once only what a USFM
+ * reader itself reads as the same is made the same (`asUsfmBytes`: a run of spaces is one, the
+ * separator after a marker is structure). Blocks showing a collapsed note, whose caller and
+ * content the screen does not show, are not compared. The settle must also only respell what the
+ * screen showed while the edit was pending — supply a `\p`, nest or un-nest, normalize attributes,
+ * rename a closer with its opener, supply a caller (`unrespelledChange`) — so a typed byte it drops
+ * from the screen and the file alike still fails. And the same character typed at the same place on
+ * screen, in whichever node a caret there is spelled in, saves the same file.
  *
  * Positions are held to the same contract while the edit is pending. Every caret position, node
  * boundaries included, reports (`getSelection()`'s translation) a location the same bytes report
@@ -62,6 +67,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $isCharNode,
   $isMarkerNode,
   $isNoteNode,
   $isVerseNode,
@@ -70,6 +76,7 @@ import {
   canonicalAttributeText,
   defaultMarkerAttribute,
   getPendedDisplayOwners,
+  leadingAttributeNames,
   NBSP,
   textTypeState,
   TypedMarkNode,
@@ -180,9 +187,10 @@ const PLACED_KEYSTROKES: { name: string; character: string }[] = TYPED.map((char
   character,
 }));
 
-const KEYSTROKES: { name: string; apply: Keystroke }[] = [
+const KEYSTROKES: { name: string; apply: Keystroke; typed?: string }[] = [
   ...TYPED.map((character) => ({
     name: `type ${JSON.stringify(character)}`,
+    typed: character,
     apply: (text: string, offset: number) => ({
       text: text.slice(0, offset) + character + text.slice(offset),
       caret: offset + 1,
@@ -381,10 +389,13 @@ function $roundTripFailures(context: SettledPositionContext, view: ViewOptions):
     positions.findIndex(
       (candidate) => candidate.node.getKey() === key && candidate.offset === offset,
     );
-  /** Whether every byte from caret `from` to caret `to` is one the settled document does not have
-   * — a live-only byte in the scope's byte alignment, such as a nesting `+` the settle drops — so
-   * the two are one position in settled terms. */
+  /** Whether every byte from caret `from` to caret `to` is a nesting `+` the settled document does
+   * not have — a live-only byte in the scope's byte alignment that is a known respelling — so the
+   * two are one position in settled terms. Live-only bytes of any other kind are bytes the settle
+   * moved or dropped, and a landing may not cross them. */
   const crossesOnlyUnsettledBytes = (from: number, to: number): boolean => {
+    const crossed = text.slice(positions[from].position, positions[to].position);
+    if (!/^\+$/.test(crossed) || text[positions[from].position - 1] !== "\\") return false;
     const plan = prepared.planContaining(positions[from].node);
     if (!plan || plan !== prepared.planContaining(positions[to].node)) return false;
     const { liveFragment, alignment } = plan;
@@ -556,8 +567,8 @@ function usfmOf(item: MarkerContent, nested = false): string {
     case "chapter":
       return (
         `\\c ${item.number ?? ""} ` +
-        (item.altnumber !== undefined ? `\\ca ${item.altnumber}\\ca* ` : "") +
-        (item.pubnumber !== undefined ? `\\cp ${item.pubnumber} ` : "")
+        (item.altnumber !== undefined ? `\\ca ${item.altnumber}\\ca*` : "") +
+        (item.pubnumber !== undefined ? `\\cp ${item.pubnumber}` : "")
       );
     case "verse":
       return (
@@ -586,35 +597,252 @@ function usfmOf(item: MarkerContent, nested = false): string {
       return `\\${plus}${marker} ${inner(true)}${attributeText}${closer(`\\${plus}${marker}*`)}`;
     }
     default:
-      return JSON.stringify(item);
+      // A node the corpus does not hold has no spelling here; guessing one would compare nothing.
+      throw new Error(`usfmOf: no USFM spelling for a "${type}" node`);
   }
 }
 
-/** The bytes that are not whitespace. Where a settle may place or drop whitespace a USFM reader
- * treats as structural is a matter of spelling; a byte that is not whitespace is on the screen
- * and in the file, or the two disagree. */
+/** A marker token at a position: `\`, an optional nesting `+`, a name, an optional closing `*`. */
+const MARKER_AT_REGEX = /\\(\+?)([\w-]+)(\*?)/y;
+
+/** Whether `byte` is whitespace as USFM reads it, a no-break space included. */
+function isUsfmSpace(byte: string | undefined): boolean {
+  return byte !== undefined && /[\s\u00A0]/.test(byte);
+}
+
+/** Markers whose content a USFM reader folds onto an attribute of the marker before them (a
+ * chapter's or verse's alternate or published number, a note's category), trimmed. */
+const ATTRIBUTE_SPAN_MARKERS: ReadonlySet<string> = new Set(["ca", "va", "vp", "cat"]);
+
+/**
+ * Bytes — as the screen shows them or as the file gets them, one line per block — as USFM reads
+ * them, so the two compare byte for byte, whitespace included. Only what a USFM reader itself
+ * takes as the same (ParatextData, and `usfmFragmentToUsjContent` after it) is made the same:
+ *
+ * - A run of whitespace is one space: the reader collapses every run (`UsfmToken.RegularizeSpaces`;
+ *   `regularizeSpaces` in usfmFragmentToUsj.ts), so a file cannot hold one. A no-break space is a
+ *   space here too: the view chooses which of the two it shows a space as (standard view shows a
+ *   run with no-break spaces so it stays visible while typed), and a separator is a no-break
+ *   space on screen and a space in the file. Data no-break spaces are held to the file by the
+ *   unformatted view's own suite (unformattedContentNbsp.test.tsx).
+ * - The whitespace directly after an opening marker, and after the number or caller a `\c`, `\v`
+ *   or note marker takes (its leading attribute), is the separator the writer emits itself; the
+ *   reader takes it as structure, and it is dropped.
+ * - Whitespace ending the content of a span the reader folds onto an attribute (`\ca 3 \ca*`) is
+ *   trimmed off the value, and is dropped.
+ * - Whitespace at the start or end of a line is not kept by the reader either, and is dropped.
+ *   The line breaks themselves are kept for the pending/settled comparison to read; where one
+ *   block ends and the next begins is spelled by the next one's marker, so the screen/file
+ *   comparisons set them aside ({@link withoutLineBreaks}).
+ * - A zero-width space is dropped: the editor's empty-verse caret host, never a byte of the file.
+ *
+ * Every other byte — a space in content, in an attribute value or in a caller's slot included — is
+ * compared as it is.
+ */
 function asUsfmBytes(text: string): string {
-  return text.replace(/[\s\u00A0\u200B]+/g, "");
+  let out = "";
+  let at = 0;
+  const skipSeparator = (): void => {
+    while (text[at] !== "\n" && isUsfmSpace(text[at])) at += 1;
+  };
+  while (at < text.length) {
+    MARKER_AT_REGEX.lastIndex = at;
+    const marker = text[at] === "\\" ? MARKER_AT_REGEX.exec(text) : null;
+    if (!marker) {
+      const byte = text[at];
+      at += 1;
+      if (byte === "\n") out += byte;
+      else if (byte !== "\u200B") out += isUsfmSpace(byte) ? " " : byte;
+      continue;
+    }
+    if (marker[3] && ATTRIBUTE_SPAN_MARKERS.has(marker[2])) out = out.trimEnd();
+    out += marker[0];
+    at += marker[0].length;
+    if (marker[3]) continue;
+    skipSeparator();
+    if (!leadingAttributeNames(marker[2])) continue;
+    while (at < text.length && !isUsfmSpace(text[at]) && text[at] !== "\\") {
+      out += text[at];
+      at += 1;
+    }
+    skipSeparator();
+  }
+  return out
+    .replace(/ {2,}/g, " ")
+    .replace(/ *\n */g, "\n")
+    .trim();
+}
+
+/** A marker token anywhere: `\`, an optional nesting `+`, a name (possibly empty), an optional
+ * closing `*`. */
+const MARKER_TOKEN_ANYWHERE_REGEX = /\\\+?[\w-]*\*?/g;
+
+/**
+ * Whether the byte at `index` of normalized screen lines is one a settle may respell rather than
+ * one the user typed:
+ *
+ * - a line break (the settle splits or joins blocks);
+ * - a nesting `+` (the settle nests or un-nests a span);
+ * - a byte of an attribute section (`|…` up to the closer, which the settle normalizes);
+ * - a byte of a closer's name (a closer renamed with its opener);
+ * - on the settled side, whitespace right after a marker token (the separator the settle writes
+ *   after what now reads as a marker);
+ * - on the pending side, whitespace the settle turned into a line break (`atLineBreak`: a block
+ *   starts there now, and a line keeps no whitespace at its edge).
+ */
+function isRespelledByte(
+  text: string,
+  index: number,
+  side: "pending" | "settled",
+  atLineBreak: boolean,
+): boolean {
+  const byte = text[index];
+  if (byte === "\n") return true;
+  if (byte === "+" && text[index - 1] === "\\") return true;
+  if (byte === " ") {
+    if (side === "pending") return atLineBreak;
+    return /\\\+?[\w-]*$/.test(text.slice(0, index));
+  }
+  const section = text.lastIndexOf("|", index);
+  if (section >= 0 && !text.slice(section, index + 1).includes("\\")) return true;
+  for (const match of text.matchAll(MARKER_TOKEN_ANYWHERE_REGEX)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    if (index >= start && index < end)
+      return match[0].endsWith("*") && index > start && index < end - 1;
+  }
+  return false;
+}
+
+/** A longest common subsequence of `a` and `b`, as the index of `b` each byte of `a` is matched
+ * with, or -1 for a byte of `a` it leaves out. */
+function matchedIndexes(a: string, b: string): Int32Array {
+  const rows = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; i -= 1)
+    for (let j = b.length - 1; j >= 0; j -= 1)
+      rows[i][j] =
+        a[i] === b[j] ? rows[i + 1][j + 1] + 1 : Math.max(rows[i + 1][j], rows[i][j + 1]);
+  const match = new Int32Array(a.length).fill(-1);
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      match[i] = j;
+      i += 1;
+      j += 1;
+    } else if (rows[i + 1][j] >= rows[i][j + 1]) i += 1;
+    else j += 1;
+  }
+  return match;
+}
+
+/** The bytes the settle lost and gained, beyond respelling ({@link isRespelledByte}), with a byte
+ * that only moved counted on neither side; `undefined` when there are none. */
+function unrespelledBytes(pending: string, settled: string): string | undefined {
+  const match = matchedIndexes(pending, settled);
+  const matchedInSettled = new Set(match);
+  const lost: string[] = [];
+  for (let index = 0; index < pending.length; index += 1) {
+    if (match[index] >= 0) continue;
+    // Where the byte would sit in the settled lines: in front of the next byte that is kept.
+    let next = index + 1;
+    while (next < pending.length && match[next] < 0) next += 1;
+    const at = next < pending.length ? match[next] : settled.length;
+    if (!isRespelledByte(pending, index, "pending", settled[at - 1] === "\n"))
+      lost.push(pending[index]);
+  }
+  const gained: string[] = [];
+  for (let index = 0; index < settled.length; index += 1)
+    if (!matchedInSettled.has(index) && !isRespelledByte(settled, index, "settled", false))
+      gained.push(settled[index]);
+  const unmatched = lost.filter((byte) => {
+    const at = gained.indexOf(byte);
+    if (at < 0) return true;
+    gained.splice(at, 1);
+    return false;
+  });
+  if (unmatched.length === 0 && gained.length === 0) return undefined;
+  return `lost ${JSON.stringify(unmatched.join(""))}, gained ${JSON.stringify(gained.join(""))}`;
+}
+
+/**
+ * How the settle changed what the screen shows, beyond respelling it: the bytes the pending screen
+ * showed that the settled one lost, and the ones it gained ({@link unrespelledBytes}) — or
+ * `undefined` when the settle only respelled. Two more respellings supply bytes a reader needs
+ * and the screen lacked, so the comparison is also tried with each taken back out of the settled
+ * lines: a marker supplied at the start of a line (the `\p` that opens a paragraph for bytes typed
+ * in front of one), and a note's caller supplied where the screen showed none (a caller deleted
+ * and not retyped is put back; a note whose bytes give no caller gets `+`). A typed byte the
+ * settle drops from the screen and the file alike is invisible to the screen-equals-file check;
+ * this is what sees it.
+ */
+function unrespelledChange(pending: string, settled: string): string | undefined {
+  const change = unrespelledBytes(pending, settled);
+  if (!change) return undefined;
+  const supplied: [number, number][] = [];
+  for (const marker of settled.matchAll(/(?<=^|\n)\\[\w-]+/g))
+    for (let length = 2; length <= marker[0].length; length += 1)
+      supplied.push([marker.index, marker.index + length]);
+  for (const note of settled.matchAll(/\\([\w-]+)([^\\ ]+)/g))
+    if (leadingAttributeNames(note[1])?.includes("caller")) {
+      const start = note.index + 1 + note[1].length;
+      supplied.push([start, start + note[2].length]);
+    }
+  return supplied.some(
+    ([start, end]) => !unrespelledBytes(pending, settled.slice(0, start) + settled.slice(end)),
+  )
+    ? undefined
+    : change;
+}
+
+/** Normalized lines as one string: where blocks break is spelled by their markers. */
+function withoutLineBreaks(lines: string): string {
+  return lines.replaceAll("\n", "");
 }
 
 /** The settled document's chapter and edited blocks — everything but the book line and the
- * paragraph the caret departs to — as the screen shows them and as the file gets them; `undefined`
- * when the screen hides bytes the file has (a collapsed note's caller and content). */
-function $screenAndSaved(usj: Usj | undefined): { screen: string; saved: string } | undefined {
+ * paragraph the caret departs to — as the file gets them, one normalized line per block. */
+function savedBytes(usj: Usj | undefined): string {
+  const lines = (usj?.content ?? [])
+    .slice(1, -1)
+    .map((item) => (isBlockItem(item) ? "\n" : "") + usfmOf(item))
+    .join("");
+  return asUsfmBytes(lines);
+}
+
+/** Whether `item` starts a line of its own in USFM — a block, not inline content beside one. */
+function isBlockItem(item: MarkerContent): boolean {
+  return typeof item === "object" && ["para", "chapter", "book"].includes(item.type);
+}
+
+/** The bytes `node` shows: its text nodes' text, in document order. (`getTextContent` would add a
+ * line break around every block-level element inside it.) */
+function $bytesOf(node: LexicalNode): string {
+  return $isElementNode(node)
+    ? node
+        .getAllTextNodes()
+        .map((text) => text.getTextContent())
+        .join("")
+    : node.getTextContent();
+}
+
+/** Whether root child `node` is a block — a line of its own in USFM — rather than inline content
+ * beside one (a `\ca` span beside its chapter). */
+function $isBlockNode(node: LexicalNode): boolean {
+  return $isElementNode(node) && !$isCharNode(node);
+}
+
+/** The same blocks as the screen shows them, one normalized line per block; `undefined` when the
+ * screen hides bytes the file has (a collapsed note's caller and content). */
+function $screenBytes(): string | undefined {
   const blocks = $getRoot().getChildren().slice(1, -1);
   const hidesBytes = (node: LexicalNode): boolean =>
     ($isNoteNode(node) && node.getIsCollapsed()) ||
     ($isElementNode(node) && node.getChildren().some(hidesBytes));
-  if (blocks.some(hidesBytes) || !usj) return undefined;
-  return {
-    screen: asUsfmBytes(blocks.map((block) => block.getTextContent()).join("")),
-    saved: asUsfmBytes(
-      usj.content
-        .slice(1, -1)
-        .map((item) => usfmOf(item))
-        .join(""),
-    ),
-  };
+  if (blocks.some(hidesBytes)) return undefined;
+  return asUsfmBytes(
+    blocks.map((block) => ($isBlockNode(block) ? "\n" : "") + $bytesOf(block)).join(""),
+  );
 }
 
 /** The edited paragraph of `usj`, spelled compactly for a failure message. */
@@ -663,17 +891,25 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
         probe.unmount();
 
         const mismatches = new Map<string, string>();
+        // The first case that typed each character at each document position, and what it saved.
+        const savedByPlace = new Map<string, { label: string; saved: string }>();
         let pendingCases = 0;
         for (const { index, offset } of sites)
           for (const keystroke of [...KEYSTROKES, ...PLACED_KEYSTROKES]) {
             const mounted = await mountInView(usj, oracleView(view));
             let label = "";
             let applied = false;
+            let place: string | undefined;
             await act(async () => {
               mounted.lexical.update(() => {
                 const node = $editableTexts()[index];
                 const text = node.getTextContent();
                 label = `${node.getType()} ${JSON.stringify(text.replaceAll(NBSP, "~"))}@${offset} ${keystroke.name}`;
+                const typed = "character" in keystroke ? keystroke.character : keystroke.typed;
+                const at = $caretPositions().find(
+                  (caret) => caret.node.is(node) && caret.offset === offset,
+                );
+                if (typed !== undefined && at) place = `${JSON.stringify(typed)}@${at.position}`;
                 if ("character" in keystroke) {
                   if (offset !== 0 && offset !== text.length) return;
                   applied = true;
@@ -709,22 +945,47 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
             const pendingContext = positionContext(mounted.lexical, viewOptions);
             const before = mounted.lexical.getEditorState().read(() => ({
               text: $documentText(),
+              screen: $screenBytes(),
               reported: $reported(pendingContext),
               roundTrip: $roundTripFailures(pendingContext, viewOptions),
             }));
             await depart(mounted);
             const settled = mounted.ref.current?.getUsj();
+            // The same character typed at the same place on screen — at a glyph's end or at the
+            // start of the text after it — saves the same file.
+            if (place !== undefined) {
+              const saved = withoutLineBreaks(savedBytes(settled));
+              const first = savedByPlace.get(place);
+              if (!first) savedByPlace.set(place, { label, saved });
+              else if (first.saved !== saved)
+                mismatches.set(
+                  `${label} [same place]`,
+                  `${label} [same place]\n    saved ${JSON.stringify(saved)}\n    but ${first.label} saved ${JSON.stringify(first.saved)}`,
+                );
+            }
             if (JSON.stringify(pending) !== JSON.stringify(settled))
               mismatches.set(
                 label,
                 `${label}\n    pending ${bodyOf(pending)}\n    settled ${bodyOf(settled)}`,
               );
             // What the screen shows is what the file gets.
-            const shown = mounted.lexical.getEditorState().read(() => $screenAndSaved(settled));
-            if (shown && shown.screen !== shown.saved)
+            const shown = mounted.lexical.getEditorState().read(() => $screenBytes());
+            const saved = savedBytes(settled);
+            if (shown !== undefined && withoutLineBreaks(shown) !== withoutLineBreaks(saved))
               mismatches.set(
                 `${label} [screen]`,
-                `${label} [screen]\n    screen ${JSON.stringify(shown.screen)}\n    saved  ${JSON.stringify(shown.saved)}`,
+                `${label} [screen]\n    screen ${JSON.stringify(shown)}\n    saved  ${JSON.stringify(saved)}`,
+              );
+            // And the settle only respelled what the screen showed while the edit was pending: a
+            // typed byte it dropped from the screen and the file alike is not on either.
+            const change =
+              before.screen !== undefined && shown !== undefined
+                ? unrespelledChange(before.screen, shown)
+                : undefined;
+            if (change)
+              mismatches.set(
+                `${label} [respelled]`,
+                `${label} [respelled] ${change}\n    pending ${JSON.stringify(before.screen)}\n    settled ${JSON.stringify(shown)}`,
               );
             const settledContext = positionContext(mounted.lexical, viewOptions);
             const after = mounted.lexical.getEditorState().read(() => ({
@@ -739,7 +1000,13 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 `${label} [positions]\n    ${[...moved, ...roundTrip].join("\n    ")}`,
               );
             if (DUMP)
-              for (const key of [label, `${label} [screen]`, `${label} [positions]`])
+              for (const key of [
+                label,
+                `${label} [screen]`,
+                `${label} [positions]`,
+                `${label} [same place]`,
+                `${label} [respelled]`,
+              ])
                 if (mismatches.has(key))
                   // eslint-disable-next-line no-console -- PENDING_SETTLED_ORACLE_DUMP asks for this output.
                   console.info(
