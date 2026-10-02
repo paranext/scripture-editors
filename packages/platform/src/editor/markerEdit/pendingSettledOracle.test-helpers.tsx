@@ -29,8 +29,10 @@
  * content the screen does not show, are not compared. The settle must also only respell what the
  * screen showed while the edit was pending — supply a `\p`, nest or un-nest, normalize attributes,
  * rename a closer with its opener, supply a caller (`unrespelledChange`) — so a typed byte it drops
- * from the screen and the file alike still fails. And the same character typed at the same place on
- * screen, in whichever node a caret there is spelled in, saves the same file.
+ * from the screen and the file alike still fails; in a view that shows a typed whitespace run as
+ * typed (standard view), the two screens are compared with their runs kept, so a dropped space is
+ * one of those bytes. And the same character typed at the same place on screen, in whichever node
+ * a caret there is spelled in, saves the same file.
  *
  * Positions are held to the same contract while the edit is pending. Every caret position, node
  * boundaries included, reports (`getSelection()`'s translation) a location the same bytes report
@@ -78,7 +80,10 @@ import {
   defaultMarkerAttribute,
   getPendedDisplayOwners,
   leadingAttributeNames,
+  isMilestoneHeuristicName,
+  MarkerType,
   NBSP,
+  NoteNode,
   textTypeState,
   TypedMarkNode,
 } from "shared";
@@ -86,6 +91,7 @@ import {
   $getLocationFromNode,
   $getNodeFromLocation,
   $getRangeFromUsjSelection,
+  hasStandardViewWhitespace,
   usjReactNodes,
   ViewOptions,
 } from "shared-react";
@@ -631,6 +637,47 @@ function isUsfmSpace(byte: string | undefined): boolean {
 const ATTRIBUTE_SPAN_MARKERS: ReadonlySet<string> = new Set(["ca", "va", "vp", "cat"]);
 
 /**
+ * How a marker scopes what follows it, for finding the attribute sections in a line: by its kind in
+ * the stylesheet, or — for a marker the stylesheet does not know (a name being typed) — by where it
+ * stands, as the tokenizer reads one: a block at the start of a line, a char span inside one.
+ */
+function markerScope(
+  name: string,
+  isLineStart: boolean,
+): "block" | "note" | "char" | "milestone" | "none" {
+  if (name === "v" || name === "c") return "none";
+  switch (editorMarkerLookup(name)?.type) {
+    case MarkerType.Paragraph:
+      return "block";
+    case MarkerType.Character:
+      return "char";
+    case MarkerType.Note:
+      return "note";
+    case MarkerType.Milestone:
+      return "milestone";
+    default:
+      if (NoteNode.isValidMarker(name)) return "note";
+      if (isMilestoneHeuristicName(name)) return "milestone";
+      return isLineStart ? "block" : "char";
+  }
+}
+
+/**
+ * Bytes as USFM reads them ({@link normalizeUsfm}), with what the normalization knows about them
+ * that their spelling no longer says once a marker's separator is gone.
+ */
+interface UsfmBytes {
+  readonly text: string;
+  /** Per byte: whether it is in the attribute section of a char span or a milestone — from the
+   * `|` that starts it to the closer that ends that marker. */
+  readonly attribute: readonly boolean[];
+  /** Where each note's caller is, as `[start, end)`. */
+  readonly callers: readonly (readonly [number, number])[];
+  /** Where each marker that starts a line is, as `[start, end)`. */
+  readonly lineMarkers: readonly (readonly [number, number])[];
+}
+
+/**
  * Bytes — as the screen shows them or as the file gets them, one line per block — as USFM reads
  * them, so the two compare byte for byte, whitespace included. Only what a USFM reader itself
  * takes as the same (ParatextData, and `usfmFragmentToUsjContent` after it) is made the same:
@@ -654,9 +701,40 @@ const ATTRIBUTE_SPAN_MARKERS: ReadonlySet<string> = new Set(["ca", "va", "vp", "
  *
  * Every other byte — a space in content, in an attribute value or in a caller's slot included — is
  * compared as it is.
+ *
+ * `keepRuns` keeps a run of whitespace in content as long as it is (each byte a space), for
+ * comparing two SCREENS of a view that shows runs as typed (standard view keeps a typed run on
+ * screen while the file collapses it — the ratified exception in docs/standard-view-invariants.md
+ * §4): there a settle that drops a typed space from the screen is losing a byte, which a collapsed
+ * comparison cannot see. A separator run is still dropped whole: how much of the whitespace after
+ * a marker a screen shows as its separator is the view's choice, and moves with a settle that
+ * changes what reads as a marker.
  */
-function asUsfmBytes(text: string): string {
-  let out = "";
+function normalizeUsfm(text: string, keepRuns = false): UsfmBytes {
+  const out: string[] = [];
+  const attribute: boolean[] = [];
+  const callers: [number, number][] = [];
+  const lineMarkers: [number, number][] = [];
+  // The markers open at this point of the line, innermost last.
+  let open: { name: string; scope: ReturnType<typeof markerScope> }[] = [];
+  // Where the attribute section being read starts, while one is.
+  let section: number | undefined;
+  const append = (byte: string): void => {
+    out.push(byte);
+    attribute.push(section !== undefined);
+  };
+  const trimEnd = (): void => {
+    while (out.at(-1) === " ") {
+      out.pop();
+      attribute.pop();
+    }
+  };
+  /** End the attribute section being read: it is one only when a closer ends it. */
+  const endSection = (byCloser: boolean): void => {
+    if (section !== undefined && !byCloser)
+      for (let at = section; at < attribute.length; at += 1) attribute[at] = false;
+    section = undefined;
+  };
   let at = 0;
   const skipSeparator = (): void => {
     while (text[at] !== "\n" && isUsfmSpace(text[at])) at += 1;
@@ -667,26 +745,65 @@ function asUsfmBytes(text: string): string {
     if (!marker) {
       const byte = text[at];
       at += 1;
-      if (byte === "\n") out += byte;
-      else if (byte !== "\u200B") out += isUsfmSpace(byte) ? " " : byte;
+      if (byte === "\n") {
+        endSection(false);
+        open = [];
+        trimEnd();
+        if (out.length > 0 && out.at(-1) !== "\n") append(byte);
+      } else if (byte === "\\" && text[at] === "*") {
+        // A milestone's closer.
+        endSection(true);
+        if (open.at(-1)?.scope === "milestone") open.pop();
+        append(byte);
+      } else if (byte === "|") {
+        const scope = open.at(-1)?.scope;
+        if (section === undefined && (scope === "char" || scope === "milestone"))
+          section = out.length;
+        append(byte);
+      } else if (isUsfmSpace(byte)) {
+        if (out.length > 0 && out.at(-1) !== "\n" && (keepRuns || out.at(-1) !== " ")) append(" ");
+      } else if (byte !== "​") append(byte);
       continue;
     }
-    if (marker[3] && ATTRIBUTE_SPAN_MARKERS.has(marker[2])) out = out.trimEnd();
-    out += marker[0];
-    at += marker[0].length;
-    if (marker[3]) continue;
+    const [token, , name, closing] = marker;
+    endSection(!!closing);
+    if (closing && ATTRIBUTE_SPAN_MARKERS.has(name)) trimEnd();
+    const start = out.length;
+    for (const byte of token) append(byte);
+    if (start === 0 || out[start - 1] === "\n") lineMarkers.push([start, out.length]);
+    at += token.length;
+    if (closing) {
+      const opener = open.map((entry) => entry.name).lastIndexOf(name);
+      open = opener >= 0 ? open.slice(0, opener) : open.slice(0, -1);
+      continue;
+    }
+    const scope = markerScope(name, start === 0 || out[start - 1] === "\n");
+    if (scope === "block") open = [];
+    else if (scope !== "none") open.push({ name, scope });
     skipSeparator();
-    if (!leadingAttributeNames(marker[2])) continue;
+    const leading = leadingAttributeNames(name);
+    if (!leading) continue;
+    const valueStart = out.length;
     while (at < text.length && !isUsfmSpace(text[at]) && text[at] !== "\\") {
-      out += text[at];
+      append(text[at]);
       at += 1;
     }
+    if (leading.includes("caller")) callers.push([valueStart, out.length]);
     skipSeparator();
   }
-  return out
-    .replace(/ {2,}/g, " ")
-    .replace(/ *\n */g, "\n")
-    .trim();
+  endSection(false);
+  trimEnd();
+  while (out.at(-1) === "\n") {
+    out.pop();
+    attribute.pop();
+    trimEnd();
+  }
+  return { text: out.join(""), attribute, callers, lineMarkers };
+}
+
+/** {@link normalizeUsfm}'s bytes alone, every whitespace run collapsed as the reader does. */
+function asUsfmBytes(text: string): string {
+  return normalizeUsfm(text).text;
 }
 
 /** A marker token anywhere: `\`, an optional nesting `+`, a name (possibly empty), an optional
@@ -699,7 +816,7 @@ const MARKER_TOKEN_ANYWHERE_REGEX = /\\\+?[\w-]*\*?/g;
  *
  * - a line break (the settle splits or joins blocks);
  * - a nesting `+` (the settle nests or un-nests a span);
- * - a byte of an attribute section (`|…` up to the closer, which the settle normalizes);
+ * - a byte of a char span's or a milestone's attribute section (the settle normalizes it);
  * - a byte of a closer's name (a closer renamed with its opener);
  * - on the settled side, whitespace right after a marker token (the separator the settle writes
  *   after what now reads as a marker);
@@ -707,11 +824,12 @@ const MARKER_TOKEN_ANYWHERE_REGEX = /\\\+?[\w-]*\*?/g;
  *   starts there now, and a line keeps no whitespace at its edge).
  */
 function isRespelledByte(
-  text: string,
+  bytes: UsfmBytes,
   index: number,
   side: "pending" | "settled",
   atLineBreak: boolean,
 ): boolean {
+  const { text } = bytes;
   const byte = text[index];
   if (byte === "\n") return true;
   if (byte === "+" && text[index - 1] === "\\") return true;
@@ -719,8 +837,7 @@ function isRespelledByte(
     if (side === "pending") return atLineBreak;
     return /\\\+?[\w-]*$/.test(text.slice(0, index));
   }
-  const section = text.lastIndexOf("|", index);
-  if (section >= 0 && !text.slice(section, index + 1).includes("\\")) return true;
+  if (bytes.attribute[index]) return true;
   for (const match of text.matchAll(MARKER_TOKEN_ANYWHERE_REGEX)) {
     const start = match.index;
     const end = start + match[0].length;
@@ -754,23 +871,23 @@ function matchedIndexes(a: string, b: string): Int32Array {
 
 /** The bytes the settle lost and gained, beyond respelling ({@link isRespelledByte}), with a byte
  * that only moved counted on neither side; `undefined` when there are none. */
-function unrespelledBytes(pending: string, settled: string): string | undefined {
-  const match = matchedIndexes(pending, settled);
+function unrespelledBytes(pending: UsfmBytes, settled: UsfmBytes): string | undefined {
+  const match = matchedIndexes(pending.text, settled.text);
   const matchedInSettled = new Set(match);
   const lost: string[] = [];
-  for (let index = 0; index < pending.length; index += 1) {
+  for (let index = 0; index < pending.text.length; index += 1) {
     if (match[index] >= 0) continue;
     // Where the byte would sit in the settled lines: in front of the next byte that is kept.
     let next = index + 1;
-    while (next < pending.length && match[next] < 0) next += 1;
-    const at = next < pending.length ? match[next] : settled.length;
-    if (!isRespelledByte(pending, index, "pending", settled[at - 1] === "\n"))
-      lost.push(pending[index]);
+    while (next < pending.text.length && match[next] < 0) next += 1;
+    const at = next < pending.text.length ? match[next] : settled.text.length;
+    if (!isRespelledByte(pending, index, "pending", settled.text[at - 1] === "\n"))
+      lost.push(pending.text[index]);
   }
   const gained: string[] = [];
-  for (let index = 0; index < settled.length; index += 1)
+  for (let index = 0; index < settled.text.length; index += 1)
     if (!matchedInSettled.has(index) && !isRespelledByte(settled, index, "settled", false))
-      gained.push(settled[index]);
+      gained.push(settled.text[index]);
   const unmatched = lost.filter((byte) => {
     const at = gained.indexOf(byte);
     if (at < 0) return true;
@@ -781,34 +898,39 @@ function unrespelledBytes(pending: string, settled: string): string | undefined 
   return `lost ${JSON.stringify(unmatched.join(""))}, gained ${JSON.stringify(gained.join(""))}`;
 }
 
+/** `bytes` with the `[start, end)` ranges taken out, what is known of each byte kept with it. */
+function withoutRanges(
+  bytes: UsfmBytes,
+  ranges: readonly (readonly [number, number])[],
+): UsfmBytes {
+  const dropped = (index: number): boolean =>
+    ranges.some(([start, end]) => index >= start && index < end);
+  const kept = [...bytes.text].map((_, index) => index).filter((index) => !dropped(index));
+  return {
+    text: kept.map((index) => bytes.text[index]).join(""),
+    attribute: kept.map((index) => bytes.attribute[index]),
+    callers: [],
+    lineMarkers: [],
+  };
+}
+
 /**
  * How the settle changed what the screen shows, beyond respelling it: the bytes the pending screen
  * showed that the settled one lost, and the ones it gained ({@link unrespelledBytes}) — or
  * `undefined` when the settle only respelled. Two more respellings supply bytes a reader needs
  * and the screen lacked, so the comparison is also tried with each, and each pair, taken back out
- * of the settled lines: a marker supplied at the start of a line (the `\p` that opens a paragraph for bytes typed
- * in front of one), and a note's caller supplied where the screen showed none (a caller deleted
- * and not retyped is put back; a note whose bytes give no caller gets `+`). A typed byte the
- * settle drops from the screen and the file alike is invisible to the screen-equals-file check;
- * this is what sees it.
+ * of the settled lines: a marker supplied at the start of a line (the `\p` that opens a paragraph
+ * for bytes typed in front of one), and a note's caller supplied where the screen showed none (a
+ * caller deleted and not retyped is put back; a note whose bytes give no caller gets `+`) — each
+ * exactly the bytes the normalization read as that marker or that caller. A typed byte the settle
+ * drops from the screen and the file alike is invisible to the screen-equals-file check; this is
+ * what sees it.
  */
-function unrespelledChange(pending: string, settled: string): string | undefined {
+function unrespelledChange(pending: UsfmBytes, settled: UsfmBytes): string | undefined {
   const change = unrespelledBytes(pending, settled);
   if (!change) return undefined;
-  const supplied: [number, number][] = [];
-  for (const marker of settled.matchAll(/(?<=^|\n)\\[\w-]+/g))
-    for (let length = 2; length <= marker[0].length; length += 1)
-      supplied.push([marker.index, marker.index + length]);
-  for (const note of settled.matchAll(/\\([\w-]+)([^\\ ]+)/g))
-    if (leadingAttributeNames(note[1])?.includes("caller")) {
-      const start = note.index + 1 + note[1].length;
-      supplied.push([start, start + note[2].length]);
-    }
+  const supplied = [...settled.lineMarkers, ...settled.callers];
   // Either respelling alone, or both together (a `\p` and a caller supplied for one note).
-  const without = (ranges: [number, number][]): string =>
-    [...ranges]
-      .sort((a, b) => b[0] - a[0])
-      .reduce((text, [start, end]) => text.slice(0, start) + text.slice(end), settled);
   const combinations = supplied.flatMap((first, index) => [
     [first],
     ...supplied
@@ -816,7 +938,7 @@ function unrespelledChange(pending: string, settled: string): string | undefined
       .filter((second) => second[0] >= first[1] || second[1] <= first[0])
       .map((second) => [first, second]),
   ]);
-  return combinations.some((ranges) => !unrespelledBytes(pending, without(ranges)))
+  return combinations.some((ranges) => !unrespelledBytes(pending, withoutRanges(settled, ranges)))
     ? undefined
     : change;
 }
@@ -858,17 +980,22 @@ function $isBlockNode(node: LexicalNode): boolean {
   return $isElementNode(node) && !$isCharNode(node);
 }
 
-/** The same blocks as the screen shows them, one normalized line per block; `undefined` when the
- * screen hides bytes the file has (a collapsed note's caller and content). */
-export function $screenBytes(): string | undefined {
+/** The same blocks as the screen shows them, one line per block, not yet normalized; `undefined`
+ * when the screen hides bytes the file has (a collapsed note's caller and content). */
+function $screenLines(): string | undefined {
   const blocks = $getRoot().getChildren().slice(1, -1);
   const hidesBytes = (node: LexicalNode): boolean =>
     ($isNoteNode(node) && node.getIsCollapsed()) ||
     ($isElementNode(node) && node.getChildren().some(hidesBytes));
   if (blocks.some(hidesBytes)) return undefined;
-  return asUsfmBytes(
-    blocks.map((block) => ($isBlockNode(block) ? "\n" : "") + $bytesOf(block)).join(""),
-  );
+  return blocks.map((block) => ($isBlockNode(block) ? "\n" : "") + $bytesOf(block)).join("");
+}
+
+/** The same blocks as the screen shows them, one normalized line per block; `undefined` when the
+ * screen hides bytes the file has (a collapsed note's caller and content). */
+export function $screenBytes(): string | undefined {
+  const lines = $screenLines();
+  return lines === undefined ? undefined : asUsfmBytes(lines);
 }
 
 /** The edited paragraph of `usj`, spelled compactly for a failure message. */
@@ -972,7 +1099,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
             const pendingContext = positionContext(mounted.lexical, viewOptions);
             const before = mounted.lexical.getEditorState().read(() => ({
               text: $documentText(),
-              screen: $screenBytes(),
+              screen: $screenLines(),
               reported: $reported(pendingContext),
               roundTrip: $roundTripFailures(pendingContext, viewOptions),
             }));
@@ -996,7 +1123,8 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 `${label}\n    pending ${bodyOf(pending)}\n    settled ${bodyOf(settled)}`,
               );
             // What the screen shows is what the file gets.
-            const shown = mounted.lexical.getEditorState().read(() => $screenBytes());
+            const shownLines = mounted.lexical.getEditorState().read(() => $screenLines());
+            const shown = shownLines === undefined ? undefined : asUsfmBytes(shownLines);
             const saved = savedBytes(settled);
             if (shown !== undefined && withoutLineBreaks(shown) !== withoutLineBreaks(saved))
               mismatches.set(
@@ -1005,14 +1133,20 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
               );
             // And the settle only respelled what the screen showed while the edit was pending: a
             // typed byte it dropped from the screen and the file alike is not on either.
+            // A view that shows a typed whitespace run as typed is held to keeping it.
+            const keepRuns = hasStandardViewWhitespace(viewOptions);
+            const pendingScreen =
+              before.screen === undefined ? undefined : normalizeUsfm(before.screen, keepRuns);
+            const settledScreen =
+              shownLines === undefined ? undefined : normalizeUsfm(shownLines, keepRuns);
             const change =
-              before.screen !== undefined && shown !== undefined
-                ? unrespelledChange(before.screen, shown)
+              pendingScreen && settledScreen
+                ? unrespelledChange(pendingScreen, settledScreen)
                 : undefined;
             if (change)
               mismatches.set(
                 `${label} [respelled]`,
-                `${label} [respelled] ${change}\n    pending ${JSON.stringify(before.screen)}\n    settled ${JSON.stringify(shown)}`,
+                `${label} [respelled] ${change}\n    pending ${JSON.stringify(pendingScreen?.text)}\n    settled ${JSON.stringify(settledScreen?.text)}`,
               );
             const settledContext = positionContext(mounted.lexical, viewOptions);
             const after = mounted.lexical.getEditorState().read(() => ({
