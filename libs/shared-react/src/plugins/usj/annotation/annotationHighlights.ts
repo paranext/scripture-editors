@@ -37,15 +37,15 @@ export function annotationHighlightClassNames(name: string): readonly string[] |
   return classNamesByHighlight.get(name);
 }
 
-/** The properties a `::highlight()` rule can paint, read from a probe in this order. */
-const HIGHLIGHT_PROPERTIES = [
-  "background-color",
-  "color",
+/** The properties a `::highlight()` rule can paint besides a text decoration, read in this order. */
+const HIGHLIGHT_PROPERTIES = ["background-color", "color", "text-shadow"];
+
+/** A text decoration's longhands, read in this order. */
+const DECORATION_PROPERTIES = [
   "text-decoration-line",
   "text-decoration-style",
   "text-decoration-color",
   "text-decoration-thickness",
-  "text-shadow",
 ];
 
 const DECORATION_STYLES = new Set(["solid", "double", "dotted", "dashed", "wavy"]);
@@ -53,6 +53,10 @@ const DECORATION_STYLES = new Set(["solid", "double", "dotted", "dashed", "wavy"
 /**
  * The `::highlight()` declarations for what `probe`'s classes set beyond `baseline`: only the
  * properties that differ, so an inherited color is never copied over a glyph's own.
+ *
+ * A decoration counts only when it draws a line: `text-decoration-color` follows `currentcolor`,
+ * so a rule that sets only `color` changes it too, and that alone must not stand in for the
+ * underline a bottom border becomes.
  */
 export function highlightDeclarations(probe: Element, baseline: Element): string[] {
   const view = probe.ownerDocument.defaultView;
@@ -68,12 +72,26 @@ export function highlightDeclarations(probe: Element, baseline: Element): string
     const value = changed(property);
     if (value) declarations.push(`${property}: ${value}`);
   }
-  const hasDecoration = () => declarations.some((line) => line.startsWith("text-decoration"));
-  // Some engines report a decoration only through its shorthand.
-  const shorthand = changed("text-decoration");
-  if (!hasDecoration() && shorthand) declarations.push(`text-decoration: ${shorthand}`);
+  const line = styled.getPropertyValue("text-decoration-line");
+  let decorated = false;
+  if (line) {
+    if (line !== "none" && changed("text-decoration-line")) {
+      decorated = true;
+      for (const property of DECORATION_PROPERTIES) {
+        const value = changed(property);
+        if (value) declarations.push(`${property}: ${value}`);
+      }
+    }
+  } else {
+    // Some engines report a decoration only through its shorthand, whose first word is its line.
+    const shorthand = changed("text-decoration");
+    if (shorthand && !/^none\b/.test(shorthand)) {
+      decorated = true;
+      declarations.push(`text-decoration: ${shorthand}`);
+    }
+  }
   const borderStyle = changed("border-bottom-style");
-  if (!hasDecoration() && borderStyle && borderStyle !== "none") {
+  if (!decorated && borderStyle && borderStyle !== "none") {
     declarations.push(
       "text-decoration-line: underline",
       `text-decoration-style: ${DECORATION_STYLES.has(borderStyle) ? borderStyle : "solid"}`,

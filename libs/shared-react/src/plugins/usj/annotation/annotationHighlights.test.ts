@@ -5,6 +5,7 @@ import {
   highlightDeclarations,
   rangeOverText,
 } from "./annotationHighlights";
+import { vi } from "vitest";
 
 let cleanups: (() => void)[] = [];
 
@@ -69,6 +70,81 @@ describe("highlightDeclarations", () => {
       "text-decoration-color: rgb(255, 0, 0)",
       "text-decoration-thickness: 2px",
     ]);
+  });
+
+  describe("with the longhands Chromium computes", () => {
+    /** A computed style that reads `values`, as Chromium reports them; jsdom computes none of the
+     * `text-decoration-*` longhands. */
+    function computed(values: { [property: string]: string }): CSSStyleDeclaration {
+      const style = document.createElement("span").style;
+      style.getPropertyValue = (property: string) => values[property] ?? "";
+      return style;
+    }
+
+    /** `.colored { color: blue; border-bottom: 1px dashed red }` and the plain baseline. */
+    const colored = computed({
+      color: "rgb(0, 0, 255)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-decoration": "none solid rgb(0, 0, 255)",
+      "text-decoration-line": "none",
+      "text-decoration-style": "solid",
+      "text-decoration-color": "rgb(0, 0, 255)",
+      "text-decoration-thickness": "auto",
+      "text-shadow": "none",
+      "border-bottom-style": "dashed",
+      "border-bottom-color": "rgb(255, 0, 0)",
+      "border-bottom-width": "1px",
+    });
+    const plain = computed({
+      color: "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-decoration": "none solid rgb(0, 0, 0)",
+      "text-decoration-line": "none",
+      "text-decoration-style": "solid",
+      "text-decoration-color": "rgb(0, 0, 0)",
+      "text-decoration-thickness": "auto",
+      "text-shadow": "none",
+      "border-bottom-style": "none",
+      "border-bottom-color": "rgb(0, 0, 0)",
+      "border-bottom-width": "0px",
+    });
+
+    afterEach(() => vi.restoreAllMocks());
+
+    it("still turns a bottom border into an underline when the rule also sets a color", () => {
+      const [probe, baseline] = probes(container(), "colored");
+      vi.spyOn(window, "getComputedStyle").mockImplementation((element) =>
+        element === probe ? colored : plain,
+      );
+      expect(highlightDeclarations(probe, baseline)).toEqual([
+        "color: rgb(0, 0, 255)",
+        "text-decoration-line: underline",
+        "text-decoration-style: dashed",
+        "text-decoration-color: rgb(255, 0, 0)",
+        "text-decoration-thickness: 1px",
+      ]);
+    });
+
+    it("copies a decoration that draws a line, and adds no underline for a border beside it", () => {
+      const [probe, baseline] = probes(container(), "spelling");
+      const spelling = computed({
+        "text-decoration-line": "underline",
+        "text-decoration-style": "wavy",
+        "text-decoration-color": "rgb(255, 0, 0)",
+        "text-decoration-thickness": "auto",
+        "border-bottom-style": "solid",
+        "border-bottom-color": "rgb(0, 128, 0)",
+        "border-bottom-width": "1px",
+      });
+      vi.spyOn(window, "getComputedStyle").mockImplementation((element) =>
+        element === probe ? spelling : plain,
+      );
+      expect(highlightDeclarations(probe, baseline)).toEqual([
+        "text-decoration-line: underline",
+        "text-decoration-style: wavy",
+        "text-decoration-color: rgb(255, 0, 0)",
+      ]);
+    });
   });
 
   it("applies a compound rule to the class set that matches it", () => {
