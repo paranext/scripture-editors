@@ -266,11 +266,26 @@ describe("annotations held on what a decorator renders", () => {
         expect($displayAnnotationsOf(glyph)).toEqual([
           expect.objectContaining({ start: 3, end: 4 }),
         ]);
-        // No rendered byte left: the decorator is held whole rather than the annotation lost.
+        // Rendered without text (as a collapsed caller CSS draws): nothing on screen can be split,
+        // so the decorator is held whole rather than the annotation lost.
         glyph.setTextContent("");
         expect($displayAnnotationsOf(glyph)).toEqual([
           expect.objectContaining({ start: 0, end: 0 }),
         ]);
+      },
+      { discrete: true },
+    );
+  });
+
+  it("drops a decorator's range whose bytes were all replaced, as a text carrier's", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    editor.update(
+      () => {
+        const glyph = $createImmutableTypedTextNode("marker", "\\nd");
+        $getRoot().append($createParaNode().append(glyph));
+        $addDisplayAnnotation(glyph, "spelling", "a", 2, 3);
+        glyph.setTextContent("\\nx");
+        expect($displayAnnotationsOf(glyph)).toEqual([]);
       },
       { discrete: true },
     );
@@ -412,6 +427,33 @@ describe("registerDisplayAnnotationBasis", () => {
 
     editor.getEditorState().read(() => {
       expect($getState(value.getLatest(), displayAnnotationsState)).toBeUndefined();
+    });
+    unregister();
+  });
+
+  it("re-measures a decorator too, so a range its text lost never comes back", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    const unregister = registerDisplayAnnotationBasis(editor);
+    let node!: ReturnType<typeof $createImmutableChapterNode>;
+    editor.update(
+      () => {
+        node = $createImmutableChapterNode("12");
+        $getRoot().append(node);
+        // `1` and `2` of the rendered `12`.
+        $addDisplayAnnotation(node, "spelling", "one", 0, 1);
+        $addDisplayAnnotation(node, "spelling", "two", 1, 2);
+      },
+      { discrete: true },
+    );
+    editor.update(() => node.getLatest().setNumber("13"), { discrete: true });
+    editor.getEditorState().read(() => {
+      expect($getState(node.getLatest(), displayAnnotationsState)?.annotations).toEqual([
+        { type: "spelling", id: "one", start: 0, end: 1 },
+      ]);
+    });
+    editor.update(() => node.getLatest().setNumber("12"), { discrete: true });
+    editor.getEditorState().read(() => {
+      expect($displayAnnotationsOf(node.getLatest()).map(({ id }) => id)).toEqual(["one"]);
     });
     unregister();
   });

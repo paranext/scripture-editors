@@ -112,9 +112,10 @@ function sameAnnotation(a: DisplayAnnotation, type: string, id: string): boolean
 
 /**
  * `held`'s annotations re-measured against `text` through a character alignment, dropping any
- * with no byte left (see `mapRangeThroughEdit`). A decorator's range with no rendered byte left
- * (a caller a collapse renders through CSS instead) holds the decorator whole instead: its bytes
- * were not edited, only shown differently.
+ * with no byte left (see `mapRangeThroughEdit`) — a decorator's as a text carrier's. The one
+ * exception is a decorator that now renders no text at all (a caller a collapse draws through CSS
+ * instead): its bytes were not edited, only drawn differently, and with no text to split it is
+ * held whole.
  */
 function remapped(
   held: DisplayAnnotations,
@@ -122,12 +123,13 @@ function remapped(
   isDecorator: boolean,
 ): DisplayAnnotation[] {
   if (held.basis === text) return held.annotations;
+  const drawnWithoutText = isDecorator && text === "";
   const alignment = alignCharacters(held.basis, text);
   return held.annotations.flatMap((annotation) => {
     if (annotation.start === annotation.end) return [annotation];
+    if (drawnWithoutText) return [{ ...annotation, start: 0, end: 0 }];
     const mapped = mapRangeThroughAlignment(alignment, annotation.start, annotation.end);
-    if (mapped) return [{ ...annotation, start: mapped[0], end: mapped[1] }];
-    return isDecorator ? [{ ...annotation, start: 0, end: 0 }] : [];
+    return mapped ? [{ ...annotation, start: mapped[0], end: mapped[1] }] : [];
   });
 }
 
@@ -274,14 +276,15 @@ export function $displayAnnotationIdsAt(node: LexicalNode, type: string, offset:
 }
 
 /**
- * Re-measure `node`'s annotations against its current text and store that text as their basis, so
- * a range follows its bytes through typing, a sync rewrite, or a split. Idempotent. The body of the
+ * Re-measure `node`'s annotations against its current text (a decorator's rendered text) and store
+ * that text as their basis, so a range follows its bytes through typing, a sync rewrite, a split or
+ * a collaborator's renumber, and a range its bytes left stays dropped. Idempotent. The body of the
  * node transform `registerDisplayAnnotationBasis` registers; mutating.
  */
-export function $syncDisplayAnnotationBasis(node: TextNode): void {
+export function $syncDisplayAnnotationBasis(node: LexicalNode): void {
   const held = $getState(node, displayAnnotationsState);
-  if (!held || held.basis === node.getTextContent()) return;
-  $writeAnnotations(node, remapped(held, node.getTextContent(), false));
+  if (!held || held.basis === $carrierText(node)) return;
+  $writeAnnotations(node, remapped(held, $carrierText(node), $isDecoratorNode(node)));
 }
 
 /** Host callbacks for an annotation held on display bytes, which has no mark node to keep them. */
@@ -345,15 +348,27 @@ export function deleteDisplayAnnotationRegistration(
 /**
  * Keep every carrier's ranges measured against its current text, so an annotation follows its
  * bytes the way a mark follows its text. `TextNode` covers attribute runs, a note's caller and a
- * chapter's glyph; `MarkerNode` and `VerseNode` register their own transforms. Returns the
- * unregister function.
+ * chapter's glyph; `MarkerNode` and `VerseNode` register their own transforms, as do the
+ * decorator carriers defined here and any in `decoratorKlasses` (those `shared-react` defines).
+ * Returns the unregister function.
  *
  * Registering a transform marks every existing node of the class dirty once, so each mount runs
- * one extra pass over them; `$syncDisplayAnnotationBasis` reads no state for a node without
- * carrier state and writes nothing, so the pass costs a tree walk and nothing more.
+ * one extra pass over them (a decorator's is decorated again); `$syncDisplayAnnotationBasis`
+ * reads no state for a node without carrier state and writes nothing, so the pass costs a tree
+ * walk and nothing more.
  */
-export function registerDisplayAnnotationBasis(editor: LexicalEditor): () => void {
-  const klasses: Klass<TextNode>[] = [TextNode, MarkerNode, VerseNode];
+export function registerDisplayAnnotationBasis(
+  editor: LexicalEditor,
+  decoratorKlasses: Klass<LexicalNode>[] = [],
+): () => void {
+  const klasses: Klass<LexicalNode>[] = [
+    TextNode,
+    MarkerNode,
+    VerseNode,
+    ImmutableTypedTextNode,
+    ImmutableChapterNode,
+    ...decoratorKlasses,
+  ];
   const unregisters = klasses
     .filter((klass) => editor.hasNodes([klass]))
     .map((klass) => editor.registerNodeTransform(klass, $syncDisplayAnnotationBasis));

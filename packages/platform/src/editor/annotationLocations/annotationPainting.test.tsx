@@ -364,6 +364,39 @@ describe("annotation painting on read-only decorators", () => {
     mounted.unmount();
   });
 
+  it("drops, and reports destroyed, a hold on a digit a collaborator's renumber replaces", async () => {
+    const mounted = await mountInView(paintUsj, oracleView("formatted"));
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(digit, ORACLE_TYPE, "digit", { onRemove });
+      await Promise.resolve();
+    });
+    const renumber = (to: string) =>
+      act(async () => {
+        mounted.lexical.update(
+          () => {
+            $addUpdateTag(DELTA_CHANGE_TAG);
+            $dfs()
+              .map(({ node }) => node)
+              .find($isImmutableVerseNode)
+              ?.setNumber(to);
+          },
+          { discrete: true },
+        );
+        await Promise.resolve();
+      });
+    await renumber("13");
+    expect(onRemove.mock.calls).toEqual([[HELD_TYPE, "digit", "destroyed", "2"]]);
+    expect(heldText(mounted, "digit")).toBe("");
+    expect(paintedText(mounted, "digit")).toBe("");
+
+    // Back to the old number: the dropped hold stays dropped.
+    await renumber("12");
+    expect(heldText(mounted, "digit")).toBe("");
+    expect(paintedText(mounted, "digit")).toBe("");
+    mounted.unmount();
+  });
+
   it("paints a whole verse number without the space its glyph ends in (visible)", async () => {
     const mounted = await mountInView(paintUsj, oracleView("visible"));
     await annotate(

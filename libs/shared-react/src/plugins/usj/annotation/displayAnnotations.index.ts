@@ -679,7 +679,7 @@ function createIndex(editor: LexicalEditor): Entry {
       : () => undefined,
     listenForTypedMarkRemovalReports(editor),
     editor.registerUpdateListener(reportDestroyed),
-    registerDisplayAnnotationBasis(editor),
+    registerDisplayAnnotationBasis(editor, [ImmutableVerseNode, ImmutableNoteCallerNode]),
     editor.registerUpdateListener(({ dirtyLeaves, dirtyElements }) => {
       if (dirtyLeaves.size === 0 && dirtyElements.size === 0) return;
       refreshPaint([...dirtyLeaves, ...dirtyElements.keys()]);
