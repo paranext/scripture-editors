@@ -95,6 +95,7 @@ let noteVerseMarker: SomeVerseNode;
 let milestoneVerseMarker: SomeVerseNode;
 let charVerseMarker: SomeVerseNode;
 let emptyVerseMarker: SomeVerseNode;
+let paragraphFinalVerseMarker: SomeVerseNode;
 let noteVersePara: ParaNode;
 let emptyVersePara: ParaNode;
 
@@ -382,7 +383,7 @@ describe("ScriptureReferencePlugin", () => {
       expect(mockOnScrRefChange).not.toHaveBeenCalled();
     });
 
-    it("stops at the next verse marker for an empty verse with an editable marker", async () => {
+    it("rests at the end of the editable verse marker for an empty verse", async () => {
       const { editor, setScrRef } = await testEnvironment(
         scrRef,
         mockOnScrRefChange,
@@ -403,6 +404,27 @@ describe("ScriptureReferencePlugin", () => {
         // marker, not to the start of verse 6's marker at the same screen location, and must NOT
         // run on into verse 6's text.
         $expectSelectionToBe(emptyVerseMarker, emptyVerseMarker.getTextContentSize());
+      });
+      expect(mockOnScrRefChange).not.toHaveBeenCalled();
+    });
+
+    it("rests at the end of the editable verse marker for an empty verse that ends its paragraph", async () => {
+      const { editor, setScrRef } = await testEnvironment(
+        scrRef,
+        mockOnScrRefChange,
+        $editableParagraphFinalEmptyVerseState,
+      );
+      updateSelection(editor, firstVerseTextNode, 2);
+
+      await setScrRef({ ...scrRef, verseNum: 5 });
+
+      editor.getEditorState().read(() => {
+        // Nothing follows the marker in its paragraph, so there is no text host after it; the end of
+        // the marker is the one text point that belongs to this verse.
+        $expectSelectionToBe(
+          paragraphFinalVerseMarker,
+          paragraphFinalVerseMarker.getTextContentSize(),
+        );
       });
       expect(mockOnScrRefChange).not.toHaveBeenCalled();
     });
@@ -1357,6 +1379,25 @@ function $appendVerseContentStartingWithNonText($createVerse: (number: string) =
 function $editableVerseContentStartingWithNonTextState() {
   $appendVerseContentStartingWithNonText((number) =>
     $createVerseNode(number, getVisibleOpenMarkerText("v", number)),
+  );
+}
+
+/** Standard view with an empty verse 5 that is the last child of its paragraph; verse 6 opens the next. */
+function $editableParagraphFinalEmptyVerseState() {
+  firstVerseTextNode = $createTextNode("first verse text ");
+  paragraphFinalVerseMarker = $createVerseNode("5", getVisibleOpenMarkerText("v", "5"));
+  $getRoot().append(
+    $createBookNode("GEN").append($createTextNode("Test Book")),
+    $createImmutableChapterNode("1"),
+    $createParaNode().append(
+      $createVerseNode("1", getVisibleOpenMarkerText("v", "1")),
+      firstVerseTextNode,
+    ),
+    $createParaNode().append(paragraphFinalVerseMarker),
+    $createParaNode().append(
+      $createVerseNode("6", getVisibleOpenMarkerText("v", "6")),
+      $createTextNode("verse six text "),
+    ),
   );
 }
 
