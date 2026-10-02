@@ -115,6 +115,11 @@ export class AnnotationHighlighter {
   private probes: HTMLElement | undefined;
   private observer: MutationObserver | undefined;
   private renderQueued = false;
+  private disposed = false;
+  /** Each class set's declarations as last measured; cleared when a stylesheet changes. */
+  private readonly measured = new Map<string, string[]>();
+  /** Every style rule selector in the page, joined; cleared when a stylesheet changes. */
+  private selectors: string | undefined;
 
   constructor(
     private readonly api: HighlightApi,
@@ -152,6 +157,7 @@ export class AnnotationHighlighter {
 
   dispose(): void {
     for (const key of [...this.byLeaf.keys()]) this.clearLeaf(key);
+    this.disposed = true;
     this.observer?.disconnect();
     this.style?.remove();
     this.probes?.remove();
@@ -184,10 +190,10 @@ export class AnnotationHighlighter {
     });
   }
 
-  /** Measure every class set's probe and write the stylesheet, when it changed. */
+  /** Measure each class set not yet measured and write the stylesheet, when it changed. */
   render(): void {
     const parent = this.probeParent();
-    if (!parent) return;
+    if (!parent || this.disposed) return;
     const document = parent.ownerDocument;
     this.observe(document);
     if (!this.probes?.isConnected || this.probes.parentElement !== parent) {
@@ -204,14 +210,22 @@ export class AnnotationHighlighter {
     const baseline = document.createElement("span");
     probes.append(baseline);
     const rules: string[] = [];
-    for (const { name, classNames } of this.byClassSet.values()) {
-      const probe = document.createElement("span");
-      probe.className = classNames.join(" ");
-      probes.append(probe);
-      const declarations = highlightDeclarations(probe, baseline);
+    for (const [key, { name, classNames }] of this.byClassSet) {
+      let declarations = this.measured.get(key);
+      // A class set no rule names styles nothing: no need to measure it.
+      if (!declarations && !this.isNamedByRule(document, classNames)) declarations = [];
+      if (!declarations) {
+        const probe = document.createElement("span");
+        probe.className = classNames.join(" ");
+        probes.append(probe);
+        declarations = highlightDeclarations(probe, baseline);
+        this.measured.set(key, declarations);
+      }
       if (declarations.length > 0)
         rules.push(`::highlight(${name}) { ${declarations.join("; ")}; }`);
     }
+    for (const key of this.measured.keys())
+      if (!this.byClassSet.has(key)) this.measured.delete(key);
     probes.replaceChildren();
     const text = rules.join("\n");
     if (!this.style?.isConnected) {
@@ -222,6 +236,15 @@ export class AnnotationHighlighter {
     if (this.style.textContent !== text) this.style.textContent = text;
   }
 
+  /** Whether any style rule's selector names one of `classNames`. Errs toward yes. */
+  private isNamedByRule(document: Document, classNames: readonly string[]): boolean {
+    this.selectors ??= [...document.styleSheets].flatMap(selectorTexts).join("\n");
+    const selectors = this.selectors;
+    return classNames.some(
+      (name) => selectors.includes(name) || selectors.includes(name.replace(/[^\w-]/g, "\\$&")),
+    );
+  }
+
   /** Measure again when a stylesheet or the page's theme changes; never for this painter's own
    * stylesheet, which `render` writes. */
   private observe(document: Document): void {
@@ -230,8 +253,15 @@ export class AnnotationHighlighter {
     if (!view) return;
     this.observer = new view.MutationObserver((records) => {
       const own = this.style;
-      if (records.every((record) => own && (record.target === own || own.contains(record.target))))
-        return;
+      const isOwn = (record: MutationRecord) => {
+        if (!own) return false;
+        if (record.target === own || own.contains(record.target)) return true;
+        const moved = [...record.addedNodes, ...record.removedNodes];
+        return moved.length > 0 && moved.every((node) => node === own);
+      };
+      if (records.every(isOwn)) return;
+      this.measured.clear();
+      this.selectors = undefined;
       this.queueRender();
     });
     this.observer.observe(document.head, { childList: true, characterData: true, subtree: true });
@@ -239,6 +269,22 @@ export class AnnotationHighlighter {
     this.observer.observe(document.documentElement, themed);
     if (document.body) this.observer.observe(document.body, themed);
   }
+}
+
+/** The selector texts of every style rule in `sheet` or a rule group inside it; none for a sheet
+ * whose rules cannot be read. */
+function selectorTexts(sheet: CSSStyleSheet | CSSGroupingRule): string[] {
+  let rules: CSSRuleList;
+  try {
+    rules = sheet.cssRules;
+  } catch {
+    return [];
+  }
+  return [...rules].flatMap((rule) => {
+    if (rule instanceof CSSStyleRule) return [rule.selectorText];
+    if (rule instanceof CSSGroupingRule) return selectorTexts(rule);
+    return [];
+  });
 }
 
 function classSetKey(classNames: readonly string[]): string {

@@ -112,6 +112,26 @@ describe("AnnotationHighlighter", () => {
     expect([...CSS.highlights]).toEqual([]);
   });
 
+  it("styles a class set a rule names only through an escaped selector", async () => {
+    stylesheet(".annotationId-a\\:b { background-color: rgb(4, 5, 6); }");
+    const { highlighter, text } = setup();
+    const range = rangeOverText(text, 0, 1);
+    if (!range) throw new Error("the text renders 12 characters");
+    highlighter.setLeaf("k", [{ classNames: ["annotationId-a:b"], annotations: ["a"], range }]);
+    await Promise.resolve();
+    expect(highlightCss()).toContain("background-color: rgb(4, 5, 6)");
+  });
+
+  it("writes no rule for a class set no stylesheet names", async () => {
+    stylesheet(".other { background-color: rgb(4, 5, 6); }");
+    const { highlighter, text } = setup();
+    const range = rangeOverText(text, 0, 1);
+    if (!range) throw new Error("the text renders 12 characters");
+    highlighter.setLeaf("k", [{ classNames: ["unstyled"], annotations: ["a"], range }]);
+    await Promise.resolve();
+    expect(highlightCss()).toBe("");
+  });
+
   it("restyles a highlight when a host rewrites its stylesheet", async () => {
     const style = stylesheet(".x { background-color: rgb(1, 2, 3); }");
     const { highlighter, text } = setup();

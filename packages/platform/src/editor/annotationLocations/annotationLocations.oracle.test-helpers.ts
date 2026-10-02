@@ -555,6 +555,7 @@ export async function runOracle(
         const heldBytes = $heldIndexes(HELD_TYPE, id);
         const paintedBytes = $paintedIndexes(m.lexical, id);
         const nodes = $byteNodes();
+        const shownByByte = new Map<number, ReturnType<typeof $paintedDecoratorChars>>();
         info.forEach(({ unit }, i) => {
           if (unit.kind === "byte") {
             const holder = heldBytes.get(unit.byte);
@@ -564,7 +565,11 @@ export async function runOracle(
           }
           const node = nodes[unit.byte]?.[0];
           if (!node) return;
-          const shown = $paintedDecoratorChars(m.lexical, node, id);
+          let shown = shownByByte.get(unit.byte);
+          if (!shown) {
+            shown = $paintedDecoratorChars(m.lexical, node, id);
+            shownByByte.set(unit.byte, shown);
+          }
           // A decorator inside a mark (a span moved into it whole) is held, all of it, by the mark.
           if (heldBytes.get(unit.byte) === "mark") {
             held.set(i, "mark");

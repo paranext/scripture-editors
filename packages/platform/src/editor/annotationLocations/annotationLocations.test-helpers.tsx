@@ -302,18 +302,44 @@ export function $heldIndexes(type: string, id: string): Map<number, "mark" | "ca
   return held;
 }
 
-/** Whether `element` or an ancestor of it carries class `className`. */
-function hasClassAround(element: HTMLElement | null, className: string): boolean {
-  for (let current = element; current; current = current.parentElement)
-    if (current.classList.contains(className)) return true;
-  return false;
+/** What paints annotation `id` in the DOM: the elements carrying its class, and per text node the
+ * characters its editor highlights cover. */
+interface PaintSnapshot {
+  elements: Element[];
+  chars: Map<Node, Set<number>>;
 }
 
-/** Every range of every editor highlight painting with class `className`. */
-function highlightRangesWith(className: string): AbstractRange[] {
-  return [...CSS.highlights].flatMap(([name, highlight]) =>
-    annotationHighlightClassNames(name)?.includes(className) ? [...highlight] : [],
-  );
+/** Reads, once, what paints `id`: elements by class, highlight ranges walked text node by text
+ * node (a range's characters, never a per-character tree comparison). */
+function paintSnapshot(lexical: LexicalEditor, id: string): PaintSnapshot {
+  const className = `annotationId-${id}`;
+  const root = lexical.getRootElement();
+  const elements = root ? [...root.getElementsByClassName(className)] : [];
+  const chars = new Map<Node, Set<number>>();
+  for (const [name, highlight] of CSS.highlights) {
+    if (!annotationHighlightClassNames(name)?.includes(className)) continue;
+    for (const range of highlight) {
+      if (!(range instanceof Range) || range.collapsed) continue;
+      const container = range.commonAncestorContainer;
+      const walker = container.ownerDocument?.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      const texts: Node[] = container.nodeType === Node.TEXT_NODE ? [container] : [];
+      for (let text = walker?.nextNode(); text; text = walker?.nextNode()) texts.push(text);
+      for (const text of texts) {
+        if (!range.intersectsNode(text)) continue;
+        const length = text.textContent?.length ?? 0;
+        const from = text === range.startContainer ? range.startOffset : 0;
+        const to = text === range.endContainer ? range.endOffset : length;
+        const set = chars.get(text) ?? new Set<number>();
+        for (let i = from; i < to; i++) set.add(i);
+        chars.set(text, set);
+      }
+    }
+  }
+  return { elements, chars };
+}
+
+function paintedWhole(snapshot: PaintSnapshot, element: Element): boolean {
+  return snapshot.elements.some((painted) => painted.contains(element));
 }
 
 /**
@@ -323,31 +349,21 @@ function highlightRangesWith(className: string): AbstractRange[] {
  * DOM, never from the model.
  */
 export function $paintedIndexes(lexical: LexicalEditor, id: string): Set<number> {
-  const className = `annotationId-${id}`;
-  const ranges = highlightRangesWith(className).filter((range) => range instanceof Range);
+  const snapshot = paintSnapshot(lexical, id);
   const painted = new Set<number>();
   $byteNodes().forEach(([node, offset], index) => {
     const element = lexical.getElementByKey(node.getKey());
     if (!element) return;
-    if (hasClassAround(element, className)) {
+    if (paintedWhole(snapshot, element)) {
       painted.add(index);
       return;
     }
     if (offset < 0) {
-      if (ranges.some((range) => range.intersectsNode(element))) painted.add(index);
+      if ([...snapshot.chars.keys()].some((text) => element.contains(text))) painted.add(index);
       return;
     }
     const text = [...element.childNodes].find((child) => child.nodeType === Node.TEXT_NODE);
-    if (!text) return;
-    if (
-      ranges.some(
-        (range) =>
-          !range.collapsed &&
-          range.comparePoint(text, offset) === 0 &&
-          range.comparePoint(text, offset + 1) === 0,
-      )
-    )
-      painted.add(index);
+    if (text && snapshot.chars.get(text)?.has(offset)) painted.add(index);
   });
   return painted;
 }
@@ -362,29 +378,21 @@ export function $paintedDecoratorChars(
   node: LexicalNode,
   id: string,
 ): { whole: boolean; chars: Set<number>; any: boolean } {
-  const className = `annotationId-${id}`;
   const element = lexical.getElementByKey(node.getKey());
   const chars = new Set<number>();
   if (!element) return { whole: false, chars, any: false };
-  if (hasClassAround(element, className)) return { whole: true, chars, any: true };
-  const ranges = highlightRangesWith(className).filter((range) => range instanceof Range);
+  const snapshot = paintSnapshot(lexical, id);
+  if (paintedWhole(snapshot, element)) return { whole: true, chars, any: true };
   const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   let offset = 0;
+  let any = false;
   for (let text = walker.nextNode(); text; text = walker.nextNode()) {
-    const length = text.textContent?.length ?? 0;
-    for (let i = 0; i < length; i++)
-      if (
-        ranges.some(
-          (range) =>
-            !range.collapsed &&
-            range.comparePoint(text, i) === 0 &&
-            range.comparePoint(text, i + 1) === 0,
-        )
-      )
-        chars.add(offset + i);
-    offset += length;
+    const covered = snapshot.chars.get(text);
+    if (covered) any = true;
+    for (const i of covered ?? []) chars.add(offset + i);
+    offset += text.textContent?.length ?? 0;
   }
-  return { whole: false, chars, any: ranges.some((range) => range.intersectsNode(element)) };
+  return { whole: false, chars, any };
 }
 
 /** The key of the nearest block element around `node` — a paragraph, a table cell, the root. */
