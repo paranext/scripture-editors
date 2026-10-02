@@ -18,9 +18,21 @@ import { settleByBlurAndCommit } from "../markerEdit/displayAnnotations.test-hel
 import { typeOver } from "../positions/positions.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
+import { $dfs } from "@lexical/utils";
+import { $addUpdateTag, REDO_COMMAND, UNDO_COMMAND } from "lexical";
 import { vi } from "vitest";
-import { $decoratorRenderedText, $displayAnnotationsOf, NBSP, TypedMarkOnRemove } from "shared";
-import { AnnotationRange } from "shared-react";
+import {
+  $decoratorRenderedText,
+  $displayAnnotationsOf,
+  DELTA_CHANGE_TAG,
+  NBSP,
+  TypedMarkOnRemove,
+} from "shared";
+import {
+  $isImmutableVerseNode,
+  annotationHighlightClassNames,
+  AnnotationRange,
+} from "shared-react";
 
 /** A marker object with attributes `MarkerObject` does not name. */
 const attributed = (marker: MarkerObject & { [attribute: string]: unknown }): MarkerObject =>
@@ -194,6 +206,57 @@ describe("annotation painting in Standard view", () => {
     expect(texts("missing")).toEqual([]);
   });
 
+  it("keeps a partial highlight on its bytes through undo and redo of an edit to its carrier", async () => {
+    const number = `${para}.content[0]['number']`;
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: number, propertyOffset: 0 },
+        end: { jsonPath: number, propertyOffset: 1 },
+      },
+      "one",
+    );
+    expect(paintedText(mounted, "one")).toBe("1");
+    await typeOver(mounted.lexical, "12", `\\v${NBSP}13 `);
+    expect(paintedText(mounted, "one")).toBe("1");
+
+    await act(async () => mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined));
+    expect(heldText(mounted, "one")).toBe("1");
+    expect(paintedText(mounted, "one")).toBe("1");
+
+    await act(async () => mounted.lexical.dispatchCommand(REDO_COMMAND, undefined));
+    expect(heldText(mounted, "one")).toBe("1");
+    expect(paintedText(mounted, "one")).toBe("1");
+  });
+
+  it("leaves no highlight behind when the document is loaded again", async () => {
+    const number = `${para}.content[0]['number']`;
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: number, propertyOffset: 0 },
+        end: { jsonPath: number, propertyOffset: 1 },
+      },
+      "one",
+    );
+    expect(paintedText(mounted, "one")).toBe("1");
+    await act(async () => {
+      // A different document, so the load is not skipped as a no-op.
+      mounted.ref.current?.setUsj({
+        ...paintUsj,
+        content: [...paintUsj.content, { type: "para", marker: "p", content: ["more"] }],
+      });
+      // LoadStatePlugin applies the load in a microtask.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(heldText(mounted, "one")).toBe("");
+    const ranges = [...CSS.highlights]
+      .filter(([name]) => annotationHighlightClassNames(name)?.includes("annotationId-one"))
+      .flatMap(([, highlight]) => [...highlight]);
+    expect(ranges).toEqual([]);
+  });
+
   it("paints a whole char span the same whether it moved into the mark whole or not", async () => {
     // From the text before the span: the span moves into the mark whole, its separator with it.
     await annotate(
@@ -272,6 +335,34 @@ describe("annotation painting on read-only decorators", () => {
       mounted.unmount();
     },
   );
+
+  it("keeps a partial highlight on its bytes when a collaborator renumbers the verse", async () => {
+    const mounted = await mountInView(paintUsj, oracleView("formatted"));
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: number, propertyOffset: 0 },
+        end: { jsonPath: number, propertyOffset: 1 },
+      },
+      "one",
+    );
+    expect(paintedText(mounted, "one")).toBe("1");
+    await act(async () => {
+      mounted.lexical.update(
+        () => {
+          $addUpdateTag(DELTA_CHANGE_TAG);
+          $dfs()
+            .map(({ node }) => node)
+            .find($isImmutableVerseNode)
+            ?.setNumber("13");
+        },
+        { discrete: true },
+      );
+      await Promise.resolve();
+    });
+    expect(paintedText(mounted, "one")).toBe("1");
+    mounted.unmount();
+  });
 
   it("paints a whole verse number without the space its glyph ends in (visible)", async () => {
     const mounted = await mountInView(paintUsj, oracleView("visible"));

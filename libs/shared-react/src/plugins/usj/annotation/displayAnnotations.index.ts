@@ -15,7 +15,7 @@ import {
   rangeContainsPoint,
   rangeOverText,
 } from "./annotationHighlights";
-import { $paintIntervalsOf, $paintSize, leafPaint, PaintIntervals } from "./annotationPaint.utils";
+import { $paintIntervalsOf, $paintText, leafPaint, PaintIntervals } from "./annotationPaint.utils";
 import { addClassNamesToElement, mergeRegister, removeClassNamesFromElement } from "@lexical/utils";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import {
@@ -169,8 +169,12 @@ function createIndex(editor: LexicalEditor): Entry {
   const wholeLeaves = new Set<NodeKey>();
   /** Extra class names the host's state adds to an annotation's painting (`selected`). */
   const stateClasses = new Map<string, Set<string>>();
-  /** Leaves waiting for their element to render text, by element. */
-  const waitingForText = new Map<HTMLElement, MutationObserver>();
+  /** Leaves whose element did not render all the text a piece paints (a decorator's portal
+   * renders after the commit that created it). */
+  const incomplete = new Set<NodeKey>();
+  /** Watches the editable content for text that changes outside a commit, so highlights move
+   * with it. */
+  let contentObserver: MutationObserver | undefined;
   /** Set once the index is released: nothing paints after that. */
   let disposed = false;
   const highlightApi = getHighlightApi();
@@ -339,6 +343,7 @@ function createIndex(editor: LexicalEditor): Entry {
     const annotationKeys = annotationsByLeaf.get(key);
     const previous = leafElement.get(key);
     if (previous && previous !== element) paintElement(previous, []);
+    incomplete.delete(key);
     if (!node || !element || !annotationKeys || annotationKeys.size === 0) {
       if (element) paintElement(element, []);
       highlighter?.clearLeaf(key);
@@ -354,7 +359,8 @@ function createIndex(editor: LexicalEditor): Entry {
       ]),
     );
     const holds = $displayAnnotationsOf(node).length > 0;
-    let plan = leafPaint($paintSize(node), byAnnotation);
+    const text = $paintText(node);
+    let plan = leafPaint(text.length, byAnnotation);
     // Without a highlight API, a display byte that holds an annotation is painted whole, and a
     // filler byte only partly painted is not painted at all.
     if (!plan.whole && !highlighter)
@@ -370,30 +376,55 @@ function createIndex(editor: LexicalEditor): Entry {
     paintElement(element, []);
     if (!highlighter) return;
     const pieces: LeafHighlight[] = [];
-    let missing = false;
     for (const { start, end, annotations } of plan.segments) {
       const range = rangeOverText(element, start, end);
-      if (!range) missing = true;
-      else pieces.push({ classNames: classNamesFor(annotations), annotations, range });
+      if (!range) incomplete.add(key);
+      else
+        pieces.push({
+          classNames: classNamesFor(annotations),
+          annotations,
+          range,
+          text: text.slice(start, end),
+        });
     }
     highlighter.setLeaf(key, pieces);
-    if (missing) repaintWhenRendered(key, element);
   }
 
-  /** Paint leaf `key` again once `element` renders more text (a decorator's portal renders after
-   * the commit that created it). */
-  function repaintWhenRendered(key: NodeKey, element: HTMLElement): void {
-    if (waitingForText.has(element)) return;
-    const view = element.ownerDocument.defaultView;
-    if (!view) return;
-    const observer = new view.MutationObserver(() => {
-      observer.disconnect();
-      waitingForText.delete(element);
-      if (disposed) return;
-      editor.getEditorState().read(() => $repaintLeaf(key), { editor });
-    });
-    waitingForText.set(element, observer);
-    observer.observe(element, { childList: true, characterData: true, subtree: true });
+  /**
+   * Whether leaf `key`'s highlights no longer cover the text they were made for. A range over a
+   * text node collapses when the node's whole value is rewritten in place — Lexical does that for
+   * every text it reconciles in a whole-state replacement (undo, redo), and a decorator's portal
+   * does it when it re-renders after the commit — and is left behind when the node is replaced.
+   */
+  function isStale(key: NodeKey): boolean {
+    if (incomplete.has(key)) return true;
+    const element = editor.getElementByKey(key);
+    return (highlighter?.leafHighlights(key) ?? []).some(
+      ({ range, text }) =>
+        !element ||
+        !element.contains(range.startContainer) ||
+        !element.contains(range.endContainer) ||
+        range.toString() !== text,
+    );
+  }
+
+  function $staleLeaves(): NodeKey[] {
+    return [...incomplete, ...(highlighter?.leafKeys() ?? [])].filter(isStale);
+  }
+
+  /** Repaint every leaf whose highlights the DOM moved out from under, outside a commit. */
+  function repaintStale(): void {
+    if (disposed) return;
+    editor.getEditorState().read(() => new Set($staleLeaves()).forEach($repaintLeaf), { editor });
+  }
+
+  function observeContent(root: HTMLElement | null): void {
+    contentObserver?.disconnect();
+    contentObserver = undefined;
+    const view = root?.ownerDocument.defaultView;
+    if (!root || !view || !highlighter) return;
+    contentObserver = new view.MutationObserver(repaintStale);
+    contentObserver.observe(root, { childList: true, characterData: true, subtree: true });
   }
 
   /**
@@ -434,6 +465,7 @@ function createIndex(editor: LexicalEditor): Entry {
     }
     for (const [key, element] of leafElement)
       if (editor.getElementByKey(key) !== element) affected.add(key);
+    for (const key of $staleLeaves()) affected.add(key);
     for (const key of affected) $repaintLeaf(key);
   }
 
@@ -652,12 +684,13 @@ function createIndex(editor: LexicalEditor): Entry {
     }),
     // Also paints what the mutation listeners above found already in the document.
     editor.registerRootListener((root) => {
+      observeContent(root);
       if (root) refreshPaint([...annotationsByLeaf.keys()]);
     }),
     () => {
       disposed = true;
       highlighter?.dispose();
-      waitingForText.forEach((observer) => observer.disconnect());
+      contentObserver?.disconnect();
     },
     editor.registerCommand(
       SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,

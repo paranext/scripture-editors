@@ -1,4 +1,8 @@
 import { usjReactNodes } from "../../../nodes/usj";
+import {
+  $createImmutableVerseNode,
+  ImmutableVerseNode,
+} from "../../../nodes/usj/ImmutableVerseNode";
 import { annotationHighlightClassNames } from "./annotationHighlights";
 import {
   acquireDisplayAnnotationIndex,
@@ -37,6 +41,7 @@ import {
   TypedMarkOnMouseEnter,
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
+  ZWSP,
 } from "shared";
 import { vi } from "vitest";
 
@@ -442,6 +447,50 @@ describe("the display-annotation index", () => {
     wrap(editor, run, 1, 6, "external-spelling", "a");
     editor.update(() => run.getLatest().setTextContent("|xgrace"), { discrete: true });
     expect(highlighted().map(({ text }) => text)).toEqual(["grace"]);
+    release();
+  });
+
+  it("keeps a partial highlight on its bytes when a whole-state replacement rewrites the carrier's text", () => {
+    const { editor, run, release } = setup();
+    wrap(editor, run, 1, 6, "external-spelling", "a");
+    const annotated = editor.getEditorState();
+    // An edit outside the range: what the annotation paints stays `[1, 6)`.
+    editor.update(() => run.getLatest().setTextContent("Xgrace"), { discrete: true });
+    expect(highlighted().map(({ text }) => text)).toEqual(["grace"]);
+
+    // Undo and redo replace the whole state: the carrier is not a dirty leaf, but its DOM text is
+    // rewritten, which collapses every range over it.
+    editor.setEditorState(annotated);
+    expect(highlighted().map(({ text }) => text)).toEqual(["grace"]);
+    release();
+  });
+
+  it("follows a decorator's text when it renders after the commit that changed it", async () => {
+    const { editor, release } = setup();
+    let verse!: ImmutableVerseNode;
+    editor.update(
+      () => {
+        verse = $createImmutableVerseNode("12");
+        $getRoot().append($createParaNode().append(verse));
+        // `1` of the rendered number, which zero-width spaces pad.
+        $addDisplayAnnotation(verse, "external-spelling", "a", 1, 2);
+      },
+      { discrete: true },
+    );
+    const element = editor.getElementByKey(verse.getKey());
+    if (!element) throw new Error("the verse renders");
+    // What the decorator's portal renders, after the commit.
+    element.textContent = `${ZWSP}12${ZWSP}`;
+    await Promise.resolve();
+    expect(highlighted().map(({ text }) => text)).toEqual(["1"]);
+
+    editor.update(() => verse.getLatest().setNumber("13"), { discrete: true });
+    // The portal re-renders the number in place, after the commit painted over the old text.
+    const text = element.firstChild;
+    if (!text) throw new Error("the verse has text");
+    text.nodeValue = `${ZWSP}13${ZWSP}`;
+    await Promise.resolve();
+    expect(highlighted().map(({ text }) => text)).toEqual(["1"]);
     release();
   });
 

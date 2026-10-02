@@ -31,10 +31,15 @@ import {
 /** `[start, end)` character ranges of one leaf's rendered text. */
 export type PaintIntervals = [number, number][];
 
-/** How many characters `leaf` renders: a text's own, a decorator's rendered text, else none. */
+/** The characters `leaf` renders: a text's own, a decorator's rendered text, else none. */
+export function $paintText(leaf: LexicalNode): string {
+  if ($isTextNode(leaf)) return leaf.getTextContent();
+  return $decoratorRenderedText(leaf);
+}
+
+/** How many characters `leaf` renders ({@link $paintText}). */
 export function $paintSize(leaf: LexicalNode): number {
-  if ($isTextNode(leaf)) return leaf.getTextContentSize();
-  return $decoratorRenderedText(leaf).length;
+  return $paintText(leaf).length;
 }
 
 /** Whether character `index` of `leaf`'s rendered text is a byte no range can hold. */

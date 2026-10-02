@@ -102,6 +102,8 @@ export interface LeafHighlight {
   /** The annotations (index keys) painting it. */
   annotations: readonly string[];
   range: Range;
+  /** The text `range` covers when it was made: anything else means the DOM moved under it. */
+  text: string;
 }
 
 /** Partial-text painting for one editor: highlight registration, ranges per leaf, and the
@@ -131,6 +133,11 @@ export class AnnotationHighlighter {
   /** The pieces painted on leaf `key`. */
   leafHighlights(key: NodeKey): readonly LeafHighlight[] {
     return this.byLeaf.get(key) ?? [];
+  }
+
+  /** The leaves with painted pieces. */
+  leafKeys(): NodeKey[] {
+    return [...this.byLeaf.keys()];
   }
 
   /** Replace leaf `key`'s painted pieces. */
