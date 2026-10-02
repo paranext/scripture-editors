@@ -11,7 +11,8 @@
  * marker glyphs and separators. At each, one keystroke is applied to the bytes at that node: a
  * name character, a space, `*`, `\`, `|`, the removal of the character before (Backspace) or after
  * (Delete) it, or — once per node — `x` typed over the node's whole text (a caller, a glyph, a word
- * selected and replaced).
+ * selected and replaced) — and, as the delete-then-type gesture, Backspace or Delete followed by
+ * `x` typed at the caret it leaves.
  * Typing is a direct splice into the node rather than `insertText`, so both nodes on either side
  * of a boundary are exercised: the editor can resolve a caret at a glyph's end to the end of the
  * glyph or to the start of the next text, and the two must settle alike. At every node boundary
@@ -187,7 +188,32 @@ const PLACED_KEYSTROKES: { name: string; character: string }[] = TYPED.map((char
   character,
 }));
 
-const KEYSTROKES: { name: string; apply: Keystroke; typed?: string }[] = [
+/** Backspace: the character before the offset removed. */
+const backspace: Keystroke = (text, offset) =>
+  offset === 0
+    ? undefined
+    : { text: text.slice(0, offset - 1) + text.slice(offset), caret: offset - 1 };
+
+/** Delete: the character after the offset removed. */
+const deleteForward: Keystroke = (text, offset) =>
+  offset >= text.length
+    ? undefined
+    : { text: text.slice(0, offset) + text.slice(offset + 1), caret: offset };
+
+/**
+ * One keystroke at a node offset, as {@link Keystroke}; `typed` is the character it types, and
+ * `then` a character typed next at the caret it leaves (`insertText`, in an update of its own) —
+ * the delete-then-type gesture, which reaches what a deletion leaves waiting for the next key (a
+ * note's caller retyped after being deleted).
+ */
+interface KeystrokeCase {
+  name: string;
+  apply: Keystroke;
+  typed?: string;
+  then?: string;
+}
+
+const KEYSTROKES: KeystrokeCase[] = [
   ...TYPED.map((character) => ({
     name: `type ${JSON.stringify(character)}`,
     typed: character,
@@ -202,20 +228,10 @@ const KEYSTROKES: { name: string; apply: Keystroke; typed?: string }[] = [
     apply: (text: string, offset: number) =>
       offset === 0 && text.length > 0 ? { text: "x", caret: 1 } : undefined,
   },
-  {
-    name: "Backspace",
-    apply: (text: string, offset: number) =>
-      offset === 0
-        ? undefined
-        : { text: text.slice(0, offset - 1) + text.slice(offset), caret: offset - 1 },
-  },
-  {
-    name: "Delete",
-    apply: (text: string, offset: number) =>
-      offset >= text.length
-        ? undefined
-        : { text: text.slice(0, offset) + text.slice(offset + 1), caret: offset },
-  },
+  { name: "Backspace", apply: backspace },
+  { name: "Delete", apply: deleteForward },
+  { name: 'Backspace, then type "x"', apply: backspace, then: "x" },
+  { name: 'Delete, then type "x"', apply: deleteForward, then: "x" },
 ];
 
 /** Whether `node` is shown inside a collapsed note, where nothing can be typed. */
@@ -769,8 +785,8 @@ function unrespelledBytes(pending: string, settled: string): string | undefined 
  * How the settle changed what the screen shows, beyond respelling it: the bytes the pending screen
  * showed that the settled one lost, and the ones it gained ({@link unrespelledBytes}) — or
  * `undefined` when the settle only respelled. Two more respellings supply bytes a reader needs
- * and the screen lacked, so the comparison is also tried with each taken back out of the settled
- * lines: a marker supplied at the start of a line (the `\p` that opens a paragraph for bytes typed
+ * and the screen lacked, so the comparison is also tried with each, and each pair, taken back out
+ * of the settled lines: a marker supplied at the start of a line (the `\p` that opens a paragraph for bytes typed
  * in front of one), and a note's caller supplied where the screen showed none (a caller deleted
  * and not retyped is put back; a note whose bytes give no caller gets `+`). A typed byte the
  * settle drops from the screen and the file alike is invisible to the screen-equals-file check;
@@ -788,9 +804,19 @@ function unrespelledChange(pending: string, settled: string): string | undefined
       const start = note.index + 1 + note[1].length;
       supplied.push([start, start + note[2].length]);
     }
-  return supplied.some(
-    ([start, end]) => !unrespelledBytes(pending, settled.slice(0, start) + settled.slice(end)),
-  )
+  // Either respelling alone, or both together (a `\p` and a caller supplied for one note).
+  const without = (ranges: [number, number][]): string =>
+    [...ranges]
+      .sort((a, b) => b[0] - a[0])
+      .reduce((text, [start, end]) => text.slice(0, start) + text.slice(end), settled);
+  const combinations = supplied.flatMap((first, index) => [
+    [first],
+    ...supplied
+      .slice(index + 1)
+      .filter((second) => second[0] >= first[1] || second[1] <= first[0])
+      .map((second) => [first, second]),
+  ]);
+  return combinations.some((ranges) => !unrespelledBytes(pending, without(ranges)))
     ? undefined
     : change;
 }
@@ -925,11 +951,12 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
               await Promise.resolve();
               await Promise.resolve();
             });
-            if (applied && "character" in keystroke)
+            const next = "character" in keystroke ? keystroke.character : keystroke.then;
+            if (applied && next !== undefined)
               await act(async () => {
                 mounted.lexical.update(() => {
                   const selection = $getSelection();
-                  if ($isRangeSelection(selection)) selection.insertText(keystroke.character);
+                  if ($isRangeSelection(selection)) selection.insertText(next);
                 });
                 await Promise.resolve();
                 await Promise.resolve();

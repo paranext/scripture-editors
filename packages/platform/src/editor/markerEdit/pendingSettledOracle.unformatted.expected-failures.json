@@ -1,1 +1,6 @@
-{}
+{
+  "note (unformatted view)": {
+    "marker \"\\\\p\"@1 Delete, then type \"x\" [screen]": "The paragraph's \\p retyped \\x makes \\x a note marker opening in front of an expanded footnote. The file's bytes read as an empty \\x note closed by the \\f, beside the footnote, but the paragraph rebuild spells the footnote as a preserved placeholder, which the tokenizer reads as part of the \\x caller word; the placeholder count no longer matches and the rebuild aborts, so the screen keeps \\x while the file keeps \\p. Fixing it needs the tokenizer to know what a placeholder stands for (a note ends the note before it).",
+    "marker \"\\\\p\"@2 Backspace, then type \"x\" [screen]": "The paragraph's \\p retyped \\x makes \\x a note marker opening in front of an expanded footnote. The file's bytes read as an empty \\x note closed by the \\f, beside the footnote, but the paragraph rebuild spells the footnote as a preserved placeholder, which the tokenizer reads as part of the \\x caller word; the placeholder count no longer matches and the rebuild aborts, so the screen keeps \\x while the file keeps \\p. Fixing it needs the tokenizer to know what a placeholder stands for (a note ends the note before it)."
+  }
+}
