@@ -9,13 +9,20 @@
  * the edited block is visited at every offset of a glyph-like node (marker glyphs, verse glyphs, attribute runs)
  * and at the first and last two offsets of plain text — the positions around marker glyphs and
  * separators. At each, one keystroke is applied to the bytes at that node: a name character, a
- * space, `*`, `\`, `|`, or the removal of the character before (Backspace) or after (Delete) it.
+ * space, `*`, `\`, `|`, the removal of the character before (Backspace) or after (Delete) it, or —
+ * once per node — `x` typed over the node's whole text (a caller, a glyph, a word selected and
+ * replaced).
  * Typing is a direct splice into the node rather than `insertText`, so both nodes on either side
  * of a boundary are exercised: the editor can resolve a caret at a glyph's end to the end of the
  * glyph or to the start of the next text, and the two must settle alike.
  *
  * The settle is the departure an abandoned edit gets: a click into another paragraph, blur, and
  * `commitPendingMarkerEdits()`.
+ *
+ * After the settle, the screen must show what the file gets: the settled blocks' text, and the USFM
+ * the settled document writes, carry the same bytes once whitespace — which a settle may place or
+ * drop where a USFM reader treats it as structural — is set aside. Blocks showing a collapsed note,
+ * whose caller and content the screen does not show, are not compared.
  *
  * Positions are held to the same contract while the edit is pending: every caret position inside
  * a text node reports (`getSelection()`'s translation) the location the same bytes report after the
@@ -54,6 +61,8 @@ import {
   $isVerseNode,
   createMarkerLookup,
   defaultStyleInfo,
+  canonicalAttributeText,
+  defaultMarkerAttribute,
   getPendedDisplayOwners,
   NBSP,
   textTypeState,
@@ -153,6 +162,12 @@ const KEYSTROKES: { name: string; apply: Keystroke }[] = [
       caret: offset + 1,
     }),
   })),
+  {
+    // Selecting a whole text and typing over it — a caller, a glyph, a word. Once per text.
+    name: 'type "x" over the whole text',
+    apply: (text: string, offset: number) =>
+      offset === 0 && text.length > 0 ? { text: "x", caret: 1 } : undefined,
+  },
   {
     name: "Backspace",
     apply: (text: string, offset: number) =>
@@ -372,6 +387,89 @@ function positionsReportedToTheRight(
   return failures;
 }
 
+/** The USFM a writer emits for `item`, the way the screen spells it: a marker and its separator,
+ * its attribute text in canonical display form, its closer. */
+function usfmOf(item: MarkerContent, nested = false): string {
+  if (typeof item === "string") return item;
+  const { type, marker = "", content = [], closed, ...fields } = item;
+  const attributes = Object.fromEntries(
+    Object.entries(fields).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+  const inner = (isNested: boolean) => content.map((child) => usfmOf(child, isNested)).join("");
+  const closer = (spelled: string) => (closed === "false" ? "" : spelled);
+  switch (type) {
+    case "unmatched":
+      return `\\${marker}`;
+    case "optbreak":
+      return "//";
+    case "para":
+      return `\\${marker} ${inner(false)}`;
+    case "chapter":
+      return (
+        `\\c ${item.number ?? ""} ` +
+        (item.altnumber !== undefined ? `\\ca ${item.altnumber}\\ca* ` : "") +
+        (item.pubnumber !== undefined ? `\\cp ${item.pubnumber} ` : "")
+      );
+    case "verse":
+      return (
+        `\\v ${item.number ?? ""} ` +
+        (item.altnumber !== undefined ? `\\va ${item.altnumber}\\va* ` : "") +
+        (item.pubnumber !== undefined ? `\\vp ${item.pubnumber}\\vp* ` : "")
+      );
+    case "ms": {
+      const { sid, eid, ...rest } = attributes;
+      const named = {
+        ...(sid !== undefined ? { sid } : {}),
+        ...(eid !== undefined ? { eid } : {}),
+        ...rest,
+      };
+      return `\\${marker}${canonicalAttributeText(named, undefined)}\\*`;
+    }
+    case "note":
+      return (
+        `\\${marker} ${item.caller ?? ""} ` +
+        (item.category !== undefined ? `\\cat ${item.category}\\cat* ` : "") +
+        `${inner(false)}${closer(`\\${marker}*`)}`
+      );
+    case "char": {
+      const plus = nested ? "+" : "";
+      const attributeText = canonicalAttributeText(attributes, defaultMarkerAttribute(marker));
+      return `\\${plus}${marker} ${inner(true)}${attributeText}${closer(`\\${plus}${marker}*`)}`;
+    }
+    default:
+      return JSON.stringify(item);
+  }
+}
+
+/** The bytes that are not whitespace. Where a settle may place or drop whitespace a USFM reader
+ * treats as structural is a matter of spelling; a byte that is not whitespace is on the screen
+ * and in the file, or the two disagree. */
+function asUsfmBytes(text: string): string {
+  return text.replace(/[\s\u00A0\u200B]+/g, "");
+}
+
+/** The settled document's chapter and edited blocks — everything but the book line and the
+ * paragraph the caret departs to — as the screen shows them and as the file gets them; `undefined`
+ * when the screen hides bytes the file has (a collapsed note's caller and content). */
+function $screenAndSaved(usj: Usj | undefined): { screen: string; saved: string } | undefined {
+  const blocks = $getRoot().getChildren().slice(1, -1);
+  const hidesBytes = (node: LexicalNode): boolean =>
+    ($isNoteNode(node) && node.getIsCollapsed()) ||
+    ($isElementNode(node) && node.getChildren().some(hidesBytes));
+  if (blocks.some(hidesBytes) || !usj) return undefined;
+  return {
+    screen: asUsfmBytes(blocks.map((block) => block.getTextContent()).join("")),
+    saved: asUsfmBytes(
+      usj.content
+        .slice(1, -1)
+        .map((item) => usfmOf(item))
+        .join(""),
+    ),
+  };
+}
+
 /** The edited paragraph of `usj`, spelled compactly for a failure message. */
 function bodyOf(usj: Usj | undefined): string {
   return JSON.stringify(usj?.content.slice(2, -1));
@@ -459,6 +557,13 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 label,
                 `${label}\n    pending ${bodyOf(pending)}\n    settled ${bodyOf(settled)}`,
               );
+            // What the screen shows is what the file gets.
+            const shown = mounted.lexical.getEditorState().read(() => $screenAndSaved(settled));
+            if (shown && shown.screen !== shown.saved)
+              mismatches.set(
+                `${label} [screen]`,
+                `${label} [screen]\n    screen ${JSON.stringify(shown.screen)}\n    saved  ${JSON.stringify(shown.saved)}`,
+              );
             const settledContext = positionContext(mounted.lexical, viewOptions);
             const after = mounted.lexical.getEditorState().read(() => ({
               text: $documentText(),
@@ -471,11 +576,13 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 `${label} [positions]`,
                 `${label} [positions]\n    ${[...moved, ...roundTrip].join("\n    ")}`,
               );
-            if (DUMP && mismatches.has(`${label} [positions]`))
-              // eslint-disable-next-line no-console -- PENDING_SETTLED_ORACLE_DUMP asks for this output.
-              console.info(
-                `DUMP ${row} :: ${mismatches.get(`${label} [positions]`)}\n    before ${JSON.stringify(before.text)}\n    after  ${JSON.stringify(after.text)}`,
-              );
+            if (DUMP)
+              for (const key of [label, `${label} [screen]`, `${label} [positions]`])
+                if (mismatches.has(key))
+                  // eslint-disable-next-line no-console -- PENDING_SETTLED_ORACLE_DUMP asks for this output.
+                  console.info(
+                    `DUMP ${row} :: ${mismatches.get(key)}\n    before ${JSON.stringify(before.text)}\n    after  ${JSON.stringify(after.text)}`,
+                  );
             mounted.unmount();
           }
 

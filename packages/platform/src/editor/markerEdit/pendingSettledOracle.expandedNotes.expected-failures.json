@@ -1,1 +1,16 @@
-{}
+{
+  "note (standard+expandedNotes view)": {
+    "marker \"\\\\f*\"@0 Delete [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them.",
+    "marker \"\\\\f*\"@0 type \" \" [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them.",
+    "marker \"\\\\f*\"@0 type \"*\" [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them.",
+    "marker \"\\\\f*\"@0 type \"\\\\\" [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them.",
+    "marker \"\\\\f*\"@0 type \"x\" [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them.",
+    "marker \"\\\\f*\"@0 type \"x\" over the whole text [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them.",
+    "marker \"\\\\f*\"@0 type \"|\" [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them.",
+    "marker \"\\\\f*\"@1 Backspace [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them.",
+    "marker \"\\\\f*\"@1 type \" \" [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them.",
+    "marker \"\\\\f*\"@1 type \"*\" [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them.",
+    "marker \"\\\\f*\"@1 type \"\\\\\" [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them.",
+    "marker \"\\\\f*\"@1 type \"|\" [positions]": "A location in the bytes of a damaged note closer, which settle as note content, is handed back to a position to its right: the inbound translation does not land inside the pending glyph that holds them."
+  }
+}
