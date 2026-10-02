@@ -46,7 +46,6 @@ import {
   $charClosingGlyph,
   $hasCaretHeldSeparatorGap,
   $isAttributeRunNode,
-  $isBookNode,
   $isCanonicalMarkerNode,
   $isCanonicalUnmatchedNode,
   $isChapterNode,
@@ -118,26 +117,26 @@ function $displayRunValueAtRest(node: TextNode): boolean {
 }
 
 /**
- * Whether `node` sits inside a block whose text the tokenizer keeps literal — a book id, an
- * opaque UnknownNode block (sidebar, periph, figure, …), or a table. These are the
- * degradation-property contexts `$rebuildParas` refuses to re-tokenize (the paragraph guard
- * rails and `$requestTier2ForNode`'s opaque-block bail), so a divergence there can never
- * settle. Both the backslash path and the `//` optbreak path below skip such nodes: pending
- * a literal the engine will never rebuild would only leave a stuck key.
+ * Whether `node` sits inside a block whose text the tokenizer keeps literal — an opaque
+ * UnknownNode block (sidebar, periph, figure, …) or a table. These are the degradation-property
+ * contexts `$rebuildParas` refuses to re-tokenize (the paragraph guard rails and
+ * `$requestTier2ForNode`'s opaque-block bail), so a divergence there can never settle. Both the
+ * backslash path and the `//` optbreak path below skip such nodes: pending a literal the engine
+ * will never rebuild would only leave a stuck key.
  *
- * Chapters USED to sit in this list, and their entry was purely circular: nothing about a
- * chapter's bytes is literal-by-policy — they were excluded only because no scope rebuilt them.
- * `$rebuildChapter` (tier2Rebuild.utils.ts) is that scope now, so a chapter's display bytes pend
- * and settle like any paragraph's. `book` stays: it has no settle scope, deliberately.
+ * Chapters and books USED to sit in this list, and both entries were purely circular: nothing
+ * about their bytes is literal-by-policy — they were excluded only because no scope rebuilt them.
+ * `$rebuildChapter` and `$rebuildBook` (tier2Rebuild.utils.ts) are those scopes now, so a
+ * chapter's display bytes and the `\id` line's content pend and settle like any paragraph's.
  *
- * Tables are here for the same reason `book` is: no rebuild scope owns one. Their cells hold
- * ordinary `TextNode`s, so this transform does run on them, and a cell whose text contains `//`
- * (a URL, say — the tokenizer reads `//` as an optbreak wherever it appears) would otherwise pend
- * a key nothing can ever settle, leaving it to re-arm the idle timer for the rest of the session.
+ * Tables stay because no rebuild scope owns one. Their cells hold ordinary `TextNode`s, so this
+ * transform does run on them, and a cell whose text contains `//` (a URL, say — the tokenizer
+ * reads `//` as an optbreak wherever it appears) would otherwise pend a key nothing can ever
+ * settle, leaving it to re-arm the idle timer for the rest of the session.
  */
 function $inLiteralOnlyBlock(node: LexicalNode): boolean {
   for (let parent = node.getParent(); parent; parent = parent.getParent())
-    if ($isBookNode(parent) || $isUnknownNode(parent) || $isImmutableTableNode(parent)) return true;
+    if ($isUnknownNode(parent) || $isImmutableTableNode(parent)) return true;
   return false;
 }
 
@@ -147,7 +146,7 @@ function $inLiteralOnlyBlock(node: LexicalNode): boolean {
  * caret-departure settling (a chapter's own glyph text, display-run values, attribute bytes,
  * incomplete or caret-held literals), or request an immediate Tier-2 rebuild for a literal the
  * user just TERMINATED (a separator or `*` closer landed — {@link TERMINATED_MARKER_IN_TEXT_REGEX})
- * with no caret still composing it. Literal-only blocks (book/unknown constructs) never
+ * with no caret still composing it. Literal-only blocks (opaque unknown constructs, tables) never
  * re-tokenize from here, and glyph nodes never arrive (exact-type dispatch routes `MarkerNode`
  * subclasses to their own transforms).
  *
@@ -266,9 +265,9 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
   // `\zfoo ` persisted indefinitely and serialized raw to disk because the caret-departure
   // settle had nothing pended to resolve.
   //
-  // Note content now routes to the note-scoped rebuild (`$rebuildNoteContent`) via
-  // `$requestTier2ForNode`, so it is NOT skipped here; books/chapters/unknowns keep
-  // literal text (degradation property).
+  // Note content routes to the note-scoped rebuild (`$rebuildNoteContent`) via
+  // `$requestTier2ForNode`, and the `\id` line's content to `$rebuildBook`, so neither is skipped
+  // here; opaque unknown blocks and tables keep literal text (degradation property).
   if ($inLiteralOnlyBlock(node)) return;
   // Only the USER'S TYPED RUN can terminate a marker (the type-through corruption class): with
   // the caret mid-word ("li|ke"), typing `\` yields
@@ -421,8 +420,9 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
       // verse-attribute-site branch). Undoing an optbreak settle restores the literal `//`, and
       // undoing a settled fold restores the empty source span's typed value — both are the same
       // divergence class and must re-pend so the next departure re-settles them. No
-      // literal-only-block guard is needed here: the scan never descends into books or
-      // unknowns (handled below), so a `//` there is never visited, and chapter interiors are
+      // literal-only-block guard is needed here: the scan never descends into unknowns (handled
+      // below), so a `//` there is never visited; a book's line is visited, but it settles like a
+      // paragraph's ($rebuildBook) rather than keeping its literals; and chapter interiors are
       // claimed by the chapter arm above.
       if (
         text.includes("\\") ||
@@ -445,14 +445,15 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
       // shared loop above, via `$isStaticSettleShape`'s optbreakDescriptor arm (that arm operates
       // on THIS node, unlike the AttributeRunNode husk below, whose arm operates on its OWNER).
       // Every UnknownNode kind (optbreak or opaque) still stops the walk here without descending:
-      // books/chapters/unknowns keep literal text (degradation property) — the transform never
-      // pends inside them.
+      // unknown blocks keep literal text (degradation property) — the transform never pends
+      // inside them.
       return;
     }
-    // Books keep literal text (degradation property); chapters now DESCEND — their glyph text and
-    // `\ca` run pieces are pend-shaped display bytes with a settle scope of their own
-    // ($rebuildChapter), so an undone chapter settle must re-pend exactly like a paragraph's.
-    if ($isBookNode(node)) return;
+    // Books and chapters both DESCEND: a chapter's glyph text and `\ca` run pieces, and the `\id`
+    // line's content, are pend-shaped display bytes with settle scopes of their own
+    // ($rebuildChapter / $rebuildBook), so an undone settle there must re-pend exactly like a
+    // paragraph's. A book's own `\id GEN ` prefix is an immutable decorator, never a TextNode, so
+    // the literal-shapes check below never sees it.
     if ($isAttributeRunNode(node) && node.getChildrenSize() === 0) {
       // An emptied AttributeRunNode wrapper (an undone husk-removal settle restores it) is the
       // same statically-re-derivable shape as the optbreak husk above: zero children means

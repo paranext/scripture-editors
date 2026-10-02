@@ -32,7 +32,8 @@ import { MarkerStyleInfo, StyleInfo } from "shared";
 export interface MarkerMenuContext {
   /** Chosen per PT9 HandleBackslash (MarkerDropdownEditHandler.cs:96-139). */
   source: "paragraph" | "character";
-  /** Current paragraph's marker (undefined at e.g. book level). */
+  /** The enclosing block's marker: the paragraph's, or `id` in the `\id` line; undefined where the
+   * caret has no block owner. */
   paraMarker?: string;
   /** styleType-paragraph markers before the caret, forward order (validity stack replay). */
   previousParaMarkers: string[];

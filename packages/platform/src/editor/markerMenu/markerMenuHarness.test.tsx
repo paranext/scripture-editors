@@ -27,6 +27,7 @@ import {
 } from "./markerMenuApply.utils";
 import { $getMarkerMenuContext } from "./markerMenuContext.utils";
 import {
+  $buildBookLine,
   $noteContentText,
   findOnlyNote,
   noteUsx,
@@ -60,6 +61,7 @@ import {
   $createCharNode,
   $createMarkerNode,
   $createParaNode,
+  $isBookNode,
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
@@ -363,6 +365,52 @@ describe("editable-mode marker menu harness", () => {
       });
       const json = JSON.stringify(editor.getEditorState().toJSON());
       expect(json).toContain(`"marker":"${chosenMarker}"`);
+    });
+  });
+
+  describe("the `\\id` line", () => {
+    it("offers the INLINE palette (footnotes included), not the paragraph list", async () => {
+      // PT9's own behavior in the `\id` line: character styles valid under `id` plus every note
+      // style. `\id` names the book and its glyph is immutable, so there is no paragraph there to
+      // retag and nothing the paragraph palette could do.
+      let text: TextNode | undefined;
+      const { editor } = await harnessTestEnvironment(() => {
+        text = $buildBookLine("Genesis description");
+      });
+      await act(async () => editor.update(() => requireDefined(text, "text").select(7, 7)));
+
+      await dispatchKeyDown(editor, "\\");
+      const labels = (await waitForMenu()).map(menuItemLabel);
+
+      expect(labels).toContain("f");
+      expect(labels).toContain("fe");
+      // A paragraph marker in the list would mean the paragraph source was chosen.
+      expect(labels).not.toContain("p");
+      expect(labels).not.toContain("q1");
+    });
+
+    it("Enter opens the paragraph menu, and the pick lands the paragraph after the line", async () => {
+      let text: TextNode | undefined;
+      const { editor } = await harnessTestEnvironment(() => {
+        text = $buildBookLine("Genesis description");
+      });
+      await act(async () => editor.update(() => requireDefined(text, "text").select(7, 7)));
+
+      await pressEnterCommand(editor);
+      const menuItems = await waitForMenu();
+      expect(menuItemLabel(menuItems[0])).toBe("ip"); // SmartEnter's introduction choice
+
+      await dispatchKeyDown(editor, "Enter"); // selects the active (first) item
+
+      editor.getEditorState().read(() => {
+        const children = $getRoot().getChildren();
+        expect(children).toHaveLength(2);
+        expect($isBookNode(children[0])).toBe(true);
+        const para = children[1];
+        if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+        expect(para.getMarker()).toBe("ip");
+        expect(para.getTextContent()).toContain(" description");
+      });
     });
   });
 
