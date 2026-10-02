@@ -348,7 +348,11 @@ function walk(
     // A marker the settled side spells twice in a row where the live side spells it once: the
     // tokenizer supplied the first copy (` \p` settles as a `\p` paragraph holding the space,
     // ahead of the paragraph the typed glyph still opens), so the live marker is the second.
-    const supplied = settled[j] === MARKER_START ? suppliedMarkerAt(live, i, settled, j) : 0;
+    const supplied =
+      settled[j] === MARKER_START
+        ? suppliedMarkerAt(live, i, settled, j) ||
+          suppliedMarkerBeforeLiteral(live, i, settled, j, options.spellings)
+        : 0;
     if (supplied > 0) {
       out.push(i, i, j, j + supplied, false);
       j += supplied;
@@ -420,6 +424,30 @@ function suppliedMarkerAt(live: string, i: number, settled: string, j: number): 
     !live.startsWith(token, i + token.length)
     ? token.length
     : 0;
+}
+
+/**
+ * The length of the marker token at `settled[j]` when the tokenizer supplied it in front of a node
+ * the live side spells as literal bytes — `\p` opening a paragraph for a `\x …` typed where the
+ * paragraph's own marker was, which settles as a note — or 0. The settled side then spells the
+ * token and the node's placeholder, and the live side only the literal, starting with the node's
+ * own first marker rather than the token.
+ */
+function suppliedMarkerBeforeLiteral(
+  live: string,
+  i: number,
+  settled: string,
+  j: number,
+  spellings: ReadonlyMap<number, string> | undefined,
+): number {
+  MARKER_TOKEN.lastIndex = j;
+  const token = MARKER_TOKEN.exec(settled)?.[0];
+  if (!token || settled[j + token.length] !== PLACEHOLDER) return 0;
+  const spelling = spellings?.get(j + token.length);
+  if (spelling === undefined || live.startsWith(token, i)) return 0;
+  MARKER_TOKEN.lastIndex = 0;
+  const first = MARKER_TOKEN.exec(spelling)?.[0];
+  return first !== undefined && live.startsWith(first, i) ? token.length : 0;
 }
 
 /** Shift a literal's inner segments so their live side counts from the literal's own start. */

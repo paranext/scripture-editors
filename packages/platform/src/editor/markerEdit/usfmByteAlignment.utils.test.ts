@@ -464,6 +464,19 @@ describe("alignScopeBytes", () => {
     );
   });
 
+  it("finds a literal behind a marker the tokenizer supplied in front of it", () => {
+    // `\x In the` typed where the paragraph's `\p` was settles as a note in a supplied `\p`
+    // paragraph: the `\p` has no live bytes, and the literal starts at the live side's front.
+    const live = nows("\\x In the");
+    const settled = nows(`\\p ${PLACEHOLDER}`);
+    const r = alignScopeBytes(live, settled, new Map([[settled.indexOf(PLACEHOLDER), live]]));
+    expectTiles(r.alignment, live.length, settled.length);
+    expect(r.literals.get(settled.indexOf(PLACEHOLDER))).toEqual(
+      expect.objectContaining({ liveStart: 0, liveEnd: live.length }),
+    );
+    expect(mapCount(r.alignment, 0, "settled")).toBeUndefined(); // the supplied `\p`
+  });
+
   it("finds a re-spelled literal's extent from the front, so a later literal still pairs", () => {
     const live = nows('In \\fig a|file="x.jpg"\\fig* the \\f + \\ft n\\f* made');
     const spellFig = nows('\\fig a|src="x.jpg"\\fig*');

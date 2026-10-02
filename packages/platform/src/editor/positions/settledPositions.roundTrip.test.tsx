@@ -572,3 +572,32 @@ describe.each(["standard+expandedNotes", "unformatted"])(
     });
   },
 );
+
+describe.each(VIEWS)("a paragraph's marker retyped as a note's (%s view)", (view) => {
+  it("reports a position in the paragraph's text where the settled note holds it", async () => {
+    // `\p` retyped `\x`: `\x In the …` settles as a cross-reference note, `In` its caller, in a
+    // paragraph the tokenizer supplies. A position in that text is in the note, not on the
+    // paragraph's marker.
+    const { mounted, $node } = await pendingEdit(
+      ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      view,
+      "\\p",
+      "\\x",
+      2,
+    );
+    const $text = () => {
+      const text = $getRoot()
+        .getAllTextNodes()
+        .find((node) => node.getTextContent().includes("In the"));
+      if (!text) throw new Error("no paragraph text");
+      return text;
+    };
+    expect(roundTrip(mounted, view, $text, 1).reported).toEqual({
+      jsonPath: "$.content[2].content[0]['caller']",
+      propertyOffset: 1,
+    });
+    expectBackInPlace(roundTrip(mounted, view, $text, 4));
+    expect(mounted.lexical.getEditorState().read(() => $node().getTextContent())).toBe("\\x");
+    mounted.unmount();
+  });
+});
