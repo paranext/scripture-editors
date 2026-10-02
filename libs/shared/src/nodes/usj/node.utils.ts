@@ -84,6 +84,8 @@ export {
   getEditableCallerText,
   getVisibleOpenMarkerText,
   openingMarkerText,
+  typedCallerBytes,
+  typedCallerRange,
 } from "./markerText.utils.js";
 
 export type NodesWithMarker =

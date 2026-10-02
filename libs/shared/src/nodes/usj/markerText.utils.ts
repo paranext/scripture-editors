@@ -50,3 +50,48 @@ export function getVisibleOpenMarkerText(marker: string, content: string | undef
 export function getEditableCallerText(noteCaller: string): string {
   return " " + noteCaller + NBSP;
 }
+
+/** Whether `a` and `b` are the same caller-text byte: a space and a no-break space are both the
+ * whitespace around the caller, whichever the view displays. */
+function isSameCallerByte(a: string, b: string): boolean {
+  return a === b || ((a === " " || a === NBSP) && (b === " " || b === NBSP));
+}
+
+/**
+ * Where the bytes typed into an expanded note's editable caller text start and end, and whether
+ * any of the caller's own bytes are gone: what is left of `text` once the bytes it still starts
+ * and ends with, from the caller's own spelling ({@link getEditableCallerText}), are set aside.
+ * The caller's bytes are `missing` when those leading and trailing bytes are not its whole
+ * spelling — some were deleted or typed over.
+ */
+export function typedCallerRange(
+  text: string,
+  caller: string,
+): { start: number; end: number; missing: boolean } {
+  const canonical = getEditableCallerText(caller);
+  let start = 0;
+  while (
+    start < text.length &&
+    start < canonical.length &&
+    isSameCallerByte(text[start], canonical[start])
+  )
+    start += 1;
+  let kept = 0;
+  while (
+    kept < text.length - start &&
+    kept < canonical.length - start &&
+    isSameCallerByte(text[text.length - 1 - kept], canonical[canonical.length - 1 - kept])
+  )
+    kept += 1;
+  return { start, end: text.length - kept, missing: start + kept < canonical.length };
+}
+
+/**
+ * The bytes typed into an expanded note's editable caller text, spelled as the note's content
+ * reads them (a no-break space as the space it stands for): what a caller that is not put back as
+ * a caller word gives its note's content. See {@link typedCallerRange}.
+ */
+export function typedCallerBytes(text: string, caller: string): string {
+  const { start, end } = typedCallerRange(text, caller);
+  return text.slice(start, end).replaceAll(NBSP, " ");
+}

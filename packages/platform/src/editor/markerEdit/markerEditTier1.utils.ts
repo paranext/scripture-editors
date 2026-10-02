@@ -66,6 +66,8 @@ import {
   closingMarkerText,
   displayRunDescriptors,
   getEditableCallerText,
+  typedCallerBytes,
+  typedCallerRange,
   getVisibleOpenMarkerText,
   ImmutableUnmatchedNode,
   leadingAttributeNames,
@@ -74,7 +76,6 @@ import {
   MarkerType,
   NoteNode,
   ParaNode,
-  NBSP,
   textTypeState,
   VerseNode,
 } from "shared";
@@ -922,10 +923,12 @@ const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+$/;
  *   (PT9 GetNextWord: whole word, valid or not), exactly as `\v 1a` retags the number; the
  *   whitespace around it is structural and collapses.
  * - Anything else is damage to the caller's own bytes: the note keeps its caller, and its text is
- *   put back. Bytes the user typed into it — after its separator, onto its word, in front of it
- *   (a `\`, which no word starts with), or over all of it — are content, and move to the start of
- *   the note's content, where the screen shows them; the caller's own bytes never do. A caret in those bytes moves with them; a caret anywhere else past the
- *   caller lands at the content's start, so the next keystroke is content too.
+ *   put back, with the bytes the user typed into it moved to the start of the note's content (see
+ *   `$settleNoteCallerText`). While the collapsed caret is at a caller some of whose own bytes are
+ *   gone (deleted or typed over), the text waits as typed instead, pended for the departure to put
+ *   back: the next keystroke may make it a caller word again — Paratext 9 retags a caller deleted
+ *   and retyped — and meanwhile the document reads as the departure will leave it (the editor→USJ
+ *   conversion moves the same typed bytes to the content).
  *
  * Only the caller TEXT is handled — the unmergeable text child the note builders make (a text
  * spelling the caller exactly counts too, for a shape built without the flag). Content text that
@@ -968,24 +971,52 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
     node.setTextContent(getEditableCallerText(retagged[1]));
     return true;
   }
-  // The bytes typed into the caller text: what is left once the bytes it still starts and ends
-  // with, from the caller's own spelling, are set aside.
-  const canonical = getEditableCallerText(caller);
-  let movedStart = 0;
-  while (
-    movedStart < text.length &&
-    movedStart < canonical.length &&
-    text[movedStart] === canonical[movedStart]
-  )
-    movedStart += 1;
-  let kept = 0;
-  while (
-    kept < text.length - movedStart &&
-    kept < canonical.length - movedStart &&
-    text[text.length - 1 - kept] === canonical[canonical.length - 1 - kept]
-  )
-    kept += 1;
-  const moved = text.slice(movedStart, text.length - kept).replaceAll(NBSP, " ");
+  // A caller whose own bytes are gone waits as typed while the caret is at it: the next keystroke
+  // may make it a caller word again (Paratext 9's delete-then-type retag). The departure puts it
+  // back, as below, and the document reads that way meanwhile. Only a text that still starts with
+  // the separator after the note's marker can become a caller word again, and a typed `\` starts
+  // none: without the one, or with the other, there is nothing to wait for, and the bytes go to
+  // the content now, where they settle as whatever they spell.
+  if (
+    typedCallerRange(text, caller).missing &&
+    /^[ \u00A0]/.test(text) &&
+    !text.includes("\\") &&
+    $isCaretAtNoteCaller(node)
+  ) {
+    context.pendingKeys.add(node.getKey());
+    return true;
+  }
+  $settleNoteCallerText(node, note);
+  return true;
+}
+
+/**
+ * Whether the collapsed caret is at an expanded note's caller text `callerNode`: in it, or at the
+ * start of what follows it — where the caret rests after deleting the caller's last byte.
+ */
+function $isCaretAtNoteCaller(callerNode: TextNode): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const { anchor } = selection;
+  if (anchor.key === callerNode.getKey()) return true;
+  const next = callerNode.getNextSibling();
+  return anchor.offset === 0 && next !== null && anchor.key === next.getKey();
+}
+
+/**
+ * Put an expanded note's caller text `node` back to its caller, moving the bytes typed into it —
+ * after its separator, onto its word, in front of it, or over all of it — to the start of the
+ * note's content, where the screen shows them; the caller's own bytes never move. A caret in
+ * those bytes moves with them; a caret anywhere else past the caller lands at the content's start,
+ * so the next keystroke is content too.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $settleNoteCallerText(node: TextNode, note: NoteNode): void {
+  const caller = note.getCaller();
+  const text = node.getTextContent();
+  const { start: movedStart } = typedCallerRange(text, caller);
+  const moved = typedCallerBytes(text, caller);
   const selection = $getSelection();
   const caret =
     $isRangeSelection(selection) &&
@@ -995,11 +1026,52 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
       : undefined;
   node.setTextContent(getEditableCallerText(caller));
   const content = moved ? $prependNoteContent(note, node, moved) : undefined;
-  if (caret === undefined) return true;
+  if (caret === undefined) return;
   if (content && caret >= movedStart) {
     const offset = Math.min(caret - movedStart, moved.length);
     content.select(offset, offset);
   } else $selectNoteContentStart(note, node);
+}
+
+/**
+ * The expanded note whose editable caller text `node` is — the unmergeable text in the note's
+ * caller slot, right after its opening glyph(s) — or `undefined`.
+ *
+ * Read-only: safe inside `editor.update()` or either read form.
+ */
+function $noteOfCallerText(node: LexicalNode): NoteNode | undefined {
+  if (!$isTextNode(node) || $isMarkerNode(node) || !node.isUnmergeable()) return undefined;
+  const note = node.getParent();
+  if (!$isNoteNode(note) || note.getIsCollapsed() !== false || note.getCaller() === "")
+    return undefined;
+  let slot: LexicalNode | null = note.getFirstChild();
+  while ($isMarkerNode(slot) && slot.getMarkerSyntax() === "opening") slot = slot.getNextSibling();
+  return node.is(slot) ? note : undefined;
+}
+
+/**
+ * Settle a pended expanded-note caller text — one that waited as typed while the caret was at it
+ * ({@link $noteCallerTextTransform}): put back as its caller, the bytes typed into it moved to the
+ * note's content. The idle tick leaves it waiting while the caret is still at it, so a pause
+ * between deleting the caller and typing the next one does not put the old one back.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns `undefined` when `node` is no such caller text; otherwise whether anything changed.
+ */
+function $settlePendedNoteCaller(
+  node: LexicalNode,
+  context: MarkerEditContext,
+  settleReason: SettleReason,
+): boolean | undefined {
+  const note = $noteOfCallerText(node);
+  if (!note || !$isTextNode(node)) return undefined;
+  if (node.getTextContent() === getEditableCallerText(note.getCaller())) return false;
+  if (settleReason === "idle" && $isCaretAtNoteCaller(node)) {
+    context.pendingKeys.add(node.getKey());
+    return false;
+  }
+  $settleNoteCallerText(node, note);
   return true;
 }
 
@@ -1451,6 +1523,11 @@ export function $resolvePendingMarkers(
     const node: LexicalNode | null = $getNodeByKey(key);
     if (!node?.isAttached()) {
       context.pendingKeys.delete(key);
+      continue;
+    }
+    if ($noteOfCallerText(node)) {
+      context.pendingKeys.delete(key);
+      mutated = $settlePendedNoteCaller(node, context, settleReason) || mutated;
       continue;
     }
     if ($isMarkerNode(node)) {

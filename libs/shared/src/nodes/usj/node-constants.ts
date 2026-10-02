@@ -93,3 +93,10 @@ export const blackListedChangeTags = [
   ANNOTATION_CHANGE_TAG,
   DELTA_CHANGE_TAG,
 ];
+
+/**
+ * The `detail` flag of a text node Lexical's normalization never merges with an adjacent text node
+ * (`TextNode.toggleUnmergeable`) — what an expanded note's editable caller text carries, read off
+ * its serialized form. Lexical keeps its detail flags internal, so the value is spelled here.
+ */
+export const UNMERGEABLE_TEXT_DETAIL = 2;

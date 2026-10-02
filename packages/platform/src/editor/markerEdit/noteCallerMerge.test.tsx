@@ -6,6 +6,7 @@
  * again: the note keeps its caller, and the screen shows what the file gets.
  */
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { IDLE_SETTLE_DELAY_MS } from "./MarkerEditPlugin";
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -14,6 +15,7 @@ import {
   $getSelection,
   $isRangeSelection,
   $isTextNode,
+  CLICK_COMMAND,
   LexicalEditor,
   TextNode,
 } from "lexical";
@@ -24,7 +26,7 @@ import {
   NBSP,
   NoteNode,
 } from "shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 /** `\p a\f + note text\f* b`: the note's content starts with plain text. */
 const plainNoteUsj = twoParaUsj([
@@ -59,6 +61,17 @@ function $callerSlot(): TextNode {
   const slot = $liveNote().getChildren()[1];
   if (!$isTextNode(slot)) throw new Error("expected the caller text after the opening glyph");
   return slot;
+}
+
+/** Click into the second paragraph and commit whatever is still pending — the caret departing. */
+async function depart(mounted: Awaited<ReturnType<typeof mountInView>>): Promise<void> {
+  await act(async () => {
+    mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
+    mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  act(() => mounted.ref.current?.commitPendingMarkerEdits());
 }
 
 /** The live note's caller text, or `undefined` when it no longer reads as the caller. */
@@ -135,6 +148,9 @@ describe.each(
       await Promise.resolve();
     });
 
+    // An emptied caller text waits for the caret to leave; a removed one has nothing to wait in.
+    expect(savedNote(mounted.ref.current?.getUsj())).toEqual(loaded);
+    if (how === "emptied") await depart(mounted);
     expect(callerText(mounted.lexical)).toBe(getEditableCallerText("+"));
     expect(savedNote(mounted.ref.current?.getUsj())).toEqual(loaded);
   });
@@ -186,6 +202,9 @@ describe.each(["standard+expandedNotes", "unformatted"])(
       return mounted;
     }
 
+    // While the caret is at the caller, a caller with its own bytes damaged waits as typed — the
+    // next keystroke may make it a caller word again — and the document already reads as the
+    // departure settles it.
     it.each([
       ["its separator deleted", " +", "content" as const, "note text"],
       ["its caller deleted too", " ", "content" as const, "note text"],
@@ -196,9 +215,12 @@ describe.each(["standard+expandedNotes", "unformatted"])(
       "keeps the caller and moves no caller byte into content: %s",
       async (_name, damaged, caret, content) => {
         const mounted = await damage(damaged, caret);
+        const pending = savedNote(mounted.ref.current?.getUsj());
+        expect(pending.caller).toBe("+");
+        expect(pending.content).toEqual([content]);
+        await depart(mounted);
         const saved = savedNote(mounted.ref.current?.getUsj());
-        expect(saved.caller).toBe("+");
-        expect(saved.content).toEqual([content]);
+        expect(saved).toEqual(pending);
         expect(callerText(mounted.lexical)).toBe(getEditableCallerText("+"));
         expectNoteScreenIsSaved(mounted.lexical, saved);
       },
@@ -207,14 +229,70 @@ describe.each(["standard+expandedNotes", "unformatted"])(
     it("moves only the typed backslash into content when it is typed in front of the caller word", async () => {
       // A `\` cannot start a word, so ` \+⍽` is no retag; the caller's own `+` stays the caller's.
       const mounted = await damage(` \\+${NBSP}`, 2);
+      const pending = savedNote(mounted.ref.current?.getUsj());
+      await depart(mounted);
       const saved = savedNote(mounted.ref.current?.getUsj());
+      expect(saved).toEqual(pending);
       expect(saved.caller).toBe("+");
       expect(callerText(mounted.lexical)).toBe(getEditableCallerText("+"));
       expect(mounted.lexical.getEditorState().read($noteScreen)).toBe("\\f + \\note text\\f*");
       expectNoteScreenIsSaved(mounted.lexical, saved);
     });
 
-    it("lands the caret at the content's start once the caller is put back, so typing is content", async () => {
+    it("takes the word typed next as the caller once the caller is deleted, as Paratext 9 does", async () => {
+      const mounted = await damage(` ${NBSP}`, 1);
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.insertText("a");
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(savedNote(mounted.ref.current?.getUsj())).toMatchObject({
+        caller: "a",
+        content: ["note text"],
+      });
+      await depart(mounted);
+      const saved = savedNote(mounted.ref.current?.getUsj());
+      expect(saved).toMatchObject({ caller: "a", content: ["note text"] });
+      expect(callerText(mounted.lexical)).toBe(getEditableCallerText("a"));
+      expectNoteScreenIsSaved(mounted.lexical, saved);
+    });
+
+    it.each([
+      ["in the caller", 1 as const],
+      ["at the content's start", "content" as const],
+    ])("keeps an emptied caller waiting through a pause with the caret %s", async (_at, caret) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        const mounted = await damage(` ${NBSP}`, caret);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(IDLE_SETTLE_DELAY_MS * 3);
+        });
+        expect(callerText(mounted.lexical)).not.toBe(getEditableCallerText("+"));
+        expect(savedNote(mounted.ref.current?.getUsj())).toMatchObject({
+          caller: "+",
+          content: ["note text"],
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("leaves an emptied caller as the user left it while the caret is there", async () => {
+      const mounted = await damage(` ${NBSP}`, 1);
+      expect(
+        mounted.lexical.getEditorState().read(() => $callerSlot().getTextContent()),
+      ).not.toContain("+");
+      const pending = savedNote(mounted.ref.current?.getUsj());
+      expect(pending).toMatchObject({ caller: "+", content: ["note text"] });
+      await depart(mounted);
+      expect(savedNote(mounted.ref.current?.getUsj())).toEqual(pending);
+      expect(callerText(mounted.lexical)).toBe(getEditableCallerText("+"));
+    });
+
+    it("moves bytes typed into an emptied caller that make no caller word to the content", async () => {
       const mounted = await damage(" ", 1);
       await act(async () => {
         mounted.lexical.update(() => {
@@ -224,8 +302,11 @@ describe.each(["standard+expandedNotes", "unformatted"])(
         await Promise.resolve();
         await Promise.resolve();
       });
+      const pending = savedNote(mounted.ref.current?.getUsj());
+      expect(pending).toMatchObject({ caller: "+", content: ["xnote text"] });
+      await depart(mounted);
       const saved = savedNote(mounted.ref.current?.getUsj());
-      expect(saved).toMatchObject({ caller: "+", content: ["xnote text"] });
+      expect(saved).toEqual(pending);
       expectNoteScreenIsSaved(mounted.lexical, saved);
     });
   },

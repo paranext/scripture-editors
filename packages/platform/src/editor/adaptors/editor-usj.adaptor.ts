@@ -68,8 +68,10 @@ import {
   TABLE_ROW_TYPE,
   TABLE_TYPE,
   TypedMarkNode,
+  typedCallerBytes,
   UnknownNode,
   UNMATCHED_TAG_NAME,
+  UNMERGEABLE_TEXT_DETAIL,
   isSerializedVerseBlockNode,
   VerseBlockNode,
   VerseNode,
@@ -530,20 +532,31 @@ function serializedThroughMarks(
   return current;
 }
 
+/** A note's editable caller text, and the caller it stands for. */
+interface CallerSlot {
+  node: SerializedTextNode;
+  caller: string;
+}
+
 /**
  * The one child of `noteChildren` that renders a note's EDITABLE caller, if any — the serialized
  * twin of `$noteEditableCallerNode` (attributeDisplay.utils.ts): skip the leading opening
  * `marker` nodes, look through any annotation mark at that position, and the next child is the
- * caller slot only when it is a serialized plain text node whose text equals
+ * caller slot when it is a serialized plain text node whose text equals
  * `getEditableCallerText(caller)`. A `marker` candidate there (an absent-caller shape, opening
  * glyph immediately followed by closing glyph) never carries that text, so failing the type check
  * first is equivalent to the live predicate's `$isTextNode` guard followed by the same text
  * comparison.
+ *
+ * It is also the slot while its bytes are damaged, waiting as the user typed them while the caret
+ * is at it (the marker-edit engine's `$noteCallerTextTransform`): the unmergeable text the note
+ * builders make for the caller and nothing else. The note still has its caller then, and the
+ * caret's departure will put the text back, so it is read the way that departure leaves it.
  */
 function noteCallerSlotNode(
   noteChildren: SerializedLexicalNode[],
   caller: string,
-): SerializedTextNode | undefined {
+): CallerSlot | undefined {
   let index = 0;
   while (index < noteChildren.length) {
     const child = noteChildren[index];
@@ -551,9 +564,11 @@ function noteCallerSlotNode(
     index++;
   }
   const candidate = serializedThroughMarks(noteChildren[index]);
-  if (isSerializedTextNode(candidate) && candidate.text === getEditableCallerText(caller))
-    return candidate;
-  return undefined;
+  if (!isSerializedTextNode(candidate)) return undefined;
+  if (candidate.text === getEditableCallerText(caller)) return { node: candidate, caller };
+  // `detail` is Lexical's bit field, and the flag is one bit of it.
+  const isUnmergeable = Math.floor(candidate.detail / UNMERGEABLE_TEXT_DETAIL) % 2 === 1;
+  return caller !== "" && isUnmergeable ? { node: candidate, caller } : undefined;
 }
 
 // Keep this function's content semantics in sync with `$getLogicalContentItems` in
@@ -566,7 +581,7 @@ function recurseNodes(
   // caller, threaded down so the TextNode case below can drop that exact node and no other —
   // never re-derived by comparing text, or content that coincidentally matches the caller's
   // rendered text anywhere else in the note would be dropped too.
-  callerSlot?: SerializedTextNode,
+  callerSlot?: CallerSlot,
   // The char span `nodes` are the (unwrapped, through marks) direct children of, or `undefined`
   // outside any char span — see `precedesOpeningCharGlyph`.
   enclosingChar?: SerializedCharNode,
@@ -720,6 +735,14 @@ function recurseNodes(
         markers.push(createMilestoneMarker(node as SerializedMilestoneNode));
         break;
       case TextNode.getType():
+        if (callerSlot && node === callerSlot.node) {
+          // The caller's own bytes are the note's caller; bytes typed into a damaged caller text
+          // are the content the departure moves them to (`noteCallerSlotNode`).
+          let typed = typedCallerBytes(callerSlot.node.text, callerSlot.caller);
+          if (isStandardView(viewOptions)) typed = displayTextToUsj(collapseSpaceRuns(typed));
+          if (typed) combineTextContentOrAdd(markers, typed);
+          break;
+        }
         if (
           serializedTextNode.text &&
           // Drop a bare caret host (EmptyVerseCaretGuardPlugin). A legitimate ZWSP inside real text
@@ -751,11 +774,7 @@ function recurseNodes(
           // Char-span attribute display runs (bare `|…`, no NBSP prefix — see
           // usj-editor.adaptor's `addCharAttributes`) carry no NBSP prefix to strip against, so
           // the prefix check above can't catch them; the textType state tag is the only signal.
-          serializedTextNode[NODE_STATE_KEY]?.textType !== "attribute" &&
-          // Identity, not text equality: only the ONE node `noteCallerSlotNode` anchored as the
-          // note's caller is excluded, so note content that coincidentally reads the same as the
-          // caller (anywhere else in the note) still round-trips as data.
-          node !== callerSlot
+          serializedTextNode[NODE_STATE_KEY]?.textType !== "attribute"
         ) {
           let text = createTextMarker(serializedTextNode);
           // A char marker's leading NBSP separator (added by the forward adaptor's `createChar`

@@ -789,12 +789,12 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       expect(note.content).toEqual([{ type: "char", marker: "ft", content: ["body"] }]);
     });
 
-    it("a drifted caller-slot text (no longer matching the caller) anchors nothing and survives as data", () => {
+    it("a drifted caller-slot text gives its note's content only the bytes typed into it", () => {
       // Simulates the tree mid-edit, after a keystroke has changed the caller-slot node's bytes
-      // before the marker-edit engine has resettled it: the note's children no longer present the
-      // exact `getEditableCallerText(caller)` shape `$noteEditableCallerNode` requires, so nothing
-      // is anchored as the caller slot — the drifted text itself must round-trip untouched, not be
-      // silently dropped because it once matched.
+      // before the marker-edit engine has resettled it (or while the engine leaves it waiting,
+      // the caret at it). The slot is still the caller's — the unmergeable text the note builder
+      // made for it — so the note keeps its caller, and the bytes typed into the slot read as the
+      // content the engine moves them to; the caller's own bytes are never content.
       const viewOptions = getViewOptions(UNFORMATTED_VIEW_MODE);
       const state = buildNoteState(viewOptions);
       const note = findSerializedNote(state);
@@ -808,10 +808,11 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       if (!roundTripped) throw new Error("Expected a round-tripped USJ");
 
       const note2 = findNote(roundTripped);
-      // The drifted text and the loose look-alike text are adjacent surviving plain-text nodes,
-      // so they coalesce into one string exactly as any other adjacent text run would.
+      expect(note2?.caller).toBe("+");
+      // The typed byte and the loose look-alike text after the slot are adjacent content, so they
+      // coalesce into one string exactly as any other adjacent text run would.
       expect(note2?.content).toEqual([
-        `${callerLookalike}X${callerLookalike}`,
+        `X${callerLookalike}`,
         { type: "char", marker: "ft", content: [callerLookalike] },
       ]);
     });

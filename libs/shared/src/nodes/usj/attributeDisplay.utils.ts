@@ -392,6 +392,12 @@ function $throughMarks(node: LexicalNode | undefined): LexicalNode | undefined {
  * editable caller at all. Deriving the anchor from tree shape (rather than viewOptions) keeps the
  * cat sync a structural no-op in every mode that never builds the run, the same rule
  * {@link $charClosingGlyph} applies for a char span's run.
+ *
+ * The text is the caller's while its bytes are damaged too: the unmergeable text the note builders
+ * make for the caller and nothing else (`toggleUnmergeable`), which waits as the user left it
+ * while the caret is at it (the marker-edit engine's caller transform). Any other text in the slot
+ * — content left there once the caller text was removed — is content, unless it spells the caller
+ * exactly (a shape built without the flag).
  */
 export function $noteEditableCallerNode(note: NoteNode): TextNode | undefined {
   const children = note.getChildren();
@@ -402,9 +408,9 @@ export function $noteEditableCallerNode(note: NoteNode): TextNode | undefined {
     index++;
   }
   const caller = $throughMarks(children[index]);
-  if ($isTextNode(caller) && caller.getTextContent() === getEditableCallerText(note.getCaller()))
-    return caller;
-  return undefined;
+  if (!$isTextNode(caller) || caller.getType() !== TextNode.getType()) return undefined;
+  if (caller.getTextContent() === getEditableCallerText(note.getCaller())) return caller;
+  return note.getCaller() !== "" && caller.isUnmergeable() ? caller : undefined;
 }
 
 /**
