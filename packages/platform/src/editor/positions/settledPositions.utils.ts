@@ -998,7 +998,9 @@ function $liveLocationFromSettled(
   }
   const point = $livePointInScope(context, prepared, target);
   const node = point && $getNodeByKey(point.key);
-  return node ? $liveLocationOfPoint(node, point.offset, prepared.viewOptions) : undefined;
+  return node
+    ? $liveLocationOfPoint(node, point.offset, prepared.viewOptions, target.plan.liveNodes)
+    : undefined;
 }
 
 /** How many bytes `a` and `b` start with in common. */
@@ -1052,41 +1054,65 @@ function $renamedCloserLocation(
   return undefined;
 }
 
+/** The leaf in front of `node` in document order — the deepest last descendant of the nearest
+ * earlier sibling of `node` or of one of its ancestors — or `null` at the document's start. An
+ * empty element is a leaf. */
+function $leafBefore(node: LexicalNode): LexicalNode | null {
+  for (let current: LexicalNode | null = node; current; current = current.getParent()) {
+    let leaf = current.getPreviousSibling();
+    if (!leaf) continue;
+    for (let last = $isElementNode(leaf) ? leaf.getLastChild() : null; last; ) {
+      leaf = last;
+      last = $isElementNode(leaf) ? leaf.getLastChild() : null;
+    }
+    return leaf;
+  }
+  return null;
+}
+
+/** Whether `node` is one of `scope` or inside one. */
+function $isWithin(node: LexicalNode, scope: readonly LexicalNode[]): boolean {
+  for (let current: LexicalNode | null = node; current; current = current.getParent())
+    if (scope.some((member) => member.is(current))) return true;
+  return false;
+}
+
 /** Every caret position in front of `node`'s `offset`, nearest first: the earlier offsets of a
- * text node, then each earlier text node's offsets from its end, in document order. An element
- * point stands in front of its child at `offset`. */
+ * text node, then each earlier text node's offsets from its end, in document order — stopping at
+ * the first text node outside `scope` when one is given. An element point stands in front of its
+ * child at `offset`. Walks the tree one leaf at a time, so a caller that stops early reads only
+ * what it passes. */
 function* $caretPointsBefore(
   node: LexicalNode,
   offset: number,
+  scope?: readonly LexicalNode[],
 ): Generator<{ node: LexicalNode; offset: number }> {
-  let text: LexicalNode | null = node;
+  let from: LexicalNode = node;
   if ($isTextNode(node)) for (let at = offset; at >= 0; at -= 1) yield { node, offset: at };
   else if ($isElementNode(node)) {
     const child = node.getChildAtIndex(Math.min(offset, node.getChildrenSize()));
-    text = child ?? node;
-    if (!child) {
+    if (child) from = child;
+    else {
       const last = node.getLastDescendant();
       if ($isTextNode(last))
         for (let at = last.getTextContentSize(); at >= 0; at -= 1) yield { node: last, offset: at };
-      text = last ?? node;
+      from = last ?? node;
     }
   }
-  const texts = $getRoot().getAllTextNodes();
-  const index = texts.findIndex((candidate) => candidate.is(text));
-  const from =
-    index >= 0 ? index - 1 : texts.findIndex((candidate) => !candidate.isBefore(text)) - 1;
-  for (let at = from; at >= 0; at -= 1)
-    for (let offset = texts[at].getTextContentSize(); offset >= 0; offset -= 1)
-      yield { node: texts[at], offset };
+  for (let leaf = $leafBefore(from); leaf; leaf = $leafBefore(leaf)) {
+    if (!$isTextNode(leaf)) continue;
+    if (scope && !$isWithin(leaf, scope)) return;
+    for (let at = leaf.getTextContentSize(); at >= 0; at -= 1) yield { node: leaf, offset: at };
+  }
 }
 
 /**
  * The live location a live point is reported as, chosen so that resolving it lands on that point
  * or the closest one to its left. A pending edit can leave live bytes the live location model has
- * no spelling for — a space typed in front of a paragraph's `\p`, a byte typed into a closer — and
- * there the point's own location resolves past it, onto the next byte the model can name; the
- * position in front of it is then spelled from the nearest point to its left that resolves where
- * it is.
+ * no spelling for — a space typed in front of a paragraph's `\p`, a byte typed into a glyph — and
+ * there the point's own location resolves elsewhere; the point is then spelled as the same caret
+ * on the other side of a node edge, or as the closest point to its left — within `scope`, the
+ * nodes of the settle scope it is in — whose own location resolves exactly where it is.
  *
  * Read-only: call inside a read of the LIVE editor state.
  */
@@ -1094,31 +1120,36 @@ function $liveLocationOfPoint(
   node: LexicalNode,
   offset: number,
   viewOptions: ViewOptions,
+  scope: readonly LexicalNode[],
 ): UsjDocumentLocation {
   const own = $getLocationFromNode(node, offset, viewOptions);
   const target = $pointOf([node, offset]);
   if (!target) return own;
   const resolvesTo = (location: UsjDocumentLocation): PointType | undefined =>
     $pointOf($getNodeFromLocation(location, viewOptions));
-  const ownResolved = resolvesTo(own);
-  if (ownResolved?.is(target)) return own;
+  if (resolvesTo(own)?.is(target)) return own;
+  /** `at`'s own location, when it resolves back to `at` — or to the same caret on the other side
+   * of a node edge. */
+  const exactAt = (at: LexicalNode, atOffset: number): UsjDocumentLocation | undefined => {
+    const location = $getLocationFromNode(at, atOffset, viewOptions);
+    const resolved = resolvesTo(location);
+    if (!resolved) return undefined;
+    if (resolved.is($createPoint(at.getKey(), atOffset, "text"))) return location;
+    const twin = $twinCaret(at, atOffset);
+    return twin && resolved.is($createPoint(twin.node.getKey(), twin.offset, "text"))
+      ? location
+      : undefined;
+  };
   // A caret at a text's end is also the caret at the start of the text after it, and the other
   // way round: where the point's own spelling does not resolve back to it (a token separator's
   // end), the same position spelled from the other side can, and is exact.
   const twin = $twinCaret(node, offset);
-  if (twin) {
-    const location = $getLocationFromNode(twin.node, twin.offset, viewOptions);
-    if (resolvesTo(location)?.is($createPoint(twin.node.getKey(), twin.offset, "text")))
-      return location;
-  }
-  const resolvesAtOrBefore = (location: UsjDocumentLocation): boolean => {
-    const resolved = resolvesTo(location);
-    return !!resolved && !target.isBefore(resolved);
-  };
-  if (ownResolved && !target.isBefore(ownResolved)) return own;
-  for (const point of $caretPointsBefore(node, offset)) {
-    const location = $getLocationFromNode(point.node, point.offset, viewOptions);
-    if (resolvesAtOrBefore(location)) return location;
+  const twinLocation = twin && exactAt(twin.node, twin.offset);
+  if (twinLocation) return twinLocation;
+  for (const point of $caretPointsBefore(node, offset, scope)) {
+    if (point.node.is(node) && point.offset === offset) continue;
+    const location = exactAt(point.node, point.offset);
+    if (location) return location;
   }
   return own;
 }

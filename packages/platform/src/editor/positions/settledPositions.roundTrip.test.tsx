@@ -106,6 +106,25 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
       expectBackInPlace(roundTrip(mounted, view, $node, offset));
   });
 
+  it("keeps a position in a milestone glyph a byte was typed in front of inside the glyph", async () => {
+    // The live document has no location inside `x\qt-s`; a position there is handed back at the
+    // closest one to its left it does have — in front of the glyph — not at the paragraph's own
+    // marker.
+    const { mounted, $node } = await pendingEdit(
+      ["a ", { type: "ms", marker: "qt-s" }, "b"],
+      view,
+      "\\qt-s",
+      "x\\qt-s",
+      1,
+    );
+    const glyphStart = roundTrip(mounted, view, $node, 0).from ?? 0;
+    for (let offset = 1; offset <= "x\\qt-s".length; offset += 1) {
+      const trip = roundTrip(mounted, view, $node, offset);
+      expect(trip.to).toBeGreaterThanOrEqual(glyphStart);
+      expect(trip.to).toBeLessThanOrEqual(trip.from ?? 0);
+    }
+  });
+
   it("keeps a position inside a closer the user damaged", async () => {
     const { mounted, $node } = await pendingEdit(
       ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
