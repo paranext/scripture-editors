@@ -14,7 +14,9 @@
  * replaced).
  * Typing is a direct splice into the node rather than `insertText`, so both nodes on either side
  * of a boundary are exercised: the editor can resolve a caret at a glyph's end to the end of the
- * glyph or to the start of the next text, and the two must settle alike.
+ * glyph or to the start of the next text, and the two must settle alike. At every node boundary
+ * each character is also typed the way a click and a keystroke arrive — the caret placed in one
+ * update, `insertText` in the next — so the caret is wherever the selection listeners leave it.
  *
  * The settle is the departure an abandoned edit gets: a click into another paragraph, blur, and
  * `commitPendingMarkerEdits()`.
@@ -48,8 +50,10 @@ import { MarkerContent, Usj, UsjDocumentLocation } from "@eten-tech-foundation/s
 import { act } from "@testing-library/react";
 import {
   $getRoot,
+  $getSelection,
   $getState,
   $isElementNode,
+  $isRangeSelection,
   $isTextNode,
   CLICK_COMMAND,
   LexicalEditor,
@@ -162,8 +166,22 @@ const CORPUS: { name: string; usj: Usj }[] = [
  * the keystroke does nothing there. */
 type Keystroke = (text: string, offset: number) => { text: string; caret: number } | undefined;
 
+/** The characters the oracle types. */
+const TYPED = ["x", " ", "*", "\\", "|"];
+
+/**
+ * Keystrokes typed the way a user's click and keystroke arrive: the caret placed at a node
+ * boundary in one update, the character inserted at the selection in the next. Between the two,
+ * selection listeners may move the caret to the other node at that boundary (the end of a glyph
+ * rather than the start of the text after it), so this reaches the node a splice does not.
+ */
+const PLACED_KEYSTROKES: { name: string; character: string }[] = TYPED.map((character) => ({
+  name: `place the caret, then type ${JSON.stringify(character)}`,
+  character,
+}));
+
 const KEYSTROKES: { name: string; apply: Keystroke }[] = [
-  ...["x", " ", "*", "\\", "|"].map((character) => ({
+  ...TYPED.map((character) => ({
     name: `type ${JSON.stringify(character)}`,
     apply: (text: string, offset: number) => ({
       text: text.slice(0, offset) + character + text.slice(offset),
@@ -647,7 +665,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
         const mismatches = new Map<string, string>();
         let pendingCases = 0;
         for (const { index, offset } of sites)
-          for (const keystroke of KEYSTROKES) {
+          for (const keystroke of [...KEYSTROKES, ...PLACED_KEYSTROKES]) {
             const mounted = await mountInView(usj, oracleView(view));
             let label = "";
             let applied = false;
@@ -656,6 +674,12 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 const node = $editableTexts()[index];
                 const text = node.getTextContent();
                 label = `${node.getType()} ${JSON.stringify(text.replaceAll(NBSP, "~"))}@${offset} ${keystroke.name}`;
+                if ("character" in keystroke) {
+                  if (offset !== 0 && offset !== text.length) return;
+                  applied = true;
+                  node.select(offset, offset);
+                  return;
+                }
                 const result = keystroke.apply(text, offset);
                 if (!result) return;
                 applied = true;
@@ -665,6 +689,15 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
               await Promise.resolve();
               await Promise.resolve();
             });
+            if (applied && "character" in keystroke)
+              await act(async () => {
+                mounted.lexical.update(() => {
+                  const selection = $getSelection();
+                  if ($isRangeSelection(selection)) selection.insertText(keystroke.character);
+                });
+                await Promise.resolve();
+                await Promise.resolve();
+              });
             if (!applied) {
               mounted.unmount();
               continue;

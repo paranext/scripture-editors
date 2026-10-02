@@ -18,10 +18,11 @@
  * gestures from a space typed beside a marker that is already complete.
  *
  * The rule these pin: while the user is typing there really are two spaces on screen, so the
- * position between them is a real one and the keystroke that created it must be honored. The file
- * is unaffected either way — the writer emits one structural space regardless — which is the same
- * licence the invariants already give a trailing space at the end of a paragraph. Accepting the
- * keystroke and discarding it is the "no silent no-ops" failure.
+ * position between them is a real one and the keystroke that created it must be honored. A space
+ * between a verse marker and its number has no place in the file but the structural run, and the
+ * writer emits one space there regardless. A space typed after a char opener does have one: it is
+ * the content's, behind the separator, and the file gets it. Accepting the keystroke and
+ * discarding it is the "no silent no-ops" failure.
  */
 
 import {
@@ -198,19 +199,21 @@ describe("a space typed at a char opener's end", () => {
   it.each([
     ["flat", false, "\\nd"],
     ["nested", true, "\\+nd"],
-  ])("keeps the caret after the typed space (%s)", async (_label, nested, openerText) => {
+  ])("keeps the space, and the caret after it (%s)", async (_label, nested, openerText) => {
     const { editor } = await charEnvironment(nested);
     await typeSpaceAt(editor, $ndOpener, openerText.length);
 
-    editor.getEditorState().read(() => expect($ndOpener().getTextContent()).toBe(`${openerText} `));
-    // Immediately after the typed space — NOT past the structural separator as well.
-    expect(caretOf(editor)).toBe(`${JSON.stringify(`${openerText} `)}@${openerText.length + 1}`);
-    // The span is untouched in the file: the writer emits the separator structurally.
+    // The separator is the glyph's; the typed space is the content's, behind it — where the same
+    // keystroke lands with the caret at the content's front.
+    editor.getEditorState().read(() => expect($ndOpener().getTextContent()).toBe(openerText));
+    // Immediately after the typed space — NOT past the content's first byte as well.
+    expect(caretOf(editor)).toBe(`${JSON.stringify(`${NBSP} things`)}@2`);
+    // The file gets the space the screen shows.
     const content = paraContent(editor);
     const span = (
       nested ? (content?.[0] as MarkerObject).content?.[1] : content?.[0]
     ) as MarkerObject;
-    expect(span).toMatchObject({ type: "char", marker: "nd", content: ["things"] });
+    expect(span).toMatchObject({ type: "char", marker: "nd", content: [" things"] });
   });
 });
 

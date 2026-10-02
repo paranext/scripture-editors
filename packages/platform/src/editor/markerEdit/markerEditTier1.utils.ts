@@ -51,6 +51,7 @@ import {
   $openerSeparatorGapFollowingBytes,
   $ownerOfRunPiece,
   $paraPrefixSeparatorCaretHeld,
+  $moveGlyphTailBehindSeparator,
   $restoreCanonicalMarkerText,
   $runDiverges,
   $selectCharContentStart,
@@ -598,6 +599,12 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
     return;
   }
   if (node.getMarkerSyntax() === "opening") {
+    // A `|` or space typed at the glyph's end belongs behind the separator, where the same
+    // keystroke lands with the caret at the content's front.
+    if ($moveGlyphTailBehindSeparator(node)) {
+      context.pendingKeys.delete(node.getKey());
+      return;
+    }
     const terminated = TERMINATED_OPENER_REGEX.exec(text);
     if (terminated) {
       context.pendingKeys.delete(node.getKey());

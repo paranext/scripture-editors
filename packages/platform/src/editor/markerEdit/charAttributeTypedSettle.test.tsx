@@ -482,3 +482,68 @@ describe.each(["standard", "unformatted"])(
     });
   },
 );
+
+describe.each(["standard", "unformatted"])(
+  "a byte typed at the boundary between an opening glyph and its separator (%s view)",
+  (view) => {
+    // The caret between `\w` and its separator can sit at the glyph's end or at the front of the
+    // content text, and a selection listener moves the second onto the first before the next
+    // keystroke. The two look the same on screen, so a byte typed at either saves the same file.
+    // `|` and a space go behind the separator; `*` and `\` read with the marker in front of them.
+    const usj = twoParaUsj(["a ", { type: "char", marker: "w", content: ["grace"] }, " b"]);
+    it.each([
+      ["|", ["a ", { type: "char", marker: "w", lemma: "grace" }, " b"]],
+      [" ", ["a ", { type: "char", marker: "w", content: [" grace"] }, " b"]],
+      [
+        "*",
+        [
+          "a ",
+          { type: "unmatched", marker: "w*" },
+          " grace",
+          { type: "unmatched", marker: "w*" },
+          " b",
+        ],
+      ],
+      ["\\", ["a ", { type: "char", marker: "w", content: ["\\ grace"] }, " b"]],
+    ])(
+      "%j saves the same at the glyph's end and in front of the separator",
+      async (byte, saved) => {
+        const results: unknown[] = [];
+        for (const caret of ["glyph end", "content front"]) {
+          const mounted = await mountInView(usj, oracleView(view));
+          // Place the caret, then type: two updates, as a user's click and keystroke are.
+          await act(async () => {
+            mounted.lexical.update(() => $textContaining("grace").select(0, 0));
+            await Promise.resolve();
+          });
+          await act(async () => {
+            mounted.lexical.update(() => {
+              if (caret === "content front") {
+                const content = $textContaining("grace");
+                content.setTextContent(byte + content.getTextContent());
+                content.select(1, 1);
+                return;
+              }
+              const selection = $getSelection();
+              if (!$isRangeSelection(selection)) throw new Error("no caret");
+              selection.insertText(byte);
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+          });
+          await act(async () => {
+            mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
+            mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
+            await Promise.resolve();
+            await Promise.resolve();
+          });
+          act(() => mounted.ref.current?.commitPendingMarkerEdits());
+          const para = mounted.ref.current?.getUsj()?.content[2];
+          results.push(typeof para === "object" ? para.content : undefined);
+          mounted.unmount();
+        }
+        expect(results).toEqual([saved, saved]);
+      },
+    );
+  },
+);

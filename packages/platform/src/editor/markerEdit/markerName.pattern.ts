@@ -81,11 +81,14 @@ export const OPENER_NAME_SPAN_REGEX = new RegExp(
 );
 
 /**
- * An ENTIRE run of marker-name bytes — what the user typed in front of a char opener's separator
- * when it belongs to the opener's name (markerEditTier2Trigger.utils.ts's
+ * An ENTIRE run of bytes that reads with the marker in front of it — marker-name bytes, optionally
+ * ended by the `*` of a closer or the `\` of the next marker: what the user typed in front of a
+ * char opener's separator when it belongs to the opener's glyph (markerEditTier2Trigger.utils.ts's
  * `$movePushedNameIntoGlyph`).
  */
-export const MARKER_NAME_BYTES_REGEX = new RegExp(String.raw`^[${ENGINE_MARKER_NAME_BYTES}]+$`);
+export const BYTES_READ_WITH_MARKER_REGEX = new RegExp(
+  String.raw`^(?:[${ENGINE_MARKER_NAME_BYTES}]+[*\\]?|[*\\])$`,
+);
 
 /**
  * A backslash sequence ANYWHERE in text, completed by a space/NBSP separator or a `*` closer —

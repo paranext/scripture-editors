@@ -30,7 +30,7 @@
 
 import {
   BARE_OPENER_REGEX,
-  MARKER_NAME_BYTES_REGEX,
+  BYTES_READ_WITH_MARKER_REGEX,
   TERMINATED_MARKER_IN_TEXT_REGEX,
 } from "./markerName.pattern";
 import { $requestTier2ForNode, $settleScopeForNode } from "./tier2Rebuild.utils";
@@ -133,11 +133,14 @@ function $spanOfContentText(node: LexicalNode): CharNode | undefined {
 }
 
 /**
- * Move the name bytes the user just typed in front of a char opener's separator into the opening
- * glyph. A caret at the opener's boundary can resolve to the start of the content text, and typing
- * there puts `x⍽grace` after `\w` — bytes that read `\wx grace` on screen, exactly as `x` typed at
- * the end of the glyph does. Moving them makes the two one edit, which settles as the opener rename
- * it spells: the glyph pends, and its settle renames the span and its closer in place.
+ * Move the bytes the user just typed in front of a char opener's separator that read with the
+ * marker — name bytes, a closer's `*`, a next marker's `\` — into the opening glyph. A caret at the
+ * opener's boundary can resolve to the start of the content text, and typing there puts `x⍽grace`
+ * after `\w` — bytes that read `\wx grace` on screen, exactly as `x` typed at the end of the glyph
+ * does. Moving them makes the two one edit, which settles as what it spells: the glyph pends, and
+ * its settle renames the span and its closer in place (or re-tokenizes a `\w*` closer or a `\w\`).
+ * Left in front of the separator, a `\` would take the separator off its glyph and spell a
+ * different marker with it in the unformatted view, where a data no-break space is written `~`.
  *
  * Decided by where the caret is, not by the bytes alone: only the run from the start of the text
  * up to the collapsed caret moves, and only when the separator follows it. Deleting the separator
@@ -160,7 +163,7 @@ function $movePushedNameIntoGlyph(node: TextNode, span: CharNode): boolean {
   if (!node.is(afterGlyph) || !BARE_OPENER_REGEX.test(glyph.getTextContent())) return false;
   const text = node.getTextContent();
   const name = text.slice(0, anchor.offset);
-  if (!MARKER_NAME_BYTES_REGEX.test(name) || text[anchor.offset] !== NBSP) return false;
+  if (!BYTES_READ_WITH_MARKER_REGEX.test(name) || text[anchor.offset] !== NBSP) return false;
   const glyphText = glyph.getTextContent() + name;
   node.setTextContent(text.slice(name.length));
   glyph.setTextContent(glyphText);
@@ -232,14 +235,14 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
     else context.pendingKeys.add(node.getKey());
     return;
   }
+  // Name bytes, `*` or `\\` typed in front of a char opener's separator belong to the opener's
+  // glyph, and nothing else here applies to them.
+  const pushedSpan = $spanOfContentText(node);
+  if (pushedSpan && $movePushedNameIntoGlyph(node, pushedSpan)) {
+    context.pendingKeys.delete(node.getKey());
+    return;
+  }
   if (!text.includes("\\")) {
-    // Name bytes typed in front of a char opener's separator belong to the opener's glyph, and
-    // nothing else here applies to them.
-    const pushedSpan = $spanOfContentText(node);
-    if (pushedSpan && $movePushedNameIntoGlyph(node, pushedSpan)) {
-      context.pendingKeys.delete(node.getKey());
-      return;
-    }
     // `|…` bytes typed into a CLOSED char span's plain content are a pending attribute edit, not
     // inert text: PT9 re-parses `|…` before an explicit closer as attributes. When the closer glyph
     // was typed FIRST (TJ's corrected repro: `\nd text\nd*` then caret at "text|" and type

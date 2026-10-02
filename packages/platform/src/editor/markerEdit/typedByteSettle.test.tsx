@@ -398,7 +398,8 @@ describe("char glyph typed bytes", () => {
     await advance(IDLE_SETTLE_DELAY_MS * 2);
 
     editor.getEditorState().read(() => {
-      // `\nd| word\nd*` re-tokenized: the `|` is CONTENT of the span (the tokenizer's meaning
+      // The `|` goes behind the separator, where it lands with the caret at the content's front,
+      // and `\nd |word\nd*` re-tokenizes with it as CONTENT of the span (the tokenizer's meaning
       // for an `nd`, which carries no attributes) — the span keeps its marker.
       const span = $getRoot()
         .getChildren()
@@ -409,9 +410,9 @@ describe("char glyph typed bytes", () => {
       const content = span
         ?.getChildren()
         .find((child) => $isTextNode(child) && !$isMarkerNode(child));
-      expect(content?.getTextContent()).toBe(`${NBSP}| word`);
-      // Caret immediately AFTER the typed `|`, which hopped the engine's NBSP separator during
-      // the rebuild — the caret follows its byte, not a raw character offset.
+      expect(content?.getTextContent()).toBe(`${NBSP}|word`);
+      // Caret immediately AFTER the typed `|`, which hopped the engine's NBSP separator — the
+      // caret follows its byte, not a raw character offset.
       const selection = $getSelection();
       if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
       expect(selection.anchor.getNode().is(content ?? undefined)).toBe(true);

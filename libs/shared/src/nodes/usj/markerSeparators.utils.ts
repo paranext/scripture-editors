@@ -55,6 +55,7 @@ import { textTypeState } from "../collab/delta.state.js";
 import { $isCharNode, CharNode } from "./CharNode.js";
 import { $isInLiteralOnlyBlock } from "./literalOnlyBlock.utils.js";
 import { $charGlyphNestedValue } from "./nestedGlyphs.utils.js";
+import { openingMarkerText } from "./markerText.utils.js";
 import { NBSP } from "./node-constants.js";
 import {
   $isDisplayOwnerPended,
@@ -296,6 +297,41 @@ function $moveTypedBytesBehindSeparator(text: TextNode): boolean {
   const typed = content.slice(0, anchor.offset);
   text.setTextContent(NBSP + typed + content.slice(anchor.offset + 1));
   text.select(anchor.offset + 1, anchor.offset + 1);
+  return true;
+}
+
+/**
+ * Bytes typed at the END of a char span's opening glyph that the marker name cannot take and that
+ * read with the content rather than the marker — a `|` or whitespace (`\w|` in front of `⍽grace`)
+ * — move behind the separator that still follows the glyph, the shape the same keystroke leaves
+ * with the caret at the content's front ({@link $moveTypedBytesBehindSeparator}). The two carets
+ * are one place on screen and must save one file: the lemma `grace`, not ` grace`. Bytes that do
+ * read with the marker (a name byte, `*`, `\`) stay in the glyph.
+ *
+ * Decided by where the caret is: only a collapsed caret at the glyph's end moves bytes, so a glyph
+ * whose separator was deleted, or a rename in progress, keeps its bytes.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the bytes moved; the glyph is then canonical again.
+ */
+export function $moveGlyphTailBehindSeparator(opener: MarkerNode): boolean {
+  if (opener.getMarkerSyntax() !== "opening" || !$isCharNode(opener.getParent())) return false;
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const text = opener.getTextContent();
+  const { anchor } = selection;
+  if (anchor.key !== opener.getKey() || anchor.offset !== text.length) return false;
+  const spelled = openingMarkerText(opener.getMarker(), opener.getNested());
+  const tail = text.slice(spelled.length);
+  if (!text.startsWith(spelled) || !/^[|\s]+$/.test(tail)) return false;
+  const content = $contentAfterOpener(opener);
+  if (!$isSeparatorPrefixHostText(content)) return false;
+  const contentText = content.getTextContent();
+  if (!contentText.startsWith(NBSP)) return false;
+  opener.setTextContent(spelled);
+  content.setTextContent(NBSP + tail + contentText.slice(NBSP.length));
+  content.select(NBSP.length + tail.length, NBSP.length + tail.length);
   return true;
 }
 

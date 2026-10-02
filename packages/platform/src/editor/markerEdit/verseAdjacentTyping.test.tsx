@@ -245,7 +245,7 @@ describe("typed characters at verse boundaries", () => {
 });
 
 describe("typed space at the char opener separator", () => {
-  it("lands as a visible glyph; serialization collapses to the structural space", async () => {
+  it("lands as content behind the separator, on screen and in the file", async () => {
     let opener: MarkerNode;
     const { editor } = await mount(() => {
       const char = $createCharNode("nd");
@@ -259,8 +259,8 @@ describe("typed space at the char opener separator", () => {
         ),
       );
     });
-    // Caret at the opener glyph's end (`\nd|⍽Lord`): the typed space must appear on screen as
-    // its own glyph beside the separator, not be absorbed.
+    // Caret at the opener glyph's end (`\nd|⍽Lord`): the typed space must appear on screen
+    // beside the separator, not be absorbed.
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     await typeTextAtSelection(editor, " ", opener!, 3);
 
@@ -270,14 +270,13 @@ describe("typed space at the char opener separator", () => {
         .filter($isParaNode)
         .flatMap((para) => para.getChildren())
         .filter($isCharNode);
-      // Two whitespace glyphs between the opener and "Lord": the typed space and the separator.
-      expect(chars[0].getTextContent()).toBe(`\\nd ${NBSP}Lord\\nd*`);
+      // Two whitespace bytes between the opener and "Lord": the separator and the typed space.
+      expect(chars[0].getTextContent()).toBe(`\\nd${NBSP} Lord\\nd*`);
     });
-    // Data side: `\nd  Lord` collapses on a reformat event to `\nd Lord` (the one space after
-    // the marker is structural), so USJ normalizes to the canonical span.
+    // Data side: the separator is structural, the typed space is content.
     const para = currentParaUsj(editor);
     const span = typeof para === "object" ? para.content?.[1] : undefined;
-    expect(typeof span === "object" && span.content).toEqual(["Lord"]);
+    expect(typeof span === "object" && span.content).toEqual([" Lord"]);
   });
 });
 
