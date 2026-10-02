@@ -154,6 +154,9 @@ function createIndex(editor: LexicalEditor): Entry {
   let droppedMarks = new Map<string, NodeKey[]>();
   const painted = new WeakMap<HTMLElement, string[]>();
   const wired = new WeakSet<HTMLElement>();
+  /** Removes every pointer listener this index added once it is released, so an index acquired
+   * later for the same editor is the only one dispatching. */
+  const listeners = new AbortController();
   /** The annotations each wired element's pointer is over now, with the bytes each covers. */
   const hovered = new WeakMap<
     HTMLElement,
@@ -331,10 +334,13 @@ function createIndex(editor: LexicalEditor): Entry {
   function wire(element: HTMLElement): void {
     if (wired.has(element)) return;
     wired.add(element);
-    element.addEventListener("click", (event) => dispatch(element, event, "onClick"));
-    element.addEventListener("mouseenter", (event) => dispatch(element, event, "move"));
-    element.addEventListener("mousemove", (event) => dispatch(element, event, "move"));
-    element.addEventListener("mouseleave", (event) => dispatch(element, event, "leave"));
+    const { signal } = listeners;
+    element.addEventListener("click", (event) => dispatch(element, event, "onClick"), { signal });
+    element.addEventListener("mouseenter", (event) => dispatch(element, event, "move"), { signal });
+    element.addEventListener("mousemove", (event) => dispatch(element, event, "move"), { signal });
+    element.addEventListener("mouseleave", (event) => dispatch(element, event, "leave"), {
+      signal,
+    });
   }
 
   /** Paint leaf `key` from what every annotation paints on it: its element whole, or highlights
@@ -693,6 +699,7 @@ function createIndex(editor: LexicalEditor): Entry {
     }),
     () => {
       disposed = true;
+      listeners.abort();
       highlighter?.dispose();
       contentObserver?.disconnect();
     },

@@ -43,7 +43,7 @@ import {
   TypedMarkOnRemove,
   ZWSP,
 } from "shared";
-import { vi } from "vitest";
+import { onTestFinished, vi } from "vitest";
 
 /** The platform editor's own theme names for `typedMark`/`typedMarkOverlap`; the painter reads
  * them from the editor's theme exactly as `TypedMarkNode.createDOM` does. */
@@ -89,6 +89,14 @@ afterEach(() => {
   lastRelease = undefined;
   lastContainer = undefined;
 });
+
+/** A `<style>` holding `css` for one test. */
+function stylesheetForTest(css: string): void {
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.head.append(style);
+  onTestFinished(() => style.remove());
+}
 
 function classesOf(editor: LexicalEditor, node: TextNode): string[] {
   return [...(editor.getElementByKey(node.getKey())?.classList ?? [])];
@@ -152,6 +160,31 @@ describe("the display-annotation index", () => {
     firstRelease();
     wrap(editor, run, 0, 6, "external-spelling", "d");
     expect(classesOf(editor, run)).not.toContain("annotationId-d");
+  });
+
+  it("dispatches a click once after the index is released and acquired again", () => {
+    const { editor, run, release } = setup();
+    const onClick = vi.fn();
+    wrap(editor, run, 0, 6, "external-spelling", "a", { onClick });
+    release();
+    const again = acquireDisplayAnnotationIndex(editor);
+    lastRelease = again.release;
+    editor.getElementByKey(run.getKey())?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+    again.release();
+  });
+
+  it("removes its highlight stylesheet and probes when released", async () => {
+    stylesheetForTest(".editor-typed-mark-external-spelling { background-color: rgb(1, 2, 3); }");
+    const { editor, run, release } = setup();
+    wrap(editor, run, 1, 6, "external-spelling", "a");
+    await Promise.resolve();
+    expect(document.querySelectorAll("style[data-editor-annotation-highlights]")).toHaveLength(1);
+    expect(document.querySelectorAll("[data-editor-annotation-probes]")).toHaveLength(1);
+    release();
+    expect(document.querySelectorAll("style[data-editor-annotation-highlights]")).toHaveLength(0);
+    expect(document.querySelectorAll("[data-editor-annotation-probes]")).toHaveLength(0);
+    expect(highlighted()).toEqual([]);
   });
 
   it("paints a carrier held whole with the class names a mark gets, and unpaints it when the annotation goes", () => {
