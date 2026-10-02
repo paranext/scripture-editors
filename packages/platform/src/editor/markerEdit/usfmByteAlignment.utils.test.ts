@@ -121,6 +121,18 @@ describe("alignUsfmBytes", () => {
     expect(mapCount(a, 0, "settled")).toBeUndefined(); // the supplied `\p` has no live bytes
   });
 
+  it("pairs a live closer with the settled closer when the settle supplies an empty span's opener", () => {
+    // A lone `\w*` the settle reads as an empty span: the opener in front of it is the settle's,
+    // and the live closer is the settled closer — not the opener's copy.
+    const live = "a\\w*b";
+    const settled = "a\\w\\w*b";
+    const a = alignUsfmBytes(live, settled);
+    expectTiles(a, live.length, settled.length);
+    expect(mapCount(a, 1, "live")).toBe(3); // in front of the live closer: the settled closer
+    expect(mapCount(a, 4, "live")).toBe(6); // after it: after the settled closer
+    expect(mapCount(a, 1, "settled")).toBeUndefined(); // the supplied opener has no live bytes
+  });
+
   it("lines up every byte but a nesting `+` the settle drops or adds", () => {
     // `\nd` deleted: its nested span settles un-nested, both its markers losing their `+`.
     const live = nows("nd one \\+wj two\\+wj* three\\nd*");
