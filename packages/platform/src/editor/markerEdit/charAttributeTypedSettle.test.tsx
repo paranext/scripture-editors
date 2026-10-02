@@ -268,6 +268,30 @@ describe("typed char attribute text settles into real attribute state", () => {
     expectSettlesLikeTokenizer(editor, `\\p \\nd text|stuff="thing" more="bits"\\nd*`);
   });
 
+  it("settles a byte typed in front of an existing run as content, on screen and in the file", async () => {
+    // The caret at the run's start can type into the run itself. The bytes then read
+    // `\w gracex|g\w*` on screen; the text moved from the run's node into the content's is a real
+    // change, so the settle must not take the rebuild for a no-op and leave `x` unsaved.
+    let seed!: Seed;
+    const { editor } = await appStackEnvironment(
+      () => (seed = $seedSpan("w", "grace", { lemma: "g" }, "|g")),
+    );
+    const run = requireDefined(seed.run, "seeded run missing");
+    await act(async () =>
+      editor.update(() => {
+        run.setTextContent("x|g");
+        run.select(1, 1);
+      }),
+    );
+    await depart(editor, seed.other);
+
+    editor.getEditorState().read(() => {
+      expect($charAttributeDisplayNode($onlySpan())?.getTextContent()).toBe("|g");
+      expect($onlySpan().getTextContent()).toBe(`\\w${NBSP}gracex|g\\w*`);
+    });
+    expectSettlesLikeTokenizer(editor, `\\p \\w gracex|g\\w*`);
+  });
+
   it("leaves the bytes as CONTENT on an UNCLOSED span, matching the tokenizer", async () => {
     // Not the reported bug, and the distinction is worth a pin: with no closing marker there is no
     // attribute position, so `|stuff="thing"` is literal text. The tokenizer says so, and a settle

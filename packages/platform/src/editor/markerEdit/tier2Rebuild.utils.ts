@@ -668,6 +668,16 @@ function $appendSignature(
       out.push(ATOMIC_SENTINEL);
     } else if ($isLineBreakNode(node)) {
       out.push(" ");
+    } else if ($isTextNode(node) && $getState(node, textTypeState) === "attribute") {
+      // Tagged like a glyph: bytes typed into an attribute run at its start read as the span's
+      // content once re-tokenized (`\w gracex|g\w*`), and only the run's own delimiting shows
+      // that bytes moved from the run into the content rather than the rebuild changing nothing.
+      out.push(
+        SIGNATURE_OPEN,
+        "attribute",
+        toFragmentText($textNodeFragmentText(node)),
+        SIGNATURE_CLOSE,
+      );
     } else if ($isTextNode(node)) {
       out.push(
         toFragmentText(
@@ -730,6 +740,12 @@ export function serializedChildren(
 export function serializedText(node: SerializedLexicalNode): string | undefined {
   const { text } = node as { text?: string };
   return typeof text === "string" ? text : undefined;
+}
+
+/** A serialized text node's `textTypeState` tag (Lexical keeps node state under `$`), or
+ * `undefined` for a node with none. */
+function serializedTextType(node: SerializedLexicalNode): unknown {
+  return (node as { $?: { textType?: unknown } }).$?.textType;
 }
 
 /** A serialized node's own `type` tag, or `""` for a shape with none. */
@@ -959,6 +975,11 @@ function appendSerializedSignature(
       continue;
     }
     const text = serializedText(node);
+    if (text !== undefined && serializedTextType(node) === "attribute") {
+      // Tagged, mirroring `$appendSignature`'s attribute-run branch.
+      out.push(SIGNATURE_OPEN, "attribute", toFragmentText(text), SIGNATURE_CLOSE);
+      continue;
+    }
     if (text !== undefined) {
       out.push(toFragmentText(insideCharChildren ? charOwnChildSignatureText(text) : text));
       continue;
