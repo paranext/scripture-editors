@@ -378,6 +378,9 @@ describe("AnnotationHighlighter measuring", () => {
 
 describe("AnnotationHighlighter names", () => {
   it("never collide between two copies of the module, as two bundles or a hot reload load", async () => {
+    // Two fresh copies, so both count painters from 0 whatever this file's copy has counted.
+    vi.resetModules();
+    const one = await import("./annotationHighlights");
     vi.resetModules();
     const copy = await import("./annotationHighlights");
     const api = getHighlightApi();
@@ -386,7 +389,7 @@ describe("AnnotationHighlighter names", () => {
     const text = document.createElement("span");
     text.textContent = "ab";
     parent.append(text);
-    const first = new AnnotationHighlighter(api, () => parent);
+    const first = new one.AnnotationHighlighter(api, () => parent);
     const second = new copy.AnnotationHighlighter(api, () => parent);
     cleanups.push(
       () => first.dispose(),

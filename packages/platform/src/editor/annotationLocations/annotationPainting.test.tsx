@@ -229,6 +229,8 @@ describe("annotation painting in Standard view", () => {
     expect(paintedText(mounted, "one")).toBe("1");
   });
 
+  // A load replaces every node, so this pins that it leaves no highlight behind; the stale-range
+  // path itself is reached by the undo and redo test above.
   it("leaves no highlight behind when the document is loaded again", async () => {
     const number = `${para}.content[0]['number']`;
     await annotate(
@@ -336,6 +338,8 @@ describe("annotation painting on read-only decorators", () => {
     },
   );
 
+  // The verse decorator re-renders inside the commit here, so this pins the result of a renumber;
+  // a decorator rendering after its commit is covered in `displayAnnotations.index.test.tsx`.
   it("keeps a partial highlight on its bytes when a collaborator renumbers the verse", async () => {
     const mounted = await mountInView(paintUsj, oracleView("formatted"));
     await annotate(
