@@ -262,10 +262,9 @@ export interface EditorRef {
    * Highlight instead, which the editor styles from the same class rules: it copies the
    * properties a highlight can paint (`background-color`, `color`, a `text-decoration` that draws
    * a line, `text-shadow`) and otherwise draws a bottom border as an underline. Other properties
-   * and `:hover` rules
-   * apply only to elements, and the rules must not depend on ancestors inside the editable content.
-   * Where the browser has no highlight API, a display byte is painted whole. Find painted
-   * annotations with {@link EditorRef.getAnnotationRanges}, not by class.
+   * and `:hover` rules apply only to elements, and the rules must not depend on ancestors inside
+   * the editable content. Where the browser has no highlight API, a display byte is painted whole.
+   * Find painted annotations with {@link EditorRef.getAnnotationRanges}, not by class.
    *
    * A read-only glyph, verse number or chapter number (the views without editable markers) holds
    * and paints exactly the part of what it shows that the range names. A range that names only
