@@ -565,6 +565,92 @@ function $markerGlyphCaretHeld(glyph: MarkerNode): boolean {
 }
 
 /**
+ * Move whitespace typed on a glyph's OUTER side — in front of an opener or a milestone, or behind
+ * a note's closer — to the text beside it, when the glyph is otherwise intact. The caret there and
+ * the one at that text's edge are one place on screen, and the bytes do not read with the marker:
+ * they are the text's own. Left in the glyph, they would settle with its divergence, and the
+ * re-tokenization collapses the whitespace run they make with that text, dropping a typed space
+ * the screen keeps everywhere else (docs/standard-view-invariants.md §4).
+ *
+ * A paragraph's own marker is left alone: nothing stands in front of it in its paragraph. An
+ * opener that starts the node it opens (a char span, a note, a milestone) has the whitespace go
+ * in front of that node; one at the document root (a `\ca` span beside its chapter) is left
+ * alone too, since the root holds no text.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the whitespace moved.
+ */
+function $moveOuterGlyphSpaceOut(glyph: MarkerNode): boolean {
+  const text = glyph.getTextContent();
+  const isCloser = glyph.getMarkerSyntax() === "closing";
+  const space = (isCloser ? /[ \u00A0]+$/ : /^[ \u00A0]+/).exec(text)?.[0];
+  if (!space || space.length === text.length) return false;
+  const parent = glyph.getParent();
+  // The node the whitespace goes beside: a span or note the glyph opens or closes, or the glyph.
+  let beside: LexicalNode = glyph;
+  if (isCloser) {
+    if (!$isNoteNode(parent) || !parent.getLastChild()?.is(glyph)) return false;
+    beside = parent;
+  } else if ($isAttributeRunNode(parent)) {
+    // A milestone's glyphs ride in a run wrapper right after the milestone itself, which the
+    // whitespace must not come between.
+    const owner = $ownerOfRunPiece(glyph)?.owner;
+    if (!$isMilestoneNode(owner) || !parent.getFirstChild()?.is(glyph)) return false;
+    beside = owner;
+  } else if (parent?.getFirstChild()?.is(glyph)) {
+    if ($isParaNode(parent)) return false;
+    beside = parent;
+  }
+  // A span beside its chapter (`\ca`) stands at the document root, which holds no text.
+  if ($isRootOrShadowRoot(beside.getParent())) return false;
+  const kept = isCloser ? text.slice(0, text.length - space.length) : text.slice(space.length);
+  glyph.setTextContent(kept);
+  if (!$isCanonicalMarkerNode(glyph)) {
+    glyph.setTextContent(text);
+    return false;
+  }
+  const selection = $getSelection();
+  const caret =
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === glyph.getKey()
+      ? selection.anchor.offset
+      : undefined;
+  let holder: TextNode;
+  if (isCloser) {
+    const next = beside.getNextSibling();
+    if ($isPlainNoteText(next)) {
+      next.setTextContent(space + next.getTextContent());
+      holder = next;
+    } else {
+      holder = $createTextNode(space);
+      beside.insertAfter(holder);
+    }
+    if (caret !== undefined && caret > kept.length) {
+      const offset = caret - kept.length;
+      holder.select(offset, offset);
+    }
+    return true;
+  }
+  const previous = beside.getPreviousSibling();
+  let spaceStart = 0;
+  if ($isPlainNoteText(previous)) {
+    spaceStart = previous.getTextContentSize();
+    previous.setTextContent(previous.getTextContent() + space);
+    holder = previous;
+  } else {
+    holder = $createTextNode(space);
+    beside.insertBefore(holder);
+  }
+  if (caret !== undefined) {
+    if (caret <= space.length) holder.select(spaceStart + caret, spaceStart + caret);
+    else glyph.select(caret - space.length, caret - space.length);
+  }
+  return true;
+}
+
+/**
  * Tier-1 transform for a marker GLYPH (`MarkerNode`): canonical bytes clear the node's pend;
  * divergent bytes either HEAL back to canonical — machine drift, a byte change with no caret at
  * the glyph and no pend-ledger entry, a shape no user gesture produces (glyphDriftHeal.test.tsx)
@@ -609,6 +695,10 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
     context.logger?.debug(
       `[MarkerEdit] healed machine-drifted glyph bytes back to "${node.getTextContent()}"`,
     );
+    return;
+  }
+  if ($moveOuterGlyphSpaceOut(node)) {
+    context.pendingKeys.delete(node.getKey());
     return;
   }
   if (node.getMarkerSyntax() === "opening") {
