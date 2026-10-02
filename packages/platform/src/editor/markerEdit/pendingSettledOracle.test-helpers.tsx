@@ -23,8 +23,10 @@
  * glyph is also visited at its two ends: a character typed with the caret placed there, and
  * Backspace or Delete removing the glyph's character the way Lexical removes a `token` node, whole.
  * Every caret there is placed as a click, which the shell's caret guard answers; a place it does
- * not let a caret rest (past the note's closer) is not edited. And since the popover saves only
- * its note, a keystroke made in the note must leave everything outside it as loaded.
+ * not let a caret rest (past the note's closer) is not edited. Each caret in the note's content
+ * is also extended into a range the keyboard makes (Shift with an arrow, Home or End, and
+ * select-all) and the range typed over or removed. And since the popover saves only its note, a
+ * keystroke made in the note must leave everything outside it as loaded.
  * And the delete-then-type gesture is also typed as two history entries and followed by leaving and
  * then Undo (or Undo, Undo and Redo), which brings back the document between the two keystrokes
  * without running a single transform; that document is then held to the same contract.
@@ -79,6 +81,7 @@ import {
   LexicalNode,
   NodeKey,
   REDO_COMMAND,
+  SELECT_ALL_COMMAND,
   SELECTION_CHANGE_COMMAND,
   TextNode,
   UNDO_COMMAND,
@@ -327,6 +330,31 @@ const SHELL_KEYSTROKES: ShellKeystroke[] = [
   { name: "Backspace at its end", deletes: "before" },
   { name: "Delete at its front", deletes: "after" },
 ];
+
+/**
+ * A range made from a caret in a note's content the way the keyboard makes one — Shift with Left
+ * or Right (one caret position), Home or End (the paragraph's edge), or select-all — announced as
+ * a selection change, then typed over with `x` or removed (Backspace), as edits of their own. Run
+ * in the popover's view, whose shell guard keeps such a range to the note's content.
+ */
+interface RangeKeystroke {
+  name: string;
+  extend: "left" | "right" | "home" | "end" | "all";
+  edit: "x" | "";
+}
+
+const RANGE_KEYSTROKES: RangeKeystroke[] = (
+  [
+    ["Shift+Left", "left"],
+    ["Shift+Right", "right"],
+    ["Shift+Home", "home"],
+    ["Shift+End", "end"],
+    ["select-all", "all"],
+  ] as const
+).flatMap(([gesture, extend]) => [
+  { name: `${gesture}, then type "x"`, extend, edit: "x" as const },
+  { name: `${gesture}, then Backspace`, extend, edit: "" as const },
+]);
 
 /** Whether `node` is shown inside a collapsed note, where nothing can be typed. */
 function $isInCollapsedNote(node: LexicalNode): boolean {
@@ -1184,7 +1212,11 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
         for (const { index, offset, shell } of sites)
           for (const keystroke of shell
             ? SHELL_KEYSTROKES
-            : [...KEYSTROKES, ...PLACED_KEYSTROKES]) {
+            : [
+                ...KEYSTROKES,
+                ...PLACED_KEYSTROKES,
+                ...(view === PROTECTED_NOTE_SHELL_VIEW ? RANGE_KEYSTROKES : []),
+              ]) {
             const mounted = await mountInView(usj, pendingOracleView(view));
             let label = "";
             let applied = false;
@@ -1241,6 +1273,36 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                   selection.removeText();
                   return;
                 }
+                if ("extend" in keystroke) {
+                  if (!isInNote) return;
+                  applied = true;
+                  node.select(offset, offset);
+                  const selection = $getSelection();
+                  if (!$isRangeSelection(selection)) return;
+                  if (keystroke.extend === "all") {
+                    mounted.lexical.dispatchCommand(SELECT_ALL_COMMAND, undefined);
+                    return;
+                  }
+                  const para = $getRoot().getChildren()[2];
+                  if (!$isElementNode(para)) return;
+                  const positions = $caretPositions();
+                  const at = positions.find(
+                    (caret) => caret.node.is(node) && caret.offset === offset,
+                  );
+                  const neighbor =
+                    keystroke.extend === "left"
+                      ? positions
+                          .filter((caret) => caret.position === (at?.position ?? 0) - 1)
+                          .at(-1)
+                      : positions.find((caret) => caret.position === (at?.position ?? 0) + 1);
+                  if (keystroke.extend === "home") selection.focus.set(para.getKey(), 0, "element");
+                  else if (keystroke.extend === "end")
+                    selection.focus.set(para.getKey(), para.getChildrenSize(), "element");
+                  else if (neighbor)
+                    selection.focus.set(neighbor.node.getKey(), neighbor.offset, "text");
+                  mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+                  return;
+                }
                 const typed = "character" in keystroke ? keystroke.character : keystroke.typed;
                 const at = $caretPositions().find(
                   (caret) => caret.node.is(node) && caret.offset === offset,
@@ -1264,12 +1326,15 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
               await Promise.resolve();
               await Promise.resolve();
             });
+            // An empty `next` replaces a range with nothing: Backspace.
             const next =
               "character" in keystroke
                 ? keystroke.character
                 : "then" in keystroke
                   ? keystroke.then
-                  : undefined;
+                  : "edit" in keystroke
+                    ? keystroke.edit
+                    : undefined;
             const history = "history" in keystroke ? keystroke.history : undefined;
             if (applied && next !== undefined)
               await act(async () => {
