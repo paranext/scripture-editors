@@ -8,6 +8,7 @@ import {
   LexicalNode,
   PointType,
   SELECTION_CHANGE_COMMAND,
+  TextNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
 import {
@@ -43,6 +44,50 @@ function $noteShellNodes(note: NoteNode): LexicalNode[] {
   return shell.length > 0 && shell.every((node) => $isTextNode(node) && node.getMode() === "token")
     ? shell
     : [];
+}
+
+/**
+ * An expanded note's protected CLOSING glyph — the `\f*` that ends the shell's other side — or
+ * `undefined` when the note has none or leaves it editable. Read off the node's mode, as
+ * {@link $noteShellNodes} is: the adaptor builds it in `token` mode exactly when it builds the
+ * opening glyph and the caller that way.
+ */
+function $protectedCloser(note: NoteNode): TextNode | undefined {
+  if (note.getIsCollapsed() !== false) return undefined;
+  const last = note.getLastChild();
+  return $isMarkerNode(last) && last.getMarkerSyntax() === "closing" && last.getMode() === "token"
+    ? last
+    : undefined;
+}
+
+/**
+ * The note whose protected closer `point` rests strictly inside, or `undefined`. Both of the
+ * closer's ends are caret positions: Lexical redirects an insertion at either boundary of a
+ * `token` node to the sibling side — the note's content in front of it, or what follows the note —
+ * while an insertion strictly inside replaces the closer outright and leaves the note unclosed.
+ */
+function $closerInteriorAt(point: PointType): NoteNode | undefined {
+  if (point.type !== "text") return undefined;
+  const node = point.getNode();
+  const note = node.getParent();
+  if (!$isNoteNode(note) || !$protectedCloser(note)?.is(node)) return undefined;
+  return point.offset > 0 && point.offset < node.getTextContentSize() ? note : undefined;
+}
+
+/**
+ * Whether a KEYBOARD move reached the closer from the note's side — the caret was before the
+ * closer — so carrying on past it, out of the note, is the move's direction. Anything else (a move
+ * coming back from after the note, no previous selection) lands in front of it, in the note.
+ */
+function $arrivedFromBeforeCloser(closer: TextNode): boolean {
+  const previous = $getPreviousSelection();
+  if (!$isRangeSelection(previous)) return false;
+  const { anchor } = previous;
+  const node = anchor.getNode();
+  if (node.is(closer)) return false;
+  const note = closer.getParent();
+  if (note && node.is(note)) return anchor.offset <= closer.getIndexWithinParent();
+  return node.isBefore(closer);
 }
 
 /** The note whose protected shell `node` belongs to, or `undefined`. */
@@ -154,6 +199,16 @@ export function $guardCaretOutOfNoteShell(isPointerGesture = false): boolean {
 
   if (!selection.isCollapsed()) return $expandSelectionPastShell(selection.anchor, selection.focus);
 
+  const closedNote = $closerInteriorAt(selection.anchor);
+  const closer = closedNote && $protectedCloser(closedNote);
+  if (closer) {
+    // A pointer names the note it landed in; a keyboard move keeps its direction.
+    const offset =
+      !isPointerGesture && $arrivedFromBeforeCloser(closer) ? closer.getTextContentSize() : 0;
+    closer.select(offset, offset);
+    return true;
+  }
+
   const note = $shellAt(selection.anchor);
   if (!note) return false;
   if (!isPointerGesture && $arrivedFromContentSide(note)) {
@@ -177,13 +232,23 @@ export function $guardCaretOutOfNoteShell(isPointerGesture = false): boolean {
 function $expandSelectionPastShell(anchor: PointType, focus: PointType): boolean {
   const anchorNote = $shellAt(anchor);
   const focusNote = $shellAt(focus);
-  if (!anchorNote && !focusNote) return false;
+  const anchorCloser = $closerInteriorAt(anchor);
+  const focusCloser = $closerInteriorAt(focus);
+  if (!anchorNote && !focusNote && !anchorCloser && !focusCloser) return false;
   // Which endpoint leads is the range's own direction; each offending one moves to the shell edge
   // that is farther from the other, which is what grows rather than shrinks the selection.
   const anchorLeads = anchor.isBefore(focus);
   if (anchorNote) $movePointPastShell(anchor, anchorNote, anchorLeads);
   if (focusNote) $movePointPastShell(focus, focusNote, !anchorLeads);
+  if (anchorCloser) $movePointPastCloser(anchor, anchorCloser, anchorLeads);
+  if (focusCloser) $movePointPastCloser(focus, focusCloser, !anchorLeads);
   return true;
+}
+
+/** Move `point` from inside `note`'s protected closer to its front (`toStart`) or its end. */
+function $movePointPastCloser(point: PointType, note: NoteNode, toStart: boolean): void {
+  const closer = $protectedCloser(note);
+  if (closer) point.set(closer.getKey(), toStart ? 0 : closer.getTextContentSize(), "text");
 }
 
 /** Move `point` to the shell's leading edge (`toStart`) or to the start of the note's content. */
@@ -196,7 +261,10 @@ function $movePointPastShell(point: PointType, note: NoteNode, toStart: boolean)
 /**
  * Keeps the caret out of an expanded note's shell — the opening glyph and caller a host governs
  * through its own UI rather than as text (`ViewOptions.isNoteShellEditable: false`; Paratext 10's
- * footnote editor has a dropdown for each, as does Paratext 9).
+ * footnote editor has a dropdown for each, as does Paratext 9) — and out of the inside of its
+ * closing glyph, which is built the same way and would leave the note unclosed if typed into: a
+ * caret there moves to the closer's front, or, for a keyboard move travelling out of the note, to
+ * its end.
  *
  * Rendering those nodes in Lexical's `token` mode is what makes them atomic to the operations that
  * ASK a node whether it can be split, but it does not keep a caret from landing among their

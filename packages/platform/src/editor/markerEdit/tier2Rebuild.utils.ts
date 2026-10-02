@@ -477,12 +477,16 @@ export function $isReTokenizableMilestone(marker: string, getMarkerFn: MarkerLoo
  * bytes would stay on screen and never reach the file.
  *
  * A note carrying attributes its bytes cannot spell (anything but `closed`) stays preserved.
- * Collapsed notes never qualify: their glyphs are not typed into.
+ * Collapsed notes never qualify: their glyphs are not typed into. Nor does a note whose shell the
+ * host governs (`ViewOptions.isNoteShellEditable: false`, its glyphs built in `token` mode): its
+ * glyphs are not text, so their bytes never read as anything but the note's own.
  *
  * Read-only: safe inside `editor.getEditorState().read(...)` or an update.
  */
 export function $isLiteralNoteShell(note: NoteNode): boolean {
   if (note.getIsCollapsed() !== false) return false;
+  if (note.getChildren().some((child) => $isMarkerNode(child) && child.getMode() === "token"))
+    return false;
   const attributes = Object.keys(note.getUnknownAttributes() ?? {});
   if (attributes.some((name) => name !== "closed")) return false;
   return note.getChildren().some((child) => {

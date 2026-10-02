@@ -28,6 +28,7 @@ import {
   KEY_ENTER_COMMAND,
   LexicalEditor,
   LexicalNode,
+  SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { $dfs } from "@lexical/utils";
 // Reaching inside only for tests.
@@ -542,4 +543,48 @@ describe("popover note ops round-trip (canonical glyph-free contract)", () => {
       ["third paragraph"],
     ]);
   }, 30000);
+});
+
+describe("the popover's protected note shell", () => {
+  // The popover's own view: the host's, expanded, with the note's marker and caller governed by its
+  // dropdowns rather than typed (FootnoteEditor's `isNoteShellEditable: false`).
+  const protectedPopoverOptions: EditorOptions = {
+    ...popoverOptions,
+    view: { ...requireDefined(popoverOptions.view, "popover view"), isNoteShellEditable: false },
+  };
+
+  it.each([1, 2])(
+    "saves one closed note, keystroke included, when the caret lands inside the closer at %i",
+    async (offset) => {
+      const host = await renderEditor(hostOptions, sampleUsj);
+      const hostNoteOps = requireDefined(host.editorRef.getNoteOps(0), "host note ops");
+      const popover = await renderEditor(protectedPopoverOptions, PARAGRAPH_USJ);
+      await act(async () => {
+        popover.editorRef.applyUpdate([hostNoteOps[0]]);
+      });
+      await act(async () => {
+        popover.lexical.update(() => {
+          const note = requireDefined($findNotes()[0], "popover note");
+          const closer = note.getLastChild();
+          if (!$isMarkerNode(closer)) throw new Error("expected the note's closing glyph");
+          closer.select(offset, offset);
+          popover.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        });
+      });
+      await act(async () => {
+        popover.lexical.update(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.insertText("X");
+        });
+      });
+      act(() => popover.editorRef.commitPendingMarkerEdits());
+
+      // What the popover's Save writes: its first note op, which must be the whole note.
+      const ops = requireDefined(popover.editorRef.getNoteOps(0), "popover note ops");
+      expect(ops).toHaveLength(1);
+      expect(ops[0]).not.toHaveProperty(["insert", "note", "closed"]);
+      expect(JSON.stringify(ops[0])).toContain('"X"');
+    },
+    30000,
+  );
 });

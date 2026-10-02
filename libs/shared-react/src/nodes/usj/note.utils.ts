@@ -384,7 +384,10 @@ export function $createWholeNote(
     openingMarkerNode = $createMarkerNode(marker);
     if (isShellAtomic) openingMarkerNode.setMode("token");
     // An unclosed note has no closer to display.
-    if (!isUnclosed) closingMarkerNode = $createMarkerNode(marker, "closing");
+    if (!isUnclosed) {
+      closingMarkerNode = $createMarkerNode(marker, "closing");
+      if (isShellAtomic) closingMarkerNode.setMode("token");
+    }
   } else if (viewOptions?.markerMode === "visible") {
     // Same glyph text shapes as the load path (`createNote`): opening glyph with a plain
     // trailing space, closer bare. Glyphs are presentation-only (never serialized), so a

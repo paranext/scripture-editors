@@ -45,6 +45,7 @@ import {
   TextNode,
 } from "lexical";
 import { $isMarkerNode, $noteEditableCallerNode, getEditableCallerText, NoteNode } from "shared";
+import { $isLiteralNoteShell } from "./tier2Rebuild.utils";
 import { NoteShellCaretGuardPlugin, ViewOptions } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
@@ -61,11 +62,11 @@ const protectedShell: ViewOptions = { ...expandedEditable, isNoteShellEditable: 
 
 /** `serializedState` from the shared helpers always uses the default view options; these cases
  * differ ONLY in the view options, so the state has to be built with the one under test. */
-async function mount(view: ViewOptions) {
+async function mount(view: ViewOptions, noteAttrs = `closed="false"`) {
   initializeSerialize(undefined, undefined);
   initializeDeserialize(undefined);
   reset();
-  const state = serializeEditorState(noteUsx(`closed="false"`), view);
+  const state = serializeEditorState(noteUsx(noteAttrs), view);
   return baseTestEnvironment(
     JSON.stringify({ root: state.root }),
     <>
@@ -319,5 +320,69 @@ describe("expanded note shell", () => {
       expect(note.getCaller()).toBe("X+");
       expect($noteEditableCallerNode(note)?.getTextContent()).toBe(getEditableCallerText("X+"));
     });
+  });
+});
+
+describe("a closed note's closing glyph, with the shell protected", () => {
+  /** The note's closing `\\f*` glyph. */
+  function $closer(note: NoteNode): TextNode {
+    const closer = note
+      .getChildren()
+      .find((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing");
+    return requireDefined($isTextNode(closer) ? closer : undefined, "closing glyph not found");
+  }
+
+  it.each([1, 2])(
+    "keeps the note closed and whole, and the keystroke, with the caret inside it at %i",
+    async (offset) => {
+      const { editor } = await mount(protectedShell, "");
+
+      await placeCaretInShell(editor, $closer, offset);
+      await typeText(editor, "X");
+
+      editor.getEditorState().read(() => {
+        const note = findOnlyNote($getRoot());
+        expect($closer(note).getTextContent()).toBe("\\f*");
+        expect($closer(note).getMode()).toBe("token");
+      });
+      // The keystroke is the note's content: at its end, in front of the closer it was typed in.
+      const note = findUsjNote(usjOf(editor)?.content);
+      expect(note).not.toHaveProperty("closed");
+      expect(note.content?.at(-1)).toBe("X");
+    },
+  );
+
+  it("lets a keyboard move out of the note's content cross the closer in one hop", async () => {
+    const { editor } = await mount(protectedShell, "");
+    await act(async () => {
+      editor.update(() => {
+        const closer = $closer(findOnlyNote($getRoot()));
+        closer.getPreviousSibling()?.selectEnd();
+      });
+    });
+    await placeCaretInShell(editor, $closer, 1);
+
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      const closer = $closer(findOnlyNote($getRoot()));
+      expect(selection.anchor.getNode().is(closer)).toBe(true);
+      expect(selection.anchor.offset).toBe(closer.getTextContentSize());
+    });
+  });
+
+  it("is never re-tokenized as a damaged literal", async () => {
+    const { editor } = await mount(protectedShell, "");
+    // Bytes no keystroke can put there: the shell is the host's, so its glyphs are not text a
+    // settle reads back. Asked in the same update, before any transform can heal the bytes.
+    let isLiteral: boolean | undefined;
+    await act(async () => {
+      editor.update(() => {
+        const note = findOnlyNote($getRoot());
+        $closer(note).setTextContent("\\xf*");
+        isLiteral = $isLiteralNoteShell(note);
+      });
+    });
+    expect(isLiteral).toBe(false);
   });
 });
