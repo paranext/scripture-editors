@@ -35,6 +35,7 @@ import {
 } from "./markerName.pattern";
 import { $requestTier2ForNode, $settleScopeForNode } from "./tier2Rebuild.utils";
 import {
+  $moveLeadingSpaceOntoLeadingAttribute,
   $noteCallerTextTransform,
   $noteOfCallerText,
   MarkerEditContext,
@@ -222,6 +223,9 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
   // reach the literal machinery below; unhandled ones (a deleted flanking separator, backslash
   // bytes) fall through with today's behavior untouched.
   if ($noteCallerTextTransform(node, context)) return;
+  // Whitespace typed in front of the text after a verse number or a caller is that marker's
+  // separator run, as typing at its end makes it.
+  if ($moveLeadingSpaceOntoLeadingAttribute(node)) return;
   // Attribute runs (every registered kind alike) pend and never re-tokenize from here: their
   // bytes legitimately contain arbitrary characters, so neither the backslash check below nor the
   // termination regex further down means anything for them — a `\`-free edit is just as much a

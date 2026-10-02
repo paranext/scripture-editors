@@ -566,11 +566,18 @@ function $markerGlyphCaretHeld(glyph: MarkerNode): boolean {
 
 /**
  * Move whitespace typed on a glyph's OUTER side — in front of an opener or a milestone, or behind
- * a note's closer — to the text beside it, when the glyph is otherwise intact. The caret there and
- * the one at that text's edge are one place on screen, and the bytes do not read with the marker:
- * they are the text's own. Left in the glyph, they would settle with its divergence, and the
- * re-tokenization collapses the whitespace run they make with that text, dropping a typed space
- * the screen keeps everywhere else (docs/standard-view-invariants.md §4).
+ * a note's closer — onto the text beside it, when the glyph is otherwise intact. The caret
+ * there and the one at that text's edge are one place on screen, and the bytes do not read with
+ * the marker: they are the text's own. Left in the glyph, they would settle with its divergence,
+ * and the re-tokenization collapses the whitespace run they make with that text, dropping a typed
+ * space the screen keeps everywhere else (docs/standard-view-invariants.md §4).
+ *
+ * Never into a text of its own: with another glyph beside it — a verse, a note's caller, another
+ * span's glyph — the whitespace goes to that glyph's edge instead, to settle exactly as typing
+ * there does, since that is the same place on screen. A text of its own between two markers would
+ * save a byte the reader skips (ParatextData's `GetNextWord` after a verse number or a caller),
+ * which a reload drops, and the same place on screen would save two different files. With no text
+ * beside the glyph at all, the whitespace stays where it was typed.
  *
  * A paragraph's own marker is left alone: nothing stands in front of it in its paragraph. An
  * opener that starts the node it opens (a char span, a note, a milestone) has the whitespace go
@@ -602,8 +609,8 @@ function $moveOuterGlyphSpaceOut(glyph: MarkerNode): boolean {
     if ($isParaNode(parent)) return false;
     beside = parent;
   }
-  // A span beside its chapter (`\ca`) stands at the document root, which holds no text.
-  if ($isRootOrShadowRoot(beside.getParent())) return false;
+  const holder = isCloser ? beside.getNextSibling() : beside.getPreviousSibling();
+  if (!$isTextNode(holder)) return false;
   const kept = isCloser ? text.slice(0, text.length - space.length) : text.slice(space.length);
   glyph.setTextContent(kept);
   if (!$isCanonicalMarkerNode(glyph)) {
@@ -617,32 +624,16 @@ function $moveOuterGlyphSpaceOut(glyph: MarkerNode): boolean {
     selection.anchor.key === glyph.getKey()
       ? selection.anchor.offset
       : undefined;
-  let holder: TextNode;
   if (isCloser) {
-    const next = beside.getNextSibling();
-    if ($isPlainNoteText(next)) {
-      next.setTextContent(space + next.getTextContent());
-      holder = next;
-    } else {
-      holder = $createTextNode(space);
-      beside.insertAfter(holder);
-    }
+    holder.setTextContent(space + holder.getTextContent());
     if (caret !== undefined && caret > kept.length) {
       const offset = caret - kept.length;
       holder.select(offset, offset);
-    }
+    } else if (!$isPlainNoteText(holder)) holder.select(space.length, space.length);
     return true;
   }
-  const previous = beside.getPreviousSibling();
-  let spaceStart = 0;
-  if ($isPlainNoteText(previous)) {
-    spaceStart = previous.getTextContentSize();
-    previous.setTextContent(previous.getTextContent() + space);
-    holder = previous;
-  } else {
-    holder = $createTextNode(space);
-    beside.insertBefore(holder);
-  }
+  const spaceStart = holder.getTextContentSize();
+  holder.setTextContent(holder.getTextContent() + space);
   if (caret !== undefined) {
     if (caret <= space.length) holder.select(spaceStart + caret, spaceStart + caret);
     else glyph.select(caret - space.length, caret - space.length);
@@ -1145,6 +1136,56 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
     return true;
   }
   $settleNoteCallerText(node, note);
+  return true;
+}
+
+/**
+ * Move whitespace the user just typed at the start of a plain text that follows a verse glyph onto
+ * the glyph — the separator run after the verse number, where typing at the glyph's end puts it.
+ * The caret at the text's start and the one at the glyph's end are one place on screen, and a
+ * reader skips this whitespace (ParatextData's `GetNextWord` after a verse number), so left in the
+ * text it saves a byte a reload drops, and the same place saves two different files. On the glyph
+ * the run stays on screen and the file is unaffected (docs/standard-view-invariants.md §4).
+ *
+ * The same holds after a note's caller, which `GetNextWord` reads too. Where the host governs the
+ * caller (`token` mode, `ViewOptions.isNoteShellEditable: false`), the caret guard puts the caret
+ * for the start of the note's content at the caller's end, so a space typed there is such a text;
+ * the caller takes no typing, so the whitespace is dropped, as an editable caller folds away
+ * whitespace typed at its end.
+ *
+ * Only while the caret is in that leading whitespace: text loaded that way is left alone.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the whitespace moved.
+ */
+export function $moveLeadingSpaceOntoLeadingAttribute(node: TextNode): boolean {
+  if (!$isPlainNoteText(node)) return false;
+  const text = node.getTextContent();
+  const space = /^[ \u00A0]+/.exec(text)?.[0];
+  if (!space) return false;
+  const previous = node.getPreviousSibling();
+  const isProtectedCaller =
+    $isTextNode(previous) && previous.getMode() === "token" && !!$noteOfCallerText(previous);
+  if (!$isTextNode(previous) || !($isVerseNode(previous) || isProtectedCaller)) return false;
+  const selection = $getSelection();
+  if (
+    !$isRangeSelection(selection) ||
+    !selection.isCollapsed() ||
+    selection.anchor.key !== node.getKey() ||
+    selection.anchor.offset > space.length
+  )
+    return false;
+  const caret = selection.anchor.offset;
+  const rest = text.slice(space.length);
+  const end = previous.getTextContentSize();
+  if (previous.getMode() === "token") previous.select(end, end);
+  else {
+    previous.setTextContent(previous.getTextContent() + space);
+    previous.select(end + caret, end + caret);
+  }
+  if (rest) node.setTextContent(rest);
+  else node.remove();
   return true;
 }
 

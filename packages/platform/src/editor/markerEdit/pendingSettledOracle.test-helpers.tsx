@@ -184,6 +184,14 @@ const CORPUS: { name: string; usj: Usj }[] = [
     usj: twoParaUsj(["a ", { type: "ms", marker: "qt-s" }, "b"]),
   },
   {
+    name: "char span right after a verse",
+    usj: twoParaUsj([
+      { type: "verse", marker: "v", number: "1" },
+      { type: "char", marker: "w", content: ["grace"] },
+      " b",
+    ]),
+  },
+  {
     name: "\\ca span beside its chapter",
     usj: chapterSideUsj({ type: "char", marker: "ca", content: ["3"] }),
   },
@@ -1379,8 +1387,11 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
             const settled = mounted.ref.current?.getUsj();
             // The same character typed at the same place on screen — at a glyph's end or at the
             // start of the text after it — saves the same file.
+            // Compared as the saved document's structure, not its normalized bytes: a whitespace
+            // node a reader skips (between a verse and a span) collapses away in the bytes, but
+            // the file still has it, and a reload drops it.
             if (place !== undefined) {
-              const saved = withoutLineBreaks(savedBytes(settled));
+              const saved = bodyOf(settled);
               const first = savedByPlace.get(place);
               if (!first) savedByPlace.set(place, { label, saved });
               else if (first.saved !== saved)
