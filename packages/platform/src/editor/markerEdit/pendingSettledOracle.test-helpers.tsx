@@ -24,11 +24,13 @@
  * drop where a USFM reader treats it as structural — is set aside. Blocks showing a collapsed note,
  * whose caller and content the screen does not show, are not compared.
  *
- * Positions are held to the same contract while the edit is pending: every caret position inside
- * a text node reports (`getSelection()`'s translation) the location the same bytes report after the
- * settle, or one a position to their left reports; and every report, handed back the way
- * `setSelection` and `setAnnotation` hand a host's location in, lands on the position it came from
- * or the closest representable one to its left.
+ * Positions are held to the same contract while the edit is pending. Every caret position, node
+ * boundaries included, reports (`getSelection()`'s translation) a location the same bytes report
+ * after the settle — exactly, or, where the settled document reports nothing there, the closest
+ * location to their left. And every report, handed back the way `setSelection` and `setAnnotation`
+ * hand a host's location in, lands on the position it came from, on one across whitespace only that
+ * reports the same, or on the closest position to its left the report names — never across a byte
+ * to its right.
  *
  * One test file per view registers the oracle for that view
  * (`pendingSettledOracle.<view>.test.tsx`), so the views run in parallel.
@@ -44,7 +46,6 @@ import { SettledPositionContext } from "../positions/settledPositions.model";
 import { MarkerContent, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
-  $getNodeByKey,
   $getRoot,
   $getState,
   $isElementNode,
@@ -68,7 +69,13 @@ import {
   textTypeState,
   TypedMarkNode,
 } from "shared";
-import { $getRangeFromUsjSelection, usjReactNodes, ViewOptions } from "shared-react";
+import {
+  $getLocationFromNode,
+  $getNodeFromLocation,
+  $getRangeFromUsjSelection,
+  usjReactNodes,
+  ViewOptions,
+} from "shared-react";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
 
@@ -291,54 +298,106 @@ function $documentText(): string {
     .join("");
 }
 
-/** What each live caret position reports as — `getSelection()`'s translation — with its document
- * position. A node boundary is two caret positions at one document position. */
-function $reported(
-  context: SettledPositionContext,
-): { position: number; interior: boolean; location: string }[] {
+/** What one caret position reports as — `getSelection()`'s translation, spelled as JSON, or
+ * `undefined` when it reports nothing — at its document position. */
+interface PositionReport {
+  readonly position: number;
+  readonly location: string | undefined;
+}
+
+/** What each live caret position reports as. A node boundary is two caret positions at one
+ * document position. */
+function $reported(context: SettledPositionContext): PositionReport[] {
   const prepared = $prepareSettleScopes(context);
-  return $caretPositions().map(({ node, offset, position }) => ({
-    position,
-    interior: offset > 0 && offset < node.getTextContentSize(),
-    location: JSON.stringify($settledLocationFromLivePoint(prepared, node, offset)),
-  }));
+  return $caretPositions().map(({ node, offset, position }) => {
+    const location = $settledLocationFromLivePoint(prepared, node, offset);
+    return { position, location: location && JSON.stringify(location) };
+  });
+}
+
+/** Whether the document text between positions `a` and `b`, in either order, is whitespace only
+ * (no byte at all included) — the bytes a landing may cross, as `$leftmostReporting` does. */
+function isWhitespaceBetween(text: string, a: number, b: number): boolean {
+  return /^[\s\u00A0\u200B]*$/.test(text.slice(Math.min(a, b), Math.max(a, b)));
 }
 
 /**
  * Where each pending caret position's report goes back to — the translation `setSelection` and
- * `setAnnotation` both run, resolved as `setSelection` resolves it — as a list of failures: a
- * report that will not resolve, or one that lands to the RIGHT of the position it came from on a
- * position that reports something else. Landing on the position itself, on the closest
- * representable position to its left, or on a position that reports the same location (several
- * live positions are one settled position where the settle collapses whitespace) is the contract:
- * `getSelection()` after `setSelection()` hands the host back what it gave.
+ * `setAnnotation` both run, resolved as `setSelection` resolves it — as a list of failures.
+ * The landing must be the position itself — either caret at it, where it is a node boundary — or
+ * report the same location, so `getSelection()` after `setSelection()` hands the host back what it
+ * gave, from:
+ *
+ * - a position across whitespace only, on either side (several live positions are one settled
+ *   position where whitespace the settle drops was typed);
+ * - or, for a position that reports a location to its LEFT, the closest position to its left that
+ *   reports it: every position from the landing up to the one the report came from reports it.
+ *
+ * A position the live document has no location for — bytes typed into a glyph — cannot be landed
+ * on at all, so a report may land on the closest position the live document can spell at or to the
+ * left of the place it names (where the run of positions reporting it starts), whatever that
+ * reports.
  */
 function $roundTripFailures(context: SettledPositionContext, view: ViewOptions): string[] {
   const prepared = $prepareSettleScopes(context);
   const positions = $caretPositions();
-  const positionOf = (key: NodeKey, offset: number): number | undefined =>
-    positions.find((candidate) => candidate.node.getKey() === key && candidate.offset === offset)
-      ?.position;
+  const text = $documentText();
+  const reports = positions.map(({ node, offset }) => {
+    const location = $settledLocationFromLivePoint(prepared, node, offset);
+    return location && JSON.stringify(location);
+  });
+  // Whether the live document's own location model can spell each caret position: its location
+  // resolves back to the same position. A host's position can only be handed back onto one.
+  const representable = positions.map(({ node, offset, position }) => {
+    const [resolved, at] = $getNodeFromLocation($getLocationFromNode(node, offset, view), view);
+    if (!resolved || at === undefined) return false;
+    const found = positions.find(
+      (candidate) => candidate.node.is(resolved) && candidate.offset === at,
+    );
+    return found?.position === position;
+  });
+  const indexOf = (key: NodeKey, offset: number): number =>
+    positions.findIndex(
+      (candidate) => candidate.node.getKey() === key && candidate.offset === offset,
+    );
   const failures: string[] = [];
-  for (const { node, offset, position } of positions) {
+  positions.forEach(({ node, offset, position }, index) => {
     const reported: UsjDocumentLocation | undefined = $settledLocationFromLivePoint(
       prepared,
       node,
       offset,
     );
-    if (!reported) continue;
+    if (!reported) return;
+    const wanted = reports[index];
     const live = $liveSelectionFromSettled(context, prepared, { start: reported });
     const anchor = live && $getRangeFromUsjSelection(live, view)?.anchor;
-    const landed = anchor && positionOf(anchor.key, anchor.offset);
-    const landedNode = anchor && $getNodeByKey(anchor.key);
-    const reportsTheSame =
-      !!anchor &&
-      !!landedNode &&
-      JSON.stringify($settledLocationFromLivePoint(prepared, landedNode, anchor.offset)) ===
-        JSON.stringify(reported);
-    if (landed === undefined || (landed > position && !reportsTheSame))
-      failures.push(`${position} -> ${JSON.stringify(reported)} -> ${landed ?? "nothing"}`);
-  }
+    const landedIndex = anchor ? indexOf(anchor.key, anchor.offset) : -1;
+    const landed = landedIndex < 0 ? undefined : positions[landedIndex].position;
+    // Where the run of positions reporting the same location up to this one starts: the place
+    // the report names, when this position reports a location to its left.
+    let first = index;
+    while (first > 0 && reports[first - 1] === wanted) first -= 1;
+    const named = positions[first].position;
+    const isFaithful =
+      landed !== undefined &&
+      (landed === position ||
+        (reports[landedIndex] === wanted &&
+          (isWhitespaceBetween(text, landed, position) ||
+            (landedIndex < index &&
+              reports.slice(landedIndex, index + 1).every((report) => report === wanted)))) ||
+        (landed <= named &&
+          !positions.some(
+            (candidate, at) =>
+              representable[at] && candidate.position > landed && candidate.position <= named,
+          )));
+    if (!isFaithful)
+      failures.push(
+        `${position} -> ${wanted} -> ${landed ?? "nothing"}` +
+          (landed === undefined || reports[landedIndex] === wanted
+            ? ""
+            : ` reporting ${reports[landedIndex]}`),
+      );
+  });
   return failures;
 }
 
@@ -350,15 +409,16 @@ function commonPrefix(a: string, b: string): number {
 }
 
 /**
- * The caret positions inside a text node that report, while the edit is pending, a location the
- * settled document only has to their RIGHT. Each such position is compared at the same bytes after
- * the settle — the bytes both documents' texts start or end with, which the settle left in place —
- * and its pending report must be the location those bytes report after the settle, or one a
- * position to their left reports (the closest representable location to the left).
+ * The caret positions whose pending report is not where the same bytes report after the settle.
+ * Each caret position is compared at the same bytes after the settle — the bytes both documents'
+ * texts start or end with, which the settle left in place — and its pending report must be one of
+ * the locations the settled caret positions there report (exact), or, only where the settled
+ * document reports nothing there, one the closest position to their left that reports anything
+ * reports (the closest representable location to the left).
  */
-function positionsReportedToTheRight(
-  before: { text: string; reported: { position: number; interior: boolean; location: string }[] },
-  after: { text: string; reported: { position: number; location: string }[] },
+function positionsReportedAwayFromTheirBytes(
+  before: { text: string; reported: PositionReport[] },
+  after: { text: string; reported: PositionReport[] },
 ): string[] {
   const prefix = commonPrefix(before.text, after.text);
   const suffix = Math.min(
@@ -366,9 +426,12 @@ function positionsReportedToTheRight(
     before.text.length - prefix,
     after.text.length - prefix,
   );
+  const settledAt = (position: number): (string | undefined)[] =>
+    after.reported
+      .filter((report) => report.position === position)
+      .map((report) => report.location);
   const failures: string[] = [];
-  for (const { position, interior, location } of before.reported) {
-    if (!interior) continue;
+  for (const { position, location } of before.reported) {
     // Both bytes beside the position must be ones the settle left in place.
     const settledPosition =
       position < prefix
@@ -377,11 +440,14 @@ function positionsReportedToTheRight(
           ? position - before.text.length + after.text.length
           : undefined;
     if (settledPosition === undefined) continue;
-    const atOrLeft = after.reported.filter((report) => report.position <= settledPosition);
-    if (atOrLeft.some((report) => report.location === location)) continue;
-    const there = after.reported
-      .filter((report) => report.position === settledPosition)
-      .map((report) => report.location);
+    const there = settledAt(settledPosition);
+    if (there.includes(location)) continue;
+    if (there.every((report) => report === undefined)) {
+      const left = after.reported
+        .filter((report) => report.position < settledPosition && report.location !== undefined)
+        .at(-1);
+      if (left && settledAt(left.position).includes(location)) continue;
+    }
     failures.push(`${position}: pending ${location}, settled ${there.join(" | ")}`);
   }
   return failures;
@@ -569,7 +635,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
               text: $documentText(),
               reported: $reported(settledContext),
             }));
-            const moved = isPending ? positionsReportedToTheRight(before, after) : [];
+            const moved = isPending ? positionsReportedAwayFromTheirBytes(before, after) : [];
             const roundTrip = isPending ? before.roundTrip : [];
             if (moved.length > 0 || roundTrip.length > 0)
               mismatches.set(
