@@ -61,6 +61,7 @@ import {
   serializedType,
   Tier2Context,
   toFragmentText,
+  tokenizeFragment,
 } from "./tier2Rebuild.utils";
 import {
   MarkerContent,
@@ -99,7 +100,6 @@ import {
   ParaNode,
   SerializedVerseNode,
   UnknownNode,
-  usfmFragmentToUsjContent,
 } from "shared";
 
 /** Where a live node's serialized counterpart sits: the JSON node itself, plus the children array
@@ -518,7 +518,7 @@ export function $settledParaScope(
   if (!built) return undefined;
   const fragment = $fragmentWithCharOpenerRenames(built, charRenames, context);
   const tokenized = $fragmentWithoutTransient(fragment, transient);
-  const content: MarkerContent[] = usfmFragmentToUsjContent(tokenized.text, {
+  const content: MarkerContent[] = tokenizeFragment(tokenized.text, {
     getMarker: getMarkerFn,
   });
   if (content.length === 0) return undefined;
@@ -649,7 +649,7 @@ export function $settledNoteScope(
   if (contentNodes.length === 0) return undefined;
   const out = $fragmentWithCharOpenerRenames(built.out, charRenames, context);
   const tokenized = $fragmentWithoutTransient(out, transient);
-  const content: MarkerContent[] = usfmFragmentToUsjContent(tokenized.text, {
+  const content: MarkerContent[] = tokenizeFragment(tokenized.text, {
     getMarker: getMarkerFn,
     isNoteContext: true,
   });
@@ -840,11 +840,10 @@ function $emptiedOptbreakHusksOf(pendedKeys: ReadonlySet<NodeKey>): UnknownNode[
  *
  * Deliberately silent on VALIDITY (`NoteNode.isValidMarker`): the caller checks that separately.
  * Even an INVALID target still needs to be recognized as "a note-glyph rename was attempted" for
- * this function's own contract, even though it settles differently — an invalid target routes
- * `$applyOpenerRename` to `$requestTier2ForNode` -> `$rebuildNoteContent`, which only ever rebuilds
- * a note's CONTENT (`$buildNoteFragment` trims the glyphs out of `contentNodes` before tokenizing),
- * never the note's own marker or glyph text — so the existing, generic note-scope settle this
- * module already performs is already the correct (no-op-on-the-glyph) mirror for that case.
+ * this function's own contract, even though it settles differently — an invalid target makes the
+ * note a literal (`$isLiteralNoteShell`, tier2Rebuild.utils.ts), which `$settleScopeForNode` routes
+ * to its paragraph, where the note's bytes re-tokenize inline; the generic scope settle this module
+ * performs is that same rebuild.
  */
 function $noteGlyphRenameTarget(
   node: LexicalNode,
@@ -881,8 +880,8 @@ function rewriteSettledGlyphMarker(json: SerializedLexicalNode, marker: string):
  * VALID note marker ({@link $noteGlyphRenameTarget}) — the read-only mirror of
  * `$applyOpenerRename`'s `$isNoteNode(parent)` branch (markerEditTier1.utils.ts):
  * `parent.setMarker(clean)`. An INVALID target is left untouched: see
- * `$noteGlyphRenameTarget`'s own doc comment for why the existing, generic note-content settle is
- * already the correct mirror for that case.
+ * `$noteGlyphRenameTarget`'s own doc comment for why the generic scope settle is already the
+ * correct mirror for that case.
  *
  * Runs independently of, and composes safely with, a co-resident content settle
  * ({@link $settledNoteScope}) in the SAME note: this patches only the note's own top-level
@@ -1071,7 +1070,7 @@ export function $settledChapterScope(
   // re-tokenizes the region, as in a paragraph scope.
   const out = $fragmentWithCharOpenerRenames(built, charRenames, context);
   const tokenized = $fragmentWithoutTransient(out, transient);
-  const content: MarkerContent[] = usfmFragmentToUsjContent(tokenized.text, {
+  const content: MarkerContent[] = tokenizeFragment(tokenized.text, {
     getMarker: getMarkerFn,
   });
   const [freshChapter] = content;

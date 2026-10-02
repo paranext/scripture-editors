@@ -11,7 +11,11 @@
  */
 
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
-import { UNTERMINATED_MARKER_TAIL } from "./markerName.pattern";
+import {
+  BARE_OPENER_REGEX,
+  TERMINATED_OPENER_REGEX,
+  UNTERMINATED_MARKER_TAIL,
+} from "./markerName.pattern";
 import {
   $childPath,
   $liveRunSide,
@@ -65,6 +69,8 @@ import {
 import {
   $chapterGlyphTextNode,
   $hasUnrecoverableAttributes,
+  $isCanonicalMarkerNode,
+  $noteEditableCallerNode,
   $isAttributeRunNode,
   $isChapterNode,
   $isCharNode,
@@ -188,7 +194,10 @@ function pushSentinel(out: FragmentAccumulator, nodes: LexicalNode[]): void {
   // milestone, or attribute span right after an opener) could never settle. Emit the separator
   // the tokenizer expects after an opening marker; it is structural there (consumed by the
   // opener's separator scan), and mid-word placements (`wa` + note + `tta`) are unaffected.
-  if (UNTERMINATED_MARKER_TAIL.test(out.text)) out.text += " ";
+  // After a bare `\` it is not structural — the tokenizer keeps `\ ` as text — so it is spelled
+  // as a no-break space no other fragment byte is, and {@link tokenizeFragment} takes it back out.
+  const tail = UNTERMINATED_MARKER_TAIL.exec(out.text)?.[0];
+  if (tail !== undefined) out.text += tail === "\\" ? NBSP : " ";
   out.spans.push({
     key: nodes[0].getKey(),
     start: out.text.length,
@@ -208,6 +217,34 @@ function pushSentinel(out: FragmentAccumulator, nodes: LexicalNode[]): void {
  * view-dependent signature would buy nothing while opening a mirror-drift surface. */
 export function toFragmentText(text: string): string {
   return text.replaceAll(NBSP, " ");
+}
+
+/** The separator `pushSentinel` puts between a bare `\` and a preserved node's placeholder, as the
+ * tokenizer hands it back. */
+const BARE_BACKSLASH_SEPARATED_SENTINEL = `\\${NBSP}${ATOMIC_SENTINEL}`;
+
+/** Drop `pushSentinel`'s bare-backslash separators from tokenized `content`, in place. */
+function withoutBareBackslashSeparators(content: MarkerContent[]): MarkerContent[] {
+  content.forEach((item, index) => {
+    if (typeof item === "string")
+      content[index] = item.replaceAll(BARE_BACKSLASH_SEPARATED_SENTINEL, `\\${ATOMIC_SENTINEL}`);
+    else if (item.content) withoutBareBackslashSeparators(item.content);
+  });
+  return content;
+}
+
+/**
+ * Tokenize a rebuild fragment's text. Every settle that tokenizes a fragment holding preserved-node
+ * placeholders goes through here, so a bare `\` the user left in front of a preserved node stays
+ * exactly that: the separator `pushSentinel` emits to keep the placeholder out of the marker-name
+ * scan is not a byte of the document, and the file reads `\` directly followed by the node's own
+ * marker the same way.
+ */
+export function tokenizeFragment(
+  text: string,
+  options: Parameters<typeof usfmFragmentToUsjContent>[1],
+): MarkerContent[] {
+  return withoutBareBackslashSeparators(usfmFragmentToUsjContent(text, options));
 }
 
 /**
@@ -432,6 +469,37 @@ export function $isReTokenizableMilestone(marker: string, getMarkerFn: MarkerLoo
 }
 
 /**
+ * Whether an expanded note's own opening or closing glyph holds bytes that make it a literal: they
+ * no longer spell the note's marker, and they are not a rename the note takes in place (a bare or
+ * terminated opener naming another note marker, which `$applyOpenerRename` applies). Such a note
+ * is re-tokenized from its bytes within its paragraph, exactly as a char span with a damaged glyph
+ * is, instead of being preserved whole: its own content-only scope never reads its glyphs, so the
+ * bytes would stay on screen and never reach the file.
+ *
+ * A note carrying attributes its bytes cannot spell (anything but `closed`) stays preserved.
+ * Collapsed notes never qualify: their glyphs are not typed into.
+ *
+ * Read-only: safe inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $isLiteralNoteShell(note: NoteNode): boolean {
+  if (note.getIsCollapsed() !== false) return false;
+  const attributes = Object.keys(note.getUnknownAttributes() ?? {});
+  if (attributes.some((name) => name !== "closed")) return false;
+  return note.getChildren().some((child) => {
+    if (!$isMarkerNode(child) || $isCanonicalMarkerNode(child)) return false;
+    if (child.getMarkerSyntax() !== "opening") return true;
+    const text = child.getTextContent();
+    const name = (BARE_OPENER_REGEX.exec(text) ?? TERMINATED_OPENER_REGEX.exec(text))?.[1];
+    return (
+      name === undefined ||
+      name.startsWith("+") ||
+      !NoteNode.isValidMarker(name) ||
+      child.getMarker() !== note.getMarker()
+    );
+  });
+}
+
+/**
  * Mirrors `$appendChildrenFragment`'s "preserve this node atomically" classification. A milestone
  * re-tokenizes exactly when its marker classifies as one (`$isReTokenizableMilestone`): its
  * display run (opening glyph, optional attribute text, self-closing glyph) is ordinary text among
@@ -462,7 +530,8 @@ export function $isReTokenizableMilestone(marker: string, getMarkerFn: MarkerLoo
  */
 export function $isRebuildSentinel(node: LexicalNode, getMarkerFn: MarkerLookup): boolean {
   if ($isMilestoneNode(node)) return !$isReTokenizableMilestone(node.getMarker(), getMarkerFn);
-  if ($isNoteNode(node) || $isUnknownNode(node)) return true;
+  if ($isNoteNode(node)) return !$isLiteralNoteShell(node);
+  if ($isUnknownNode(node)) return true;
   if ($isVerseNode(node)) return verseNeedsSentinel(node);
   if ($isCharNode(node)) return $charNeedsSentinel(node, getMarkerFn);
   return false;
@@ -1068,6 +1137,14 @@ function $appendNodesFragment(
         $appendNodesFragment(run, out, getMarkerFn, viewOptions);
       else pushSentinel(out, [node, ...run]);
       index += run.length;
+    } else if ($isNoteNode(node) && $isLiteralNoteShell(node)) {
+      consumeCharLead();
+      // The note's bytes as the screen shows them; the caller text's no-break space is the
+      // separator after the caller, as a glyph's is.
+      const caller = $noteEditableCallerNode(node);
+      for (const child of node.getChildren())
+        if (caller?.is(child)) pushText(out, child, toFragmentText(child.getTextContent()));
+        else $appendNodesFragment([child], out, getMarkerFn, viewOptions);
     } else if ($isNoteNode(node) || $isUnknownNode(node)) {
       consumeCharLead();
       pushSentinel(out, [node]);
@@ -2512,7 +2589,7 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
   // destroys and are transparent to re-tokenization, so nothing else would bring them back.
   const markRanges = $captureMarkByteRanges(paras, combined, undefined, $getEditor());
 
-  const content: MarkerContent[] = usfmFragmentToUsjContent(combined.text, {
+  const content: MarkerContent[] = tokenizeFragment(combined.text, {
     getMarker: getMarkerFn,
   });
   if (content.length === 0) {
@@ -2732,7 +2809,7 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   // expanded note exactly as it can in a paragraph.
   const markRanges = $captureMarkByteRanges(contentNodes, out, undefined, $getEditor());
 
-  const content: MarkerContent[] = usfmFragmentToUsjContent(out.text, {
+  const content: MarkerContent[] = tokenizeFragment(out.text, {
     getMarker: getMarkerFn,
     isNoteContext: true,
   });
@@ -3176,7 +3253,9 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
  * the paragraph that contains it — or `undefined` when it has neither (an opaque block interior,
  * where the bytes stay literal, or a detached node). The nearest Note or Para wins — a note inside
  * a paragraph is its own scope: the note node, its marker glyphs, and its caller are preserved
- * across a rebuild while only its content re-tokenizes.
+ * across a rebuild while only its content re-tokenizes. A note whose own glyph has become a
+ * literal ({@link $isLiteralNoteShell}) is no scope: its glyph bytes are what changed, so its
+ * paragraph re-tokenizes them with the rest of the note's bytes.
  *
  * The walk runs to the DOCUMENT ROOT, not just to the first Note/Para match: a paragraph can itself
  * be nested inside an opaque block (a sidebar's own paragraphs — see `$buildParaFragment`'s matching
@@ -3214,7 +3293,12 @@ export function $settleScopeForNode(
   let rootChild: LexicalNode | undefined;
   for (let current: LexicalNode | null = node; current; current = current.getParent()) {
     if ($isUnknownNode(current)) return undefined;
-    if (!scope && ($isNoteNode(current) || $isParaNode(current) || $isChapterNode(current)))
+    if (
+      !scope &&
+      (($isNoteNode(current) && !$isLiteralNoteShell(current)) ||
+        $isParaNode(current) ||
+        $isChapterNode(current))
+    )
       scope = current;
     if ($isRootNode(current.getParent())) rootChild = current;
   }
