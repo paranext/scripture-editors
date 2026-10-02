@@ -19,6 +19,13 @@
  * each character is also typed the way a click and a keystroke arrive — the caret placed in one
  * update, `insertText` in the next — so the caret is wherever the selection listeners leave it.
  *
+ * In the footnote popover's view, whose note shell is `token` glyphs a user cannot splice, each
+ * glyph is also visited at its two ends: a character typed with the caret placed there, and
+ * Backspace or Delete removing the glyph's character the way Lexical removes a `token` node, whole.
+ * And the delete-then-type gesture is also typed as two history entries and followed by leaving and
+ * then Undo (or Undo, Undo and Redo), which brings back the document between the two keystrokes
+ * without running a single transform; that document is then held to the same contract.
+ *
  * The settle is the departure an abandoned edit gets: a click into another paragraph, blur, and
  * `commitPendingMarkerEdits()`.
  *
@@ -64,10 +71,14 @@ import {
   $isRangeSelection,
   $isTextNode,
   CLICK_COMMAND,
+  HISTORY_PUSH_TAG,
   LexicalEditor,
   LexicalNode,
   NodeKey,
+  REDO_COMMAND,
+  SELECTION_CHANGE_COMMAND,
   TextNode,
+  UNDO_COMMAND,
 } from "lexical";
 import {
   $isCharNode,
@@ -176,6 +187,40 @@ const CORPUS: { name: string; usj: Usj }[] = [
   },
 ];
 
+/**
+ * The view the footnote popover edits its note in: the host's editable view with notes expanded,
+ * and the note's marker, caller and closer governed by the popover's own controls rather than
+ * typed (`isNoteShellEditable: false`), so they are `token` glyphs the caret steps around.
+ */
+export const PROTECTED_NOTE_SHELL_VIEW = "standard+protectedNoteShell";
+
+/** The documents the oracle edits in {@link PROTECTED_NOTE_SHELL_VIEW}: only a note has a shell
+ * to protect, so only the note rows — the corpus's, and one whose content span runs on to the
+ * note's closer, as ParatextData writes footnote text. */
+const PROTECTED_NOTE_SHELL_CORPUS: { name: string; usj: Usj }[] = [
+  ...CORPUS.filter(({ name }) => name === "note"),
+  {
+    name: "note whose content span runs to its closer",
+    usj: twoParaUsj([
+      "a",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "ft", closed: "false", content: ["note text"] }],
+      },
+      " b",
+    ]),
+  },
+];
+
+/** The view options the oracle runs `view` in: an `ORACLE_VIEWS` name, or
+ * {@link PROTECTED_NOTE_SHELL_VIEW}. */
+function pendingOracleView(view: string): ViewOptions {
+  if (view !== PROTECTED_NOTE_SHELL_VIEW) return oracleView(view);
+  return { ...oracleView("standard+expandedNotes"), isNoteShellEditable: false };
+}
+
 /** One keystroke at a node offset: the new text and where the caret ends up, or `undefined` when
  * the keystroke does nothing there. */
 type Keystroke = (text: string, offset: number) => { text: string; caret: number } | undefined;
@@ -217,6 +262,9 @@ interface KeystrokeCase {
   apply: Keystroke;
   typed?: string;
   then?: string;
+  /** After `then`, typed as an edit of its own, the caret leaves (a settle) and these history
+   * commands run, in order: the document then is one undo or redo brought back. */
+  history?: ("undo" | "redo")[];
 }
 
 const KEYSTROKES: KeystrokeCase[] = [
@@ -238,6 +286,43 @@ const KEYSTROKES: KeystrokeCase[] = [
   { name: "Delete", apply: deleteForward },
   { name: 'Backspace, then type "x"', apply: backspace, then: "x" },
   { name: 'Delete, then type "x"', apply: deleteForward, then: "x" },
+  {
+    // Undo after leaving brings back the state between the two keystrokes — the one a deletion
+    // leaves waiting for the next key — which no transform has seen since.
+    name: 'Backspace, then type "x", leave, then Undo',
+    apply: backspace,
+    then: "x",
+    history: ["undo"],
+  },
+  {
+    name: 'Backspace, then type "x", leave, then Undo, Undo and Redo',
+    apply: backspace,
+    then: "x",
+    history: ["undo", "undo", "redo"],
+  },
+  {
+    name: 'Delete, then type "x", leave, then Undo',
+    apply: deleteForward,
+    then: "x",
+    history: ["undo"],
+  },
+];
+
+/**
+ * The keystrokes at a protected note shell's glyphs (`token` nodes), which a user cannot splice:
+ * a character typed with the caret placed at either end of one by a click — so the shell's caret
+ * guard moves a caret it does not allow there — and Backspace at its end or
+ * Delete at its front, which Lexical's `deleteCharacter` turns into removing a one-character range
+ * reaching into the glyph (the native selection's `modify`, which jsdom lacks, is what extends it).
+ */
+type ShellKeystroke =
+  | { name: string; character: string }
+  | { name: string; deletes: "before" | "after" };
+
+const SHELL_KEYSTROKES: ShellKeystroke[] = [
+  ...PLACED_KEYSTROKES,
+  { name: "Backspace at its end", deletes: "before" },
+  { name: "Delete at its front", deletes: "after" },
 ];
 
 /** Whether `node` is shown inside a collapsed note, where nothing can be typed. */
@@ -254,9 +339,22 @@ function $isGlyphLike(node: TextNode): boolean {
   );
 }
 
-/** Every (node index, offset) the oracle edits in the first body paragraph. */
-function $editSites(): { index: number; offset: number }[] {
-  const sites: { index: number; offset: number }[] = [];
+/** A place the oracle edits: a node of {@link $editableTexts} (or, for `shell`, of
+ * {@link $shellTexts}) by index, and an offset in it. */
+interface EditSite {
+  index: number;
+  offset: number;
+  shell?: boolean;
+}
+
+/** Every place the oracle edits in the first body paragraph. */
+function $editSites(): EditSite[] {
+  const sites: EditSite[] = [];
+  $shellTexts().forEach((node, index) =>
+    [...new Set([0, node.getTextContentSize()])].forEach((offset) =>
+      sites.push({ index, offset, shell: true }),
+    ),
+  );
   $editableTexts().forEach((node, index) => {
     const length = node.getTextContentSize();
     const offsets = $isGlyphLike(node)
@@ -278,6 +376,23 @@ function $editableTexts(): TextNode[] {
       if (node.getMode() === "normal" && !$isInCollapsedNote(node)) out.push(node);
       return;
     }
+    if ($isElementNode(node)) node.getChildren().forEach(visit);
+  };
+  if (para) visit(para);
+  return out;
+}
+
+/** The glyphs of every protected note shell in the first body paragraph — the `token` text an
+ * expanded note's opener, caller and closer are built as when the host governs them — in document
+ * order. */
+function $shellTexts(): TextNode[] {
+  const para = $getRoot().getChildren()[2];
+  const out: TextNode[] = [];
+  const visit = (node: LexicalNode): void => {
+    if ($isNoteNode(node) && !node.getIsCollapsed())
+      node.getChildren().forEach((child) => {
+        if ($isTextNode(child) && child.getMode() === "token") out.push(child);
+      });
     if ($isElementNode(node)) node.getChildren().forEach(visit);
   };
   if (para) visit(para);
@@ -1028,7 +1143,8 @@ function readExpectedFailures(listFile: URL): ExpectedFailures {
  * keeping the reasons of the cases still listed.
  */
 export function describePendingSettledOracle(view: string, listFile: URL): void {
-  const rows = CORPUS.map(({ name, usj }) => [`${name} (${view} view)`, usj] as const);
+  const corpus = view === PROTECTED_NOTE_SHELL_VIEW ? PROTECTED_NOTE_SHELL_CORPUS : CORPUS;
+  const rows = corpus.map(({ name, usj }) => [`${name} (${view} view)`, usj] as const);
   const listed = readExpectedFailures(listFile);
   const written: ExpectedFailures = {};
   afterAll(() => {
@@ -1039,7 +1155,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
     it.each(rows)(
       "%s",
       async (row, usj) => {
-        const probe = await mountInView(usj, oracleView(view));
+        const probe = await mountInView(usj, pendingOracleView(view));
         const sites = probe.lexical.getEditorState().read($editSites);
         probe.unmount();
 
@@ -1047,17 +1163,39 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
         // The first case that typed each character at each document position, and what it saved.
         const savedByPlace = new Map<string, { label: string; saved: string }>();
         let pendingCases = 0;
-        for (const { index, offset } of sites)
-          for (const keystroke of [...KEYSTROKES, ...PLACED_KEYSTROKES]) {
-            const mounted = await mountInView(usj, oracleView(view));
+        for (const { index, offset, shell } of sites)
+          for (const keystroke of shell
+            ? SHELL_KEYSTROKES
+            : [...KEYSTROKES, ...PLACED_KEYSTROKES]) {
+            const mounted = await mountInView(usj, pendingOracleView(view));
             let label = "";
             let applied = false;
             let place: string | undefined;
+            // At a shell glyph, the caret is placed the way a click places it: the pointer is down
+            // while the selection change is announced, so the shell's caret guard reads it as a
+            // destination.
+            const isShellClick = shell && "character" in keystroke;
+            const doc = mounted.lexical.getRootElement()?.ownerDocument ?? document;
             await act(async () => {
+              if (isShellClick) doc.dispatchEvent(new Event("pointerdown", { bubbles: true }));
               mounted.lexical.update(() => {
-                const node = $editableTexts()[index];
+                const node = (shell ? $shellTexts() : $editableTexts())[index];
                 const text = node.getTextContent();
-                label = `${node.getType()} ${JSON.stringify(text.replaceAll(NBSP, "~"))}@${offset} ${keystroke.name}`;
+                label = `${shell ? "shell " : ""}${node.getType()} ${JSON.stringify(text.replaceAll(NBSP, "~"))}@${offset} ${keystroke.name}`;
+                if ("deletes" in keystroke) {
+                  if (offset !== (keystroke.deletes === "before" ? text.length : 0)) return;
+                  applied = true;
+                  node.select(offset, offset);
+                  const selection = $getSelection();
+                  if (!$isRangeSelection(selection)) return;
+                  selection.focus.set(
+                    node.getKey(),
+                    keystroke.deletes === "before" ? offset - 1 : offset + 1,
+                    "text",
+                  );
+                  selection.removeText();
+                  return;
+                }
                 const typed = "character" in keystroke ? keystroke.character : keystroke.typed;
                 const at = $caretPositions().find(
                   (caret) => caret.node.is(node) && caret.offset === offset,
@@ -1067,6 +1205,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                   if (offset !== 0 && offset !== text.length) return;
                   applied = true;
                   node.select(offset, offset);
+                  if (shell) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
                   return;
                 }
                 const result = keystroke.apply(text, offset);
@@ -1075,19 +1214,41 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 node.setTextContent(result.text);
                 node.select(result.caret, result.caret);
               });
+              if (isShellClick) doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
               await Promise.resolve();
               await Promise.resolve();
             });
-            const next = "character" in keystroke ? keystroke.character : keystroke.then;
+            const next =
+              "character" in keystroke
+                ? keystroke.character
+                : "then" in keystroke
+                  ? keystroke.then
+                  : undefined;
+            const history = "history" in keystroke ? keystroke.history : undefined;
             if (applied && next !== undefined)
               await act(async () => {
-                mounted.lexical.update(() => {
-                  const selection = $getSelection();
-                  if ($isRangeSelection(selection)) selection.insertText(next);
-                });
+                mounted.lexical.update(
+                  () => {
+                    const selection = $getSelection();
+                    if ($isRangeSelection(selection)) selection.insertText(next);
+                  },
+                  // Its own history entry, so an undo can stop between the two keystrokes.
+                  history ? { tag: HISTORY_PUSH_TAG } : undefined,
+                );
                 await Promise.resolve();
                 await Promise.resolve();
               });
+            if (applied && history) {
+              await depart(mounted);
+              for (const command of history)
+                await act(async () => {
+                  mounted.lexical.dispatchCommand(
+                    command === "undo" ? UNDO_COMMAND : REDO_COMMAND,
+                    undefined,
+                  );
+                  await Promise.resolve();
+                });
+            }
             if (!applied) {
               mounted.unmount();
               continue;
@@ -1095,7 +1256,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
             const isPending = (getPendedDisplayOwners(mounted.lexical)?.size ?? 0) > 0;
             if (isPending) pendingCases += 1;
             const pending = mounted.ref.current?.getUsj();
-            const viewOptions = oracleView(view);
+            const viewOptions = pendingOracleView(view);
             const pendingContext = positionContext(mounted.lexical, viewOptions);
             const before = mounted.lexical.getEditorState().read(() => ({
               text: $documentText(),
