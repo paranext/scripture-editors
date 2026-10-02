@@ -589,4 +589,35 @@ describe("the popover's protected note shell", () => {
     },
     30000,
   );
+
+  it("saves a keystroke typed after a focus that parks the caret at the document's end", async () => {
+    const host = await renderEditor(hostOptions, sampleUsj);
+    const hostNoteOps = requireDefined(host.editorRef.getNoteOps(0), "host note ops");
+    const popover = await renderEditor(protectedPopoverOptions, PARAGRAPH_USJ);
+    await act(async () => {
+      popover.editorRef.applyUpdate([hostNoteOps[0]]);
+    });
+    // `focus()` with no selection to restore falls back to the document's end: past the note,
+    // which is all the popover's document holds and all its Save writes.
+    await act(async () => {
+      popover.lexical.update(() => {
+        $getRoot().selectEnd();
+        popover.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      });
+    });
+    await act(async () => {
+      popover.lexical.update(() => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertText("X");
+      });
+    });
+    act(() => popover.editorRef.commitPendingMarkerEdits());
+
+    const ops = requireDefined(popover.editorRef.getNoteOps(0), "popover note ops");
+    expect(ops).toHaveLength(1);
+    expect(JSON.stringify(ops[0])).toContain('"2X"');
+    // Nothing outside the note, where Save would drop it.
+    const para = popover.editorRef.getUsj()?.content[0];
+    expect(typeof para === "object" ? para.content?.length : undefined).toBe(1);
+  }, 30000);
 });

@@ -278,53 +278,78 @@ describe("expanded note shell", () => {
     });
   });
 
-  it("sends a CLICK at the shell's very front to the place in front of the note", async () => {
+  // The popover saves only the note, so a caret in front of it would type bytes the popover's Save
+  // drops. Every way of reaching that place lands at the start of the note's content instead.
+  it.each([
+    ["a click at the shell's very front", true, (note: NoteNode) => $opener(note).select(0, 0)],
+    [
+      "a click at the end of the text before the note",
+      true,
+      (note: NoteNode) => {
+        const before = note.getPreviousSibling();
+        if (!$isTextNode(before)) throw new Error("expected text before the note");
+        before.select(before.getTextContentSize(), before.getTextContentSize());
+      },
+    ],
+    [
+      "a click on the paragraph's boundary right before the note",
+      true,
+      (note: NoteNode) => {
+        const para = requireDefined(note.getParent() ?? undefined, "note paragraph");
+        para.select(note.getIndexWithinParent(), note.getIndexWithinParent());
+      },
+    ],
+    [
+      "a keyboard move back out of the note's content, into the caller",
+      false,
+      (note: NoteNode) => requireDefined($noteEditableCallerNode(note), "caller").select(2, 2),
+    ],
+  ])("never rests the caret in front of it: %s", async (_label, isClick, place) => {
     const { editor } = await mount(protectedShell);
-
-    // In front of `\f` and at the end of the text before the note are one place on screen, so a
-    // click there types where the end of that text would.
-    await clickCaretInShell(editor, $opener, 0);
+    // Start in the note's content, as a leftward arrow press out of the note does.
+    await act(async () => {
+      editor.update(() => $noteContentText(findOnlyNote($getRoot())).select(1, 1));
+    });
+    const doc = editor.getRootElement()?.ownerDocument ?? document;
+    await act(async () => {
+      if (isClick) doc.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      editor.update(() => {
+        place(findOnlyNote($getRoot()));
+        editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      });
+      if (isClick) doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    });
     await typeText(editor, "X");
 
     const usj = usjOf(editor);
     const note = findUsjNote(usj?.content);
-    expect(note.content).toEqual([
-      { type: "char", marker: "ft", closed: "false", content: ["A note"] },
-    ]);
+    expect(note.content?.[0]).toBe("X");
     const para = usj?.content.find((item) => typeof item === "object" && item.type === "para");
-    expect(typeof para === "object" ? para.content : undefined).toContain("textX");
+    expect(typeof para === "object" ? para.content : undefined).toContain("text");
   });
 
-  it("crosses the shell in one hop coming back out of the note's content", async () => {
+  it("puts its opening glyph back when Delete in front of the note removes it", async () => {
     const { editor } = await mount(protectedShell);
-
-    // Arrive from the content side — what a leftward arrow press out of the note looks like.
+    // Lexical's `deleteCharacter` extends the selection one character into the glyph and removes
+    // the range, which takes a `token` node whole.
     await act(async () => {
       editor.update(() => {
-        const note = findOnlyNote($getRoot());
-        const content = requireDefined(
-          note.getChildren().find((child) => child.getIndexWithinParent() > 1),
-          "note content",
-        );
-        content.selectStart();
+        const opener = $opener(findOnlyNote($getRoot()));
+        opener.select(0, 0);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        selection.focus.set(opener.getKey(), 1, "text");
+        selection.removeText();
       });
     });
-    await placeCaretInShell(
-      editor,
-      (note) => requireDefined($noteEditableCallerNode(note), "caller"),
-      2,
-    );
 
     editor.getEditorState().read(() => {
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
-      // Out of the note entirely, rather than pushed forward again into its content — which would
-      // trap the caret against a shell it can never cross.
       const note = findOnlyNote($getRoot());
-      const anchorNode = selection.anchor.getNode();
-      expect(note.is(anchorNode)).toBe(false);
-      expect(anchorNode.getParent()?.is(note) ?? false).toBe(false);
+      expect($opener(note).getTextContent()).toBe("\\f");
+      expect($opener(note).getMode()).toBe("token");
     });
+    const note = findUsjNote(usjOf(editor)?.content);
+    expect(note).toMatchObject({ marker: "f", caller: "+" });
   });
 
   it("leaves an editable shell alone, caret and keystroke both", async () => {
@@ -382,7 +407,56 @@ describe("a closed note's closing glyph, with the shell protected", () => {
     },
   );
 
-  it("lets a keyboard move out of the note's content cross the closer in one hop", async () => {
+  /** Whether the caret rests at the closer's front: the end of the note's content. */
+  function $isAtCloserFront(): boolean {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+    const closer = $closer(findOnlyNote($getRoot()));
+    return selection.anchor.getNode().is(closer) && selection.anchor.offset === 0;
+  }
+
+  // The popover saves only the note, so a caret that rests past the closer would type bytes the
+  // popover's Save drops. Every way of reaching that place lands at the closer's front instead.
+  it.each([
+    [
+      "a keyboard move out of the note's content, into the closer",
+      false,
+      (note: NoteNode) => $closer(note).select(1, 1),
+    ],
+    [
+      "a keyboard move onto the closer's end",
+      false,
+      (note: NoteNode) => {
+        const closer = $closer(note);
+        closer.select(closer.getTextContentSize(), closer.getTextContentSize());
+      },
+    ],
+    [
+      "a click on the closer's end",
+      true,
+      (note: NoteNode) => {
+        const closer = $closer(note);
+        closer.select(closer.getTextContentSize(), closer.getTextContentSize());
+      },
+    ],
+    [
+      "a click at the start of the text after the note",
+      true,
+      (note: NoteNode) => {
+        const after = note.getNextSibling();
+        if (!$isTextNode(after)) throw new Error("expected text after the note");
+        after.select(0, 0);
+      },
+    ],
+    [
+      "a click on the paragraph's boundary right after the note",
+      true,
+      (note: NoteNode) => {
+        const para = requireDefined(note.getParent() ?? undefined, "note paragraph");
+        para.select(note.getIndexWithinParent() + 1, note.getIndexWithinParent() + 1);
+      },
+    ],
+  ])("never rests the caret past it: %s", async (_label, isClick, place) => {
     const { editor } = await mount(protectedShell, "");
     await act(async () => {
       editor.update(() => {
@@ -390,15 +464,23 @@ describe("a closed note's closing glyph, with the shell protected", () => {
         closer.getPreviousSibling()?.selectEnd();
       });
     });
-    await placeCaretInShell(editor, $closer, 1);
-
-    editor.getEditorState().read(() => {
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
-      const closer = $closer(findOnlyNote($getRoot()));
-      expect(selection.anchor.getNode().is(closer)).toBe(true);
-      expect(selection.anchor.offset).toBe(closer.getTextContentSize());
+    const doc = editor.getRootElement()?.ownerDocument ?? document;
+    await act(async () => {
+      if (isClick) doc.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      editor.update(() => {
+        place(findOnlyNote($getRoot()));
+        editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      });
+      if (isClick) doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
     });
+
+    expect(editor.getEditorState().read($isAtCloserFront)).toBe(true);
+    await typeText(editor, "X");
+    const { note, tail } = savedNoteAndTail(editor);
+    expect(note.content).toEqual([
+      { type: "char", marker: "ft", closed: "false", content: ["A noteX"] },
+    ]);
+    expect(tail).toEqual([" after"]);
   });
 
   /** The paragraph holding the note as the screen shows it, a no-break space read as a space. */
@@ -505,8 +587,9 @@ describe("a closed note's closing glyph, with the shell protected", () => {
     expect(tail).toEqual([" after"]);
   });
 
-  it("sends text typed at its end after the note, where the screen shows it", async () => {
+  it("keeps text that still arrives behind it in the note's content, where the screen shows it", async () => {
     const { editor } = await mount(protectedShell, "");
+    // Typed in the same update the caret is put there, before any selection listener can move it.
     await act(async () => {
       editor.update(() => {
         $closer(findOnlyNote($getRoot())).selectEnd();
@@ -516,15 +599,14 @@ describe("a closed note's closing glyph, with the shell protected", () => {
     });
 
     editor.getEditorState().read(() => {
-      expect($noteParagraphText()).toMatch(/\\ft A note\\f\*X after$/);
-      // Nothing behind the closer, inside the note.
+      expect($noteParagraphText()).toMatch(/\\ft A noteX\\f\* after$/);
       expect($isMarkerNode(findOnlyNote($getRoot()).getLastChild())).toBe(true);
     });
     const { note, tail } = savedNoteAndTail(editor);
     expect(note.content).toEqual([
-      { type: "char", marker: "ft", closed: "false", content: ["A note"] },
+      { type: "char", marker: "ft", closed: "false", content: ["A noteX"] },
     ]);
-    expect(tail).toEqual(["X after"]);
+    expect(tail).toEqual([" after"]);
   });
 
   it("puts text typed at its front in the span the screen shows it in", async () => {

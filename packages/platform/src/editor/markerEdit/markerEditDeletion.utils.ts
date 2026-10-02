@@ -545,6 +545,18 @@ export function $noteDeletionTransform(note: NoteNode, context: MarkerEditContex
 
   if (note.getIsCollapsed() !== true) {
     if (hasOpener) return; // intact — unclosed expanded notes have no closer by construction
+    // A note whose shell the host governs (`ViewOptions.isNoteShellEditable: false`, built as
+    // `token` glyphs) is not text the user edits: Delete in front of it, which Lexical turns into
+    // removing the whole opening glyph, gets its opener back rather than unwrapping the note — the
+    // host (the footnote popover) edits and saves that note alone.
+    if (children.some((child) => $isTextNode(child) && child.getMode() === "token")) {
+      const opener = $createMarkerNode(note.getMarker());
+      opener.setMode("token");
+      const first = note.getFirstChild();
+      if (first) first.insertBefore(opener);
+      else note.append(opener);
+      return;
+    }
     // Recognize an editable-built note by ANY marker-glyph evidence: the editable caller text,
     // a closing glyph, or a MarkerNode anywhere in the subtree (content char spans carry their
     // own glyphs). A single evidence anchor (caller only) is not enough: a RANGE deletion

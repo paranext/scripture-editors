@@ -1,8 +1,8 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
-  $getPreviousSelection,
   $getSelection,
   $isRangeSelection,
+  $isElementNode,
   $isTextNode,
   COMMAND_PRIORITY_EDITOR,
   LexicalNode,
@@ -10,7 +10,7 @@ import {
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import {
   $isMarkerNode,
   $isNoteNode,
@@ -61,13 +61,9 @@ function $protectedCloser(note: NoteNode): TextNode | undefined {
 }
 
 /**
- * The note whose protected closer `point` rests strictly inside, or `undefined`. Both of the
- * closer's ends are caret positions. Lexical puts an insertion at either boundary of a `token`
- * node in a new text node beside it, inside the note: in front of the closer, or behind it. The
- * marker-editing engine's note transform settles each where the screen shows it — behind the
- * closer is after the note, and in front of it is the end of a content span that shows no closer
- * of its own. An insertion strictly inside replaces the closer outright, which nothing could put
- * back where it was typed, so the caret is never left there.
+ * The note whose protected closer `point` rests strictly inside, or `undefined`. An insertion
+ * strictly inside a `token` node replaces it outright, so a RANGE endpoint there is pushed to one
+ * of the closer's ends ({@link $expandSelectionPastShell}).
  */
 function $closerInteriorAt(point: PointType): NoteNode | undefined {
   if (point.type !== "text") return undefined;
@@ -78,19 +74,33 @@ function $closerInteriorAt(point: PointType): NoteNode | undefined {
 }
 
 /**
- * Whether a KEYBOARD move reached the closer from the note's side — the caret was before the
- * closer — so carrying on past it, out of the note, is the move's direction. Anything else (a move
- * coming back from after the note, no previous selection) lands in front of it, in the note.
+ * The note whose protected closer a collapsed caret at `point` is inside or past, or `undefined`:
+ * strictly inside the closer, at its end, or at any position that is the same place on screen —
+ * the note's own boundary behind the closer, the boundary right after the note, or the start of a
+ * text right after it.
+ *
+ * None of those is a place the caret may rest. The host that protects a note's shell edits that
+ * note alone — the footnote popover saves only the note — so a byte typed past the closer would
+ * be shown and then dropped. The closer's front, the end of the note's content, is where such a
+ * caret goes instead.
  */
-function $arrivedFromBeforeCloser(closer: TextNode): boolean {
-  const previous = $getPreviousSelection();
-  if (!$isRangeSelection(previous)) return false;
-  const { anchor } = previous;
-  const node = anchor.getNode();
-  if (node.is(closer)) return false;
-  const note = closer.getParent();
-  if (note && node.is(note)) return anchor.offset <= closer.getIndexWithinParent();
-  return node.isBefore(closer);
+function $atOrPastProtectedCloser(point: PointType): NoteNode | undefined {
+  const node = point.getNode();
+  if (point.type === "text") {
+    const note = node.getParent();
+    if ($isNoteNode(note) && $protectedCloser(note)?.is(node))
+      return point.offset > 0 ? note : undefined;
+    if (point.offset !== 0) return undefined;
+    const previous = node.getPreviousSibling();
+    return $isNoteNode(previous) && $protectedCloser(previous) ? previous : undefined;
+  }
+  if ($isNoteNode(node)) {
+    const closer = $protectedCloser(node);
+    return closer && point.offset > closer.getIndexWithinParent() ? node : undefined;
+  }
+  if (!$isElementNode(node) || point.offset === 0) return undefined;
+  const previous = node.getChildAtIndex(point.offset - 1);
+  return $isNoteNode(previous) && $protectedCloser(previous) ? previous : undefined;
 }
 
 /** The note whose protected shell `node` belongs to, or `undefined`. */
@@ -110,37 +120,28 @@ function $contentStartIndex(note: NoteNode): number {
   return last ? last.getIndexWithinParent() + 1 : 0;
 }
 
-/** `note`'s own child that contains `node`, or `undefined` when `node` is not inside `note`. */
-function $noteChildContaining(note: NoteNode, node: LexicalNode): LexicalNode | undefined {
-  for (let cursor: LexicalNode | null = node; cursor; cursor = cursor.getParent())
-    if (note.is(cursor.getParent())) return cursor;
-  return undefined;
-}
-
 /**
- * Whether the caret reached the shell from the note's CONTENT side — which is what a leftward move
- * out of the note looks like, and the one case where pushing it forward again would trap it.
+ * The note whose protected shell a collapsed caret at `point` is in front of, or `undefined`: at
+ * the end of a text right before the note, at the boundary right before it, or inside the note
+ * before its content starts. Each is the same place on screen as the shell's leading edge.
  *
- * Taken from the PREVIOUS selection because the shell is crossed whole in either direction and the
- * landing point alone cannot say which way the user was going. Anything else — a rightward move
- * from before the note, no previous selection at all — reads as travelling forward, which is also
- * the safe default: forward lands in editable content.
- *
- * Only asked of a KEYBOARD move. A pointer is not travelling anywhere — it names a destination
- * outright — so the previous caret says nothing about the user's intent, and reading it as a
- * direction sends a click away from the note it landed in. That is not hypothetical: a popover
- * that focuses its editor with no selection parks the caret at the document end, which for a
- * document holding one note is that note's own closing glyph — so the FIRST click on the shell
- * read as "coming from the content side" and threw the caret past the whole note.
+ * None of those is a place the caret may rest. The host that protects a note's shell edits that
+ * note alone — the footnote popover saves only the note — so a byte typed in front of it would be
+ * shown and then dropped. The start of the note's content is where such a caret goes instead.
  */
-function $arrivedFromContentSide(note: NoteNode): boolean {
-  const previous = $getPreviousSelection();
-  if (!$isRangeSelection(previous)) return false;
-  const { anchor } = previous;
-  const node = anchor.getNode();
-  if (note.is(node)) return anchor.offset >= $contentStartIndex(note);
-  const child = $noteChildContaining(note, node);
-  return child !== undefined && child.getIndexWithinParent() >= $contentStartIndex(note);
+function $atOrBeforeProtectedOpener(point: PointType): NoteNode | undefined {
+  const node = point.getNode();
+  const isProtected = (candidate: LexicalNode | null | undefined): candidate is NoteNode =>
+    $isNoteNode(candidate) && $noteShellNodes(candidate).length > 0;
+  if (point.type === "text") {
+    if (point.offset !== node.getTextContentSize()) return undefined;
+    const next = node.getNextSibling();
+    return isProtected(next) ? next : undefined;
+  }
+  if (isProtected(node)) return point.offset < $contentStartIndex(node) ? node : undefined;
+  if (!$isElementNode(node)) return undefined;
+  const next = node.getChildAtIndex(point.offset);
+  return isProtected(next) ? next : undefined;
 }
 
 /**
@@ -165,12 +166,6 @@ function $shellAt(point: PointType): NoteNode | undefined {
   return $isShellTrailingEdge(note, node, point.offset) ? undefined : note;
 }
 
-/** Whether `point` is at the shell's leading edge — the caret position just in front of `\f`. */
-function $isShellLeadingEdge(note: NoteNode, point: PointType): boolean {
-  const first = $noteShellNodes(note)[0];
-  return first !== undefined && first.is(point.getNode()) && point.offset === 0;
-}
-
 /** Whether `point` is at the shell's trailing edge — the caret position just past `\f + `. */
 function $isShellTrailingEdge(note: NoteNode, node: LexicalNode, offset: number): boolean {
   const shell = $noteShellNodes(note);
@@ -187,14 +182,13 @@ function $placeAtShellTrailingEdge(note: NoteNode): void {
 }
 
 /**
- * Move a caret that has come to rest inside an expanded note's protected shell to the nearest
- * position outside it: the start of the note's own content, or — for a KEYBOARD move coming back
- * out of that content — the position before the whole note, so the shell can be crossed leftward
- * instead of trapping the caret against it.
- *
- * `isPointerGesture` says the caret was placed by a pointer, which is a destination rather than a
- * direction: such a caret goes to the content, the position the user was pointing into — or, at
- * the shell's leading edge, to the position before the note, which is the same place on screen.
+ * Move a caret that has come to rest in or beside an expanded note's protected shell into the
+ * note's own content: one in front of the note or among its opening glyph and caller goes to the
+ * start of the content ({@link $atOrBeforeProtectedOpener}, {@link $shellAt}), and one inside or
+ * past its closer goes to the closer's front, the end of the content
+ * ({@link $atOrPastProtectedCloser}). Such a host edits the note alone (the footnote popover saves
+ * only the note), so the caret is kept where what it types is saved — however it got there: a
+ * click, an arrow press, `End`, or a focus that falls back to the document's end.
  *
  * Returns `true` when the selection was corrected.
  *
@@ -203,35 +197,22 @@ function $placeAtShellTrailingEdge(note: NoteNode): void {
  *
  * Mutating (moves the selection): call inside `editor.update()` or a command handler.
  */
-export function $guardCaretOutOfNoteShell(isPointerGesture = false): boolean {
+export function $guardCaretOutOfNoteShell(): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
 
   if (!selection.isCollapsed()) return $expandSelectionPastShell(selection.anchor, selection.focus);
 
-  const closedNote = $closerInteriorAt(selection.anchor);
+  const closedNote = $atOrPastProtectedCloser(selection.anchor);
   const closer = closedNote && $protectedCloser(closedNote);
   if (closer) {
-    // A pointer names the note it landed in; a keyboard move keeps its direction.
-    const offset =
-      !isPointerGesture && $arrivedFromBeforeCloser(closer) ? closer.getTextContentSize() : 0;
-    closer.select(offset, offset);
+    closer.select(0, 0);
     return true;
   }
 
-  const note = $shellAt(selection.anchor);
+  const note = $atOrBeforeProtectedOpener(selection.anchor) ?? $shellAt(selection.anchor);
   if (!note) return false;
-  // A pointer at the shell's leading edge names the place in front of the note: on screen it is
-  // one place with the end of whatever precedes the note.
-  if (
-    isPointerGesture ? $isShellLeadingEdge(note, selection.anchor) : $arrivedFromContentSide(note)
-  ) {
-    const parent = note.getParent();
-    if (!parent) return false;
-    $placeCaretAtBoundary(parent, note.getIndexWithinParent());
-  } else {
-    $placeAtShellTrailingEdge(note);
-  }
+  $placeAtShellTrailingEdge(note);
   return true;
 }
 
@@ -273,12 +254,14 @@ function $movePointPastShell(point: PointType, note: NoteNode, toStart: boolean)
 }
 
 /**
- * Keeps the caret out of an expanded note's shell — the opening glyph and caller a host governs
- * through its own UI rather than as text (`ViewOptions.isNoteShellEditable: false`; Paratext 10's
- * footnote editor has a dropdown for each, as does Paratext 9) — and out of the inside of its
- * closing glyph, which is built the same way and would leave the note unclosed if typed into: a
- * caret there moves to the closer's front, or, for a keyboard move travelling out of the note, to
- * its end.
+ * Keeps the caret inside an expanded note's content when the host governs the note's shell — its
+ * opening glyph, caller and closing glyph — through its own UI rather than as text
+ * (`ViewOptions.isNoteShellEditable: false`; Paratext 10's footnote editor has a dropdown for the
+ * marker and the caller, as does Paratext 9). Such a host edits that note alone (the footnote
+ * popover saves only the note), so a caret in front of the note or among its opening glyph and
+ * caller moves to the start of its content, and one inside or past its closer moves to the end of
+ * its content. A keyboard move therefore cannot leave the note past either end of its shell; the
+ * popover's document holds nothing there.
  *
  * Rendering those nodes in Lexical's `token` mode is what makes them atomic to the operations that
  * ASK a node whether it can be split, but it does not keep a caret from landing among their
@@ -289,16 +272,7 @@ function $movePointPastShell(point: PointType, note: NoteNode, toStart: boolean)
  * as deletion damage. Both read on screen as an edit that was accepted and then quietly reverted.
  *
  * So the caret is corrected the moment it comes to rest there, in the same update, before anything
- * can be typed. It lands at the start of the note's content — where the note IS editable, and where
- * a `\cat` category run belongs. The one exception is a KEYBOARD move coming back out of that
- * content: that one lands before the whole note, so the shell is crossed in a single hop rather
- * than trapping the caret against it.
- *
- * A pointer is held to a destination, never a direction: it lands in the content, or before the
- * note when it lands at the shell's very front. It is read from the pointer being DOWN
- * when the selection lands, which is the order a click delivers (`pointerdown`, then the selection
- * change, then `pointerup`) — the click event itself arrives too late to answer in the same update,
- * and correcting twice would let other selection listeners see the wrong position in between.
+ * can be typed.
  *
  * Not gated on view options: the rule reads the shell's own node mode, so it is structurally a
  * no-op in the views that build an editable shell (the main editor's Markers view expands notes
@@ -308,30 +282,6 @@ function $movePointPastShell(point: PointType, note: NoteNode, toStart: boolean)
  */
 export function NoteShellCaretGuardPlugin(): null {
   const [editor] = useLexicalComposerContext();
-  const isPointerDown = useRef(false);
-
-  useEffect(() => {
-    const markDown = () => {
-      isPointerDown.current = true;
-    };
-    const markUp = () => {
-      isPointerDown.current = false;
-    };
-    // Listened for on the DOCUMENT in the capture phase, and released on `pointercancel` as well
-    // as `pointerup`: a drag that starts in the editor can finish anywhere, and a pointer flag
-    // that fails to clear would make every later keyboard move read as a click.
-    return editor.registerRootListener((rootElement, prevRootElement) => {
-      const previous = prevRootElement?.ownerDocument;
-      previous?.removeEventListener("pointerdown", markDown, true);
-      previous?.removeEventListener("pointerup", markUp, true);
-      previous?.removeEventListener("pointercancel", markUp, true);
-      isPointerDown.current = false;
-      const current = rootElement?.ownerDocument;
-      current?.addEventListener("pointerdown", markDown, true);
-      current?.addEventListener("pointerup", markUp, true);
-      current?.addEventListener("pointercancel", markUp, true);
-    });
-  }, [editor]);
 
   useEffect(() => {
     return editor.registerCommand(
@@ -340,7 +290,7 @@ export function NoteShellCaretGuardPlugin(): null {
         // Command handlers already run inside an update, so the announcement joins that commit.
         // Announced rather than tagged: the guard moves only the caret, and a tag on a caret-only
         // commit would ride along on the user's next edit and hide it from the host.
-        if ($guardCaretOutOfNoteShell(isPointerDown.current))
+        if ($guardCaretOutOfNoteShell())
           editor.dispatchCommand(APP_PLACED_CARET_COMMAND, undefined);
         return false;
       },

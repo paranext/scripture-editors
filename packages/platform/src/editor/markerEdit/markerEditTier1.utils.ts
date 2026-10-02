@@ -1426,8 +1426,11 @@ export function $restoreRemovedNoteCaller(note: NoteNode, context: MarkerEditCon
  * - Backspace after it, or Delete in front of it, removes a `token` node whole. The note stays
  *   closed (its `closed` attribute says so, not the glyph), so the glyph is put back.
  * - Text inserted at its end lands inside the note, behind it — Lexical puts an insertion at a
- *   `token` node's trailing boundary in a new sibling of that node. The screen shows it after the
- *   note, so that is where it goes.
+ *   `token` node's trailing boundary in a new sibling of that node. The caret guard never leaves a
+ *   caret there, but text that still arrives (typed in the update that placed the caret) moves in
+ *   front of the closer, to the end of the note's content, which is where the screen then shows
+ *   it. After the note is no place for it: the host that protects the shell edits the note alone
+ *   (the footnote popover saves only the note), so it would be lost.
  * - Text inserted at its front lands as a note child in front of it. When the content span before
  *   it shows no closer of its own (`\ft`, whose bytes run on to the note's closer), the screen
  *   shows the text as that span's and a reload reads it so; it joins the span.
@@ -1454,12 +1457,9 @@ export function $keepProtectedNoteCloser(note: NoteNode): void {
     note.append(closer);
   }
 
-  // Behind the closer: after the note, in order.
-  let after: LexicalNode = note;
-  for (let behind = closer.getNextSibling(); behind; behind = closer.getNextSibling()) {
-    after.insertAfter(behind);
-    after = behind;
-  }
+  // Behind the closer: in front of it, in order — the end of the note's content.
+  for (let behind = closer.getNextSibling(); behind; behind = closer.getNextSibling())
+    closer.insertBefore(behind);
 
   // In front of it, as a note child: into the closer-less span the screen shows it in.
   const front = closer.getPreviousSibling();
