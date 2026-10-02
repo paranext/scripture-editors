@@ -1723,8 +1723,18 @@ export function $resolveFragmentByteAnchor(
   }
   if (best) return { ...best, type: "text" };
   // A byte position satisfied at the end of the last span it could name, with nothing after it:
-  // the end of those bytes, a closer's included.
+  // the end of those bytes, a closer's included. Whitespace the anchor counts past them that the
+  // fragment does not have is clamped away, as it is in front of a byte.
   if (endOfSatisfied) return { ...endOfSatisfied, type: "text" };
+  const final = spans[spans.length - 1];
+  if (
+    addressDisplayBytes &&
+    remainingNonWs === 0 &&
+    final &&
+    !final.isSentinel &&
+    final.end === text.length
+  )
+    return { key: final.key, offset: final.end - final.start, type: "text" };
   // The offset ran past every addressable span. Both span kinds the forward scan skips can be
   // the last thing in the fragment, and for both the position belongs AFTER them — an append
   // position in the paragraph — rather than at the end of the preceding text, which is where the
