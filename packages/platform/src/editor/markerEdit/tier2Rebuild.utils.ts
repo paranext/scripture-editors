@@ -1675,6 +1675,8 @@ export function $resolveFragmentByteAnchor(
 ): FragmentPoint | undefined {
   const { text, spans } = fragment;
   let best: { key: string; offset: number } | undefined;
+  // The end of the span a byte position was satisfied at, held while the next span is looked for.
+  let endOfSatisfied: { key: string; offset: number } | undefined;
   let remainingNonWs = anchor.nonWsBefore;
   let remainingWs = anchor.wsRun;
   // Whether the anchor position resolved INSIDE a span the caret cannot rest in — a sentinel
@@ -1715,10 +1717,14 @@ export function $resolveFragmentByteAnchor(
         best = { key: span.key, offset: spanLength };
         break;
       }
+      if (addressable) endOfSatisfied = { key: span.key, offset: spanLength };
       needNextAddressable = true;
     }
   }
   if (best) return { ...best, type: "text" };
+  // A byte position satisfied at the end of the last span it could name, with nothing after it:
+  // the end of those bytes, a closer's included.
+  if (endOfSatisfied) return { ...endOfSatisfied, type: "text" };
   // The offset ran past every addressable span. Both span kinds the forward scan skips can be
   // the last thing in the fragment, and for both the position belongs AFTER them — an append
   // position in the paragraph — rather than at the end of the preceding text, which is where the

@@ -413,6 +413,28 @@ describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (
     expect(trip.to).toBe(trip.from);
   });
 
+  it("keeps the end of a `\\ca` closer that folds onto its chapter", async () => {
+    // `\ca 3x\ca*` folds onto the chapter as altnumber `3x`; the end of the typed closer is the
+    // end of the chapter's `\ca` run closer, not the end of the value in front of it.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { mounted, $node } = await pendingEdit(usj, view, "\\ca*", "x\\ca*", 1);
+    const trip = roundTrip(mounted, view, $node, "x\\ca*".length);
+    expect(trip.reported).toMatchObject({
+      keyName: "altnumber",
+      keyClosingMarkerOffset: "\\ca*".length,
+    });
+    expect(trip.to).toBe(trip.from);
+  });
+
   it("keeps a position at the end of a `\\ca` value when a space is typed in front of its closer", async () => {
     // `\ca 3 \ca*` folds onto the chapter as altnumber `3`: the end of the value is in front of
     // the typed space, where it was read from, not behind it.
