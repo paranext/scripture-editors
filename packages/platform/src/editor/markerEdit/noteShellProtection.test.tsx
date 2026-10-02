@@ -40,8 +40,10 @@ import {
   $getSelection,
   $isRangeSelection,
   $isTextNode,
+  $selectAll,
   KEY_DOWN_COMMAND,
   LexicalEditor,
+  SELECT_ALL_COMMAND,
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
@@ -643,5 +645,134 @@ describe("a closed note's closing glyph, with the shell protected", () => {
       });
     });
     expect(isLiteral).toBe(false);
+  });
+});
+
+describe("a range selection beside a protected note shell", () => {
+  /** The note's content text node (`A note`), and where a range starts in it. */
+  function $contentText(note: NoteNode): TextNode {
+    return $noteContentText(note);
+  }
+
+  /** The paragraph holding the note, in USJ, with the note itself taken out. */
+  function outsideTheNote(editor: LexicalEditor) {
+    const para = usjOf(editor)?.content.find(
+      (item) =>
+        typeof item === "object" &&
+        item.type === "para" &&
+        item.content?.some((child) => typeof child === "object" && child.type === "note"),
+    );
+    if (typeof para !== "object") throw new Error("the note's paragraph is gone");
+    return (para.content ?? []).filter(
+      (child) => typeof child !== "object" || child.type !== "note",
+    );
+  }
+
+  /**
+   * Make a range the way a keyboard extension or a select-all does — the selection changed in one
+   * update, announced as a selection change — and then edit it in the next: type `X` or press
+   * Backspace (`removeText`, which is what Backspace does to a range).
+   */
+  async function selectThenEdit(
+    editor: LexicalEditor,
+    select: (note: NoteNode) => void,
+    edit: "type" | "backspace",
+  ): Promise<void> {
+    await act(async () => {
+      editor.update(() => {
+        select(findOnlyNote($getRoot()));
+        editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      });
+    });
+    await act(async () => {
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        if (edit === "type") selection.insertText("X");
+        else selection.removeText();
+      });
+    });
+  }
+
+  /** A range from the note content's `offset` to `focus`. */
+  function rangeFrom(
+    offset: number,
+    focus: (note: NoteNode) => { key: string; offset: number; type: "text" | "element" },
+  ) {
+    return (note: NoteNode) => {
+      const text = $contentText(note);
+      text.select(offset, offset);
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      const to = focus(note);
+      selection.focus.set(to.key, to.offset, to.type);
+    };
+  }
+
+  const $paragraphStart = (note: NoteNode) => ({
+    key: requireDefined(note.getParent() ?? undefined, "paragraph").getKey(),
+    offset: 0,
+    type: "element" as const,
+  });
+  const $paragraphEnd = (note: NoteNode) => {
+    const para = requireDefined(note.getParent() ?? undefined, "paragraph");
+    return { key: para.getKey(), offset: para.getChildrenSize(), type: "element" as const };
+  };
+  const $intoTheCaller = (note: NoteNode) => ({
+    key: requireDefined($noteEditableCallerNode(note), "caller").getKey(),
+    offset: 1,
+    type: "text" as const,
+  });
+  const $intoTheCloser = (note: NoteNode) => {
+    const closer = note.getLastChild();
+    if (!$isMarkerNode(closer)) throw new Error("expected the closing glyph");
+    return { key: closer.getKey(), offset: 2, type: "text" as const };
+  };
+
+  // The popover saves only the note, so a range that reaches past the note's content would edit or
+  // remove bytes the popover's Save drops — or the note itself. Each range is kept to the content.
+  it.each([
+    ["Shift+Left into the caller, then typing", rangeFrom(0, $intoTheCaller), "type"],
+    ["Shift+Home, then typing", rangeFrom(1, $paragraphStart), "type"],
+    ["Shift+Home, then Backspace", rangeFrom(1, $paragraphStart), "backspace"],
+    ["Shift+Right into the closer, then typing", rangeFrom(6, $intoTheCloser), "type"],
+    ["Shift+End, then Backspace", rangeFrom(1, $paragraphEnd), "backspace"],
+    ["Shift+End, then typing", rangeFrom(1, $paragraphEnd), "type"],
+    ["select-all, then typing", () => $selectAll(), "type"],
+    ["select-all, then Backspace", () => $selectAll(), "backspace"],
+  ] as const)("keeps the note and what is outside it: %s", async (_label, select, edit) => {
+    const { editor } = await mount(protectedShell, "");
+    const outside = outsideTheNote(editor);
+
+    await selectThenEdit(editor, select, edit);
+
+    expect(outsideTheNote(editor)).toEqual(outside);
+    const note = findUsjNote(usjOf(editor)?.content);
+    expect(note).toMatchObject({ marker: "f", caller: "+" });
+    expect(note).not.toHaveProperty("closed");
+    editor.getEditorState().read(() => {
+      const live = findOnlyNote($getRoot());
+      expect($opener(live).getTextContent()).toBe("\\f");
+      expect($noteEditableCallerNode(live)?.getTextContent()).toBe(getEditableCallerText("+"));
+      expect($isMarkerNode(live.getLastChild())).toBe(true);
+    });
+    if (edit === "type") expect(JSON.stringify(note.content)).toContain("X");
+  });
+
+  it("confines Ctrl+A before the edit that follows it, with no selection change in between", async () => {
+    const { editor } = await mount(protectedShell, "");
+    const outside = outsideTheNote(editor);
+    await act(async () => {
+      editor.dispatchCommand(SELECT_ALL_COMMAND, undefined);
+    });
+    await act(async () => {
+      editor.update(() => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertText("X");
+      });
+    });
+
+    expect(outsideTheNote(editor)).toEqual(outside);
+    expect(findUsjNote(usjOf(editor)?.content)).toMatchObject({ caller: "+", content: ["X"] });
   });
 });

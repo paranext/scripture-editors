@@ -1,12 +1,18 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { mergeRegister } from "@lexical/utils";
 import {
+  $createPoint,
   $getSelection,
   $isRangeSelection,
   $isElementNode,
   $isTextNode,
+  $selectAll,
   COMMAND_PRIORITY_EDITOR,
+  COMMAND_PRIORITY_HIGH,
   LexicalNode,
   PointType,
+  RangeSelection,
+  SELECT_ALL_COMMAND,
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
@@ -58,19 +64,6 @@ function $protectedCloser(note: NoteNode): TextNode | undefined {
   return $isMarkerNode(last) && last.getMarkerSyntax() === "closing" && last.getMode() === "token"
     ? last
     : undefined;
-}
-
-/**
- * The note whose protected closer `point` rests strictly inside, or `undefined`. An insertion
- * strictly inside a `token` node replaces it outright, so a RANGE endpoint there is pushed to one
- * of the closer's ends ({@link $expandSelectionPastShell}).
- */
-function $closerInteriorAt(point: PointType): NoteNode | undefined {
-  if (point.type !== "text") return undefined;
-  const node = point.getNode();
-  const note = node.getParent();
-  if (!$isNoteNode(note) || !$protectedCloser(note)?.is(node)) return undefined;
-  return point.offset > 0 && point.offset < node.getTextContentSize() ? note : undefined;
 }
 
 /**
@@ -201,7 +194,7 @@ export function $guardCaretOutOfNoteShell(): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
 
-  if (!selection.isCollapsed()) return $expandSelectionPastShell(selection.anchor, selection.focus);
+  if (!selection.isCollapsed()) return $confineRangeToProtectedNote(selection);
 
   const closedNote = $atOrPastProtectedCloser(selection.anchor);
   const closer = closedNote && $protectedCloser(closedNote);
@@ -216,41 +209,60 @@ export function $guardCaretOutOfNoteShell(): boolean {
   return true;
 }
 
+/** The protected note `node` is, or is inside, or `undefined`. */
+function $protectedNoteOf(node: LexicalNode): NoteNode | undefined {
+  for (let cursor: LexicalNode | null = node; cursor; cursor = cursor.getParent())
+    if ($isNoteNode(cursor) && $noteShellNodes(cursor).length > 0) return cursor;
+  return undefined;
+}
+
 /**
- * Push a RANGE's endpoints out of any shell they land in, away from the other endpoint, so the
- * shell ends up wholly inside the selection or wholly outside it.
- *
- * A range that stops partway through the shell is the other way a keystroke reaches it: replacing
- * such a selection edits the shell node the range clipped. Growing the range instead makes the
- * shell behave as the single unit it is drawn as — the same treatment `token` mode gives deletion.
+ * The protected note a RANGE touches: one an endpoint is in, beside or past the shell of, or one
+ * the range spans. `undefined` when it touches none.
  */
-function $expandSelectionPastShell(anchor: PointType, focus: PointType): boolean {
-  const anchorNote = $shellAt(anchor);
-  const focusNote = $shellAt(focus);
-  const anchorCloser = $closerInteriorAt(anchor);
-  const focusCloser = $closerInteriorAt(focus);
-  if (!anchorNote && !focusNote && !anchorCloser && !focusCloser) return false;
-  // Which endpoint leads is the range's own direction; each offending one moves to the shell edge
-  // that is farther from the other, which is what grows rather than shrinks the selection.
-  const anchorLeads = anchor.isBefore(focus);
-  if (anchorNote) $movePointPastShell(anchor, anchorNote, anchorLeads);
-  if (focusNote) $movePointPastShell(focus, focusNote, !anchorLeads);
-  if (anchorCloser) $movePointPastCloser(anchor, anchorCloser, anchorLeads);
-  if (focusCloser) $movePointPastCloser(focus, focusCloser, !anchorLeads);
-  return true;
+function $protectedNoteTouchedBy(selection: RangeSelection): NoteNode | undefined {
+  for (const point of [selection.anchor, selection.focus]) {
+    const note =
+      $protectedNoteOf(point.getNode()) ??
+      $atOrBeforeProtectedOpener(point) ??
+      $atOrPastProtectedCloser(point);
+    if (note) return note;
+  }
+  for (const node of selection.getNodes()) {
+    const note = $protectedNoteOf(node);
+    if (note) return note;
+  }
+  return undefined;
 }
 
-/** Move `point` from inside `note`'s protected closer to its front (`toStart`) or its end. */
-function $movePointPastCloser(point: PointType, note: NoteNode, toStart: boolean): void {
+/**
+ * Keep a RANGE that touches a protected note to that note's content: an endpoint in front of the
+ * content (before the note, in its opening glyph or caller) moves to the content's start, and one
+ * past it (in or past the closer) to the content's end, the closer's front. So whatever replaces
+ * or removes the range — typing over it, Backspace, select-all and either — edits the note's
+ * content only and never its shell, the note itself, or anything outside it, which the host that
+ * protects the shell does not save (the footnote popover saves only the note).
+ */
+function $confineRangeToProtectedNote(selection: RangeSelection): boolean {
+  const note = $protectedNoteTouchedBy(selection);
+  if (!note) return false;
+  const shell = $noteShellNodes(note);
+  const last = shell[shell.length - 1];
+  const start = $isTextNode(last)
+    ? $createPoint(last.getKey(), last.getTextContentSize(), "text")
+    : $createPoint(note.getKey(), $contentStartIndex(note), "element");
   const closer = $protectedCloser(note);
-  if (closer) point.set(closer.getKey(), toStart ? 0 : closer.getTextContentSize(), "text");
-}
-
-/** Move `point` to the shell's leading edge (`toStart`) or to the start of the note's content. */
-function $movePointPastShell(point: PointType, note: NoteNode, toStart: boolean): void {
-  const parent = note.getParent();
-  if (toStart && parent) point.set(parent.getKey(), note.getIndexWithinParent(), "element");
-  else point.set(note.getKey(), $contentStartIndex(note), "element");
+  const end = closer
+    ? $createPoint(closer.getKey(), 0, "text")
+    : $createPoint(note.getKey(), note.getChildrenSize(), "element");
+  let isMoved = false;
+  for (const point of [selection.anchor, selection.focus]) {
+    const bound = point.isBefore(start) ? start : end.isBefore(point) ? end : undefined;
+    if (!bound || (point.key === bound.key && point.offset === bound.offset)) continue;
+    point.set(bound.key, bound.offset, bound.type);
+    isMoved = true;
+  }
+  return isMoved;
 }
 
 /**
@@ -261,7 +273,9 @@ function $movePointPastShell(point: PointType, note: NoteNode, toStart: boolean)
  * popover saves only the note), so a caret in front of the note or among its opening glyph and
  * caller moves to the start of its content, and one inside or past its closer moves to the end of
  * its content. A keyboard move therefore cannot leave the note past either end of its shell; the
- * popover's document holds nothing there.
+ * popover's document holds nothing there. A range that touches the note — Shift with an arrow,
+ * Home or End, a drag, select-all — is kept to the note's content the same way, so no edit of it
+ * reaches the shell, the note itself or anything outside it.
  *
  * Rendering those nodes in Lexical's `token` mode is what makes them atomic to the operations that
  * ASK a node whether it can be split, but it does not keep a caret from landing among their
@@ -284,17 +298,32 @@ export function NoteShellCaretGuardPlugin(): null {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
-    return editor.registerCommand(
-      SELECTION_CHANGE_COMMAND,
-      () => {
-        // Command handlers already run inside an update, so the announcement joins that commit.
-        // Announced rather than tagged: the guard moves only the caret, and a tag on a caret-only
-        // commit would ride along on the user's next edit and hide it from the host.
-        if ($guardCaretOutOfNoteShell())
-          editor.dispatchCommand(APP_PLACED_CARET_COMMAND, undefined);
-        return false;
-      },
-      COMMAND_PRIORITY_EDITOR,
+    // Command handlers already run inside an update, so the announcement joins that commit.
+    // Announced rather than tagged: the guard moves only the caret, and a tag on a caret-only
+    // commit would ride along on the user's next edit and hide it from the host.
+    const $guard = () => {
+      if ($guardCaretOutOfNoteShell()) editor.dispatchCommand(APP_PLACED_CARET_COMMAND, undefined);
+    };
+    return mergeRegister(
+      editor.registerCommand(
+        SELECTION_CHANGE_COMMAND,
+        () => {
+          $guard();
+          return false;
+        },
+        COMMAND_PRIORITY_EDITOR,
+      ),
+      // Select-all is the rich-text plugin's `$selectAll`, confined in the same update rather than
+      // after the selection change it announces, which an edit may come before.
+      editor.registerCommand(
+        SELECT_ALL_COMMAND,
+        () => {
+          $selectAll();
+          $guard();
+          return true;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
     );
   }, [editor]);
 
