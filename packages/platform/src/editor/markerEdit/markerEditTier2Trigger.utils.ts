@@ -34,7 +34,11 @@ import {
   TERMINATED_MARKER_IN_TEXT_REGEX,
 } from "./markerName.pattern";
 import { $requestTier2ForNode, $settleScopeForNode } from "./tier2Rebuild.utils";
-import { $noteCallerTextTransform, MarkerEditContext } from "./markerEditTier1.utils";
+import {
+  $noteCallerTextTransform,
+  $noteOfCallerText,
+  MarkerEditContext,
+} from "./markerEditTier1.utils";
 import {
   $getRoot,
   $getSelection,
@@ -70,6 +74,7 @@ import {
   DisplayRunDescriptor,
   displayRunDescriptor,
   displayRunDescriptors,
+  getEditableCallerText,
   getVisibleOpenMarkerText,
   textTypeState,
   milestoneEjectionPending,
@@ -452,6 +457,15 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
       const chapterParent = node.getParent();
       if ($isChapterNode(chapterParent)) {
         if (node.getTextContent() !== getVisibleOpenMarkerText("c", chapterParent.getNumber()))
+          context.pendingKeys.add(node.getKey());
+        return;
+      }
+      // An expanded note's caller text that is not its caller's spelling is one waiting for its
+      // next keystroke (a caller deleted, then retyped) — the caller-text transform's pend. The
+      // departure puts it back unless it has become a caller word again.
+      const callerNote = $noteOfCallerText(node);
+      if (callerNote) {
+        if (node.getTextContent() !== getEditableCallerText(callerNote.getCaller()))
           context.pendingKeys.add(node.getKey());
         return;
       }

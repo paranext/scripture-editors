@@ -1157,7 +1157,7 @@ function $settleNoteCallerText(node: TextNode, note: NoteNode): void {
  *
  * Read-only: safe inside `editor.update()` or either read form.
  */
-function $noteOfCallerText(node: LexicalNode): NoteNode | undefined {
+export function $noteOfCallerText(node: LexicalNode): NoteNode | undefined {
   if (!$isTextNode(node) || $isMarkerNode(node) || !node.isUnmergeable()) return undefined;
   const note = node.getParent();
   if (!$isNoteNode(note) || note.getIsCollapsed() !== false || note.getCaller() === "")

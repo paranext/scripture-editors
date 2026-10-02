@@ -17,7 +17,9 @@ import {
   $isTextNode,
   CLICK_COMMAND,
   LexicalEditor,
+  REDO_COMMAND,
   TextNode,
+  UNDO_COMMAND,
 } from "lexical";
 import {
   $isNoteNode,
@@ -279,6 +281,56 @@ describe.each(["standard+expandedNotes", "unformatted"])(
         vi.useRealTimers();
       }
     });
+
+    it.each(["Undo", "Undo, then Redo"])(
+      "settles a waiting caller that %s brings back once the caret leaves",
+      async (gesture) => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        try {
+          // Delete the caller, pause, type a new one, and leave: three history entries, the middle
+          // one a caller waiting for its next keystroke.
+          const mounted = await damage(` ${NBSP}`, 1);
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(1500);
+          });
+          await act(async () => {
+            mounted.lexical.update(() => {
+              const selection = $getSelection();
+              if ($isRangeSelection(selection)) selection.insertText("a");
+            });
+            await Promise.resolve();
+          });
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(1500);
+          });
+          await depart(mounted);
+          expect(callerText(mounted.lexical)).toBe(getEditableCallerText("a"));
+
+          // Back to the waiting caller: a restored state runs no transforms, so only the re-pend
+          // scan can tell the next departure there is a caller to put back.
+          const press = async (command: typeof UNDO_COMMAND) => {
+            await act(async () => {
+              mounted.lexical.dispatchCommand(command, undefined);
+              await Promise.resolve();
+            });
+          };
+          await press(UNDO_COMMAND);
+          if (gesture === "Undo, then Redo") {
+            await press(UNDO_COMMAND);
+            await press(REDO_COMMAND);
+          }
+          expect(callerText(mounted.lexical)).not.toBe(getEditableCallerText("a"));
+          await depart(mounted);
+
+          const saved = savedNote(mounted.ref.current?.getUsj());
+          expect(saved).toMatchObject({ caller: "+", content: ["note text"] });
+          expect(callerText(mounted.lexical)).toBe(getEditableCallerText("+"));
+          expectNoteScreenIsSaved(mounted.lexical, saved);
+        } finally {
+          vi.useRealTimers();
+        }
+      },
+    );
 
     it("leaves an emptied caller as the user left it while the caret is there", async () => {
       const mounted = await damage(` ${NBSP}`, 1);
