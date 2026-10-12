@@ -134,6 +134,31 @@ export interface EditorRef {
    */
   commitPendingMarkerEdits(): void;
   /**
+   * Suspends (or resumes) the two settle clocks that fire with NO user gesture: the idle debounce
+   * and the blur settle. For a host that opens a surface of its own over the editor — a marker
+   * palette — and needs the document to hold still while it is open.
+   *
+   * Both clocks are a problem for such a surface, for the same underlying reason: a settle updates
+   * the editor, an update moves the selection, and moving the selection makes Lexical focus the
+   * editor root — pulling focus out of the surface, which the host then dismisses on the window
+   * blur that follows. The blur clock fires the instant the surface takes focus; the idle clock
+   * fires about a second later, closing a surface the user is still looking at.
+   *
+   * Suspending CANCELS an already-armed idle timer, which is the part a delay change cannot do:
+   * `EditorOptions.markerSettleDelayMs` is read when the clock is next armed, so a timer armed
+   * before the host changed it still fires. Resuming re-arms a full delay from that moment, so
+   * work left pending through the suspension settles on the normal rhythm rather than at once.
+   *
+   * Deliberately narrow. Settles driven by a real user gesture — caret departure, Enter, an
+   * explicit {@link EditorRef.commitPendingMarkerEdits} — are untouched, because the user asking
+   * for something is not the case this protects against. The caret's own node is already excepted
+   * from the blur settle; this covers every other pending node, which is what produces the update.
+   *
+   * The host owns the pairing: suspend when the surface opens, resume when it closes, including on
+   * the paths where it closes without committing.
+   */
+  setMarkerSettleSuspended(suspended: boolean): void;
+  /**
    * Declares in-progress input that an in-editor command surface (e.g. the marker palette) will
    * consume or discard — analogous to an IME composition string. While declared,
    * {@link EditorRef.getUsj} excludes these bytes from its settled output: the containing paragraph

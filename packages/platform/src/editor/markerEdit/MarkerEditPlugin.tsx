@@ -137,6 +137,14 @@ export const COMMIT_PENDING_MARKERS_COMMAND: LexicalCommand<void> = createComman
 );
 
 /**
+ * Suspends or resumes the two settle clocks that fire WITHOUT a user gesture — the idle debounce
+ * and the blur settle. Dispatched by `EditorRef.setMarkerSettleSuspended`.
+ */
+export const SET_MARKER_SETTLE_SUSPENDED_COMMAND: LexicalCommand<boolean> = createCommand(
+  "SET_MARKER_SETTLE_SUSPENDED_COMMAND",
+);
+
+/**
  * Runs `settle` inside the surrounding commit and marks that commit as a settle: it merges into
  * the current history entry, and it still reports itself to USJ-change consumers.
  *
@@ -592,6 +600,13 @@ export function MarkerEditPlugin({
   // suppression window), so `armIdleSettle` reads it through this ref at every arm — a change
   // takes effect on the next arm, never re-arming an already-ticking timer.
   const markerSettleDelayRef = useRef(markerSettleDelayMs);
+  /**
+   * Whether the gesture-free settle clocks are suspended (see
+   * `SET_MARKER_SETTLE_SUSPENDED_COMMAND`). A ref rather than a local in the registration effect
+   * below: that effect re-runs on an editor/enabled/view change, and a suspension must survive one
+   * — it is released by the host closing its surface, not by a re-registration.
+   */
+  const markerSettleSuspendedRef = useRef(false);
   // Wiring too, read by the Standard-view copy and cut claims at each copy or cut.
   const copyLimitRef = useRef(copyLimit);
 
@@ -712,6 +727,11 @@ export function MarkerEditPlugin({
       if (idleSettleTimer !== undefined) clearTimeout(idleSettleTimer);
       idleSettleTimer = undefined;
       if (disposed || context.pendingKeys.size === 0) return;
+      // Suspended by the host (a marker palette is open). Clearing above and returning here is the
+      // whole mechanism: nothing re-arms until the host resumes, and the resume re-arms a FULL
+      // delay from that moment rather than letting a timer armed before the palette opened fire
+      // the instant it closes.
+      if (markerSettleSuspendedRef.current) return;
       const delay = markerSettleDelayRef.current ?? IDLE_SETTLE_DELAY_MS;
       // A negative delay (canonically -1) turns the idle clock OFF: the timer armed above was
       // cleared and nothing re-arms, so only the departure/Enter/blur/forced-commit paths
@@ -1131,6 +1151,26 @@ export function MarkerEditPlugin({
       ),
       registerPasteNormalization(editor, context, isStandardView),
       editor.registerCommand(
+        SET_MARKER_SETTLE_SUSPENDED_COMMAND,
+        (suspended) => {
+          markerSettleSuspendedRef.current = suspended;
+          if (suspended) {
+            // Cancel a timer that is ALREADY ticking. This is the part a delay change cannot do:
+            // `markerSettleDelayMs: -1` is only read the next time something arms the clock, so a
+            // timer armed before the host suspended would still fire — closing the surface that
+            // suspended it about a second later.
+            if (idleSettleTimer !== undefined) clearTimeout(idleSettleTimer);
+            idleSettleTimer = undefined;
+          } else {
+            // Re-arm a full delay from the resume, so pending work left over from before the
+            // suspension settles on the normal idle rhythm rather than immediately.
+            armIdleSettle();
+          }
+          return true;
+        },
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
         COMMIT_PENDING_MARKERS_COMMAND,
         () => {
           // While the app-placed-caret window is armed (a scrRef-sync yank or an undo/redo
@@ -1170,6 +1210,11 @@ export function MarkerEditPlugin({
       editor.registerCommand(
         BLUR_COMMAND,
         () => {
+          // Suspended by the host: the blur IS the palette taking focus, so settling now would
+          // update the editor, move the selection, and make Lexical pull focus back out of the
+          // surface that just took it. The caret's own node is already excepted below; this covers
+          // every OTHER pending node, which is what actually produces that update.
+          if (markerSettleSuspendedRef.current) return false;
           // While the app-placed-caret window is armed (a scrRef-sync yank or an undo/redo
           // restore), focus loss carries no user intent over the restored content: clicking
           // ANOTHER PANEL right after an undo would otherwise re-settle the explicitly-undone

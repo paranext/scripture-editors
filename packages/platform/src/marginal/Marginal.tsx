@@ -146,6 +146,9 @@ const Marginal = forwardRef(function Marginal<TLogger extends LoggerBasic>(
     commitPendingMarkerEdits() {
       editorRef.current?.commitPendingMarkerEdits();
     },
+    setMarkerSettleSuspended(suspended) {
+      editorRef.current?.setMarkerSettleSuspended(suspended);
+    },
     setTransientInput(input) {
       editorRef.current?.setTransientInput(input);
     },

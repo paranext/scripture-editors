@@ -27,7 +27,11 @@ import {
 import { $getMarkerMenuContext } from "./markerMenu/markerMenuContext.utils";
 import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
 import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
-import { COMMIT_PENDING_MARKERS_COMMAND, MarkerEditPlugin } from "./markerEdit/MarkerEditPlugin";
+import {
+  COMMIT_PENDING_MARKERS_COMMAND,
+  MarkerEditPlugin,
+  SET_MARKER_SETTLE_SUSPENDED_COMMAND,
+} from "./markerEdit/MarkerEditPlugin";
 import { MarkerValidationPlugin } from "./markerEdit/MarkerValidationPlugin";
 import { MarkersViewCopyPlugin } from "./MarkersViewCopyPlugin";
 import {
@@ -569,6 +573,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         },
         { discrete: true },
       );
+    },
+    setMarkerSettleSuspended(suspended) {
+      // Not discrete, and deliberately not wrapped in `editor.update`: this only flips a flag and
+      // (re)arms a timer in the plugin, touching no editor state, so it must not push a commit —
+      // a commit here would move the selection and cause exactly the focus loss the suspension
+      // exists to prevent.
+      editorRef.current?.dispatchCommand(SET_MARKER_SETTLE_SUSPENDED_COMMAND, suspended);
     },
     setTransientInput(input) {
       if (!input) {
