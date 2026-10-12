@@ -561,7 +561,10 @@ function $selectCharContentEnd(charNode: CharNode) {
  * @param options - `isContentChange`: set it when the calling update also changes the document
  *   (closing a note, say). The caret then still goes past the note but its move is not announced
  *   (see {@link $selectElementPoint}), since the repair that announcement triggers tags the whole
- *   commit as a caret move and `onUsjChange` would skip the change with it.
+ *   commit as a caret move and `onUsjChange` would skip the change with it. Unannounced, the point
+ *   gets no caret host, so a browser that reads it back from the end of a char span resolves it to
+ *   the end of the note's closing glyph. The editable-marker views move text typed there out after
+ *   the note as it is typed, so it still lands past the note.
  */
 export function $selectAfterNote(
   noteNode: NoteNode,

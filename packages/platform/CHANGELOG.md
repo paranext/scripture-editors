@@ -163,6 +163,11 @@ refused. The public surface grew substantially; nothing was removed.
   caret after the note, so what is typed next joins the paragraph instead of the note's last run.
 - `selectAfterNote` on a note that ends an unclosed char span (`\wj … \f + …\f*` with no `\wj*`)
   leaves the caret after the note instead of inside its hidden content.
+- Text typed right after a note's closing glyph (`\f*Z`) moves after the note as it is typed, the
+  way text typed after a char span's closer already did, instead of going into the glyph and being
+  lost on save. A browser puts the caret there when it reads back a caret at the end of a line a
+  note ends: clicking at the end of such a line in Unformatted view, or typing after closing a note
+  that ends an unclosed char span.
 - A selection that reaches into a collapsed note (select to the end of the document from a paragraph
   that a footnote ends) takes the whole note, since only its caller is on screen. Copying it
   carried `\f + ` with the note's content missing, and cutting or typing over it left half a note.

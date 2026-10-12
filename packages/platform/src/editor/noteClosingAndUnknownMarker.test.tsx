@@ -371,6 +371,98 @@ describe("typing a note's own closer into an unclosed note", () => {
   });
 });
 
+/**
+ * Puts the caret at the end of the note's own closing glyph, where a browser resolves a caret it
+ * reads back from the end of a line a note ends: Lexical turns a DOM point at the end of an element
+ * into the end of its last text, and that is the note's closer. jsdom never reads the DOM
+ * selection back, so the test puts the caret there itself.
+ */
+async function caretAtEndOfNoteCloser(lexical: LexicalEditor) {
+  await act(async () =>
+    lexical.update(() => {
+      const closer = $onlyNote().getLastChild();
+      if (!$isMarkerNode(closer) || closer.getMarkerSyntax() !== "closing")
+        throw new Error("expected the note to end with its closing glyph");
+      const end = closer.getTextContentSize();
+      closer.select(end, end);
+    }),
+  );
+  await restCaret(lexical);
+}
+
+describe("text typed right after a note's own closing glyph", () => {
+  const closedNote = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "ft", closed: "false", content: ["alpha"] }],
+  } as MarkerObject;
+
+  it("in Unformatted view, goes after the note when the note ends its paragraph", async () => {
+    const { editorRef, lexical } = await renderEditor(usjWith(closedNote), unformattedOptions);
+
+    await caretAtEndOfNoteCloser(lexical);
+    await typeText(lexical, "Z");
+    await restCaret(lexical);
+
+    expect(paraContent(editorRef.getUsj())).toEqual([
+      { type: "verse", marker: "v", number: "1" },
+      "before ",
+      closedNote,
+      "Z",
+    ]);
+    const typed = requireDefined(caretText(lexical), "caret");
+    expect(typed).toMatchObject({ text: "Z", offset: 1 });
+  });
+
+  it("in Unformatted view, goes after the note once typing its closer has closed it", async () => {
+    const { editorRef, lexical } = await renderEditor(
+      usjWith(unclosedNote("alpha")),
+      unformattedOptions,
+    );
+
+    await typeCloserAt(lexical, editorRef, 5);
+    await caretAtEndOfNoteCloser(lexical);
+    await typeText(lexical, "Z");
+    await restCaret(lexical);
+
+    expect(paraContent(editorRef.getUsj())).toEqual([
+      { type: "verse", marker: "v", number: "1" },
+      "before ",
+      closedNote,
+      "Z",
+    ]);
+  });
+
+  it("goes after the note, inside the unclosed char span the note ends, once it is closed", async () => {
+    const { editorRef, lexical } = await renderEditor(
+      usjWith({
+        type: "char",
+        marker: "wj",
+        closed: "false",
+        content: ["stuff ", unclosedNote("alpha")],
+      } as MarkerObject),
+    );
+    const [key] = noteKeys(lexical);
+
+    await act(async () => editorRef.selectNoteTextOffset(key, 5));
+    await restCaret(lexical);
+    await act(async () => {
+      editorRef.commitTypedCloser("f");
+    });
+    await restCaret(lexical);
+    await caretAtEndOfNoteCloser(lexical);
+    await typeText(lexical, "Z");
+    await restCaret(lexical);
+
+    expect(paraContent(editorRef.getUsj())).toEqual([
+      { type: "verse", marker: "v", number: "1" },
+      "before ",
+      { type: "char", marker: "wj", closed: "false", content: ["stuff ", closedNote, "Z"] },
+    ]);
+  });
+});
+
 describe("committing an unknown marker inside a note's run", () => {
   it.each([
     ["without a category", undefined],

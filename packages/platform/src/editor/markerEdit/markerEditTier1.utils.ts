@@ -571,18 +571,20 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
     context.pendingKeys.add(node.getKey());
     return;
   }
-  // Text typed at the very END of an intact char-span closer merges into the glyph (`\nd*x`).
-  // The name scan ends at the `*`, so those bytes re-tokenize as the canonical closer plus plain
-  // text after the span — an in-place split is re-tokenization identity (Invariant I's one
-  // sanctioned optimization), applied immediately so the typed character never rides styled
-  // inside the span until a departure settles it. Same shape as $verseNodeTransform's rest
-  // split. Scoped to the span's OWN last-child closer; every other closer divergence (damage,
-  // retype, run closers) pends below.
+  // Text typed at the very END of an intact char-span or note closer merges into the glyph
+  // (`\nd*x`, `\f*x`). The name scan ends at the `*`, so those bytes re-tokenize as the canonical
+  // closer plus plain text after the span or note — an in-place split is re-tokenization identity
+  // (Invariant I's one sanctioned optimization), applied immediately so the typed character never
+  // rides styled inside the span until a departure settles it. Same shape as $verseNodeTransform's
+  // rest split. A note's closer is reached this way whenever the browser reads back a caret at the
+  // end of a line the note ends: Lexical resolves that point into the line's last text, which is
+  // the note's closer (hidden, when the note is collapsed). Scoped to the span's or note's OWN
+  // last-child closer; every other closer divergence (damage, retype, run closers) pends below.
   if (node.getMarkerSyntax() === "closing") {
     const parent = node.getParent();
     const canonical = closingMarkerText(node.getMarker(), node.getNested());
     if (
-      $isCharNode(parent) &&
+      ($isCharNode(parent) || $isNoteNode(parent)) &&
       node.getMarker() === parent.getMarker() &&
       parent.getLastChild()?.is(node) &&
       text.startsWith(canonical) &&
