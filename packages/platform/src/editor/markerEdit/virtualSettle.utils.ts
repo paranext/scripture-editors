@@ -35,6 +35,7 @@ import { BARE_OPENER_REGEX } from "./markerName.pattern";
 import { $unknownSplitRejoinScope } from "./markerEditTier1.utils";
 import { $serializeExpandedNoteContent, ATOMIC_SENTINEL } from "./settleShared.utils";
 import {
+  chapterFragmentContent,
   $buildChapterFragment,
   $buildNoteFragment,
   $buildParaFragment,
@@ -873,8 +874,9 @@ function $applySettledNoteGlyphRename(
 /**
  * The serialized nodes a settled chapter becomes — or `undefined` when the settle refuses.
  * Mirrors `$rebuildChapter` (tier2Rebuild.utils.ts) read-only, decision for decision: the same
- * fragment, the same must-still-be-a-chapter guard, the same sid carry-over, and the same
- * fixed-point refusal.
+ * fragment content, the same sid carry-over, and the same fixed-point refusal. Bytes that are no
+ * longer a chapter marker settle to what they now are here even while the caret is still in an
+ * emptied line, which the live settle defers only so the caret has somewhere to be.
  */
 function $settledChapter(
   chapter: ChapterNode,
@@ -885,22 +887,23 @@ function $settledChapter(
   const out = $buildChapterFragment(chapter, getMarkerFn, viewOptions);
   if (!out) return undefined;
   const fragmentText = transient ? $fragmentTextWithoutTransient(out, transient) : out.text;
-  const content: MarkerContent[] = usfmFragmentToUsjContent(fragmentText, {
-    getMarker: getMarkerFn,
-  });
-  const [freshChapter] = content;
-  if (content.length === 0 || typeof freshChapter !== "object" || freshChapter.type !== "chapter")
-    return undefined;
+  const content = chapterFragmentContent(fragmentText, getMarkerFn);
   if (countSentinels(content) !== 0) {
     logger?.warn("[MarkerEdit] Settled chapter USJ skipped: unexpected preserved-node placeholder");
     return undefined;
   }
-  if (chapter.getSid() !== undefined) freshChapter.sid = chapter.getSid();
+  const survivingChapter = content.find(
+    (item): item is MarkerContent & object => typeof item === "object" && item.type === "chapter",
+  );
+  if (survivingChapter && chapter.getSid() !== undefined) survivingChapter.sid = chapter.getSid();
   const rebuilt = usjEditorAdaptor.serializeEditorState(
     { type: USJ_TYPE, version: USJ_VERSION, content },
     viewOptions,
   ).root.children;
-  if (rebuilt.length === 0) return undefined;
+  // Bytes that are no longer a chapter marker are saved as what they now are, even while the live
+  // settle waits for the caret to leave — the region gives way to them, or to nothing at all.
+  const [freshChapter] = content;
+  if (typeof freshChapter !== "object" || freshChapter.type !== "chapter") return rebuilt;
   // Refuse only when the structure AND the chapter's own fields are already settled. An edited
   // run's fresh serialization is byte-identical to the displayed edit while
   // number/altnumber/pubnumber still lag it — the real settle reconciles the fields in place on

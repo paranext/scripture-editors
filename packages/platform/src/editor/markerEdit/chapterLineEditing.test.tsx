@@ -817,3 +817,65 @@ describe("inline insertion with the caret on the chapter line", () => {
     expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2_CA_3, "X", VERSE_1_PARA]);
   });
 });
+
+describe("a chapter line whose bytes are no longer a chapter marker", () => {
+  // Whatever is typed or deleted on the chapter line stays, and is saved as what it now is, as
+  // Paratext 9 saves the bytes it holds; the host puts a marker the chapter needs back above it.
+
+  /** Replaces the chapter glyph's text with what `edit` makes of it, leaving the caret at `caret`. */
+  async function editGlyph(
+    editor: LexicalEditor,
+    edit: (text: string) => string,
+    caret: number,
+  ): Promise<void> {
+    await act(async () =>
+      editor.update(() => {
+        const glyph = $glyph();
+        glyph.setTextContent(edit(glyph.getTextContent()));
+        glyph.select(caret, caret);
+      }),
+    );
+  }
+
+  const rest = [VERSE_1_PARA, POETRY_PARA];
+
+  it.each([
+    ["deleting the c", (text: string) => text.slice(0, 1) + text.slice(2), 1, ["\\ 2", ...rest]],
+    ["deleting the backslash", (text: string) => text.slice(1), 0, ["c 2", ...rest]],
+    [
+      "deleting the c and the number",
+      (text: string) => text.slice(0, 1) + text.slice(4),
+      1,
+      ["\\", ...rest],
+    ],
+    ["deleting all but the trailing space", (text: string) => text.slice(4), 0, rest],
+    ["typing before the backslash", (text: string) => `X${text}`, 1, ["X", CHAPTER_2, ...rest]],
+  ])("saves what %s leaves, while the caret is still there", async (_label, edit, caret, saved) => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await editGlyph(lexical, edit, caret);
+    expect(ref.current?.getUsj()?.content).toEqual(saved);
+  });
+
+  it("keeps the bytes as a line of text once the caret leaves", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await editGlyph(lexical, (text) => text.slice(0, 1) + text.slice(2), 1);
+    await act(async () => lexical.update(() => $verseText().select(1, 1)));
+    await act(async () => {
+      ref.current?.commitPendingMarkerEdits();
+    });
+    lexical.getEditorState().read(() => {
+      expect($getRoot().getChildren().some($isChapterNode)).toBe(false);
+      expect($getRoot().getFirstChild()?.getTextContent()).toBe("\\ 2");
+    });
+    expect(ref.current?.getUsj()?.content).toEqual(["\\ 2", ...rest]);
+  });
+
+  it("keeps a paragraph marker typed over the chapter marker", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await editGlyph(lexical, (text) => `\\q1${text.slice(2)}`, 3);
+    expect(ref.current?.getUsj()?.content).toEqual([
+      { type: "para", marker: "q1", content: ["2 "] },
+      ...rest,
+    ]);
+  });
+});

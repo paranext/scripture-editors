@@ -2034,6 +2034,45 @@ export function $buildChapterFragment(
   return out;
 }
 
+/** A `\p` spelled at the start of a fragment, which the tokenizer then opens as typed. */
+const LEADING_PARA_MARKER_REGEX = /^\s*\\p(?:\s|$)/;
+
+/**
+ * What a chapter's displayed bytes tokenize to, in the shape the document holds them.
+ *
+ * The tokenizer reads a fragment as paragraph content, so it opens a `\p` for text that comes
+ * before any paragraph marker. On a chapter line nobody typed that `\p`: bytes left there that are
+ * no longer a chapter marker (`\ 2`, `c 2`, or text typed ahead of the `\c`) stand markerless, as
+ * Paratext 9 keeps them. Neither is the glyph's trailing separator their content — it is display —
+ * so a line left as text does not keep it.
+ *
+ * Exported for the read-only settle (virtualSettle.utils.ts), which must read the same content.
+ */
+export function chapterFragmentContent(text: string, getMarkerFn: MarkerLookup): MarkerContent[] {
+  const content = usfmFragmentToUsjContent(text, { getMarker: getMarkerFn });
+  const [first, ...others] = content;
+  if (
+    typeof first !== "object" ||
+    first.type !== "para" ||
+    first.marker !== "p" ||
+    LEADING_PARA_MARKER_REGEX.test(text)
+  )
+    return content;
+  const lineContent = [...(first.content ?? [])];
+  const last = lineContent.at(-1);
+  if (typeof last === "string") {
+    const trimmed = last.trimEnd();
+    if (trimmed) lineContent[lineContent.length - 1] = trimmed;
+    else lineContent.pop();
+  }
+  return [...lineContent, ...others];
+}
+
+/** Whether `item` is a chapter marker. */
+function isChapterContent(item: MarkerContent | undefined): item is MarkerContent & object {
+  return typeof item === "object" && item.type === "chapter";
+}
+
 /**
  * Chapter-scoped Tier 2 re-tokenization — the third settle scope, beside `$rebuildParas` and
  * `$rebuildNoteContent`. The whole chapter node re-serializes from its re-tokenized bytes:
@@ -2041,10 +2080,13 @@ export function $buildChapterFragment(
  * attrCapture folds well-formed `\ca`/`\cp` spans back onto the chapter), while `sid` — never
  * derivable from visible bytes — is carried over.
  *
- * Preserve-or-refuse: the re-tokenized output must BE a chapter — an edit that would change the
- * node's KIND (the `\c` bytes rewritten into some other marker, or deleted) refuses and stays a
- * pending literal rather than restructuring the document from a chapter-scoped settle. Deleting
- * a chapter outright is `$chapterNodeTransform`'s existing empty-children path, not this one.
+ * Bytes that no longer read as a chapter marker — `\ 2` or `c 2` after a deletion, another marker
+ * typed over the `\c`, text typed ahead of it — become what they now are
+ * ({@link chapterFragmentContent}): the region is replaced by that content, as Paratext 9 keeps
+ * the bytes it holds, and the host puts back a marker the chapter needs on save. Bytes that are
+ * nothing at all once the glyph's separator is set aside remove the region, but not while the
+ * caret is in it, which would leave the caret nowhere; deleting a chapter outright is
+ * `$chapterNodeTransform`'s empty-children path.
  */
 export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): boolean {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
@@ -2075,20 +2117,23 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
       caretAnchor = $caretSpanByteAnchor(out, selection.anchor.key, selection.anchor.offset);
   }
 
-  const content: MarkerContent[] = usfmFragmentToUsjContent(out.text, { getMarker: getMarkerFn });
-  const [freshChapter] = content;
-  if (content.length === 0 || typeof freshChapter !== "object" || freshChapter.type !== "chapter") {
-    logger?.debug("[MarkerEdit] Chapter Tier 2 skipped: bytes no longer tokenize as a chapter");
+  const content = chapterFragmentContent(out.text, getMarkerFn);
+  if (content.length === 0 && anchorInRegion) {
+    logger?.debug("[MarkerEdit] Chapter Tier 2 deferred: emptied chapter line holds the caret");
     return false;
   }
   if (countSentinels(content) !== 0) {
     logger?.warn("[MarkerEdit] Chapter Tier 2 aborted: unexpected preserved-node placeholder");
     return false;
   }
+  const [first] = content;
+  const freshChapter = isChapterContent(first) ? first : undefined;
 
   // Sid carry-over BEFORE serialization — never derivable from visible bytes. `altnumber` and
   // `pubnumber` both come from the bytes now that both runs display: absent bytes mean deleted.
-  if (chapter.getSid() !== undefined) freshChapter.sid = chapter.getSid();
+  // Carried to the chapter even when text typed ahead of it now comes first.
+  const survivingChapter = content.find(isChapterContent);
+  if (survivingChapter && chapter.getSid() !== undefined) survivingChapter.sid = chapter.getSid();
 
   const serialized = usjEditorAdaptor.serializeEditorState(
     { type: USJ_TYPE, version: USJ_VERSION, content },
@@ -2107,8 +2152,9 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
   // materializes no live nodes — see `$rebuildParas`' fixed-point comment for why orphan-free
   // refusal is load-bearing.
   if (
+    freshChapter &&
     serializedSignatureOf(serialized.root.children, getMarkerFn) ===
-    $signatureOf(region, getMarkerFn)
+      $signatureOf(region, getMarkerFn)
   ) {
     let reconciled = false;
     if (chapter.getNumber() !== (freshChapter.number ?? "")) {
@@ -2129,11 +2175,6 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
   }
 
   const newNodes = serialized.root.children.map((child) => $parseSerializedNode(child));
-  if (!$isChapterNode(newNodes[0])) {
-    logger?.warn("[MarkerEdit] Chapter Tier 2 aborted: serialized output is not a chapter");
-    return false;
-  }
-
   newNodes.forEach((node) => chapter.insertBefore(node));
   region.forEach((node) => node.remove());
   $restoreSelectionAtOffset(newNodes, caretAnchor, anchorInRegion, getMarkerFn, viewOptions);

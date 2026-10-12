@@ -896,8 +896,8 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
 /**
  * Tier-1 transform for an editable chapter: an emptied chapter removes itself (deleting the
  * chapter marker deletes it), and a terminated `\c N` retype moves the chapter's number state to
- * the typed value in the same tick; anything else is left literal, with serialization falling
- * back to the stored number. Unlike its sibling node transforms, a chapter marker never enters
+ * the typed value in the same tick; anything else is left literal until the chapter settles
+ * (`$rebuildChapter`), which reads the bytes for what they now are. Unlike its sibling node transforms, a chapter marker never enters
  * the pending/deferred machinery `MarkerEditContext` tracks (deletion removes the node outright;
  * a number retag is a same-tick rewrite) — so it takes no context parameter.
  *
@@ -920,7 +920,7 @@ export function $chapterNodeTransform(node: ChapterNode): void {
   const leadingRun = /^[ \u00A0]+/.exec(text);
   const classifiable = leadingRun ? text.slice(leadingRun[0].length) : text;
   const match = CHAPTER_GLYPH_REGEXES.valueTerminated.exec(classifiable);
-  if (!match) return; // leave literal; serialization falls back to the stored number
+  if (!match) return; // leave literal; the chapter settle reads these bytes for what they are
   // The typed bytes stay as-is in BOTH branches: `valueTerminated` guarantees the only possible
   // divergence beyond the number word is whitespace inside the glyph's separator runs, and
   // rewriting to canonical deleted a typed space while the caret advanced over where it had
