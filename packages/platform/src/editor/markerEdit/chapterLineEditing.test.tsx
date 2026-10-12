@@ -35,6 +35,7 @@ import {
   UNDO_COMMAND,
 } from "lexical";
 import {
+  $chapterAltnumberRunPieces,
   $chapterGlyphTextNode,
   $isChapterNode,
   ChapterNode,
@@ -80,6 +81,13 @@ function $chapter(): ChapterNode {
 
 function $glyph(): TextNode {
   return requireDefined($chapterGlyphTextNode($chapter()), "chapter glyph not found");
+}
+
+/** Puts a collapsed caret just past the chapter's `\\ca` run, at the end of the chapter line. */
+function $afterAltnumberRun(): void {
+  const { closer } = $chapterAltnumberRunPieces($chapter());
+  const end = requireDefined(closer, "no \\ca closer");
+  end.select(end.getTextContentSize(), end.getTextContentSize());
 }
 
 /** The last leaf of `node` — the end of a paragraph's text. */
@@ -654,6 +662,63 @@ describe("inline insertion with the caret on the chapter line", () => {
     },
   );
 
+  // A private-use character is real text in some projects, so one elsewhere in the document must
+  // be neither taken for the content's place nor lost.
+  it("leaves a private-use character elsewhere in the document alone", async () => {
+    const introPara: MarkerContent = { type: "para", marker: "ip", content: ["intro \uE000 pua"] };
+    const { ref, lexical } = await mountStandardViewEditor(
+      docOf(introPara, CHAPTER_2, VERSE_1_PARA),
+      { scrRef: GEN_2_1 },
+    );
+    await onChapterLine(lexical, () => undefined);
+    await act(async () => {
+      ref.current?.insertMarker("f");
+    });
+    expect(ref.current?.getUsj()?.content).toEqual([
+      introPara,
+      CHAPTER_2,
+      FRESH_NOTE,
+      VERSE_1_PARA,
+    ]);
+  });
+
+  // Typing after the `\ca` run keeps it the chapter's, so an insertion there does too.
+  it.each(insertions)(
+    "inserts %s after the chapter's \\ca run from a caret past it, keeping the alternate number",
+    async (_label, marker, inserted) => {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2_CA_3, VERSE_1_PARA), {
+        scrRef: GEN_2_1,
+      });
+      await act(async () => lexical.update(() => $afterAltnumberRun()));
+      await act(async () => {
+        ref.current?.insertMarker(marker);
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2_CA_3, inserted, VERSE_1_PARA]);
+    },
+  );
+
+  // A chapter line whose glyph has lost its trailing separator still takes the insertion after
+  // the number rather than joining the number's word.
+  it.each(insertions.slice(0, 2))(
+    "inserts %s after a chapter number with no separator after it",
+    async (_label, marker, inserted) => {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2, VERSE_1_PARA), {
+        scrRef: GEN_2_1,
+      });
+      await act(async () =>
+        lexical.update(() => {
+          const glyph = $glyph();
+          glyph.setTextContent(glyph.getTextContent().trimEnd());
+          glyph.select(glyph.getTextContentSize(), glyph.getTextContentSize());
+        }),
+      );
+      await act(async () => {
+        ref.current?.insertMarker(marker);
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2, inserted, VERSE_1_PARA]);
+    },
+  );
+
   it("starts the chapter's text when nothing follows the chapter line", async () => {
     const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2), { scrRef: GEN_2_1 });
     await onChapterLine(lexical, () => undefined);
@@ -698,4 +763,18 @@ describe("inline insertion with the caret on the chapter line", () => {
       expect(ref.current?.getUsj()?.content).toEqual(expected);
     },
   );
+
+  it("text typed after the chapter's \\ca run lands after it, keeping the alternate number", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2_CA_3, VERSE_1_PARA), {
+      scrRef: GEN_2_1,
+    });
+    await act(async () => lexical.update(() => $afterAltnumberRun()));
+    await act(async () => {
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "X");
+    });
+    await act(async () => {
+      ref.current?.commitPendingMarkerEdits();
+    });
+    expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2_CA_3, "X", VERSE_1_PARA]);
+  });
 });

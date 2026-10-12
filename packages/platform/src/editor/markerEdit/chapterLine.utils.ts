@@ -20,11 +20,26 @@
  */
 
 import { $setParaMarkerWithPrefix } from "./markerEditDeletion.utils";
-import { $rebuildChapter, Tier2Context } from "./tier2Rebuild.utils";
+import {
+  $chapterAdjacentAttributeNodes,
+  $rebuildChapter,
+  Tier2Context,
+} from "./tier2Rebuild.utils";
 import { $insertPastedText } from "./whitespaceDisplay.plugin.utils";
 import { $findMatchingParent } from "@lexical/utils";
-import { $getRoot, $getSelection, $isRangeSelection, LexicalNode, RangeSelection } from "lexical";
 import {
+  $createTextNode,
+  $getRoot,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  $isTextNode,
+  LexicalNode,
+  RangeSelection,
+  TextNode,
+} from "lexical";
+import {
+  $chapterAltnumberRunPieces,
   $chapterGlyphTextNode,
   $createParaNode,
   $isChapterNode,
@@ -165,11 +180,34 @@ export function $pasteOnChapterLine(
 }
 
 /**
- * Stands in for the content an insertion puts after a chapter number while the chapter's bytes are
- * re-tokenized (see {@link $moveCaretOffChapterLine}). A private-use character: the tokenizer reads
- * it as ordinary text, and no real text holds it for the search that finds it again.
+ * Stands in for the content an insertion puts on a chapter line while the chapter's bytes are
+ * re-tokenized (see {@link $moveCaretOffChapterLine}). A Unicode noncharacter, which is reserved for
+ * a program's internal use and so is not in a project's text, unlike a private-use character, which
+ * some projects use for their own script; the tokenizer reads it as ordinary text. It is looked for
+ * again only among the nodes the re-tokenize produced.
  */
-const INSERTION_PLACEHOLDER = "\uE000";
+const INSERTION_PLACEHOLDER = "\uFDD0";
+
+/**
+ * Where on `chapter`'s line an insertion requested at `selection` goes: after the `\ca` run when
+ * the caret is past the chapter number and the run is there, closed; else after the number.
+ * Typing past the `\ca` run keeps it the chapter's alternate number, so an insertion there does
+ * too.
+ */
+function $insertionAnchorOnChapterLine(
+  chapter: ChapterNode,
+  glyph: TextNode,
+  selection: RangeSelection,
+): LexicalNode {
+  const { closer, wrapper } = $chapterAltnumberRunPieces(chapter);
+  const runEnd = wrapper ?? closer;
+  if (!runEnd) return glyph;
+  const focusNode = selection.focus.getNode();
+  const isPastNumber = focusNode.is(chapter)
+    ? selection.focus.offset > glyph.getIndexWithinParent() + 1
+    : !focusNode.is(glyph);
+  return isPastNumber ? runEnd : glyph;
+}
 
 /**
  * Prepares an inline insertion (a note, a character marker, a verse, a milestone — anything that
@@ -184,13 +222,15 @@ const INSERTION_PLACEHOLDER = "\uE000";
  * that followed the chapter then follows that content on the same line, and a `\cp` stays on the
  * next line; neither is the chapter's attribute any more, since something now stands between it and
  * the `\c`. So `\c 1 ^\n\ca 2\ca*` becomes `\c 1\n^\ca 2\ca*`, and `\c 1 ^\n\cp 2` becomes
- * `\c 1\n^\n\cp 2`. Rather than build that shape by hand, the chapter's bytes are re-tokenized with
- * one character standing in for the content at the end of the chapter glyph (`$rebuildChapter`,
- * the same settle that typing there runs), and the caret then takes that character's place.
+ * `\c 1\n^\n\cp 2`. With the caret past the `\ca` run, the content goes after that run instead, as
+ * typing there puts it, and the run stays the chapter's: `\c 1 \ca 2\ca*^` becomes
+ * `\c 1 \ca 2\ca*\n^`. Rather than build that shape by hand, the chapter's bytes are re-tokenized
+ * with one character standing in for the content (`$rebuildChapter`, the same settle that typing
+ * there runs), and the caret then takes that character's place.
  *
- * The content goes after the chapter number wherever on the line the caret is, and a selection
- * lying wholly on the chapter line is treated the same way: the bytes of the marker itself are
- * never operands for an insertion. A selection that runs from a chapter line into the text is left
+ * The content goes after the chapter number (or the `\ca` run) wherever on the line the caret is,
+ * and a selection lying wholly on the chapter line is treated the same way: the bytes of the marker
+ * itself are never operands for an insertion. A selection that runs from a chapter line into the text is left
  * as it is; the insertions already step its ends out of the glyph text and act on the text it
  * covers.
  *
@@ -212,17 +252,39 @@ export function $moveCaretOffChapterLine(context: Tier2Context): boolean {
   const glyph = $chapterGlyphTextNode(chapter);
   if (!glyph) return false;
 
-  glyph.setTextContent(glyph.getTextContent() + INSERTION_PLACEHOLDER);
+  // The re-tokenize replaces the chapter and its attribute region; the nodes between these two are
+  // what it produced.
+  const regionBefore = chapter.getPreviousSibling();
+  const regionAfter = ($chapterAdjacentAttributeNodes(chapter).at(-1) ?? chapter).getNextSibling();
+
+  // A glyph that has lost its separator would join the placeholder to the number's word.
+  const anchor = $insertionAnchorOnChapterLine(chapter, glyph, selection);
+  const separator = anchor.is(glyph) && !/\s$/.test(glyph.getTextContent()) ? " " : "";
+  const stand = $createTextNode(separator + INSERTION_PLACEHOLDER);
+  anchor.insertAfter(stand);
   if (!$rebuildChapter(chapter, context)) {
-    glyph.setTextContent(glyph.getTextContent().slice(0, -INSERTION_PLACEHOLDER.length));
+    stand.remove();
     return false;
   }
-  const holder = $getRoot()
-    .getAllTextNodes()
-    .find((node) => node.getTextContent().includes(INSERTION_PLACEHOLDER));
-  if (!holder) return false;
+  const holder = $nodesBetween(regionBefore, regionAfter)
+    .flatMap((node) => ($isElementNode(node) ? node.getAllTextNodes() : [node]))
+    .find((node) => $isTextNode(node) && node.getTextContent().includes(INSERTION_PLACEHOLDER));
+  if (!$isTextNode(holder)) return false;
   const offset = holder.getTextContent().indexOf(INSERTION_PLACEHOLDER);
   holder.setTextContent(holder.getTextContent().replace(INSERTION_PLACEHOLDER, ""));
   holder.select(offset, offset);
   return true;
+}
+
+/** The root children strictly between `before` and `after`; from the first child and to the last
+ * when either is `null`. */
+function $nodesBetween(before: LexicalNode | null, after: LexicalNode | null): LexicalNode[] {
+  const nodes: LexicalNode[] = [];
+  for (
+    let node = before ? before.getNextSibling() : $getRoot().getFirstChild();
+    node && !node.is(after);
+    node = node.getNextSibling()
+  )
+    nodes.push(node);
+  return nodes;
 }
