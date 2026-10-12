@@ -202,6 +202,47 @@ const CORPUS: { name: string; usj: Usj }[] = [
 ];
 
 /**
+ * The documents the oracle edits in the unformatted view: the corpus, and content directly
+ * touching a following verse — text, a note, and a char span with no space before `\v`. That
+ * view shows a line break before every verse, which is not a byte of the document.
+ */
+const UNFORMATTED_CORPUS: { name: string; usj: Usj }[] = [
+  ...CORPUS,
+  {
+    name: "text touching a following verse",
+    usj: twoParaUsj([
+      { type: "verse", marker: "v", number: "1" },
+      "a",
+      { type: "verse", marker: "v", number: "2" },
+      "b",
+    ]),
+  },
+  {
+    name: "note touching a following verse",
+    usj: twoParaUsj([
+      "a",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "ft", content: ["note text"] }],
+      },
+      { type: "verse", marker: "v", number: "2" },
+      "b",
+    ]),
+  },
+  {
+    name: "char span touching a following verse",
+    usj: twoParaUsj([
+      "a ",
+      { type: "char", marker: "w", content: ["grace"] },
+      { type: "verse", marker: "v", number: "2" },
+      "b",
+    ]),
+  },
+];
+
+/**
  * The view the footnote popover edits its note in: the host's editable view with notes expanded,
  * and the note's marker, caller and closer governed by the popover's own controls rather than
  * typed (`isNoteShellEditable: false`), so they are `token` glyphs the caret steps around.
@@ -227,6 +268,13 @@ const PROTECTED_NOTE_SHELL_CORPUS: { name: string; usj: Usj }[] = [
     ]),
   },
 ];
+
+/** The documents the oracle edits in `view`. */
+function corpusFor(view: string): { name: string; usj: Usj }[] {
+  if (view === PROTECTED_NOTE_SHELL_VIEW) return PROTECTED_NOTE_SHELL_CORPUS;
+  if (view === "unformatted") return UNFORMATTED_CORPUS;
+  return CORPUS;
+}
 
 /** The view options the oracle runs `view` in: an `ORACLE_VIEWS` name, or
  * {@link PROTECTED_NOTE_SHELL_VIEW}. */
@@ -1196,7 +1244,7 @@ function readExpectedFailures(listFile: URL): ExpectedFailures {
  * keeping the reasons of the cases still listed.
  */
 export function describePendingSettledOracle(view: string, listFile: URL): void {
-  const corpus = view === PROTECTED_NOTE_SHELL_VIEW ? PROTECTED_NOTE_SHELL_CORPUS : CORPUS;
+  const corpus = corpusFor(view);
   const rows = corpus.map(({ name, usj }) => [`${name} (${view} view)`, usj] as const);
   const listed = readExpectedFailures(listFile);
   const written: ExpectedFailures = {};

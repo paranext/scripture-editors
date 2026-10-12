@@ -83,6 +83,7 @@ import {
   $isParaNode,
   $isUnknownNode,
   $isVerseNode,
+  isSerializedVerseNode,
   $isMarkerTrailingSeparator,
   $isNbspContentAtMark,
   $isTypedMarkNode,
@@ -235,6 +236,29 @@ function withoutBareBackslashSeparators(content: MarkerContent[]): MarkerContent
   return content;
 }
 
+/**
+ * The fragment byte of a line break that is display only: the one a view without spacing shows
+ * before every verse, which the USJ export skips and loading puts back. It is whitespace to every
+ * fragment reader that counts positions (`/\s/`), so the caret positions on either side of the
+ * break stay apart exactly as a plain space would keep them, but {@link tokenizeFragment} removes
+ * it: the file has nothing between the verse and the bytes before it, and a space there would
+ * re-tokenize as text. No other fragment byte is this character.
+ */
+const DISPLAY_LINE_BREAK = String.fromCharCode(0x2028);
+
+/** `text` as the tokenizer reads it: without the display-only line breaks
+ * ({@link DISPLAY_LINE_BREAK}). */
+function withoutDisplayLineBreaks(text: string): string {
+  return text.replaceAll(DISPLAY_LINE_BREAK, "");
+}
+
+/** The bytes a line break stands for in a rebuild's fragment and signature: a display-only one
+ * before a verse is {@link DISPLAY_LINE_BREAK}, and any other reads as the space between its
+ * neighbors. */
+function lineBreakFragmentText(isBeforeVerse: boolean): string {
+  return isBeforeVerse ? DISPLAY_LINE_BREAK : " ";
+}
+
 /** What the preserved node run behind a placeholder stands for, as the tokenizer reads it. */
 function preservedNodeKind(run: LexicalNode[]): PreservedNodeKind {
   if ($isNoteNode(run[0])) return "note";
@@ -254,7 +278,7 @@ export function tokenizeFragment(
   options: Omit<UsfmFragmentOptions, "placeholders">,
 ): MarkerContent[] {
   return withoutBareBackslashSeparators(
-    usfmFragmentToUsjContent(fragment.text, {
+    usfmFragmentToUsjContent(withoutDisplayLineBreaks(fragment.text), {
       ...options,
       placeholders: fragment.sentinels.map(preservedNodeKind),
     }),
@@ -593,6 +617,20 @@ export function $charNeedsSentinelAs(
   return !isAttributeMarker(marker) && getMarkerFn(marker) === undefined;
 }
 
+/** Whether the next content after `lineBreak` in its paragraph is a verse, looking through any
+ * annotation mark wrapping either of them (a mark contributes no bytes). */
+function $isVerseLineBreak(lineBreak: LexicalNode): boolean {
+  let at: LexicalNode = lineBreak;
+  let parent = at.getParent();
+  while (!at.getNextSibling() && $isTypedMarkNode(parent)) {
+    at = parent;
+    parent = at.getParent();
+  }
+  let next = at.getNextSibling();
+  while ($isTypedMarkNode(next)) next = next.getFirstChild();
+  return $isVerseNode(next);
+}
+
 /**
  * Delimiter (never present in scripture text) opening a structural element's span inside a
  * signature string ({@link $signatureOf}), so a structural change is always visible in the
@@ -763,7 +801,7 @@ function $appendSignature(
     } else if ($isRebuildSentinel(node, getMarkerFn)) {
       out.push(ATOMIC_SENTINEL);
     } else if ($isLineBreakNode(node)) {
-      out.push(" ");
+      out.push(lineBreakFragmentText($isVerseLineBreak(node)));
     } else if ($isTextNode(node) && $getState(node, textTypeState) === "attribute") {
       // Tagged like a glyph: bytes typed into an attribute run at its start read as the span's
       // content once re-tokenized (`\w gracex|g\w*`), and only the run's own delimiting shows
@@ -1046,7 +1084,7 @@ function appendSerializedSignature(
       continue;
     }
     if (type === "linebreak") {
-      out.push(" ");
+      out.push(lineBreakFragmentText(isSerializedVerseNode(children[index + 1])));
       continue;
     }
     if (type === "char") {
@@ -1206,7 +1244,7 @@ function $appendNodesFragment(
       else $appendChildrenFragment(node, out, getMarkerFn, viewOptions, { pending: true });
     } else if ($isLineBreakNode(node)) {
       consumeCharLead();
-      pushText(out, node, " ");
+      pushText(out, node, lineBreakFragmentText($isVerseLineBreak(node)));
     } else if ($isTextNode(node)) {
       // Glyph-adjacent structural text (the para-prefix separator, attribute runs — whose own
       // leading NBSP is the file's real separator byte before `|…`, a chapter's `\c N` glyph
@@ -3060,7 +3098,9 @@ function $isChapterAttributeImpliedPara(node: LexicalNode): node is ImpliedParaN
   if (out.sentinels.length > 0) return false;
   const text = out.text;
   if (text.trim() === "") return false;
-  const content = usfmFragmentToUsjContent(text, { getMarker: bundledGetMarker });
+  const content = usfmFragmentToUsjContent(withoutDisplayLineBreaks(text), {
+    getMarker: bundledGetMarker,
+  });
   const [first] = content;
   const items =
     content.length === 1 &&
@@ -3226,7 +3266,9 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
   // destroys them — carried the way `$rebuildParas` carries a paragraph's.
   const markRanges = $captureMarkByteRanges(region, out, undefined, $getEditor());
 
-  const content: MarkerContent[] = usfmFragmentToUsjContent(out.text, { getMarker: getMarkerFn });
+  const content: MarkerContent[] = usfmFragmentToUsjContent(withoutDisplayLineBreaks(out.text), {
+    getMarker: getMarkerFn,
+  });
   const [freshChapter] = content;
   if (content.length === 0 || typeof freshChapter !== "object" || freshChapter.type !== "chapter") {
     logger?.debug("[MarkerEdit] Chapter Tier 2 skipped: bytes no longer tokenize as a chapter");
