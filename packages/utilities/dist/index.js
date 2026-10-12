@@ -1,6 +1,6 @@
 import { DOMImplementation as b, DOMParser as g } from "@xmldom/xmldom";
 const m = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
-function j(e) {
+function v(e) {
   if (m.has(e))
     throw new Error(`The key "${e}" is not allowed to avoid prototype pollution.`);
 }
@@ -17,7 +17,7 @@ function w(e) {
     A
   );
 }
-function v(e) {
+function j(e) {
   return e != null && "jsonPath" in e && !("offset" in e) && !("closingMarkerOffset" in e) && !("propertyOffset" in e) && !("keyName" in e);
 }
 function U(e) {
@@ -39,7 +39,7 @@ function _(e) {
   return e != null && "jsonPath" in e && "keyName" in e && "keyClosingMarkerOffset" in e;
 }
 function K(e) {
-  return e === void 0 ? "undefined" : e === null ? "null" : _(e) ? "UsjClosingAttributeMarkerLocation" : C(e) ? "UsjAttributeKeyLocation" : X(e) ? "UsjAttributeMarkerLocation" : L(e) ? "UsjPropertyValueLocation" : U(e) ? "UsjClosingMarkerLocation" : J(e) ? "UsjTextContentLocation" : v(e) ? "UsjMarkerLocation" : "Unknown";
+  return e === void 0 ? "undefined" : e === null ? "null" : _(e) ? "UsjClosingAttributeMarkerLocation" : C(e) ? "UsjAttributeKeyLocation" : X(e) ? "UsjAttributeMarkerLocation" : L(e) ? "UsjPropertyValueLocation" : U(e) ? "UsjClosingMarkerLocation" : J(e) ? "UsjTextContentLocation" : j(e) ? "UsjMarkerLocation" : "Unknown";
 }
 const d = "usx", T = "3.1", x = `<${d} version="${T}" />`;
 let u, c;
@@ -69,7 +69,7 @@ function y(e, t, n, r) {
   i && (!r || a) && t.appendChild(i), t.appendChild(o), i && r && !a && t.appendChild(i), r && t.nodeName === d && (c && t.appendChild(S(n, c)), u && t.appendChild(h(n, u)), c = void 0, u = void 0);
 }
 function R(e, t) {
-  t.marker && (t.type === "unmatched" ? e.setAttribute("marker", t.marker) : e.setAttribute("style", t.marker));
+  t.marker !== void 0 && (t.type === "unmatched" ? e.setAttribute("marker", t.marker) : e.setAttribute("style", t.marker));
   for (const [n, r] of Object.entries(t))
     r != null && !["type", "marker", "content"].includes(n) && e.setAttribute(n, r);
 }
@@ -233,10 +233,10 @@ function M(e) {
   let n = e.tagName, r, o, f = "append";
   if (["row", "cell"].includes(n) && (n = "table:" + n), e.attributes)
     for (const s of Array.from(e.attributes))
-      j(s.name), t[s.name] = s.value;
-  t.style && (r = t.style, delete t.style), t.vid && delete t.vid, t.status && delete t.status;
+      v(s.name), t[s.name] = s.value;
+  t.style !== void 0 && (r = t.style, delete t.style), t.vid && delete t.vid, t.status && delete t.status;
   let i = { type: n };
-  r && (i.marker = r), i = { ...i, ...t }, e.firstChild && e.firstChild.nodeType === e.firstChild.TEXT_NODE && e.firstChild.nodeValue && E(e.firstChild.nodeValue) && (o = e.firstChild.nodeValue);
+  r !== void 0 && (i.marker = r), i = { ...i, ...t }, e.firstChild && e.firstChild.nodeType === e.firstChild.TEXT_NODE && e.firstChild.nodeValue && E(e.firstChild.nodeValue) && (o = e.firstChild.nodeValue);
   const a = Array.from(e.childNodes);
   i.content = [], o && i.content.push(o);
   for (const s of a) {
@@ -270,14 +270,14 @@ export {
   d as USX_TYPE,
   T as USX_VERSION,
   B as VALID_BOOK_CODES,
-  j as assertSafeKey,
+  v as assertSafeKey,
   K as getUsjDocumentLocationTypeName,
   D as indexesFromUsjJsonPath,
   C as isUsjAttributeKeyLocation,
   X as isUsjAttributeMarkerLocation,
   _ as isUsjClosingAttributeMarkerLocation,
   U as isUsjClosingMarkerLocation,
-  v as isUsjMarkerLocation,
+  j as isUsjMarkerLocation,
   L as isUsjPropertyValueLocation,
   J as isUsjTextContentLocation,
   Z as isValidBookCode,
