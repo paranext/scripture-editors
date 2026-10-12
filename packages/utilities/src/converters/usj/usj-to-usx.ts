@@ -92,7 +92,8 @@ function convertUsjRecurse(
 }
 
 function setAttributes(element: Element, markerContent: MarkerObject) {
-  if (markerContent.marker) {
+  // An empty marker is written as the empty style it was read from, never dropped.
+  if (markerContent.marker !== undefined) {
     if (markerContent.type === "unmatched") element.setAttribute("marker", markerContent.marker);
     else element.setAttribute("style", markerContent.marker);
   }
