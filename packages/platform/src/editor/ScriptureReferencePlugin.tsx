@@ -55,6 +55,10 @@
  *                           document; arrival-driven placement targets the arriving document only
  *   I7 mount-correction     a mounted document with a mismatched book corrects the host once
  *   I8 verse-0-is-data      verse 0 reports from idle and applies as a target
+ *   I9 one-verse-question   the caret's verse is resolved ONE way ($resolveVerseNode +
+ *                           $getEffectiveVerseForBcv), for reporting and for the "already here"
+ *                           no-op alike - so a position between two verses belongs to the same
+ *                           verse whichever of the two asks
  *
  * Documented trade-offs (deliberate; do not "fix" one without weighing its counterpart):
  *   - A late echo arriving after a newer external navigation cleared the queue is treated as a
@@ -120,19 +124,18 @@ import {
   ImmutableChapterNode,
   getSelectionStartNode,
   isVerseInRange,
-  isVerseRange,
   removeNodeAndAfter,
   removeNodesBeforeNode,
   VerseNode,
 } from "shared";
 import {
   $advancePastParaPrefixes,
-  $findThisVerse,
   $findVerseOrPara,
   $getEffectiveVerseForBcv,
   $isSomeVerseNode,
   $resolveVerseNode,
   ImmutableVerseNode,
+  releaseTagsAfterNextCommit,
   SomeVerseNode,
 } from "shared-react";
 
@@ -370,7 +373,7 @@ function onPropChanged(machine: Machine, editor: LexicalEditor, newRef: Serializ
   // Prop-driven placement gate: never move the caret inside a different book's (stale) document.
   const bookCode = getCommittedBookCode(editor);
   if (!bookCode || bookCode === newRef.book) {
-    editor.update(() => $moveCaretToVerseStart(newRef.chapterNum, newRef.verseNum), {
+    editor.update(() => $placeCaretAtVerseStart(editor, newRef.chapterNum, newRef.verseNum), {
       tag: CURSOR_CHANGE_TAG,
     });
   }
@@ -482,26 +485,40 @@ function onDocumentChanged(
 function schedulePlacingCaretAtVerseStart(machine: Machine, editor: LexicalEditor) {
   queueMicrotask(() => {
     editor.update(
-      () => $moveCaretToVerseStart(machine.scrRef.chapterNum, machine.scrRef.verseNum),
+      () => $placeCaretAtVerseStart(editor, machine.scrRef.chapterNum, machine.scrRef.verseNum),
       { tag: CURSOR_CHANGE_TAG },
     );
   });
 }
 
-/** Moves the caret to the start of `verseNum` in `chapterNum`. No-op when the caret is already
- * inside a verse range containing `verseNum` (a range is one location), or the target is absent. */
+/**
+ * {@link $moveCaretToVerseStart} for an update tagged `CURSOR_CHANGE_TAG`, releasing that tag once
+ * the placement commits.
+ *
+ * A pure caret placement dirties no nodes, so Lexical never resets its pending tags for it: the tag
+ * would ride along onto whatever commit the user's next keystroke produces (a footnote insert
+ * included), and every listener that ignores caret moves (`DeltaOnChangePlugin` among them) would
+ * drop that edit. The release is armed only when the caret actually moved: an unchanged selection
+ * commits nothing, and an armed release would then strip the tag from some later, unrelated commit.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $placeCaretAtVerseStart(editor: LexicalEditor, chapterNum: number, verseNum: number) {
+  const before = $getSelection()?.clone();
+  $moveCaretToVerseStart(chapterNum, verseNum);
+  const after = $getSelection();
+  if (after && !(before && after.is(before))) releaseTagsAfterNextCommit(editor, CURSOR_CHANGE_TAG);
+}
+
+/** Moves the caret to the start of `verseNum` in `chapterNum`. No-op when the caret already
+ * resolves to that verse - a range containing it counts, a range being one location - or when the
+ * target is absent. */
 function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
-  const startNode = getSelectionStartNode($getSelection());
-  const selectedVerse = $findThisVerse(startNode)?.getNumber();
-  // Resolve the caret's CHAPTER too, mirroring $resolvePosition's counting (content before the
-  // first chapter of a loaded document addresses as chapter 1). The verse-number match alone is
-  // chapter-blind: in a multi-chapter document, navigating chapter N verse K -> chapter M verse K
-  // keeps the verse number but is a genuine cross-chapter move, and a number-only "already here"
-  // guard would wrongly no-op and strand the caret in the wrong chapter.
-  const selectedChapterNode = $findThisChapter(startNode);
-  const selectedChapterNum = selectedChapterNode
-    ? parseInt(selectedChapterNode.getNumber() ?? "1", 10)
-    : 1;
+  // Which verse the caret is in is ONE question, and $resolvePosition answers it for reporting -
+  // so ask it here too (I9). Any other reading disagrees with the report at some position: the
+  // slot just past a note that ends a verse, or a heading before verse 1 (which reports verse 0),
+  // and the host publishing that very verse then reads as a navigation that yanks the caret.
+  //
   // Already parked in the verse being navigated to: moving to its start would eject a caret the
   // user is actively typing in. The scrRef echo of this editor's own save fires ~90-190ms after a
   // keystroke; without this guard it yanks the caret out of a freshly typed marker span, so the
@@ -511,15 +528,16 @@ function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
   // is also the deliberate UX no-op for clicking the verse the caret is already in: it is left
   // where the user placed it, not snapped to the verse start. Genuine cross-verse OR cross-chapter
   // navigation still moves, since the caret is not in the target chapter's target verse.
+  //
+  // A document swap nulls the selection, which resolves to no position at all, so a navigation
+  // still places a caret in the arriving document rather than reading "already here" off having
+  // none.
+  const here = $resolvePosition();
   if (
-    selectedChapterNum === chapterNum &&
-    selectedVerse &&
-    (isVerseRange(selectedVerse)
-      ? verseInRangeSafe(verseNum, selectedVerse)
-      : parseInt(selectedVerse, 10) === verseNum)
-  ) {
+    here?.chapterNum === chapterNum &&
+    (here.verse ? verseInRangeSafe(verseNum, here.verse) : here.verseNum === verseNum)
+  )
     return;
-  }
 
   const children = $getRoot().getChildren();
   const chapterNode = $findChapter(children, chapterNum);

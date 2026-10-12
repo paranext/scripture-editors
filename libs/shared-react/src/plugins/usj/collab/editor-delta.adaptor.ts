@@ -37,6 +37,7 @@ import {
   $isSomeChapterNode,
   $isUnknownNode,
   $isVerseNode,
+  $separatorPrefixLength,
   BOOK_MARKER,
   BookNode,
   CHAPTER_MARKER,
@@ -316,20 +317,14 @@ function $handleTextNodes(
   const parentCharNode = $isCharNode(parent) ? parent : undefined;
   // Strip the structural NBSP separator that editable-mode char spans glue onto their
   // content text after the opening glyph (added by the USJ adaptor's `createChar` and
-  // re-added by `$applyUpdate`'s `$createNote`); it is display-only, not content. POSITIONAL,
-  // like the reverse adaptor's `content[0]` strip: the separator is prepended solely to the text
-  // directly after the span's opening glyph, so only THAT node's leading NBSP is structural — a
-  // leading NBSP on any later child (after a nested closer in `\ft A\+nd x\+nd*~B`) is the
-  // author's own `~` and must flow into the op on every emit.
-  const parentCharFirstChild = parentCharNode?.getFirstChild();
-  if (
-    isInNote &&
-    !!parentCharNode &&
-    $isMarkerNode(parentCharFirstChild) &&
-    previousSibling === parentCharFirstChild &&
-    text.startsWith(NBSP)
-  ) {
-    text = text.slice(1);
+  // re-added by `$applyUpdate`'s `$createNote`); it is display-only, not content. Which bytes
+  // count is $separatorPrefixLength's call, so a leading NBSP anywhere else (after a nested closer
+  // in `\ft A\+nd x\+nd*~B`) is the author's own `~` and flows into the op on every emit. This
+  // path is narrower still: only the span's OWN opener (its first child) qualifies, like the
+  // reverse adaptor's `content[0]` strip, so the collab-flattened shape's nested opener keeps
+  // emitting what peers already receive.
+  if (isInNote && !!parentCharNode && previousSibling === parentCharNode.getFirstChild()) {
+    text = text.slice($separatorPrefixLength(currentNode));
   }
 
   // Char-span attribute display runs (bare `|…`, no NBSP prefix — see usj-editor.adaptor's

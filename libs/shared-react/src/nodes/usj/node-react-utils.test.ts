@@ -53,6 +53,7 @@ import {
   ImmutableChapterNode,
   MarkerNode,
   NoteNode,
+  getVisibleOpenMarkerText,
   ParaNode,
   TypedMarkNode,
   VerseBlockNode,
@@ -827,6 +828,90 @@ describe("$getEffectiveVerseForBcv()", () => {
       expect(result).toEqual({ verseNum: 1 });
     });
   });
+
+  // Views that render markers as editable text make the verse node's text the WHOLE marker
+  // (`\v 3 `), so the verse number no longer sits at offset 0. Everything before it is marker
+  // syntax, and a caret there belongs to the preceding verse — that position is where a note
+  // ending the previous verse leaves the caret, since the next verse's marker follows it directly.
+  it("returns the previous verse when the cursor is before the number of an editable verse marker", () => {
+    let verse3Key: string;
+    const { editor } = createBasicTestEnvironment([ParaNode, VerseNode]);
+    editor.update(
+      () => {
+        const v3 = $createVerseNode("3", getVisibleOpenMarkerText("v", "3"));
+        $getRoot().append($createParaNode().append(v3));
+        verse3Key = v3.getKey();
+        v3.select(0, 0);
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      const node = $getNodeByKey(verse3Key);
+      const verseNode = $isSomeVerseNode(node) ? node : undefined;
+
+      const result = $getEffectiveVerseForBcv(verseNode, $getSelection());
+
+      expect(result).toEqual({ verseNum: 2 });
+    });
+  });
+
+  it("returns the current verse once the cursor is past the number of an editable verse marker", () => {
+    let verse3Key: string;
+    const { editor } = createBasicTestEnvironment([ParaNode, VerseNode]);
+    editor.update(
+      () => {
+        const markerText = getVisibleOpenMarkerText("v", "3");
+        const v3 = $createVerseNode("3", markerText);
+        $getRoot().append($createParaNode().append(v3));
+        verse3Key = v3.getKey();
+        v3.select(markerText.length, markerText.length);
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      const node = $getNodeByKey(verse3Key);
+      const verseNode = $isSomeVerseNode(node) ? node : undefined;
+
+      const result = $getEffectiveVerseForBcv(verseNode, $getSelection());
+
+      expect(result).toEqual({ verseNum: 3 });
+    });
+  });
+
+  // The verse before a marker is the one the chapter actually has there, which the next marker's
+  // number alone cannot tell: a bridge, a segment, or an omitted verse all break "number - 1".
+  it.each([
+    { previous: "1-2", next: "3", expected: { verseNum: 1, verse: "1-2" } },
+    { previous: "2a", next: "2b", expected: { verseNum: 2, verse: "2a" } },
+    { previous: "20", next: "22", expected: { verseNum: 20 } },
+  ])(
+    "returns the previous verse node's verse before `\\v $next` after `\\v $previous`",
+    ({ previous, next, expected }) => {
+      let nextKey: string;
+      const { editor } = createBasicTestEnvironment([ParaNode, VerseNode]);
+      editor.update(
+        () => {
+          const nextVerse = $createVerseNode(next, getVisibleOpenMarkerText("v", next));
+          $getRoot().append(
+            $createParaNode().append(
+              $createVerseNode(previous, getVisibleOpenMarkerText("v", previous)),
+              $createTextNode("text "),
+            ),
+            $createParaNode().append(nextVerse, $createTextNode("more")),
+          );
+          nextKey = nextVerse.getKey();
+          nextVerse.select(0, 0);
+        },
+        { discrete: true },
+      );
+      editor.getEditorState().read(() => {
+        const node = $getNodeByKey(nextKey);
+        const verseNode = $isSomeVerseNode(node) ? node : undefined;
+
+        expect($getEffectiveVerseForBcv(verseNode, $getSelection())).toEqual(expected);
+      });
+    },
+  );
 
   it("returns verse 0 when cursor is in parent at offset 0 (before first verse)", () => {
     let paraKey: string;

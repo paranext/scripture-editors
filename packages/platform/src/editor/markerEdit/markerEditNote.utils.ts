@@ -24,11 +24,11 @@ import {
   $findFirstAncestorNoteNode,
   $isMarkerNode,
   $liftOutOfCharStack,
+  $separatorPrefixLength,
   $withCharContentNbspPrefix,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   MarkerLookup,
   MarkerType,
-  NBSP,
   NoteNode,
 } from "shared";
 
@@ -328,7 +328,7 @@ function $startFpAtCaret(): boolean {
 function $selectBreakPoint(span: ElementNode): void {
   const first = span.getChildren().find((child) => !$isMarkerNode(child));
   if ($isTextNode(first)) {
-    const offset = first.getTextContent().startsWith(NBSP) ? 1 : 0;
+    const offset = $separatorPrefixLength(first);
     first.select(offset, offset);
     return;
   }

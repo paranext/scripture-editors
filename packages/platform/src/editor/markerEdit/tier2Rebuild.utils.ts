@@ -15,8 +15,10 @@ import { UNTERMINATED_MARKER_TAIL } from "./markerName.pattern";
 import {
   $serializeBookLine,
   $serializeExpandedNoteContent,
+  $serializeNoteClosedAtOwnCloser,
   ATOMIC_SENTINEL,
   charOwnChildSignatureText,
+  splitUnclosedNoteAtOwnCloser,
 } from "./settleShared.utils";
 import {
   MarkerContent,
@@ -36,10 +38,12 @@ import {
   $parseSerializedNode,
   ElementNode,
   LexicalNode,
+  NodeKey,
   SerializedLexicalNode,
   TextNode,
 } from "lexical";
 import {
+  $findFirstAncestorNoteNode,
   $hasUnrecoverableAttributes,
   $isAttributeRunNode,
   $isBookNode,
@@ -48,6 +52,7 @@ import {
   $isCharNode,
   $isImmutableUnmatchedNode,
   $isImpliedParaNode,
+  $isCanonicalMarkerNode,
   $isMarkerNode,
   $isMilestoneNode,
   $isNoteNode,
@@ -79,7 +84,13 @@ import {
   usfmFragmentToUsjContent,
   VerseNode,
 } from "shared";
-import { $isImmutableNoteCallerNode, hasStandardViewWhitespace, ViewOptions } from "shared-react";
+import {
+  $isImmutableNoteCallerNode,
+  $selectAfterNote,
+  $selectNote,
+  hasStandardViewWhitespace,
+  ViewOptions,
+} from "shared-react";
 
 /**
  * Everything a Tier-2 rebuild needs that is not the nodes themselves: the active view options
@@ -121,6 +132,13 @@ export interface FragmentAccumulator {
   spans: FragmentSpan[];
   /** One entry per U+FFFC, in fragment order; each entry is a node RUN to re-insert. */
   sentinels: LexicalNode[][];
+  /**
+   * Set only when measuring a REBUILT region to put the caret back: the keys of the nodes the
+   * rebuild preserved. A span that would otherwise be a sentinel but is not among them was just
+   * built by the tokenizer from bytes the caret's anchor counted one by one - an unknown marker
+   * the user typed - so its bytes are counted the same way here rather than as one placeholder.
+   */
+  preservedKeys?: ReadonlySet<NodeKey>;
 }
 
 function pushText(out: FragmentAccumulator, node: LexicalNode, text: string): void {
@@ -418,6 +436,11 @@ export function $isRebuildSentinel(node: LexicalNode, getMarkerFn: MarkerLookup)
  * Two shapes are not text-recoverable. A span carrying attribute bytes with nowhere visible to
  * re-derive them from ({@link $hasUnrecoverableAttributes}), and a span whose marker the
  * stylesheet does not declare — a custom.sty marker the tokenizer would degrade to literal text.
+ * Inside a note it does not: in note context the tokenizer reads an undeclared marker as a
+ * character span, so such a span re-tokenizes like any other there, unless it carries attributes
+ * (the tokenizer does not extract those for a marker it has no definition of). Re-tokenizing it
+ * is also what keeps it where it is: its placeholder would read as text of an unclosed run before
+ * it (`\ft asdf ` then `\df`), and splice it back INSIDE that run, nested (`\+df`).
  *
  * An ATTRIBUTE marker is exempt from the stylesheet test, because for those the stylesheet is
  * not the authority: the tokenizer's own table folds them onto their host, so the round trip is
@@ -430,7 +453,43 @@ export function $isRebuildSentinel(node: LexicalNode, getMarkerFn: MarkerLookup)
 function $charNeedsSentinel(char: CharNode, getMarkerFn: MarkerLookup): boolean {
   if ($hasUnrecoverableAttributes(char)) return true;
   const marker = char.getMarker();
-  return !isAttributeMarker(marker) && getMarkerFn(marker) === undefined;
+  if (isAttributeMarker(marker) || getMarkerFn(marker) !== undefined) return false;
+  if ($isInsideNote(char) && !$hasAttributesBesidesClosed(char)) return false;
+  // An undeclared marker is kept whole only while its own glyphs still spell it. Once the user has
+  // edited one (deleted the `\` to turn the marker back into text, say), those bytes are the
+  // instruction: preserved as a sentinel they never reach the tokenizer, the span survives the
+  // settle unchanged, and the damaged glyph is later healed back to the marker it no longer says.
+  return !$hasEditedOwnGlyph(char);
+}
+
+/** Whether `node` is inside a note's content. */
+function $isInsideNote(node: LexicalNode): boolean {
+  const parent = node.getParent();
+  return parent !== null && $findFirstAncestorNoteNode(parent) !== undefined;
+}
+
+/** Whether a char span carries attributes other than the derived `closed` flag. */
+function $hasAttributesBesidesClosed(char: CharNode): boolean {
+  const attributes = char.getUnknownAttributes();
+  return !!attributes && Object.keys(attributes).some((name) => name !== "closed");
+}
+
+/**
+ * Whether one of `char`'s own marker glyphs no longer reads canonically, or its opener is gone
+ * while its closer remains - a span the user has started turning back into text.
+ *
+ * A span with no glyphs at all (markers hidden, or an unclosed span whose opener was deleted) is
+ * not counted: nothing on screen records an edit there.
+ */
+function $hasEditedOwnGlyph(char: CharNode): boolean {
+  const ownGlyphs = char
+    .getChildren()
+    .filter((child) => $isMarkerNode(child) && child.getMarker() === char.getMarker())
+    .filter($isMarkerNode);
+  if (ownGlyphs.some((glyph) => !$isCanonicalMarkerNode(glyph))) return true;
+  const hasOpener = ownGlyphs.some((glyph) => glyph.getMarkerSyntax() === "opening");
+  const hasCloser = ownGlyphs.some((glyph) => glyph.getMarkerSyntax() === "closing");
+  return !hasOpener && hasCloser;
 }
 
 /**
@@ -987,7 +1046,8 @@ function $appendNodesFragment(
       // run (if any) is ordinary text among its children — it re-tokenizes and re-derives via
       // `extractAttributes` like the rest of the span's content. `$charNeedsSentinel` is the
       // shared authority, so this branch and `$isRebuildSentinel` cannot drift apart.
-      if ($charNeedsSentinel(node, getMarkerFn)) pushSentinel(out, [node]);
+      const isPreserved = !out.preservedKeys || out.preservedKeys.has(node.getKey());
+      if (isPreserved && $charNeedsSentinel(node, getMarkerFn)) pushSentinel(out, [node]);
       else $appendChildrenFragment(node, out, getMarkerFn, viewOptions, { pending: true });
     } else if ($isLineBreakNode(node)) {
       consumeCharLead();
@@ -1171,8 +1231,9 @@ function $spansForNodes(
   nodes: LexicalNode[],
   getMarkerFn: MarkerLookup,
   viewOptions: ViewOptions | undefined,
+  preservedKeys?: ReadonlySet<NodeKey>,
 ): { text: string; spans: FragmentSpan[] } {
-  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [], preservedKeys };
   for (const node of nodes) {
     if (out.text.length > 0) out.text += " ";
     if ($isElementNode(node)) $appendChildrenFragment(node, out, getMarkerFn, viewOptions);
@@ -1524,6 +1585,7 @@ function $restoreSelectionAtOffset(
   anchorInParas: boolean,
   getMarkerFn: MarkerLookup,
   viewOptions: ViewOptions | undefined,
+  preservedKeys?: ReadonlySet<NodeKey>,
 ): void {
   // The caret was somewhere else entirely (the primary completion flow: the user
   // typed a mid-edit marker, then clicked/arrowed into another paragraph, which is
@@ -1534,7 +1596,11 @@ function $restoreSelectionAtOffset(
     newNodes.find($isElementNode)?.selectStart();
     return;
   }
-  $selectAtFragmentByteAnchor($spansForNodes(newNodes, getMarkerFn, viewOptions), anchor, newNodes);
+  $selectAtFragmentByteAnchor(
+    $spansForNodes(newNodes, getMarkerFn, viewOptions, preservedKeys),
+    anchor,
+    newNodes,
+  );
 }
 
 /**
@@ -1562,13 +1628,14 @@ function $restoreSelectionInContentRegion(
   anchorInShell: boolean,
   getMarkerFn: MarkerLookup,
   viewOptions: ViewOptions | undefined,
+  preservedKeys?: ReadonlySet<NodeKey>,
 ): void {
   if (!anchorInShell) return;
   if (anchor === undefined) {
     $selectBeforeFirstUnaddressableRegionChild(liveContentNodes, getMarkerFn);
     return;
   }
-  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [], preservedKeys };
   $appendNodesFragment(liveContentNodes, out, getMarkerFn, viewOptions);
   $selectAtFragmentByteAnchor({ text: out.text, spans: out.spans }, anchor, liveContentNodes);
 }
@@ -1737,7 +1804,14 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
     if (newVerses[i].getNumber() === oldVerseSids[i].number)
       newVerses[i].setSid(oldVerseSids[i].sid);
   }
-  $restoreSelectionAtOffset(newNodes, caretAnchor, anchorInParas, getMarkerFn, viewOptions);
+  $restoreSelectionAtOffset(
+    newNodes,
+    caretAnchor,
+    anchorInParas,
+    getMarkerFn,
+    viewOptions,
+    new Set(combined.sentinels.flat().map((node) => node.getKey())),
+  );
   return true;
 }
 
@@ -1919,6 +1993,18 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   // instead of the sync resurrecting it from stale state.
   const foldedCategory = extractLeadingCategoryFold(noteContent);
 
+  // A closer the user typed into an unclosed note ends the note right there.
+  const closedAt = splitUnclosedNoteAtOwnCloser(note, noteContent);
+  if (closedAt)
+    return $closeNoteAtOwnCloser(
+      note,
+      closedAt,
+      foldedCategory,
+      out.sentinels,
+      context,
+      anchorInNote,
+    );
+
   // The fresh content children come from serializing the WHOLE note expanded and unwrapping its
   // shell; `$serializeExpandedNoteContent` (settleShared.utils.ts) states why, and is shared with
   // the read-only settle so the two can never unwrap the same shell differently. Parse the
@@ -2013,7 +2099,75 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
     anchorInNote,
     getMarkerFn,
     viewOptions,
+    preservedKeys,
   );
+  return true;
+}
+
+/**
+ * Replaces `note` with itself closed at the closer the user typed into it (see
+ * `splitUnclosedNoteAtOwnCloser`), rebuilt in the view's own note mode - so a view that collapses
+ * its closed notes now shows this one as its caller - followed by whatever came after the closer,
+ * as paragraph content. The caret, when it was in the note, goes where the user was typing: past
+ * the note whenever it collapsed OR nothing governs its shell through its own UI - which is every
+ * ordinary close, including Unformatted view's expanded notes - so the next keystroke joins the
+ * paragraph rather than extending the note's last run. Only a host whose note editor owns the
+ * shell (`ViewOptions.isNoteShellEditable: false`) keeps the caret IN the note: there, the text
+ * that followed the closer is about to be taken out of this editor entirely (see
+ * `EditorRef.getOpsAfterNote`/`takeOpsAfterNote`), and the caret has to stay put for that. Preserve-
+ * or-refuse: `false` with the note untouched when the rebuilt shape cannot carry every preserved
+ * node.
+ */
+function $closeNoteAtOwnCloser(
+  note: NoteNode,
+  { before, after }: { before: MarkerContent[]; after: MarkerContent[] },
+  foldedCategory: string | undefined,
+  sentinels: LexicalNode[][],
+  context: Tier2Context,
+  anchorInNote: boolean,
+): boolean {
+  const { viewOptions, logger } = context;
+  const serialized = $serializeNoteClosedAtOwnCloser(
+    note,
+    before,
+    after,
+    foldedCategory,
+    viewOptions,
+  );
+  if (!serialized || countSerializedSentinels(serialized) !== sentinels.length) {
+    logger?.warn("[MarkerEdit] Note close aborted: the closed note does not carry its content");
+    return false;
+  }
+  const newNodes = serialized.map((child) => $parseSerializedNode(child));
+  const [closedNote] = newNodes;
+  if (!$isNoteNode(closedNote) || countSentinelNodes(newNodes) !== sentinels.length) {
+    logger?.warn("[MarkerEdit] Note close aborted: the closed note does not carry its content");
+    return false;
+  }
+  let previous: LexicalNode = note;
+  for (const node of newNodes) {
+    previous.insertAfter(node);
+    previous = node;
+  }
+  $replaceSentinels(newNodes, sentinels);
+  // The note stays the same node, taking on the closed note's content and attributes: closing a note
+  // is an edit to it, not a new note, and a host tells the two apart by whether the node is new (a
+  // new note is where a host opens its note editor).
+  // Appended before the old children go: a note left empty removes itself.
+  const oldChildren = note.getChildren();
+  note.append(...closedNote.getChildren());
+  oldChildren.forEach((child) => child.remove());
+  note
+    .setCaller(closedNote.getCaller())
+    .setCategory(closedNote.getCategory())
+    .setUnknownAttributes(closedNote.getUnknownAttributes())
+    .setIsCollapsed(closedNote.getIsCollapsed());
+  closedNote.remove();
+  if (anchorInNote) {
+    if (note.getIsCollapsed() !== true && viewOptions?.isNoteShellEditable === false)
+      $selectNote(note, viewOptions);
+    else $selectAfterNote(note, { isContentChange: true });
+  }
   return true;
 }
 
@@ -2258,6 +2412,7 @@ export function $rebuildBook(
     anchorInScope,
     getMarkerFn,
     viewOptions,
+    preservedKeys,
   );
   return true;
 }

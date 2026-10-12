@@ -287,8 +287,12 @@ function findUsjNotes(usj: Usj): MarkerObject[] {
   return notes;
 }
 
-async function roundtripNote(noteIndex: number, sourceNoteUsj: MarkerObject) {
-  const host = await renderEditor(hostOptions, sampleUsj);
+async function roundtripNote(
+  noteIndex: number,
+  sourceNoteUsj: MarkerObject,
+  sourceUsj = sampleUsj,
+) {
+  const host = await renderEditor(hostOptions, sourceUsj);
 
   // Guard: the host USJ adaptors round-trip the source note losslessly on their own.
   const hostUsj = requireDefined(host.editorRef.getUsj(), "host USJ");
@@ -411,6 +415,60 @@ describe("popover note ops round-trip (canonical glyph-free contract)", () => {
     });
     await expectRebuildFixedPoint(popover);
   }, 30000);
+
+  // A nested span materialized from the FIRST op of a run takes the same shape as one nested
+  // mid-run: its glyphs inside it. Built with them outside, the editor's marker engine re-reads the
+  // run's bytes and the nested span is gone, so a note that opens with `\+nd LORD\+nd*` lost it.
+  it.each([
+    {
+      name: "a closed run that opens with a nested span",
+      run: {
+        type: "char",
+        marker: "ft",
+        content: [{ type: "char", marker: "nd", content: ["LORD"] }, " said"],
+      },
+    },
+    {
+      name: "an unclosed run that opens with a nested span",
+      run: {
+        type: "char",
+        marker: "ft",
+        content: [{ type: "char", marker: "nd", content: ["LORD"] }, " said"],
+        closed: "false",
+      } as ClosableMarkerObject,
+    },
+    {
+      name: "a closed run with a nested span mid-run",
+      run: {
+        type: "char",
+        marker: "ft",
+        content: ["the ", { type: "char", marker: "nd", content: ["LORD"] }, " said"],
+      },
+    },
+    {
+      name: "a run that is only a nested span",
+      run: {
+        type: "char",
+        marker: "ft",
+        content: [{ type: "char", marker: "nd", content: ["LORD"] }],
+      },
+    },
+  ] satisfies { name: string; run: MarkerObject }[])("is idempotent for $name", async ({ run }) => {
+    const noteUsj: MarkerObject = { type: "note", marker: "f", caller: "+", content: [run] };
+    const hostUsj: Usj = {
+      ...sampleUsj,
+      content: [
+        ...sampleUsj.content.slice(0, 2),
+        {
+          type: "para",
+          marker: "p",
+          content: [{ type: "verse", marker: "v", number: "1" }, "first ", noteUsj, "end"],
+        },
+      ],
+    };
+
+    await roundtripNote(0, noteUsj, hostUsj);
+  });
 
   it("writes a clean note back into the host via replaceEmbedUpdate (popover Save path)", async () => {
     const { host, popover } = await roundtripNote(0, closedNoteUsj);
