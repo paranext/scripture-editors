@@ -69,10 +69,12 @@ export function $displayWhitespaceTransform(node: TextNode): void {
   // NBSPs and the caller's own transform straight back, forever. The caller's transform owns it.
   if ($isNoteCallerSlot(node)) return;
   for (let parent = node.getParent(); parent; parent = parent.getParent()) {
-    // Note content displays space runs as NBSP like any other content;
-    // books/chapters/unknowns keep literal text (degradation property) — same skip-list
-    // as Tier 2.
-    if ($isBookNode(parent) || $isChapterNode(parent) || $isUnknownNode(parent)) return;
+    // Note content and the `\id` line's content both display space runs as NBSP like any other
+    // content — the USJ->editor adaptor already display-maps their text on load, so mapping while
+    // typing is what keeps the live shape and the loaded one the same. A chapter's own text is its
+    // `\c N` glyph rather than content, and unknown blocks keep literal text (degradation
+    // property), so neither has a content run to map.
+    if ($isChapterNode(parent) || $isUnknownNode(parent)) return;
   }
   // A char span's text children carry a STRUCTURAL leading NBSP (the glyph separator the
   // adaptor/materializer glues onto content). It is not a display space-run member, so it must

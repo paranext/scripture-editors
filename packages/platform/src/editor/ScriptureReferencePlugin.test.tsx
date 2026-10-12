@@ -25,6 +25,7 @@ import {
   $setSelection,
   BaseSelection,
   LexicalEditor,
+  LexicalNode,
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
@@ -100,6 +101,7 @@ let noteVerseMarker: SomeVerseNode;
 let milestoneVerseMarker: SomeVerseNode;
 let charVerseMarker: SomeVerseNode;
 let emptyVerseMarker: SomeVerseNode;
+let paragraphFinalVerseMarker: SomeVerseNode;
 let noteVersePara: ParaNode;
 let emptyVersePara: ParaNode;
 let verseFinalNote: NoteNode;
@@ -390,25 +392,90 @@ describe("ScriptureReferencePlugin", () => {
       expect(mockOnScrRefChange).not.toHaveBeenCalled();
     });
 
-    it("stops at the next verse marker for an empty verse with an editable marker", async () => {
+    it("rests at the end of the editable verse marker for an empty verse", async () => {
       const { editor, setScrRef } = await testEnvironment(
         scrRef,
         mockOnScrRefChange,
         $editableVerseContentStartingWithNonTextState,
       );
       updateSelection(editor, firstVerseTextNode, 2);
+      // Let the setup selection's queued `selectionchange` land now, so the one that settles the
+      // placement below is always the placement's own rather than whichever happens to be pending.
+      await flushQueuedEvents();
 
       await setScrRef({ ...scrRef, verseNum: 5 });
+      // jsdom fires `selectionchange` a macrotask after the DOM selection moves; act() does not
+      // wait for it.
+      await flushQueuedEvents();
 
       editor.getEditorState().read(() => {
-        // Nothing but the NEXT verse marker follows, so placement leaves the boundary element point
-        // — and in editable-marker mode Lexical's own selection normalization then resolves that to
-        // the end of this verse's marker, which draws a caret in the right place. Either way the
-        // caret must NOT run on into verse 6's text.
+        // Nothing but the NEXT verse marker follows. The caret goes to the end of this verse's own
+        // marker, not to the start of verse 6's marker at the same screen location, and must NOT
+        // run on into verse 6's text.
         $expectSelectionToBe(emptyVerseMarker, emptyVerseMarker.getTextContentSize());
       });
       expect(mockOnScrRefChange).not.toHaveBeenCalled();
     });
+
+    // Documents intended behavior; it cannot fail without the placement code. With nothing after the
+    // marker, the old element point and the marker-end point converge once Lexical commits the
+    // update, so no assertion on the outcome tells them apart.
+    it("rests at the end of the editable verse marker for an empty verse that ends its paragraph", async () => {
+      const { editor, setScrRef } = await testEnvironment(
+        scrRef,
+        mockOnScrRefChange,
+        $editableParagraphFinalEmptyVerseState,
+      );
+      updateSelection(editor, firstVerseTextNode, 2);
+
+      await setScrRef({ ...scrRef, verseNum: 5 });
+
+      editor.getEditorState().read(() => {
+        // Nothing follows the marker in its paragraph, so there is no text host after it; the end of
+        // the marker is the one text point that belongs to this verse.
+        $expectSelectionToBe(
+          paragraphFinalVerseMarker,
+          paragraphFinalVerseMarker.getTextContentSize(),
+        );
+      });
+      expect(mockOnScrRefChange).not.toHaveBeenCalled();
+    });
+
+    // Which verse the caret reports matters as much as where it is drawn: a caret that resolves into
+    // the next verse reports that verse to the host, and every view following the host moves there.
+    it.each([
+      [
+        "an editable marker (Standard view)",
+        $editableVerseContentStartingWithNonTextState,
+        (): [LexicalNode, number] => [emptyVerseMarker, emptyVerseMarker.getTextContentSize()],
+      ],
+      [
+        "an immutable marker (Formatted view)",
+        $immutableVerseContentStartingWithNonTextState,
+        (): [LexicalNode, number] => [emptyVersePara, 1],
+      ],
+    ])(
+      "reports the empty verse for a caret the user puts in it, with %s",
+      async (_label, $initialState, caret) => {
+        const { editor } = await testEnvironment(scrRef, mockOnScrRefChange, $initialState);
+        // Consume the initial move-to-verse-start so the dispatch below runs the reporting logic.
+        await act(async () => {
+          editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        });
+        mockOnScrRefChange.mockClear();
+
+        const [node, offset] = editor.getEditorState().read(caret);
+        updateSelection(editor, node, offset);
+        await act(async () => {
+          editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        });
+
+        expect(mockOnScrRefChange).toHaveBeenCalledWith(expect.objectContaining({ verseNum: 5 }));
+        expect(mockOnScrRefChange).not.toHaveBeenCalledWith(
+          expect.objectContaining({ verseNum: 6 }),
+        );
+      },
+    );
 
     // Every view but Standard/Unformatted renders a verse as a childless `ImmutableVerseNode`
     // decorator, which cannot host a caret, so the marker's end is not available as a position
@@ -1432,6 +1499,25 @@ function $immutableVerseFinalNoteState() {
 function $editableVerseContentStartingWithNonTextState() {
   $appendVerseContentStartingWithNonText((number) =>
     $createVerseNode(number, getVisibleOpenMarkerText("v", number)),
+  );
+}
+
+/** Standard view with an empty verse 5 that is the last child of its paragraph; verse 6 opens the next. */
+function $editableParagraphFinalEmptyVerseState() {
+  firstVerseTextNode = $createTextNode("first verse text ");
+  paragraphFinalVerseMarker = $createVerseNode("5", getVisibleOpenMarkerText("v", "5"));
+  $getRoot().append(
+    $createBookNode("GEN").append($createTextNode("Test Book")),
+    $createImmutableChapterNode("1"),
+    $createParaNode().append(
+      $createVerseNode("1", getVisibleOpenMarkerText("v", "1")),
+      firstVerseTextNode,
+    ),
+    $createParaNode().append(paragraphFinalVerseMarker),
+    $createParaNode().append(
+      $createVerseNode("6", getVisibleOpenMarkerText("v", "6")),
+      $createTextNode("verse six text "),
+    ),
   );
 }
 

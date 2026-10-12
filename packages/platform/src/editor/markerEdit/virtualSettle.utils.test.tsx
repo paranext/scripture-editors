@@ -3,19 +3,19 @@
  * editor. Each case drives a real pending edit through the mounted engine, reads the settled USJ,
  * and then asserts the editor itself is unchanged — the two halves of the contract.
  */
-import { deserializeSerializedEditorState } from "../adaptors/editor-usj.adaptor";
 import {
   $appendMilestoneRun,
   $pendGlyphEdit,
+  settledUsjOf,
   testEnvironment,
   testEnvironmentExpanded,
+  unsettledUsjOf,
   viewOptions,
 } from "./markerEdit.test-helpers";
-import { $settledUsj } from "./virtualSettle.utils";
 import { Tier2Context } from "./tier2Rebuild.utils";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $createTextNode, $getRoot, $isTextNode, $setState, LexicalEditor } from "lexical";
+import { $createTextNode, $getRoot, $isTextNode, $setState } from "lexical";
 import {
   $createCharNode,
   $createImmutableTypedTextNode,
@@ -32,33 +32,11 @@ import {
   $isUnknownNode,
   getEditableCallerText,
   getMarker as bundledGetMarker,
-  getPendedDisplayOwners,
   NBSP,
   textTypeState,
 } from "shared";
 
 const context: Tier2Context = { viewOptions, getMarker: bundledGetMarker };
-
-/** Read the settled USJ exactly as `Editor.tsx`'s `getUsj()` does. */
-function settledUsjOf(editor: LexicalEditor): Usj | undefined {
-  const editorState = editor.getEditorState();
-  const serializedState = editorState.toJSON();
-  const pendedKeys = getPendedDisplayOwners(editor) ?? new Set<string>();
-  return editorState.read(() => $settledUsj(serializedState, pendedKeys, context));
-}
-
-/**
- * The UNSETTLED USJ: a plain editor->USJ conversion of the editor's current serialized state,
- * with no settle logic involved at all — what the caller already has cached before ever calling
- * `$settledUsj` (see its `undefined` fast-path return). The reference a refusing scope's settled
- * output must match byte-for-byte, since a refusal contributes "as-is", never a partial patch.
- */
-function unsettledUsjOf(editor: LexicalEditor): Usj | undefined {
-  const editorState = editor.getEditorState();
-  return editorState.read(() =>
-    deserializeSerializedEditorState(editorState.toJSON(), viewOptions),
-  );
-}
 
 /** The `marker` of the USJ content entry at `index`, or undefined when it is not a marker object. */
 function markerAt(usj: Usj | undefined, index: number): string | undefined {
@@ -74,7 +52,7 @@ describe("$settledUsj — paragraph scopes", () => {
         $createParaNode("p").append($createMarkerNode("p"), $createTextNode(`${NBSP}body`)),
       );
     });
-    expect(settledUsjOf(editor)).toBeUndefined();
+    expect(settledUsjOf(editor, context)).toBeUndefined();
   });
 
   it("settles an abandoned in-place marker rename in the OUTPUT without mutating the editor", async () => {
@@ -96,7 +74,7 @@ describe("$settledUsj — paragraph scopes", () => {
       await Promise.resolve();
     });
 
-    expect(markerAt(settledUsjOf(editor), 0)).toBe("q1");
+    expect(markerAt(settledUsjOf(editor, context), 0)).toBe("q1");
 
     // The editor is untouched: the paragraph is still `\p` with the pending literal on screen.
     editor.getEditorState().read(() => {
@@ -129,7 +107,7 @@ describe("$settledUsj — paragraph scopes", () => {
       await Promise.resolve();
     });
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     expect(markerAt(settled, 0)).toBe("q1");
     const para = settled?.content[0];
     if (!para || typeof para === "string") throw new Error("expected a para marker object");
@@ -175,7 +153,7 @@ describe("$settledUsj — paragraph scopes", () => {
       await Promise.resolve();
     });
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     const para = settled?.content[0];
     if (!para || typeof para === "string") throw new Error("expected a para marker object");
     const content = (para as MarkerObject).content ?? [];
@@ -219,7 +197,7 @@ describe("$settledUsj — paragraph scopes", () => {
       await Promise.resolve();
     });
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     // The unrelated scope genuinely re-tokenized.
     expect(markerAt(settled, 1)).toBe("q2");
     // The refusing scope did NOT re-tokenize: still `\p`, not `\q1`.
@@ -271,7 +249,7 @@ describe("$settledUsj — paragraph scopes", () => {
       await Promise.resolve();
     });
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     const para = settled?.content[0];
     if (!para || typeof para === "string") throw new Error("expected a para marker object");
     // The unrelated rename genuinely re-tokenized.
@@ -324,7 +302,7 @@ describe("$settledUsj — paragraph scopes", () => {
       await Promise.resolve();
     });
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     const para = settled?.content[0];
     if (!para || typeof para === "string") throw new Error("expected a para marker object");
     // The rename genuinely settled: a "char" entry with marker "it" exists in the output. Before
@@ -422,7 +400,7 @@ describe("$settledUsj — paragraph scopes", () => {
     // caused by the unrelated note's own nested marker leaking into the live sequence (before the
     // opacity gate: live sequence ["p","bd","nd"] vs. JSON sequence ["p","nd"] — a length
     // mismatch that made a genuine fixed point look like a structural change).
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     const unsettled = unsettledUsjOf(editor);
     expect(settled?.content[0]).toEqual(unsettled?.content[0]);
   });
@@ -475,7 +453,7 @@ describe("$settledUsj — expanded note scopes", () => {
       await Promise.resolve();
     });
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     const para = settled?.content[0];
     if (!para || typeof para === "string") throw new Error("expected a para marker object");
     const note = (para as MarkerObject).content?.find(
@@ -546,7 +524,7 @@ describe("$settledUsj — expanded note scopes", () => {
       await Promise.resolve();
     });
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     // The unrelated scope genuinely re-tokenized.
     expect(markerAt(settled, 1)).toBe("q2");
 
@@ -600,7 +578,7 @@ describe("$settledUsj — expanded note scopes", () => {
       await Promise.resolve();
     });
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     // The paragraph genuinely re-tokenized.
     expect(markerAt(settled, 0)).toBe("q1");
 
@@ -678,7 +656,7 @@ describe("$settledUsj — expanded note scopes", () => {
       await Promise.resolve();
     });
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     const para = settled?.content[0];
     if (!para || typeof para === "string") throw new Error("expected a para marker object");
     const note = (para as MarkerObject).content?.find(
@@ -742,7 +720,7 @@ describe("$settledUsj — expanded note scopes", () => {
       await Promise.resolve();
     });
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     const para = settled?.content[0];
     if (!para || typeof para === "string") throw new Error("expected a para marker object");
     const note = (para as MarkerObject).content?.find(
@@ -823,7 +801,7 @@ describe("$settledUsj — expanded note scopes", () => {
       await Promise.resolve();
     });
 
-    const settled = settledUsjOf(editor);
+    const settled = settledUsjOf(editor, context);
     // The unrelated scope genuinely re-tokenized.
     expect(markerAt(settled, 1)).toBe("q2");
 

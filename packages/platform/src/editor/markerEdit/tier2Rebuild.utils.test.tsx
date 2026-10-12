@@ -619,6 +619,50 @@ describe("$rebuildParas", () => {
     });
   });
 
+  it("holds a caret parked at an ELEMENT point between a verse and a note through a rebuild elsewhere", () => {
+    // ArrowLeft past a collapsed note leaves the caret at an ELEMENT point ON THE PARAGRAPH itself
+    // (offset = the note's own index) rather than a text point. An unrelated edit later in the
+    // paragraph still drives a mutating rebuild, and the caret must hold its place past the verse
+    // rather than jumping to the rebuild's first element.
+    const editor = loadEditor(
+      usjFromUsx(
+        `<verse number="1" style="v" /><note caller="+" style="f"><char style="ft">n</char></note> b \\nd x\\nd* c`,
+      ),
+    );
+    let noteKey = "";
+    editor.update(
+      () => {
+        const para = $lastPara();
+        const noteNode = requireDefined(
+          para.getChildren().find((n) => n.getType() === "note"),
+          "note node not found",
+        );
+        noteKey = noteNode.getKey();
+        const noteIndex = noteNode.getIndexWithinParent();
+        para.select(noteIndex, noteIndex);
+        expect($rebuildParas([para], context)).toBe(true);
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      const para = $lastPara();
+      const note = para.getChildren().find((n) => n.getType() === "note");
+      expect(note?.getKey()).toBe(noteKey); // same instance, not a recreation
+      const verse = requireDefined(
+        para.getChildren().find($isVerseNode),
+        "verse node not found after rebuild",
+      );
+      const selection = $getSelection();
+      expect($isRangeSelection(selection)).toBe(true);
+      if ($isRangeSelection(selection)) {
+        // The bug parks the caret at the START of the rebuild's first element instead of holding
+        // its place past the verse, right before the note.
+        expect(selection.anchor.key).toBe(verse.getKey());
+        expect(selection.anchor.offset).toBe(verse.getTextContentSize());
+      }
+    });
+  });
+
   it("lands the caret AFTER a typed closer glyph, on the following content (not inside it)", () => {
     // The user typed a complete `\nd Lord\nd*` span; the caret sits right after the just-typed
     // closer `\nd*`, before " after". After the rebuild builds the real CharNode span, the caret
