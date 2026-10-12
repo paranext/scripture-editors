@@ -15,6 +15,30 @@ import {
 import { ContentJsonPath, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { SKIP_DOM_SELECTION_TAG } from "lexical";
+import { afterAll, beforeAll } from "vitest";
+
+// jsdom implements `getBoundingClientRect` on Element but not on Range, and Lexical measures the
+// selection through a Range whenever it scrolls a collapsed caret into view after a commit — so
+// the focused-editor case below throws asynchronously, outside the test's own stack. Kept local
+// for the reason noteCaretPlacement.test.tsx gives.
+const originalRangeRect = Range.prototype.getBoundingClientRect;
+beforeAll(() => {
+  Range.prototype.getBoundingClientRect = () =>
+    ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      width: 0,
+      height: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+});
+afterAll(() => {
+  Range.prototype.getBoundingClientRect = originalRangeRect;
+});
 
 const twoNotesUsj: Usj = {
   type: "USJ",
