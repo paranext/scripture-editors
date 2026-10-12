@@ -41,6 +41,8 @@ import {
 import {
   $chapterAltnumberRunPieces,
   $chapterGlyphTextNode,
+  $chapterPubnumberRunPieces,
+  $createImpliedParaNode,
   $createParaNode,
   $isChapterNode,
   ChapterNode,
@@ -189,6 +191,23 @@ export function $pasteOnChapterLine(
 const INSERTION_PLACEHOLDER = "\uFDD0";
 
 /**
+ * Whether the caret of `selection` is in `chapter`'s `\cp` run. Typing there goes into the published
+ * number, since a `\cp` run has no closer, but a marker inserted there ends it: Paratext 9 puts the
+ * marker's bytes at the caret (`\cp B\f …`), and ParatextData reads that back as the chapter keeping
+ * its published number, with the inserted content after it.
+ */
+function $isCaretInPubnumberRun(chapter: ChapterNode, selection: RangeSelection): boolean {
+  const { opener, value, wrapper } = $chapterPubnumberRunPieces(chapter);
+  const runStart = wrapper ?? opener;
+  if (!runStart) return false;
+  const focusNode = selection.focus.getNode();
+  if (focusNode.is(chapter)) return selection.focus.offset > runStart.getIndexWithinParent();
+  return [wrapper, opener, value].some(
+    (piece) => piece && (piece.is(focusNode) || piece.isParentOf(focusNode)),
+  );
+}
+
+/**
  * Where on `chapter`'s line an insertion requested at `selection` goes: after the `\ca` run when
  * the caret is past the chapter number and the run is there, closed; else after the number.
  * Typing past the `\ca` run keeps it the chapter's alternate number, so an insertion there does
@@ -226,7 +245,9 @@ function $insertionAnchorOnChapterLine(
  * typing there puts it, and the run stays the chapter's: `\c 1 \ca 2\ca*^` becomes
  * `\c 1 \ca 2\ca*\n^`. Rather than build that shape by hand, the chapter's bytes are re-tokenized
  * with one character standing in for the content (`$rebuildChapter`, the same settle that typing
- * there runs), and the caret then takes that character's place.
+ * there runs), and the caret then takes that character's place. With the caret in the `\cp` run,
+ * the content goes on a line of its own after the chapter line and the run stays the chapter's:
+ * `\c 1 \cp B^` becomes `\c 1 \cp B\n^`, as Paratext 9 reads the marker's bytes put there.
  *
  * The content goes after the chapter number (or the `\ca` run) wherever on the line the caret is,
  * and a selection lying wholly on the chapter line is treated the same way: the bytes of the marker
@@ -251,6 +272,17 @@ export function $moveCaretOffChapterLine(context: Tier2Context): boolean {
   if (!chapter || !chapter.is($chapterLineOf(selection.anchor.getNode()))) return true;
   const glyph = $chapterGlyphTextNode(chapter);
   if (!glyph) return false;
+
+  // Nothing on the chapter line changes, so there is nothing to re-tokenize, and a stand-in would
+  // only be read as more of the published number.
+  if ($isCaretInPubnumberRun(chapter, selection)) {
+    const holder = $createTextNode("");
+    ($chapterAdjacentAttributeNodes(chapter).at(-1) ?? chapter).insertAfter(
+      $createImpliedParaNode().append(holder),
+    );
+    holder.select(0, 0);
+    return true;
+  }
 
   // The re-tokenize replaces the chapter and its attribute region; the nodes between these two are
   // what it produced.

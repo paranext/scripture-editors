@@ -37,6 +37,7 @@ import {
 import {
   $chapterAltnumberRunPieces,
   $chapterGlyphTextNode,
+  $chapterPubnumberRunPieces,
   $isChapterNode,
   ChapterNode,
   getVisibleOpenMarkerText,
@@ -87,6 +88,13 @@ function $glyph(): TextNode {
 function $afterAltnumberRun(): void {
   const { closer } = $chapterAltnumberRunPieces($chapter());
   const end = requireDefined(closer, "no \\ca closer");
+  end.select(end.getTextContentSize(), end.getTextContentSize());
+}
+
+/** Puts a collapsed caret at the end of the chapter's `\\cp` run's value, the end of its line. */
+function $afterPubnumberRun(): void {
+  const { value } = $chapterPubnumberRunPieces($chapter());
+  const end = requireDefined(value, "no \\cp value");
   end.select(end.getTextContentSize(), end.getTextContentSize());
 }
 
@@ -694,6 +702,37 @@ describe("inline insertion with the caret on the chapter line", () => {
         ref.current?.insertMarker(marker);
       });
       expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2_CA_3, inserted, VERSE_1_PARA]);
+    },
+  );
+
+  // Paratext 9 inserts the marker's bytes at the caret, `\cp B\f …\f*`, and ParatextData reads
+  // that back as the chapter keeping its published number with the content after it.
+  it.each(insertions)(
+    "inserts %s after the chapter's \\cp run from a caret at its end, keeping the published number",
+    async (_label, marker, inserted) => {
+      const { ref, lexical } = await mountStandardViewEditor(docOf(CHAPTER_2_CP_B, VERSE_1_PARA), {
+        scrRef: GEN_2_1,
+      });
+      await act(async () => lexical.update(() => $afterPubnumberRun()));
+      await act(async () => {
+        ref.current?.insertMarker(marker);
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([CHAPTER_2_CP_B, inserted, VERSE_1_PARA]);
+    },
+  );
+
+  it.each(insertions)(
+    "inserts %s after both of the chapter's runs from a caret at the end of its \\cp run",
+    async (_label, marker, inserted) => {
+      const chapter: MarkerContent = { ...CHAPTER_2, altnumber: "3", pubnumber: "B" };
+      const { ref, lexical } = await mountStandardViewEditor(docOf(chapter, VERSE_1_PARA), {
+        scrRef: GEN_2_1,
+      });
+      await act(async () => lexical.update(() => $afterPubnumberRun()));
+      await act(async () => {
+        ref.current?.insertMarker(marker);
+      });
+      expect(ref.current?.getUsj()?.content).toEqual([chapter, inserted, VERSE_1_PARA]);
     },
   );
 
