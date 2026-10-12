@@ -1285,6 +1285,19 @@ function $appendNodesFragment(
 }
 
 /**
+ * Whether `para` is a nameless paragraph (ParatextData reads `\p \ df` as a paragraph whose style
+ * is empty) whose glyph still names no marker. Its bytes would re-tokenize as a literal `\ ` in a
+ * default paragraph, so until a typed nameless backslash tokenizes as ParatextData reads it, such a
+ * paragraph is preserved rather than rebuilt. A glyph the user has given a name (`\` retyped to
+ * `\q`) spells a marker again and rebuilds like any other paragraph.
+ */
+function $isUnnamedNamelessPara(para: ParaNode): boolean {
+  if (para.getMarker() !== "") return false;
+  const glyph = para.getFirstChild();
+  return !$isMarkerNode(glyph) || !/\\[^\s\\]/.test(glyph.getTextContent());
+}
+
+/**
  * Exported for two callers outside this module's own rebuild path. The read-only settle
  * (virtualSettle.utils.ts) builds the SAME fragment a mutating rebuild would, which is what makes
  * the settled USJ a consumer reads and the structure a later real settle produces one computation
@@ -1301,6 +1314,7 @@ export function $buildParaFragment(
   // Guard rails (preserve-or-refuse): a paragraph the engine cannot fully
   // re-derive from its text is never rebuilt — edits inside it stay literal text.
   if (para.getUnknownAttributes()) return undefined;
+  if ($isUnnamedNamelessPara(para)) return undefined;
   // Known non-paragraph kinds can't be re-derived as paragraphs. Unknown markers
   // now round-trip: the tokenizer emits them as paragraphs in body context (PT9
   // DetermineUnknownTokenType), so they no longer refuse.

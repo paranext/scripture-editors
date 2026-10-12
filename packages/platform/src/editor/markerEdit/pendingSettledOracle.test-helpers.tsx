@@ -192,6 +192,11 @@ const CORPUS: { name: string; usj: Usj }[] = [
     ]),
   },
   {
+    // ParatextData reads `\p \ df` as a paragraph whose style is empty.
+    name: "nameless paragraph",
+    usj: chapterSideUsj({ type: "para", marker: "", content: ["df"] }),
+  },
+  {
     name: "\\ca span beside its chapter",
     usj: chapterSideUsj({ type: "char", marker: "ca", content: ["3"] }),
   },
