@@ -134,28 +134,44 @@ export interface EditorRef {
    */
   commitPendingMarkerEdits(): void;
   /**
-   * Suspends (or resumes) the two settle clocks that fire with NO user gesture: the idle debounce
-   * and the blur settle. For a host that opens a surface of its own over the editor — a marker
-   * palette — and needs the document to hold still while it is open.
+   * EXPERIMENTAL: this signature may change. Suspends (or resumes) the settle clocks that fire
+   * without the host asking for them: the idle debounce, the blur settle, and the caret-departure
+   * settle. For a host that opens a surface of its own over the editor — a marker palette — and
+   * needs the document to stop reformatting underneath it while that surface is open.
    *
-   * Both clocks are a problem for such a surface, for the same underlying reason: a settle updates
-   * the editor, an update moves the selection, and moving the selection makes Lexical focus the
-   * editor root — pulling focus out of the surface, which the host then dismisses on the window
-   * blur that follows. The blur clock fires the instant the surface takes focus; the idle clock
-   * fires about a second later, closing a surface the user is still looking at.
+   * All three are a problem for such a surface, for the same underlying reason: a settle commits
+   * dirty nodes, and Lexical re-asserts the DOM selection on any such commit — focusing the editor
+   * root whenever focus has left it (`updateDOMSelection`). A surface that dismisses itself on
+   * focus loss therefore closes. The blur clock fires the instant the surface takes focus; the
+   * idle clock fires one `EditorOptions.markerSettleDelayMs` later, closing a surface the user is
+   * still looking at; the departure clock is keyed off every COMMIT, so a commit the host or a
+   * display-run sync makes while the surface is open does the same thing with no user involved.
    *
    * Suspending CANCELS an already-armed idle timer, which is the part a delay change cannot do:
    * `EditorOptions.markerSettleDelayMs` is read when the clock is next armed, so a timer armed
    * before the host changed it still fires. Resuming re-arms a full delay from that moment, so
    * work left pending through the suspension settles on the normal rhythm rather than at once.
+   * Redispatching the value already in force is a no-op, so a host may drive this straight from an
+   * effect.
    *
-   * Deliberately narrow. Settles driven by a real user gesture — caret departure, Enter, an
-   * explicit {@link EditorRef.commitPendingMarkerEdits} — are untouched, because the user asking
-   * for something is not the case this protects against. The caret's own node is already excepted
-   * from the blur settle; this covers every other pending node, which is what produces the update.
+   * Deliberately narrow: what remains is what the host or the user EXPLICITLY asked for — Enter,
+   * and {@link EditorRef.commitPendingMarkerEdits}. Note that a forced commit is not covered, and
+   * `commitPendingMarkerEdits`' own rule still binds: do not issue one while a palette session is
+   * open. A host whose pre-save debounce can fire with the surface open must hold that save, not
+   * rely on this. The caret's own node is already excepted from the blur settle (see the blur
+   * handler for the exact fallback); this covers every other pending node.
    *
    * The host owns the pairing: suspend when the surface opens, resume when it closes, including on
-   * the paths where it closes without committing.
+   * the paths where it closes without committing. Not refcounted — one owner at a time, last call
+   * wins, so a second surface's resume lifts the first one's hold. Nothing else clears it: not
+   * {@link EditorRef.setUsj}, not a plugin re-registration (surviving that is deliberate), and
+   * there is no timeout. A host that misses a resume path loses all three clocks for the life of
+   * that editor, with no log and no way to read the flag back. That is a visible degradation
+   * rather than a data-integrity problem — {@link EditorRef.getUsj} settles independently of these
+   * clocks, and Enter and a forced commit still settle — but it is open-ended, unlike
+   * {@link EditorRef.setTransientInput}, whose stale declarations self-heal.
+   *
+   * No-op outside editable marker modes, and silently dropped if the editor is not mounted.
    */
   setMarkerSettleSuspended(suspended: boolean): void;
   /**

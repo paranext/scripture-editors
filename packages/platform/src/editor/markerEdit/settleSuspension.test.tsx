@@ -1,20 +1,24 @@
 /**
- * Suspending the gesture-free settle clocks (`EditorRef.setMarkerSettleSuspended`).
+ * Suspending the settle clocks a host did not ask for (`EditorRef.setMarkerSettleSuspended`).
  *
  * A host that opens its own surface over the editor — a marker palette — needs the document to
- * hold still while it is open, and the two clocks that fire with NO user gesture are what break
- * that. Both do it the same way: a settle updates the editor, an update moves the selection, and
- * moving the selection makes Lexical focus the editor root — pulling focus out of the surface,
- * which the host then dismisses on the window blur that follows.
+ * stop reformatting underneath it while that surface is open. Three clocks break that, all the
+ * same way: a settle commits dirty nodes, and Lexical re-asserts the DOM selection on any such
+ * commit, focusing the editor root whenever focus has left it. A surface that dismisses itself on
+ * focus loss then closes.
  *
  * - The BLUR clock fires the instant the surface takes focus. Its existing caret-node exception
  *   already protects the literal the palette is about to consume, so what remains is every OTHER
- *   pending node — and settling those is what produces the update.
- * - The IDLE clock fires about a second later, closing a surface the user is still looking at.
+ *   pending node — and settling those is what produces the commit.
+ * - The IDLE clock fires one `markerSettleDelayMs` later, closing a surface the user is still
+ *   looking at.
+ * - The DEPARTURE clock is keyed off every commit, not off a gesture, so an ordinary commit while
+ *   the surface is open settles underneath it with no user involved ("an ordinary commit while
+ *   suspended does not settle" below).
  *
- * Why a delay change is not enough, which is the case the last test here pins: the engine reads
- * `markerSettleDelayMs` when it next ARMS the clock, so a timer armed before the host changed the
- * delay still fires. Suspending cancels the armed timer outright.
+ * Why a delay change is not enough, which is what "CANCELS a timer that was already armed" pins:
+ * the engine reads `markerSettleDelayMs` when it next ARMS the clock, so a timer armed before the
+ * host changed the delay still fires. Suspending cancels the armed timer outright.
  */
 
 import {
@@ -25,7 +29,14 @@ import {
 import { $appendCharPara, $pendGlyphEdit, testEnvironment } from "./markerEdit.test-helpers";
 import { $createMarkerNode, $createParaNode, MarkerNode, NBSP, ParaNode } from "shared";
 import { act } from "@testing-library/react";
-import { $createTextNode, $getRoot, BLUR_COMMAND, LexicalEditor } from "lexical";
+import {
+  $createTextNode,
+  $getRoot,
+  BLUR_COMMAND,
+  CLICK_COMMAND,
+  KEY_DOWN_COMMAND,
+  LexicalEditor,
+} from "lexical";
 
 /** A heading para with its own marker glyph — same shape the Tier-1 blur tests use. */
 function $appendHeadingPara(): { para: ParaNode; marker: MarkerNode } {
@@ -66,8 +77,9 @@ function expectSettled(editor: LexicalEditor, parts: ReturnType<typeof $appendCh
 }
 
 /**
- * What `EditorRef.setMarkerSettleSuspended` does — that method is a one-line dispatch of this
- * command, so driving the command here tests the mechanism rather than the wrapper.
+ * What `EditorRef.setMarkerSettleSuspended` does. That method is a thin dispatch of this command
+ * (`Editor.tsx`), forwarded by `MarginalRef` — driving the command here tests the mechanism; that
+ * wiring is not covered by this file.
  */
 async function setSuspended(editor: LexicalEditor, suspended: boolean): Promise<void> {
   await act(async () => {
@@ -158,12 +170,14 @@ describe("setMarkerSettleSuspended", () => {
 
     await setSuspended(editor, true);
     await act(async () => {
-      editor.dispatchCommand(BLUR_COMMAND, null as never);
+      editor.dispatchCommand(BLUR_COMMAND, undefined as never);
     });
 
     editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1"));
   });
 
+  // A guard-rail against OVER-suspension rather than a test of the feature: it passes with the
+  // feature removed, and fails if a suspension ever stops releasing.
   it("lets the BLUR clock run again once resumed", async () => {
     let para!: ParaNode;
     let marker!: MarkerNode;
@@ -173,15 +187,18 @@ describe("setMarkerSettleSuspended", () => {
     await setSuspended(editor, true);
     await setSuspended(editor, false);
     await act(async () => {
-      editor.dispatchCommand(BLUR_COMMAND, null as never);
+      editor.dispatchCommand(BLUR_COMMAND, undefined as never);
     });
 
     editor.getEditorState().read(() => expect(para.getMarker()).toBe("s2"));
   });
 
-  it("leaves a GESTURE-driven settle alone while suspended", async () => {
-    // Deliberately narrow: the user explicitly asking for a settle is not what this protects
-    // against, so `commitPendingMarkerEdits` still works with a surface open.
+  // Also a guard-rail against over-suspension: it fails the moment someone adds a suspension
+  // check to COMMIT_PENDING_MARKERS_COMMAND. Note the host-side rule that makes this safe —
+  // `commitPendingMarkerEdits`' own doc forbids issuing one while a palette session is open.
+  it("leaves a FORCED commit alone while suspended", async () => {
+    // Deliberately narrow: what the host explicitly asks for is not what this protects against,
+    // so `commitPendingMarkerEdits` still works with a surface open.
     let parts!: ReturnType<typeof $appendCharPara>;
     const { editor } = await testEnvironment(() => {
       parts = $appendCharPara();
@@ -191,6 +208,82 @@ describe("setMarkerSettleSuspended", () => {
     await setSuspended(editor, true);
     await forceCommit(editor);
 
+    expectSettled(editor, parts);
+  });
+
+  it("does not settle on an ordinary commit while suspended", async () => {
+    // The DEPARTURE clock is keyed off every commit, not off a user gesture, so without its own
+    // suspension guard a commit the host or a display-run sync makes — nothing the user did —
+    // settles underneath the open surface about a tick later. Regression test: before the guard
+    // this settled to "wj" roughly 1ms after the commit, long before the idle delay.
+    let parts!: ReturnType<typeof $appendCharPara>;
+    const { editor } = await testEnvironment(() => {
+      parts = $appendCharPara();
+    });
+    await $retypeOpenerBare(editor, parts);
+    await setSuspended(editor, true);
+
+    await act(async () => editor.update(() => $getRoot().append($createParaNode("p"))));
+    await advance(1);
+    expectPending(editor, parts);
+    await advance(IDLE_SETTLE_DELAY_MS * 2);
+    expectPending(editor, parts);
+  });
+
+  it("does not let a CLICK re-arm the idle clock while suspended", async () => {
+    // `armIdleSettle`'s own guard, which only a re-arm attempt DURING a suspension reaches: the
+    // CLICK and KEY_DOWN handlers and every commit re-arm the clock, so without it an open
+    // palette that sees any of those settles one idle delay later anyway.
+    let parts!: ReturnType<typeof $appendCharPara>;
+    const { editor } = await testEnvironment(() => {
+      parts = $appendCharPara();
+    });
+    await $retypeOpenerBare(editor, parts);
+    await setSuspended(editor, true);
+
+    await act(async () => {
+      editor.dispatchCommand(CLICK_COMMAND, new MouseEvent("click") as never);
+    });
+    await advance(IDLE_SETTLE_DELAY_MS * 3);
+
+    expectPending(editor, parts);
+  });
+
+  it("does not let a KEY_DOWN re-arm the idle clock while suspended", async () => {
+    // The palette filters on keystrokes the editor still sees, so this is the re-arm attempt that
+    // actually happens in use.
+    let parts!: ReturnType<typeof $appendCharPara>;
+    const { editor } = await testEnvironment(() => {
+      parts = $appendCharPara();
+    });
+    await $retypeOpenerBare(editor, parts);
+    await setSuspended(editor, true);
+
+    await act(async () => {
+      editor.dispatchCommand(KEY_DOWN_COMMAND, new KeyboardEvent("keydown", { key: "s" }));
+    });
+    await advance(IDLE_SETTLE_DELAY_MS * 3);
+
+    expectPending(editor, parts);
+  });
+
+  it("ignores a resume dispatched when already resumed", async () => {
+    // The resume branch re-arms a FULL delay, so a host driving this from an effect without a
+    // change guard would push the settle out on every render and starve the clock. Redispatching
+    // the value already in force must therefore do nothing at all.
+    let parts!: ReturnType<typeof $appendCharPara>;
+    const { editor } = await testEnvironment(() => {
+      parts = $appendCharPara();
+    });
+    await $retypeOpenerBare(editor, parts);
+
+    // Most of one delay goes by, then a redundant resume lands.
+    await advance(IDLE_SETTLE_DELAY_MS - 100);
+    expectPending(editor, parts);
+    await setSuspended(editor, false);
+
+    // The clock the first pend armed is still the one running, so the remaining 100ms settles it.
+    await advance(200);
     expectSettled(editor, parts);
   });
 });

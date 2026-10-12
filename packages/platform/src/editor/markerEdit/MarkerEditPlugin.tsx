@@ -727,10 +727,8 @@ export function MarkerEditPlugin({
       if (idleSettleTimer !== undefined) clearTimeout(idleSettleTimer);
       idleSettleTimer = undefined;
       if (disposed || context.pendingKeys.size === 0) return;
-      // Suspended by the host (a marker palette is open). Clearing above and returning here is the
-      // whole mechanism: nothing re-arms until the host resumes, and the resume re-arms a FULL
-      // delay from that moment rather than letting a timer armed before the palette opened fire
-      // the instant it closes.
+      // Suspended by the host (a marker palette is open): never arm. The suspend command cancels
+      // anything already ticking and the resume re-arms a full delay — see the handler itself.
       if (markerSettleSuspendedRef.current) return;
       const delay = markerSettleDelayRef.current ?? IDLE_SETTLE_DELAY_MS;
       // A negative delay (canonically -1) turns the idle clock OFF: the timer armed above was
@@ -1153,12 +1151,18 @@ export function MarkerEditPlugin({
       editor.registerCommand(
         SET_MARKER_SETTLE_SUSPENDED_COMMAND,
         (suspended) => {
+          // Idempotent: a host driving this from an effect can redispatch the value already in
+          // force, and the resume branch below RE-ARMS the idle clock. Without this, a redundant
+          // resume on every render would push the settle out by a fresh full delay each time and
+          // starve the clock indefinitely — a failure whose symptom (markers never settle on an
+          // idle pause) looks nothing like its cause.
+          if (markerSettleSuspendedRef.current === suspended) return true;
           markerSettleSuspendedRef.current = suspended;
           if (suspended) {
             // Cancel a timer that is ALREADY ticking. This is the part a delay change cannot do:
             // `markerSettleDelayMs: -1` is only read the next time something arms the clock, so a
             // timer armed before the host suspended would still fire — closing the surface that
-            // suspended it about a second later.
+            // suspended it one idle delay later.
             if (idleSettleTimer !== undefined) clearTimeout(idleSettleTimer);
             idleSettleTimer = undefined;
           } else {
@@ -1168,7 +1172,11 @@ export function MarkerEditPlugin({
           }
           return true;
         },
-        COMMAND_PRIORITY_CRITICAL,
+        // LOW, matching the sibling host-dispatched `COMMIT_PENDING_MARKERS_COMMAND` below. This
+        // command has exactly one handler, so priority decides nothing; CRITICAL is reserved in
+        // this file for handlers that must beat Lexical's built-ins on NATIVE commands, and using
+        // it here would imply a priority contest that does not exist.
+        COMMAND_PRIORITY_LOW,
       ),
       editor.registerCommand(
         COMMIT_PENDING_MARKERS_COMMAND,
@@ -1210,10 +1218,13 @@ export function MarkerEditPlugin({
       editor.registerCommand(
         BLUR_COMMAND,
         () => {
-          // Suspended by the host: the blur IS the palette taking focus, so settling now would
-          // update the editor, move the selection, and make Lexical pull focus back out of the
-          // surface that just took it. The caret's own node is already excepted below; this covers
-          // every OTHER pending node, which is what actually produces that update.
+          // Suspended by the host. While suspended we cannot tell the surface's own focus steal
+          // from any other blur — another panel, alt-tab, closing the window — so every blur
+          // settle is held until the host resumes, and those other blurs keep their pending set
+          // until then. Settling here would commit dirty nodes, and Lexical re-asserts the DOM
+          // selection on such a commit, focusing the root back out of whatever just took focus.
+          // The caret's own node is already excepted below; this covers every OTHER pending node,
+          // which is what actually produces that update.
           if (markerSettleSuspendedRef.current) return false;
           // While the app-placed-caret window is armed (a scrRef-sync yank or an undo/redo
           // restore), focus loss carries no user intent over the restored content: clicking
@@ -1371,11 +1382,19 @@ export function MarkerEditPlugin({
         // nothing even though lastAnchorKey still points at the user's node. The BLUR handler, not
         // this deferred path, does the final sweep when focus is genuinely lost.
         if (resolveQueued || anchorKey === undefined) return;
+        // Suspended by the host. This clock is keyed off every COMMIT, not off a user gesture (see
+        // the note above on why it watches commits rather than SELECTION_CHANGE), so a commit the
+        // host or a display-run sync makes while its surface is open would otherwise settle
+        // underneath it — the very update whose focus side effect the suspension exists to prevent.
+        // Checked again inside the microtask below: a suspend can land between the queue and the
+        // run, and the run is the moment that matters.
+        if (markerSettleSuspendedRef.current) return;
         if (![...context.pendingKeys].some((key) => key !== anchorKey)) return;
         resolveQueued = true;
         queueMicrotask(() => {
           resolveQueued = false;
           if (disposed) return;
+          if (markerSettleSuspendedRef.current) return;
           if (settleCascadeExceeded()) return;
           // lastAnchorKey is re-read here: if further commits landed before this microtask,
           // the freshest anchor wins (never except a node the caret has already left).

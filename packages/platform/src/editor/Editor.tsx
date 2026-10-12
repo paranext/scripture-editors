@@ -575,10 +575,14 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       );
     },
     setMarkerSettleSuspended(suspended) {
-      // Not discrete, and deliberately not wrapped in `editor.update`: this only flips a flag and
-      // (re)arms a timer in the plugin, touching no editor state, so it must not push a commit —
-      // a commit here would move the selection and cause exactly the focus loss the suspension
-      // exists to prevent.
+      // Dispatched bare. Lexical opens an update around every command listener regardless
+      // (`triggerCommandListeners` → `updateEditorSync`), so "not wrapped in `editor.update`" is
+      // not the point — the point is that the handler dirties no node and no selection, so that
+      // implicit update finds nothing to commit and throws its cloned pending state away. NOT
+      // `{ discrete: true }` either, unlike `commitPendingMarkerEdits` above: a discrete update
+      // force-flushes whatever else is already queued, turning a flag flip into someone else's
+      // reconciliation — and a reconciliation is what re-asserts the DOM selection and pulls focus
+      // back to the editor root, the very thing the suspension exists to prevent.
       editorRef.current?.dispatchCommand(SET_MARKER_SETTLE_SUSPENDED_COMMAND, suspended);
     },
     setTransientInput(input) {
