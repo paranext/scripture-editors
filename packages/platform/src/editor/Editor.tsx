@@ -707,10 +707,14 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     setMarkerSettleSuspended(suspended) {
       // Dispatched bare. Lexical opens an update around every command listener regardless
-      // (`triggerCommandListeners` → `updateEditorSync`), so "not wrapped in `editor.update`" is
-      // not the point — the point is that the handler dirties no node and no selection, so that
-      // implicit update finds nothing to commit and throws its cloned pending state away. NOT
-      // `{ discrete: true }` either, unlike `commitPendingMarkerEdits` above: a discrete update
+      // (`triggerCommandListeners` → `updateEditorSync`), and the handler dirties no node, so that
+      // update USUALLY finds nothing to commit. Not always: dispatched outside an event — after an
+      // `await`, or from a timer — `$beginUpdate` re-reads the DOM selection, which can differ from
+      // the state's and produce a selection-only commit. That commit runs `updateDOMSelection`, the
+      // path that focuses the editor root. So dispatch this synchronously from the event that opens
+      // the surface, which is what the `EditorRef` doc asks for anyway.
+      //
+      // NOT `{ discrete: true }`, unlike `commitPendingMarkerEdits` above: a discrete update
       // force-flushes whatever else is already queued, turning a flag flip into someone else's
       // reconciliation — and a reconciliation is what re-asserts the DOM selection and pulls focus
       // back to the editor root, the very thing the suspension exists to prevent.

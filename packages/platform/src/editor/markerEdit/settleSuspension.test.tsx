@@ -26,13 +26,26 @@ import {
   IDLE_SETTLE_DELAY_MS,
   SET_MARKER_SETTLE_SUSPENDED_COMMAND,
 } from "./MarkerEditPlugin";
-import { $appendCharPara, $pendGlyphEdit, testEnvironment } from "./markerEdit.test-helpers";
-import { $createMarkerNode, $createParaNode, MarkerNode, NBSP, ParaNode } from "shared";
+import {
+  $appendCharPara,
+  $pendGlyphEdit,
+  testEnvironment,
+  testEnvironmentWithDisplaySyncs,
+} from "./markerEdit.test-helpers";
+import {
+  $createMarkerNode,
+  $createParaNode,
+  $isParaNode,
+  MarkerNode,
+  NBSP,
+  ParaNode,
+} from "shared";
 import { act } from "@testing-library/react";
 import {
   $createTextNode,
   $getRoot,
   BLUR_COMMAND,
+  FOCUS_COMMAND,
   CLICK_COMMAND,
   KEY_DOWN_COMMAND,
   LexicalEditor,
@@ -94,6 +107,13 @@ async function forceCommit(editor: LexicalEditor): Promise<void> {
       discrete: true,
     }),
   );
+}
+
+/** Let queued microtasks and the updates they open run, WITHOUT advancing any clock. */
+async function flush(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+  });
 }
 
 async function advance(ms: number): Promise<void> {
@@ -214,8 +234,8 @@ describe("setMarkerSettleSuspended", () => {
   it("does not settle on an ordinary commit while suspended", async () => {
     // The DEPARTURE clock is keyed off every commit, not off a user gesture, so without its own
     // suspension guard a commit the host or a display-run sync makes — nothing the user did —
-    // settles underneath the open surface about a tick later. Regression test: before the guard
-    // this settled to "wj" roughly 1ms after the commit, long before the idle delay.
+    // settles underneath the open surface about a tick later — well before the idle delay, so a
+    // test that only advanced the idle clock would not see it.
     let parts!: ReturnType<typeof $appendCharPara>;
     const { editor } = await testEnvironment(() => {
       parts = $appendCharPara();
@@ -250,8 +270,10 @@ describe("setMarkerSettleSuspended", () => {
   });
 
   it("does not let a KEY_DOWN re-arm the idle clock while suspended", async () => {
-    // The palette filters on keystrokes the editor still sees, so this is the re-arm attempt that
-    // actually happens in use.
+    // NOT the filter keystrokes: a host that claims those (Platform.Bible stops propagation in a
+    // capture-phase window listener) never lets them reach Lexical. What does reach the editor
+    // while a session is open are the pass-through keys — modifier and lock keys on the way to a
+    // chord, `Dead`, and IME keys — and any of them would re-arm the clock.
     let parts!: ReturnType<typeof $appendCharPara>;
     const { editor } = await testEnvironment(() => {
       parts = $appendCharPara();
@@ -285,5 +307,128 @@ describe("setMarkerSettleSuspended", () => {
     // The clock the first pend armed is still the one running, so the remaining 100ms settles it.
     await advance(200);
     expectSettled(editor, parts);
+  });
+
+  it("settles a blur-held edit on RESUME, without waiting out an idle delay", async () => {
+    // Paratext 9 reformats when its palette closes, so resume is the moment to settle — not an
+    // idle delay later. A non-caret pend is the shape that reaches this: the caret's own node is
+    // excepted on resume exactly as it is by the blur and departure clocks.
+    let para!: ParaNode;
+    let marker!: MarkerNode;
+    const { editor } = await testEnvironment(() => ({ para, marker } = $appendHeadingPara()));
+    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+
+    await setSuspended(editor, true);
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, undefined as never);
+    });
+    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1"));
+
+    await setSuspended(editor, false);
+    await flush();
+
+    // No timer advanced: the settle is the resume's own, not the re-armed idle clock's.
+    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s2"));
+  });
+
+  it("settles a held edit on RESUME even with the idle clock turned off", async () => {
+    // `markerSettleDelayMs: -1` turns the idle clock off, so there is no clock for a resume to
+    // re-arm, so a resume that only re-armed would leave a held edit pending until the next
+    // keystroke or click, whenever that came.
+    let para!: ParaNode;
+    let marker!: MarkerNode;
+    const { editor } = await testEnvironment(() => ({ para, marker } = $appendHeadingPara()), -1);
+    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+
+    await setSuspended(editor, true);
+    await setSuspended(editor, false);
+    await flush();
+
+    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s2"));
+    // And nothing was waiting on a clock that does not exist.
+    await advance(IDLE_SETTLE_DELAY_MS * 10);
+    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s2"));
+  });
+
+  it("does not settle a departure queued before the suspend but run after it", async () => {
+    // The departure guard is checked TWICE: once where the microtask is queued, once where it
+    // runs. Only the second check covers a suspend that lands in the gap between them, which is
+    // real — the host suspends in its trigger keydown, and a commit from the same keystroke can
+    // already have queued the settle. Removing either check alone must fail a test.
+    let parts!: ReturnType<typeof $appendCharPara>;
+    const { editor } = await testEnvironment(() => {
+      parts = $appendCharPara();
+    });
+    await $retypeOpenerBare(editor, parts);
+
+    await act(async () => {
+      // Discrete: the update listener runs inside this call and queues the departure microtask
+      // while nothing is suspended, so the queue-time guard lets it through...
+      editor.update(
+        () => {
+          $getRoot().append($createParaNode("p"));
+          const para = $getRoot().getFirstChild();
+          if ($isParaNode(para)) para.selectEnd();
+        },
+        { discrete: true },
+      );
+      // ...and the suspend lands before that microtask runs, which only the run-time guard sees.
+      editor.dispatchCommand(SET_MARKER_SETTLE_SUSPENDED_COMMAND, true);
+    });
+    await flush();
+
+    expectPending(editor, parts);
+  });
+
+  it("lifts a suspension the host never resumed, at the next editor focus", async () => {
+    // The safeguard: nothing is lost when a host misses a resume (`getUsj` settles on read), but
+    // typed marker text stays literal on screen until the user presses Enter, and no timer heals
+    // it. The editor regaining focus means the surface is gone, so it is the moment to recover.
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    let para!: ParaNode;
+    let marker!: MarkerNode;
+    const { editor } = await testEnvironmentWithDisplaySyncs(
+      () => ({ para, marker } = $appendHeadingPara()),
+      logger,
+    );
+    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+
+    await setSuspended(editor, true);
+    // The surface takes focus; the blur settle is held, as it should be.
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, undefined as never);
+    });
+    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1"));
+
+    // No resume ever arrives. Focus comes back to the editor instead.
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, undefined as never);
+    });
+    await flush();
+
+    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s2"));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("regained focus"));
+  });
+
+  it("does not lift the suspension on a focus that arrives before the surface took it", async () => {
+    // A host suspends synchronously in its trigger keydown, BEFORE focus moves to the surface, so
+    // there is a window where the suspension holds and the editor still has focus. A commit in
+    // that window can make Lexical re-assert the DOM selection and focus the root, firing
+    // FOCUS_COMMAND. Lifting there would release the suspension before the surface ever had
+    // focus — defeating it on the very keystroke that armed it.
+    let parts!: ReturnType<typeof $appendCharPara>;
+    const { editor } = await testEnvironment(() => {
+      parts = $appendCharPara();
+    });
+    await $retypeOpenerBare(editor, parts);
+    await setSuspended(editor, true);
+
+    // Focus, with no blur in between: not a return of focus, so not the safeguard's case.
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, undefined as never);
+    });
+    await advance(IDLE_SETTLE_DELAY_MS * 3);
+
+    expectPending(editor, parts);
   });
 });
