@@ -374,6 +374,21 @@ export function $moveGlyphTailBehindSeparator(opener: MarkerNode): boolean {
   return true;
 }
 
+/**
+ * Give `opener`, a char span's opening glyph that a builder just made, the standalone spacer it owes
+ * in front of an annotation mark — the shape {@link $syncOpenerSeparators} heals that gap to, when
+ * it heals it. A builder adds it rather than waiting for the sync, because the sync leaves a gap in
+ * front of a mark over a name byte to the marker-edit engine as the user's possible rename
+ * ({@link $isRenamingGap}), and bytes a builder just put behind a glyph it made are no rename. Any
+ * other element after the glyph begins with bytes the name scan stops at, so the sync heals its gap.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+export function $insertOwedOpenerSpacer(opener: MarkerNode, char: CharNode): void {
+  if (!$isTypedMarkNode(opener.getNextSibling())) return;
+  if ($openerSeparatorGap(opener, char) === "spacer") opener.insertAfter($createTextNode(NBSP));
+}
+
 /** Prefix `text` with the separator NBSP, keeping any selection point inside it on the same
  * character it was on. */
 function $prefixSeparator(text: TextNode): void {

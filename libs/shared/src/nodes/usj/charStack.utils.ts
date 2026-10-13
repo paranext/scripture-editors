@@ -34,7 +34,11 @@ import {
   $continuationCharAttributes,
 } from "./charGlyphs.utils.js";
 import { $createCharNode, $isCharNode, CharNode } from "./CharNode.js";
-import { $isSeparatorPrefixHostText, $separatorPrefixLength } from "./markerSeparators.utils.js";
+import {
+  $charSeparatorPrefixLength,
+  $insertOwedOpenerSpacer,
+  $isSeparatorPrefixHostText,
+} from "./markerSeparators.utils.js";
 import { $isNestedCharNode } from "./nestedGlyphs.utils.js";
 import { canonicalAttributeText } from "./attributeDisplay.utils.js";
 import { textTypeState } from "../collab/delta.state.js";
@@ -212,11 +216,14 @@ function $absorbIntoCharSpan(span: CharNode, content: LexicalNode[], renderGlyph
   // separator sync uses ($isSeparatorPrefixHostText): TextNode subclasses (VerseNode,
   // ImmutableUnmatchedNode) render their own marker bytes and attribute runs are engine-owned
   // canonical output, so splicing an NBSP into either rewrites a glyph or corrupts the run.
-  // Everything else gets its standalone spacer from `$syncOpenerSeparators` on the next dirty.
+  // Everything else gets a standalone spacer once it is in.
   const [first] = content;
   if (renderGlyphs && $isSeparatorPrefixHostText(first) && !first.getTextContent().startsWith(NBSP))
     first.setTextContent(NBSP + first.getTextContent());
   span.append(...content);
+  const opener = span.getFirstChild();
+  if (renderGlyphs && $isMarkerNode(opener) && opener.getMarkerSyntax() === "opening")
+    $insertOwedOpenerSpacer(opener, span);
 }
 
 /**
@@ -320,12 +327,18 @@ export function $liftOutOfCharStack(node: LexicalNode, options: CharStackLiftOpt
  */
 export function $selectCharContentStart(node: LexicalNode): void {
   if ($isTextNode(node) && !$isMarkerNode(node)) {
-    const offset = $separatorPrefixLength(node);
+    const offset = $charSeparatorPrefixLength(node);
     node.select(offset, offset);
     return;
   }
   if ($isElementNode(node)) {
-    const first = node.getChildren().find((child: LexicalNode) => !$isMarkerNode(child));
+    // A standalone separator spacer in front of more content (a nested span, an annotation mark)
+    // is the glyph's, not content: the content starts behind it.
+    const content = node.getChildren().filter((child: LexicalNode) => !$isMarkerNode(child));
+    const first = content.find(
+      (child, index) =>
+        index === content.length - 1 || !$isTextNode(child) || child.getTextContent() !== NBSP,
+    );
     if (first) {
       $selectCharContentStart(first);
       return;
