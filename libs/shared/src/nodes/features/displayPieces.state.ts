@@ -103,6 +103,36 @@ export function $logicalChildren(element: ElementNode): LexicalNode[] {
   return element.getChildren().filter((child) => !$isPieceContinuation(child));
 }
 
+/**
+ * Where offset `offset` into piece `node` falls in its whole carrier's text: the texts of the
+ * pieces before it, plus `offset`. `offset` itself for a carrier in one piece.
+ */
+export function $logicalOffset(node: LexicalNode, offset: number): number {
+  let start = 0;
+  for (const piece of $pieces(node)) {
+    if (piece.is(node)) break;
+    start += piece.getTextContentSize();
+  }
+  return start + offset;
+}
+
+/**
+ * The piece of `node`'s carrier holding offset `offset` into the whole carrier's text, and the
+ * offset into that piece. An offset on a cut is the end of the piece before it (the side a split
+ * keeps a point on); an offset past the end is the end of the last piece.
+ */
+export function $pieceAtLogicalOffset<T extends LexicalNode>(node: T, offset: number): [T, number] {
+  const pieces = $pieces(node);
+  let start = 0;
+  for (const piece of pieces) {
+    const size = piece.getTextContentSize();
+    if (offset <= start + size) return [piece, Math.max(0, offset - start)];
+    start += size;
+  }
+  const last = pieces[pieces.length - 1];
+  return [last, last.getTextContentSize()];
+}
+
 /** Whether `node` is split into more than one piece. */
 export function $isSplitCarrier(node: LexicalNode): boolean {
   return $pieces(node).length > 1;

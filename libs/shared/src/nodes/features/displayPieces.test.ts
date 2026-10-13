@@ -18,8 +18,10 @@ import {
   $lastPiece,
   $logicalChildren,
   $logicalNextSibling,
+  $logicalOffset,
   $logicalPreviousSibling,
   $logicalText,
+  $pieceAtLogicalOffset,
   $pieceHead,
   $pieces,
 } from "./displayPieces.state.js";
@@ -121,6 +123,30 @@ describe("carrier pieces", () => {
       expect($logicalNextSibling(run)?.getTextContent()).toBe("\\w*");
       expect($logicalPreviousSibling(logical[3])).toBe(run);
       expect($pieces(run).map($holdIds)).toEqual([[], ["a[0,5)"], []]);
+    });
+  });
+
+  it("maps an offset into a piece to the whole carrier's offset and back", () => {
+    const editor = mount();
+    let run!: TextNode;
+    editor.update(
+      () => {
+        run = $span().run;
+        $addDisplayAnnotation(run, "check", "a", 23, 28);
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      const [first, held, last] = $pieces(run);
+      expect([$logicalOffset(first, 0), $logicalOffset(held, 0), $logicalOffset(last, 1)]).toEqual([
+        0, 23, 29,
+      ]);
+      expect($pieceAtLogicalOffset(run, 0)).toEqual([first, 0]);
+      // On a cut, the end of the piece before it.
+      expect($pieceAtLogicalOffset(held, 23)).toEqual([first, 23]);
+      expect($pieceAtLogicalOffset(run, 24)).toEqual([held, 1]);
+      expect($pieceAtLogicalOffset(run, 29)).toEqual([last, 1]);
+      expect($pieceAtLogicalOffset(run, 40)).toEqual([last, 1]);
     });
   });
 
