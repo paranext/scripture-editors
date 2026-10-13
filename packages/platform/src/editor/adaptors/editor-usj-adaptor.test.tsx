@@ -49,9 +49,11 @@ import { deepEqual } from "fast-equals";
 import {
   $createTextNode,
   $getRoot,
+  $isElementNode,
   $isTextNode,
   $setState,
   LexicalEditor,
+  LexicalNode,
   SerializedEditorState,
   SerializedTextNode,
   TextNode,
@@ -60,6 +62,8 @@ import {
   $createImmutableVerseNode,
   FORMATTED_VIEW_MODE,
   getViewOptions,
+  ImmutableNoteCallerNode,
+  ImmutableVerseNode,
   NoteCallerOnClick,
   STANDARD_VIEW_MODE,
   TextSpacingPlugin,
@@ -67,6 +71,7 @@ import {
   usjReactNodes,
 } from "shared-react";
 import {
+  $addDisplayAnnotation,
   $createAttributeRunNode,
   $createCharNode,
   $createMarkerNode,
@@ -75,7 +80,9 @@ import {
   $createParaNode,
   $createTypedMarkNode,
   $createVerseNode,
+  $isDisplayAnnotationCarrier,
   $isParaNode,
+  $isPieceContinuation,
   CHAPTER_MARKER,
   CharNode,
   CURSOR_PLACEHOLDER_CHAR,
@@ -104,6 +111,7 @@ import {
   TypedMarkNode,
   VERSE_MARKER,
   COMMENT_MARK_TYPE,
+  registerDisplayAnnotationBasis,
 } from "shared";
 
 const nodes = [TypedMarkNode, ...usjReactNodes];
@@ -1582,4 +1590,106 @@ describe("Editor USJ Adaptor — comment milestones", () => {
       },
     ]);
   });
+});
+
+describe("Editor USJ Adaptor — a carrier an annotation holds in part", () => {
+  /** Every editable display-byte carrier kind: a chapter glyph, verses (one with an alternate
+   * number), a char span's glyphs and attribute run, a note's caller and glyphs, an unmatched
+   * closer. */
+  const carriersUsj: Usj = {
+    ...EMPTY_USJ,
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["Genesis"] },
+      { type: "chapter", marker: "c", number: "1", altnumber: "2", sid: "GEN 1" },
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "verse", marker: "v", number: "12", sid: "GEN 1:12" },
+          "In the ",
+          { type: "char", marker: "w", lemma: "grace", content: ["grace"] } as MarkerObject,
+          " of God",
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note text"] }],
+          },
+          " made ",
+          { type: "verse", marker: "v", number: "13", altnumber: "14", sid: "GEN 1:13" },
+          "more ",
+          { type: "unmatched", marker: "f*" } as MarkerObject,
+          " end",
+        ],
+      } as MarkerObject,
+    ],
+  };
+
+  /** `carriersUsj` loaded in `viewMode`, then exported; with `cut`, every text carrier of two or
+   * more bytes first holds an annotation over its second byte alone, so it is cut into pieces.
+   * `cutKinds` names the kinds of carrier that were cut (a parent's type for a plain text one). */
+  function exportCarriers(viewMode: string, cut: boolean): { usj?: Usj; cutKinds: string[] } {
+    const viewOptions = getViewOptions(viewMode);
+    initializeSerialize(undefined, undefined);
+    reset();
+    const state = serializeEditorState(carriersUsj, viewOptions);
+    const { editor: localEditor } = createBasicTestEnvironment(nodes);
+    registerDisplayAnnotationBasis(localEditor, [ImmutableVerseNode, ImmutableNoteCallerNode]);
+    localEditor.setEditorState(localEditor.parseEditorState(state));
+    if (cut)
+      localEditor.update(
+        () => {
+          const walk = (node: LexicalNode): void => {
+            if ($isElementNode(node)) node.getChildren().forEach(walk);
+            else if (
+              $isTextNode(node) &&
+              $isDisplayAnnotationCarrier(node) &&
+              node.getTextContentSize() >= 2
+            )
+              $addDisplayAnnotation(node, "test", "a", 1, 2);
+          };
+          walk($getRoot());
+        },
+        { discrete: true },
+      );
+    const cutKinds = localEditor.getEditorState().read(() => {
+      const kinds = new Set<string>();
+      const walk = (node: LexicalNode): void => {
+        if ($isPieceContinuation(node)) {
+          const kind = node.getType() === TextNode.getType() ? node.getParent()?.getType() : "";
+          kinds.add(`${node.getType()}${kind ? ` in ${kind}` : ""}`);
+        }
+        if ($isElementNode(node)) node.getChildren().forEach(walk);
+      };
+      walk($getRoot());
+      return [...kinds].sort();
+    });
+    initializeDeserialize(undefined);
+    return {
+      usj: editorUsjAdaptor.deserializeEditorState(localEditor.getEditorState(), viewOptions),
+      cutKinds,
+    };
+  }
+
+  it.each([UNFORMATTED_VIEW_MODE, STANDARD_VIEW_MODE])(
+    "exports the same document as the uncut one in %s view",
+    (viewMode) => {
+      const uncut = exportCarriers(viewMode, false);
+      const cut = exportCarriers(viewMode, true);
+      expect(uncut.cutKinds).toEqual([]);
+      // Every kind of carrier the view spells as editable text is cut: glyphs, verses, attribute
+      // runs (a verse's in a wrapper, a char span's loose), the chapter's `\c N`, the unmatched
+      // closer, and the expanded note's caller where the view has one.
+      expect(cut.cutKinds).toEqual([
+        "marker",
+        "text in attribute-run",
+        "text in chapter",
+        "text in char",
+        ...(viewMode === UNFORMATTED_VIEW_MODE ? ["text in note"] : []),
+        "unmatched",
+        "verse",
+      ]);
+      expect(cut.usj).toEqual(uncut.usj);
+    },
+  );
 });
