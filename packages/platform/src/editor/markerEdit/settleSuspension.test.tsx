@@ -380,10 +380,13 @@ describe("setMarkerSettleSuspended", () => {
     expectPending(editor, parts);
   });
 
-  it("lifts a suspension the host never resumed, at the next editor focus", async () => {
-    // The safeguard: nothing is lost when a host misses a resume (`getUsj` settles on read), but
-    // typed marker text stays literal on screen until the user presses Enter, and no timer heals
-    // it. The editor regaining focus means the surface is gone, so it is the moment to recover.
+  it("WARNS but does not lift when the editor regains focus while suspended", async () => {
+    // The safeguard cannot lift: a host's own commit path returns focus to the editor mid-session
+    // to apply what the user chose, and the marker palette's commit-and-reopen does exactly that.
+    // Lifting there settles the document under a palette about to reappear — measured in the real
+    // app as `\\` `nd` `\\` reopening the palette and the safeguard closing it. Deferring does not
+    // separate the cases either, because the host re-asserts a suspension already in force, which
+    // is a no-op. So it reports and leaves the pairing to the host.
     const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
     let para!: ParaNode;
     let marker!: MarkerNode;
@@ -394,20 +397,39 @@ describe("setMarkerSettleSuspended", () => {
     await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
 
     await setSuspended(editor, true);
-    // The surface takes focus; the blur settle is held, as it should be.
     await act(async () => {
       editor.dispatchCommand(BLUR_COMMAND, undefined as never);
     });
-    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1"));
-
-    // No resume ever arrives. Focus comes back to the editor instead.
     await act(async () => {
       editor.dispatchCommand(FOCUS_COMMAND, undefined as never);
     });
+    await advance(IDLE_SETTLE_DELAY_MS * 2);
     await flush();
 
-    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s2"));
+    // Still HELD — nothing settled, so nothing could steal focus from a palette still open.
+    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1"));
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("regained focus"));
+  });
+
+  it("warns only once per suspension, so a commit-heavy session cannot flood the log", async () => {
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    let marker!: MarkerNode;
+    const { editor } = await testEnvironmentWithDisplaySyncs(
+      () => ({ marker } = $appendHeadingPara()),
+      logger,
+    );
+    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+
+    await setSuspended(editor, true);
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, undefined as never);
+    });
+    for (let i = 0; i < 3; i++)
+      await act(async () => {
+        editor.dispatchCommand(FOCUS_COMMAND, undefined as never);
+      });
+
+    expect(logger.warn).toHaveBeenCalledOnce();
   });
 
   it("does not lift the suspension on a focus that arrives before the surface took it", async () => {

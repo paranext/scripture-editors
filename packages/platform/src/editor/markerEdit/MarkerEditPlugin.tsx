@@ -731,6 +731,8 @@ export function MarkerEditPlugin({
      * alone would lift the suspension there, before the surface had ever taken focus.
      */
     let blurredWhileSuspended = false;
+    /** One warning per suspension, so a commit-heavy session cannot flood the log. */
+    let suspensionWarned = false;
     const applyMarkerSettleSuspended = (suspended: boolean) => {
       // Idempotent: a host driving this from an effect can redispatch the value already in
       // force, and the resume branch below RE-ARMS the idle clock. Without this, a redundant
@@ -740,6 +742,7 @@ export function MarkerEditPlugin({
       if (markerSettleSuspendedRef.current === suspended) return;
       markerSettleSuspendedRef.current = suspended;
       blurredWhileSuspended = false;
+      suspensionWarned = false;
       if (suspended) {
         // Cancel a timer that is ALREADY ticking. This is the part a delay change cannot do:
         // `markerSettleDelayMs: -1` is only read the next time something arms the clock, so a
@@ -1237,24 +1240,33 @@ export function MarkerEditPlugin({
           // `getUsj` settles on read — but typed marker text stays literal on screen until the
           // user presses Enter, and no timer would ever heal it.
           //
-          // The editor regaining focus means the surface the suspension protects is gone: it was
-          // dismissed and focus restored, the user clicked back into the text (which dismisses
-          // it), or something else took focus (which dismisses it too). So on a normal close this
-          // fires just after the host's own resume and the idempotence check below makes it a
-          // no-op; on a missed resume it heals at the next focus. No timer, so a surface left
-          // open for a long time is unaffected.
+          // The editor regaining focus does NOT reliably mean the surface is gone, so this does
+          // not lift the suspension — it only reports it.
           //
-          // Deliberately NOT extended to KEY_DOWN or CLICK. Some keys do reach the editor while a
-          // session is open, before the surface has focus — modifier and lock keys (Shift on the
-          // way to `+`), `Dead`, and IME keys — and lifting on those would release the suspension
-          // just before the blur settle it exists to hold.
-          if (markerSettleSuspendedRef.current && blurredWhileSuspended) {
+          // The appealing version of this safeguard lifts here: the editor usually gets focus back
+          // only once the surface was dismissed, the user clicked into the text, or something else
+          // took focus. But a host's own commit path returns focus to the editor MID-SESSION, on
+          // purpose, to apply what the user chose — the marker palette's commit-and-reopen does
+          // exactly that, committing the typed marker and opening a replacement palette in one
+          // keystroke. Lifting there settles the document under a palette that is about to
+          // reappear, which is the failure the suspension exists to prevent. Measured in the real
+          // app: `\` `nd` `\` reopened the palette and this safeguard closed it.
+          //
+          // Deferring the lift does not separate the two either: the host re-asserts a suspension
+          // that is ALREADY in force, which is a no-op here, so nothing distinguishes "re-suspended
+          // for the replacement" from "never released".
+          //
+          // So the editor cannot tell, from focus alone, whether a host still needs its suspension.
+          // It warns instead, which turns an invisible stuck flag into one line in the log, and
+          // leaves the correctness of the pairing where it belongs — with the host.
+          if (markerSettleSuspendedRef.current && blurredWhileSuspended && !suspensionWarned) {
+            suspensionWarned = true;
             context.logger?.warn(
-              "[MarkerEdit] the editor regained focus while marker settling was suspended, so " +
-                "the suspension was lifted. The host did not resume on one of its close paths; " +
-                "held edits have now settled.",
+              "[MarkerEdit] the editor regained focus while marker settling was suspended. That " +
+                "is expected mid-session (a host commit returns focus to apply an edit), but if " +
+                "no surface is open the host has missed a resume and automatic settling is off " +
+                "until it calls setMarkerSettleSuspended(false).",
             );
-            applyMarkerSettleSuspended(false);
           }
           // Focus is a notification other plugins legitimately observe; never claim it.
           return false;
