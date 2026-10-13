@@ -17,12 +17,7 @@ import {
 } from "lexical";
 import { createRef } from "react";
 import { $addDisplayAnnotation, $isMarkerNode, COMMENT_MARK_TYPE } from "shared";
-import {
-  $isImmutableNoteCallerNode,
-  annotationHighlightClassNames,
-  getViewOptions,
-  STANDARD_VIEW_MODE,
-} from "shared-react";
+import { $isImmutableNoteCallerNode, getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
 import { MockInstance, vi } from "vitest";
 
 /** The first descendant of `root` (depth-first, root included) `predicate` accepts. */
@@ -316,12 +311,14 @@ describe("Marginal comments panel", () => {
     const lexical = getEmbeddedLexicalEditor(mountedContainer);
 
     let openerKey!: NodeKey;
+    let openerText = "";
     let charKey!: NodeKey;
     await act(async () => {
       lexical.update(() => {
         const opener = findDescendant($getRoot(), $isMarkerNode);
         if (!opener) throw new Error("expected an opening marker glyph in the seed content");
         openerKey = opener.getKey();
+        openerText = opener.getTextContent();
         const parent = opener.getParent();
         if (!parent) throw new Error("opener glyph has no parent");
         charKey = parent.getKey();
@@ -332,11 +329,18 @@ describe("Marginal comments panel", () => {
       await Promise.resolve();
     });
 
-    return { marginal: ref.current, lexical, container: mountedContainer, openerKey, charKey };
+    return {
+      marginal: ref.current,
+      lexical,
+      container: mountedContainer,
+      openerKey,
+      openerText,
+      charKey,
+    };
   }
 
   it("names a comment held on the tail of a text carrier from an element-point caret behind it", async () => {
-    const { lexical, openerKey, charKey } = await renderMarginalWithGlyphTailComment();
+    const { lexical, openerKey, openerText, charKey } = await renderMarginalWithGlyphTailComment();
 
     await act(async () => {
       lexical.update(() => {
@@ -351,15 +355,14 @@ describe("Marginal comments panel", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    // Only the glyph's last character holds the comment, so only it is painted selected.
+    // Only the glyph's last character holds the comment, so the glyph is cut there and only that
+    // piece is painted selected.
     const openerElement = lexical.getElementByKey(openerKey);
     if (!openerElement) throw new Error("expected the opener glyph to render");
     expect(openerElement.classList.contains("selected")).toBe(false);
-    const selected = [...CSS.highlights].flatMap(([name, highlight]) =>
-      annotationHighlightClassNames(name)?.includes("selected")
-        ? [...highlight].map((range) => (range instanceof Range ? range.toString() : ""))
-        : [],
+    const selected = [...(lexical.getRootElement()?.querySelectorAll(".selected") ?? [])].map(
+      (element) => element.textContent,
     );
-    expect(selected).toEqual([openerElement.textContent?.slice(-1)]);
+    expect(selected).toEqual([openerText.slice(-1)]);
   });
 });

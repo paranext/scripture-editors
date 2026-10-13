@@ -1,5 +1,12 @@
 import {
+  getDecoratorPaint,
+  markDomPaintedDecorator,
+  renderDecoratorPaint,
+} from "./decoratorPaint.js";
+import {
   $applyNodeReplacement,
+  $getEditor,
+  EditorConfig,
   $getState,
   $setState,
   createState,
@@ -127,24 +134,23 @@ export class ImmutableTypedTextNode extends DecoratorNode<null> {
     return this.getTextContent();
   }
 
-  override createDOM(): HTMLElement {
+  override createDOM(_config: EditorConfig, editor: LexicalEditor): HTMLElement {
     const dom = document.createElement("span");
     dom.setAttribute("data-text-type", this.__textType);
     dom.classList.add(this.__textType);
     // The glyph bytes are written into the element itself, NOT rendered through the decorator
-    // portal — see `decorate` for why. The resulting DOM is identical either way (React rendered
-    // the same string as this element's only text child), so nothing downstream changes shape.
-    dom.textContent = this.__text;
+    // portal — see `decorate` for why — with any annotation's sub-spans (`decoratorPaint.ts`).
+    markDomPaintedDecorator(dom);
+    renderDecoratorPaint(dom, this.__text, getDecoratorPaint(editor, this.__key));
     return dom;
   }
 
-  override updateDOM(prevNode: this, dom: HTMLElement): boolean {
+  override updateDOM(_prevNode: this, dom: HTMLElement): boolean {
     // Keep the rendered bytes in step with an in-place `setTextContent` (the JSON update path is
-    // its only caller); the guard means an untouched node writes nothing. `__textType` is
-    // deliberately NOT re-applied here — it is only ever set while building a node from JSON,
-    // before this element exists, so the class list has never been able to go stale, and
-    // re-deriving it would be a behavior change this fix does not need.
-    if (prevNode.__text !== this.__text) dom.textContent = this.__text;
+    // its only caller); an untouched node writes nothing. `__textType` is deliberately NOT
+    // re-applied here — it is only ever set while building a node from JSON, before this element
+    // exists, so the class list has never been able to go stale.
+    renderDecoratorPaint(dom, this.__text, getDecoratorPaint($getEditor(), this.__key));
     // Returning false tells Lexical that this node does not need its
     // DOM element replacing with a new copy from createDOM.
     return false;

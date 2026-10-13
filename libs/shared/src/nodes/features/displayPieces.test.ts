@@ -30,6 +30,7 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $setSelection,
   $setState,
@@ -102,7 +103,8 @@ describe("carrier pieces", () => {
       { discrete: true },
     );
     editor.read(() => {
-      const char = $getRoot().getFirstChild()?.getFirstChild();
+      const para = $getRoot().getFirstChild();
+      const char = $isElementNode(para) ? para.getFirstChild() : null;
       if (!(char instanceof CharNode)) throw new Error("no span");
       expect(texts(char.getChildren())).toEqual([
         "\\w",
@@ -272,7 +274,8 @@ describe("carrier pieces", () => {
       { discrete: true },
     );
     editor.read(() => {
-      const char = $getRoot().getFirstChild()?.getFirstChild();
+      const para = $getRoot().getFirstChild();
+      const char = $isElementNode(para) ? para.getFirstChild() : null;
       if (!(char instanceof CharNode)) throw new Error("no span");
       const last = char.getLastChild();
       expect(last?.getTextContent()).toBe("*");

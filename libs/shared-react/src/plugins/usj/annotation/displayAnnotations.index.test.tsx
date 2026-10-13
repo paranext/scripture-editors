@@ -4,7 +4,6 @@ import {
   $createImmutableVerseNode,
   ImmutableVerseNode,
 } from "../../../nodes/usj/ImmutableVerseNode";
-import { annotationHighlightClassNames } from "./annotationHighlights";
 import {
   acquireDisplayAnnotationIndex,
   DISPLAY_ANNOTATION_CLASS_NAME,
@@ -27,6 +26,8 @@ import {
 import {
   $addDisplayAnnotation,
   $createCharNode,
+  $pieces,
+  getDecoratorPaint,
   $createMarkerNode,
   $createNoteNode,
   $createParaNode,
@@ -45,9 +46,8 @@ import {
   TypedMarkOnMouseEnter,
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
-  ZWSP,
 } from "shared";
-import { onTestFinished, vi } from "vitest";
+import { vi } from "vitest";
 
 /** The platform editor's own theme names for `typedMark`/`typedMarkOverlap`; the painter reads
  * them from the editor's theme exactly as `TypedMarkNode.createDOM` does. */
@@ -94,29 +94,56 @@ afterEach(() => {
   lastContainer = undefined;
 });
 
-/** A `<style>` holding `css` for one test. */
-function stylesheetForTest(css: string): void {
-  const style = document.createElement("style");
-  style.textContent = css;
-  document.head.append(style);
-  onTestFinished(() => style.remove());
-}
-
 function classesOf(editor: LexicalEditor, node: TextNode): string[] {
   return [...(editor.getElementByKey(node.getKey())?.classList ?? [])];
 }
 
-/** Every piece of text an editor highlight paints, with the class names it paints it with. */
-function highlighted(): { text: string; classNames: string[] }[] {
-  return [...CSS.highlights].flatMap(([name, highlight]) =>
-    [...highlight].map((range) => ({
-      text: range instanceof Range ? range.toString() : "",
-      classNames: [...(annotationHighlightClassNames(name) ?? [])].sort(),
-    })),
+/** Every element painted outside a mark — a carrier piece painted whole, a decorator's sub-span —
+ * with its text and the class names it is painted with. */
+function painted(editor: LexicalEditor): { text: string; classNames: string[] }[] {
+  const root = editor.getRootElement();
+  return [...(root?.querySelectorAll(`.${DISPLAY_ANNOTATION_CLASS_NAME}`) ?? [])].map(
+    (element) => ({
+      text: element.textContent ?? "",
+      classNames: [...element.classList].sort(),
+    }),
   );
 }
 
-/** Wrap `type`/`id` over `[from, to)` of `node` through the real wrap, with `callbacks`. */
+/** The element painted with `text` ({@link painted}). */
+function paintedElement(editor: LexicalEditor, text: string): HTMLElement {
+  const root = editor.getRootElement();
+  const element = [...(root?.querySelectorAll(`.${DISPLAY_ANNOTATION_CLASS_NAME}`) ?? [])].find(
+    (candidate) => candidate.textContent === text,
+  );
+  if (!(element instanceof HTMLElement)) throw new Error(`nothing painted reads ${text}`);
+  return element;
+}
+
+/** Drop `type`/`id` from every piece of the carrier `node` is a piece of, as `removeAnnotation`
+ * does through the index's holder keys. Mutating. */
+function $removeFromCarrier(node: TextNode, type: string, id: string): void {
+  for (const piece of $pieces(node.getLatest())) $removeDisplayAnnotation(piece, type, id);
+}
+
+/** Remove every piece of the carrier `node` is a piece of. Mutating. */
+function $removeCarrier(node: TextNode): void {
+  for (const piece of $pieces(node.getLatest())) piece.remove();
+}
+
+/** The text point `offset` bytes into the carrier `node` is a piece of, on the piece holding it. */
+function $pointInCarrier(node: TextNode, offset: number): [string, number] {
+  let at = offset;
+  const pieces = $pieces(node.getLatest());
+  for (const piece of pieces) {
+    if (at <= piece.getTextContentSize()) return [piece.getKey(), at];
+    at -= piece.getTextContentSize();
+  }
+  throw new Error(`offset ${offset} is past the carrier`);
+}
+
+/** Wrap `type`/`id` over `[from, to)` of the carrier `node` is a piece of, through the real wrap,
+ * with `callbacks`. */
 function wrap(
   editor: LexicalEditor,
   node: TextNode,
@@ -134,8 +161,8 @@ function wrap(
   editor.update(
     () => {
       const selection = $createRangeSelection();
-      selection.anchor.set(node.getKey(), from, "text");
-      selection.focus.set(node.getKey(), to, "text");
+      selection.anchor.set(...$pointInCarrier(node, from), "text");
+      selection.focus.set(...$pointInCarrier(node, to), "text");
       $wrapSelectionInTypedMarkNode(
         selection,
         type,
@@ -178,19 +205,6 @@ describe("the display-annotation index", () => {
     again.release();
   });
 
-  it("removes its highlight stylesheet and probes when released", async () => {
-    stylesheetForTest(".editor-typed-mark-external-spelling { background-color: rgb(1, 2, 3); }");
-    const { editor, run, release } = setup();
-    wrap(editor, run, 1, 6, "external-spelling", "a");
-    await Promise.resolve();
-    expect(document.querySelectorAll("style[data-editor-annotation-highlights]")).toHaveLength(1);
-    expect(document.querySelectorAll("[data-editor-annotation-probes]")).toHaveLength(1);
-    release();
-    expect(document.querySelectorAll("style[data-editor-annotation-highlights]")).toHaveLength(0);
-    expect(document.querySelectorAll("[data-editor-annotation-probes]")).toHaveLength(0);
-    expect(highlighted()).toEqual([]);
-  });
-
   it("paints a carrier held whole with the class names a mark gets, and unpaints it when the annotation goes", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 0, 6, "external-spelling", "a");
@@ -201,7 +215,7 @@ describe("the display-annotation index", () => {
         DISPLAY_ANNOTATION_CLASS_NAME,
       ]),
     );
-    editor.update(() => $removeDisplayAnnotation(run.getLatest(), "external-spelling", "a"), {
+    editor.update(() => $removeFromCarrier(run, "external-spelling", "a"), {
       discrete: true,
     });
     expect(classesOf(editor, run)).not.toContain("annotationId-a");
@@ -213,7 +227,7 @@ describe("the display-annotation index", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 6, "external-spelling", "a");
     expect(classesOf(editor, run)).toEqual([]);
-    expect(highlighted()).toEqual([
+    expect(painted(editor)).toEqual([
       {
         text: "grace",
         classNames: [
@@ -223,10 +237,10 @@ describe("the display-annotation index", () => {
         ],
       },
     ]);
-    editor.update(() => $removeDisplayAnnotation(run.getLatest(), "external-spelling", "a"), {
+    editor.update(() => $removeFromCarrier(run, "external-spelling", "a"), {
       discrete: true,
     });
-    expect(highlighted()).toEqual([]);
+    expect(painted(editor)).toEqual([]);
     expect(classesOf(editor, run)).toEqual([]);
     release();
   });
@@ -235,7 +249,7 @@ describe("the display-annotation index", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 6, "external-spelling", "a");
     wrap(editor, run, 1, 4, "external-spelling", "b");
-    expect(highlighted()).toEqual(
+    expect(painted(editor)).toEqual(
       expect.arrayContaining([
         {
           text: "gra",
@@ -257,11 +271,11 @@ describe("the display-annotation index", () => {
         },
       ]),
     );
-    expect(highlighted()).toHaveLength(2);
-    editor.update(() => $removeDisplayAnnotation(run.getLatest(), "external-spelling", "a"), {
+    expect(painted(editor)).toHaveLength(2);
+    editor.update(() => $removeFromCarrier(run, "external-spelling", "a"), {
       discrete: true,
     });
-    expect(highlighted()).toEqual([
+    expect(painted(editor)).toEqual([
       {
         text: "gra",
         classNames: [
@@ -278,8 +292,8 @@ describe("the display-annotation index", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 3, "external-spelling", "a");
     wrap(editor, run, 4, 6, "external-spelling", "b");
-    expect(highlighted().map(({ text }) => text)).toEqual(["gr", "ce"]);
-    expect(highlighted().flatMap(({ classNames }) => classNames)).not.toContain(
+    expect(painted(editor).map(({ text }) => text)).toEqual(["gr", "ce"]);
+    expect(painted(editor).flatMap(({ classNames }) => classNames)).not.toContain(
       "editor-typed-markOverlap-external-spelling",
     );
     expect(classesOf(editor, run)).toEqual([]);
@@ -300,7 +314,7 @@ describe("the display-annotation index", () => {
     expect(classesOf(editor, run)).toEqual(
       expect.arrayContaining([...markTokens, DISPLAY_ANNOTATION_CLASS_NAME]),
     );
-    editor.update(() => $removeDisplayAnnotation(run.getLatest(), "external-spelling", "a b"), {
+    editor.update(() => $removeFromCarrier(run, "external-spelling", "a b"), {
       discrete: true,
     });
     expect(classesOf(editor, run)).toEqual([]);
@@ -347,24 +361,6 @@ describe("the display-annotation index", () => {
   });
 
   describe("over a carrier two annotations each hold part of", () => {
-    /** Where each painted text sits on screen: `gr` from x 0 to 10, `ce` from x 20 to 30. */
-    const rectsByText: { [text: string]: DOMRect } = {
-      gr: new DOMRect(0, 0, 10, 10),
-      ce: new DOMRect(20, 0, 10, 10),
-    };
-    beforeEach(() => {
-      Object.defineProperty(Range.prototype, "getClientRects", {
-        configurable: true,
-        value(this: Range): DOMRect[] {
-          const rect = rectsByText[this.toString()];
-          return rect ? [rect] : [];
-        },
-      });
-    });
-    afterEach(() => {
-      Reflect.deleteProperty(Range.prototype, "getClientRects");
-    });
-
     function setupTwo() {
       const fixture = setup();
       const callbacks = {
@@ -373,14 +369,26 @@ describe("the display-annotation index", () => {
       };
       wrap(fixture.editor, fixture.run, 1, 3, "external-spelling", "a", callbacks.a);
       wrap(fixture.editor, fixture.run, 4, 6, "external-spelling", "b", callbacks.b);
-      const element = fixture.editor.getElementByKey(fixture.run.getKey());
-      if (!element) throw new Error("the run renders");
-      return { ...fixture, callbacks, element };
+      return {
+        ...fixture,
+        callbacks,
+        gr: paintedElement(fixture.editor, "gr"),
+        ce: paintedElement(fixture.editor, "ce"),
+      };
     }
 
+    it("cuts the carrier into a piece per held part, each painted whole", () => {
+      const { editor, run, release } = setupTwo();
+      expect(
+        editor.getEditorState().read(() => $pieces(run.getLatest()).map((p) => p.getTextContent())),
+      ).toEqual(["|", "gr", "a", "ce"]);
+      expect(painted(editor).map(({ text }) => text)).toEqual(["gr", "ce"]);
+      release();
+    });
+
     it("calls only the click callback of the annotation painted where the pointer is", () => {
-      const { callbacks, element, release } = setupTwo();
-      element.dispatchEvent(new MouseEvent("click", { clientX: 5, clientY: 5 }));
+      const { callbacks, gr, release } = setupTwo();
+      gr.dispatchEvent(new MouseEvent("click"));
       expect(callbacks.a.onClick).toHaveBeenCalledWith(
         expect.any(MouseEvent),
         "external-spelling",
@@ -388,24 +396,21 @@ describe("the display-annotation index", () => {
         "gr",
       );
       expect(callbacks.b.onClick).not.toHaveBeenCalled();
-
-      element.dispatchEvent(new MouseEvent("click", { clientX: 15, clientY: 5 }));
-      expect(callbacks.a.onClick).toHaveBeenCalledTimes(1);
-      expect(callbacks.b.onClick).not.toHaveBeenCalled();
       release();
     });
 
     it("enters and leaves each annotation as the pointer moves over the part it paints", () => {
-      const { callbacks, element, release } = setupTwo();
-      element.dispatchEvent(new MouseEvent("mouseenter", { clientX: 15, clientY: 5 }));
-      expect(callbacks.a.onMouseEnter).not.toHaveBeenCalled();
-      element.dispatchEvent(new MouseEvent("mousemove", { clientX: 5, clientY: 5 }));
-      element.dispatchEvent(new MouseEvent("mousemove", { clientX: 6, clientY: 5 }));
+      const { callbacks, gr, ce, release } = setupTwo();
+      gr.dispatchEvent(new MouseEvent("mouseenter"));
       expect(callbacks.a.onMouseEnter).toHaveBeenCalledTimes(1);
-      element.dispatchEvent(new MouseEvent("mousemove", { clientX: 25, clientY: 5 }));
+      expect(callbacks.b.onMouseEnter).not.toHaveBeenCalled();
+      gr.dispatchEvent(new MouseEvent("mousemove"));
+      expect(callbacks.a.onMouseEnter).toHaveBeenCalledTimes(1);
+      gr.dispatchEvent(new MouseEvent("mouseleave"));
+      ce.dispatchEvent(new MouseEvent("mouseenter"));
       expect(callbacks.a.onMouseLeave).toHaveBeenCalledTimes(1);
       expect(callbacks.b.onMouseEnter).toHaveBeenCalledTimes(1);
-      element.dispatchEvent(new MouseEvent("mouseleave", { clientX: 40, clientY: 5 }));
+      ce.dispatchEvent(new MouseEvent("mouseleave"));
       expect(callbacks.b.onMouseLeave).toHaveBeenCalledTimes(1);
       expect(callbacks.b.onMouseLeave).toHaveBeenCalledWith(
         expect.any(MouseEvent),
@@ -417,9 +422,9 @@ describe("the display-annotation index", () => {
     });
 
     it("adds a state class only to the parts its annotation paints", () => {
-      const { index, release } = setupTwo();
+      const { editor, index, release } = setupTwo();
       index.setStateClass("external-spelling", "a", "selected", true);
-      expect(highlighted()).toEqual(
+      expect(painted(editor)).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ text: "gr", classNames: expect.arrayContaining(["selected"]) }),
           {
@@ -433,7 +438,7 @@ describe("the display-annotation index", () => {
         ]),
       );
       index.setStateClass("external-spelling", "a", "selected", false);
-      expect(highlighted().flatMap(({ classNames }) => classNames)).not.toContain("selected");
+      expect(painted(editor).flatMap(({ classNames }) => classNames)).not.toContain("selected");
       release();
     });
 
@@ -467,56 +472,59 @@ describe("the display-annotation index", () => {
     release();
   });
 
-  it("moves a partial highlight onto the text of an element Lexical re-creates", () => {
+  it("repaints the held piece of a carrier on an element Lexical re-creates", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 6, "external-spelling", "a");
-    editor.update(() => run.getLatest().setFormat("code"), { discrete: true });
-    const after = editor.getElementByKey(run.getKey());
-    const ranges = [...CSS.highlights.values()].flatMap((highlight) => [...highlight]);
-    expect(ranges).toHaveLength(1);
-    expect(ranges[0].toString()).toBe("grace");
-    expect(after?.contains(ranges[0].startContainer)).toBe(true);
+    const before = paintedElement(editor, "grace");
+    editor.update(
+      () => {
+        const [, held] = $pieces(run.getLatest());
+        held.setFormat("code");
+      },
+      { discrete: true },
+    );
+    const after = paintedElement(editor, "grace");
+    expect(after).not.toBe(before);
+    expect(after.tagName).toBe("CODE");
     release();
   });
 
-  it("keeps a partial highlight on the same bytes as the carrier's text is typed into", () => {
+  it("keeps a partial paint on the same bytes as the carrier's text is typed into", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 6, "external-spelling", "a");
-    editor.update(() => run.getLatest().setTextContent("|xgrace"), { discrete: true });
-    expect(highlighted().map(({ text }) => text)).toEqual(["grace"]);
+    // Typed in front of the held bytes: the head piece grows, the held piece stays.
+    editor.update(() => run.getLatest().setTextContent("|x"), { discrete: true });
+    expect(painted(editor).map(({ text }) => text)).toEqual(["grace"]);
+    // Typed at the held piece's end: a byte at a hold's edge stays outside it.
+    editor.update(
+      () => {
+        const [, held] = $pieces(run.getLatest());
+        held.setTextContent("gracey");
+      },
+      { discrete: true },
+    );
+    expect(painted(editor).map(({ text }) => text)).toEqual(["grace"]);
+    expect(
+      editor.getEditorState().read(() => $pieces(run.getLatest()).map((p) => p.getTextContent())),
+    ).toEqual(["|x", "grace", "y"]);
     release();
   });
 
-  it("keeps a partial highlight on its bytes when a whole-state replacement rewrites the carrier's text", () => {
+  it("keeps a partial paint on its bytes when a whole-state replacement rewrites the carrier's text", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 1, 6, "external-spelling", "a");
     const annotated = editor.getEditorState();
-    // An edit outside the range: what the annotation paints stays `[1, 6)`.
-    editor.update(() => run.getLatest().setTextContent("Xgrace"), { discrete: true });
-    expect(highlighted().map(({ text }) => text)).toEqual(["grace"]);
+    // An edit outside the range: what the annotation paints stays `grace`.
+    editor.update(() => run.getLatest().setTextContent("X"), { discrete: true });
+    expect(painted(editor).map(({ text }) => text)).toEqual(["grace"]);
 
-    // Undo and redo replace the whole state: the carrier is not a dirty leaf, but its DOM text is
-    // rewritten, which collapses every range over it.
+    // Undo and redo replace the whole state: the pieces come back as they were.
     editor.setEditorState(annotated);
-    expect(highlighted().map(({ text }) => text)).toEqual(["grace"]);
+    expect(painted(editor).map(({ text }) => text)).toEqual(["grace"]);
     release();
   });
 
-  it("checks its highlights once per edit, not again for the DOM writes the commit made", async () => {
-    const { editor, run, release } = setup();
-    wrap(editor, run, 1, 6, "external-spelling", "a");
-    await Promise.resolve();
-    const reads = vi.spyOn(Range.prototype, "toString");
-    editor.update(() => run.getLatest().setTextContent("|xgrace"), { discrete: true });
-    const afterCommit = reads.mock.calls.length;
-    expect(afterCommit).toBeGreaterThan(0);
-    await Promise.resolve();
-    expect(reads.mock.calls.length).toBe(afterCommit);
-    reads.mockRestore();
-    release();
-  });
-
-  it("follows a decorator's text when it renders after the commit that changed it", async () => {
+  it("gives a decorator a paint over exactly the characters it holds, and follows them through a renumber", () => {
     const { editor, release } = setup();
     let verse!: ImmutableVerseNode;
     editor.update(
@@ -528,20 +536,31 @@ describe("the display-annotation index", () => {
       },
       { discrete: true },
     );
-    const element = editor.getElementByKey(verse.getKey());
-    if (!element) throw new Error("the verse renders");
-    // What the decorator's portal renders, after the commit.
-    element.textContent = `${ZWSP}12${ZWSP}`;
-    await Promise.resolve();
-    expect(highlighted().map(({ text }) => text)).toEqual(["1"]);
+    const paintedChars = () =>
+      getDecoratorPaint(editor, verse.getKey()).map(({ start, end, classNames }) => ({
+        text: editor
+          .getEditorState()
+          .read(() => verse.getLatest().getRenderedText().slice(start, end)),
+        classNames: [...classNames].sort(),
+      }));
+    expect(paintedChars()).toEqual([
+      {
+        text: "1",
+        classNames: [
+          "annotationId-a",
+          DISPLAY_ANNOTATION_CLASS_NAME,
+          "editor-typed-mark-external-spelling",
+        ],
+      },
+    ]);
 
     editor.update(() => verse.getLatest().setNumber("13"), { discrete: true });
-    // The portal re-renders the number in place, after the commit painted over the old text.
-    const text = element.firstChild;
-    if (!text) throw new Error("the verse has text");
-    text.nodeValue = `${ZWSP}13${ZWSP}`;
-    await Promise.resolve();
-    expect(highlighted().map(({ text }) => text)).toEqual(["1"]);
+    expect(paintedChars()).toEqual([expect.objectContaining({ text: "1" })]);
+
+    editor.update(() => $removeDisplayAnnotation(verse.getLatest(), "external-spelling", "a"), {
+      discrete: true,
+    });
+    expect(paintedChars()).toEqual([]);
     release();
   });
 
@@ -621,7 +640,7 @@ describe("the display-annotation index", () => {
     const { editor, run, release } = setup();
     const onRemove = vi.fn();
     wrap(editor, run, 1, 6, "external-spelling", "a", { onRemove });
-    editor.update(() => run.getLatest().remove(), { discrete: true });
+    editor.update(() => $removeCarrier(run), { discrete: true });
     editor.update(() => $getRoot().clear(), { discrete: true });
     expect(onRemove).toHaveBeenCalledTimes(1);
     expect(onRemove).toHaveBeenCalledWith("external-spelling", "a", "destroyed", "grace");
@@ -823,7 +842,7 @@ describe("the display-annotation index", () => {
       },
       { discrete: true },
     );
-    editor.update(() => run.getLatest().remove(), { discrete: true });
+    editor.update(() => $removeCarrier(run), { discrete: true });
     expect(onRemove).not.toHaveBeenCalled();
     release();
   });
@@ -853,7 +872,7 @@ describe("the display-annotation index", () => {
       editor.update(
         () => {
           $addUpdateTag(tag);
-          run.getLatest().remove();
+          $removeCarrier(run);
         },
         { discrete: true },
       );
@@ -873,7 +892,7 @@ describe("the display-annotation index", () => {
     editor.update(
       () => {
         $addUpdateTag(DELTA_CHANGE_TAG);
-        run.getLatest().remove();
+        $removeCarrier(run);
       },
       { discrete: true },
     );

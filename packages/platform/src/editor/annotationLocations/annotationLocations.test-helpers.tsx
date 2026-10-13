@@ -302,76 +302,41 @@ export function $heldIndexes(type: string, id: string): Map<number, "mark" | "ca
   return held;
 }
 
-/** What paints annotation `id` in the DOM: the elements carrying its class, and per text node the
- * characters its editor highlights cover. */
-interface PaintSnapshot {
-  elements: Element[];
-  chars: Map<Node, Set<number>>;
-}
-
-/** Reads, once, what paints `id`: elements by class, highlight ranges walked text node by text
- * node (a range's characters, never a per-character tree comparison). */
-function paintSnapshot(lexical: LexicalEditor, id: string): PaintSnapshot {
-  const className = `annotationId-${id}`;
+/** The elements painting annotation `id`: every element carrying its class — a `<mark>`, a display
+ * byte painted whole, a decorator's sub-span. */
+function paintedElements(lexical: LexicalEditor, id: string): Element[] {
   const root = lexical.getRootElement();
-  const elements = root ? [...root.getElementsByClassName(className)] : [];
-  const chars = new Map<Node, Set<number>>();
-  for (const [name, highlight] of CSS.highlights) {
-    if (!annotationHighlightClassNames(name)?.includes(className)) continue;
-    for (const range of highlight) {
-      if (!(range instanceof Range) || range.collapsed) continue;
-      const container = range.commonAncestorContainer;
-      const walker = container.ownerDocument?.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-      const texts: Node[] = container.nodeType === Node.TEXT_NODE ? [container] : [];
-      for (let text = walker?.nextNode(); text; text = walker?.nextNode()) texts.push(text);
-      for (const text of texts) {
-        if (!range.intersectsNode(text)) continue;
-        const length = text.textContent?.length ?? 0;
-        const from = text === range.startContainer ? range.startOffset : 0;
-        const to = text === range.endContainer ? range.endOffset : length;
-        const set = chars.get(text) ?? new Set<number>();
-        for (let i = from; i < to; i++) set.add(i);
-        chars.set(text, set);
-      }
-    }
-  }
-  return { elements, chars };
+  return root ? [...root.getElementsByClassName(`annotationId-${id}`)] : [];
 }
 
-function paintedWhole(snapshot: PaintSnapshot, element: Element): boolean {
-  return snapshot.elements.some((painted) => painted.contains(element));
+function paintedWhole(painted: Element[], element: Element): boolean {
+  return painted.some((candidate) => candidate.contains(element));
 }
 
 /**
  * What paints annotation `id` on screen now, by byte index (the indexing of {@link $byteNodes}):
- * an element whose classes name it — a `<mark>`, or a display byte painted whole — or an editor
- * highlight over the byte's character. A decorator counts when any of it is painted. Read from the
- * DOM, never from the model.
+ * an element whose classes name it — a `<mark>`, a display byte painted whole — or, for a
+ * decorator, any sub-span of it painted with the class. Read from the DOM, never from the model.
  */
 export function $paintedIndexes(lexical: LexicalEditor, id: string): Set<number> {
-  const snapshot = paintSnapshot(lexical, id);
-  const painted = new Set<number>();
+  const painted = paintedElements(lexical, id);
+  const result = new Set<number>();
   $byteNodes().forEach(([node, offset], index) => {
     const element = lexical.getElementByKey(node.getKey());
     if (!element) return;
-    if (paintedWhole(snapshot, element)) {
-      painted.add(index);
+    if (paintedWhole(painted, element)) {
+      result.add(index);
       return;
     }
-    if (offset < 0) {
-      if ([...snapshot.chars.keys()].some((text) => element.contains(text))) painted.add(index);
-      return;
-    }
-    const text = [...element.childNodes].find((child) => child.nodeType === Node.TEXT_NODE);
-    if (text && snapshot.chars.get(text)?.has(offset)) painted.add(index);
+    if (offset < 0 && painted.some((candidate) => element.contains(candidate))) result.add(index);
   });
-  return painted;
+  return result;
 }
 
 /**
  * Which characters of decorator `node`'s rendered text paint annotation `id`, read from the DOM:
- * `whole` when its element or an ancestor carries the annotation's class, else the characters an
- * editor highlight covers; `any` when any highlight touches the element at all.
+ * `whole` when its element or an ancestor carries the annotation's class, else the characters of
+ * its sub-spans painted with the class; `any` when any sub-span of it is painted at all.
  */
 export function $paintedDecoratorChars(
   lexical: LexicalEditor,
@@ -381,16 +346,18 @@ export function $paintedDecoratorChars(
   const element = lexical.getElementByKey(node.getKey());
   const chars = new Set<number>();
   if (!element) return { whole: false, chars, any: false };
-  const snapshot = paintSnapshot(lexical, id);
-  if (paintedWhole(snapshot, element)) return { whole: true, chars, any: true };
+  const painted = paintedElements(lexical, id);
+  if (paintedWhole(painted, element)) return { whole: true, chars, any: true };
   const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   let offset = 0;
   let any = false;
   for (let text = walker.nextNode(); text; text = walker.nextNode()) {
-    const covered = snapshot.chars.get(text);
-    if (covered) any = true;
-    for (const i of covered ?? []) chars.add(offset + i);
-    offset += text.textContent?.length ?? 0;
+    const length = text.textContent?.length ?? 0;
+    if (painted.some((candidate) => candidate.contains(text))) {
+      any = true;
+      for (let i = 0; i < length; i++) chars.add(offset + i);
+    }
+    offset += length;
   }
   return { whole: false, chars, any };
 }

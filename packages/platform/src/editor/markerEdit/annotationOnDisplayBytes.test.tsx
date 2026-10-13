@@ -42,7 +42,7 @@ import {
   NBSP,
   TypedMarkOnRemove,
 } from "shared";
-import { AnnotationRange, annotationHighlightClassNames, getEditorDelta } from "shared-react";
+import { AnnotationRange, getEditorDelta } from "shared-react";
 import { Mock, vi } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
@@ -127,21 +127,16 @@ describe("an annotation on a char span's attribute value", () => {
     expect(markCount(mounted.lexical)).toBe(0);
     expect(paraText(mounted)).toBe(displayBefore);
     expect(mounted.ref.current?.getUsj()).toEqual(lemmaUsj);
-    const element = mounted.lexical
-      .getEditorState()
-      .read(() => mounted.lexical.getElementByKey($carrierHolding("1").getKey()));
-    // The run is `|grace`: its `|` is not held, so the element is not painted, only its value.
-    expect(element?.classList.contains("annotationId-1")).toBe(false);
-    const painted = [...CSS.highlights].flatMap(([name, highlight]) => {
-      const classNames = annotationHighlightClassNames(name) ?? [];
-      return classNames.includes("annotationId-1")
-        ? [...highlight].map((range) => ({
-            text: range instanceof Range ? range.toString() : "",
-            typed: classNames.includes("editor-typed-mark-external-test"),
-          }))
-        : [];
-    });
+    // The run is `|grace`: its `|` is not held, so it is cut off into its own unpainted piece and
+    // only the value's piece is painted, with the class names a mark gets.
+    const painted = [
+      ...(mounted.lexical.getRootElement()?.querySelectorAll(".annotationId-1") ?? []),
+    ].map((element) => ({
+      text: element.textContent,
+      typed: element.classList.contains("editor-typed-mark-external-test"),
+    }));
     expect(painted).toEqual([{ text: "grace", typed: true }]);
+    expect(paraText(mounted)).toBe(displayBefore);
   });
 
   it("reports its removal once, as removed", async () => {

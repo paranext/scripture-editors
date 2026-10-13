@@ -255,18 +255,18 @@ export interface EditorRef {
    * the annotation themselves. Setting an annotation never changes the document, a position, or
    * what `getSelection` reports.
    *
-   * Painting is exact: an annotation paints the bytes it holds, plus the whitespace the editor
-   * shows between two of them in one paragraph (a marker's separator, a verse number's trailing
-   * space) — never whitespace at its edges, and never the rest of a display byte it holds only part
-   * of. A display byte painted over all of its text gets the same class names a `<mark>` gets
-   * (`<typedMark>-<type>`, `<typedMarkOverlap>-<type>` where two ids of a type overlap,
-   * `annotationId-<id>`) plus `display-annotation`. A part of one is painted with a CSS Custom
-   * Highlight instead, which the editor styles from the same class rules: it copies the
-   * properties a highlight can paint (`background-color`, `color`, a `text-decoration` that draws
-   * a line, `text-shadow`) and otherwise draws a bottom border as an underline. Other properties
-   * and `:hover` rules apply only to elements, and the rules must not depend on ancestors inside
-   * the editable content. Where the browser has no highlight API, a display byte is painted whole.
-   * Find painted annotations with {@link EditorRef.getAnnotationRanges}, not by class.
+   * Painting is exact, and always by element: an annotation paints the bytes it holds, plus the
+   * whitespace the editor shows between two of them in one paragraph (a marker's separator, a
+   * verse number's trailing space) — never whitespace at its edges, and never the rest of a
+   * display byte it holds only part of. Every painted element gets the same class names a
+   * `<mark>` gets (`<typedMark>-<type>`, `<typedMarkOverlap>-<type>` where two ids of a type
+   * overlap, `annotationId-<id>`); a display byte gets `display-annotation` too. An editable
+   * display byte held in part is cut at the hold's edges into pieces of its own kind, so the held
+   * part is its own element and is painted whole; a read-only glyph held in part paints a sub-span
+   * of its text. So every host class rule — background, border, padding, font, `:hover`,
+   * `::selection` — applies to everything an annotation paints. Find painted annotations with
+   * {@link EditorRef.getAnnotationRanges}, which lists every element it paints, rather than by
+   * class alone.
    *
    * A read-only glyph, verse number or chapter number (the views without editable markers) holds
    * and paints exactly the part of what it shows that the range names. A range that names only

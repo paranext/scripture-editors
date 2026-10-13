@@ -1,6 +1,7 @@
 export * from "./displayAnnotations.state.js";
 export * from "./displayAnnotations.utils.js";
 export * from "./displayPieces.state.js";
+export * from "./decoratorPaint.js";
 export * from "./MarkerNode.js";
 export * from "./TypedMarkNode.js";
 export * from "./typedMarkWrap.utils.js";

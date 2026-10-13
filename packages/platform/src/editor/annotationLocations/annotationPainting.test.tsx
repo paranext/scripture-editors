@@ -28,11 +28,7 @@ import {
   NBSP,
   TypedMarkOnRemove,
 } from "shared";
-import {
-  $isImmutableVerseNode,
-  annotationHighlightClassNames,
-  AnnotationRange,
-} from "shared-react";
+import { $isImmutableVerseNode, AnnotationRange } from "shared-react";
 
 /** A marker object with attributes `MarkerObject` does not name. */
 const attributed = (marker: MarkerObject & { [attribute: string]: unknown }): MarkerObject =>
@@ -206,7 +202,7 @@ describe("annotation painting in Standard view", () => {
     expect(texts("missing")).toEqual([]);
   });
 
-  it("keeps a partial highlight on its bytes through undo and redo of an edit to its carrier", async () => {
+  it("keeps a partial paint on its bytes through undo and redo of an edit to its carrier", async () => {
     const number = `${para}.content[0]['number']`;
     await annotate(
       mounted,
@@ -229,9 +225,8 @@ describe("annotation painting in Standard view", () => {
     expect(paintedText(mounted, "one")).toBe("1");
   });
 
-  // A load replaces every node, so this pins that it leaves no highlight behind; the stale-range
-  // path itself is reached by the undo and redo test above.
-  it("leaves no highlight behind when the document is loaded again", async () => {
+  // A load replaces every node, so this pins that it leaves no paint behind.
+  it("leaves no paint behind when the document is loaded again", async () => {
     const number = `${para}.content[0]['number']`;
     await annotate(
       mounted,
@@ -253,10 +248,8 @@ describe("annotation painting in Standard view", () => {
       await Promise.resolve();
     });
     expect(heldText(mounted, "one")).toBe("");
-    const ranges = [...CSS.highlights]
-      .filter(([name]) => annotationHighlightClassNames(name)?.includes("annotationId-one"))
-      .flatMap(([, highlight]) => [...highlight]);
-    expect(ranges).toEqual([]);
+    expect(paintedText(mounted, "one")).toBe("");
+    expect(mounted.ref.current?.getAnnotationRanges(ORACLE_TYPE, "one")).toEqual([]);
   });
 
   it("paints a whole char span the same whether it moved into the mark whole or not", async () => {
@@ -290,31 +283,6 @@ describe("annotation painting in Standard view", () => {
   });
 });
 
-describe("annotation painting without the CSS Custom Highlight API", () => {
-  const highlightApi = Object.getOwnPropertyDescriptor(globalThis, "Highlight");
-  beforeEach(() => {
-    Object.defineProperty(globalThis, "Highlight", { value: undefined, configurable: true });
-  });
-  afterEach(() => {
-    if (highlightApi) Object.defineProperty(globalThis, "Highlight", highlightApi);
-  });
-
-  it("falls back to painting a display-byte node it holds part of whole", async () => {
-    const mounted = await mountInView(paintUsj, oracleView("standard"));
-    const number = `${para}.content[0]['number']`;
-    await annotate(
-      mounted,
-      {
-        start: { jsonPath: number, propertyOffset: 1 },
-        end: { jsonPath: number, propertyOffset: 2 },
-      },
-      "digit",
-    );
-    expect(paintedText(mounted, "digit")).toBe(`\\v${NBSP}12 `);
-    mounted.unmount();
-  });
-});
-
 describe("annotation painting on read-only decorators", () => {
   const number = `${para}.content[0]['number']`;
   const digit: AnnotationRange = {
@@ -340,7 +308,7 @@ describe("annotation painting on read-only decorators", () => {
 
   // The verse decorator re-renders inside the commit here, so this pins the result of a renumber;
   // a decorator rendering after its commit is covered in `displayAnnotations.index.test.tsx`.
-  it("keeps a partial highlight on its bytes when a collaborator renumbers the verse", async () => {
+  it("keeps a partial paint on its bytes when a collaborator renumbers the verse", async () => {
     const mounted = await mountInView(paintUsj, oracleView("formatted"));
     await annotate(
       mounted,
