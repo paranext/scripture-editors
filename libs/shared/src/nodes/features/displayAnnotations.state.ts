@@ -130,3 +130,18 @@ export function mapRangeThroughEdit(
 ): [number, number] | undefined {
   return mapRangeThroughAlignment(alignCharacters(before, after), start, end);
 }
+
+/**
+ * `held`'s ranges re-measured against `basis`, the carrier's storage text now, through a character
+ * alignment, dropping any with no byte left (see {@link mapRangeThroughEdit}). A whole-decorator
+ * hold (`[0, 0]`) stays whole.
+ */
+export function remapAnnotations(held: DisplayAnnotations, basis: string): DisplayAnnotation[] {
+  if (held.basis === basis) return held.annotations;
+  const alignment = alignCharacters(held.basis, basis);
+  return held.annotations.flatMap((annotation) => {
+    if (annotation.start === annotation.end) return [annotation];
+    const mapped = mapRangeThroughAlignment(alignment, annotation.start, annotation.end);
+    return mapped ? [{ ...annotation, start: mapped[0], end: mapped[1] }] : [];
+  });
+}

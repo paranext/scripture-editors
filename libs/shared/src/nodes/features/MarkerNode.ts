@@ -1,6 +1,7 @@
 /** Marker node used when displaying USFM */
 
 import { closingMarkerText, openingMarkerText } from "../usj/markerText.utils.js";
+import { $logicalText, $mergePieces, $setLogicalText } from "./displayPieces.state.js";
 import {
   $applyNodeReplacement,
   EditorConfig,
@@ -93,7 +94,9 @@ export class MarkerNode extends TextNode {
   setMarker(marker: string): this {
     if (this.__marker === marker) return this;
 
-    const self = this.getWritable();
+    // A glyph split into pieces by an annotation is one glyph: its spelling is rewritten whole,
+    // so the setter joins the pieces first (see `displayPieces.state.ts`).
+    const self = $mergePieces(this).getWritable();
     self.__marker = marker;
     self.__text = getMarkerText(marker, self.__markerSyntax, self.__nested);
     return self;
@@ -107,7 +110,7 @@ export class MarkerNode extends TextNode {
   setMarkerSyntax(markerSyntax: MarkerSyntax): this {
     if (this.__markerSyntax === markerSyntax) return this;
 
-    const self = this.getWritable();
+    const self = $mergePieces(this).getWritable();
     self.__markerSyntax = markerSyntax;
     self.__text = getMarkerText(self.__marker, markerSyntax, self.__nested);
     return self;
@@ -121,7 +124,7 @@ export class MarkerNode extends TextNode {
   setNested(nested: boolean): this {
     if (this.__nested === nested) return this;
 
-    const self = this.getWritable();
+    const self = $mergePieces(this).getWritable();
     self.__nested = nested;
     self.__text = getMarkerText(self.__marker, self.__markerSyntax, nested);
     return self;
@@ -204,12 +207,14 @@ export function isSerializedMarkerNode(
  * span's `\+w*` is canonical FOR A NESTED GLYPH; the `+` comes from the node's own stored nesting,
  * so a rest-state nested glyph is never mistaken for a damaged one.
  *
+ * A glyph an annotation has split into pieces is read whole (`$logicalText`): each piece's own
+ * text is only part of the spelling.
+ *
  * Read-only: call inside `editor.getEditorState().read(...)` or an update.
  */
 export function $isCanonicalMarkerNode(node: MarkerNode): boolean {
   return (
-    node.getTextContent() ===
-    getMarkerText(node.getMarker(), node.getMarkerSyntax(), node.getNested())
+    $logicalText(node) === getMarkerText(node.getMarker(), node.getMarkerSyntax(), node.getNested())
   );
 }
 
@@ -224,7 +229,7 @@ export function $isCanonicalMarkerNode(node: MarkerNode): boolean {
  * transform when a non-user divergence is detected).
  */
 export function $restoreCanonicalMarkerText(node: MarkerNode): void {
-  node.setTextContent(getMarkerText(node.getMarker(), node.getMarkerSyntax(), node.getNested()));
+  $setLogicalText(node, getMarkerText(node.getMarker(), node.getMarkerSyntax(), node.getNested()));
 }
 
 /**

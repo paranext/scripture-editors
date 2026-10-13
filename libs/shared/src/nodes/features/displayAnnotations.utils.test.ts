@@ -24,6 +24,7 @@ import {
   registerDisplayAnnotationBasis,
   setDecoratorBytesReader,
 } from "./displayAnnotations.utils.js";
+import { $pieces, $setLogicalText } from "./displayPieces.state.js";
 import { $createImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
 import { $createImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
 import { $createMarkerNode } from "./MarkerNode.js";
@@ -424,21 +425,23 @@ describe("registerDisplayAnnotationBasis", () => {
       },
       { discrete: true },
     );
-    editor.update(() => run.getLatest().setTextContent('|lemma="grace"'), { discrete: true });
+    // The carrier is cut where the hold ends, so a rewrite goes through the whole carrier.
+    editor.update(() => $setLogicalText(run.getLatest(), '|lemma="grace"'), { discrete: true });
 
     editor.getEditorState().read(() => {
-      expect($getState(run.getLatest(), displayAnnotationsState)).toEqual({
-        basis: '|lemma="grace"',
-        annotations: [{ type: "spelling", id: "a", start: 8, end: 13 }],
-      });
+      expect($pieces(run.getLatest()).map($heldBytes)).toEqual([
+        ['|lemma="', []],
+        ["grace", ["spelling:a"]],
+        ['"', []],
+      ]);
     });
     // And back: the re-spelling the settle writes keeps the value's bytes, so the range follows.
-    editor.update(() => run.getLatest().setTextContent("|grace"), { discrete: true });
+    editor.update(() => $setLogicalText(run.getLatest(), "|grace"), { discrete: true });
     editor.getEditorState().read(() => {
-      expect($getState(run.getLatest(), displayAnnotationsState)).toEqual({
-        basis: "|grace",
-        annotations: [{ type: "spelling", id: "a", start: 1, end: 6 }],
-      });
+      expect($pieces(run.getLatest()).map($heldBytes)).toEqual([
+        ["|", []],
+        ["grace", ["spelling:a"]],
+      ]);
     });
     unregister();
   });
@@ -508,21 +511,33 @@ describe("registerDisplayAnnotationBasis", () => {
     );
     editor.update(
       () => {
-        glyph.getLatest().setTextContent("\\ndx");
+        $setLogicalText(glyph.getLatest(), "\\ndx");
         // `1` typed in front of the annotated `2`: at the range's front edge, so outside it.
-        verse.getLatest().setTextContent(`${verseText.slice(0, 3)}1${verseText.slice(3)}`);
+        $setLogicalText(verse.getLatest(), `${verseText.slice(0, 3)}1${verseText.slice(3)}`);
       },
       { discrete: true },
     );
 
     editor.getEditorState().read(() => {
-      expect($getState(glyph.getLatest(), displayAnnotationsState)?.annotations).toEqual([
-        { type: "spelling", id: "a", start: 1, end: 3 },
+      expect($pieces(glyph.getLatest()).map($heldBytes)).toEqual([
+        ["\\", []],
+        ["nd", ["spelling:a"]],
+        ["x", []],
       ]);
-      expect($getState(verse.getLatest(), displayAnnotationsState)?.annotations).toEqual([
-        { type: "spelling", id: "b", start: 4, end: 5 },
+      expect($pieces(verse.getLatest()).map($heldBytes)).toEqual([
+        [`${verseText.slice(0, 3)}1`, []],
+        ["2", ["spelling:b"]],
+        [" ", []],
       ]);
     });
     unregister();
   });
 });
+
+/** A piece's text and the annotations holding it, for a readable whole-carrier assertion. */
+function $heldBytes(piece: LexicalNode): [string, string[]] {
+  return [
+    piece.getTextContent(),
+    $displayAnnotationsOf(piece).map((held) => `${held.type}:${held.id}`),
+  ];
+}

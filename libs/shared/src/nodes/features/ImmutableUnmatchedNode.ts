@@ -13,6 +13,7 @@ import {
   Spread,
   TextNode,
 } from "lexical";
+import { $logicalText } from "./displayPieces.state.js";
 
 export const UNMATCHED_TAG_NAME = "unmatched";
 export const IMMUTABLE_UNMATCHED_VERSION = 2;
@@ -178,7 +179,7 @@ export class ImmutableUnmatchedNode extends TextNode {
  * mid-edit (pend-shaped). The unmatched counterpart of `$isCanonicalMarkerNode`.
  * Read-only: call inside `editor.getEditorState().read(...)` or an update. */
 export function $isCanonicalUnmatchedNode(node: ImmutableUnmatchedNode): boolean {
-  return node.getTextContent() === unmatchedGlyphText(node.getMarker());
+  return $logicalText(node) === unmatchedGlyphText(node.getMarker());
 }
 
 function unmatchedTitle(marker: string): string {

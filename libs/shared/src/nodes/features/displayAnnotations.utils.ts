@@ -23,10 +23,18 @@ import {
   DisplayAnnotation,
   DisplayAnnotations,
   displayAnnotationsState,
-  mapRangeThroughAlignment,
-  alignCharacters,
+  remapAnnotations,
 } from "./displayAnnotations.state.js";
-import { $isImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
+import {
+  $isPieceContinuation,
+  $joinPieces,
+  $logicalText,
+  $pieceHead,
+  $pieces,
+  displayPieceContinuationState,
+  pieceHoldKeys,
+} from "./displayPieces.state.js";
+import { $isImmutableUnmatchedNode, ImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
 import { ImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
 import { $isMarkerNode, MarkerNode } from "./MarkerNode.js";
 import type {
@@ -36,8 +44,18 @@ import type {
   TypedMarkOnRemove,
 } from "./TypedMarkNode.js";
 import { $isTypedMarkNode } from "./TypedMarkNode.js";
-import type { Klass, LexicalEditor, LexicalNode } from "lexical";
-import { $getEditor, $getState, $isDecoratorNode, $isTextNode, $setState, TextNode } from "lexical";
+import type { Klass, LexicalEditor, LexicalNode, PointType } from "lexical";
+import {
+  $copyNode,
+  $getEditor,
+  $getSelection,
+  $getState,
+  $isDecoratorNode,
+  $isRangeSelection,
+  $isTextNode,
+  $setState,
+  TextNode,
+} from "lexical";
 
 /** Decorators whose DOM is their display bytes, annotated as a whole node. */
 const DISPLAY_ANNOTATION_DECORATOR_TYPES: ReadonlySet<string> = new Set([
@@ -63,10 +81,12 @@ export function $isAttributeDisplayRun(node: LexicalNode): boolean {
  */
 export function $isElementOwnerRunAnchor(node: LexicalNode): boolean {
   if (!$isTextNode(node)) return false;
-  let owner = node.getParent();
+  // A piece of a split anchor is the anchor too; the finders name its head.
+  const head = $pieceHead(node);
+  let owner = head.getParent();
   while ($isTypedMarkNode(owner)) owner = owner.getParent();
-  if ($isNoteNode(owner)) return $noteEditableCallerNode(owner)?.is(node) ?? false;
-  if ($isChapterNode(owner)) return $chapterGlyphTextNode(owner)?.is(node) ?? false;
+  if ($isNoteNode(owner)) return $noteEditableCallerNode(owner)?.is(head) ?? false;
+  if ($isChapterNode(owner)) return $chapterGlyphTextNode(owner)?.is(head) ?? false;
   return false;
 }
 
@@ -95,34 +115,33 @@ export function $isDisplayAnnotationCarrier(node: LexicalNode): boolean {
 /**
  * The bytes of carrier `node` an annotation can hold: all of a decorator (`[0, 0]`, the whole
  * node), or a text carrier without the whitespace at its edges — a glyph's own separator (the
- * space in `\v 3 `, around a caller, after a run opener), which has no position of its own.
+ * space in `\v 3 `, around a caller, after a run opener), which has no position of its own. The
+ * edges are the whole carrier's (`$logicalText`): a piece of a split carrier can hold whitespace
+ * at its own edge when that whitespace is inside the carrier.
  */
 export function $carrierHoldableRange(node: LexicalNode): [number, number] {
   if (!$isTextNode(node)) return [0, 0];
-  if ($isImmutableUnmatchedNode(node)) return [0, node.getTextContentSize()];
-  const text = node.getTextContent();
-  const lead = text.length - text.trimStart().length;
-  if (lead === text.length) return [lead, lead];
-  return [lead, text.trimEnd().length];
+  const text = $logicalText(node);
+  let low = 0;
+  let high = text.length;
+  if (!$isImmutableUnmatchedNode(node)) {
+    low = text.length - text.trimStart().length;
+    high = low === text.length ? low : text.trimEnd().length;
+  }
+  // Restate the carrier's range in the piece's own offsets.
+  let offset = 0;
+  for (const piece of $pieces(node)) {
+    if (piece.is(node)) break;
+    offset += piece.getTextContentSize();
+  }
+  const size = node.getTextContentSize();
+  const clamp = (at: number) => Math.min(Math.max(at - offset, 0), size);
+  const from = clamp(low);
+  return [from, Math.max(from, clamp(high))];
 }
 
 function sameAnnotation(a: DisplayAnnotation, type: string, id: string): boolean {
   return a.type === type && a.id === id;
-}
-
-/**
- * `held`'s ranges re-measured against `basis`, the carrier's storage text now, through a character
- * alignment, dropping any with no byte left (see `mapRangeThroughEdit`). A whole-decorator hold
- * (`[0, 0]`) stays whole.
- */
-function remapped(held: DisplayAnnotations, basis: string): DisplayAnnotation[] {
-  if (held.basis === basis) return held.annotations;
-  const alignment = alignCharacters(held.basis, basis);
-  return held.annotations.flatMap((annotation) => {
-    if (annotation.start === annotation.end) return [annotation];
-    const mapped = mapRangeThroughAlignment(alignment, annotation.start, annotation.end);
-    return mapped ? [{ ...annotation, start: mapped[0], end: mapped[1] }] : [];
-  });
 }
 
 /**
@@ -143,7 +162,7 @@ function $carrierText(node: LexicalNode): string {
 /** `node`'s holds as stored, measured against its current storage text ({@link $storageText}). */
 function $storedAnnotations(node: LexicalNode): DisplayAnnotation[] {
   const held = $getState(node, displayAnnotationsState);
-  return held ? remapped(held, $storageText(node)) : [];
+  return held ? remapAnnotations(held, $storageText(node)) : [];
 }
 
 /**
@@ -361,7 +380,7 @@ export function $displayAnnotationIdsAt(node: LexicalNode, type: string, offset:
 export function $syncDisplayAnnotationBasis(node: LexicalNode): void {
   const held = $getState(node, displayAnnotationsState);
   if (!held || held.basis === $storageText(node)) return;
-  $writeAnnotations(node, remapped(held, $storageText(node)));
+  $writeAnnotations(node, remapAnnotations(held, $storageText(node)));
 }
 
 /** Host callbacks for an annotation held on display bytes, which has no mark node to keep them. */
@@ -422,16 +441,124 @@ export function deleteDisplayAnnotationRegistration(
   registrations.get(editor)?.delete(registrationKey(type, id));
 }
 
+// ---------------------------------------------------------------------------------------------
+// Pieces: an editable carrier cut where a hold ends (see `displayPieces.state.ts`). Every piece
+// is held whole or not at all, no two adjacent pieces are held by the same annotations, and no
+// continuation is without a head. The transform below keeps that so; it is registered beside the
+// hold-basis transform, so a hold that moves, grows, shrinks or goes away re-cuts the carrier in
+// the same update.
+// ---------------------------------------------------------------------------------------------
+/** The offsets strictly inside `text` where a hold of `annotations` starts or ends. */
+function holdBoundaries(annotations: readonly DisplayAnnotation[], length: number): number[] {
+  const cuts = new Set<number>();
+  for (const { start, end } of annotations)
+    for (const offset of [start, end]) if (offset > 0 && offset < length) cuts.add(offset);
+  return [...cuts].sort((a, b) => a - b);
+}
+
+/** The holds of `annotations` that cover `[start, end)` of `text` whole, restated over that part
+ * alone (its text is their basis). */
+function holdsOver(
+  annotations: readonly DisplayAnnotation[],
+  text: string,
+  start: number,
+  end: number,
+): DisplayAnnotations | undefined {
+  const covering = annotations
+    .filter((annotation) => annotation.start <= start && end <= annotation.end)
+    .map(({ type, id }) => ({ type, id, start: 0, end: end - start }));
+  return covering.length > 0 ? { basis: text.slice(start, end), annotations: covering } : undefined;
+}
+
+/**
+ * Cut text piece `piece` at `cuts` (offsets strictly inside it, ascending) into pieces of the
+ * same class: `piece` keeps the first part, each later part is a copy of it marked a continuation.
+ * Each part gets exactly the holds covering it whole; the selection's points on `piece` move with
+ * their bytes (a point on a cut goes with the part before it). Mutating.
+ */
+function $splitPiece(piece: TextNode, cuts: number[]): void {
+  const text = piece.getTextContent();
+  const held = $displayAnnotationsOf(piece);
+  const bounds = [0, ...cuts, text.length];
+  const selection = $getSelection();
+  const moved: { point: PointType; offset: number }[] = [];
+  if ($isRangeSelection(selection))
+    for (const point of [selection.anchor, selection.focus])
+      if (point.type === "text" && point.key === piece.getKey())
+        moved.push({ point, offset: point.offset });
+  const parts: TextNode[] = [];
+  let previous: TextNode | undefined;
+  for (let index = 0; index + 1 < bounds.length; index++) {
+    const [start, end] = [bounds[index], bounds[index + 1]];
+    const part = text.slice(start, end);
+    const node = previous ? $copyNode(piece) : piece;
+    const writable = node.setTextContent(part);
+    $setState(writable, displayAnnotationsState, holdsOver(held, text, start, end));
+    if (previous) {
+      $setState(writable, displayPieceContinuationState, true);
+      previous.insertAfter(writable, false);
+    }
+    parts.push(writable);
+    previous = writable;
+  }
+  for (const { point, offset } of moved) {
+    // Left-biased: an offset on a cut names the end of the part before it.
+    let index = bounds.findIndex((bound, i) => i > 0 && offset <= bound) - 1;
+    if (index < 0) index = 0;
+    point.set(parts[index].getKey(), offset - bounds[index], "text");
+  }
+}
+
+/**
+ * Normalize the carrier `node` is a piece of. The body of the piece transform; idempotent (a
+ * normalized carrier is left untouched, so the transform converges). Mutating.
+ */
+export function $normalizeCarrierPieces(node: LexicalNode): void {
+  if (!$isTextNode(node) || !node.isAttached()) return;
+  // A continuation whose head is gone (deleted, or the piece was moved) is a carrier of its own.
+  if ($isPieceContinuation(node) && $pieceHead(node).is(node))
+    $setState(node, displayPieceContinuationState, undefined);
+  const head = $pieceHead(node);
+  // Plain content never holds and never splits; the check is what keeps this cheap for every
+  // typed character.
+  if (
+    !$isDisplayAnnotationCarrier(head) &&
+    !$isPieceContinuation(head.getNextSibling()) &&
+    $displayAnnotationsOf(head).length === 0
+  )
+    return;
+  // Cut every piece where a hold starts or ends inside it.
+  for (const piece of $pieces(head)) {
+    if (!$isTextNode(piece)) continue;
+    const cuts = holdBoundaries($displayAnnotationsOf(piece), piece.getTextContentSize());
+    if (cuts.length > 0) $splitPiece(piece, cuts);
+  }
+  // Join neighbours the same annotations hold, so a carrier is split only where a hold ends.
+  let current = $pieceHead(head);
+  for (;;) {
+    const pieces = $pieces(current);
+    const index = pieces.findIndex((piece) => piece.is(current));
+    const next = pieces[index + 1];
+    if (!next) break;
+    const same =
+      pieceHoldKeys($displayAnnotationsOf(current)).join("\u0000") ===
+      pieceHoldKeys($displayAnnotationsOf(next)).join("\u0000");
+    if (same) current = $joinPieces([current, next]);
+    else current = next;
+  }
+}
+
 /**
  * Keep every carrier's ranges measured against its current text, so an annotation follows its
- * bytes the way a mark follows its text. `TextNode` covers attribute runs, a note's caller and a
- * chapter's glyph; `MarkerNode` and `VerseNode` register their own transforms, as do the
- * decorator carriers defined here and any in `decoratorKlasses` (those `shared-react` defines).
- * Returns the unregister function.
+ * bytes the way a mark follows its text, and keep every editable carrier cut into pieces exactly
+ * where a hold ends (`$normalizeCarrierPieces`). `TextNode` covers attribute runs, a note's caller
+ * and a chapter's glyph; `MarkerNode`, `VerseNode` and `ImmutableUnmatchedNode` register their own
+ * transforms, as do the decorator carriers defined here and any in `decoratorKlasses` (those
+ * `shared-react` defines). Returns the unregister function.
  *
  * Registering a transform marks every existing node of the class dirty once, so each mount runs
- * one extra pass over them (a decorator's is decorated again); `$syncDisplayAnnotationBasis`
- * reads no state for a node without carrier state and writes nothing, so the pass costs a tree
+ * one extra pass over them (a decorator's is decorated again); neither transform reads state for
+ * a node without carrier state or writes anything for a normalized one, so the pass costs a tree
  * walk and nothing more.
  */
 export function registerDisplayAnnotationBasis(
@@ -442,12 +569,17 @@ export function registerDisplayAnnotationBasis(
     TextNode,
     MarkerNode,
     VerseNode,
+    ImmutableUnmatchedNode,
     ImmutableTypedTextNode,
     ImmutableChapterNode,
     ...decoratorKlasses,
   ];
+  const $transform = (node: LexicalNode): void => {
+    $syncDisplayAnnotationBasis(node);
+    $normalizeCarrierPieces(node);
+  };
   const unregisters = klasses
     .filter((klass) => editor.hasNodes([klass]))
-    .map((klass) => editor.registerNodeTransform(klass, $syncDisplayAnnotationBasis));
+    .map((klass) => editor.registerNodeTransform(klass, $transform));
   return () => unregisters.forEach((unregister) => unregister());
 }
