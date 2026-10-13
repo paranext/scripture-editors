@@ -211,7 +211,7 @@ export function $guardCaretOutOfNoteShell(): boolean {
 
   const ended = $noteEndAt(selection.anchor) ?? $atOrPastProtectedCloser(selection.anchor);
   if (ended) {
-    const end = $contentEndPoint(ended);
+    const end = $contentEndCaret(ended);
     if (selection.anchor.is(end)) return false;
     $setCollapsed(selection, end);
     return true;
@@ -266,6 +266,17 @@ function $contentEndPoint(note: NoteNode): PointType {
     if ($isTextNode(text)) return $createPoint(text.getKey(), text.getTextContentSize(), "text");
   }
   return $shellTrailingEdge(note);
+}
+
+/**
+ * Where a caret past `note`'s content rests: the front of its protected closer, which is the end of
+ * the content on screen — text typed there joins the content in front of it
+ * (`$keepProtectedNoteCloser`, in the marker-edit engine) — or, for a closer the adaptor left
+ * editable, the end of the content as a text point ({@link $contentEndPoint}).
+ */
+function $contentEndCaret(note: NoteNode): PointType {
+  const closer = $protectedCloser(note);
+  return closer ? $createPoint(closer.getKey(), 0, "text") : $contentEndPoint(note);
 }
 
 /**
