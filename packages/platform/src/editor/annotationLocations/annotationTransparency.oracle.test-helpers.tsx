@@ -43,14 +43,24 @@ import {
   readExpectedFailures,
   runKeystrokeCase,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
-import { Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
+import { copyEvent } from "../markerEdit/markerEdit.test-helpers";
+import { UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, $isElementNode, $isTextNode, LexicalNode, TextNode } from "lexical";
+import {
+  $getRoot,
+  $isElementNode,
+  $isTextNode,
+  COPY_COMMAND,
+  LexicalNode,
+  TextNode,
+} from "lexical";
 import {
   $carrierHoldableRange,
   $isDisplayAnnotationCarrier,
   $isMarkerTrailingSeparator,
+  NBSP,
   TypedMarkOnRemove,
+  ZWSP,
 } from "shared";
 import { AnnotationRange, getEditorDelta, ViewOptions } from "shared-react";
 import { writeFileSync } from "node:fs";
@@ -248,8 +258,23 @@ function observables(run: CaseRun): { [name: string]: string } {
   };
 }
 
+/** The `text/plain` a copy of the whole edited paragraph puts on the clipboard. */
+async function copiedBytes(mounted: MountedInView): Promise<string> {
+  await act(async () => {
+    mounted.lexical.update(() => {
+      const para = $getRoot().getChildren()[2];
+      if ($isElementNode(para)) para.select(0, para.getChildrenSize());
+    });
+  });
+  const { event, getData } = copyEvent();
+  await act(async () => {
+    mounted.lexical.dispatchCommand(COPY_COMMAND, event);
+  });
+  return getData("text/plain");
+}
+
 /** Bytes an annotation may paint without holding: whitespace between or beside held bytes. */
-const FILLER = /^[\s ​]$/;
+const FILLER = new RegExp(`^[\\s${NBSP}${ZWSP}]$`);
 
 /**
  * The annotated run's own failures after `mounted` settled: a held byte nothing paints, a
@@ -332,6 +357,8 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
             if (!plain) continue;
             const expected = observables(plain);
             expected.delta = JSON.stringify(getEditorDelta(plainMounted.lexical.getEditorState()));
+            expected.ops = JSON.stringify(plainMounted.ops);
+            expected.copy = await copiedBytes(plainMounted);
             plainMounted.unmount();
             // Every spelling the annotated tree gives the site, each run on a fresh mount.
             let spellings: CaseSite[] | undefined;
@@ -339,6 +366,8 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               const mounted = await mountInView(usj, viewOptions);
               const applied = await applyAnnotations(mounted, plan);
               heldAnnotations = Math.max(heldAnnotations, applied.ids.length);
+              // Setting an annotation emits no change, so the ops streams start equal here.
+              const opsBefore = mounted.ops.length;
               spellings ??= mounted.lexical.getEditorState().read(() => $spellings(site));
               const spelling = spellings[which];
               if (!spelling) {
@@ -365,6 +394,8 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               comparedCases += 1;
               const actual = observables(annotated);
               actual.delta = JSON.stringify(getEditorDelta(mounted.lexical.getEditorState()));
+              actual.ops = JSON.stringify(mounted.ops.slice(opsBefore));
+              actual.copy = await copiedBytes(mounted);
               for (const [name, value] of Object.entries(expected))
                 if (actual[name] !== value)
                   mismatches.set(

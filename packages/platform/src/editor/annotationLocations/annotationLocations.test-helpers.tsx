@@ -14,6 +14,7 @@ import {
   UsjDocumentLocation,
 } from "@eten-tech-foundation/scripture-utilities";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
+import { DeltaOp } from "shared-react";
 import { act, render } from "@testing-library/react";
 import {
   $getRoot,
@@ -52,13 +53,17 @@ export interface MountedInView {
   unmount: () => void;
   /** Every `error` and `warn` the Editor's logger received, prefixed `E ` or `W `. */
   logs: string[];
+  /** Every `onUsjChange` call's ops, in order (empty ops as `[]`). */
+  ops: DeltaOp[][];
 }
 
-/** Mounts `usj` in the real `Editor` with `view`, collecting what its logger reports. */
+/** Mounts `usj` in the real `Editor` with `view`, collecting what its logger reports and every
+ * `onUsjChange` call's ops. */
 export async function mountInView(usj: Usj, view: ViewOptions): Promise<MountedInView> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
   const logs: string[] = [];
+  const ops: DeltaOp[][] = [];
   const logger: LoggerBasic = {
     error: (...params: unknown[]) => logs.push(`E ${params.map(String).join(" ")}`),
     warn: (...params: unknown[]) => logs.push(`W ${params.map(String).join(" ")}`),
@@ -66,7 +71,13 @@ export async function mountInView(usj: Usj, view: ViewOptions): Promise<MountedI
     debug: () => undefined,
   };
   const ui: ReactElement = (
-    <Editor ref={ref} defaultUsj={usj} options={{ view }} logger={logger}>
+    <Editor
+      ref={ref}
+      defaultUsj={usj}
+      options={{ view }}
+      logger={logger}
+      onUsjChange={(_usj, changeOps) => ops.push(changeOps ?? [])}
+    >
       <EditorRefPlugin editorRef={lexicalRef} />
     </Editor>
   );
@@ -75,7 +86,7 @@ export async function mountInView(usj: Usj, view: ViewOptions): Promise<MountedI
     ({ unmount } = render(ui));
   });
   if (!lexicalRef.current || !unmount) throw new Error("mount failed");
-  return { ref, lexical: lexicalRef.current, unmount, logs };
+  return { ref, lexical: lexicalRef.current, unmount, logs, ops };
 }
 
 function requireViewOptions(mode: string): ViewOptions {
