@@ -92,7 +92,8 @@ function convertUsjRecurse(
 }
 
 function setAttributes(element: Element, markerContent: MarkerObject) {
-  if (markerContent.marker) {
+  // Present, not truthy: an empty marker is a nameless one (`\ 2` in USFM) — see usx-to-usj.ts.
+  if (markerContent.marker !== undefined) {
     if (markerContent.type === "unmatched") element.setAttribute("marker", markerContent.marker);
     else element.setAttribute("style", markerContent.marker);
   }

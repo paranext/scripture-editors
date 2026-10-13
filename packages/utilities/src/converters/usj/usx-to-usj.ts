@@ -54,7 +54,9 @@ function convertUsxRecurse<T extends Usj | MarkerObject = Usj>(
     }
   }
 
-  if (attribs.style) {
+  // Present, not truthy: an empty style is a nameless marker (`\ 2` in USFM), which ParatextData
+  // reads as `style=""` and writes back as the same bytes.
+  if (attribs.style !== undefined) {
     marker = attribs.style;
     delete attribs.style;
   }
@@ -65,7 +67,7 @@ function convertUsxRecurse<T extends Usj | MarkerObject = Usj>(
   if (attribs.status) delete attribs.status;
 
   let outObj: T = { type } as T;
-  if (marker) (outObj as MarkerObject).marker = marker;
+  if (marker !== undefined) (outObj as MarkerObject).marker = marker;
   outObj = { ...outObj, ...attribs };
 
   if (
