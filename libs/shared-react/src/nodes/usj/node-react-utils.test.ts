@@ -53,6 +53,7 @@ import {
   ImmutableChapterNode,
   MarkerNode,
   NoteNode,
+  getVisibleOpenMarkerText,
   ParaNode,
   TypedMarkNode,
   VerseBlockNode,
@@ -828,6 +829,90 @@ describe("$getEffectiveVerseForBcv()", () => {
     });
   });
 
+  // Views that render markers as editable text make the verse node's text the WHOLE marker
+  // (`\v 3 `), so the verse number no longer sits at offset 0. Everything before it is marker
+  // syntax, and a caret there belongs to the preceding verse — that position is where a note
+  // ending the previous verse leaves the caret, since the next verse's marker follows it directly.
+  it("returns the previous verse when the cursor is before the number of an editable verse marker", () => {
+    let verse3Key: string;
+    const { editor } = createBasicTestEnvironment([ParaNode, VerseNode]);
+    editor.update(
+      () => {
+        const v3 = $createVerseNode("3", getVisibleOpenMarkerText("v", "3"));
+        $getRoot().append($createParaNode().append(v3));
+        verse3Key = v3.getKey();
+        v3.select(0, 0);
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      const node = $getNodeByKey(verse3Key);
+      const verseNode = $isSomeVerseNode(node) ? node : undefined;
+
+      const result = $getEffectiveVerseForBcv(verseNode, $getSelection());
+
+      expect(result).toEqual({ verseNum: 2 });
+    });
+  });
+
+  it("returns the current verse once the cursor is past the number of an editable verse marker", () => {
+    let verse3Key: string;
+    const { editor } = createBasicTestEnvironment([ParaNode, VerseNode]);
+    editor.update(
+      () => {
+        const markerText = getVisibleOpenMarkerText("v", "3");
+        const v3 = $createVerseNode("3", markerText);
+        $getRoot().append($createParaNode().append(v3));
+        verse3Key = v3.getKey();
+        v3.select(markerText.length, markerText.length);
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      const node = $getNodeByKey(verse3Key);
+      const verseNode = $isSomeVerseNode(node) ? node : undefined;
+
+      const result = $getEffectiveVerseForBcv(verseNode, $getSelection());
+
+      expect(result).toEqual({ verseNum: 3 });
+    });
+  });
+
+  // The verse before a marker is the one the chapter actually has there, which the next marker's
+  // number alone cannot tell: a bridge, a segment, or an omitted verse all break "number - 1".
+  it.each([
+    { previous: "1-2", next: "3", expected: { verseNum: 1, verse: "1-2" } },
+    { previous: "2a", next: "2b", expected: { verseNum: 2, verse: "2a" } },
+    { previous: "20", next: "22", expected: { verseNum: 20 } },
+  ])(
+    "returns the previous verse node's verse before `\\v $next` after `\\v $previous`",
+    ({ previous, next, expected }) => {
+      let nextKey: string;
+      const { editor } = createBasicTestEnvironment([ParaNode, VerseNode]);
+      editor.update(
+        () => {
+          const nextVerse = $createVerseNode(next, getVisibleOpenMarkerText("v", next));
+          $getRoot().append(
+            $createParaNode().append(
+              $createVerseNode(previous, getVisibleOpenMarkerText("v", previous)),
+              $createTextNode("text "),
+            ),
+            $createParaNode().append(nextVerse, $createTextNode("more")),
+          );
+          nextKey = nextVerse.getKey();
+          nextVerse.select(0, 0);
+        },
+        { discrete: true },
+      );
+      editor.getEditorState().read(() => {
+        const node = $getNodeByKey(nextKey);
+        const verseNode = $isSomeVerseNode(node) ? node : undefined;
+
+        expect($getEffectiveVerseForBcv(verseNode, $getSelection())).toEqual(expected);
+      });
+    },
+  );
+
   it("returns verse 0 when cursor is in parent at offset 0 (before first verse)", () => {
     let paraKey: string;
     let verse1Key: string;
@@ -1508,7 +1593,14 @@ describe("$insertNote()", () => {
     });
   });
 
-  it("classifies 'ex' as a cross-reference when resolving the project default caller", () => {
+  it("gives 'f' and 'x' the project's own default caller, and every other marker Paratext 9's fallback", () => {
+    // Paratext 9's DefaultCallerMapper has a project-level default caller for exactly four
+    // markers - f, x, ef, ex - each under its OWN settings field. This editor exposes only two of
+    // those settings (defaultFootnoteCaller for "f", defaultCrossRefCaller for "x"), so every
+    // other marker - "fe", "ef", "efe", "ex" included - falls back to Paratext 9's hardcoded
+    // per-marker default instead of borrowing a different marker's project setting: "+" for a
+    // marker starting with "f", "-" for everything else
+    // (Paratext ParatextBase/ScriptureEditor/UsfmSnippetInserter.cs GetFallbackCaller).
     const { editor } = createBasicTestEnvironment(requiredNodes);
     editor.update(
       () => {
@@ -1524,29 +1616,65 @@ describe("$insertNote()", () => {
         defaultCrossRefCaller: "†",
         defaultFootnoteCaller: "‡",
       };
-      const extendedCrossRef = $insertNote(
-        "ex",
-        undefined,
-        undefined,
-        { book: "GEN", chapterNum: 1, verseNum: 1 },
-        viewOptions,
-        projectCallers,
-        undefined,
-      );
-      expect(extendedCrossRef?.getCaller()).toBe("†");
+      const insert = (marker: string) =>
+        $insertNote(
+          marker,
+          undefined,
+          undefined,
+          { book: "GEN", chapterNum: 1, verseNum: 1 },
+          viewOptions,
+          projectCallers,
+          undefined,
+        );
 
-      // Positive control: "ef" also starts with "e" but is a footnote — it must take the
-      // footnote default, proving the cross-reference classification matches "ex" exactly.
-      const studyNote = $insertNote(
-        "ef",
+      expect(insert("f")?.getCaller()).toBe("‡");
+      expect(insert("x")?.getCaller()).toBe("†");
+      // The bug this pins: "fe" has no project-level default in Paratext 9 at all, so it must NOT
+      // take the "f" marker's defaultFootnoteCaller - it always gets Paratext 9's own "+"
+      // fallback, regardless of what the project configured for plain footnotes.
+      expect(insert("fe")?.getCaller()).toBe("+");
+      // "ef" and "ex" have their OWN Paratext 9 project settings (DefaultExFootnoteCaller /
+      // DefaultExCrossRefCaller), which this editor does not model — so they fall back too,
+      // rather than incorrectly reusing "f"/"x"'s settings.
+      expect(insert("ef")?.getCaller()).toBe("-");
+      expect(insert("ex")?.getCaller()).toBe("-");
+      expect(insert("efe")?.getCaller()).toBe("-");
+    });
+  });
+
+  it("gives 'fe' Paratext 9's '+' fallback even when the project has customized the footnote default", () => {
+    const { editor } = createBasicTestEnvironment(requiredNodes);
+    editor.update(
+      () => {
+        const t1 = $createTextNode("text");
+        $getRoot().append($createParaNode().append(t1));
+        t1.select(2, 2);
+      },
+      { discrete: true },
+    );
+
+    editor.update(() => {
+      const endnote = $insertNote(
+        "fe",
         undefined,
         undefined,
         { book: "GEN", chapterNum: 1, verseNum: 1 },
         viewOptions,
-        projectCallers,
+        { defaultFootnoteCaller: "-" },
         undefined,
       );
-      expect(studyNote?.getCaller()).toBe("‡");
+      expect(endnote?.getCaller()).toBe("+");
+
+      const footnote = $insertNote(
+        "f",
+        undefined,
+        undefined,
+        { book: "GEN", chapterNum: 1, verseNum: 1 },
+        viewOptions,
+        { defaultFootnoteCaller: "-" },
+        undefined,
+      );
+      expect(footnote?.getCaller()).toBe("-");
     });
   });
 

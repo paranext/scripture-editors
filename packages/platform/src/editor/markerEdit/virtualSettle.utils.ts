@@ -36,9 +36,18 @@ import {
   $pendingCharOpenerRename,
   $unknownSplitRejoinScope,
   CharOpenerRename,
+  UnknownSplitRejoinScope,
 } from "./markerEditTier1.utils";
-import { $serializeExpandedNoteContent, ATOMIC_SENTINEL } from "./settleShared.utils";
 import {
+  $serializeBookLine,
+  $serializeExpandedNoteContent,
+  $serializeNoteClosedAtOwnCloser,
+  ATOMIC_SENTINEL,
+  splitUnclosedNoteAtOwnCloser,
+} from "./settleShared.utils";
+import {
+  $appendParaFragments,
+  $buildBookFragment,
   $buildChapterFragment,
   $buildNoteFragment,
   $buildParaScopeFragment,
@@ -62,6 +71,7 @@ import {
   Tier2Context,
   toFragmentText,
   tokenizeFragment,
+  tokenizedBookLine,
 } from "./tier2Rebuild.utils";
 import {
   MarkerContent,
@@ -83,6 +93,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $isBookNode,
   $isCanonicalMarkerNode,
   $isChapterNode,
   $isCharNode,
@@ -91,6 +102,7 @@ import {
   $isParaNode,
   $isUnknownNode,
   $isVerseNode,
+  BookNode,
   ChapterNode,
   CharNode,
   MarkerLookup,
@@ -135,12 +147,25 @@ export function $mapSerializedSites(
  * preserved node run it stands for, in fragment order — the JSON analogue of `$replaceSentinels`.
  * A placeholder's own text node is split around it, so a preserved node lands exactly where its
  * placeholder stood and never migrates to a block boundary.
+ *
+ * Mutates `roots` IN PLACE (top-level splices as well as nested ones) rather than returning a new
+ * array, so a caller that needs the result must pass the array it will go on to read — never a
+ * throwaway `[...a, ...b]` spread, whose splices land on the spread copy and leave `a`/`b`
+ * unmutated.
+ *
+ * `startIndex`/the return value let two SEPARATE arrays (e.g. a settled region's own content and
+ * the blocks that follow it) share ONE run queue across two calls, consuming it in document order,
+ * without needing to concatenate them into one throwaway array first.
+ *
+ * @returns The queue index just past the last run this call consumed — pass it as the next
+ *   call's `startIndex` to continue the same queue over a second array.
  */
 function replaceSerializedSentinels(
   roots: SerializedLexicalNode[],
   runs: SerializedLexicalNode[][],
-): void {
-  let queueIndex = 0;
+  startIndex = 0,
+): number {
+  let queueIndex = startIndex;
   const visitList = (list: SerializedLexicalNode[]): void => {
     for (let index = 0; index < list.length; index++) {
       const node = list[index];
@@ -180,6 +205,7 @@ function replaceSerializedSentinels(
     }
   };
   visitList(roots);
+  return queueIndex;
 }
 
 /** One fragment's preserved runs as a settled rebuild carries them: the live members of each run
@@ -640,6 +666,9 @@ export function $settledNoteScope(
        * note's current state — the caller patches the serialized note's own field on change. */
       category: string | undefined;
       categoryChanged: boolean;
+      /** The note closed at a closer typed into it, then what followed the closer - replacing the
+       * note itself rather than its content (see `splitUnclosedNoteAtOwnCloser`). */
+      closedAs?: SerializedLexicalNode[];
     }
   | undefined {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
@@ -675,6 +704,31 @@ export function $settledNoteScope(
   const noteContent = tokenizedWrapper.content ?? [];
   const foldedCategory = extractLeadingCategoryFold(noteContent);
   const categoryChanged = note.getCategory() !== foldedCategory;
+  // Mirrors `$rebuildNoteContent`'s `$closeNoteAtOwnCloser`.
+  const closedAt = splitUnclosedNoteAtOwnCloser(note, noteContent);
+  if (closedAt) {
+    const closedAs = $serializeNoteClosedAtOwnCloser(
+      note,
+      closedAt.before,
+      closedAt.after,
+      foldedCategory,
+      viewOptions,
+    );
+    if (!closedAs || countSerializedSentinels(closedAs) !== out.sentinels.length) {
+      logger?.warn("[MarkerEdit] Settled note USJ skipped: the closed note lost its content");
+      return undefined;
+    }
+    const closedRuns = carriedPreservedRuns(out, sites, huskKeys);
+    if (!closedRuns) return undefined;
+    replaceSerializedSentinels(closedAs, closedRuns.serialized);
+    return {
+      rebuilt: undefined,
+      contentNodes,
+      category: foldedCategory,
+      categoryChanged: false,
+      closedAs,
+    };
+  }
   const unwrapped = $serializeExpandedNoteContent(note, noteContent, foldedCategory, viewOptions);
   if (unwrapped.failure !== undefined) {
     // An "empty" unwrap is silent here, matching this module's other content-less skips.
@@ -1052,6 +1106,104 @@ export function $applySettledCharOpenerRename(
 }
 
 /**
+ * The serialized nodes a settled `\id` line's CONTENT becomes, paired with the live content nodes
+ * they replace, plus the serialized blocks the settle starts after the line — or `undefined` when
+ * the settle refuses. Mirrors `$rebuildBook` (tier2Rebuild.utils.ts) decision for decision: the
+ * same fragment, the same {@link tokenizedBookLine} split, the same shared serialize-and-unwrap,
+ * and the same fixed-point refusal over the CONTENT nodes only — the book's own marker and code are
+ * preserved verbatim across the rebuild and never re-derived from bytes.
+ *
+ * `trailingParas` widens the scope exactly as it widens `$rebuildBook`'s — the unknown-split
+ * rejoin's artifact paragraph, joined onto the line's bytes and replaced by what they tokenize to.
+ *
+ * `transient` is cut out of the line's fragment the same way `$settledParaScope` cuts it out of a
+ * paragraph's — see {@link $fragmentWithoutTransient}'s doc comment.
+ */
+function $settledBookLine(
+  book: BookNode,
+  sites: Map<NodeKey, SerializedSite>,
+  context: Tier2Context,
+  huskKeys: ReadonlySet<NodeKey>,
+  transient: TransientLiteral | undefined,
+  trailingParas: ParaNode[],
+  charRenames?: ReadonlyMap<NodeKey, CharOpenerRename>,
+):
+  | {
+      rebuilt: SerializedLexicalNode[];
+      contentNodes: LexicalNode[];
+      followingBlocks: SerializedLexicalNode[];
+    }
+  | undefined {
+  const { viewOptions, getMarker: getMarkerFn, logger } = context;
+  const built = $buildBookFragment(book, getMarkerFn, viewOptions);
+  const { contentNodes } = built;
+  if (contentNodes.length === 0 && trailingParas.length === 0) return undefined;
+  if (!$appendParaFragments(built.out, trailingParas, getMarkerFn, viewOptions)) return undefined;
+  const out = $fragmentWithCharOpenerRenames(built.out, charRenames, context);
+  const tokenized = tokenizedBookLine($fragmentWithoutTransient(out, transient), getMarkerFn);
+  if (countSentinels(tokenized.content) !== out.sentinels.length) {
+    logger?.warn("[MarkerEdit] Settled book USJ skipped: sentinel/preserved-node count mismatch");
+    return undefined;
+  }
+  const serialized = $serializeBookLine(
+    book,
+    tokenized.lineContent,
+    tokenized.followingBlocks,
+    viewOptions,
+  );
+  if (serialized.failure !== undefined) {
+    // An "empty" unwrap is silent here, matching this module's other content-less skips.
+    if (serialized.failure === "shape")
+      logger?.warn("[MarkerEdit] Settled book USJ skipped: unexpected serialized shape");
+    return undefined;
+  }
+  const { children: rebuilt, followingBlocks } = serialized;
+  if (countSerializedSentinels([...rebuilt, ...followingBlocks]) !== out.sentinels.length) {
+    logger?.warn(
+      "[MarkerEdit] Settled book USJ skipped: serialized sentinel/preserved-node count mismatch",
+    );
+    return undefined;
+  }
+  const runs = carriedPreservedRuns(out, sites, huskKeys);
+  if (!runs) {
+    logger?.warn("[MarkerEdit] Settled book USJ skipped: a preserved node had no serialized form");
+    return undefined;
+  }
+  // Fixed-point refusal, computed BEFORE `replaceSerializedSentinels` below while `rebuilt` still
+  // carries the raw ATOMIC_SENTINEL characters — the same ordering (and the same
+  // `$structuralMarkersAgree` companion, blind spot and all) `$settledNoteScope` documents, over
+  // the content nodes and the widened paragraphs alike. Without `trailingParas`, a settle that
+  // starts a following block restructures the document, so it is never a fixed point.
+  if (
+    followingBlocks.length === trailingParas.length &&
+    serializedSignatureOf(followingBlocks, getMarkerFn) ===
+      $signatureOf(trailingParas, getMarkerFn) &&
+    $structuralMarkersAgree(trailingParas, followingBlocks, getMarkerFn) &&
+    serializedSignatureOf(rebuilt, getMarkerFn) === $signatureOf(contentNodes, getMarkerFn) &&
+    $structuralMarkersAgree(contentNodes, rebuilt, getMarkerFn)
+  ) {
+    logger?.debug("[MarkerEdit] Settled book USJ skipped: rebuild is a no-op (fixed point)");
+    return undefined;
+  }
+  // Two calls sharing ONE run queue, in document order: the line's content comes first, so its
+  // placeholders consume the preserved runs ahead of the following blocks' own. Each call mutates
+  // its OWN array in place — `rebuilt` and `followingBlocks` keep their identity, which is what the
+  // caller (and this function's own return value) hands back.
+  const queueIndexAfterContent = replaceSerializedSentinels(rebuilt, runs.serialized);
+  replaceSerializedSentinels(followingBlocks, runs.serialized, queueIndexAfterContent);
+  // Sid carry-over, mirroring `$rebuildBook`/`$settledParaScope` — see the latter's own comment
+  // for the rationale (the tokenizer never derives a sid from visible bytes, so without this a
+  // `getUsj()` taken mid-pend disagrees with `commitPendingMarkerEdits()` then `getUsj()`).
+  const oldVerseSids = $collectLiveVerseSids([...contentNodes, ...trailingParas]);
+  const newVerses = collectSerializedVerses([...rebuilt, ...followingBlocks]);
+  for (let i = 0; i < oldVerseSids.length && i < newVerses.length; i++) {
+    if (oldVerseSids[i].sid !== undefined && newVerses[i].number === oldVerseSids[i].number)
+      newVerses[i].sid = oldVerseSids[i].sid;
+  }
+  return { rebuilt, contentNodes, followingBlocks };
+}
+
+/**
  * The serialized nodes a settled chapter becomes — or `undefined` when the settle refuses.
  * Mirrors `$rebuildChapter` (tier2Rebuild.utils.ts) read-only, decision for decision: the same
  * fragment, the same must-still-be-a-chapter guard, the same sid carry-over, and the same
@@ -1141,6 +1293,11 @@ export interface SettleScopes {
   paraScopes: Map<NodeKey, ParaNode[]>;
   noteScopes: Map<NodeKey, NoteNode>;
   chapterScopes: Map<NodeKey, ChapterNode>;
+  /** The `\id` line scopes, keyed by the book's key. */
+  bookScopes: Map<NodeKey, BookNode>;
+  /** A book scope's widened paragraphs — the artifact an unknown-split rejoin folds back into the
+   * line — keyed by the book's key. */
+  bookTrailingParas: Map<NodeKey, ParaNode[]>;
   /** The note-own-glyph renames among the pended keys, keyed by the note's key. */
   noteGlyphRenames: Map<NodeKey, NoteGlyphRename>;
   /** The char opener renames Tier 1 applies in place, keyed by the span's key. They rebuild no
@@ -1163,14 +1320,18 @@ export function $collectSettleScopes(
   transient: TransientLiteral | undefined,
 ): SettleScopes {
   const paraScopes = new Map<NodeKey, ParaNode[]>();
-  const rejoinScopes: ParaNode[][] = [];
+  const rejoinScopes: UnknownSplitRejoinScope[] = [];
   const noteScopes = new Map<NodeKey, NoteNode>();
   const chapterScopes = new Map<NodeKey, ChapterNode>();
+  const bookScopes = new Map<NodeKey, BookNode>();
+  // A book's widened paragraphs — the artifact an unknown-split rejoin folds back into the line.
+  const bookTrailingParas = new Map<NodeKey, ParaNode[]>();
   const noteGlyphRenames = new Map<NodeKey, NoteGlyphRename>();
   const charOpenerRenames = new Map<NodeKey, CharOpenerRename>();
-  const addScope = (scope: ParaNode | NoteNode | ChapterNode) => {
+  const addScope = (scope: ParaNode | NoteNode | ChapterNode | BookNode) => {
     if ($isNoteNode(scope)) noteScopes.set(scope.getKey(), scope);
     else if ($isChapterNode(scope)) chapterScopes.set(scope.getKey(), scope);
+    else if ($isBookNode(scope)) bookScopes.set(scope.getKey(), scope);
     else paraScopes.set(scope.getKey(), [scope]);
   };
   for (const key of pendedKeys) {
@@ -1198,28 +1359,41 @@ export function $collectSettleScopes(
     }
   }
   // Apply the widened scopes last, replacing the single-paragraph entries they subsume, so a
-  // paragraph is rebuilt by exactly ONE scope and no two splices can target overlapping slots.
+  // paragraph is rebuilt by exactly ONE scope and no two splices can target overlapping slots. A
+  // book predecessor keeps its own book scope and takes the artifact as its trailing paragraph,
+  // the same scope `$rebuildBook` rebuilds on the mutating side.
   const claimed = new Set<NodeKey>();
-  for (const rejoin of rejoinScopes) {
-    if (rejoin.some((para) => claimed.has(para.getKey()))) continue;
-    rejoin.forEach((para) => {
-      claimed.add(para.getKey());
-      paraScopes.delete(para.getKey());
+  for (const [previous, artifact] of rejoinScopes) {
+    if (claimed.has(previous.getKey()) || claimed.has(artifact.getKey())) continue;
+    [previous, artifact].forEach((block) => {
+      claimed.add(block.getKey());
+      paraScopes.delete(block.getKey());
     });
-    paraScopes.set(rejoin[0].getKey(), rejoin);
+    if ($isBookNode(previous)) {
+      bookScopes.set(previous.getKey(), previous);
+      bookTrailingParas.set(previous.getKey(), [artifact]);
+    } else paraScopes.set(previous.getKey(), [previous, artifact]);
   }
   if (transient) {
     // No note-glyph-rename lookup for this scope: a transient declaration is plain typed text, not
     // a bare-opener rename Tier 1 would route to `$applyOpenerRename` — see
     // `$noteGlyphRenameTarget`'s own doc comment for what that shape looks like.
     const scope = $settleScopeForNode(transient.node);
-    if (scope) addScope(scope);
+    // A scope the widening pass above already CLAIMED (the rejoin's artifact, or its book/para
+    // predecessor) is already going to settle through the widened scope — `$settledBookLine`/
+    // `$settledParaScope` both receive `transient` directly, so the declaration still reaches it.
+    // Adding it again here would re-enter it as its own single-paragraph scope, and a rebuild of
+    // the artifact ALONE that happens to tokenize to more than one block would then splice into
+    // the document TWICE: once joined into the widened scope, once as its own duplicate.
+    if (scope && !claimed.has(scope.getKey())) addScope(scope);
   }
   const husks = $emptiedOptbreakHusksOf(pendedKeys);
   return {
     paraScopes,
     noteScopes,
     chapterScopes,
+    bookScopes,
+    bookTrailingParas,
     noteGlyphRenames,
     charOpenerRenames,
     husks,
@@ -1282,6 +1456,17 @@ export function $applySettledNoteScope(
   if (!site || !noteChildren) return false;
   const built = $settledNoteScope(note, sites, context, huskKeys, transient, charRenames);
   if (!built) return false;
+  if (built.closedAs) {
+    const index = site.siblings.indexOf(site.node);
+    if (index < 0) return false;
+    const [closedNote, ...following] = built.closedAs;
+    // Rewritten in place, so a paragraph settling around this note substitutes the closed note.
+    const target = site.node as unknown as { [key: string]: unknown };
+    for (const key of Object.keys(target)) Reflect.deleteProperty(target, key);
+    Object.assign(target, closedNote);
+    site.siblings.splice(index + 1, 0, ...following);
+    return true;
+  }
   // The category fold's result patches the serialized note's OWN field — the settled USJ a
   // consumer reads must carry the category the displayed bytes fold to, not the stale state.
   if (built.categoryChanged) {
@@ -1328,6 +1513,8 @@ export function $settledUsj(
     paraScopes,
     noteScopes,
     chapterScopes,
+    bookScopes,
+    bookTrailingParas,
     noteGlyphRenames,
     charOpenerRenames,
     husks,
@@ -1338,6 +1525,7 @@ export function $settledUsj(
     noteScopes.size === 0 &&
     chapterScopes.size === 0 &&
     charOpenerRenames.size === 0 &&
+    bookScopes.size === 0 &&
     husks.length === 0
   )
     return undefined;
@@ -1379,12 +1567,44 @@ export function $settledUsj(
     site.siblings.splice(index, paras.length, ...rebuilt);
   }
 
-  // Chapters are top-level and disjoint from both passes above — a chapter is never inside a
-  // paragraph or a note — so ordering against them is free. The whole REGION's slots are
-  // replaced — the chapter plus the adjacent first-class `\ca`/`\cp` spans and `\cp` paragraph
-  // ($chapterAdjacentAttributeNodes), mirroring `$rebuildChapter`'s whole-region splice: a
-  // folded span or paragraph must vanish from the settled output, not linger beside the updated
-  // chapter.
+  // The `\id` line's content, after the notes pass for the same reason the paragraph pass is: a
+  // note inside the line is preserved as a sentinel, and this pass substitutes the very serialized
+  // subtree that pass has just rewritten. Its slots are the line's content children only — the
+  // immutable `\id GEN ` prefix is never part of the rebuild — plus, for a typed block marker, the
+  // new blocks inserted right after the book in its own parent's children, which replace a rejoin's
+  // widened paragraphs there (they sit directly after the book, as `$unknownSplitRejoinScope`
+  // requires). A line with no content yet takes its rebuilt content at its end, after the prefix.
+  for (const book of bookScopes.values()) {
+    const site = sites.get(book.getKey());
+    const bookChildren = site ? serializedChildren(site.node) : undefined;
+    if (!site || !bookChildren) continue;
+    const trailingParas = bookTrailingParas.get(book.getKey()) ?? [];
+    const built = $settledBookLine(
+      book,
+      sites,
+      context,
+      huskKeys,
+      transient,
+      trailingParas,
+      charOpenerRenames,
+    );
+    if (!built) continue;
+    const firstContent = built.contentNodes.at(0);
+    const firstSite = firstContent ? sites.get(firstContent.getKey()) : undefined;
+    if (firstContent && !firstSite) continue;
+    const start = firstSite ? bookChildren.indexOf(firstSite.node) : bookChildren.length;
+    const bookIndex = site.siblings.indexOf(site.node);
+    if (start < 0 || bookIndex < 0) continue;
+    bookChildren.splice(start, built.contentNodes.length, ...built.rebuilt);
+    site.siblings.splice(bookIndex + 1, trailingParas.length, ...built.followingBlocks);
+  }
+
+  // Chapters are top-level and disjoint from all three passes above — a chapter is never inside a
+  // paragraph, a note, or the `\id` line's book — so ordering against them is free. The whole
+  // REGION's slots are replaced — the chapter plus the adjacent first-class `\ca`/`\cp` spans and
+  // `\cp` paragraph ($chapterAdjacentAttributeNodes), mirroring `$rebuildChapter`'s whole-region
+  // splice: a folded span or paragraph must vanish from the settled output, not linger beside the
+  // updated chapter.
   for (const chapter of chapterScopes.values()) {
     const site = sites.get(chapter.getKey());
     if (!site) continue;
@@ -1396,18 +1616,19 @@ export function $settledUsj(
     site.siblings.splice(index, regionSize, ...rebuilt);
   }
 
-  // Husks LAST, deliberately AFTER the notes/para passes above, not before: a husk pended ALONE
-  // (its own paragraph/note never lands in paraScopes/noteScopes at all, since
-  // $settleScopeForNode always refuses an UnknownNode) is untouched by anything else, so this
-  // splice is the ONLY thing that removes it from the output, and running it here still finds it
-  // exactly where it started.
+  // Husks LAST, deliberately AFTER the notes/para/book passes above, not before: a husk pended
+  // ALONE (its own paragraph/note/book line never lands in paraScopes/noteScopes/bookScopes at
+  // all, since $settleScopeForNode always refuses an UnknownNode) is untouched by anything else,
+  // so this splice is the ONLY thing that removes it from the output, and running it here still
+  // finds it exactly where it started.
   //
-  // A husk whose own paragraph/note is ALSO settling for an unrelated pend was already resolved
-  // above, but the two scopes get there by DIFFERENT mechanisms — this loop below is a genuine
-  // no-op for both, just not for the identical reason:
-  //  - NOTE: the notes pass's splice (`noteChildren.splice(start, ..., ...built.rebuilt)`)
-  //    mutates `noteChildren` IN PLACE — the SAME array object this loop's own `site.siblings`
-  //    points to for the husk (both were recorded from the SAME note-children array by
+  // A husk whose own paragraph/note/book line is ALSO settling for an unrelated pend was already
+  // resolved above, but the three scopes get there by DIFFERENT mechanisms — this loop below is a
+  // genuine no-op for all three, just not for the identical reason:
+  //  - NOTE and BOOK: the notes pass's splice (`noteChildren.splice(start, ..., ...built.rebuilt)`)
+  //    and the book pass's splice (`bookChildren.splice(start, ..., ...built.rebuilt)`) both
+  //    mutate their children array IN PLACE — the SAME array object this loop's own
+  //    `site.siblings` points to for the husk (both were recorded from that same children array by
   //    `$mapSerializedSites`). `built.rebuilt` already excludes the husk (via `huskKeys`), so by
   //    the time this loop runs, the husk's own JSON node genuinely no longer exists anywhere in
   //    that array; `indexOf` returns -1 and `continue` is a real no-op.
@@ -1421,11 +1642,12 @@ export function $settledUsj(
   //    has no observable effect on the final output either way.
   //
   // Running this pass FIRST (as an earlier version of this settle did) breaks a different way: the
-  // notes pass anchors its splice on `built.contentNodes[0]`'s serialized site — if a husk is a
-  // note's (or paragraph's) OWN first content node, an earlier husk-first splice has already
-  // spliced that exact JSON node out of `noteChildren`, so `noteChildren.indexOf(firstSite.node)`
-  // can no longer find it, `start < 0` fires, and the ENTIRE co-settling rebuild for that scope is
-  // silently skipped — not just the husk, but the unrelated pend riding alongside it too.
+  // notes pass (and, identically, the book pass) anchors its splice on `built.contentNodes[0]`'s
+  // serialized site — if a husk is a note's, paragraph's, or the book line's OWN first content
+  // node, an earlier husk-first splice has already spliced that exact JSON node out of the
+  // relevant children array, so `indexOf(firstSite.node)` can no longer find it, `start < 0`
+  // fires, and the ENTIRE co-settling rebuild for that scope is silently skipped — not just the
+  // husk, but the unrelated pend riding alongside it too.
   for (const husk of husks) {
     const site = sites.get(husk.getKey());
     if (!site) continue;

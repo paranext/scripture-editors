@@ -37,6 +37,7 @@ export function DeltaOnChangePlugin({
     editor: LexicalEditor,
     tags: Set<string>,
     ops: DeltaOp[],
+    prevEditorState: EditorState,
   ) => void;
 }): null {
   const [editor] = useLexicalComposerContext();
@@ -59,7 +60,7 @@ export function DeltaOnChangePlugin({
       // result of NoteNode collapsing/expanding. If so, we should fix that instead.
       if (ops.length === 0) return;
 
-      onChange(payload.editorState, editor, payload.tags, ops);
+      onChange(payload.editorState, editor, payload.tags, ops, payload.prevEditorState);
     });
   }, [editor, ignoreHistoryMergeTagChange, ignoreSelectionChange, ignoreTags, onChange]);
 

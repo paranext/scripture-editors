@@ -1,3 +1,4 @@
+import { releaseTagsAfterNextCommit } from "./editorUpdate.utils";
 import { useTransientCaretHost } from "./transientCaretHost";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
@@ -8,28 +9,39 @@ import {
   $isElementNode,
   $isRangeSelection,
   CLICK_COMMAND,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_EDITOR,
   getDOMSelectionFromTarget,
   isDOMNode,
+  KEY_DOWN_COMMAND,
   LexicalNode,
   PointType,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { $isCursorPlaceholderOnlyText, $isNoteNode, CURSOR_CHANGE_TAG, NoteNode } from "shared";
 
 /**
  * `node` when it is a collapsed note that nothing in its block renders past — the one shape with no
  * caret position of its own and none after it either — or `undefined`.
+ *
+ * The note need not sit directly in the block. A char span the note ends that renders nothing after
+ * it either - an unclosed span (`closed="false"`) has no closing glyph - leaves the note the last
+ * thing on the line all the same, so the walk goes up through every inline ancestor the note ends.
  */
 function $asTrailingCollapsedNote(node: LexicalNode | null | undefined): NoteNode | undefined {
   if (!$isNoteNode(node) || node.getIsCollapsed() !== true) return undefined;
-  const block = node.getParent();
-  if (!block || block.isInline()) return undefined;
-  const rendersPastNote = node
-    .getNextSiblings()
-    .some((sibling) => !$isCursorPlaceholderOnlyText(sibling));
-  return rendersPastNote ? undefined : node;
+  let current: LexicalNode = node;
+  for (;;) {
+    const rendersPast = current
+      .getNextSiblings()
+      .some((sibling) => !$isCursorPlaceholderOnlyText(sibling));
+    if (rendersPast) return undefined;
+    const parent: LexicalNode | null = current.getParent();
+    if (!parent) return undefined;
+    if (!$isElementNode(parent) || !parent.isInline()) return node;
+    current = parent;
+  }
 }
 
 /** The child an element-point caret is resting immediately AFTER. */
@@ -60,7 +72,9 @@ function $childBeforeCaret(anchor: PointType): LexicalNode | undefined {
  * - **Collapsed only.** An EXPANDED note's own content is rendered text and is a legitimate resting
  *   place, so it needs nothing. `getIsCollapsed()` is the node's own declared property, which is
  *   also the axis the note-as-atom rule is keyed on everywhere else.
- * - **Nothing rendered may follow the note in its block.** That is the one boundary where "nothing
+ * - **Nothing rendered may follow the note in its block**, whether the note sits in the block itself
+ *   or ends an inline span that renders nothing after it (an unclosed char span). That is the one
+ *   boundary where "nothing
  *   rendered follows" is decidable from the node alone; where a sibling does render, its own start
  *   is a caret position at the same screen location and there is nothing to repair. A bare caret
  *   host renders nothing and is this guard's own doing, so it does not count as rendered — which is
@@ -144,6 +158,92 @@ function $trailingNoteUnderUnresolvedSelection(
   return landed ? $asTrailingCollapsedNote($findMatchingParent(landed, $isNoteNode)) : undefined;
 }
 
+/** The collapsed note `point` is inside (or on), or `undefined`. */
+function $collapsedNoteAt(point: PointType): NoteNode | undefined {
+  const note = $findMatchingParent(point.getNode(), $isNoteNode);
+  return note?.getIsCollapsed() === true ? note : undefined;
+}
+
+/**
+ * Takes the whole of a collapsed note into a range whose end lies inside it, and returns whether it
+ * changed the selection.
+ *
+ * A collapsed note is one atom on screen, so a range can only mean all of it or none of it. The
+ * browser has no position to put inside the note's hidden content, and "select to the end of the
+ * document" (or to the start) from a note-ended paragraph answers with the position at the start of
+ * that content. Copying, cutting or typing over such a range then handles half a note: the
+ * clipboard carries `\f + ` with the note's content missing, and a deletion leaves the rest of it
+ * behind. A range end inside a collapsed note moves to the near side of the note on the end that
+ * is inside: the start before it, the end past it.
+ *
+ * A range with both ends inside the same note is left alone; whoever made that selection (the
+ * marker menu working inside a footnote) meant the content. A caret is left alone for the same
+ * reason.
+ *
+ * Mutating (moves the selection): call inside `editor.update()` or a command handler.
+ */
+export function $takeCollapsedNotesIntoRange(): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  const startNote = $collapsedNoteAt(start);
+  const endNote = $collapsedNoteAt(end);
+  if (startNote && endNote && startNote.is(endNote)) return false;
+  let changed = false;
+  const startParent = startNote?.getParent();
+  if (startNote && startParent) {
+    start.set(startParent.getKey(), startNote.getIndexWithinParent(), "element");
+    changed = true;
+  }
+  const endParent = endNote?.getParent();
+  if (endNote && endParent) {
+    end.set(endParent.getKey(), endNote.getIndexWithinParent() + 1, "element");
+    changed = true;
+  }
+  return changed;
+}
+
+/**
+ * How long after an End key press a selection change is still its answer. A browser answers within
+ * the same task; the margin covers a busy frame.
+ */
+const END_KEY_ANSWER_MS = 500;
+
+/**
+ * Whether `event` is a press that moves the caret to the end of the line or the document, with
+ * nothing that would extend a selection (Shift) or select by word (Alt): End, Ctrl+End, and
+ * Cmd+Down on a Mac.
+ */
+function isCaretToEndKey(event: KeyboardEvent): boolean {
+  if (event.shiftKey || event.altKey) return false;
+  return event.key === "End" || (event.key === "ArrowDown" && event.metaKey);
+}
+
+/**
+ * The collapsed trailing note that the selection spans exactly (a range from just before it to just
+ * past it in its parent), or `undefined`.
+ *
+ * This is the browser's answer to a jump to the end of a block that a collapsed note ends: no
+ * caret position exists past a note whose only rendered part is its caller, so it selects the note
+ * instead. Typing, pasting or deleting then replaces the note.
+ *
+ * Read-only: call inside `editor.getEditorState().read()`.
+ */
+function $selectedTrailingNote(): NoteNode | undefined {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || selection.isCollapsed()) return undefined;
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  if (start.type !== "element" || end.type !== "element" || start.key !== end.key) return undefined;
+  if (end.offset !== start.offset + 1) return undefined;
+  const parent = start.getNode();
+  if (!$isElementNode(parent)) return undefined;
+  return $asTrailingCollapsedNote(parent.getChildAtIndex(start.offset));
+}
+
 /**
  * Keeps a visible caret at the end of a block that a collapsed note ends, and keeps it out of the
  * note's hidden content.
@@ -178,6 +278,8 @@ function $trailingNoteUnderUnresolvedSelection(
 export function TrailingNoteCaretGuardPlugin(): null {
   const [editor] = useLexicalComposerContext();
   const $repairCaret = useTransientCaretHost($trailingNoteCaretAnchor);
+  /** When the last key press was one that moves the caret to the end, for the selection it causes. */
+  const endKeyPressedAt = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     // Command handlers already run inside an update, so the tag has to be added to that one rather
@@ -190,9 +292,36 @@ export function TrailingNoteCaretGuardPlugin(): null {
     };
 
     return mergeRegister(
+      editor.registerCommand<KeyboardEvent>(
+        KEY_DOWN_COMMAND,
+        (event) => {
+          endKeyPressedAt.current = isCaretToEndKey(event) ? performance.now() : undefined;
+          return false;
+        },
+        // Only observes the press, and must see it whether or not a handler further down claims it.
+        COMMAND_PRIORITY_CRITICAL,
+      ),
       editor.registerCommand(
         SELECTION_CHANGE_COMMAND,
         () => {
+          const jumpedToEnd =
+            endKeyPressedAt.current !== undefined &&
+            performance.now() - endKeyPressedAt.current < END_KEY_ANSWER_MS;
+          if (jumpedToEnd) {
+            // The caret belongs past the note, where the guard hosts it, not on the note.
+            const selected = $selectedTrailingNote();
+            if (selected) {
+              $repairPast(selected);
+              return false;
+            }
+          }
+          if ($takeCollapsedNotesIntoRange()) {
+            // Only the selection moves, so the commit is tagged and the tag released like the
+            // caret repairs below.
+            $addUpdateTag(CURSOR_CHANGE_TAG);
+            releaseTagsAfterNextCommit(editor, CURSOR_CHANGE_TAG);
+            return false;
+          }
           const note = $trailingNoteUnderUnresolvedSelection(editor.getRootElement());
           if (note) $repairPast(note);
           return false;

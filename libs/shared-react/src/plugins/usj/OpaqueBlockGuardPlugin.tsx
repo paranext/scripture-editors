@@ -177,12 +177,18 @@ export function isEditingKey(event: KeyboardEvent): boolean {
  * lands, this predicate is where it comes back out.
  */
 export function $opaqueBlockAncestor(node: LexicalNode): LexicalNode | undefined {
-  return (
-    $findMatchingParent(
-      node,
-      (current) => $isUnknownNode(current) || $isImmutableTableNode(current),
-    ) ?? undefined
-  );
+  return $findMatchingParent(node, $isOpaqueBlockNode) ?? undefined;
+}
+
+/**
+ * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
+ * handler.
+ *
+ * Whether `node` itself is an opaque construct — the test {@link $opaqueBlockAncestor} applies at
+ * each ancestor, for a caller that already walks the ancestors itself.
+ */
+export function $isOpaqueBlockNode(node: LexicalNode | null | undefined): boolean {
+  return $isUnknownNode(node) || $isImmutableTableNode(node);
 }
 
 /**

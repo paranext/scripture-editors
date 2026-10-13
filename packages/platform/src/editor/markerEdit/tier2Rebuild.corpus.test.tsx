@@ -30,9 +30,10 @@ import {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
-import { $rebuildParas, Tier2Context } from "./tier2Rebuild.utils";
+import { $rebuildBook, $rebuildParas, Tier2Context } from "./tier2Rebuild.utils";
 import { $getRoot, $isElementNode, LexicalNode } from "lexical";
 import {
+  $isBookNode,
   $isNoteNode,
   $isParaNode,
   getMarker as bundledGetMarker,
@@ -107,6 +108,37 @@ function skipReason(para: ParaNode): string | undefined {
   const text = para.getTextContent();
   return SKIP_LIST.find((entry) => text.includes(entry.contains))?.reason;
 }
+
+describe("$rebuildBook — 2SA corpus losslessness (safety net)", () => {
+  it("refuses an unedited rebuild as a fixed point for the corpus's `\\id` line", () => {
+    // The `\id` line's own half of the same property: what the adaptor built from real project
+    // data must re-tokenize to itself, or a loaded document would rebuild its book line forever.
+    const editor = loadEditor(usj2Sa);
+    const usjBefore = deserializeSerializedEditorState(
+      editor.getEditorState().toJSON(),
+      viewOptions,
+    );
+
+    let bookCount = 0;
+    let changed = false;
+    editor.update(
+      () => {
+        const books = $getRoot().getChildren().filter($isBookNode);
+        bookCount = books.length;
+        books.forEach((book) => {
+          changed = $rebuildBook(book, context) || changed;
+        });
+      },
+      { discrete: true },
+    );
+
+    expect(bookCount).toBe(1); // the corpus actually carries an `\id` line
+    expect(changed).toBe(false);
+    expect(deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions)).toEqual(
+      usjBefore,
+    );
+  });
+});
 
 describe("$rebuildParas — 2SA corpus losslessness (safety net)", () => {
   it("refuses an unedited rebuild as a fixed point for every paragraph in the corpus", () => {

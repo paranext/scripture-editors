@@ -2,6 +2,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { $addUpdateTag, CLEAR_HISTORY_COMMAND, SKIP_DOM_SELECTION_TAG } from "lexical";
 import { RefObject, useEffect } from "react";
 import { EditorAdaptor, EXTERNAL_USJ_MUTATION_TAG, LoggerBasic, NodeOptions } from "shared";
+import { editorHoldsDomFocus } from "./editorUpdate.utils";
 
 /**
  * A plugin component that updates the state of the lexical editor when incoming Scripture changes.
@@ -61,12 +62,7 @@ export function LoadStatePlugin<TLogger extends LoggerBasic>({
         // DOM selection, so skip DOM-selection reconciliation entirely in that case. Evaluated at
         // apply time (inside the microtask), not schedule time, so a focus change in between is
         // honored. A focused editor keeps the existing behavior.
-        const rootElement = editor.getRootElement();
-        const activeElement = rootElement?.ownerDocument.activeElement;
-        const editorHasFocus =
-          rootElement != null &&
-          activeElement != null &&
-          (rootElement === activeElement || rootElement.contains(activeElement));
+        const editorHasFocus = editorHoldsDomFocus(editor);
         editor.update(
           () => {
             if (!editorHasFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);

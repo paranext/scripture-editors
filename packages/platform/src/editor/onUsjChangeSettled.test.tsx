@@ -396,11 +396,11 @@ describe("a remote applyUpdate", () => {
     expect(emissions[0].usj).toEqual(ref.current?.getUsj());
   });
 
-  it("called inside an update of the editor is reported and still applied", async () => {
+  it("called inside an update of the editor is applied and announced once, with its ops", async () => {
     const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
-    const emissions: Usj[] = [];
+    const emissions: SourcedEmission[] = [];
     const { lexical, ref } = await mountStandardViewEditor(twoParaUsj(["In the beginning"]), {
-      onUsjChange: (usj) => emissions.push(usj),
+      onUsjChange: (usj, ops, source) => emissions.push({ usj, ops, source }),
       logger,
     });
     await flush();
@@ -410,18 +410,21 @@ describe("a remote applyUpdate", () => {
         .read(() => $getOTPositionOfNode($textContaining("In the beginning"), "apply")) ?? 0) +
       "In the beginning".length;
 
+    const ops: DeltaOp[] = [{ retain }, { insert: " nested" }];
+
     act(() =>
-      lexical.update(() => ref.current?.applyUpdate([{ retain }, { insert: " nested" }], "local"), {
+      lexical.update(() => ref.current?.applyUpdate(ops, "local"), {
         discrete: true,
       }),
     );
     await flush();
 
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining("inside an update of this editor"),
-    );
+    expect(logger.error).not.toHaveBeenCalled();
     expect(JSON.stringify(ref.current?.getUsj())).toContain("In the beginning nested");
     expect(emissions).toHaveLength(1);
+    expect(emissions[0].source).toBe("local");
+    expect(emissions[0].ops).toEqual(ops);
+    expect(emissions[0].usj).toEqual(ref.current?.getUsj());
   });
 
   it("that changes the text is announced once, as remote, and getUsj() reflects it", async () => {

@@ -21,20 +21,23 @@ import {
   $isRangeSelection,
   $isTextNode,
   LexicalNode,
+  PointType,
   RangeSelection,
   TextNode,
 } from "lexical";
 import {
-  $charStackContainer,
   $innermostCharAncestor,
   $isCharNode,
   $isMarkerNode,
   $isPointInMarkerGlyphText,
   $isSomeParaNode,
+  $isTypedMarkNode,
   $liftOutOfCharStack,
   $selectCharContentStart,
   NBSP,
+  SomeParaNode,
   textTypeState,
+  TypedMarkNode,
 } from "shared";
 
 /**
@@ -193,13 +196,45 @@ export function $coveredTextNodes(selection: RangeSelection): TextNode[] {
 }
 
 /**
+ * The first ancestor at or above `node` — `node` itself is checked first — that is neither a
+ * `CharNode` nor a `TypedMarkNode`: the container a break/split reaches once every character-style
+ * span and annotation mark wrapper enclosing the starting point, in any interleaving, has been
+ * climbed out of. Callers pass whichever node is their own walk's starting point (`node` itself,
+ * or its parent); this only climbs from there.
+ *
+ * Read-only: safe inside `editor.update()` or either read form.
+ */
+export function $outermostCharStackAncestor(node: LexicalNode | null): LexicalNode | null {
+  let current = node;
+  while ($isCharNode(current) || $isTypedMarkNode(current)) current = current.getParent();
+  return current;
+}
+
+/**
+ * The paragraph a break at `node` would split: the first ancestor past every char span and
+ * annotation mark wrapper (`TypedMarkNode`) enclosing `node`, in any interleaving, when that
+ * ancestor is a paragraph. `undefined` otherwise — notably inside a NOTE, where the walk stops at
+ * the NoteNode, because a break there is an `\fp`, not a paragraph split.
+ *
+ * Unlike `$charStackContainer`, it sees through mark wrappers: {@link $breakAndLiftCharStack}
+ * splits them on the way out, so a wrapper between the stack and the paragraph does not stop the
+ * split from reaching it.
+ *
+ * Read-only: safe inside `editor.update()` or either read form.
+ */
+function $charStackParagraph(node: LexicalNode): SomeParaNode | undefined {
+  const ancestor = $outermostCharStackAncestor(node.getParent());
+  return $isSomeParaNode(ancestor) ? ancestor : undefined;
+}
+
+/**
  * Whether the selection sits inside a character-style stack that a PARAGRAPH split would tear —
  * the gate for routing an input that splits paragraphs through {@link $splitParagraphAtCharStack}
  * instead of the generic rich-text split.
  *
  * Read from the focus, the live end of the selection, so a range about to be replaced is judged by
- * where the replacement will land. A stack inside a NOTE is excluded: a break there is an `\fp`,
- * not a paragraph split.
+ * where the replacement will land. The stack may be interleaved with annotation mark wrappers. A
+ * stack inside a NOTE is excluded: a break there is an `\fp`, not a paragraph split.
  *
  * Read-only: safe inside `editor.update()` or either read form.
  */
@@ -208,14 +243,151 @@ export function $isSelectionInParagraphCharStack(): boolean {
   if (!$isRangeSelection(selection)) return false;
   const node = selection.focus.getNode();
   if (!$innermostCharAncestor(node)) return false;
-  return $isSomeParaNode($charStackContainer(node));
+  return !!$charStackParagraph(node);
+}
+
+/** What a break-and-lift left behind: where it came to rest, and what ended up after it. */
+export interface CharStackBreak {
+  /** The break point's resting parent after the lift — `undefined` only when no break point could
+   * be created at all (a point with neither a text nor an element shape to cut). */
+  parent: LexicalNode | undefined;
+  /** The nodes originally after the break point, now siblings ready to move into a new container. */
+  moving: LexicalNode[];
+}
+
+/**
+ * Creates an empty break point at `point`, lifts it out of any open character-style stack
+ * (`$liftOutOfCharStack` — each level closes before it and reopens after it) and out of any
+ * annotation mark wrapper interleaved with that stack ({@link $liftOutOfTypedMark}), and reports
+ * where it came to rest and what ended up after it — still attached, ready to move into whatever
+ * new container the caller is building. `point` must already be normalized out of glyph text (see
+ * `$normalizeSelectionOutOfGlyphText` in `shared`) — ANY text node it names, including a marker
+ * glyph or an unmatched-closer glyph, is treated as an atomic leaf that only ever gets a sibling
+ * inserted before or after it, never split through its own bytes.
+ *
+ * Shared by {@link $splitParagraphAtCharStack} and the `\id`-line split
+ * (`$splitBookWithMarker`, markerMenu/markerMenuApply.utils.ts) — the two places PT9's
+ * paragraph-marker split makes this same cut. The ELEMENT-point branch exists for the book split's
+ * caller, which can arrive with a caret parked before/after a non-text child (or at a container's
+ * end); the paragraph split always arrives with a TEXT point, so that branch never runs for it. The
+ * reported resting `parent` is likewise only meaningful to the book split's caller, which — unlike
+ * the paragraph split — cannot assume ahead of time that the lift reaches the container it wants.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+export function $breakAndLiftCharStack(point: PointType): CharStackBreak {
+  const breakPoint = $createTextNode("");
+  const node = point.getNode();
+  const offset = point.offset;
+  if ($isTextNode(node)) {
+    if (offset <= 0) node.insertBefore(breakPoint);
+    else if (offset >= node.getTextContentSize()) node.insertAfter(breakPoint);
+    else {
+      const [, tail] = node.splitText(offset) as [TextNode, TextNode];
+      tail.insertBefore(breakPoint);
+    }
+  } else {
+    // An ELEMENT point's offset is a CHILD INDEX, and a caret parked on a glyph belongs outside
+    // it: both cut before the node the point names, or at the container's end when it names none.
+    // A fresh, unnarrowed read: TypeScript's control-flow narrowing on `node` from the `if` above
+    // (excluding `TextNode`) collapses the class hierarchy to `never` once `$isElementNode` narrows
+    // it again below, even though a non-text, non-element node (a decorator) is a real case here.
+    const elementOrLeaf: LexicalNode = point.getNode();
+    const container = $isElementNode(elementOrLeaf) ? elementOrLeaf : elementOrLeaf.getParent();
+    const nextNode = $isElementNode(elementOrLeaf)
+      ? elementOrLeaf.getChildAtIndex(offset)
+      : elementOrLeaf;
+    if (nextNode) nextNode.insertBefore(breakPoint);
+    else if (container) container.append(breakPoint);
+    else return { parent: undefined, moving: [] };
+  }
+  for (let parent = breakPoint.getParent(); ; parent = breakPoint.getParent()) {
+    if ($isCharNode(parent)) $liftOutOfCharStack(breakPoint, { renderGlyphs: true });
+    else if (!$isTypedMarkNode(parent) || !$liftOutOfTypedMark(breakPoint, parent)) break;
+  }
+  const moving = breakPoint.getNextSiblings();
+  const parent = breakPoint.getParent() ?? undefined;
+  breakPoint.remove();
+  return { parent, moving };
+}
+
+/**
+ * Lifts `node` out of the annotation mark wrapper `mark` to `mark`'s parent, splitting the wrapper
+ * around it the way `RangeSelection.insertParagraph` splits one: the content after `node` moves
+ * into the continuation `TypedMarkNode.insertNewAfter` builds, which carries the same typed ids, so
+ * the annotation covers both halves. When `node` is at either edge of the wrapper it simply steps
+ * out on that side, so no half is ever left empty — removing an emptied `TypedMarkNode` would
+ * dispatch its "destroyed" remove callbacks, telling the host the annotation itself is gone.
+ *
+ * Returns `false`, mutating nothing, when there is no range selection to hand `insertNewAfter`.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $liftOutOfTypedMark(node: LexicalNode, mark: TypedMarkNode): boolean {
+  const after = node.getNextSiblings();
+  if (!node.getPreviousSibling()) {
+    mark.insertBefore(node);
+    return true;
+  }
+  if (after.length === 0) {
+    mark.insertAfter(node);
+    return true;
+  }
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return false;
+  const continuation = mark.insertNewAfter(selection, false);
+  if (!continuation) return false;
+  continuation.append(...after);
+  mark.insertAfter(node);
+  return true;
+}
+
+/**
+ * Steps a collapsed selection off the trailing edge of a canonical closing glyph that ends its
+ * whole immediate char span, landing it just after the span instead of leaving it parked on the
+ * glyph itself. A caret there is genuinely PAST the span (see `$isPointInMarkerGlyphText`), not
+ * inside it, so a split at that position must cut outside the span rather than treat the glyph as
+ * its own break target. Deliberately only steps past ONE level: after a top-level span the caller's
+ * own char-stack guard then declines (nothing left to lift), and after a NESTED closer the caret
+ * lands in the outer span's content, where the close-and-reopen split proceeds from there.
+ *
+ * A no-op — returns `selection` unchanged — for any other caret position, including a caret already
+ * past every glyph or one that is not on a canonical closer's trailing edge at all.
+ *
+ * Shared by {@link $splitParagraphAtCharStack} and the `\id`-line split (`$splitBookWithMarker`,
+ * markerMenu/markerMenuApply.utils.ts) — the two places PT9's paragraph-marker split makes this
+ * same cut.
+ *
+ * Returns `undefined` when stepping left no collapsed range selection at all (`selectNext` found no
+ * position to land on) — the caller treats that the same as "nothing to split here".
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+export function $stepCaretPastClosingGlyphSpan(
+  selection: RangeSelection,
+): RangeSelection | undefined {
+  const anchorNode = selection.anchor.getNode();
+  if (
+    $isMarkerNode(anchorNode) &&
+    !$isPointInMarkerGlyphText(anchorNode, selection.anchor.offset)
+  ) {
+    const enclosing = anchorNode.getParent();
+    if ($isCharNode(enclosing) && anchorNode.is(enclosing.getLastChild())) {
+      enclosing.selectNext(0, 0);
+      const stepped = $getSelection();
+      return $isRangeSelection(stepped) && stepped.isCollapsed() ? stepped : undefined;
+    }
+  }
+  return selection;
 }
 
 /**
  * Splits the paragraph at a caret sitting inside character-styled text, closing the whole open
  * character-style stack on the left and reopening it in the new paragraph — the tail keeps its
- * markers, its attributes, and its nesting. Returns `false` (mutating nothing) when the caret is
- * not inside a char span whose container is a paragraph, leaving the generic split to run.
+ * markers, its attributes, and its nesting. Annotation mark wrappers (`TypedMarkNode`) interleaved
+ * with the stack split along with it, keeping their ids on both halves. Returns `false` (mutating
+ * nothing) when the caret is not inside a char span whose container is a paragraph, leaving the
+ * generic split to run.
  *
  * Paratext 9 DROPS character styles across a paragraph split; reopening them is a deliberate
  * divergence. Lexical's generic inline split is not merely different, though — it is destructive:
@@ -225,8 +397,8 @@ export function $isSelectionInParagraphCharStack(): boolean {
  * levels the unwrap cascade runs twice and both closers go.
  *
  * The break is made by parking an empty marker node at the caret, lifting it out of the stack
- * (`$liftOutOfCharStack` — each level closes before it and reopens after it), and then moving
- * everything past it into the new paragraph. The caret lands at the new paragraph's start, which
+ * ({@link $breakAndLiftCharStack} — each char level closes before it and reopens after it), and
+ * then moving everything past it into the new paragraph. The caret lands at the new paragraph's start, which
  * is where `$injectMarkerPrefix` expects it in order to place it on the content side of the marker
  * prefix the split transform is about to inject.
  *
@@ -234,56 +406,32 @@ export function $isSelectionInParagraphCharStack(): boolean {
  * INSERT_PARAGRAPH command handler, ahead of the generic rich-text split).
  */
 export function $splitParagraphAtCharStack(): boolean {
-  let selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  let anchorNode = selection.anchor.getNode();
-  // A caret at the TRAILING EDGE of a canonical closing glyph is genuinely AFTER the span (see
-  // $isPointInMarkerGlyphText), so the split belongs past the WHOLE enclosing char — never inside
-  // the glyph or the span. Normalize the caret out of the span before deciding: after a top-level
-  // span the stack guard below then declines and the split runs at the span boundary; after a
-  // NESTED closer the caret lands in the outer span's content and the close-and-reopen split
-  // proceeds from there.
-  if (
-    $isMarkerNode(anchorNode) &&
-    !$isPointInMarkerGlyphText(anchorNode, selection.anchor.offset)
-  ) {
-    const enclosing = anchorNode.getParent();
-    if ($isCharNode(enclosing) && anchorNode.is(enclosing.getLastChild())) {
-      enclosing.selectNext(0, 0);
-      selection = $getSelection();
-      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-      anchorNode = selection.anchor.getNode();
-    }
-  }
+  const rawSelection = $getSelection();
+  if (!$isRangeSelection(rawSelection) || !rawSelection.isCollapsed()) return false;
+  // A caret at the TRAILING EDGE of a canonical closing glyph is genuinely AFTER the span, so the
+  // split belongs past the WHOLE enclosing char — never inside the glyph or the span. Step the
+  // caret out of the span before deciding.
+  const selection = $stepCaretPastClosingGlyphSpan(rawSelection);
+  if (!selection) return false;
+  const anchorNode = selection.anchor.getNode();
   if (!$isTextNode(anchorNode) || $isMarkerNode(anchorNode)) return false;
   if (!$innermostCharAncestor(anchorNode)) return false;
-  // Only paragraph-contained stacks. Inside a note the enclosing container is the NoteNode, and a
-  // break there is an `\fp` (markerEditNote.utils.ts), never a paragraph split.
-  const para = $charStackContainer(anchorNode);
-  if (!$isSomeParaNode(para)) return false;
+  // Only paragraph-contained stacks. Inside a note the walk stops at the NoteNode, and a break
+  // there is an `\fp` (markerEditNote.utils.ts), never a paragraph split.
+  const para = $charStackParagraph(anchorNode);
+  if (!para) return false;
 
-  // An empty text node, so it contributes no bytes to either half and nothing has to be cleaned up
-  // beyond removing it. It never survives this function, so no transform ever sees it.
-  const breakPoint = $createTextNode("");
-  const offset = selection.anchor.offset;
-  if (offset <= 0) anchorNode.insertBefore(breakPoint);
-  else if (offset >= anchorNode.getTextContentSize()) anchorNode.insertAfter(breakPoint);
-  else {
-    const [, tail] = anchorNode.splitText(offset) as [TextNode, TextNode];
-    tail.insertBefore(breakPoint);
-  }
-  $liftOutOfCharStack(breakPoint, { renderGlyphs: true });
-
-  const moving = breakPoint.getNextSiblings();
-  breakPoint.remove();
+  const { moving } = $breakAndLiftCharStack(selection.anchor);
   const newPara = para.insertNewAfter(selection, false);
   newPara.append(...moving);
-  const [firstMoved] = moving;
-  if ($isCharNode(firstMoved)) {
+  // A reopened span may sit inside the continuation of an annotation mark wrapper the break split.
+  let reopened: LexicalNode | undefined = moving[0];
+  while ($isTypedMarkNode(reopened)) reopened = reopened.getFirstChild() ?? undefined;
+  if ($isCharNode(reopened)) {
     // Typing continues the reopened style: the caret goes to the start of its content, past the
     // separator, exactly where the user interrupted the run. `$injectMarkerPrefix` leaves a caret
     // that is not at the paragraph's start alone, so the prefix splices in around it.
-    $selectCharContentStart(firstMoved);
+    $selectCharContentStart(reopened);
   } else {
     // Nothing reopened, so there is no run to continue. An ELEMENT point at offset 0 is the shape
     // `RangeSelection.insertParagraph` leaves behind, and the shape `$injectMarkerPrefix`

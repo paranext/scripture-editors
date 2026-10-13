@@ -42,7 +42,13 @@ import {
   $isRangeSelection,
   $isTextNode,
   $selectAll,
+  COMMAND_PRIORITY_LOW,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
   KEY_DOWN_COMMAND,
+  LexicalCommand,
   LexicalEditor,
   SELECT_ALL_COMMAND,
   SELECTION_CHANGE_COMMAND,
@@ -52,6 +58,7 @@ import {
   $isMarkerNode,
   $isNoteNode,
   $noteEditableCallerNode,
+  CURSOR_CHANGE_TAG,
   getEditableCallerText,
   NBSP,
   NoteNode,
@@ -182,6 +189,54 @@ async function typeText(editor: LexicalEditor, text: string): Promise<void> {
   }
 }
 
+function expectShellIntact(editor: LexicalEditor) {
+  editor.getEditorState().read(() => {
+    const note = findOnlyNote($getRoot());
+    expect($opener(note).getTextContent()).toBe("\\f");
+    expect($noteEditableCallerNode(note)?.getTextContent()).toBe(
+      getEditableCallerText(note.getCaller()),
+    );
+  });
+  const note = findUsjNote(usjOf(editor)?.content);
+  expect(note.marker).toBe("f");
+  expect(note.caller).toBe("+");
+  return note;
+}
+
+/**
+ * Dispatches a delete command and reports whether the SHELL GUARD refused it, without letting an
+ * unrefused command reach Lexical's own default handler: deleting real text from a collapsed
+ * caret needs the DOM selection's `modify`, which jsdom does not implement and would crash the
+ * test rather than no-op. A trap registered just below the guard's `COMMAND_PRIORITY_CRITICAL`
+ * (but above the default handler's `COMMAND_PRIORITY_EDITOR`) catches an unrefused command there
+ * instead and reports it undone — real text is never actually touched either way.
+ */
+async function dispatchGuardedDelete(
+  editor: LexicalEditor,
+  command: LexicalCommand<boolean>,
+  isBackward: boolean,
+): Promise<boolean> {
+  let reachedDefaultHandler = false;
+  const unregister = editor.registerCommand(
+    command,
+    () => {
+      reachedDefaultHandler = true;
+      return true;
+    },
+    COMMAND_PRIORITY_LOW,
+  );
+  try {
+    await act(async () => {
+      editor.update(() => {
+        editor.dispatchCommand(command, isBackward);
+      });
+    });
+  } finally {
+    unregister();
+  }
+  return !reachedDefaultHandler;
+}
+
 describe("expanded note shell", () => {
   it("is atomic when the host governs the marker and caller", async () => {
     const { editor } = await mount(protectedShell);
@@ -239,6 +294,389 @@ describe("expanded note shell", () => {
       expect(note.marker).toBe("f");
       expect(note.caller).toBe("+");
       expect(note.content?.[0]).toBe("X");
+    });
+  });
+
+  describe("under a keystroke over a range", () => {
+    /** Select a range the way a double-click or a drag does: pointer down, then the selection. */
+    async function dragSelect(
+      editor: LexicalEditor,
+      pick: () => { anchor: [TextNode, number]; focus: [TextNode, number] },
+    ): Promise<void> {
+      const doc = editor.getRootElement()?.ownerDocument ?? document;
+      await act(async () => {
+        doc.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+        editor.update(() => {
+          const { anchor, focus } = pick();
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) {
+            anchor[0].select(anchor[1], anchor[1]);
+          }
+          const range = $getSelection();
+          if (!$isRangeSelection(range)) throw new Error("expected a range selection");
+          range.anchor.set(anchor[0].getKey(), anchor[1], "text");
+          range.focus.set(focus[0].getKey(), focus[1], "text");
+          editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        });
+        doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
+      });
+    }
+
+    /** The note's first content text node (the `\ft` run's text). */
+    function $contentText(note: NoteNode): TextNode {
+      const text = note.getAllTextNodes().find((node) => node.getTextContent().includes("A note"));
+      return requireDefined(text, "note content text");
+    }
+
+    it("keeps the shell when a double-click selected it and the user types", async () => {
+      const { editor } = await mount(protectedShell);
+
+      await dragSelect(editor, () => {
+        const note = findOnlyNote($getRoot());
+        const caller = requireDefined($noteEditableCallerNode(note), "caller");
+        return { anchor: [$opener(note), 0], focus: [caller, caller.getTextContentSize() - 1] };
+      });
+      await typeText(editor, "Z");
+
+      const note = expectShellIntact(editor);
+      expect(note.content?.[0]).toBe("Z");
+    });
+
+    it("keeps the shell when a range from it into the content is deleted", async () => {
+      const { editor } = await mount(protectedShell);
+
+      await dragSelect(editor, () => {
+        const note = findOnlyNote($getRoot());
+        const content = $contentText(note);
+        return {
+          anchor: [$opener(note), 1],
+          focus: [content, content.getTextContent().indexOf("note")],
+        };
+      });
+      await act(async () => {
+        editor.update(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.removeText();
+        });
+      });
+
+      const note = expectShellIntact(editor);
+      expect(JSON.stringify(note.content)).toContain("note");
+      expect(JSON.stringify(note.content)).not.toContain("A note");
+    });
+
+    it("keeps the shell and the closer when a select-all is typed over", async () => {
+      // A protected shell exists only in a note editor, whose document is the note: select-all
+      // there means the note's text, never its marker, caller, or closer.
+      const { editor } = await mount(protectedShell);
+
+      await act(async () => {
+        editor.update(() => {
+          const para = findOnlyNote($getRoot()).getParentOrThrow();
+          para.select(0, para.getChildrenSize());
+          editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        });
+      });
+      await typeText(editor, "Z");
+
+      const note = expectShellIntact(editor);
+      expect(note.content).toEqual(["Z"]);
+    });
+
+    describe("when the edit comes while a drag still owns the selection", () => {
+      /**
+       * Set a range the way the browser leaves it mid-drag: no selection change has been handled
+       * for it yet, so nothing has narrowed it before the edit reads it.
+       */
+      async function unnarrowedRange(editor: LexicalEditor) {
+        await act(async () => {
+          editor.update(() => {
+            const note = findOnlyNote($getRoot());
+            const content = $contentText(note);
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection)) content.select(0, 0);
+            const range = $getSelection();
+            if (!$isRangeSelection(range)) throw new Error("expected a range selection");
+            range.anchor.set(content.getKey(), content.getTextContent().indexOf("note"), "text");
+            range.focus.set($opener(note).getKey(), 1, "text");
+          });
+        });
+      }
+
+      it("keeps the shell when the user types over the range", async () => {
+        const { editor } = await mount(protectedShell);
+        await unnarrowedRange(editor);
+
+        await act(async () => {
+          editor.update(() => {
+            editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "Z");
+          });
+        });
+
+        const note = expectShellIntact(editor);
+        expect(note.content).toEqual(["Znote"]);
+      });
+
+      it("keeps the shell when the user deletes the range", async () => {
+        const { editor } = await mount(protectedShell);
+        await unnarrowedRange(editor);
+
+        await act(async () => {
+          editor.update(() => {
+            editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+          });
+        });
+
+        const note = expectShellIntact(editor);
+        expect(JSON.stringify(note.content)).toContain("note");
+      });
+    });
+
+    it("narrows a backward range that starts in the content and ends in the shell", async () => {
+      const { editor } = await mount(protectedShell);
+
+      await dragSelect(editor, () => {
+        const note = findOnlyNote($getRoot());
+        const content = $contentText(note);
+        return {
+          anchor: [content, content.getTextContent().indexOf("note")],
+          focus: [$opener(note), 1],
+        };
+      });
+      await typeText(editor, "Z");
+
+      const note = expectShellIntact(editor);
+      // The range took the `\\ft` glyph with it, so what is left of the run is plain note text.
+      expect(note.content).toEqual(["Znote"]);
+    });
+  });
+
+  describe("under a delete from a caret at the start of the note's content", () => {
+    /** The shell's trailing edge, where a click in the shell leaves the caret. */
+    async function caretAtShellEdge(editor: LexicalEditor) {
+      await clickCaretInShell(
+        editor,
+        (note) => requireDefined($noteEditableCallerNode(note), "caller"),
+        1,
+      );
+    }
+
+    /** The start of the first content run's opening glyph: no text lies between it and the shell. */
+    async function caretAtContentGlyphStart(editor: LexicalEditor) {
+      await act(async () => {
+        editor.update(() => {
+          const note = findOnlyNote($getRoot());
+          const glyph = note
+            .getAllTextNodes()
+            .find((node) => $isMarkerNode(node) && node.getTextContent().startsWith("\\ft"));
+          requireDefined(glyph, "content run's opening glyph").select(0, 0);
+        });
+      });
+    }
+
+    it.each([
+      ["a Backspace at the shell's edge", caretAtShellEdge, DELETE_CHARACTER_COMMAND, true, true],
+      [
+        "a Backspace at the content's first glyph",
+        caretAtContentGlyphStart,
+        DELETE_CHARACTER_COMMAND,
+        true,
+        true,
+      ],
+      ["a word delete at the shell's edge", caretAtShellEdge, DELETE_WORD_COMMAND, true, true],
+      ["a line delete at the shell's edge", caretAtShellEdge, DELETE_LINE_COMMAND, true, true],
+      [
+        "a forward Delete at the shell's edge",
+        caretAtShellEdge,
+        DELETE_CHARACTER_COMMAND,
+        false,
+        false,
+      ],
+      [
+        "a forward word delete at the shell's edge",
+        caretAtShellEdge,
+        DELETE_WORD_COMMAND,
+        false,
+        false,
+      ],
+    ] as const)(
+      "keeps the shell under %s",
+      async (_label, placeCaret, command, isBackward, refusesDelete) => {
+        const { editor } = await mount(protectedShell);
+        await placeCaret(editor);
+
+        const handled = await dispatchGuardedDelete(editor, command, isBackward);
+
+        // A refused delete is handled right here and removes nothing. One the guard lets through
+        // is left for the ordinary command chain, which this guard never touches either way, so
+        // there is nothing further to assert about it in this headless environment.
+        expect(handled).toBe(refusesDelete);
+        const note = expectShellIntact(editor);
+        if (refusesDelete) expect(JSON.stringify(note.content)).toContain("A note");
+      },
+    );
+
+    /**
+     * Mount with a note that HAS a closing glyph. Every other case in this file uses `mount`'s
+     * `closed="false"` fixture, which builds an unclosed note (no `\f*`); omitting that attribute
+     * is what gives the note a closer for a forward delete to clamp against.
+     */
+    async function mountWithCloser(view: ViewOptions) {
+      initializeSerialize(undefined, undefined);
+      initializeDeserialize(undefined);
+      reset();
+      const state = serializeEditorState(noteUsx(""), view);
+      return baseTestEnvironment(
+        JSON.stringify({ root: state.root }),
+        <>
+          <MarkerEditPlugin viewOptions={view} />
+          <NoteShellCaretGuardPlugin />
+        </>,
+      );
+    }
+
+    /**
+     * Stubs `Range.prototype.getClientRects` so a range starting in one of `tops`' containers
+     * reports that `top`; any other container falls back to the real (empty, in jsdom)
+     * implementation. This is the one DOM measurement the guard's line comparison reads, so
+     * stubbing it is what lets a test say two caret positions are, or are not, on the same line.
+     */
+    function stubLineTops(tops: Map<Node, number>): () => void {
+      const original = Range.prototype.getClientRects;
+      Range.prototype.getClientRects = function (this: Range) {
+        const top = tops.get(this.startContainer);
+        return top === undefined ? original.call(this) : ([{ top }] as unknown as DOMRectList);
+      };
+      return () => {
+        Range.prototype.getClientRects = original;
+      };
+    }
+
+    /**
+     * The DOM text nodes `lineTopOf` measures for the shell's trailing edge (the caller) and the
+     * note's closing glyph — the two points a forward line-delete compares.
+     */
+    function lineTopContainers(editor: LexicalEditor): { caller: Node; closer: Node } {
+      let callerKey = "";
+      let closerKey = "";
+      editor.getEditorState().read(() => {
+        const note = findOnlyNote($getRoot());
+        callerKey = requireDefined($noteEditableCallerNode(note), "caller").getKey();
+        const closer = note.getLastChild();
+        closerKey = requireDefined(
+          $isTextNode(closer) ? closer : undefined,
+          "closing glyph",
+        ).getKey();
+      });
+      return {
+        caller: requireDefined(
+          editor.getElementByKey(callerKey)?.firstChild ?? undefined,
+          "caller DOM container",
+        ),
+        closer: requireDefined(
+          editor.getElementByKey(closerKey)?.firstChild ?? undefined,
+          "closer DOM container",
+        ),
+      };
+    }
+
+    it("does not clamp a forward LINE delete when the closer is on a different visual line", async () => {
+      const { editor } = await mountWithCloser(protectedShell);
+      await caretAtShellEdge(editor);
+      const { caller, closer } = lineTopContainers(editor);
+      const restoreLineTops = stubLineTops(
+        new Map([
+          [caller, 0],
+          [closer, 40],
+        ]),
+      );
+
+      let handled: boolean;
+      try {
+        handled = await dispatchGuardedDelete(editor, DELETE_LINE_COMMAND, false);
+      } finally {
+        restoreLineTops();
+      }
+
+      expect(handled).toBe(false);
+      const note = expectShellIntact(editor);
+      expect(JSON.stringify(note.content)).toContain("A note");
+    });
+
+    it("still stops a forward LINE delete at the closer when the lines match", async () => {
+      const { editor } = await mountWithCloser(protectedShell);
+      await caretAtShellEdge(editor);
+      const { caller, closer } = lineTopContainers(editor);
+      const restoreLineTops = stubLineTops(
+        new Map([
+          [caller, 0],
+          [closer, 0],
+        ]),
+      );
+
+      let handled: boolean;
+      try {
+        handled = await dispatchGuardedDelete(editor, DELETE_LINE_COMMAND, false);
+      } finally {
+        restoreLineTops();
+      }
+
+      expect(handled).toBe(true);
+      const note = expectShellIntact(editor);
+      // The clamp removes the whole content run up to the closer; USJ drops an empty `content`
+      // array entirely, so `note.content` itself may be `undefined` rather than an empty one.
+      expect(JSON.stringify(note.content ?? null)).not.toContain("A note");
+    });
+  });
+
+  describe("under a forward Delete with the caret outside the note", () => {
+    /** The note, its parent paragraph, and the note's own index within it. */
+    function $noteAndIndex() {
+      const note = findOnlyNote($getRoot());
+      return { note, parent: note.getParentOrThrow(), index: note.getIndexWithinParent() };
+    }
+
+    /** Caret as a TEXT point at the end of the text immediately before the note. */
+    async function caretAtTextEndBeforeNote(editor: LexicalEditor) {
+      await act(async () => {
+        editor.update(() => {
+          const { note } = $noteAndIndex();
+          const before = note.getPreviousSibling();
+          const text = requireDefined(
+            $isTextNode(before) ? before : undefined,
+            "text before the note",
+          );
+          text.select(text.getTextContentSize(), text.getTextContentSize());
+        });
+      });
+    }
+
+    /**
+     * Caret as an ELEMENT point on the paragraph, right before the note — what a leftward arrow
+     * out of the note's own content leaves it at (`$placeCaretAtBoundary`).
+     */
+    async function caretAtParagraphBoundaryBeforeNote(editor: LexicalEditor) {
+      await act(async () => {
+        editor.update(() => {
+          const { parent, index } = $noteAndIndex();
+          parent.select(index, index);
+        });
+      });
+    }
+
+    it.each([
+      ["a text point", caretAtTextEndBeforeNote],
+      ["an element point", caretAtParagraphBoundaryBeforeNote],
+    ] as const)("keeps the note whole with the caret as %s", async (_label, placeCaret) => {
+      const { editor } = await mount(protectedShell);
+      await placeCaret(editor);
+
+      const handled = await dispatchGuardedDelete(editor, DELETE_CHARACTER_COMMAND, false);
+
+      // Refused: a forward delete from here would otherwise eat the `\f` opener and unwrap the
+      // whole note into plain paragraph text.
+      expect(handled).toBe(true);
+      expectShellIntact(editor);
     });
   });
 
@@ -376,6 +814,36 @@ describe("expanded note shell", () => {
           .some((node) => $isNoteNode(node.getParent())),
       ).toBe(false);
     });
+  });
+
+  // The correction only moves the caret, and Lexical keeps a selection-only commit's tags pending:
+  // its cursor-change tag would ride onto the keystroke that follows, which the host's change
+  // listener then skips as a caret move - the character is shown but never saved.
+  it("does not tag the keystroke after a shell correction as a caret move", async () => {
+    const { editor } = await mount(protectedShell);
+    await clickCaretInShell(
+      editor,
+      (note) => requireDefined($noteEditableCallerNode(note), "caller"),
+      1,
+    );
+    const contentCommitTags: string[][] = [];
+    const unregister = editor.registerUpdateListener(({ tags, dirtyLeaves, dirtyElements }) => {
+      if (dirtyLeaves.size > 0 || dirtyElements.size > 0) contentCommitTags.push([...tags]);
+    });
+
+    await act(async () => {
+      editor.update(
+        () => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.insertText("x");
+        },
+        { discrete: true },
+      );
+    });
+    unregister();
+
+    expect(contentCommitTags.length).toBeGreaterThan(0);
+    for (const tags of contentCommitTags) expect(tags).not.toContain(CURSOR_CHANGE_TAG);
   });
 
   it("leaves an editable shell alone, caret and keystroke both", async () => {

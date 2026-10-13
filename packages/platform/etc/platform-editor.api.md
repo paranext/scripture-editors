@@ -126,6 +126,7 @@ export const Editorial: ForwardRefExoticComponent<EditorProps<LoggerBasic> & Ref
 // @public
 export interface EditorOptions {
     contextMenu?: ContextMenuOptionConfig[];
+    copyLimit?: number;
     debug?: boolean;
     hasExternalUI?: boolean;
     hasSpellCheck?: boolean;
@@ -176,9 +177,13 @@ export interface EditorRef {
             height: number;
         };
     }) | undefined;
+    getNoteIndex(noteKey: string): number | undefined;
+    getNoteKey(noteIndex: number): string | undefined;
     getNoteOps(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
+    getOpsAfterNote(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
     getSelection(): SelectionRange | undefined;
     getUsj(): Usj | undefined;
+    highlightNote(noteKeyOrIndex: string | number | undefined): void;
     insertMarker(marker: string): string | undefined;
     // @deprecated
     insertNote(marker: string, caller?: string, selection?: SelectionRange): void;
@@ -190,7 +195,15 @@ export interface EditorRef {
     removeCharacterMarker(marker?: string): boolean;
     replaceCharacterMarker(toMarker: string, fromMarker?: string): boolean;
     replaceEmbedUpdate(embedNodeKey: string, insertEmbedOps: DeltaOp[]): void;
+    selectAfterNote(noteKeyOrIndex: string | number): void;
     selectNote(noteKeyOrIndex: string | number): void;
+    selectNoteTextOffset(noteKeyOrIndex: string | number, utf16Offset: number, options?: {
+        field?: "category";
+        glyph?: {
+            index: number;
+            offset: number;
+        };
+    }): void;
     setAnnotation(selection: AnnotationRange, type: string, id: string, callbacks?: {
         onClick?: TypedMarkOnClick;
         onRemove?: TypedMarkOnRemove;
@@ -203,6 +216,7 @@ export interface EditorRef {
     setTransientInput(input: TransientInput | undefined): void;
     setUsj(usj: Usj): void;
     splitParagraphWithMarker(marker: string): void;
+    takeOpsAfterNote(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
     toolbarEndRef: RefObject<HTMLElement | null> | null;
     undo(): void;
 }

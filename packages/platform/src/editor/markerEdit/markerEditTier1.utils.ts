@@ -5,6 +5,7 @@
  */
 
 import { isCharKindMarker, isParaKindMarker } from "./markerKind.utils";
+import { $isNoteCallerSlot } from "./noteCallerSlot.utils";
 import {
   BARE_OPENER_REGEX,
   BYTES_READ_WITH_MARKER_REGEX,
@@ -15,6 +16,7 @@ import {
 } from "./markerName.pattern";
 import {
   $idleSettleWouldDiscardCaretHeldBytes,
+  $rebuildBook,
   $rebuildParas,
   $requestTier2ForNode,
   Tier2Context,
@@ -36,6 +38,7 @@ import {
   $createMarkerNode,
   $hasRenamingSeparatorGap,
   $isAttributeRunNode,
+  $isBookNode,
   $isCanonicalMarkerNode,
   $isCanonicalRunOpenerGlyph,
   $isCanonicalUnmatchedNode,
@@ -63,6 +66,7 @@ import {
   $syncOpenerSeparators,
   $verseAttributeRunPieces,
   AttributeRunNode,
+  BookNode,
   ChapterNode,
   CharNode,
   closingMarkerText,
@@ -181,6 +185,12 @@ function openerBytesEndTheSplit(text: string, getMarkerFn: MarkerLookup): boolea
 }
 
 /**
+ * An unknown-split rejoin scope: the artifact paragraph and the block its bytes rejoin — the
+ * paragraph before it, or the `\id` line's book when the line's own bytes split it off.
+ */
+export type UnknownSplitRejoinScope = readonly [previous: ParaNode | BookNode, artifact: ParaNode];
+
+/**
  * The widened Tier-2 scope that dissolves an unknown-split artifact around `glyph` —
  * `[previous, paragraph]`, so the tokenizer sees the JOINED bytes — or `undefined` when the shape
  * is not the artifact and the caller should keep its single-paragraph route.
@@ -195,8 +205,12 @@ function openerBytesEndTheSplit(text: string, getMarkerFn: MarkerLookup): boolea
  * Deliberately narrow beyond that: the paragraph's OWN marker must be unknown (a user-authored
  * `\p`/`\q1` has real blockness and keeps its own scope), the edited glyph must be the
  * paragraph's LEADING glyph (a stray opener mid-paragraph says nothing about the split), and a
- * previous sibling ParaNode must exist (with none, the degraded bytes re-tokenize alone and the
- * tokenizer's body-context default applies). A LOADED unknown paragraph (authored in the file,
+ * previous sibling ParaNode or BookNode must exist (with none, the degraded bytes re-tokenize alone
+ * and the tokenizer's body-context default applies). A BookNode predecessor is the `\id` line: its
+ * bytes end where a block marker starts, so an unknown marker typed there splits off a paragraph
+ * after the book exactly as one typed in a paragraph does, and the rejoin folds the bytes back
+ * into the line's content (`$rebuildBook` with the artifact as a trailing paragraph). A LOADED
+ * unknown paragraph (authored in the file,
  * not a split artifact) rejoins by the same rule — in the file a line without a leading marker
  * continues the previous paragraph, so the joined bytes are exactly what ParatextData would
  * parse.
@@ -211,7 +225,7 @@ function openerBytesEndTheSplit(text: string, getMarkerFn: MarkerLookup): boolea
 export function $unknownSplitRejoinScope(
   glyph: MarkerNode,
   getMarkerFn: MarkerLookup,
-): ParaNode[] | undefined {
+): UnknownSplitRejoinScope | undefined {
   if (glyph.getMarkerSyntax() !== "opening") return undefined;
   if (!openerBytesEndTheSplit(glyph.getTextContent(), getMarkerFn)) return undefined;
   const parent = glyph.getParent();
@@ -220,7 +234,7 @@ export function $unknownSplitRejoinScope(
   if (paraKind !== undefined && paraKind !== MarkerType.Unknown) return undefined;
   if (parent.getFirstChild()?.is(glyph) !== true) return undefined;
   const previous = parent.getPreviousSibling();
-  if (!$isParaNode(previous)) return undefined;
+  if (!$isParaNode(previous) && !$isBookNode(previous)) return undefined;
   return [previous, parent];
 }
 
@@ -237,7 +251,11 @@ export function $unknownSplitRejoinScope(
  */
 function $tryUnknownSplitRejoin(glyph: MarkerNode, context: MarkerEditContext): boolean {
   const scope = $unknownSplitRejoinScope(glyph, context.getMarker);
-  return scope !== undefined && $rebuildParas(scope, context);
+  if (!scope) return false;
+  const [previous, artifact] = scope;
+  return $isBookNode(previous)
+    ? $rebuildBook(previous, context, [artifact])
+    : $rebuildParas([previous, artifact], context);
 }
 
 function $clampSelectionToLength(node: MarkerNode, newLength: number): void {
@@ -402,11 +420,12 @@ export function $applyOpenerRename(
       // Correcting an unknown-split artifact's marker to any INLINE kind removes the split's
       // only reason to exist: in the file, `\p some` + newline + `\w stuff` is ONE paragraph (a
       // newline before an inline marker is ordinary whitespace), and the same holds for a
-      // milestone or a note. Widen the settle scope to include the PREVIOUS paragraph so
-      // re-tokenization rejoins them — the gate reads the glyph's own bytes (which already carry
-      // `newMarker` on every path into this function) through the SAME positional-kind rule this
-      // branch is guarded by, so no second kind check belongs here. The shape gate and the
-      // fabricated-`\p` failure mode live in {@link $unknownSplitRejoinScope}'s doc comment.
+      // milestone or a note. Widen the settle scope to include the PREVIOUS paragraph (or the
+      // `\id` line) so re-tokenization rejoins them — the gate reads the glyph's own bytes (which
+      // already carry `newMarker` on every path into this function) through the SAME
+      // positional-kind rule this branch is guarded by, so no second kind check belongs here. The
+      // shape gate and the fabricated-`\p` failure mode live in
+      // {@link $unknownSplitRejoinScope}'s doc comment.
       if ($tryUnknownSplitRejoin(node, context)) {
         context.logger?.debug(
           `[MarkerEdit] unknown-split paragraph rejoined its predecessor on rename to "${newMarker}"`,
@@ -714,20 +733,22 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
     context.pendingKeys.add(node.getKey());
     return;
   }
-  // Text typed at the very END of an intact char-span closer merges into the glyph (`\nd*x`).
-  // The name scan ends at the `*`, so those bytes re-tokenize as the canonical closer plus plain
-  // text after the span — an in-place split is re-tokenization identity (Invariant I's one
-  // sanctioned optimization), applied immediately so the typed character never rides styled
-  // inside the span until a departure settles it. Same shape as $verseNodeTransform's rest
-  // split. Scoped to the span's OWN last-child closer; every other closer divergence (damage,
-  // retype, run closers) pends below. A span at the document root (a `\ca`/`\cp` beside its
-  // chapter) has no block to hold the split-off text, so its bytes pend instead and the chapter's
-  // settle re-tokenizes them.
+  // Text typed at the very END of an intact char-span or note closer merges into the glyph
+  // (`\nd*x`, `\f*x`). The name scan ends at the `*`, so those bytes re-tokenize as the canonical
+  // closer plus plain text after the span or note — an in-place split is re-tokenization identity
+  // (Invariant I's one sanctioned optimization), applied immediately so the typed character never
+  // rides styled inside the span until a departure settles it. Same shape as $verseNodeTransform's
+  // rest split. A note's closer is reached this way whenever the browser reads back a caret at the
+  // end of a line the note ends: Lexical resolves that point into the line's last text, which is
+  // the note's closer (hidden, when the note is collapsed). Scoped to the span's or note's OWN
+  // last-child closer; every other closer divergence (damage, retype, run closers) pends below. A
+  // span at the document root (a `\ca`/`\cp` beside its chapter) has no block to hold the split-off
+  // text, so its bytes pend instead and the chapter's settle re-tokenizes them.
   if (node.getMarkerSyntax() === "closing") {
     const parent = node.getParent();
     const canonical = closingMarkerText(node.getMarker(), node.getNested());
     if (
-      $isCharNode(parent) &&
+      ($isCharNode(parent) || $isNoteNode(parent)) &&
       !$isRootOrShadowRoot(parent.getParent()) &&
       node.getMarker() === parent.getMarker() &&
       parent.getLastChild()?.is(node) &&
@@ -888,28 +909,31 @@ const CHAPTER_GLYPH_REGEXES = leadingAttributeGlyphRegexes("c");
 const SEPARATOR_RUN_ONLY_REGEX = /^[ \u00A0]*$/;
 
 /**
- * Insert `rest` — bytes extracted out of a verse glyph — as plain content directly after the
- * verse, merging into an existing following plain content node rather than always inserting a
- * fresh one. A fresh node fragments a literal the user is mid-typing across siblings — the
- * live failure: `\` typed at the verse's end split out alone, the next keystroke landed in
- * yet another node, and the resolve's caret shield (which covers the caret's contiguous
- * run) had nothing contiguous to cover, so `\vbut…` glued together in the rebuild fragment
- * and settled as a terminated unknown marker mid-word. Only an ordinary content node
- * qualifies: never a glyph (exact-type check), a token (the para-prefix separator), or an
- * attribute-run value riding beside the verse. Shared by BOTH extraction arms of
+ * Insert `rest` — bytes extracted out of a glyph's own text (a verse's number) — as plain
+ * content directly after it, merging into an existing following plain content node
+ * rather than always inserting a fresh one. A fresh node fragments a literal the user is
+ * mid-typing across siblings — the live failure: `\` typed at the verse's end split out alone,
+ * the next keystroke landed in yet another node, and the resolve's caret shield (which covers the
+ * caret's contiguous run) had nothing contiguous to cover, so `\vbut…` glued together in the
+ * rebuild fragment and settled as a terminated unknown marker mid-word. Only an ordinary content
+ * node qualifies: never a glyph (exact-type check), a token (the para-prefix separator), or an
+ * attribute-run value riding beside the owner. Shared by both extraction arms of
  * {@link $verseNodeTransform} so the merge behavior cannot drift between them.
  *
  * `caretOffsetInRest` places the collapsed caret at that offset within the inserted rest
  * (clamped to the rest by the callers); `undefined` leaves the selection untouched (a
  * programmatic edit with no caret in the glyph).
  *
+ * @returns The node that now holds `rest` — either the merged-into sibling or the freshly
+ *   created one.
+ *
  * Mutating: call inside `editor.update()` (runs from {@link $verseNodeTransform}).
  */
-function $insertRestAfterVerse(
-  node: VerseNode,
+function $insertRestAfterGlyph(
+  node: LexicalNode,
   rest: string,
   caretOffsetInRest: number | undefined,
-): void {
+): TextNode {
   const next = node.getNextSibling();
   if (
     $isTextNode(next) &&
@@ -919,11 +943,12 @@ function $insertRestAfterVerse(
   ) {
     next.setTextContent(rest + next.getTextContent());
     if (caretOffsetInRest !== undefined) next.select(caretOffsetInRest, caretOffsetInRest);
-    return;
+    return next;
   }
   const restNode = $createTextNode(rest);
   node.insertAfter(restNode);
   if (caretOffsetInRest !== undefined) restNode.select(caretOffsetInRest, caretOffsetInRest);
+  return restNode;
 }
 
 /**
@@ -997,7 +1022,7 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
         caretOffset !== undefined && caretOffset >= prefix.length
           ? Math.min(caretOffset - prefix.length, rest.length)
           : undefined;
-      $insertRestAfterVerse(node, rest, target);
+      $insertRestAfterGlyph(node, rest, target);
       return;
     }
     // `\v` prefix broken: PT9 re-tokenizes and the token becomes plain text
@@ -1039,9 +1064,9 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
   }
   node.setNumber(numberToken); // PT9 GetNextWord: whole word, valid or not
   node.setTextContent(getVisibleOpenMarkerText("v", numberToken));
-  // The caret follows to the end of the extracted rest (see $insertRestAfterVerse for the
+  // The caret follows to the end of the extracted rest (see $insertRestAfterGlyph for the
   // merge-into-following behavior both arms share).
-  if (rest) $insertRestAfterVerse(node, rest, rest.length);
+  if (rest) $insertRestAfterGlyph(node, rest, rest.length);
 }
 
 // An expanded note's editable caller text: whitespace run, caller word, whitespace run
@@ -1073,11 +1098,17 @@ const NOTE_CALLER_WORDS_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+([^\\]*[^ \
  *   and retyped — and meanwhile the document reads as the departure will leave it (the editor→USJ
  *   conversion moves the same typed bytes to the content).
  *
+ * This transform runs on every commit that dirties the caller node (it is not deferred to a
+ * settle), so every USJ reported between keystrokes is already free of the caller leaking into
+ * content.
+ *
  * Only the caller TEXT is handled — the unmergeable text child the note builders make (a text
  * spelling the caller exactly counts too, for a shape built without the flag). Content text that
  * happens to sit in the caller's slot because the caller was removed is never taken for it
  * ({@link $restoreRemovedNoteCaller} puts the caller back in front of it). Collapsed notes never
- * reach this arm — their caller is an atomic `ImmutableNoteCallerNode`, not editable text.
+ * reach this arm — their caller is an atomic `ImmutableNoteCallerNode`, not editable text. A host
+ * note editor with `isNoteShellEditable: false` renders the caller in `token` mode instead, where
+ * `NoteShellCaretGuardPlugin` keeps the caret from ever resting inside it to type.
  *
  * Mutating: call inside `editor.update()` (runs from the TextNode catch-all transform,
  * `$textNodeTier2Transform`).
@@ -1086,20 +1117,10 @@ const NOTE_CALLER_WORDS_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+([^\\]*[^ \
  *   (including the nothing-to-do canonical case).
  */
 export function $noteCallerTextTransform(node: TextNode, context: MarkerEditContext): boolean {
+  // The same slot scan $buildNoteFragment uses to find the caller.
+  if (!$isNoteCallerSlot(node)) return false;
   const note = node.getParent();
-  if (!$isNoteNode(note) || note.getIsCollapsed() !== false) return false;
-  // The map, never a local list, decides which note markers carry a leading caller.
-  if (!leadingAttributeNames(note.getMarker())?.includes("caller")) return false;
-  // The caller slot: the first child after the opening glyph(s) — the same scan
-  // $buildNoteFragment uses to find it.
-  const children = note.getChildren();
-  let slot = 0;
-  while (slot < children.length) {
-    const child = children[slot];
-    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
-    slot++;
-  }
-  if (!node.is(children[slot])) return false;
+  if (!$isNoteNode(note)) return false;
   const caller = note.getCaller();
   const text = node.getTextContent();
   if (text === getEditableCallerText(caller)) {
@@ -1903,8 +1924,8 @@ export function $resolvePendingMarkers(
         // marker edited back into an inline one — so the unknown-split artifact has no reason
         // left to be its own paragraph (see $unknownSplitRejoinScope). The single-scope route
         // below would re-tokenize those bytes alone and fabricate a default `\p` around them;
-        // the widened rejoin lets the tokenizer join them to the previous paragraph instead,
-        // exactly as the file bytes would parse.
+        // the widened rejoin lets the tokenizer join them to the previous paragraph (or the `\id`
+        // line) instead, exactly as the file bytes would parse.
         mutated = true;
         context.logger?.debug(
           "[MarkerEdit] unknown-split paragraph rejoined its predecessor on marker degradation",
