@@ -2,6 +2,7 @@ import {
   $isImmutableNoteCallerNode,
   $isImmutableVerseNode,
   $isSomeVerseNode,
+  $selectElementPoint,
   $selectNextVerse,
   $selectPreviousVerse,
   ImmutableVerseNode,
@@ -732,7 +733,9 @@ function $applyOneVisibleStop(
     return false;
   }
   if (alter === "collapse") {
-    landing.node.select(landing.offset, landing.offset);
+    if (landing.kind === "element" && $isElementNode(landing.node))
+      $selectElementPoint(landing.node, landing.offset);
+    else landing.node.select(landing.offset, landing.offset);
     return true;
   }
   selection.focus.set(landing.node.getKey(), landing.offset, landing.kind);
@@ -883,7 +886,7 @@ function $selectPastTrailingNote(note: NoteNode): void {
   // Detached from any block: leave the caret where the user can still see it.
   if (!parent) return;
   const indexPastNote = note.getIndexWithinParent() + 1;
-  parent.select(indexPastNote, indexPastNote);
+  $selectElementPoint(parent, indexPastNote);
 }
 
 /** Helper to handle forward arrow key navigation logic */

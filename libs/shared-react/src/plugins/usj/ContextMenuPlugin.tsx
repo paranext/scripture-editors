@@ -272,6 +272,9 @@ export function ContextMenuPlugin({
       // every event in a composition. Let it through untouched either way.
       if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "Escape") {
+        // Claims the key, so a host listening further along (e.g. an editor-level Escape that
+        // closes the editor) can tell this Escape was spent closing the menu.
+        event.preventDefault();
         closeMenu();
         return;
       }
