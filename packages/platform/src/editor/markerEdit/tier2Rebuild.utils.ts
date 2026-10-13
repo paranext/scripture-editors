@@ -1339,16 +1339,15 @@ function $appendNodesFragment(
 }
 
 /**
- * Whether `para` is a nameless paragraph (ParatextData reads `\p \ df` as a paragraph whose style
- * is empty) whose glyph still names no marker. Its bytes would re-tokenize as a literal `\ ` in a
- * default paragraph, so until a typed nameless backslash tokenizes as ParatextData reads it, such a
- * paragraph is preserved rather than rebuilt. A glyph the user has given a name (`\` retyped to
- * `\q`) spells a marker again and rebuilds like any other paragraph.
+ * Whether a paragraph scope's fragment opens with a nameless paragraph's glyph: ParatextData reads
+ * `\p \ df` as a paragraph whose marker is the empty name, which the editor shows as a bare `\`.
+ * Every tokenize of a paragraph scope passes this on, so that `\` re-tokenizes as the marker it
+ * shows while a bare `\` anywhere else — including one left by deleting another paragraph
+ * marker's name — stays text.
  */
-function $isUnnamedNamelessPara(para: ParaNode): boolean {
-  if (para.getMarker() !== "") return false;
-  const glyph = para.getFirstChild();
-  return !$isMarkerNode(glyph) || !/\\[^\s\\]/.test(glyph.getTextContent());
+export function $opensNamelessParagraph(paras: readonly LexicalNode[]): boolean {
+  const [first] = paras;
+  return $isParaNode(first) && first.getMarker() === "";
 }
 
 /**
@@ -1368,7 +1367,6 @@ export function $buildParaFragment(
   // Guard rails (preserve-or-refuse): a paragraph the engine cannot fully
   // re-derive from its text is never rebuilt — edits inside it stay literal text.
   if (para.getUnknownAttributes()) return undefined;
-  if ($isUnnamedNamelessPara(para)) return undefined;
   // Known non-paragraph kinds can't be re-derived as paragraphs. Unknown markers
   // now round-trip: the tokenizer emits them as paragraphs in body context (PT9
   // DetermineUnknownTokenType), so they no longer refuse.
@@ -2814,6 +2812,7 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
 
   const content: MarkerContent[] = tokenizeFragment(combined, {
     getMarker: getMarkerFn,
+    opensNamelessParagraph: $opensNamelessParagraph(paras),
   });
   if (content.length === 0) {
     logger?.debug("[MarkerEdit] Tier 2 skipped: tokenizer produced no content");
@@ -4004,7 +4003,10 @@ export function $idleSettleWouldDiscardCaretHeldBytes(
     ? $buildBookFragment(scope, getMarkerFn, viewOptions).out
     : $buildParaFragment(scope, getMarkerFn, viewOptions);
   if (!fragment) return false;
-  const content = tokenizeFragment(fragment, { getMarker: getMarkerFn });
+  const content = tokenizeFragment(fragment, {
+    getMarker: getMarkerFn,
+    opensNamelessParagraph: $opensNamelessParagraph([scope]),
+  });
   if (content.length === 0) return false;
   const counts = new Map<string, number>();
   for (const ch of fragment.text)

@@ -751,7 +751,14 @@ function $livePointFromAnchor(
   const sides = pairedSides(plan);
   if (!sides) return $liveScopeFront(plan, logger);
   const addressDisplayBytes = !isUsjTextContentLocation(location);
-  const crossed = anchorAcrossLiteralsSnapped(sides.alignment, anchor, "toLive");
+  const crossed = wsRunAcrossSuppliedBytes(
+    sides.alignment,
+    anchor.nonWsBefore,
+    sides.scratchFragment.text,
+    anchor,
+    sides.liveFragment.text,
+    anchorAcrossLiteralsSnapped(sides.alignment, anchor, "toLive"),
+  );
   const pointFor = (at: CaretByteAnchor): FragmentPoint | undefined => {
     // A byte inside a closing glyph the user is still editing (`\ w*`) is a place the caret
     // rests, and a settled position on that byte is that place — caret addressing would move it
@@ -1579,12 +1586,14 @@ function $scratchLocationFromLivePoint(
     return plan.scratch
       .getEditorState()
       .read(() => $settledLocationInSpelling(literal.run, literal.within, viewOptions));
-  const crossed = $wsRunAcrossSuppliedBytes(
+  const toSettled = anchorAcrossLiteralsSnapped(alignment, anchored.anchor, "toSettled");
+  const crossed = wsRunAcrossSuppliedBytes(
     alignment,
-    liveFragment,
-    scratchFragment,
+    toSettled.nonWsBefore,
+    liveFragment.text,
     anchored.anchor,
-    anchorAcrossLiteralsSnapped(alignment, anchored.anchor, "toSettled"),
+    scratchFragment.text,
+    toSettled,
   );
   // The mirror of the inbound addressing choice, decided the same way: a live position that names
   // USFM bytes wants the settled spelling of those bytes, including the ones no caret can rest
@@ -1631,17 +1640,21 @@ function wsRunInFrontOf(text: string, count: number): number {
 }
 
 /**
- * `crossed` — a live anchor restated in settled bytes — with its whitespace run counted back from
- * the byte it stands in front of, when settled-only bytes (a `\p` the tokenizer supplies) sit
- * right before that byte: the live whitespace run then sits in front of the same byte, and
- * counting it from the bytes before would put the position among the supplied bytes' own
- * whitespace instead.
+ * `crossed` — `from` restated on the other side of the alignment — with its whitespace run counted
+ * back from the byte it stands in front of, when settled-only bytes (a `\p` the tokenizer supplies)
+ * sit right before that byte, at `settledCount` in the settled bytes. The whitespace in front of
+ * that byte is then one run on the live side but the supplied marker's separator plus the rest on
+ * the settled side, so a run counted from the bytes before would put a live position among the
+ * supplied bytes' own whitespace, and a settled one in front of the separator past live whitespace
+ * it does not cross. Counting from the byte keeps the whitespace after the position the same on
+ * both sides.
  */
-function $wsRunAcrossSuppliedBytes(
+function wsRunAcrossSuppliedBytes(
   alignment: ByteAlignment,
-  liveFragment: FragmentAccumulator,
-  scratchFragment: FragmentAccumulator,
-  live: CaretByteAnchor,
+  settledCount: number,
+  fromText: string,
+  from: CaretByteAnchor,
+  toText: string,
   crossed: CaretByteAnchor,
 ): CaretByteAnchor {
   const followsSupplied = alignment.segments.some(
@@ -1649,13 +1662,13 @@ function $wsRunAcrossSuppliedBytes(
       !segment.same &&
       segment.liveStart === segment.liveEnd &&
       segment.settledEnd > segment.settledStart &&
-      segment.settledEnd === crossed.nonWsBefore,
+      segment.settledEnd === settledCount,
   );
   if (!followsSupplied) return crossed;
-  const wsAfter = wsRunInFrontOf(liveFragment.text, live.nonWsBefore) - live.wsRun;
+  const wsAfter = wsRunInFrontOf(fromText, from.nonWsBefore) - from.wsRun;
   return {
     ...crossed,
-    wsRun: Math.max(0, wsRunInFrontOf(scratchFragment.text, crossed.nonWsBefore) - wsAfter),
+    wsRun: Math.max(0, wsRunInFrontOf(toText, crossed.nonWsBefore) - wsAfter),
   };
 }
 

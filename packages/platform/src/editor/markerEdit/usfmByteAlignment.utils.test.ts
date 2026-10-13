@@ -121,6 +121,18 @@ describe("alignUsfmBytes", () => {
     expect(mapCount(a, 0, "settled")).toBeUndefined(); // the supplied `\p` has no live bytes
   });
 
+  it("pairs a live marker with the second settled one when the settle supplies a `\\p` before a different one", () => {
+    // ` \` typed before a nameless paragraph's glyph: the space settles as a paragraph of its own,
+    // opened by a supplied `\p`, ahead of the nameless paragraph the typed glyph still opens.
+    const live = nows(" \\ df");
+    const settled = nows("\\p   \\ df");
+    const a = alignUsfmBytes(live, settled);
+    expectTiles(a, live.length, settled.length);
+    expect(mapCount(a, 0, "live")).toBe(2); // in front of the live `\`: the second settled one
+    expect(mapCount(a, 1, "live")).toBe(3);
+    expect(mapCount(a, 0, "settled")).toBeUndefined(); // the supplied `\p` has no live bytes
+  });
+
   it("pairs a live closer with the settled closer when the settle supplies an empty span's opener", () => {
     // A lone `\w*` the settle reads as an empty span: the opener in front of it is the settle's,
     // and the live closer is the settled closer — not the opener's copy.

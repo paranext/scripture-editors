@@ -90,6 +90,7 @@ import {
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
+  $isParaNode,
   $isVerseNode,
   createMarkerLookup,
   defaultStyleInfo,
@@ -820,7 +821,7 @@ function usfmOf(item: MarkerContent, nested = false): string {
     case "optbreak":
       return "//";
     case "para":
-      return `\\${marker} ${inner(false)}`;
+      return `\\${marker || NAMELESS_MARKER_NAME} ${inner(false)}`;
     case "chapter":
       return (
         `\\c ${item.number ?? ""} ` +
@@ -859,8 +860,15 @@ function usfmOf(item: MarkerContent, nested = false): string {
   }
 }
 
+/**
+ * The name both the screen and the file are spelled with here for a nameless paragraph's marker,
+ * whose `\` names nothing: a private-use character no document holds, so the normalization reads
+ * that `\` as a marker (its separator structure) and never a `\` that is text.
+ */
+const NAMELESS_MARKER_NAME = String.fromCharCode(0xe000);
+
 /** A marker token at a position: `\`, an optional nesting `+`, a name, an optional closing `*`. */
-const MARKER_AT_REGEX = /\\(\+?)([\w-]+)(\*?)/y;
+const MARKER_AT_REGEX = new RegExp(String.raw`\\(\+?)([\w-]+|${NAMELESS_MARKER_NAME})(\*?)`, "y");
 
 /** Whether `byte` is whitespace as USFM reads it, a no-break space included. */
 function isUsfmSpace(byte: string | undefined): boolean {
@@ -1224,7 +1232,24 @@ function $screenLines(): string | undefined {
     ($isNoteNode(node) && node.getIsCollapsed()) ||
     ($isElementNode(node) && node.getChildren().some(hidesBytes));
   if (blocks.some(hidesBytes)) return undefined;
-  return blocks.map((block) => ($isBlockNode(block) ? "\n" : "") + $bytesOf(block)).join("");
+  return blocks
+    .map((block) => ($isBlockNode(block) ? "\n" : "") + $namelessMarked($bytesOf(block), block))
+    .join("");
+}
+
+/**
+ * A nameless paragraph's bytes with its glyph's `\` spelled as {@link NAMELESS_MARKER_NAME} names
+ * it, where the tokenizer reads that `\` as the nameless marker: the glyph's first byte after any
+ * whitespace, followed by whitespace, the end, or another `\`. Any other glyph is spelled as it
+ * shows.
+ */
+function $namelessMarked(bytes: string, block: LexicalNode): string {
+  const glyph = $isParaNode(block) && block.getMarker() === "" ? block.getFirstChild() : null;
+  const opener = $isMarkerNode(glyph)
+    ? /^[\s\u00A0]*\\(?=[\s\u00A0\\]|$)/.exec(glyph.getTextContent())
+    : null;
+  if (!opener) return bytes;
+  return `${opener[0]}${NAMELESS_MARKER_NAME}${bytes.slice(opener[0].length)}`;
 }
 
 /** The same blocks as the screen shows them, one normalized line per block; `undefined` when the

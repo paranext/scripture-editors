@@ -2004,8 +2004,9 @@ function $afterLastTokenLocation(
   if ($isNoteNode(node)) return property("caller", node.getCaller());
   const marker = $isUnknownNode(node) ? node.getMarker() : $markerOf(node);
   // A marker-less object (the document root, a table, an optbreak) has no token to count past,
-  // so the character after it can only be named as the object itself.
-  if (!marker) return { jsonPath } satisfies UsjMarkerLocation;
+  // so the character after it can only be named as the object itself. A nameless paragraph's
+  // marker is the empty name, which its `\` still spells: the place after it is `['marker']` at 0.
+  if (marker === undefined) return { jsonPath } satisfies UsjMarkerLocation;
   return property("marker", marker);
 }
 

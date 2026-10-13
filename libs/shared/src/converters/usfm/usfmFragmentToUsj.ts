@@ -88,6 +88,12 @@ export interface UsfmFragmentOptions {
    * placeholder with no entry stands for something other than a note or a verse.
    */
   placeholders?: readonly PreservedNodeKind[];
+  /**
+   * True when the fragment opens with the glyph of a paragraph whose marker is the empty name
+   * (shown as a bare `\`), so a bare `\` opening the fragment reads as that nameless marker
+   * rather than as text. Ignored in note content.
+   */
+  opensNamelessParagraph?: boolean;
 }
 
 const VERSE_MARKER = "v";
@@ -293,6 +299,34 @@ function scanMarkerName(fragment: string, start: number): { name: string; next: 
   return { name: fragment.slice(start, index), next: index };
 }
 
+/**
+ * Whether the bare `\` at `start` is the marker of a nameless paragraph — the empty name
+ * ParatextData 9.6 reads in `\ df` (`<para style="">df</para>`): its tokenizer reads a marker at a
+ * token start even when the name is empty, and resolves that unknown token as a paragraph in body
+ * text (UsfmParser.DetermineUnknownTokenType). A `\` after text stays text there, because its text
+ * scan only stops at a `\` followed by a name character.
+ *
+ * Read so only where the caller says the fragment opens with a nameless paragraph's glyph
+ * ({@link UsfmFragmentOptions.opensNamelessParagraph}), and only for the first `\` of the
+ * fragment, with nothing but whitespace in front of it — where a `\p` would still open a paragraph
+ * of its own. Everywhere else a bare `\` stays literal, ParatextData's token starts included: a
+ * `\` typed right after another marker, or left by deleting a marker's name, is text the user has
+ * not named yet, not a paragraph break.
+ *
+ * The name ends where it would after a named marker: at whitespace, at the end, or at another
+ * `\`. A `\` directly before `|` or a preserved-node placeholder stays literal.
+ */
+function readsAsNamelessMarker(
+  fragment: string,
+  start: number,
+  opensNamelessParagraph: boolean,
+): boolean {
+  if (!opensNamelessParagraph) return false;
+  if (!/^[\s\u00A0\u200B]*$/.test(fragment.slice(0, start))) return false;
+  const following = fragment[start + 1];
+  return following === undefined || following === "\\" || /[\s\u00A0\u200B]/.test(following);
+}
+
 /** Milestone names the Paratext stylesheet family declares: `\qt-s/-e`, `\qt1-s`…`\qt5-e`,
  * `\ts-s/-e`. */
 const STYLESHEET_MILESTONE_NAME_REGEX = /^(?:qt[1-5]?|ts)-[se]$/;
@@ -352,6 +386,7 @@ function tokenize(
   getMarkerFn: MarkerLookup,
   isNoteContext: boolean,
   placeholders: readonly PreservedNodeKind[],
+  opensNamelessParagraph: boolean,
 ): Token[] {
   const tokens: Token[] = [];
   let index = 0;
@@ -401,8 +436,19 @@ function tokenize(
     const { name, next } = scanMarkerName(fragment, index + 1);
     index = next;
 
+    // Consume the separator whitespace after an opening marker (PT9 skips it) — all leading
+    // whitespace, not just a single space.
+    const consumeSeparator = () => {
+      while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
+    };
+
     if (name === "") {
-      // Bare `\` — literal (degradation property).
+      if (readsAsNamelessMarker(fragment, rawStart, opensNamelessParagraph)) {
+        consumeSeparator();
+        tokens.push({ kind: "para", marker: "" });
+        continue;
+      }
+      // Bare `\` anywhere else — literal (degradation property).
       pushText(fragment.slice(rawStart, index));
       continue;
     }
@@ -419,12 +465,6 @@ function tokenize(
       tokens.push({ kind: "end", marker: name.slice(0, -1) });
       continue;
     }
-
-    // Consume the separator whitespace after an opening marker (PT9 skips it) — all leading
-    // whitespace, not just a single space.
-    const consumeSeparator = () => {
-      while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
-    };
 
     if (name === VERSE_MARKER) {
       const { word, next: afterWord } = getNextWord(fragment, index);
@@ -1179,6 +1219,7 @@ export function usfmFragmentToUsjContent(
     options?.getMarker ?? getMarker,
     isNoteContext,
     options?.placeholders ?? [],
+    !isNoteContext && options?.opensNamelessParagraph === true,
   );
   for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
     const token = tokens[tokenIndex];

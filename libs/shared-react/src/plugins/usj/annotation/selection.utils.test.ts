@@ -2092,6 +2092,36 @@ describe("$getUsjSelectionFromEditor", () => {
       });
     });
 
+    it.each([
+      ["p", 1],
+      ["", 0],
+    ])(
+      "should emit the marker's end after an empty paragraph's glyph and separator (marker %j)",
+      (marker, propertyOffset) => {
+        let separator: TextNode;
+        const { editor } = createBasicTestEnvironment([ParaNode, MarkerNode], () => {
+          separator = $createTextNode(NBSP);
+          $setState(separator, textTypeState, "marker-trailing-space");
+          $getRoot().append(
+            $createParaNode(marker).append($createMarkerNode(marker, "opening"), separator),
+            $createParaNode().append($createMarkerNode("p", "opening"), $createTextNode("Hi")),
+          );
+        });
+        // Non-null assertion is safe: separator is assigned during the test setup callback.
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        updateSelection(editor, separator!, 1);
+
+        editor.getEditorState().read(() => {
+          // A nameless paragraph's `\` still spells its (empty) marker, so the place after it is
+          // that marker's end, as it is for any other empty paragraph.
+          expect($getUsjSelectionFromEditor(undefined)?.start).toEqual({
+            jsonPath: "$.content[0]['marker']",
+            propertyOffset,
+          });
+        });
+      },
+    );
+
     it("should ignore non-content nodes when counting content indexes for property in editable ms", () => {
       let msOpeningMarker: MarkerNode;
       const { editor } = createBasicTestEnvironment([ParaNode, MarkerNode, MilestoneNode], () => {

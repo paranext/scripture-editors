@@ -351,7 +351,8 @@ function walk(
     const supplied =
       settled[j] === MARKER_START
         ? suppliedMarkerAt(live, i, settled, j) ||
-          suppliedMarkerBeforeLiteral(live, i, settled, j, options.spellings)
+          suppliedMarkerBeforeLiteral(live, i, settled, j, options.spellings) ||
+          (!options.prefix && i === 0 && j === 0 ? suppliedParagraphAtFront(live, settled) : 0)
         : 0;
     if (supplied > 0) {
       out.push(i, i, j, j + supplied, false);
@@ -423,6 +424,24 @@ function suppliedMarkerAt(live: string, i: number, settled: string, j: number): 
     live.startsWith(token, i) &&
     !live.startsWith(token, i + token.length)
     ? token.length
+    : 0;
+}
+
+/** The marker the tokenizer opens a paragraph with for content in front of a fragment's first
+ * marker (`PARA_MARKER_DEFAULT`). */
+const SUPPLIED_PARAGRAPH_MARKER = "\\p";
+
+/**
+ * The length of the `\p` that starts `settled` when the tokenizer supplied it for whitespace in
+ * front of the live side's first marker, which is not a `\p` — ` \` typed in front of a nameless
+ * paragraph's glyph settles as a `\p` paragraph holding the space, ahead of the paragraph the glyph
+ * still opens — or 0. A `\p` the live side starts with too is {@link suppliedMarkerAt}'s case.
+ */
+function suppliedParagraphAtFront(live: string, settled: string): number {
+  if (!settled.startsWith(SUPPLIED_PARAGRAPH_MARKER)) return 0;
+  if (settled[SUPPLIED_PARAGRAPH_MARKER.length] !== MARKER_START) return 0;
+  return live[0] === MARKER_START && !live.startsWith(SUPPLIED_PARAGRAPH_MARKER)
+    ? SUPPLIED_PARAGRAPH_MARKER.length
     : 0;
 }
 

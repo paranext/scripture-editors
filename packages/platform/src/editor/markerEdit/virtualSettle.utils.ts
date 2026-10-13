@@ -55,6 +55,7 @@ import {
   $chapterAdjacentAttributeNodes,
   $charNeedsSentinelAs,
   $isRebuildSentinel,
+  $opensNamelessParagraph,
   $settleScopeForNode,
   $signatureOf,
   countSentinels,
@@ -546,6 +547,7 @@ export function $settledParaScope(
   const tokenized = $fragmentWithoutTransient(fragment, transient);
   const content: MarkerContent[] = tokenizeFragment(tokenized, {
     getMarker: getMarkerFn,
+    opensNamelessParagraph: $opensNamelessParagraph(paras),
   });
   if (content.length === 0) return undefined;
   if (countSentinels(content) !== fragment.sentinels.length) {

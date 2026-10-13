@@ -1,17 +1,26 @@
 /**
  * A nameless paragraph: ParatextData reads `\p \ df` as `<para style="" status="unknown">df</para>`,
  * a paragraph whose marker is the empty name. The editor shows its glyph as a bare `\`, hands it
- * back unchanged, saves a rename of that glyph, and — until a typed nameless backslash tokenizes
- * as ParatextData reads it — keeps the paragraph as it is when the user types inside it rather
- * than re-tokenizing its `\ ` into literal text.
+ * back unchanged, and settles edits to it and inside it like any other paragraph's: the bare `\`
+ * that opens the paragraph's bytes tokenizes as the nameless marker it shows.
  */
 import {
   mountInView,
   ORACLE_VIEWS,
   oracleView,
 } from "../annotationLocations/annotationLocations.test-helpers";
-import { depart } from "./pendingSettledOracle.test-helpers";
-import { Usj, usjToUsxString, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
+import {
+  $screenBytes,
+  depart,
+  savedBytes,
+  withoutLineBreaks,
+} from "./pendingSettledOracle.test-helpers";
+import {
+  MarkerContent,
+  Usj,
+  usjToUsxString,
+  usxStringToUsj,
+} from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $getRoot, $isElementNode, $isTextNode, TextNode } from "lexical";
 import { describe, expect, it } from "vitest";
@@ -94,16 +103,67 @@ describe("a nameless paragraph", () => {
       const pending = mounted.ref.current?.getUsj();
       await depart(mounted);
       const settled = mounted.ref.current?.getUsj();
-      const shown = namelessParaText(mounted);
+      const screen = mounted.lexical.getEditorState().read(() => $screenBytes());
       mounted.unmount();
 
       expect(settled?.content[2]).toEqual({
         type: "para",
         marker: "",
-        content: ["d\\bd x\\bd* f"],
+        content: ["d", { type: "char", marker: "bd", content: ["x"] }, " f"],
       });
       expect(pending).toEqual(settled);
-      expect(shown.replace(/\s/g, " ")).toBe("\\ d\\bd x\\bd* f");
+      expect(withoutLineBreaks(screen ?? "")).toBe(withoutLineBreaks(savedBytes(settled)));
     },
   );
+
+  // Each edit leaves the glyph naming no marker, and the paragraph's bytes then read the way
+  // ParatextData reads them: a `\\` that opens them is the nameless marker, one after text is text.
+  // The file gets every byte the screen shows, and getUsj() reports it before the edit settles.
+  const GLYPH_EDITS: { name: string; glyph: string; caret: number; settled: MarkerContent }[] = [
+    {
+      name: "a byte typed before the backslash",
+      glyph: "x\\",
+      caret: 1,
+      settled: { type: "para", marker: "p", content: ["x\\ df"] },
+    },
+    {
+      name: "a star typed before the backslash",
+      glyph: "*\\",
+      caret: 1,
+      settled: { type: "para", marker: "p", content: ["*\\ df"] },
+    },
+    {
+      name: "a backslash typed after the backslash",
+      glyph: "\\\\",
+      caret: 2,
+      settled: { type: "para", marker: "", content: ["\\ df"] },
+    },
+    {
+      name: "the backslash deleted",
+      glyph: "",
+      caret: 0,
+      settled: { type: "para", marker: "p", content: [" df"] },
+    },
+  ];
+  describe.each(["standard", "unformatted"])("in the %s view", (viewName) => {
+    it.each(GLYPH_EDITS)(
+      "saves what the screen shows: $name",
+      async ({ glyph, caret, settled }) => {
+        const mounted = await mountInView(namelessParaUsj(), oracleView(viewName));
+        await editNamelessPara(mounted, ([glyphText]) => {
+          glyphText.setTextContent(glyph);
+          glyphText.select(caret, caret);
+        });
+        const pending = mounted.ref.current?.getUsj();
+        await depart(mounted);
+        const saved = mounted.ref.current?.getUsj();
+        const screen = mounted.lexical.getEditorState().read(() => $screenBytes());
+        mounted.unmount();
+
+        expect(saved?.content[2]).toEqual(settled);
+        expect(withoutLineBreaks(screen ?? "")).toBe(withoutLineBreaks(savedBytes(saved)));
+        expect(pending).toEqual(saved);
+      },
+    );
+  });
 });
