@@ -1484,6 +1484,49 @@ export function $applySettledNoteScope(
 }
 
 /**
+ * Settle one `\id` line scope INTO `sites`: the book's serialized counterpart takes the line's
+ * settled content children, and the blocks a typed block marker starts ({@link $settledBookLine})
+ * go into the book's own siblings directly after it, replacing the rejoin's widened paragraphs
+ * (`trailingParas`, which sit there). A line with no content yet takes its rebuilt content at its
+ * end, after the prefix. A refusal leaves the serialized copy exactly as it stood.
+ *
+ * Read-only on the LIVE tree (it mutates only the serialized copy), so call inside an
+ * editor-state read. Returns whether the serialized copy changed.
+ */
+export function $applySettledBookScope(
+  book: BookNode,
+  trailingParas: ParaNode[],
+  sites: Map<NodeKey, SerializedSite>,
+  context: Tier2Context,
+  huskKeys: ReadonlySet<NodeKey>,
+  transient: TransientLiteral | undefined,
+  charRenames?: ReadonlyMap<NodeKey, CharOpenerRename>,
+): boolean {
+  const site = sites.get(book.getKey());
+  const bookChildren = site ? serializedChildren(site.node) : undefined;
+  if (!site || !bookChildren) return false;
+  const built = $settledBookLine(
+    book,
+    sites,
+    context,
+    huskKeys,
+    transient,
+    trailingParas,
+    charRenames,
+  );
+  if (!built) return false;
+  const firstContent = built.contentNodes.at(0);
+  const firstSite = firstContent ? sites.get(firstContent.getKey()) : undefined;
+  if (firstContent && !firstSite) return false;
+  const start = firstSite ? bookChildren.indexOf(firstSite.node) : bookChildren.length;
+  const bookIndex = site.siblings.indexOf(site.node);
+  if (start < 0 || bookIndex < 0) return false;
+  bookChildren.splice(start, built.contentNodes.length, ...built.rebuilt);
+  site.siblings.splice(bookIndex + 1, trailingParas.length, ...built.followingBlocks);
+  return true;
+}
+
+/**
  * The settled USJ for the editor state `serializedState` was exported from, or `undefined` when
  * nothing settleable is pending (the caller keeps whatever it already has). Call INSIDE a
  * `read()` of that same state. `serializedState` is mutated in place and must therefore be a fresh
@@ -1574,30 +1617,16 @@ export function $settledUsj(
   // new blocks inserted right after the book in its own parent's children, which replace a rejoin's
   // widened paragraphs there (they sit directly after the book, as `$unknownSplitRejoinScope`
   // requires). A line with no content yet takes its rebuilt content at its end, after the prefix.
-  for (const book of bookScopes.values()) {
-    const site = sites.get(book.getKey());
-    const bookChildren = site ? serializedChildren(site.node) : undefined;
-    if (!site || !bookChildren) continue;
-    const trailingParas = bookTrailingParas.get(book.getKey()) ?? [];
-    const built = $settledBookLine(
+  for (const book of bookScopes.values())
+    $applySettledBookScope(
       book,
+      bookTrailingParas.get(book.getKey()) ?? [],
       sites,
       context,
       huskKeys,
       transient,
-      trailingParas,
       charOpenerRenames,
     );
-    if (!built) continue;
-    const firstContent = built.contentNodes.at(0);
-    const firstSite = firstContent ? sites.get(firstContent.getKey()) : undefined;
-    if (firstContent && !firstSite) continue;
-    const start = firstSite ? bookChildren.indexOf(firstSite.node) : bookChildren.length;
-    const bookIndex = site.siblings.indexOf(site.node);
-    if (start < 0 || bookIndex < 0) continue;
-    bookChildren.splice(start, built.contentNodes.length, ...built.rebuilt);
-    site.siblings.splice(bookIndex + 1, trailingParas.length, ...built.followingBlocks);
-  }
 
   // Chapters are top-level and disjoint from all three passes above — a chapter is never inside a
   // paragraph, a note, or the `\id` line's book — so ordering against them is free. The whole

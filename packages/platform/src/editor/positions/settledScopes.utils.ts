@@ -25,6 +25,7 @@ import {
   withoutDroppedSentinels,
 } from "../markerEdit/tier2Rebuild.utils";
 import {
+  $applySettledBookScope,
   $applySettledCharOpenerRename,
   $applySettledNoteGlyphRename,
   $applySettledNoteScope,
@@ -58,6 +59,7 @@ import {
 } from "lexical";
 import {
   $getLogicalContentItems,
+  BookNode,
   $isChapterNode,
   $isImpliedParaNode,
   $isNoteNode,
@@ -385,6 +387,52 @@ function $planForParas(
   return $planFrom("para", paras, liveFragment, liveCut, rebuilt, carried, context);
 }
 
+/** The `\id` line scope's plan, over the book and the paragraphs a rejoin widens it by: the book
+ * with its settled content, then whatever blocks the line's settle starts after it. Any note
+ * settling inside the line is settled into the serialized copy first, for the reason
+ * {@link $planForParas} gives. */
+function $planForBook(
+  book: BookNode,
+  trailingParas: ParaNode[],
+  built: FragmentAccumulator | undefined,
+  scopes: SettleScopes,
+  context: SettledPositionContext,
+  transient: TransientLiteral | undefined,
+): SettleScopePlan | undefined {
+  const { liveFragment, liveCut } = $cutLiveFragment(built, transient);
+  const liveNodes = [book, ...trailingParas];
+  const serialized = liveNodes.map($exportSubtree);
+  const sites = new Map<NodeKey, SerializedSite>();
+  $mapSerializedSites(liveNodes, serialized, sites);
+  $applyInPlaceRenames(scopes, sites);
+  $notesWithin(liveNodes)
+    .filter((note) => scopes.noteScopes.has(note.getKey()))
+    .forEach((note) =>
+      $applySettledNoteScope(
+        note,
+        sites,
+        context.tier2,
+        scopes.huskKeys,
+        transient,
+        scopes.charOpenerRenames,
+      ),
+    );
+  if (
+    !$applySettledBookScope(
+      book,
+      trailingParas,
+      sites,
+      context.tier2,
+      scopes.huskKeys,
+      transient,
+      scopes.charOpenerRenames,
+    )
+  )
+    return undefined;
+  const carried = built && carriedPreservedRuns(built, sites, scopes.huskKeys);
+  return $planFrom("para", liveNodes, liveFragment, liveCut, serialized, carried, context);
+}
+
 /** The chapter scope's plan, over the whole region the chapter rebuild replaces (the chapter plus
  * the adjacent first-class `\ca`/`\cp` nodes `$buildChapterFragment` reads). */
 function $planForChapter(
@@ -616,6 +664,17 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
       ),
       true,
     );
+  // The `\id` line is a root child like a paragraph, and its settle can start blocks after it, so
+  // its plan is a top-level one: everything after it shifts by what the line settles into.
+  for (const book of scopes.bookScopes.values()) {
+    const trailingParas = scopes.bookTrailingParas.get(book.getKey()) ?? [];
+    record(
+      planned(book.getKey(), "para", [book, ...trailingParas], (fragment) =>
+        $planForBook(book, trailingParas, fragment, scopes, context, transient),
+      ),
+      true,
+    );
+  }
   for (const chapter of scopes.chapterScopes.values())
     record(
       planned(

@@ -70,7 +70,8 @@ export interface TransientCut {
  */
 export interface SettleScopePlan {
   readonly kind: "para" | "note" | "chapter";
-  /** Live nodes the scope replaces: the paragraph(s) / the chapter region / [the note]. */
+  /** Live nodes the scope replaces: the paragraph(s) — or the `\id` line and the paragraphs a
+   * rejoin widens it by — / the chapter region / [the note]. */
   readonly liveNodes: readonly LexicalNode[];
   /**
    * Live fragment over `liveNodes` (spans keyed by LIVE keys), with the declared transient bytes
