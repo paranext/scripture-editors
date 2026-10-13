@@ -21,12 +21,18 @@ import {
 } from "../../../../../../packages/utilities/src/converters/usj/converter-test.data";
 import { $createImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { $createImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
-import { baseTestEnvironment } from "../react-test.utils";
+import {
+  baseTestEnvironment,
+  countContinuationPieces,
+  cutEveryCarrierIntoPieces,
+} from "../react-test.utils";
 import { DeltaOp, isInsertEmbedOpOfType, LF } from "./delta-common.utils";
 import { $getParticularNodeOps, getEditorDelta } from "./editor-delta.adaptor";
+import { act } from "@testing-library/react";
 import { $setState, $createTextNode, $getRoot, LexicalNode } from "lexical";
 import { $dfs } from "@lexical/utils";
 import {
+  $addDisplayAnnotation,
   $createAttributeRunNode,
   $createBookNode,
   $createCharNode,
@@ -47,6 +53,7 @@ import {
   getEditableCallerText,
   getVisibleOpenMarkerText,
   NBSP,
+  registerDisplayAnnotationBasis,
   segmentState,
   textTypeState,
 } from "shared";
@@ -1604,6 +1611,63 @@ describe("getEditorDelta", () => {
 
       expect(delta.ops).toEqual(opsGen1v1Standard);
     });
+  });
+});
+
+describe("a carrier cut into pieces", () => {
+  // An annotation held over part of a display-byte carrier cuts it into pieces of its own class
+  // (`displayPieces.state.ts`). The pieces are one carrier: the delta must be the uncut one's.
+  it.each([
+    ["editable markers", editorStateGen1v1Editable],
+    ["standard view", editorStateGen1v1Standard],
+  ])("sends the same delta as the uncut document (%s)", async (_name, serialized) => {
+    const { editor } = await testEnvironment();
+    await act(async () => {
+      editor.setEditorState(editor.parseEditorState(serialized));
+    });
+    const uncut = getEditorDelta(editor.getEditorState()).ops;
+
+    expect(await cutEveryCarrierIntoPieces(editor)).toBeGreaterThan(0);
+    expect(countContinuationPieces(editor)).toBeGreaterThan(0);
+
+    expect(getEditorDelta(editor.getEditorState()).ops).toEqual(uncut);
+  });
+
+  it("sends the bytes typed into a note's caller once, wherever the caller is cut", async () => {
+    const { editor } = await testEnvironment(() => {
+      const caller = $createTextNode(` +xy${NBSP}`).toggleUnmergeable();
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("When"),
+          $createNoteNode("f", "+", false).append(
+            $createMarkerNode("f"),
+            caller,
+            $createCharNode("ft").append($createMarkerNode("ft"), $createTextNode(`${NBSP}text`)),
+            $createMarkerNode("f", "closing"),
+          ),
+        ),
+      );
+    });
+    const uncut = getEditorDelta(editor.getEditorState()).ops;
+    expect(JSON.stringify(uncut)).toContain('"insert":"xy"');
+
+    registerDisplayAnnotationBasis(editor);
+    await act(async () => {
+      editor.update(
+        () => {
+          const caller = $getRoot()
+            .getAllTextNodes()
+            .find((node) => node.getTextContent() === ` +xy${NBSP}`);
+          if (!caller) throw new Error("no caller");
+          // Cut between the two typed bytes, and between the caller's own `+` and the first.
+          $addDisplayAnnotation(caller, "check", "a", 2, 3);
+        },
+        { discrete: true },
+      );
+    });
+    expect(countContinuationPieces(editor)).toBe(2);
+
+    expect(getEditorDelta(editor.getEditorState()).ops).toEqual(uncut);
   });
 });
 

@@ -2,6 +2,7 @@ import { $isSomeVerseNode, SomeVerseNode } from "../../../nodes/usj/node-react.u
 import {
   $editableNoteCallerContent,
   $hasAttributeRunAncestor,
+  $isEmbedContinuation,
   $isElementNodeClosing,
   $isOwnParaPrefixGlyph,
   DeltaOp,
@@ -37,7 +38,11 @@ import {
   $isParaNode,
   $isSomeChapterNode,
   $isUnknownNode,
+  $isPieceContinuation,
   $isVerseNode,
+  $logicalText,
+  $pieceHead,
+  $pieces,
   $separatorPrefixLength,
   BOOK_MARKER,
   BookNode,
@@ -184,11 +189,14 @@ function $getNodeOps(
     ops,
   );
 
-  // is an EmbedNode
+  // is an EmbedNode (a verse or unmatched closer cut into pieces is one embed, sent from its first
+  // piece)
+  const isEmbedContinuation = $isEmbedContinuation(currentNode);
   if ($isSomeChapterNode(currentNode)) ops.push($getChapterOp(currentNode));
-  if ($isSomeVerseNode(currentNode)) ops.push($getVerseOp(currentNode));
+  if ($isSomeVerseNode(currentNode) && !isEmbedContinuation) ops.push($getVerseOp(currentNode));
   if ($isMilestoneNode(currentNode)) ops.push($getMilestoneOp(currentNode));
-  if ($isImmutableUnmatchedNode(currentNode)) ops.push($getImmutableUnmatchedOp(currentNode));
+  if ($isImmutableUnmatchedNode(currentNode) && !isEmbedContinuation)
+    ops.push($getImmutableUnmatchedOp(currentNode));
   $handleUnknownNodes(currentNode, ops, openEmbeds);
   $handleNoteNodes(currentNode, ops, openEmbeds);
 
@@ -226,6 +234,9 @@ function $handleTextNodes(
   charContentProduced: Set<CharNode>,
 ) {
   if (!$isTextNode(currentNode)) return;
+  // A carrier an annotation has cut into pieces (`displayPieces.state.ts`) is one node: its first
+  // piece sends the whole carrier's bytes, so the ops are those of the uncut carrier.
+  if ($isPieceContinuation(currentNode)) return;
   // An editable VerseNode's own `__text` is its marker glyph (`\v 1 `) — VerseNode extends
   // TextNode so the glyph can sit inline for caret placement, but the glyph is engine-owned
   // display, not content. The verse is already conveyed by its own embed op ($getVerseOp,
@@ -296,14 +307,19 @@ function $handleTextNodes(
   // markerEditDeletion.utils.ts); the apply side re-synthesizes the whole prefix, so its text
   // must never enter content ops.
   if ($getState(currentNode, textTypeState) === "marker-trailing-space") return;
-  let text = currentNode.getTextContent();
+  let text = $logicalText(currentNode);
   // A bare cursor host (EmptyVerseCaretGuardPlugin) is collab-invisible: its insertion is never
   // emitted, so it must never appear in a delta op either.
   if (isCursorPlaceholderOnly(text)) return;
   // An expanded note's editable caller text is presentation of the note's `caller` attribute, so
   // none of its own bytes are content; only bytes typed into a caller that waits as the user left
   // them are, as the editor→USJ conversion reads them ({@link $editableNoteCallerContent}).
-  const callerContent = $editableNoteCallerContent(currentNode);
+  const callerContent =
+    $editableNoteCallerContent(currentNode) === undefined
+      ? undefined
+      : $pieces(currentNode)
+          .map((piece) => $editableNoteCallerContent(piece) ?? "")
+          .join("");
   if (callerContent !== undefined) {
     if (!callerContent) return;
     text = callerContent;
@@ -319,7 +335,13 @@ function $handleTextNodes(
   // path is narrower still: only the span's OWN opener (its first child) qualifies, like the
   // reverse adaptor's `content[0]` strip, so the collab-flattened shape's nested opener keeps
   // emitting what peers already receive.
-  if (isInNote && !!parentCharNode && previousSibling === parentCharNode.getFirstChild()) {
+  // The opener may be cut into pieces; its first piece is the span's first child.
+  if (
+    isInNote &&
+    !!parentCharNode &&
+    !!previousSibling &&
+    $pieceHead(previousSibling).is(parentCharNode.getFirstChild())
+  ) {
     text = text.slice($separatorPrefixLength(currentNode));
   }
 

@@ -19,6 +19,7 @@ import {
   $createPoint,
   $createRangeSelection,
   $createTextNode,
+  $getRoot,
   $insertNodes,
   $isElementNode,
   $setSelection,
@@ -34,10 +35,14 @@ import {
 } from "lexical";
 import { ReactNode, useEffect } from "react";
 import {
+  $addDisplayAnnotation,
   $createBookNode,
   $createImmutableTypedTextNode,
+  $isDisplayAnnotationCarrier,
+  $isPieceContinuation,
   BookNode,
   NBSP,
+  registerDisplayAnnotationBasis,
   segmentState,
   SerializedNoteNode,
   SerializedParaNode,
@@ -454,4 +459,48 @@ export function removeNoteCallerOnClick(
   ] as SerializedNoteNode;
   const noteCaller = note.children[noteCallerIndex] as SerializedImmutableNoteCallerNode;
   delete noteCaller.onClick;
+}
+
+/** The annotation type {@link cutEveryCarrierIntoPieces} holds carriers with. */
+export const PIECE_CUT_ANNOTATION_TYPE = "piece-cut";
+
+/**
+ * Cut every editable display-byte carrier in the editor (a marker glyph, a verse, an attribute
+ * run's text, a note's editable caller, a chapter's `\c N` glyph, an unmatched closer) into
+ * pieces, the way an annotation held over part of it does: each carrier of two or more bytes is
+ * held over its interior (`[1, length - 1)`, or `[1, 2)` for two bytes), so it splits into two or
+ * three pieces. A carrier cut this way is the same document as the uncut one, so every reader must
+ * give the same answer for both.
+ *
+ * Registers the hold-basis and piece transforms on `editor` (as the annotation plugin does) and
+ * leaves them registered.
+ *
+ * @returns How many carriers were cut.
+ */
+export async function cutEveryCarrierIntoPieces(editor: LexicalEditor): Promise<number> {
+  registerDisplayAnnotationBasis(editor);
+  let cut = 0;
+  await act(async () => {
+    editor.update(
+      () => {
+        for (const node of $getRoot().getAllTextNodes()) {
+          if (!$isDisplayAnnotationCarrier(node)) continue;
+          const length = node.getTextContentSize();
+          if (length < 2) continue;
+          const end = length === 2 ? 2 : length - 1;
+          $addDisplayAnnotation(node, PIECE_CUT_ANNOTATION_TYPE, node.getKey(), 1, end);
+          cut += 1;
+        }
+      },
+      { discrete: true },
+    );
+  });
+  return cut;
+}
+
+/** How many continuation pieces the editor's tree holds. */
+export function countContinuationPieces(editor: LexicalEditor): number {
+  return editor
+    .getEditorState()
+    .read(() => $getRoot().getAllTextNodes().filter($isPieceContinuation).length);
 }
