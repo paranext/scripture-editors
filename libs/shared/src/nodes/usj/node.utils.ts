@@ -33,6 +33,16 @@ import {
   ImmutableTypedTextNode,
   isSerializedImmutableTypedTextNode,
 } from "../features/ImmutableTypedTextNode.js";
+import {
+  $isPieceContinuation,
+  $lastPiece,
+  $logicalChildren,
+  $logicalNextSibling,
+  $logicalText,
+  $pieceHead,
+  $pieceOffset,
+  $pieces,
+} from "../features/displayPieces.state.js";
 import { $isMarkerNode, isSerializedMarkerNode } from "../features/MarkerNode.js";
 import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { $isUnknownNode, UnknownNode } from "../features/UnknownNode.js";
@@ -659,7 +669,8 @@ export function $isSynthesizedMarkerNode(node: LexicalNode | null | undefined): 
 export function $isBookPrefixGlyph(node: LexicalNode | null | undefined): boolean {
   if (!node || !$isSynthesizedMarkerNode(node)) return false;
   const parent = node.getParent();
-  return $isBookNode(parent) && node.is(parent.getFirstChild());
+  // Every piece of a glyph an annotation cut is the glyph: its head is the book's first child.
+  return $isBookNode(parent) && $pieceHead(node).is(parent.getFirstChild());
 }
 
 /**
@@ -761,18 +772,19 @@ function $retargetSynthesizedMarkers(charNode: CharNode, toMarker: string): void
   // Note-content markers are written without a closing marker, so a closing child is removed rather
   // than retargeted to a form `addClosingMarker` would never emit.
   const dropsClosingMarker = CharNode.isNoteContentMarker(toMarker);
-  charNode.getChildren().forEach((child) => {
+  // One glyph at a time, read whole however an annotation has cut it into pieces.
+  $logicalChildren(charNode).forEach((child) => {
     // Gate on the node type first: only a synthesized marker child is ever a candidate for
     // rewriting or removal here, regardless of what its text happens to contain.
     if (!$isSynthesizedMarkerNode(child)) return;
 
-    const text = child.getTextContent();
+    const text = $logicalText(child);
     const isOpening = text === openingText || text === nestedOpeningText;
     const isClosing = !isOpening && (text === closingText || text === nestedClosingText);
     if (!isOpening && !isClosing) return;
 
     if (isClosing && dropsClosingMarker) {
-      child.remove();
+      $pieces(child).forEach((piece) => piece.remove());
       return;
     }
     // MarkerNode.setMarker recomputes the node's text for us, nesting included — it re-derives
@@ -996,9 +1008,15 @@ export function $typedNoteCallerRange(
   node: LexicalNode,
 ): { start: number; end: number } | undefined {
   if (!$isTextNode(node)) return undefined;
-  const note = $getLogicalParent(node);
-  if (!$isNoteNode(note) || !$noteEditableCallerNode(note)?.is(node)) return undefined;
-  const { start, end } = typedCallerRange(node.getTextContent(), note.getCaller());
+  // A caller an annotation cut into pieces is read whole, and each piece answers for its own
+  // share of the typed bytes.
+  const caller = $pieceHead(node);
+  const note = $getLogicalParent(caller);
+  if (!$isNoteNode(note) || !$noteEditableCallerNode(note)?.is(caller)) return undefined;
+  const typed = typedCallerRange($logicalText(caller), note.getCaller());
+  const offset = $pieceOffset(node);
+  const start = Math.max(typed.start - offset, 0);
+  const end = Math.min(typed.end - offset, node.getTextContentSize());
   return start < end ? { start, end } : undefined;
 }
 
@@ -1049,7 +1067,7 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
   if (
     $isTextNode(node) &&
     $isNoteNode(logicalParent) &&
-    $noteEditableCallerNode(logicalParent)?.is(node)
+    $noteEditableCallerNode(logicalParent)?.is($pieceHead(node))
   )
     return !$typedNoteCallerRange(node);
   if ($isTextNode(node)) {
@@ -1171,12 +1189,13 @@ export function $isMarkerTrailingSeparator(node: LexicalNode | null | undefined)
 export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
   const glyph = element.getFirstChild();
   if (!$isSynthesizedMarkerNode(glyph) || glyph === null) return false;
-  if ($isMarkerTrailingSeparator(glyph.getNextSibling())) return false;
+  // The glyph is read whole however an annotation has cut it: its site is after its last piece.
+  const next = $logicalNextSibling(glyph);
+  if ($isMarkerTrailingSeparator(next)) return false;
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   const anchorNode = selection.anchor.getNode();
-  if (anchorNode.is(glyph) || anchorNode.is(element)) return true;
-  const next = glyph.getNextSibling();
+  if ($pieceHead(anchorNode).is(glyph) || anchorNode.is(element)) return true;
   return next !== null && anchorNode.is(next) && selection.anchor.offset === 0;
 }
 
@@ -1188,6 +1207,21 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
 type LogicalItemShape =
   | { type: "element"; node: LexicalNode }
   | { type: "text"; nodes: TextNode[] };
+
+/**
+ * Whether `node` is a later piece of a carrier that stands as its own content item (a verse, an
+ * unmatched closer) — a piece an annotation cut off (`displayPieces.state.ts`). The carrier is one
+ * item, which its head stands for. A plain text carrier's pieces are measured as text instead, so
+ * they stay in their run.
+ */
+function $isItemContinuation(node: LexicalNode): boolean {
+  return $isPieceContinuation(node) && node.getType() !== TextNode.getType();
+}
+
+/** The node standing for `node`'s content item: its carrier's head for an item continuation. */
+function $itemNode(node: LexicalNode): LexicalNode {
+  return $isItemContinuation(node) ? $pieceHead(node) : node;
+}
 
 /** The shape half of {@link $getLogicalContentItems}. */
 function $getLogicalItemShapes(parent: ElementNode): LogicalItemShape[] {
@@ -1207,6 +1241,7 @@ function $getLogicalItemShapes(parent: ElementNode): LogicalItemShape[] {
 
   const visit = (node: LexicalNode) => {
     if ($shouldIgnoreNodeForContentIndexes(node)) return;
+    if ($isItemContinuation(node)) return;
     if ($isContentTransparent(node)) {
       // For marks, recursion is defense-in-depth: nested marks only exist transiently before the
       // AnnotationPlugin's nested-element resolver flattens them into siblings.
@@ -1321,8 +1356,9 @@ export function $getLogicalContentItems(
  * @returns the logical index, or -1 if the child is presentation-only or not found.
  */
 export function $getLogicalIndexOfChild(parent: ElementNode, child: LexicalNode): number {
+  const node = $itemNode(child);
   return $getLogicalItemShapes(parent).findIndex((shape) =>
-    shape.type === "element" ? shape.node.is(child) : shape.nodes.some((node) => node.is(child)),
+    shape.type === "element" ? shape.node.is(node) : shape.nodes.some((text) => text.is(node)),
   );
 }
 
@@ -1400,7 +1436,10 @@ export function $getLogicalPointFromElementPoint(
   elementOffset: number,
   collapsesSpaceRuns: boolean,
 ): LogicalPoint {
-  const child = parent.getChildAtIndex(elementOffset);
+  // A point between two pieces of a carrier is inside the carrier: the closest point to its left
+  // is in front of it.
+  const at = parent.getChildAtIndex(elementOffset);
+  const child = at && $itemNode(at);
   if ($isSplicedImpliedPara(parent)) {
     const root = parent.getParentOrThrow();
     // Past the implied paragraph's last child is the boundary in front of whatever follows it.
@@ -1449,9 +1488,12 @@ export function $getLogicalPointBeforeNode(
 ): { parent: ElementNode; point: LogicalPoint } | undefined {
   const parent = $getLogicalParent(node);
   if (!parent) return undefined;
-  if (!$logicalItemWithin($getLogicalContentItems(parent, collapsesSpaceRuns), node))
+  // In front of a later piece of a carrier is inside the carrier: the closest point to its left is
+  // in front of the carrier.
+  const before = $itemNode(node);
+  if (!$logicalItemWithin($getLogicalContentItems(parent, collapsesSpaceRuns), before))
     return undefined;
-  return { parent, point: $logicalPointBefore(parent, node, collapsesSpaceRuns) };
+  return { parent, point: $logicalPointBefore(parent, before, collapsesSpaceRuns) };
 }
 
 /** Whether any of `items` is `node` or lies inside it. */
@@ -1510,9 +1552,10 @@ export function $getElementPointFromLogicalIndex(
     return [parent, parent.getChildrenSize()];
 
   const previousShape = shapes[logicalIndex - 1];
+  // After an element item is after its carrier's last piece.
   const lastNode =
     previousShape.type === "element"
-      ? previousShape.node
+      ? $lastPiece(previousShape.node)
       : previousShape.nodes[previousShape.nodes.length - 1];
   const topLevelChild = lastNode ? $findChildOfParent(parent, lastNode) : undefined;
   if (!topLevelChild) return [parent, parent.getChildrenSize()];
