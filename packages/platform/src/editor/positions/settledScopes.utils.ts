@@ -64,6 +64,8 @@ import {
   $isImpliedParaNode,
   $isNoteNode,
   $isParaNode,
+  $logicalText,
+  $pieceHead,
   ChapterNode,
   ImpliedParaNode,
   LoggerBasic,
@@ -102,7 +104,8 @@ export interface PreparedScopes {
   readonly logger: LoggerBasic | undefined;
   /**
    * The closing glyphs of char spans a pending opener rename renames in place, keyed by the
-   * glyph's key, with the bytes the glyph shows and the bytes it settles to (`\+wj*` → `\+j*`).
+   * glyph's key (its first piece's, when an annotation cuts it into pieces), with the bytes the
+   * whole glyph shows and the bytes it settles to (`\+wj*` → `\+j*`).
    * Such a span keeps its place, so no plan covers it, but a position inside its closer counts
    * into different bytes on the two sides.
    */
@@ -711,8 +714,8 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
   const renamedClosers = new Map<NodeKey, RenamedCloser>();
   for (const { closer, newMarker } of scopes.charOpenerRenames.values())
     if (closer)
-      renamedClosers.set(closer.getKey(), {
-        live: closer.getTextContent(),
+      renamedClosers.set($pieceHead(closer).getKey(), {
+        live: $logicalText(closer),
         settled: serializedMarkerGlyphText(newMarker, "closing", closer.getNested()),
       });
   if (byFirstLiveKey.size === 0)
