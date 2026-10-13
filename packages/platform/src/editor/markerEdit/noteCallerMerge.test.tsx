@@ -271,16 +271,16 @@ describe.each(["standard+expandedNotes", "unformatted"])(
     it.each([
       ["in the caller", 1 as const],
       ["at the content's start", "content" as const],
-    ])("keeps an emptied caller waiting through a pause with the caret %s", async (_at, caret) => {
+    ])("keeps an emptied caller empty through a pause with the caret %s", async (_at, caret) => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
       try {
         const mounted = await damage(` ${NBSP}`, caret);
         await act(async () => {
           await vi.advanceTimersByTimeAsync(IDLE_SETTLE_DELAY_MS * 3);
         });
-        expect(callerText(mounted.lexical)).not.toBe(getEditableCallerText("+"));
+        expect(callerText(mounted.lexical)).toBe(getEditableCallerText(""));
         expect(savedNote(mounted.ref.current?.getUsj())).toMatchObject({
-          caller: "+",
+          caller: "",
           content: ["note text"],
         });
       } finally {
@@ -321,16 +321,16 @@ describe.each(["standard+expandedNotes", "unformatted"])(
       async (gesture) => {
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
         try {
-          // Delete the caller, pause, type a new one, and leave: three history entries, the middle
-          // one a caller waiting for its next keystroke.
-          const mounted = await damage(` ${NBSP}`, 1);
+          // Delete the caller and its separator, pause, type a new one, and leave: three history
+          // entries, the middle one a caller waiting for its next keystroke.
+          const mounted = await damage(" ", 1);
           await act(async () => {
             await vi.advanceTimersByTimeAsync(1500);
           });
           await act(async () => {
             mounted.lexical.update(() => {
               const selection = $getSelection();
-              if ($isRangeSelection(selection)) selection.insertText("a");
+              if ($isRangeSelection(selection)) selection.insertText("a ");
             });
             await Promise.resolve();
           });
@@ -366,16 +366,15 @@ describe.each(["standard+expandedNotes", "unformatted"])(
       },
     );
 
-    it("leaves an emptied caller as the user left it while the caret is there", async () => {
+    // Paratext 9 keeps both separators on screen and reads the file back as a note with no caller.
+    it("leaves an emptied caller empty, its two separators showing", async () => {
       const mounted = await damage(` ${NBSP}`, 1);
-      expect(
-        mounted.lexical.getEditorState().read(() => $callerSlot().getTextContent()),
-      ).not.toContain("+");
+      expect(callerText(mounted.lexical)).toBe(getEditableCallerText(""));
       const pending = savedNote(mounted.ref.current?.getUsj());
-      expect(pending).toMatchObject({ caller: "+", content: ["note text"] });
+      expect(pending).toMatchObject({ caller: "", content: ["note text"] });
       await depart(mounted);
       expect(savedNote(mounted.ref.current?.getUsj())).toEqual(pending);
-      expect(callerText(mounted.lexical)).toBe(getEditableCallerText("+"));
+      expect(callerText(mounted.lexical)).toBe(getEditableCallerText(""));
     });
 
     it("moves bytes typed into an emptied caller that make no caller word to the content", async () => {
@@ -393,6 +392,76 @@ describe.each(["standard+expandedNotes", "unformatted"])(
       await depart(mounted);
       const saved = savedNote(mounted.ref.current?.getUsj());
       expect(saved).toEqual(pending);
+      expectNoteScreenIsSaved(mounted.lexical, saved);
+    });
+  },
+);
+
+/** `\\p a\\f  note text\\f* b`: a note with an empty caller, as ParatextData reads `\\f \\ft …`. */
+const emptyCallerNoteUsj = twoParaUsj([
+  "a",
+  { type: "note", marker: "f", caller: "", content: ["note text"] },
+  " b",
+]);
+
+describe.each(["standard+expandedNotes", "unformatted"])(
+  "a note with an empty caller (%s view)",
+  (view) => {
+    /** Mount the note and rewrite its caller text, as {@link damage} does for a `+` caller. */
+    async function edit(change: (caller: TextNode) => void) {
+      const mounted = await mountInView(emptyCallerNoteUsj, oracleView(view));
+      await act(async () => {
+        mounted.lexical.update(() => change($callerSlot()));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      return mounted;
+    }
+
+    it("shows its two separators and saves the empty caller", async () => {
+      const mounted = await mountInView(emptyCallerNoteUsj, oracleView(view));
+      expect(callerText(mounted.lexical)).toBe(getEditableCallerText(""));
+      const saved = savedNote(mounted.ref.current?.getUsj());
+      expect(saved).toMatchObject({ caller: "", content: ["note text"] });
+      expectNoteScreenIsSaved(mounted.lexical, saved);
+    });
+
+    it("takes a word typed between its separators as the caller", async () => {
+      const mounted = await edit((caller) => {
+        caller.setTextContent(` a${NBSP}`);
+        caller.select(2, 2);
+      });
+      const pending = savedNote(mounted.ref.current?.getUsj());
+      expect(pending).toMatchObject({ caller: "a", content: ["note text"] });
+      await depart(mounted);
+      expect(savedNote(mounted.ref.current?.getUsj())).toEqual(pending);
+      expect(callerText(mounted.lexical)).toBe(getEditableCallerText("a"));
+    });
+
+    it("puts its separators back when one is deleted, keeping the caller empty", async () => {
+      const mounted = await edit((caller) => {
+        caller.setTextContent(" ");
+        caller.select(1, 1);
+      });
+      const pending = savedNote(mounted.ref.current?.getUsj());
+      expect(pending).toMatchObject({ caller: "", content: ["note text"] });
+      await depart(mounted);
+      const saved = savedNote(mounted.ref.current?.getUsj());
+      expect(saved).toEqual(pending);
+      expect(callerText(mounted.lexical)).toBe(getEditableCallerText(""));
+      expectNoteScreenIsSaved(mounted.lexical, saved);
+    });
+
+    it("puts its slot back when the node holding it is removed", async () => {
+      const mounted = await edit((caller) => {
+        const glyph = caller.getPreviousSibling();
+        caller.remove();
+        if ($isTextNode(glyph))
+          glyph.select(glyph.getTextContentSize(), glyph.getTextContentSize());
+      });
+      expect(callerText(mounted.lexical)).toBe(getEditableCallerText(""));
+      const saved = savedNote(mounted.ref.current?.getUsj());
+      expect(saved).toMatchObject({ caller: "", content: ["note text"] });
       expectNoteScreenIsSaved(mounted.lexical, saved);
     });
   },
@@ -420,7 +489,9 @@ describe.each(["standard+expandedNotes", "unformatted"])(
         await Promise.resolve();
       });
       const saved = savedNote(mounted.ref.current?.getUsj());
-      expect(saved).toMatchObject({ caller: "+", content: [" q "] });
+      // Standard view folds the content's leading space into the separator after the caller.
+      const content = view === "unformatted" ? " q " : "q ";
+      expect(saved).toMatchObject({ caller: "+", content: [content] });
       expectNoteScreenIsSaved(mounted.lexical, saved);
     });
   },

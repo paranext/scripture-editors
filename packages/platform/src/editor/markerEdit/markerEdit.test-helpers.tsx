@@ -438,11 +438,12 @@ export function $appendMilestoneRun(
 export function noteUsx(
   noteAttrs: string,
   noteContent = `<char style="ft" closed="false">A note</char>`,
+  caller = "+",
 ) {
   return usxStringToUsj(
     `<usx version="3.0"><book code="RUT" style="id">T</book><chapter number="1" style="c" />` +
       `<para style="p"><verse number="1" style="v" />text` +
-      `<note caller="+" style="f" ${noteAttrs}>${noteContent}</note> after</para></usx>`,
+      `<note caller="${caller}" style="f" ${noteAttrs}>${noteContent}</note> after</para></usx>`,
   );
 }
 

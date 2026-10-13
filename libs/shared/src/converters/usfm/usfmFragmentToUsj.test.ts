@@ -232,6 +232,51 @@ describe("usfmFragmentToUsjContent — verse, chapter, note, milestone, attribut
     ]);
   });
 
+  // ParatextData reads a note's caller as the next word after the marker (`GetNextWord`), which
+  // stops at a `\\`, and writes what it found — an empty string when there is none
+  // (UsxUsfmParserSink.StartNote writes `caller=""`).
+  it.each([
+    [
+      "a closed footnote whose content starts with a marker",
+      "\\p a\\f \\fr 1.1 \\ft note\\f* b",
+      [
+        "a",
+        {
+          type: "note",
+          marker: "f",
+          caller: "",
+          content: [
+            { type: "char", marker: "fr", content: ["1.1 "], closed: "false" },
+            { type: "char", marker: "ft", content: ["note"], closed: "false" },
+          ],
+        },
+        " b",
+      ],
+    ],
+    [
+      "an empty closed footnote",
+      "\\p a\\f \\f* b",
+      ["a", { type: "note", marker: "f", caller: "" }, " b"],
+    ],
+    [
+      "an unclosed cross reference the next note closes",
+      "\\p a\\x \\f + \\ft note\\f* b",
+      [
+        "a",
+        { type: "note", marker: "x", caller: "", closed: "false" },
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ type: "char", marker: "ft", content: ["note"], closed: "false" }],
+        },
+        " b",
+      ],
+    ],
+  ])("leaves the caller empty, as ParatextData does, for %s", (_name, usfm, content) => {
+    expect(usfmFragmentToUsjContent(usfm)).toEqual([{ type: "para", marker: "p", content }]);
+  });
+
   it("marks an unterminated note closed=false", () => {
     expect(usfmFragmentToUsjContent("\\p text\\f + \\ft open note")).toEqual([
       {
@@ -2364,22 +2409,20 @@ describe("usfmFragmentToUsjContent — a preserved-node placeholder reads as the
     ]);
   });
 
-  it("fills an empty caller with `+` when a placeholder follows the note marker's separator", () => {
+  it("leaves the caller empty when a placeholder follows the note marker's separator", () => {
     const real = usfmFragmentToUsjContent(`\\p \\x ${footnote} b`);
 
     expect(
       usfmFragmentToUsjContent(`\\p \\x ${PLACEHOLDER} b`, { placeholders: ["note"] }),
     ).toEqual(withPlaceholders(real, isFootnote));
     // ParatextData reads the caller with `GetNextWord`, finds no word before the `\\f`, and writes
-    // `caller=""` (UsxUsfmParserSink.StartNote); the `\\f` then closes the `\\x`. The tokenizer
-    // gives `+` instead: the editable caller machinery reads a note with an empty caller as having
-    // no caller text, so the text in its caller slot settles into the note's content.
+    // `caller=""` (UsxUsfmParserSink.StartNote); the `\\f` then closes the `\\x`.
     expect(real).toEqual([
       {
         type: "para",
         marker: "p",
         content: [
-          { type: "note", marker: "x", caller: "+", closed: "false" },
+          { type: "note", marker: "x", caller: "", closed: "false" },
           {
             type: "note",
             marker: "f",

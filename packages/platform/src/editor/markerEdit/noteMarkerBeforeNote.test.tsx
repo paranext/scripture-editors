@@ -32,6 +32,17 @@ const noteUsj = twoParaUsj([
   " b",
 ]);
 
+/** `\\p \\f + \\ft note text\\f* b`: the note is the paragraph's first content. */
+const leadingNoteUsj = twoParaUsj([
+  {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "ft", content: ["note text"] }],
+  },
+  " b",
+]);
+
 /** The paragraph's `\\p` retyped `\\x`: the `p` deleted, then `x` typed where it stood. */
 async function retypeParaMarker(mounted: Awaited<ReturnType<typeof mountInView>>): Promise<void> {
   await act(async () => {
@@ -88,6 +99,37 @@ describe.each(["standard+expandedNotes", "unformatted"])(
         ],
       });
       expect(withoutLineBreaks(screen ?? "")).toBe(withoutLineBreaks(savedBytes(settled)));
+      expect(pending).toEqual(settled);
+      mounted.unmount();
+    });
+
+    // `\\x \\f + …`: ParatextData finds no word before the `\\f` and writes `caller=""`, so the
+    // screen shows the `\\x` note's two empty separators, never a `+` the user did not type.
+    it("directly in front of the note: the cross reference has an empty caller", async () => {
+      const mounted = await mountInView(leadingNoteUsj, oracleView(view));
+      await retypeParaMarker(mounted);
+      const pending = mounted.ref.current?.getUsj();
+
+      await depart(mounted);
+      const settled = mounted.ref.current?.getUsj();
+      const screen = mounted.lexical.getEditorState().read(() => $screenBytes());
+
+      expect(settled?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "note", marker: "x", caller: "", closed: "false" },
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note text"] }],
+          },
+          " b",
+        ],
+      });
+      expect(withoutLineBreaks(screen ?? "")).toBe(withoutLineBreaks(savedBytes(settled)));
+      expect(withoutLineBreaks(screen ?? "")).not.toMatch(/\\x \+/);
       expect(pending).toEqual(settled);
       mounted.unmount();
     });

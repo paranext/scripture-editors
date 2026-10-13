@@ -630,14 +630,10 @@ export function $noteDeletionTransform(note: NoteNode, context: MarkerEditContex
     // evidence at all (shapes built by non-editable creation paths) are left alone, as for
     // collapsed.
     const caller = note.getCaller();
-    const hasEditableCaller =
-      caller !== "" &&
-      children.some(
-        (c) =>
-          $isTextNode(c) &&
-          !$isMarkerNode(c) &&
-          c.getTextContent() === getEditableCallerText(caller),
-      );
+    const hasEditableCaller = children.some(
+      (c) =>
+        $isTextNode(c) && !$isMarkerNode(c) && c.getTextContent() === getEditableCallerText(caller),
+    );
     const hasAnyMarkerGlyph = $dfs(note).some(({ node: n }) => $isMarkerNode(n));
     if (!hasEditableCaller && !hasAnyMarkerGlyph) return; // glyph-less shape — not ours
     // UNWRAP, don't delete: an expanded note's content is visible inline (an unclosed note may
@@ -648,8 +644,9 @@ export function $noteDeletionTransform(note: NoteNode, context: MarkerEditContex
     // object — glyph damage removes the whole note (below).
     children.forEach((child) => {
       if ($isMarkerNode(child)) return; // closing glyph (if any) dissolves with the note
+      // An empty caller's two separators stand for the one space between marker and content.
       if ($isTextNode(child) && child.getTextContent() === getEditableCallerText(caller))
-        child.setTextContent(` ${caller} `);
+        child.setTextContent(caller ? ` ${caller} ` : " ");
       note.insertBefore(child);
     });
     note.remove();

@@ -410,7 +410,7 @@ export function $noteEditableCallerNode(note: NoteNode): TextNode | undefined {
   const caller = $throughMarks(children[index]);
   if (!$isTextNode(caller) || caller.getType() !== TextNode.getType()) return undefined;
   if (caller.getTextContent() === getEditableCallerText(note.getCaller())) return caller;
-  return note.getCaller() !== "" && caller.isUnmergeable() ? caller : undefined;
+  return caller.isUnmergeable() ? caller : undefined;
 }
 
 /**

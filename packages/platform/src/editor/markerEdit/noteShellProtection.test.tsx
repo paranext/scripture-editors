@@ -80,11 +80,11 @@ const protectedShell: ViewOptions = { ...expandedEditable, isNoteShellEditable: 
 
 /** `serializedState` from the shared helpers always uses the default view options; these cases
  * differ ONLY in the view options, so the state has to be built with the one under test. */
-async function mount(view: ViewOptions, noteAttrs = `closed="false"`) {
+async function mount(view: ViewOptions, noteAttrs = `closed="false"`, caller = "+") {
   initializeSerialize(undefined, undefined);
   initializeDeserialize(undefined);
   reset();
-  const state = serializeEditorState(noteUsx(noteAttrs), view);
+  const state = serializeEditorState(noteUsx(noteAttrs, undefined, caller), view);
   return baseTestEnvironment(
     JSON.stringify({ root: state.root }),
     <>
@@ -864,6 +864,46 @@ describe("expanded note shell", () => {
       expect($noteEditableCallerNode(note)?.getTextContent()).toBe(getEditableCallerText("X+"));
     });
   });
+});
+
+// ParatextData reads `\\f \\ft …` as a note with an empty caller, and the shell keeps its two
+// separators for it: the protection must hold for that shell exactly as for one with a caller.
+describe("a protected shell with an empty caller", () => {
+  it.each([
+    [`closed="false"`, "an unclosed note"],
+    ["", "a closed note"],
+  ])("keeps its two separators and its empty caller in %s", async (noteAttrs) => {
+    const { editor } = await mount(protectedShell, noteAttrs, "");
+
+    editor.getEditorState().read(() => {
+      const caller = $noteEditableCallerNode(findOnlyNote($getRoot()));
+      expect(caller?.getTextContent()).toBe(getEditableCallerText(""));
+      expect(caller?.getMode()).toBe("token");
+    });
+    expect(findUsjNote(usjOf(editor)?.content).caller).toBe("");
+  });
+
+  it.each([1, 2])(
+    "moves a caret at %i in the empty caller to the content and types there",
+    async (offset) => {
+      const { editor } = await mount(protectedShell, `closed="false"`, "");
+
+      await placeCaretInShell(
+        editor,
+        (note) => requireDefined($noteEditableCallerNode(note), "caller"),
+        offset,
+      );
+      await typeText(editor, "X");
+
+      editor.getEditorState().read(() => {
+        const note = findOnlyNote($getRoot());
+        expect($noteEditableCallerNode(note)?.getTextContent()).toBe(getEditableCallerText(""));
+      });
+      const note = findUsjNote(usjOf(editor)?.content);
+      expect(note.caller).toBe("");
+      expect(JSON.stringify(note.content)).toContain("X");
+    },
+  );
 });
 
 describe("a closed note's closing glyph, with the shell protected", () => {

@@ -450,7 +450,9 @@ function tokenize(
       const { word, next: afterWord } = getNextWord(fragment, index);
       index = afterWord;
       openNoteMarker = name;
-      tokens.push({ kind: "note", marker: name, caller: word || "+" });
+      // ParatextData's reading: the next word, stopping at a `\`, and an empty caller when there is
+      // none (UsxUsfmParserSink.StartNote writes `caller=""`).
+      tokens.push({ kind: "note", marker: name, caller: word });
       continue;
     }
     if (kind === MarkerType.Milestone || (kind === undefined && isMilestoneHeuristicName(name))) {

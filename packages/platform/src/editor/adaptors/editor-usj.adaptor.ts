@@ -590,7 +590,7 @@ function noteCallerSlotNode(
   if (candidate.text === getEditableCallerText(caller)) return { node: candidate, caller };
   // `detail` is Lexical's bit field, and the flag is one bit of it.
   const isUnmergeable = Math.floor(candidate.detail / UNMERGEABLE_TEXT_DETAIL) % 2 === 1;
-  return caller !== "" && isUnmergeable ? { node: candidate, caller } : undefined;
+  return isUnmergeable ? { node: candidate, caller } : undefined;
 }
 
 // Keep this function's content semantics in sync with `$getLogicalContentItems` in

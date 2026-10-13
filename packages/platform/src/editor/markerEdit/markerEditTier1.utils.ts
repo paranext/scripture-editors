@@ -1069,14 +1069,15 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
   if (rest) $insertRestAfterGlyph(node, rest, rest.length);
 }
 
-// An expanded note's editable caller text: whitespace run, caller word, whitespace run
-// (canonical: one space, the caller, one NBSP — getEditableCallerText). The tokenization of
-// "word" beside the map's caller declaration, exactly as the verse regexes tokenize the number.
-const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+$/;
-
-// A caller text holding more than one word: whitespace run, the first word, whitespace run, and
-// the rest — which has a word of its own and no `\`.
-const NOTE_CALLER_WORDS_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+([^\\]*[^ \u00A0\\][^\\]*)$/;
+// An expanded note's editable caller text: whitespace run, caller word, ONE trailing separator,
+// then whatever REST a keystroke past it lands there (canonical when REST is empty: one space,
+// the caller, one NBSP — getEditableCallerText). The tokenization of "word" beside the map's
+// caller declaration, exactly as the verse regexes tokenize the number.
+//
+// The word may be EMPTY: deleting the caller leaves just the two separators, which Paratext 9
+// keeps on screen (`\f  \fr …`) and reads back from its file (`\f \fr …`) as a note with no
+// caller — its tokenizer takes the next word after `\f` and stops at the `\`.
+const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]*)[ \u00A0]([\s\S]*)$/;
 
 /**
  * Tier-1 arm for an expanded note's editable caller text — the note-marker family's leading
@@ -1084,12 +1085,18 @@ const NOTE_CALLER_WORDS_REGEX = /^[ \u00A0]+([^ \u00A0\\]+)[ \u00A0]+([^\\]*[^ \
  * `leadingAttributeNames`, `shared`). Whatever the user does to it, the screen ends showing the
  * note's caller and the file gets the same bytes:
  *
- * - A whole word between whitespace runs (`\f  x `) is the caller, RETAGGED to the typed word
- *   (PT9 GetNextWord: whole word, valid or not), exactly as `\v 1a` retags the number; the
- *   whitespace around it is structural and collapses.
- * - Several words where the caller's own word is gone (it was deleted, and words were typed or
- *   pasted in its place): the first is the caller, retagged the same way, and the rest starts the
- *   note's content, the gap after it kept as the screen shows it.
+ * - A word between the leading whitespace and a separator (`\f  x `) is the caller, RETAGGED to
+ *   the typed word (PT9 GetNextWord: whole word, valid or not), exactly as `\v 1a` retags the
+ *   number; the whitespace in front of it is structural and collapses.
+ * - No word at all, just the two separators (`\f  `): the caller was deleted, and the note has an
+ *   empty caller (""), which is how Paratext 9 keeps it on screen and how ParatextData reads
+ *   `\f \fr …` back. An empty caller's text is the same two separators
+ *   (`getEditableCallerText("")`), so the slot keeps its shape and a word typed into it later is
+ *   the caller again.
+ * - Either way, bytes typed PAST the separator after the caller's place are the note's own
+ *   content, not more of the caller — the same "displayed bytes are the document" rule a verse
+ *   glyph's trailing rest follows — and move to the start of the content, where the screen shows
+ *   them: a space typed there stays on screen, and words pasted after it start the content.
  * - Anything else is damage to the caller's own bytes: the note keeps its caller, and its text is
  *   put back, with the bytes the user typed into it moved to the start of the note's content (see
  *   `$settleNoteCallerText`). While the collapsed caret is at a caller some of whose own bytes are
@@ -1127,17 +1134,11 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
     context.pendingKeys.delete(node.getKey());
     return true;
   }
-  if (!node.isUnmergeable() || caller === "") return false;
+  if (!node.isUnmergeable()) return false;
   context.pendingKeys.delete(node.getKey());
   const retagged = NOTE_CALLER_TEXT_REGEX.exec(text);
   if (retagged) {
-    note.setCaller(retagged[1]); // PT9 GetNextWord: whole word, valid or not
-    node.setTextContent(getEditableCallerText(retagged[1]));
-    return true;
-  }
-  const words = NOTE_CALLER_WORDS_REGEX.exec(text);
-  if (words && typedCallerRange(text, caller).missing) {
-    $retagNoteCallerToFirstWord(node, note, words[1], words[2]);
+    $retagNoteCaller(node, note, retagged[1], retagged[2]);
     return true;
   }
   if ($movePushedNameIntoNoteGlyph(node, caller)) return true;
@@ -1211,21 +1212,19 @@ export function $moveLeadingSpaceOntoLeadingAttribute(node: TextNode): boolean {
 }
 
 /**
- * Retag an expanded note's caller text `node` to `word`, the first of the words it holds (PT9
- * GetNextWord), and move `rest`, the bytes after the whitespace following that word, to the start
- * of the note's content, spelled as content reads them (a no-break space as the space it stands
- * for). A caret in `rest` moves with it; a caret anywhere else in the text lands at the end of
- * the new caller.
+ * Retag an expanded note's caller text `node` to `word` (PT9 GetNextWord; empty when the slot holds
+ * no word), and move `rest`, the bytes after the separator that ends the word, to the start of the
+ * note's content, spelled as content reads them (a no-break space as the space it stands for). A
+ * caret in `rest` (or right behind the separator) moves with it; a caret anywhere else in the text
+ * stays on the same byte of the caller word, or at its nearer end — between the two separators, for
+ * an empty caller, so the next keystroke types a caller there.
  *
  * Mutating: call inside `editor.update()`.
  */
-function $retagNoteCallerToFirstWord(
-  node: TextNode,
-  note: NoteNode,
-  word: string,
-  rest: string,
-): void {
-  const restStart = node.getTextContentSize() - rest.length;
+function $retagNoteCaller(node: TextNode, note: NoteNode, word: string, rest: string): void {
+  const text = node.getTextContent();
+  const restStart = text.length - rest.length;
+  const leadingRun = /^[ \u00A0]*/.exec(text)?.[0].length ?? 0;
   const selection = $getSelection();
   const caret =
     $isRangeSelection(selection) &&
@@ -1233,14 +1232,20 @@ function $retagNoteCallerToFirstWord(
     selection.anchor.key === node.getKey()
       ? selection.anchor.offset
       : undefined;
-  note.setCaller(word);
+  if (note.getCaller() !== word) note.setCaller(word); // PT9 GetNextWord: whole word, valid or not
   node.setTextContent(getEditableCallerText(word));
-  const content = $prependNoteContent(note, node, rest.replaceAll(NBSP, " "));
+  const content = rest ? $prependNoteContent(note, node, rest.replaceAll(NBSP, " ")) : undefined;
   if (caret === undefined) return;
   if (caret >= restStart) {
+    // Past the separator: in the moved bytes, or right behind the separator when there are none.
     const offset = caret - restStart;
-    content.select(offset, offset);
-  } else node.select(node.getTextContentSize(), node.getTextContentSize());
+    if (content) content.select(offset, offset);
+    else node.select(node.getTextContentSize(), node.getTextContentSize());
+    return;
+  }
+  // The caller text's leading separator is one byte, whatever run the user left in front of it.
+  const offset = 1 + Math.min(Math.max(caret - leadingRun, 0), word.length);
+  node.select(offset, offset);
 }
 
 /**
@@ -1358,8 +1363,7 @@ function $settleNoteCallerText(node: TextNode, note: NoteNode): void {
 export function $noteOfCallerText(node: LexicalNode): NoteNode | undefined {
   if (!$isTextNode(node) || $isMarkerNode(node) || !node.isUnmergeable()) return undefined;
   const note = node.getParent();
-  if (!$isNoteNode(note) || note.getIsCollapsed() !== false || note.getCaller() === "")
-    return undefined;
+  if (!$isNoteNode(note) || note.getIsCollapsed() !== false) return undefined;
   let slot: LexicalNode | null = note.getFirstChild();
   while ($isMarkerNode(slot) && slot.getMarkerSyntax() === "opening") slot = slot.getNextSibling();
   return node.is(slot) ? note : undefined;
@@ -1447,7 +1451,7 @@ function $selectNoteContentStart(note: NoteNode, callerNode: TextNode): void {
 export function $restoreRemovedNoteCaller(note: NoteNode, context: MarkerEditContext): void {
   if (!note.isAttached() || note.getIsCollapsed() !== false) return;
   const caller = note.getCaller();
-  if (caller === "" || !leadingAttributeNames(note.getMarker())?.includes("caller")) return;
+  if (!leadingAttributeNames(note.getMarker())?.includes("caller")) return;
   const children = note.getChildren();
   let slot = 0;
   while (slot < children.length) {
