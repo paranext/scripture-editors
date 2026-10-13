@@ -490,6 +490,13 @@ describe("an annotation in a note closed at a typed closer", () => {
   });
 });
 
+/** `delta` where the settled document has it while the close is pending: in the paragraph text
+ * after the note, the close having moved it out. */
+const settledDeltaRange: AnnotationRange = {
+  start: { jsonPath: contentPath([2, 2]), offset: " beta ".length },
+  end: { jsonPath: contentPath([2, 2]), offset: " beta delta".length },
+};
+
 describe.each(["standard", "standard+expandedNotes", "unformatted"])(
   "an annotation on the text a typed closer moves out of its note (%s view)",
   (viewName) => {
@@ -512,6 +519,21 @@ describe.each(["standard", "standard+expandedNotes", "unformatted"])(
       await annotate(mounted, noteWordRange("delta"), "out", onRemove);
 
       await pendCloserAfterGap(mounted);
+      settleByBlurAndCommit(mounted);
+
+      expect(paraDocument(mounted.ref.current?.getUsj())).toEqual(closedPara);
+      expect(annotatedText(mounted.lexical)).toEqual({ out: ["delta"] });
+      expect(onRemove).not.toHaveBeenCalled();
+    });
+
+    it("lands on the bytes it names when set while the close is pending", async () => {
+      const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+      const mounted = await mountInView(unclosedNoteUsj, oracleView(viewName));
+
+      await pendCloserAfterGap(mounted);
+      expect(paraDocument(mounted.ref.current?.getUsj())).toEqual(closedPara);
+      await annotate(mounted, settledDeltaRange, "out", onRemove);
+      expect(annotatedText(mounted.lexical)).toEqual({ out: ["delta"] });
       settleByBlurAndCommit(mounted);
 
       expect(paraDocument(mounted.ref.current?.getUsj())).toEqual(closedPara);
