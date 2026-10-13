@@ -140,6 +140,9 @@ export interface ClosedNoteLayout {
   /** The settled note's content indexes in the scratch tree — the scratch counterpart of the live
    * note's own path, which a path through the note's parent at or past the note crosses by. */
   readonly scratchNotePath: readonly number[];
+  /** How many content items the settled note's parent holds from the note on: the note, what
+   * moved out of it, and the siblings after it. */
+  readonly settledItemsFromNote: number;
 }
 
 /**

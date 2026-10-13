@@ -144,6 +144,15 @@ export function $mapSerializedSites(
 }
 
 /**
+ * What a note closed at a closer typed into it moved out after itself, keyed by the note's
+ * serialized node. The note's settle puts that content right after the note in its parent's
+ * serialized children; a rebuild of that parent re-tokenizes the parent's bytes, where the note is
+ * one placeholder and the moved content is still inside it, so the rebuild puts the content back
+ * after the note where it substitutes the note for its placeholder.
+ */
+const movedAfterClosedNote = new WeakMap<SerializedLexicalNode, SerializedLexicalNode[]>();
+
+/**
  * Replace each U+FFFC in a freshly serialized rebuild tree with the serialized form of the
  * preserved node run it stands for, in fragment order — the JSON analogue of `$replaceSentinels`.
  * A placeholder's own text node is split around it, so a preserved node lands exactly where its
@@ -185,7 +194,9 @@ function replaceSerializedSentinels(
       // capturing outer-loop state is a common source of stale-closure bugs. No closure, no risk.
       for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
         const piece = pieces[pieceIndex];
-        if (pieceIndex > 0) replacement.push(...(runs[queueIndex++] ?? []));
+        if (pieceIndex > 0)
+          for (const member of runs[queueIndex++] ?? [])
+            replacement.push(member, ...(movedAfterClosedNote.get(member) ?? []));
         // Spread the placeholder's own node so a split piece keeps its format and node state
         // (a text run's textType tag rides there). The cast is safe: `serializedText` already
         // confirmed `node` carries a string `text` field before this branch runs, but
@@ -1467,6 +1478,7 @@ export function $applySettledNoteScope(
     for (const key of Object.keys(target)) Reflect.deleteProperty(target, key);
     Object.assign(target, closedNote);
     site.siblings.splice(index + 1, 0, ...following);
+    if (following.length > 0) movedAfterClosedNote.set(site.node, following);
     return true;
   }
   // The category fold's result patches the serialized note's OWN field — the settled USJ a

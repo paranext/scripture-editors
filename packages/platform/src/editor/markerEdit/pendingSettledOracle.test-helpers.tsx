@@ -301,7 +301,10 @@ export const PROTECTED_NOTE_SHELL_VIEW = "standard+protectedNoteShell";
  * to protect, so only the note rows — the corpus's, and one whose content span runs on to the
  * note's closer, as ParatextData writes footnote text. */
 const PROTECTED_NOTE_SHELL_CORPUS: { name: string; usj: Usj }[] = [
-  ...CORPUS.filter(({ name }) => name === "note" || name === "note with an empty caller"),
+  ...CORPUS.filter(
+    ({ name }) =>
+      name === "note" || name === "note with an empty caller" || name === "unclosed note",
+  ),
   {
     name: "note whose content span runs to its closer",
     usj: twoParaUsj([
