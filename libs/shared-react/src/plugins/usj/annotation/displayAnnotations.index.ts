@@ -44,7 +44,6 @@ import {
   deleteDisplayAnnotationRegistration,
   DisplayAnnotation,
   displayAnnotationsState,
-  displayPieceContinuationState,
   EXTERNAL_USJ_MUTATION_TAG,
   isDomPaintedDecorator,
   paintedPieceKeys,
