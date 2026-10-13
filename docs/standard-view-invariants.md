@@ -177,16 +177,37 @@ host's session, since the apply still replaces the note node.
 Consequence for tests: asserting that the mode is `token` proves nothing about whether the shell is
 protected. Assert what the DOCUMENT does under a keystroke.
 
-### Annotations never restructure display bytes
+### Annotations never restructure display bytes — they cut them into pieces
 
 An annotation covers content text with a `TypedMarkNode` and covers display bytes — marker glyphs,
 attribute-run text, a verse, a note caller, a chapter glyph, read-only glyph decorators — by state
 held on the node itself (`displayAnnotationsState`, `libs/shared/src/nodes/features/`). A display
-node is never moved into a mark and never split by one: display runs are found by position and read
-as single nodes, so either would read as the run being deleted, and the sync would rebuild or remove
-it. Separators hold nothing — they have no position of their own. The settle carries both
-representations by bytes: kept or re-spelled bytes carry their annotation to the settled
-counterpart, discarded bytes drop it. `getUsj()` carries no display-byte annotation.
+node is never moved into a mark. Separators hold nothing — they have no position of their own.
+
+Painting is by element only: every painted element carries the class names a `<mark>` does. Since
+Lexical maps one DOM text node to one `TextNode`, an editable carrier held only in PART is cut at
+every hold boundary into **pieces** (`displayPieces.state.ts`): adjacent siblings of the same class
+and identity, the first the carrier's own node, every later one carrying the continuation state,
+each held whole or not at all, joined again where neighbours are held by the same annotations. The
+piece transform beside the hold-basis transform keeps that so after every update. A read-only
+decorator never splits; held in part it draws sub-spans of its own text from the per-editor paint
+store (`decoratorPaint.ts`).
+
+**A piece chain is one node to every reader of structure.** Display runs are found by position and
+read as single nodes, so each reader goes through the chain helpers: `$logicalText` for a carrier's
+bytes (a glyph's canonical check, a run's value compare, an exporter, an ops count), `$logicalNextSibling`
+/ `$lastPiece` for the node after a carrier (a run scan, an insertion anchor), `$logicalChildren` for
+a parent's children (one item per carrier), `$pieceHead` for a transform or owner walk that must act
+once per carrier, and `$setLogicalText` / the glyph setters for a rewrite, which joins the chain
+first so the holds remap through the basis as on an unsplit carrier. A reader that takes a
+continuation piece for a carrier of its own duplicates a run, a verse, an op or a position — the
+corruption the annotation-transparency oracle
+(`packages/platform/src/editor/annotationLocations/annotationTransparency.*`) exists to catch: with
+annotations covering every display byte of a paragraph, every keystroke case of the pending/settled
+oracle must give the same documents, screen, positions and delta as the same case with none.
+
+The settle carries both representations by bytes: kept or re-spelled bytes carry their annotation to
+the settled counterpart, discarded bytes drop it. `getUsj()` carries no display-byte annotation.
 
 The wrap measures coverage by caret order: an inline element moves into a mark only when the range
 covers it whole; otherwise its text is split and its glyphs hold the annotation. The wrap tags its

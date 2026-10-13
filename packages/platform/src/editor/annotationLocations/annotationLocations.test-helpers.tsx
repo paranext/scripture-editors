@@ -36,7 +36,6 @@ import {
 } from "shared";
 import {
   $getLocationFromNode,
-  annotationHighlightClassNames,
   getViewOptions,
   STANDARD_VIEW_MODE,
   ViewOptions,
