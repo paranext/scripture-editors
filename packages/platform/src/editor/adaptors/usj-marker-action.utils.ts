@@ -34,8 +34,10 @@ import {
   $isSynthesizedMarkerNode,
   $isTypedMarkNode,
   $isVisibleMarkerNode,
+  $lastPiece,
   $liftOutOfCharStack,
   $normalizeSelectionOutOfGlyphText,
+  $pieceHead,
   $setCharNodeMarker,
   CharNode,
   createLexicalUsjNode,
@@ -431,7 +433,8 @@ export function getUsjMarkerAction(
           const charTail = caretChar
             ? $collectSiblingsFromCaret(node, selection.anchor.offset)
             : [];
-          const noteChildAnchor = caretChar ?? node;
+          // A caller an annotation cuts into pieces is one node to insert after.
+          const noteChildAnchor = caretChar ?? $lastPiece(node);
           let lastInsertedNode: LexicalNode = noteChildAnchor.insertAfter(nodeToInsert);
           if ($isVisibleMarkerNode(nodeToInsert)) {
             // We are using visible marker mode so the `nodeToInsert` is just the marker. Get the
@@ -1432,14 +1435,15 @@ function $splitCharNodeAroundTargets(
   let firstCoveredIndex = coveredIndexes[0];
   let lastCoveredIndex = coveredIndexes[coveredIndexes.length - 1];
   // Fold an adjacent boundary marker into the covered range so it isn't left stranded alone in a
-  // clone — see the marker-mode handling note above.
+  // clone — see the marker-mode handling note above. A marker an annotation cut into pieces is
+  // folded in whole.
   if (firstCoveredIndex > 0 && $isSynthesizedMarkerNode(children[firstCoveredIndex - 1]))
-    firstCoveredIndex -= 1;
+    firstCoveredIndex = $pieceHead(children[firstCoveredIndex - 1]).getIndexWithinParent();
   if (
     lastCoveredIndex < children.length - 1 &&
     $isSynthesizedMarkerNode(children[lastCoveredIndex + 1])
   )
-    lastCoveredIndex += 1;
+    lastCoveredIndex = $lastPiece(children[lastCoveredIndex + 1]).getIndexWithinParent();
   if (firstCoveredIndex === 0 && lastCoveredIndex === children.length - 1) return charNode;
 
   // Append moves the children out of `charNode`, so it is left holding only the covered ones.
