@@ -180,6 +180,34 @@ const CORPUS: { name: string; usj: Usj }[] = [
     ]),
   },
   {
+    // ParatextData reads `\\f \\ft note text\\f*` as a note whose caller is empty.
+    name: "note with an empty caller",
+    usj: twoParaUsj([
+      "a",
+      {
+        type: "note",
+        marker: "f",
+        caller: "",
+        content: [{ type: "char", marker: "ft", content: ["note text"] }],
+      },
+      " b",
+    ]),
+  },
+  {
+    // An unclosed note shows expanded in every editable view, its empty caller as two separators.
+    name: "unclosed note with an empty caller",
+    usj: twoParaUsj([
+      "a",
+      {
+        type: "note",
+        marker: "f",
+        caller: "",
+        closed: "false",
+        content: [{ type: "char", marker: "ft", closed: "false", content: ["note text"] }],
+      },
+    ]),
+  },
+  {
     name: "milestone",
     usj: twoParaUsj(["a ", { type: "ms", marker: "qt-s" }, "b"]),
   },
@@ -258,7 +286,7 @@ export const PROTECTED_NOTE_SHELL_VIEW = "standard+protectedNoteShell";
  * to protect, so only the note rows — the corpus's, and one whose content span runs on to the
  * note's closer, as ParatextData writes footnote text. */
 const PROTECTED_NOTE_SHELL_CORPUS: { name: string; usj: Usj }[] = [
-  ...CORPUS.filter(({ name }) => name === "note"),
+  ...CORPUS.filter(({ name }) => name === "note" || name === "note with an empty caller"),
   {
     name: "note whose content span runs to its closer",
     usj: twoParaUsj([
@@ -992,7 +1020,8 @@ function normalizeUsfm(text: string, keepRuns = false): UsfmBytes {
     if (!leading) continue;
     const valueStart = out.length;
     while (at < text.length && !isUsfmSpace(text[at]) && text[at] !== "\\") {
-      append(text[at]);
+      // A caret host in an empty value's place (an empty caller's) is no byte of the value.
+      if (text[at] !== "\u200B") append(text[at]);
       at += 1;
     }
     if (leading.includes("caller")) callers.push([valueStart, out.length]);

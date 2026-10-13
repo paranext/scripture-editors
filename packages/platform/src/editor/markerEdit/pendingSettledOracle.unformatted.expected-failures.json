@@ -1,4 +1,7 @@
 {
+  "unclosed note with an empty caller (unformatted view)": {
+    "marker \"\\\\ft\"@2 type \"*\" [positions]": "A closer typed into an unclosed note closes the note there, and what followed the closer moves after the note into the paragraph. The settled-position basis does not model that move yet, so while the close is pending a position past the typed closer is reported at the note's caller."
+  },
   "nameless paragraph (unformatted view)": {
     "marker \"\\\\\"@0 Delete [screen]": "An edit that leaves a nameless paragraph's glyph still naming no marker (bytes typed before or after its bare backslash, or the backslash deleted) is not re-tokenized: a nameless backslash does not yet tokenize as ParatextData reads it, so the paragraph is preserved and the glyph's bytes do not reach the file.",
     "marker \"\\\\\"@0 Delete, then type \"x\" [screen]": "An edit that leaves a nameless paragraph's glyph still naming no marker (bytes typed before or after its bare backslash, or the backslash deleted) is not re-tokenized: a nameless backslash does not yet tokenize as ParatextData reads it, so the paragraph is preserved and the glyph's bytes do not reach the file.",
