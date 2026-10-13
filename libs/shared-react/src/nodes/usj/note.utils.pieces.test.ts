@@ -7,6 +7,8 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { createBasicTestEnvironment } from "../../../../../libs/shared/src/nodes/usj/test.utils";
 import {
+  $describeLogicalPoint,
+  $describeLogicalSelection,
   countContinuationPieces,
   cutEveryCarrierIntoPieces,
 } from "../../plugins/usj/react-test.utils";
@@ -24,14 +26,9 @@ import {
   $createRangeSelection,
   $createTextNode,
   $getRoot,
-  $getSelection,
-  $isElementNode,
-  $isRangeSelection,
   $setSelection,
   $setState,
   LexicalEditor,
-  LexicalNode,
-  PointType,
 } from "lexical";
 import {
   $createAttributeRunNode,
@@ -41,12 +38,8 @@ import {
   $createParaNode,
   $createVerseNode,
   $isNoteNode,
-  $isPieceContinuation,
-  $logicalChildren,
-  $logicalOffset,
   $logicalText,
   $pieceAtLogicalOffset,
-  $pieceHead,
   getEditableCallerText,
   NBSP,
   NoteNode,
@@ -89,35 +82,6 @@ function $build(content = true): void {
   );
 }
 
-/** A place in the tree as the uncut document spells it: the carrier (by its whole text and its
- * place among its parent's carriers) and the offset into its whole text, or the element and how
- * many carriers stand in front of the point. */
-function $describe(node: LexicalNode, offset: number): string {
-  if ($isElementNode(node)) {
-    const child = node.getChildAtIndex(offset);
-    // In front of a later piece is inside its carrier.
-    if (child && $isPieceContinuation(child)) return $describe(child, 0);
-    const before = node
-      .getChildren()
-      .slice(0, offset)
-      .filter((c) => !$isPieceContinuation(c));
-    return `${node.getType()}[${before.length}]`;
-  }
-  const head = $pieceHead(node);
-  const parent = head.getParentOrThrow();
-  const index = $logicalChildren(parent).findIndex((child) => child.is(head));
-  return `${parent.getType()}>${JSON.stringify($logicalText(head))}#${index}@${$logicalOffset(node, offset)}`;
-}
-
-function $caret(): string {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection)) return "no selection";
-  const point = (p: PointType) => $describe(p.getNode(), p.offset);
-  return selection.isCollapsed()
-    ? point(selection.anchor)
-    : `${point(selection.anchor)}..${point(selection.focus)}`;
-}
-
 function $note(): NoteNode {
   const note = $getRoot()
     .getAllTextNodes()
@@ -156,7 +120,7 @@ describe("a note whose carriers are cut into pieces", () => {
     for (const offset of [0, 1, 4, 5, 6, 20]) {
       const [uncut, cut] = await both(() => {
         $selectNoteTextOffset($note(), offset);
-        return $caret();
+        return $describeLogicalSelection();
       });
       expect([offset, cut]).toEqual([offset, uncut]);
     }
@@ -173,7 +137,7 @@ describe("a note whose carriers are cut into pieces", () => {
     for (const [offset, glyph] of glyphs) {
       const [uncut, cut] = await both(() => {
         $selectNoteTextOffset($note(), offset, glyph);
-        return $caret();
+        return $describeLogicalSelection();
       });
       expect([offset, glyph, cut]).toEqual([offset, glyph, uncut]);
     }
@@ -189,7 +153,7 @@ describe("a note whose carriers are cut into pieces", () => {
     ] as const) {
       const [uncut, cut] = await both(() => {
         $selectNoteCategoryOffset($note(), offset, glyph);
-        return $caret();
+        return $describeLogicalSelection();
       });
       expect([offset, glyph, cut]).toEqual([offset, glyph, uncut]);
     }
@@ -202,7 +166,7 @@ describe("a note whose carriers are cut into pieces", () => {
         markerMode: "editable",
         noteMode: "expanded",
       });
-      return $caret();
+      return $describeLogicalSelection();
     });
     expect(cut).toEqual(uncut);
   });
@@ -211,7 +175,7 @@ describe("a note whose carriers are cut into pieces", () => {
     const [uncut, cut] = await both(() => {
       const note = $note();
       const slot = $emptyNoteContentSlot(note);
-      return slot === undefined ? "none" : $describe(note, slot);
+      return slot === undefined ? "none" : $describeLogicalPoint(note, slot);
     }, false);
     expect(uncut).not.toBe("none");
     expect(cut).toEqual(uncut);

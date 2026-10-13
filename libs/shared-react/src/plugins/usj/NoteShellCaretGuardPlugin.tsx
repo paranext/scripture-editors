@@ -33,7 +33,10 @@ import {
   $findFirstAncestorNoteNode,
   $isMarkerNode,
   $isNoteNode,
+  $logicalOffset,
   $noteEditableCallerNode,
+  $pieceHead,
+  $pieces,
   $placeCaretAtBoundary,
   APP_PLACED_CARET_COMMAND,
   NoteNode,
@@ -56,8 +59,9 @@ function $noteShellNodes(note: NoteNode): LexicalNode[] {
     if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
     shell.push(child);
   }
+  // Every piece of a caller an annotation cut into pieces: the shell ends past its last.
   const caller = $noteEditableCallerNode(note);
-  if (caller) shell.push(caller);
+  if (caller) shell.push(...$pieces(caller));
   // Protected only when the adaptor marked it so. A partly-token shell is not a shape the adaptor
   // builds; requiring ALL of it keeps this from half-applying to one it did not.
   return shell.length > 0 && shell.every((node) => $isTextNode(node) && node.getMode() === "token")
@@ -90,7 +94,9 @@ function $contentStartIndex(note: NoteNode): number {
  */
 function $protectedCloser(note: NoteNode): TextNode | undefined {
   if (note.getIsCollapsed() !== false) return undefined;
-  const last = note.getLastChild();
+  // A closer an annotation cut into pieces is one glyph, named by its first piece.
+  const lastChild = note.getLastChild();
+  const last = lastChild && $pieceHead(lastChild);
   return $isMarkerNode(last) && last.getMarkerSyntax() === "closing" && last.getMode() === "token"
     ? last
     : undefined;
@@ -111,8 +117,9 @@ function $atOrPastProtectedCloser(point: PointType): NoteNode | undefined {
   const node = point.getNode();
   if (point.type === "text") {
     const note = node.getParent();
-    if ($isNoteNode(note) && $protectedCloser(note)?.is(node))
-      return point.offset > 0 ? note : undefined;
+    // Past the front of the closer is inside it, in whichever of its pieces.
+    if ($isNoteNode(note) && $protectedCloser(note)?.is($pieceHead(node)))
+      return $logicalOffset(node, point.offset) > 0 ? note : undefined;
     if (point.offset !== 0) return undefined;
     const previous = node.getPreviousSibling();
     return $isNoteNode(previous) && $protectedCloser(previous) ? previous : undefined;
@@ -236,12 +243,14 @@ function $shellTrailingEdge(note: NoteNode): PointType {
 
 /** The index of `note`'s own closing glyph, or its child count when it has none. */
 function $contentEndIndex(note: NoteNode): number {
-  const last = note.getLastChild();
+  // A closer an annotation cut into pieces starts at its first piece.
+  const lastChild = note.getLastChild();
+  const last = lastChild && $pieceHead(lastChild);
   const endsInCloser =
     $isMarkerNode(last) &&
     last.getMarkerSyntax() === "closing" &&
     last.getMarker() === note.getMarker();
-  return endsInCloser ? note.getChildrenSize() - 1 : note.getChildrenSize();
+  return endsInCloser ? last.getIndexWithinParent() : note.getChildrenSize();
 }
 
 /** `note`'s own closing glyph, or `undefined` when it has none (an unclosed note). */
@@ -287,7 +296,11 @@ function $contentEndCaret(note: NoteNode): PointType {
 function $noteEndAt(point: PointType): NoteNode | undefined {
   const node = point.getNode();
   const parent = node.getParent();
-  if ($isNoteNode(parent) && $noteShellNodes(parent).length > 0 && $closingGlyph(parent)?.is(node))
+  if (
+    $isNoteNode(parent) &&
+    $noteShellNodes(parent).length > 0 &&
+    $closingGlyph(parent)?.is($pieceHead(node))
+  )
     return parent;
   if (point.type !== "element") return undefined;
   if ($isNoteNode(node) && $noteShellNodes(node).length > 0 && $closingGlyph(node))

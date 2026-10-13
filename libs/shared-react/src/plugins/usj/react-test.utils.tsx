@@ -20,8 +20,10 @@ import {
   $createRangeSelection,
   $createTextNode,
   $getRoot,
+  $getSelection,
   $insertNodes,
   $isElementNode,
+  $isRangeSelection,
   $setSelection,
   $setState,
   EditorUpdateOptions,
@@ -31,6 +33,7 @@ import {
   LexicalEditor,
   LexicalNode,
   LexicalNodeReplacement,
+  PointType,
   SerializedEditorState,
 } from "lexical";
 import { ReactNode, useEffect } from "react";
@@ -40,6 +43,10 @@ import {
   $createImmutableTypedTextNode,
   $isDisplayAnnotationCarrier,
   $isPieceContinuation,
+  $logicalChildren,
+  $logicalOffset,
+  $logicalText,
+  $pieceHead,
   BookNode,
   NBSP,
   registerDisplayAnnotationBasis,
@@ -503,4 +510,38 @@ export function countContinuationPieces(editor: LexicalEditor): number {
   return editor
     .getEditorState()
     .read(() => $getRoot().getAllTextNodes().filter($isPieceContinuation).length);
+}
+
+/**
+ * A point as a document with no carrier cut into pieces spells it, so a cut and an uncut document
+ * can be compared point for point: a text point names its carrier (by the carrier's whole text,
+ * its parent's type and its place among the parent's carriers) and the offset into the whole
+ * carrier; an element point names the element and how many carriers stand in front of it. An
+ * element point in front of a later piece is inside that piece's carrier, and is named so.
+ */
+export function $describeLogicalPoint(node: LexicalNode, offset: number): string {
+  if ($isElementNode(node)) {
+    const child = node.getChildAtIndex(offset);
+    if (child && $isPieceContinuation(child)) return $describeLogicalPoint(child, 0);
+    const before = node
+      .getChildren()
+      .slice(0, offset)
+      .filter((sibling) => !$isPieceContinuation(sibling));
+    return `${node.getType()}[${before.length}]`;
+  }
+  const head = $pieceHead(node);
+  const parent = head.getParentOrThrow();
+  const index = $logicalChildren(parent).findIndex((child) => child.is(head));
+  const text = JSON.stringify($logicalText(head));
+  return `${parent.getType()}>${text}#${index}@${$logicalOffset(node, offset)}`;
+}
+
+/** The current selection, each end described by {@link $describeLogicalPoint}. */
+export function $describeLogicalSelection(): string {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return "no selection";
+  const point = (at: PointType) => $describeLogicalPoint(at.getNode(), at.offset);
+  return selection.isCollapsed()
+    ? point(selection.anchor)
+    : `${point(selection.anchor)}..${point(selection.focus)}`;
 }
