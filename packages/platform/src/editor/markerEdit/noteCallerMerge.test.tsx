@@ -2,8 +2,9 @@
  * An expanded note's editable caller text (` +⍽`) stays its own node. Lexical merges two adjacent
  * plain text nodes whenever either is edited, so content text that starts right after the caller
  * would otherwise be folded into it: the caller then no longer reads as one, and the saved note
- * carries the caller's bytes as content, writing the caller twice. And a deleted caller is shown
- * again: the note keeps its caller, and the screen shows what the file gets.
+ * carries the caller's bytes as content, writing the caller twice. A caller deleted down to its
+ * two separators leaves the note an empty caller, as Paratext 9 shows it; any other damage to the
+ * caller shows it again. Either way the screen shows what the file gets.
  */
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
 import { IDLE_SETTLE_DELAY_MS } from "./MarkerEditPlugin";
