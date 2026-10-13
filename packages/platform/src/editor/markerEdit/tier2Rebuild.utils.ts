@@ -71,6 +71,7 @@ import {
 } from "lexical";
 import {
   $chapterGlyphTextNode,
+  $createBookNode,
   $findFirstAncestorNoteNode,
   $hasUnrecoverableAttributes,
   $isCanonicalMarkerNode,
@@ -2460,8 +2461,9 @@ export function $exportSubtree(node: LexicalNode): SerializedLexicalNode {
 }
 
 /** What a read-only settle's rebuilt nodes stand in for: whole paragraphs, a chapter and its
- * adjacent region, or a note's content — which decides how their bytes are read back. */
-export type SettledScopeKind = "paras" | "chapter" | "noteContent";
+ * adjacent region, a note's content, or a note closed at a closer typed into it followed by what
+ * came after the closer — which decides how their bytes are read back. */
+export type SettledScopeKind = "paras" | "chapter" | "noteContent" | "closedNote";
 
 /**
  * `rebuilt` — the serialized nodes a read-only settle turns `scope` into — with the annotation
@@ -2477,8 +2479,10 @@ export type SettledScopeKind = "paras" | "chapter" | "noteContent";
  * `carriedRuns` lists the live members `rebuilt` carries, per run of `fragment.sentinels`.
  *
  * `fragment` is the one the rebuild tokenized — with any transient bytes already cut out — so the
- * marks anchor in the coordinates `rebuilt` was built in. `rebuilt` comes back untouched, and no
- * scratch editor is made, when the scope holds no mark.
+ * marks anchor in the coordinates `rebuilt` was built in; for `"closedNote"`, the note's shell
+ * bytes in front of it ({@link $withNoteShellFragment}), the same capture the mutating close
+ * takes. `rebuilt` comes back untouched, and no scratch editor is made, when the scope holds no
+ * mark.
  *
  * Read-only on the live tree: call inside a read of it.
  */
@@ -2491,14 +2495,105 @@ export function $carryMarksIntoSerialized(
   getMarkerFn: MarkerLookup,
   viewOptions: ViewOptions | undefined,
 ): SerializedLexicalNode[] {
-  // The settle splices a husk out of `rebuilt` without a trace, so its placeholder comes out of
-  // the captured bytes too — left in, every mark past it would land one byte early.
-  const captured = $captureMarkByteRanges(
-    scope,
-    withoutDroppedSentinels(fragment, carriedRuns),
-    carriedRuns,
+  // Note content, and a closed note with what followed it, are inline; the root holds only blocks.
+  const isInline = kind === "noteContent" || kind === "closedNote";
+  const $holderOf = (root: ElementNode): ElementNode | undefined => {
+    if (!isInline) return root;
+    const holder = root.getFirstChild();
+    return $isElementNode(holder) ? holder : undefined;
+  };
+  return $carryCapturedThroughScratch(
+    $captureForSerializedCarry(scope, fragment, carriedRuns),
+    rebuilt,
+    (root) => {
+      const holder = isInline ? $createImpliedParaNode() : root;
+      if (holder !== root) root.append(holder);
+      rebuilt.forEach((child) => holder.append($parseSerializedNode(child)));
+      return () => {
+        const nodes = holder.getChildren();
+        if (kind === "paras") return $spansForNodes(nodes, getMarkerFn, viewOptions);
+        if (kind === "chapter")
+          return $isChapterNode(nodes[0])
+            ? $buildChapterFragment(nodes[0], getMarkerFn, viewOptions)
+            : undefined;
+        if (kind === "closedNote")
+          return $isNoteNode(nodes[0])
+            ? $closedNoteRegionFragment(nodes[0], nodes.slice(1), getMarkerFn, viewOptions)
+            : undefined;
+        const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+        $appendNodesFragment(nodes, out, getMarkerFn, viewOptions);
+        return out;
+      };
+    },
+    (root) => $holderOf(root)?.getChildren().map($exportSubtree) ?? rebuilt,
   );
-  if (captured.ranges.length === 0) return rebuilt;
+}
+
+/**
+ * {@link $carryMarksIntoSerialized} for the `\id` line's settle, whose rebuilt nodes are two
+ * lists: the line's content children (`rebuilt`), and the blocks a typed block marker starts after
+ * the line (`followingBlocks`). Both are materialized together, under a scratch book, because a
+ * mark is carried by its bytes across the whole region the settle re-tokenized — the line and the
+ * paragraphs it was widened over — and those bytes may now be on either side of the line's end.
+ *
+ * Read-only on the live tree: call inside a read of it.
+ */
+export function $carryMarksIntoSerializedBookLine(
+  scope: LexicalNode[],
+  fragment: FragmentAccumulator,
+  carriedRuns: readonly (readonly LexicalNode[])[],
+  rebuilt: SerializedLexicalNode[],
+  followingBlocks: SerializedLexicalNode[],
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): { rebuilt: SerializedLexicalNode[]; followingBlocks: SerializedLexicalNode[] } {
+  const untouched = { rebuilt, followingBlocks };
+  return $carryCapturedThroughScratch(
+    $captureForSerializedCarry(scope, fragment, carriedRuns),
+    untouched,
+    (root) => {
+      const book = $createBookNode();
+      root.append(book);
+      rebuilt.forEach((child) => book.append($parseSerializedNode(child)));
+      followingBlocks.forEach((block) => root.append($parseSerializedNode(block)));
+      return () => $bookRegionFragment(book, book.getNextSiblings(), getMarkerFn, viewOptions);
+    },
+    (root) => {
+      const [book, ...blocks] = root.getChildren();
+      if (!$isBookNode(book)) return untouched;
+      return {
+        rebuilt: book.getChildren().map($exportSubtree),
+        followingBlocks: blocks.map($exportSubtree),
+      };
+    },
+  );
+}
+
+/** A read-only settle's capture: {@link $captureMarkByteRanges} over `fragment` with the
+ * placeholders of the runs the settle drops cut out — the settle splices a husk out of its rebuilt
+ * nodes without a trace, so left in, every mark past it would land one byte early. */
+function $captureForSerializedCarry(
+  scope: LexicalNode[],
+  fragment: FragmentAccumulator,
+  carriedRuns: readonly (readonly LexicalNode[])[],
+): CapturedMarks {
+  return $captureMarkByteRanges(scope, withoutDroppedSentinels(fragment, carriedRuns), carriedRuns);
+}
+
+/**
+ * Restore `captured` in a scratch editor and read the result back: `$materialize` builds the
+ * rebuilt nodes under the scratch root and returns how to re-derive their fragment (called afresh
+ * for every wrap, as {@link $restoreMarkByteRanges} requires), and `$read` exports them. The
+ * scratch editor un-nests overlapping marks the way the live editor's `AnnotationPlugin` does.
+ * Returns `untouched`, with no scratch editor made, when nothing was captured.
+ */
+function $carryCapturedThroughScratch<T>(
+  captured: CapturedMarks,
+  untouched: T,
+  $materialize: (root: ElementNode) => () => FragmentAccumulator | undefined,
+  $read: (root: ElementNode) => T,
+): T {
+  if (captured.ranges.length === 0) return untouched;
   const scratch = createEditor({
     nodes: [TypedMarkNode, ...usjReactNodes],
     onError: (error) => {
@@ -2514,34 +2609,10 @@ export function $carryMarksIntoSerialized(
         ids.forEach((id) => to.addID(type, id)),
       ),
   );
-  let holderKey: NodeKey | undefined;
-  scratch.update(
-    () => {
-      const root = $getRoot();
-      // Note content is inline, and the root holds only blocks.
-      const holder = kind === "noteContent" ? $createImpliedParaNode() : root;
-      if (holder !== root) root.append(holder);
-      holderKey = holder.getKey();
-      rebuilt.forEach((child) => holder.append($parseSerializedNode(child)));
-      const $fresh = () => {
-        const nodes = holder.getChildren();
-        if (kind === "paras") return $spansForNodes(nodes, getMarkerFn, viewOptions);
-        if (kind === "chapter")
-          return $isChapterNode(nodes[0])
-            ? $buildChapterFragment(nodes[0], getMarkerFn, viewOptions)
-            : undefined;
-        const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
-        $appendNodesFragment(nodes, out, getMarkerFn, viewOptions);
-        return out;
-      };
-      $restoreMarkByteRanges(captured, $fresh);
-    },
-    { discrete: true },
-  );
-  return scratch.getEditorState().read(() => {
-    const holder = holderKey === undefined ? undefined : $getNodeByKey(holderKey);
-    return $isElementNode(holder) ? holder.getChildren().map($exportSubtree) : rebuilt;
+  scratch.update(() => $restoreMarkByteRanges(captured, $materialize($getRoot())), {
+    discrete: true,
   });
+  return scratch.getEditorState().read(() => $read($getRoot()));
 }
 
 /** Collapse the selection onto `point`; `false` when its node is no longer in the tree. */
@@ -2977,6 +3048,85 @@ export function $buildNoteFragment(
 }
 
 /**
+ * Append `note`'s shell bytes to `out` — its opening glyph(s) and its caller, the children
+ * {@link $noteContentNodes} skips in front of the content — and return how many children that was.
+ * A collapsed note's caller is a decorator, spelled as the caller it shows.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ */
+function $appendNoteShellFragment(
+  note: NoteNode,
+  out: FragmentAccumulator,
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): number {
+  const children = note.getChildren();
+  let index = 0;
+  for (; index < children.length; index++) {
+    const child = children[index];
+    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
+    $appendNodesFragment([child], out, getMarkerFn, viewOptions);
+  }
+  const caller = children[index];
+  if ($isImmutableNoteCallerNode(caller)) pushText(out, caller, note.getCaller());
+  else if (
+    $isTextNode(caller) &&
+    caller.getTextContent() === getEditableCallerText(note.getCaller())
+  )
+    pushText(out, caller, toFragmentText(caller.getTextContent()));
+  else return index;
+  return index + 1;
+}
+
+/**
+ * `content` — a note's content fragment ({@link $buildNoteFragment}) — with the note's shell bytes
+ * ({@link $appendNoteShellFragment}) in front of it: the bytes a settle that rebuilds the whole
+ * note, not just its content, carries annotations across, so one held on the note's opening glyph
+ * or caller is carried too. `content`'s preserved runs are kept as they are, by reference.
+ *
+ * Exported for the read-only settle (virtualSettle.utils.ts), which must capture the same bytes.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ */
+export function $withNoteShellFragment(
+  note: NoteNode,
+  content: FragmentAccumulator,
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): FragmentAccumulator {
+  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  $appendNoteShellFragment(note, out, getMarkerFn, viewOptions);
+  const base = out.text.length;
+  content.spans.forEach((span) =>
+    out.spans.push({ ...span, start: span.start + base, end: span.end + base }),
+  );
+  out.sentinels.push(...content.sentinels);
+  out.text += content.text;
+  return out;
+}
+
+/**
+ * The bytes of a note closed at a closer typed into it, as it stands after the close: the note's
+ * shell, content and closing glyph, then `following` — what came after the closer, now beside the
+ * note. Its bytes line up with the note's before the close ({@link $withNoteShellFragment}), the
+ * typed closer standing where the closing glyph now is.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ */
+function $closedNoteRegionFragment(
+  note: NoteNode,
+  following: LexicalNode[],
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): FragmentAccumulator {
+  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  const contentStart = $appendNoteShellFragment(note, out, getMarkerFn, viewOptions);
+  $appendNodesFragment(note.getChildren().slice(contentStart), out, getMarkerFn, viewOptions);
+  $appendNodesFragment(following, out, getMarkerFn, viewOptions);
+  return out;
+}
+
+/**
  * A foldable leading `\cat` span's category value, REMOVED from `content` — or `undefined` with
  * `content` untouched. Foldable mirrors ParatextData's note-category parse: explicitly closed
  * (no `closed` metadata and no other attributes riding the span), exactly one plain-text content
@@ -3085,14 +3235,7 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   // A closer the user typed into an unclosed note ends the note right there.
   const closedAt = splitUnclosedNoteAtOwnCloser(note, noteContent);
   if (closedAt)
-    return $closeNoteAtOwnCloser(
-      note,
-      closedAt,
-      foldedCategory,
-      out.sentinels,
-      context,
-      anchorInNote,
-    );
+    return $closeNoteAtOwnCloser(note, closedAt, foldedCategory, out, context, anchorInNote);
 
   // The fresh content children come from serializing the WHOLE note expanded and unwrapping its
   // shell; `$serializeExpandedNoteContent` (settleShared.utils.ts) states why, and is shared with
@@ -3222,11 +3365,12 @@ function $closeNoteAtOwnCloser(
   note: NoteNode,
   { before, after }: { before: MarkerContent[]; after: MarkerContent[] },
   foldedCategory: string | undefined,
-  sentinels: LexicalNode[][],
+  content: FragmentAccumulator,
   context: Tier2Context,
   anchorInNote: boolean,
 ): boolean {
-  const { viewOptions, logger } = context;
+  const { viewOptions, getMarker: getMarkerFn, logger } = context;
+  const { sentinels } = content;
   const serialized = $serializeNoteClosedAtOwnCloser(
     note,
     before,
@@ -3244,6 +3388,16 @@ function $closeNoteAtOwnCloser(
     logger?.warn("[MarkerEdit] Note close aborted: the closed note does not carry its content");
     return false;
   }
+  // The whole note is rebuilt, its shell included, so annotations are captured over the shell's
+  // bytes as well as the content's — mirror `$rebuildNoteContent`.
+  const markRanges = $captureMarkByteRanges(
+    [note],
+    $withNoteShellFragment(note, content, getMarkerFn, viewOptions),
+    undefined,
+    $getEditor(),
+  );
+  // Where the region this close rebuilds ends: what followed the closer goes in front of it.
+  const end = note.getNextSibling();
   let previous: LexicalNode = note;
   for (const node of newNodes) {
     previous.insertAfter(node);
@@ -3256,13 +3410,23 @@ function $closeNoteAtOwnCloser(
   // Appended before the old children go: a note left empty removes itself.
   const oldChildren = note.getChildren();
   note.append(...closedNote.getChildren());
-  oldChildren.forEach((child) => child.remove());
+  oldChildren.forEach((child) => {
+    // See `$rebuildNoteContent`'s removal: the restore below re-wraps the annotation.
+    if ($isTypedMarkNode(child)) child.getWritable().__suppressOnRemoveCallbacks = true;
+    child.remove();
+  });
   note
     .setCaller(closedNote.getCaller())
     .setCategory(closedNote.getCategory())
     .setUnknownAttributes(closedNote.getUnknownAttributes())
     .setIsCollapsed(closedNote.getIsCollapsed());
   closedNote.remove();
+  $restoreMarkByteRanges(markRanges, () => {
+    const following: LexicalNode[] = [];
+    for (let node = note.getNextSibling(); node && !node.is(end); node = node.getNextSibling())
+      following.push(node);
+    return $closedNoteRegionFragment(note, following, getMarkerFn, viewOptions);
+  });
   if (anchorInNote) {
     if (note.getIsCollapsed() !== true && viewOptions?.isNoteShellEditable === false)
       $selectNote(note, viewOptions);
@@ -3306,6 +3470,29 @@ export function $buildBookFragment(
   const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
   $appendNodesFragment(contentNodes, out, getMarkerFn, viewOptions);
   return { out, contentNodes };
+}
+
+/**
+ * The bytes of the region a `\id` line settle rebuilt, as it stands after the splice: the line's
+ * content ({@link $buildBookFragment}), then each block the settle put after the line, joined as
+ * following lines exactly as {@link $appendParaFragments} joins the paragraphs a settle is widened
+ * over. Its bytes line up with the fragment the settle tokenized, which is what an annotation is
+ * carried across by ({@link $restoreMarkByteRanges}).
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ */
+function $bookRegionFragment(
+  book: BookNode,
+  followingBlocks: readonly LexicalNode[],
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): FragmentAccumulator {
+  const { out } = $buildBookFragment(book, getMarkerFn, viewOptions);
+  for (const block of followingBlocks) {
+    if (out.text.length > 0) out.text += " ";
+    if ($isElementNode(block)) $appendChildrenFragment(block, out, getMarkerFn, viewOptions);
+  }
+  return out;
 }
 
 /**
@@ -3401,6 +3588,14 @@ export function $rebuildBook(
       }
     if (selection.isCollapsed()) caret = $captureCaret(out, selection.anchor);
   }
+  // Annotations in the line and the paragraphs it is widened over anchor the same way — mirror
+  // `$rebuildParas`.
+  const markRanges = $captureMarkByteRanges(
+    [...contentNodes, ...trailingParas],
+    out,
+    undefined,
+    $getEditor(),
+  );
 
   const tokenized = tokenizedBookLine(out, getMarkerFn);
   // Symmetry bail-out (see `$rebuildParas`): a preserved-run/placeholder mismatch aborts the
@@ -3476,7 +3671,11 @@ export function $rebuildBook(
   $replaceSentinels(newNodes, out.sentinels);
   const preservedKeys = new Set(out.sentinels.flat().map((node) => node.getKey()));
   contentNodes.forEach((node) => {
-    if (!preservedKeys.has(node.getKey())) node.remove();
+    if (preservedKeys.has(node.getKey())) return;
+    // An annotation directly in the line is removed directly — see `$rebuildNoteContent`'s
+    // removal for why the notification is suppressed: the restore below re-wraps it.
+    if ($isTypedMarkNode(node)) node.getWritable().__suppressOnRemoveCallbacks = true;
+    node.remove();
   });
   trailingParas.forEach((para) => para.remove());
   // Re-derived from the book's OWN children now that the splice has settled, PLUS the freshly
@@ -3498,8 +3697,14 @@ export function $rebuildBook(
     if (newVerses[i].getNumber() === oldVerseSids[i].number)
       newVerses[i].setSid(oldVerseSids[i].sid);
   }
+  // Before the caret restore, so the caret resolves against the final tree — mirror
+  // `$rebuildParas`. Re-wrapping splits the line's direct text children, so the caret restore
+  // re-reads them afterwards.
+  $restoreMarkByteRanges(markRanges, () =>
+    $bookRegionFragment(book, newBlocks, getMarkerFn, viewOptions),
+  );
   $restoreSelectionInContentRegion(
-    liveContentNodes,
+    [...$bookContentNodes(book), ...newBlocks],
     caret,
     anchorInScope,
     getMarkerFn,

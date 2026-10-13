@@ -52,12 +52,14 @@ import {
   $buildNoteFragment,
   $buildParaScopeFragment,
   $carryMarksIntoSerialized,
+  $carryMarksIntoSerializedBookLine,
   $chapterAdjacentAttributeNodes,
   $charNeedsSentinelAs,
   $isRebuildSentinel,
   $opensNamelessParagraph,
   $settleScopeForNode,
   $signatureOf,
+  $withNoteShellFragment,
   countSentinels,
   countSerializedSentinels,
   cutFragment,
@@ -728,7 +730,16 @@ export function $settledNoteScope(
       contentNodes,
       category: foldedCategory,
       categoryChanged: false,
-      closedAs,
+      // Annotation marks, mirroring `$closeNoteAtOwnCloser`'s carry over the whole note.
+      closedAs: $carryMarksIntoSerialized(
+        [note],
+        $withNoteShellFragment(note, tokenized, getMarkerFn, viewOptions),
+        closedRuns.live,
+        closedAs,
+        "closedNote",
+        getMarkerFn,
+        viewOptions,
+      ),
     };
   }
   const unwrapped = $serializeExpandedNoteContent(note, noteContent, foldedCategory, viewOptions);
@@ -1142,7 +1153,8 @@ function $settledBookLine(
   if (contentNodes.length === 0 && trailingParas.length === 0) return undefined;
   if (!$appendParaFragments(built.out, trailingParas, getMarkerFn, viewOptions)) return undefined;
   const out = $fragmentWithCharOpenerRenames(built.out, charRenames, context);
-  const tokenized = tokenizedBookLine($fragmentWithoutTransient(out, transient), getMarkerFn);
+  const tokenizedFragment = $fragmentWithoutTransient(out, transient);
+  const tokenized = tokenizedBookLine(tokenizedFragment, getMarkerFn);
   if (countSentinels(tokenized.content) !== out.sentinels.length) {
     logger?.warn("[MarkerEdit] Settled book USJ skipped: sentinel/preserved-node count mismatch");
     return undefined;
@@ -1190,7 +1202,7 @@ function $settledBookLine(
   // Two calls sharing ONE run queue, in document order: the line's content comes first, so its
   // placeholders consume the preserved runs ahead of the following blocks' own. Each call mutates
   // its OWN array in place — `rebuilt` and `followingBlocks` keep their identity, which is what the
-  // caller (and this function's own return value) hands back.
+  // annotation carry below reads.
   const queueIndexAfterContent = replaceSerializedSentinels(rebuilt, runs.serialized);
   replaceSerializedSentinels(followingBlocks, runs.serialized, queueIndexAfterContent);
   // Sid carry-over, mirroring `$rebuildBook`/`$settledParaScope` — see the latter's own comment
@@ -1202,7 +1214,19 @@ function $settledBookLine(
     if (oldVerseSids[i].sid !== undefined && newVerses[i].number === oldVerseSids[i].number)
       newVerses[i].sid = oldVerseSids[i].sid;
   }
-  return { rebuilt, contentNodes, followingBlocks };
+  // Annotation marks, mirroring `$rebuildBook`'s carry.
+  return {
+    ...$carryMarksIntoSerializedBookLine(
+      [...contentNodes, ...trailingParas],
+      tokenizedFragment,
+      runs.live,
+      rebuilt,
+      followingBlocks,
+      getMarkerFn,
+      viewOptions,
+    ),
+    contentNodes,
+  };
 }
 
 /**
