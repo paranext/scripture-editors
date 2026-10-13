@@ -195,6 +195,20 @@ const CORPUS: { name: string; usj: Usj }[] = [
     ]),
   },
   {
+    // An unclosed note shows expanded in every editable view.
+    name: "unclosed note",
+    usj: twoParaUsj([
+      "a",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        closed: "false",
+        content: [{ type: "char", marker: "ft", closed: "false", content: ["note text"] }],
+      },
+    ]),
+  },
+  {
     // An unclosed note shows expanded in every editable view, its empty caller as two separators.
     name: "unclosed note with an empty caller",
     usj: twoParaUsj([

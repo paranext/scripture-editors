@@ -354,14 +354,44 @@ type SettledTarget =
     };
 
 /**
- * The note scope whose note the path crosses, and at what depth — the settle that rebuilt a note's
- * CONTENT leaves every index above the note untouched, so the live tree can be walked down to the
- * note and only the remainder of the path is in settled coordinates.
+ * The note scope a path names something in, and the path restated in its scratch tree.
+ *
+ * A note a typed closer closes ({@link SettleScopePlan.closedNote}) hands what followed the closer
+ * to its parent, right after itself, so every settled index at or past the note's in that parent
+ * names something in its scope's scratch, which holds them where they settle. Above the note
+ * nothing moves.
+ *
+ * Any other note scope rebuilds only the note's CONTENT, which leaves every index above the note
+ * untouched, so the live tree can be walked down to the note and only the remainder of the path is
+ * in settled coordinates; the settled note sits at the scratch root's only content index.
  */
 function $noteScopeOnPath(
   prepared: PreparedScopes,
   liveIndexes: number[],
-): { plan: SettleScopePlan; depth: number } | undefined {
+): { plan: SettleScopePlan; scratchIndexes: number[] } | undefined {
+  for (const plan of prepared.byFirstLiveKey.values()) {
+    const scratchNotePath = plan.closedNote?.scratchNotePath;
+    const note = plan.liveNodes[0];
+    if (!scratchNotePath || !note.isAttached()) continue;
+    const notePath = $getJsonPathIndexes(note);
+    const depth = notePath.length - 1;
+    if (
+      depth < 0 ||
+      liveIndexes.length <= depth ||
+      !isSamePath(liveIndexes.slice(0, depth), notePath.slice(0, depth)) ||
+      liveIndexes[depth] < notePath[depth]
+    )
+      continue;
+    const scratchDepth = scratchNotePath.length - 1;
+    return {
+      plan,
+      scratchIndexes: [
+        ...scratchNotePath.slice(0, scratchDepth),
+        scratchNotePath[scratchDepth] + liveIndexes[depth] - notePath[depth],
+        ...liveIndexes.slice(depth + 1),
+      ],
+    };
+  }
   let node: LexicalNode = $getRoot();
   for (let depth = 0; depth < liveIndexes.length; depth += 1) {
     if (!$isElementNode(node)) return undefined;
@@ -371,7 +401,8 @@ function $noteScopeOnPath(
     if (item?.type !== "element") return undefined;
     node = item.node;
     const plan = prepared.byFirstLiveKey.get(node.getKey());
-    if (plan?.kind === "note") return { plan, depth };
+    if (plan?.kind === "note")
+      return { plan, scratchIndexes: [0, ...liveIndexes.slice(depth + 1)] };
   }
   return undefined;
 }
@@ -413,14 +444,8 @@ function $settledTarget(
     };
   const liveIndexes = [top.liveIndex, ...indexes.slice(1)];
   const note = $noteScopeOnPath(prepared, liveIndexes);
-  // The settled note sits at the scratch root's only content index.
   if (note)
-    return {
-      kind: "scope",
-      plan: note.plan,
-      scratchIndexes: [0, ...indexes.slice(note.depth + 1)],
-      location,
-    };
+    return { kind: "scope", plan: note.plan, scratchIndexes: note.scratchIndexes, location };
   return { kind: "live", location: withContentIndexes(location, liveIndexes) };
 }
 
@@ -929,10 +954,15 @@ function $livePointThroughScope(
   const { plan } = target;
   const { logger, viewOptions } = context.tier2;
   // A location on the note's own bytes names the note itself, not a byte of its content fragment,
-  // so it needs no byte correspondence at all.
+  // so it needs no byte correspondence at all — except the closer of a note a typed closer closes,
+  // which is the typed closer's bytes in the live content.
+  const closedNotePath = plan.closedNote?.scratchNotePath;
   if (
     plan.kind === "note" &&
-    target.scratchIndexes.length === 1 &&
+    (closedNotePath
+      ? isSamePath(target.scratchIndexes, closedNotePath) &&
+        !isUsjClosingMarkerLocation(target.location)
+      : target.scratchIndexes.length === 1) &&
     isNoteOwnBytesLocation(target.location)
   )
     return $livePointOnNoteOwnBytes(plan.liveNodes[0], target.location, prepared.viewOptions);
@@ -1398,7 +1428,8 @@ function $scopeStartIndexes(node: LexicalNode, viewOptions: ViewOptions): number
  * A scratch-relative path restated against the settled document. A paragraph or chapter scope's
  * scratch root children ARE settled top-level items, so the scope's own top index counts them
  * off; a note scope's scratch root holds the one settled note, which sits exactly where the live
- * note sat.
+ * note sat. A note a typed closer closes sits in its whole settled block instead, and what its
+ * parent holds from the note on is counted off from the note's own settled index.
  */
 function settledPathFromScratch(
   plan: SettleScopePlan,
@@ -1406,6 +1437,24 @@ function settledPathFromScratch(
   scratchIndexes: number[],
 ): number[] | undefined {
   if (!scopePath) return undefined;
+  const scratchNotePath = plan.closedNote?.scratchNotePath;
+  if (scratchNotePath) {
+    const depth = scratchNotePath.length - 1;
+    const noteIndex = scopePath.at(-1);
+    if (
+      noteIndex === undefined ||
+      depth < 0 ||
+      scratchIndexes.length <= depth ||
+      !isSamePath(scratchIndexes.slice(0, depth), scratchNotePath.slice(0, depth)) ||
+      scratchIndexes[depth] < scratchNotePath[depth]
+    )
+      return undefined;
+    return [
+      ...scopePath.slice(0, -1),
+      noteIndex + scratchIndexes[depth] - scratchNotePath[depth],
+      ...scratchIndexes.slice(depth + 1),
+    ];
+  }
   const [scratchTop, ...rest] = scratchIndexes;
   if (scratchTop === undefined) return undefined;
   if (plan.kind === "note") return scratchTop === 0 ? [...scopePath, ...rest] : undefined;

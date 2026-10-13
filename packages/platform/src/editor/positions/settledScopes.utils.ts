@@ -13,6 +13,7 @@
 import {
   $buildChapterFragment,
   $buildImpliedParaFragment,
+  $buildNodesFragment,
   $buildNoteFragment,
   $buildParaScopeFragment,
   $buildSettledRootFragment,
@@ -42,8 +43,18 @@ import {
   $mapSerializedSites,
   spliceHusk,
 } from "../markerEdit/virtualSettle.utils";
-import { $liveRunSide, $settledRunSide, pairRuns } from "../markerEdit/settledOnlyRuns.utils";
-import { SettledPositionContext, SettleScopePlan, TransientCut } from "./settledPositions.model";
+import {
+  $childPath,
+  $liveRunSide,
+  $settledRunSide,
+  pairRuns,
+} from "../markerEdit/settledOnlyRuns.utils";
+import {
+  ClosedNoteLayout,
+  SettledPositionContext,
+  SettleScopePlan,
+  TransientCut,
+} from "./settledPositions.model";
 import {
   $getNodeByKey,
   $getRoot,
@@ -62,16 +73,18 @@ import {
   BookNode,
   $isChapterNode,
   $isImpliedParaNode,
+  $isMarkerNode,
   $isNoteNode,
   $isParaNode,
   ChapterNode,
+  isSerializedNoteNode,
   ImpliedParaNode,
   LoggerBasic,
   LogicalContentItem,
   NoteNode,
   ParaNode,
 } from "shared";
-import { hasStandardViewWhitespace, ViewOptions } from "shared-react";
+import { $getJsonPathIndexes, hasStandardViewWhitespace, ViewOptions } from "shared-react";
 
 /** The settled document's top-level content indexes, expressed against the live tree's. */
 export interface PreparedScopes {
@@ -238,6 +251,13 @@ function $notesWithin(nodes: readonly LexicalNode[], out: NoteNode[] = []): Note
   return out;
 }
 
+/** A scope's settled fragment, read off its scratch tree, and — for a note a typed closer closes —
+ * where the settled note sits there. */
+interface SettledSideLayout {
+  readonly fragment: FragmentAccumulator | undefined;
+  readonly closedNote?: ClosedNoteLayout;
+}
+
 /** Build the plan for one scope from its settled serialized nodes, or `undefined` when they will
  * not materialize. `carried` is the rebuild's own account of which preserved-run members reached
  * its output, which is what pairs the two sides' run lists up. */
@@ -249,11 +269,16 @@ function $planFrom(
   rebuilt: SerializedLexicalNode[],
   carried: CarriedPreservedRuns | undefined,
   context: SettledPositionContext,
+  $settledSide: () => SettledSideLayout | undefined = () => ({
+    fragment: $buildScopeFragment(kind, $getRoot().getChildren(), context.tier2),
+  }),
 ): SettleScopePlan | undefined {
   const scratch = materializeScratch(context.nodes, rebuilt);
   if (!scratch) return undefined;
-  const { settledCount, scratchFragment, settledSide } = scratch.getEditorState().read(() => {
-    const fragment = $buildScopeFragment(kind, $getRoot().getChildren(), context.tier2);
+  const built = scratch.getEditorState().read(() => {
+    const layout = $settledSide();
+    if (!layout) return undefined;
+    const { fragment } = layout;
     return {
       settledCount: $getLogicalContentItems(
         $getRoot(),
@@ -261,9 +286,20 @@ function $planFrom(
       ).length,
       scratchFragment: fragment,
       settledSide: fragment && $settledRunSide(fragment),
+      closedNote: layout.closedNote,
     };
   });
-  const base = { kind, liveNodes, liveCut, scratch, scratchFragment, settledCount };
+  if (!built) return undefined;
+  const { settledCount, scratchFragment, settledSide, closedNote } = built;
+  const base = {
+    kind,
+    liveNodes,
+    liveCut,
+    scratch,
+    scratchFragment,
+    settledCount,
+    ...(closedNote && { closedNote }),
+  };
   // Nothing preserved on either side: the run correspondence is vacuous, not unknown, and the
   // bytes still line up.
   if ((liveFragment?.sentinels.length ?? 0) === 0 && (settledSide?.runs.length ?? 0) === 0) {
@@ -316,6 +352,116 @@ function $applyInPlaceRenames(scopes: SettleScopes, sites: Map<NodeKey, Serializ
     $applySettledCharOpenerRename(rename, sites);
 }
 
+/** Whether `block` is in a paragraph or `\id` line scope of its own, whose plan carries the
+ * settle of every note inside it. */
+function isInSettlingBlock(block: LexicalNode, scopes: SettleScopes): boolean {
+  const key = block.getKey();
+  return (
+    scopes.bookScopes.has(key) ||
+    [...scopes.paraScopes.values(), ...scopes.bookTrailingParas.values()].some((paras) =>
+      paras.some((para) => para.getKey() === key),
+    )
+  );
+}
+
+/** A note's children past its opening glyphs and its caller: its content and its closing glyph —
+ * or `undefined` when there is no caller where one belongs. */
+function $noteBytesPastCaller(note: NoteNode): LexicalNode[] | undefined {
+  const children = note.getChildren();
+  let start = 0;
+  while (start < children.length) {
+    const child = children[start];
+    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
+    start += 1;
+  }
+  return start < children.length ? children.slice(start + 1) : undefined;
+}
+
+/**
+ * The plan for an unclosed note whose settle closes it at a closer typed into it
+ * (`splitUnclosedNoteAtOwnCloser`), or `undefined` when it does not close that way or its bytes
+ * cannot be lined up. What followed the closer moves out of the note into its parent, after it, so
+ * the scope runs past the note: its live nodes are the note and every sibling after it, and its
+ * scratch holds the note's whole top-level block as it settles, so the moved bytes have the paths
+ * they settle at. Both fragments spell the note's content and those siblings — the typed closer is
+ * among the live content's bytes and is the settled note's closing glyph.
+ *
+ * A block that settles itself carries its notes' settles in its own plan, so a note in one keeps
+ * an ordinary note plan.
+ */
+function $planForClosedNote(
+  note: NoteNode,
+  scopes: SettleScopes,
+  context: SettledPositionContext,
+  transient: TransientLiteral | undefined,
+): SettleScopePlan | undefined {
+  const { getMarker, viewOptions } = context.tier2;
+  if (note.getUnknownAttributes()?.closed !== "false") return undefined;
+  const block = note.getTopLevelElement();
+  const path = block && $childPath(block, note);
+  const contentNodes = $buildNoteFragment(note, getMarker, viewOptions)?.contentNodes;
+  if (!block || !path || !contentNodes || isInSettlingBlock(block, scopes)) return undefined;
+  const following = note.getNextSiblings();
+  const built = $buildNodesFragment([...contentNodes, ...following], getMarker, viewOptions);
+  const serialized = $exportSubtree(block);
+  const sites = new Map<NodeKey, SerializedSite>();
+  $mapSerializedSites([block], [serialized], sites);
+  $applyInPlaceRenames(scopes, sites);
+  $notesWithin([block])
+    .filter((other) => !other.is(note) && scopes.noteScopes.has(other.getKey()))
+    .forEach((other) =>
+      $applySettledNoteScope(
+        other,
+        sites,
+        context.tier2,
+        scopes.huskKeys,
+        transient,
+        scopes.charOpenerRenames,
+      ),
+    );
+  if (
+    !$applySettledNoteScope(
+      note,
+      sites,
+      context.tier2,
+      scopes.huskKeys,
+      transient,
+      scopes.charOpenerRenames,
+    )
+  )
+    return undefined;
+  // The settle that closes the note at the typed closer is the one that drops its `closed`.
+  const settled = sites.get(note.getKey())?.node;
+  if (!isSerializedNoteNode(settled) || settled.unknownAttributes?.closed === "false")
+    return undefined;
+  const { liveFragment, liveCut } = $cutLiveFragment(built, transient);
+  const carried = carriedPreservedRuns(built, sites, scopes.huskKeys);
+  return $planFrom(
+    "note",
+    [note, ...following],
+    liveFragment,
+    liveCut,
+    [serialized],
+    carried,
+    context,
+    () => {
+      let settledNote: LexicalNode | null = $getRoot().getFirstChild();
+      for (const index of path)
+        settledNote = $isElementNode(settledNote) ? settledNote.getChildAtIndex(index) : null;
+      const bytes = $isNoteNode(settledNote) ? $noteBytesPastCaller(settledNote) : undefined;
+      if (!settledNote || !bytes) return undefined;
+      return {
+        fragment: $buildNodesFragment(
+          [...bytes, ...settledNote.getNextSiblings()],
+          getMarker,
+          viewOptions,
+        ),
+        closedNote: { scratchNotePath: $getJsonPathIndexes(settledNote) },
+      };
+    },
+  );
+}
+
 /** The note scope's plan: the note's own serialized form with its settled content spliced in. */
 function $planForNote(
   note: NoteNode,
@@ -324,6 +470,8 @@ function $planForNote(
   context: SettledPositionContext,
   transient: TransientLiteral | undefined,
 ): SettleScopePlan | undefined {
+  const closed = $planForClosedNote(note, scopes, context, transient);
+  if (closed) return closed;
   const { liveFragment, liveCut } = $cutLiveFragment(built, transient);
   const serialized = $exportSubtree(note);
   const sites = new Map<NodeKey, SerializedSite>();
@@ -621,7 +769,11 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
     if (!plan) return;
     const firstKey = plan.liveNodes[0].getKey();
     byFirstLiveKey.set(firstKey, plan);
-    plan.liveNodes.forEach((node) => byLiveKey.set(node.getKey(), plan));
+    // A scope's own node is always its own plan's: a note a typed closer closes counts the
+    // siblings after it as its scope's, and a settling note among them keeps its own plan.
+    plan.liveNodes.forEach((node, index) => {
+      if (index === 0 || !byLiveKey.has(node.getKey())) byLiveKey.set(node.getKey(), plan);
+    });
     if (isTopLevel) plan.liveNodes.forEach((node) => topPlans.set(node.getKey(), plan));
   };
 
@@ -650,10 +802,17 @@ export function $prepareSettleScopes(context: SettledPositionContext): PreparedS
 
   // Notes first: a note settling inside a settling paragraph has to be settled into the
   // paragraph's serialized copy before the paragraph itself is rebuilt around it.
+  // An unclosed note's plan can run past it (`$planForClosedNote`), so what follows it is part of
+  // what the plan is memoized on.
   for (const note of scopes.noteScopes.values())
     record(
-      planned(note.getKey(), "note", [note], (fragment) =>
-        $planForNote(note, fragment, scopes, context, transient),
+      planned(
+        note.getKey(),
+        "note",
+        note.getUnknownAttributes()?.closed === "false"
+          ? [note, ...note.getNextSiblings()]
+          : [note],
+        (fragment) => $planForNote(note, fragment, scopes, context, transient),
       ),
       false,
     );

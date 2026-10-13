@@ -125,6 +125,21 @@ export interface SettleScopePlan {
    * the scope's front.
    */
   readonly alignment: ByteAlignment | undefined;
+  /**
+   * Set on a note scope whose settle closes an unclosed note at a closer typed into it: what
+   * followed the closer moves out of the note into its parent, after the note. The scope's live
+   * nodes are then the note and every sibling after it, the scratch holds the note's whole settled
+   * top-level block, and the two fragments spell the note's content and those siblings — the same
+   * bytes on both sides, the typed closer among them.
+   */
+  readonly closedNote?: ClosedNoteLayout;
+}
+
+/** Where a note a typed closer closes sits in its scope's scratch tree. */
+export interface ClosedNoteLayout {
+  /** The settled note's content indexes in the scratch tree — the scratch counterpart of the live
+   * note's own path, which a path through the note's parent at or past the note crosses by. */
+  readonly scratchNotePath: readonly number[];
 }
 
 /**

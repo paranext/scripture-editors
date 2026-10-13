@@ -601,3 +601,101 @@ describe.each(VIEWS)("a paragraph's marker retyped as a note's (%s view)", (view
     mounted.unmount();
   });
 });
+
+describe.each(VIEWS)("a closer typed into an unclosed note (%s view)", (view) => {
+  // `\ft` retyped `\f*t`: the settle closes the note at the typed `\f*`, and `t note text` moves
+  // after the note into the paragraph. A position on the typed closer is on the settled note's
+  // closer, and one past it is in the paragraph's text after the note.
+  const unclosedNote = (caller: string, after: MarkerContent[] = []): MarkerContent[] => [
+    "a",
+    {
+      type: "note",
+      marker: "f",
+      caller,
+      closed: "false",
+      content: [{ type: "char", marker: "ft", closed: "false", content: ["note text"] }],
+    },
+    ...after,
+  ];
+  const note = "$.content[2].content[1]";
+  const movedText = "$.content[2].content[2]";
+  const $textAfterCloser = () => {
+    const text = $getRoot()
+      .getAllTextNodes()
+      .find((node) => node.getTextContent().endsWith("note text"));
+    if (!text) throw new Error("no note text");
+    return text;
+  };
+
+  it.each([
+    ["a normal caller", "+"],
+    ["an empty caller", ""],
+  ])("reports the typed closer as the settled note's closer, with %s", async (_name, caller) => {
+    const { mounted, $node } = await pendingEdit(unclosedNote(caller), view, "\\ft", "\\f*t", 3);
+    for (const offset of [1, 2]) {
+      const trip = roundTrip(mounted, view, $node, offset);
+      expect(trip.reported).toEqual({ jsonPath: note, closingMarkerOffset: offset });
+      expect(trip.to).toBe(trip.from);
+    }
+    const front = roundTrip(mounted, view, $node, 0);
+    expect(front.reported).toEqual({ jsonPath: note, closingMarkerOffset: 0 });
+    expectBackInPlace(front);
+    const end = roundTrip(mounted, view, $node, 3);
+    expect([
+      { jsonPath: note, closingMarkerOffset: 3 },
+      { jsonPath: movedText, offset: 0 },
+    ]).toContainEqual(end.reported);
+    expectBackInPlace(end);
+    mounted.unmount();
+  });
+
+  it.each([
+    ["a normal caller", "+"],
+    ["an empty caller", ""],
+  ])(
+    "reports the text past the typed closer in the paragraph after the note, with %s",
+    async (_name, caller) => {
+      const { mounted, $node } = await pendingEdit(unclosedNote(caller), view, "\\ft", "\\f*t", 3);
+      const paragraph = mounted.ref.current?.getUsj()?.content[2];
+      expect(typeof paragraph === "object" && paragraph.content?.[2]).toBe("t note text");
+      expect(roundTrip(mounted, view, $node, 4).reported).toEqual({
+        jsonPath: movedText,
+        offset: 1,
+      });
+      const text = mounted.lexical.getEditorState().read(() => $textAfterCloser().getTextContent());
+      // The settled text starts at the typed `t`, in front of this node's bytes.
+      for (let offset = 1; offset <= text.length; offset += 1) {
+        const trip = roundTrip(mounted, view, $textAfterCloser, offset);
+        expect(trip.reported).toEqual({ jsonPath: movedText, offset: offset + 1 });
+        expect(trip.to).toBe(trip.from);
+      }
+      mounted.unmount();
+    },
+  );
+
+  it("reports text after the note in its paragraph past the text the close moves there", async () => {
+    // What follows the note in its paragraph follows the moved text once the note closes.
+    const { mounted, $node } = await pendingEdit(
+      unclosedNote("+", [{ type: "verse", marker: "v", number: "2" }, "bc"]),
+      view,
+      "\\ft",
+      "\\f*t",
+      3,
+    );
+    expect(roundTrip(mounted, view, $node, 4).reported).toEqual({ jsonPath: movedText, offset: 1 });
+    const $after = () => {
+      const text = $getRoot()
+        .getAllTextNodes()
+        .find((node) => node.getTextContent() === "bc");
+      if (!text) throw new Error("no text after the verse");
+      return text;
+    };
+    // The document a host reads holds the text there.
+    const paragraph = mounted.ref.current?.getUsj()?.content[2];
+    expect(typeof paragraph === "object" && paragraph.content?.[4]).toBe("bc");
+    const trip = roundTrip(mounted, view, $after, 1);
+    expect(trip.reported).toEqual({ jsonPath: "$.content[2].content[4]", offset: 1 });
+    expect(trip.to).toBe(trip.from);
+    mounted.unmount();
+  });
+});
