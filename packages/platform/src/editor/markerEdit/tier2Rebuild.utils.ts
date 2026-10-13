@@ -2034,6 +2034,9 @@ export function $buildChapterFragment(
   return out;
 }
 
+/** A bare backslash and the separator after it: a marker with no name. */
+const NAMELESS_MARKER_REGEX = /^\\(?:\s|$)/;
+
 /** A `\p` spelled at the start of a fragment, which the tokenizer then opens as typed. */
 const LEADING_PARA_MARKER_REGEX = /^\s*\\p(?:\s|$)/;
 
@@ -2042,8 +2045,8 @@ const LEADING_PARA_MARKER_REGEX = /^\s*\\p(?:\s|$)/;
  *
  * The tokenizer reads a fragment as paragraph content, so it opens a `\p` for text that comes
  * before any paragraph marker. On a chapter line nobody typed that `\p`: bytes left there that are
- * no longer a chapter marker (`\ 2`, `c 2`, or text typed ahead of the `\c`) stand markerless, as
- * Paratext 9 keeps them. Neither is the glyph's trailing separator their content — it is display —
+ * no longer a chapter marker (`c 2`, or text typed ahead of the `\c`) stand markerless, as
+ * Paratext 9 keeps them, and a bare backslash (`\ 2`) opens a paragraph with no marker name. Neither is the glyph's trailing separator their content — it is display —
  * so a line left as text does not keep it.
  *
  * Exported for the read-only settle (virtualSettle.utils.ts), which must read the same content.
@@ -2064,6 +2067,14 @@ export function chapterFragmentContent(text: string, getMarkerFn: MarkerLookup):
     const trimmed = last.trimEnd();
     if (trimmed) lineContent[lineContent.length - 1] = trimmed;
     else lineContent.pop();
+  }
+  // A bare backslash is a marker with no name, which is how ParatextData reads `\ 2` and writes it
+  // back; holding the same paragraph means the saved chapter reads back as what was sent.
+  const [lead, ...afterLead] = lineContent;
+  if (typeof lead === "string" && NAMELESS_MARKER_REGEX.test(lead)) {
+    const leadText = lead.replace(NAMELESS_MARKER_REGEX, "");
+    const content = leadText ? [leadText, ...afterLead] : afterLead;
+    return [{ type: "para", marker: "", content }, ...others];
   }
   return [...lineContent, ...others];
 }

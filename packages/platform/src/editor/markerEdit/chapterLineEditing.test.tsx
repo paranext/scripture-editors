@@ -838,15 +838,23 @@ describe("a chapter line whose bytes are no longer a chapter marker", () => {
   }
 
   const rest = [VERSE_1_PARA, POETRY_PARA];
+  // A bare backslash is a marker with no name, as ParatextData reads `\\ 2`.
+  const NAMELESS_2: MarkerContent = { type: "para", marker: "", content: ["2"] };
+  const NAMELESS: MarkerContent = { type: "para", marker: "" };
 
   it.each([
-    ["deleting the c", (text: string) => text.slice(0, 1) + text.slice(2), 1, ["\\ 2", ...rest]],
+    [
+      "deleting the c",
+      (text: string) => text.slice(0, 1) + text.slice(2),
+      1,
+      [NAMELESS_2, ...rest],
+    ],
     ["deleting the backslash", (text: string) => text.slice(1), 0, ["c 2", ...rest]],
     [
       "deleting the c and the number",
       (text: string) => text.slice(0, 1) + text.slice(4),
       1,
-      ["\\", ...rest],
+      [NAMELESS, ...rest],
     ],
     ["deleting all but the trailing space", (text: string) => text.slice(4), 0, rest],
     ["typing before the backslash", (text: string) => `X${text}`, 1, ["X", CHAPTER_2, ...rest]],
@@ -856,7 +864,7 @@ describe("a chapter line whose bytes are no longer a chapter marker", () => {
     expect(ref.current?.getUsj()?.content).toEqual(saved);
   });
 
-  it("keeps the bytes as a line of text once the caret leaves", async () => {
+  it("keeps the bytes as a nameless paragraph once the caret leaves", async () => {
     const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
     await editGlyph(lexical, (text) => text.slice(0, 1) + text.slice(2), 1);
     await act(async () => lexical.update(() => $verseText().select(1, 1)));
@@ -865,9 +873,9 @@ describe("a chapter line whose bytes are no longer a chapter marker", () => {
     });
     lexical.getEditorState().read(() => {
       expect($getRoot().getChildren().some($isChapterNode)).toBe(false);
-      expect($getRoot().getFirstChild()?.getTextContent()).toBe("\\ 2");
+      expect($getRoot().getFirstChild()?.getTextContent()).toBe(`\\${NBSP}2`);
     });
-    expect(ref.current?.getUsj()?.content).toEqual(["\\ 2", ...rest]);
+    expect(ref.current?.getUsj()?.content).toEqual([NAMELESS_2, ...rest]);
   });
 
   it("keeps a paragraph marker typed over the chapter marker", async () => {
