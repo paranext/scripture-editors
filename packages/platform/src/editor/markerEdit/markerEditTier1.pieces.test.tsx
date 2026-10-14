@@ -7,6 +7,7 @@ import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetU
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { inOneUpdate } from "./displayAnnotations.test-helpers";
 import { $keepProtectedNoteCloser } from "./markerEditTier1.utils";
+import { testEnvironment } from "./markerEdit.test-helpers";
 import { drainNativeSelectionChange } from "../editor-test.utils";
 import { act } from "@testing-library/react";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -20,6 +21,10 @@ import {
 } from "lexical";
 import {
   $addDisplayAnnotation,
+  $createCharNode,
+  $createMarkerNode,
+  $createNoteNode,
+  $createParaNode,
   $coveredDisplayText,
   $displayAnnotationsOf,
   $isAttributeRunNode,
@@ -39,6 +44,7 @@ import {
   NBSP,
   NoteNode,
   ParaNode,
+  registerDisplayAnnotationBasis,
 } from "shared";
 
 function $find<T extends LexicalNode>(guard: (node: LexicalNode) => node is T): T {
@@ -199,6 +205,43 @@ describe("a carrier an annotation cuts into pieces", () => {
     expect(read()).toEqual(["w", "\\wj"]);
     await inOneUpdate(mounted.lexical, () => $textContaining("depart here").select(1, 1));
     expect(read()).toEqual(["wj", "\\wj"]);
+  });
+
+  it("keeps one caller when a caller built without the unmergeable flag is cut", async () => {
+    // A builder that leaves the flag off (a collaborator's, a fixture's) is told apart by what its
+    // caller text spells.
+    const { editor } = await testEnvironment(() => {
+      const ft = $createCharNode("ft");
+      ft.setUnknownAttributes({ closed: "false" });
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $createTextNode(`${NBSP}text`),
+          $createNoteNode("f", "+", false).append(
+            $createMarkerNode("f"),
+            $createTextNode(getEditableCallerText("+")),
+            ft.append($createMarkerNode("ft"), $createTextNode(`${NBSP}a note`)),
+            $createMarkerNode("f", "closing"),
+          ),
+        ),
+      );
+    });
+    registerDisplayAnnotationBasis(editor);
+    const noteText = () => editor.getEditorState().read(() => $find($isNoteNode).getTextContent());
+    const before = noteText();
+    await inOneUpdate(editor, () => {
+      const caller = $noteEditableCallerNode($find($isNoteNode));
+      if (!caller) throw new Error("no caller text");
+      // ` + `: hold the `+` alone, so the caller is cut in three.
+      $addDisplayAnnotation(caller, "test", "caller", 1, 2);
+    });
+    editor.getEditorState().read(() => {
+      const caller = $noteEditableCallerNode($find($isNoteNode));
+      if (!caller) throw new Error("no caller text");
+      expect($pieces(caller).length).toBe(3);
+    });
+    expect(noteText()).toBe(before);
+    expect(heldBytes(editor)).toEqual({ caller: "+" });
   });
 
   it("unwraps a note whose opener is deleted with its cut caller spelled as content", async () => {

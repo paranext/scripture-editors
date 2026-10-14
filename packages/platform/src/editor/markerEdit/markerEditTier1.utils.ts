@@ -1512,8 +1512,8 @@ function $selectNoteContentStart(note: NoteNode, callerNode: TextNode): void {
  * text the screen shows `\fnote text\f*` while the file gets `\f + note text\f*`. The caller
  * text is the note's one unmergeable text child (`toggleUnmergeable`, given it by both note
  * builders), so a slot holding any other node — content text included — has lost it, unless that
- * node spells the caller exactly (a shape built without the flag). Only a
- * note whose opening glyph is intact: deleting the glyph unwraps the note
+ * node spells the caller exactly (a shape built without the flag), read across every piece when an
+ * annotation cuts it. Only a note whose opening glyph is intact: deleting the glyph unwraps the note
  * (`$noteDeletionTransform`).
  *
  * Mutating: call inside `editor.update()` (runs from MarkerEditPlugin's NoteNode transform).
@@ -1534,7 +1534,7 @@ export function $restoreRemovedNoteCaller(note: NoteNode, context: MarkerEditCon
   if (
     $isTextNode(occupant) &&
     !$isMarkerNode(occupant) &&
-    (occupant.isUnmergeable() || occupant.getTextContent() === getEditableCallerText(caller))
+    (occupant.isUnmergeable() || $logicalText(occupant) === getEditableCallerText(caller))
   )
     return;
   const callerNode = $createTextNode(getEditableCallerText(caller)).toggleUnmergeable();
