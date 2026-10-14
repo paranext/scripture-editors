@@ -43,7 +43,6 @@ import { mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $getNodeByKey,
-  $getRoot,
   $hasUpdateTag,
   $getSelection,
   $getState,
