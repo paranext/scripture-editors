@@ -45,6 +45,9 @@ import { vi } from "vitest";
 
 const view = pendingOracleView("standard");
 
+/** A `\w` span's default attribute, as USJ spells unknown-to-the-type attributes. */
+const LEMMA: { [attribute: string]: string } = { lemma: "g" };
+
 /** `\c 1` with a `\cp A\cp*` span beside it, then a paragraph to depart to. */
 const cpSpanUsj: Usj = {
   type: "USJ",
@@ -334,7 +337,7 @@ describe("an annotation and the marker edits the engine holds pending", () => {
       const outcomes: string[] = [];
       for (const annotated of [false, true]) {
         const mounted = await mountInView(
-          twoParaUsj(["a ", { type: "char", marker: "w", lemma: "g", content: ["grace"] }, " b"]),
+          twoParaUsj(["a ", { type: "char", marker: "w", ...LEMMA, content: ["grace"] }, " b"]),
           view,
         );
         const $value = () =>
