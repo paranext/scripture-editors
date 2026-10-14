@@ -39,6 +39,7 @@ import {
   $lastPiece,
   $logicalText,
   $ownerOfRunPiece,
+  $pieces,
   $wrapSelectionInTypedMarkNode,
   COMMENT_MARK_TYPE,
   NBSP,
@@ -275,10 +276,12 @@ describe("undoing the deletion of an annotated verse", () => {
 
     await act(async () => {
       mounted.lexical.update(() => {
-        $getRoot()
+        // The whole verse: the hold cuts its glyph into pieces, and deleting a verse removes
+        // every one of them.
+        const verse = $getRoot()
           .getAllTextNodes()
-          .find((node) => $isVerseNode(node))
-          ?.remove();
+          .find((node) => $isVerseNode(node));
+        if (verse) $pieces(verse).forEach((piece) => piece.remove());
       });
       await Promise.resolve();
     });
