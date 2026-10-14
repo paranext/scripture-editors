@@ -53,6 +53,7 @@ import {
   $isElementNode,
   $isTextNode,
   COPY_COMMAND,
+  LexicalEditor,
   LexicalNode,
   TextNode,
 } from "lexical";
@@ -309,13 +310,23 @@ function composedOps(ops: readonly DeltaOp[]): DeltaOp[] {
   return delta.ops;
 }
 
+/** `value` as JSON with every object's keys sorted, so two ops that differ only in key order
+ * read the same. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    inner && typeof inner === "object" && !Array.isArray(inner)
+      ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : inner,
+  );
+}
+
 /** The net change of a run's `onUsjChange` ops: every commit's ops composed in order. */
 function composedChange(commits: readonly (readonly DeltaOp[])[]): string {
   const net = commits.reduce(
     (acc, commit) => acc.compose(new Delta(composedOps(commit))),
     new Delta(),
   );
-  return JSON.stringify(net.ops);
+  return canonicalJson(net.ops);
 }
 
 /** What the transparency comparison reads of a run, each as one string. */
@@ -335,7 +346,7 @@ function observables(run: CaseRun): { [name: string]: string } {
 
 /** `getEditorDelta`'s ops composed ({@link composedOps}), as one string. */
 function composedDelta(editor: LexicalEditor): string {
-  return JSON.stringify(composedOps(getEditorDelta(editor.getEditorState()).ops));
+  return canonicalJson(composedOps(getEditorDelta(editor.getEditorState()).ops));
 }
 
 /** Whether `keystroke` acts on a node as a whole rather than at an offset in it. A content node a
