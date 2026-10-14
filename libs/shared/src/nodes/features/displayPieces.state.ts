@@ -30,12 +30,24 @@ import {
   LexicalNode,
   NODE_STATE_KEY,
   NodeKey,
+  PointType,
   SerializedLexicalNode,
 } from "lexical";
 
 /** `true` on every piece of a carrier but its first. */
 export const displayPieceContinuationState = createState("displayPieceContinuation", {
   parse: (value: unknown): true | undefined => (value === true ? true : undefined),
+});
+
+/**
+ * On every piece of a carrier in `token` mode that is cut into pieces (an atomic note shell glyph
+ * or caller, an unmatched closer): the whole carrier's text. A token is atomic — Lexical removes
+ * or replaces it whole — but each piece is a token of its own, so a deletion takes one piece only.
+ * A piece whose recorded text is no longer its carrier's tells the piece transform a piece was
+ * taken, and it removes the rest ({@link $removeBrokenTokenPieces}).
+ */
+export const displayPieceTokenTextState = createState("displayPieceTokenText", {
+  parse: (value: unknown): string | undefined => (typeof value === "string" ? value : undefined),
 });
 
 /** Whether `node` continues the carrier whose piece precedes it. */
@@ -216,10 +228,28 @@ export function coalesceAnnotations(annotations: DisplayAnnotation[]): DisplayAn
   return sortedAnnotations(out);
 }
 
+/** The offset of the collapsed caret when it is a text point in `node`; otherwise `undefined`. */
+export function $caretOffsetIn(node: LexicalNode): number | undefined {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+  const { anchor } = selection;
+  return anchor.type === "text" && anchor.key === node.getKey() ? anchor.offset : undefined;
+}
+
+/**
+ * The holds stored on text node `node`, measured against its current text. When the caret is in
+ * `node`, a change since the holds were measured is read as the user's edit at the caret
+ * ({@link remapAnnotations}), so a byte typed beside an identical held one stays outside the hold.
+ * Read-only.
+ */
+export function $textHolds(node: LexicalNode): DisplayAnnotation[] {
+  const held: DisplayAnnotations | undefined = $getState(node, displayAnnotationsState);
+  return held ? remapAnnotations(held, node.getTextContent(), $caretOffsetIn(node)) : [];
+}
+
 /** The holds stored on text piece `piece`, measured against its current text. */
 function $pieceHolds(piece: LexicalNode): DisplayAnnotation[] {
-  const held: DisplayAnnotations | undefined = $getState(piece, displayAnnotationsState);
-  return held ? remapAnnotations(held, piece.getTextContent()) : [];
+  return $textHolds(piece);
 }
 
 /** Move the selection's text points on `from` to `to`, `shift` bytes further in. */
@@ -230,6 +260,38 @@ function $movePoints(from: LexicalNode, to: LexicalNode, shift: number): void {
   for (const point of [selection.anchor, selection.focus])
     if (point.type === "text" && point.key === fromKey)
       point.set(to.getKey(), point.offset + shift, "text");
+}
+
+/**
+ * Run `mutate`, which cuts or joins the pieces right after child `index` of `parent`, and keep
+ * every selection point on `parent` itself (a caret at a boundary between its children) at the
+ * same place: a point after the changed run is moved by `delta` (the children `mutate` adds, or
+ * minus the ones it removes); a point between two joined pieces (`index` < offset ≤
+ * `index - delta`, for a join) is put on the joined node where the boundary was, through `inside`.
+ * Lexical moves no such point when a piece is inserted without restoring the selection, and on a
+ * removal it may re-anchor one onto a neighbouring text, so the points are restated here. Mutating.
+ */
+export function $keepParentPoints(
+  parent: ElementNode | null,
+  index: number,
+  delta: number,
+  mutate: () => void,
+  inside?: (offset: number) => [LexicalNode, number],
+): void {
+  const selection = $getSelection();
+  const kept: { point: PointType; offset: number }[] = [];
+  if (parent && $isRangeSelection(selection))
+    for (const point of [selection.anchor, selection.focus])
+      if (point.type === "element" && point.key === parent.getKey() && point.offset > index)
+        kept.push({ point, offset: point.offset });
+  mutate();
+  if (!parent) return;
+  for (const { point, offset } of kept) {
+    if (delta < 0 && offset <= index - delta && inside) {
+      const [node, at] = inside(offset);
+      point.set(node.getKey(), at, "text");
+    } else point.set(parent.getKey(), offset + delta, "element");
+  }
 }
 
 /**
@@ -261,8 +323,65 @@ export function $joinPieces<T extends LexicalNode>(pieces: readonly T[]): T {
     displayAnnotationsState,
     joined.length > 0 ? { basis: text, annotations: joined } : undefined,
   );
-  for (const piece of rest) piece.remove();
+  // The joined node is not the chain it recorded; the piece transform records the chain anew.
+  $setState(writable, displayPieceTokenTextState, undefined);
+  // A boundary between pieces is a place in the joined text: the end of the piece before it.
+  const ends: number[] = [];
+  let end = 0;
+  for (const piece of pieces.slice(0, -1)) ends.push((end += piece.getTextContentSize()));
+  const index = writable.getIndexWithinParent();
+  $keepParentPoints(
+    writable.getParent(),
+    index,
+    -rest.length,
+    () => {
+      for (const piece of rest) piece.remove();
+    },
+    (offset) => [writable, ends[offset - index - 1]],
+  );
   return writable;
+}
+
+/**
+ * When `node` is a piece of a `token` carrier that has lost a piece (its recorded whole text,
+ * {@link displayPieceTokenTextState}, is no longer its carrier's), remove every piece that
+ * recorded it, as Lexical removes a token whole: what is left is what removing the unsplit token
+ * leaves. A node that recorded nothing (text typed in place of a piece) stays. Returns whether
+ * anything was removed. Mutating.
+ */
+export function $removeBrokenTokenPieces(node: LexicalNode): boolean {
+  if (!$isTextNode(node)) return false;
+  // Cheap for plain text: only a recorded piece, or a node a continuation follows (text typed in
+  // place of a head piece), can be part of a broken token.
+  if (
+    $getState(node, displayPieceTokenTextState) === undefined &&
+    !$isPieceContinuation(node.getNextSibling())
+  )
+    return false;
+  const pieces = $pieces(node);
+  const text = $logicalText(node);
+  const broken = pieces.filter((piece) => {
+    const recorded = $getState(piece, displayPieceTokenTextState);
+    return recorded !== undefined && recorded !== text;
+  });
+  if (broken.length === 0) return false;
+  for (const piece of broken) piece.remove();
+  return true;
+}
+
+/**
+ * Record `node`'s carrier's whole text on each of its pieces when it is a `token` carrier cut into
+ * pieces, and clear the record from a carrier in one piece ({@link displayPieceTokenTextState}).
+ * Writes only what changes. Mutating.
+ */
+export function $recordTokenPieces(node: LexicalNode): void {
+  const pieces = $pieces(node);
+  const head = pieces[0];
+  const text =
+    pieces.length > 1 && $isTextNode(head) && head.isToken() ? $logicalText(head) : undefined;
+  for (const piece of pieces)
+    if ($getState(piece, displayPieceTokenTextState) !== text)
+      $setState(piece, displayPieceTokenTextState, text);
 }
 
 /**
@@ -281,8 +400,24 @@ export function $mergePieces<T extends LexicalNode>(node: T): T {
  */
 export function $setLogicalText<T extends LexicalNode>(node: T, text: string): T {
   const head = $mergePieces(node);
-  if ($isTextNode(head) && head.getTextContent() !== text) return head.setTextContent(text);
-  return head;
+  if (!$isTextNode(head) || head.getTextContent() === text) return head;
+  // The holds as the text stands before the rewrite (a user's edit since they were measured read
+  // at the caret), then re-measured across the rewrite here rather than by the basis transform:
+  // the rewrite is not the user's edit, so a caret left in the carrier must not be read as where
+  // it happened.
+  const before = head.getTextContent();
+  const held = $getState(head, displayAnnotationsState) ? $textHolds(head) : undefined;
+  const writable = head.setTextContent(text);
+  if (!held) return writable;
+  const annotations = remapAnnotations({ basis: before, annotations: held }, text).sort(
+    (a, b) => a.start - b.start || a.end - b.end,
+  );
+  $setState(
+    writable,
+    displayAnnotationsState,
+    annotations.length > 0 ? { basis: text, annotations } : undefined,
+  );
+  return writable;
 }
 
 /** A serialized node's text, when it is a serialized text node. */
@@ -319,7 +454,10 @@ function joinSerializedChain(pieces: readonly SerializedLexicalNode[]): Serializ
   }
   const state: { [key: string]: unknown } = Object.fromEntries(
     Object.entries(head[NODE_STATE_KEY] ?? {}).filter(
-      ([key]) => key !== displayPieceContinuationState.key && key !== displayAnnotationsState.key,
+      ([key]) =>
+        key !== displayPieceContinuationState.key &&
+        key !== displayPieceTokenTextState.key &&
+        key !== displayAnnotationsState.key,
     ),
   );
   const joined = coalesceAnnotations(annotations);

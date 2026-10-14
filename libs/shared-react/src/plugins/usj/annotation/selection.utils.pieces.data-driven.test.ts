@@ -22,8 +22,17 @@ import {
   $getRangeFromUsjSelection,
   $getUsjSelectionFromEditor,
 } from "./selection.utils";
-import { $getNodeByKey, $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
 import {
+  $createTextNode,
+  $getNodeByKey,
+  $getRoot,
+  $isElementNode,
+  LexicalEditor,
+  LexicalNode,
+} from "lexical";
+import {
+  $createParaNode,
+  $createVerseNode,
   $isDisplayAnnotationCarrier,
   $isPieceContinuation,
   $logicalChildren,
@@ -32,6 +41,7 @@ import {
   $pieceAtLogicalOffset,
   $pieceHead,
   $pieces,
+  getVisibleOpenMarkerText,
   TypedMarkNode,
 } from "shared";
 import { lexicalEditable2Sa, usjLocations2Sa } from "test-data";
@@ -146,6 +156,37 @@ describe("data-driven: usj2Sa locations through carriers cut into pieces", () =>
           if (actual !== expected)
             mismatches.push(`${JSON.stringify(text)}@${offset}: ${actual} ≠ ${expected}`);
       }
+    expect(mismatches).toEqual([]);
+  });
+});
+
+describe("a carrier whose text spells no display bytes, cut into pieces", () => {
+  it("reports every caret in it as the uncut carrier does", async () => {
+    // A space typed in front of a verse's glyph: the verse's text no longer spells `\v 2 `, so its
+    // carets report the places beside it, not display bytes.
+    const { editor } = createBasicTestEnvironment([TypedMarkNode, ...usjReactNodes]);
+    let key = "";
+    editor.update(
+      () => {
+        const verse = $createVerseNode("2", ` ${getVisibleOpenMarkerText("v", "2")}`);
+        key = verse.getKey();
+        $getRoot().append(
+          $createParaNode().append($createTextNode("a"), verse, $createTextNode("b")),
+        );
+      },
+      { discrete: true },
+    );
+    const text = editor.getEditorState().read(() => $logicalText($getNodeByKey(key) ?? $getRoot()));
+    const offsets = Array.from({ length: text.length + 1 }, (_, offset) => offset);
+    const uncut = offsets.map((offset) => readCarrierLocations(editor, key, offset)[0]);
+
+    expect(await cutEveryCarrierIntoPieces(editor)).toBeGreaterThan(0);
+    expect(countContinuationPieces(editor)).toBeGreaterThan(0);
+    const mismatches = offsets.flatMap((offset) =>
+      readCarrierLocations(editor, key, offset)
+        .filter((actual) => actual !== uncut[offset])
+        .map((actual) => `@${offset}: ${actual} ≠ ${uncut[offset]}`),
+    );
     expect(mismatches).toEqual([]);
   });
 });

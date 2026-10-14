@@ -9,7 +9,11 @@ import { $createParaNode } from "../usj/ParaNode.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
 import { $createVerseNode } from "../usj/VerseNode.js";
 import { textTypeState } from "../collab/delta.state.js";
-import { displayAnnotationsState, mapRangeThroughEdit } from "./displayAnnotations.state.js";
+import {
+  displayAnnotationsState,
+  mapRangeThroughEdit,
+  remapAnnotations,
+} from "./displayAnnotations.state.js";
 import {
   $addDisplayAnnotation,
   $carrierHoldableRange,
@@ -61,6 +65,161 @@ describe("mapRangeThroughEdit", () => {
     ['|lemma="a" strong="G5485" lemma="b"', '|lemma="b" strong="G5485"', 19, 24, [19, 24]],
   ])("%j -> %j maps [%i, %i) to %j", (before, after, start, end, expected) => {
     expect(mapRangeThroughEdit(before, after, start, end)).toEqual(expected);
+  });
+});
+
+describe("remapAnnotations", () => {
+  type Range = [number, number];
+  /** `holds` on `before`, re-measured against `after` with the caret (if any) at `caret`. */
+  function remap(before: string, holds: Range[], after: string, caret?: number): Range[] {
+    const annotations = holds.map(([start, end], index) => ({
+      type: "t",
+      id: `${index}`,
+      start,
+      end,
+    }));
+    return remapAnnotations({ basis: before, annotations }, after, caret).map((a) => [
+      a.start,
+      a.end,
+    ]);
+  }
+
+  describe("with the caret right after the edit (a user edit)", () => {
+    it.each<[string, string, Range[], string, number, Range[]]>([
+      [
+        "a byte typed before an identical held byte stays outside it",
+        "\\",
+        [[0, 1]],
+        "\\\\",
+        1,
+        [[1, 2]],
+      ],
+      [
+        "a byte typed after an identical held byte stays outside it",
+        "\\",
+        [[0, 1]],
+        "\\\\",
+        2,
+        [[0, 1]],
+      ],
+      ["a byte typed at a glyph's end, beside its last byte", "\\p", [[0, 2]], "\\pp", 3, [[0, 2]]],
+      [
+        "a byte typed in front of a glyph, beside its first byte",
+        "pp",
+        [[0, 1]],
+        "ppp",
+        1,
+        [[1, 2]],
+      ],
+      [
+        "a byte typed strictly inside a held range grows it",
+        "\\pp",
+        [[0, 3]],
+        "\\ppp",
+        2,
+        [[0, 4]],
+      ],
+      [
+        "Backspace on a held byte beside an identical unheld one",
+        "\\pp",
+        [[0, 2]],
+        "\\p",
+        1,
+        [[0, 1]],
+      ],
+      [
+        "Delete on an unheld byte beside an identical held one",
+        "\\pp",
+        [[0, 2]],
+        "\\p",
+        2,
+        [[0, 2]],
+      ],
+      ["Backspace on the first of two identical held bytes", "\\\\v", [[1, 3]], "\\v", 0, [[0, 2]]],
+      [
+        "several bytes typed before an identical held run",
+        `\\v${NBSP}`,
+        [[0, 2]],
+        `\\v\\v${NBSP}`,
+        2,
+        [[2, 4]],
+      ],
+    ])("%s", (_, before, holds, after, caret, expected) => {
+      expect(remap(before, holds, after, caret)).toEqual(expected);
+    });
+
+    it("falls back to the alignment when the caret does not name the edit", () => {
+      // The caret is not where an insertion of the extra byte would leave it.
+      expect(remap("\\p", [[0, 2]], "\\pp", 0)).toEqual([[0, 2]]);
+      // A replacement, not a pure insertion or deletion.
+      expect(remap("\\pq", [[0, 2]], "\\px", 3)).toEqual([[0, 2]]);
+    });
+  });
+
+  describe("with no caret (a rewrite)", () => {
+    it.each<[string, string, Range[], string, Range[]]>([
+      [
+        "keeps a held byte over an identical unheld one it replaces",
+        "\\\\v 1 ",
+        [[1, 5]],
+        "\\v 1 ",
+        [[0, 4]],
+      ],
+      [
+        "keeps every hold's bytes when the unheld duplicate goes",
+        "\\\\v 1",
+        [
+          [1, 2],
+          [1, 5],
+        ],
+        "\\v 1",
+        [
+          [0, 1],
+          [0, 4],
+        ],
+      ],
+      [
+        "moves no hold onto a byte typed beside it",
+        "\\v 1",
+        [
+          [0, 4],
+          [0, 1],
+        ],
+        "\\\\v 1",
+        [
+          [1, 5],
+          [1, 2],
+        ],
+      ],
+      ["reads a byte typed at a glyph's end as outside it", "\\p", [[0, 2]], "\\pp", [[0, 2]]],
+      [
+        "drops the unheld duplicate of a held byte, not the held one",
+        "\\pp",
+        [[1, 2]],
+        "\\p",
+        [[1, 2]],
+      ],
+      ["keeps the bytes a re-spelling shares", "\\v 12", [[3, 5]], "\\va 12", [[4, 6]]],
+      ["a held range respelled entirely is dropped", "\\v 1", [[3, 4]], "\\v 2", []],
+      [
+        "a hold whose bytes are deleted is dropped, not moved onto identical bytes elsewhere",
+        "12 12a",
+        [[3, 6]],
+        "12",
+        [],
+      ],
+      [
+        "a deletion either of two identical runs could be takes the unheld one",
+        "ab-ab",
+        [[3, 5]],
+        "ab",
+        [[0, 2]],
+      ],
+      ["a replacement is matched by bytes alone, holds aside", "12a 12", [[0, 3]], "12b", [[0, 2]]],
+      ["a tie no hold decides goes to the earliest match", "a", [[0, 1]], "aa", [[0, 1]]],
+    ])("%s", (_, before, holds, after, expected) => {
+      expect(remap(before, holds, after)).toEqual(expected);
+    });
   });
 });
 
