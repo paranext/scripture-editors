@@ -79,7 +79,7 @@ import {
   $isSplicedImpliedPara,
 } from "./logicalParent.utils.js";
 import { closingMarkerText, openingMarkerText, typedCallerRange } from "./markerText.utils.js";
-import { collapsedSpaceRunRanges } from "./spaceRuns.utils.js";
+import { collapsedSpaceRunRanges, endsInSpaceRun } from "./spaceRuns.utils.js";
 import {
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   IMMUTABLE_NOTE_CALLER_NODE_TYPE,
@@ -1265,13 +1265,16 @@ function $getLogicalItemShapes(parent: ElementNode): LogicalItemShape[] {
 }
 
 /**
- * Measures a coalesced text run in the exporter's coordinates. Each node is measured on its own,
- * as the exporter converts each node's text before joining it to its neighbors, so a space run
- * split across an annotation's edge does not collapse.
+ * Measures a coalesced text run in the exporter's coordinates. Each node is converted on its own,
+ * as the exporter converts each node's text before joining it to its neighbors, and a space run
+ * that crosses from one node into the next (split by an annotation's edge) collapses as one run,
+ * as the exporter collapses it where it joins the two.
  */
 function $measureTextItem(nodes: TextNode[], collapsesSpaceRuns: boolean): LogicalTextItem {
   const segments: LogicalTextSegment[] = [];
   let length = 0;
+  // Whether the text kept so far ends in a display space, so a run this node starts continues it.
+  let continuesRun = false;
   for (const node of nodes) {
     // A char span's separator NBSP is a prefix of its first content text and the exporter strips
     // it before anything else, so it occupies no USJ offset and never belongs to a space run —
@@ -1281,11 +1284,17 @@ function $measureTextItem(nodes: TextNode[], collapsesSpaceRuns: boolean): Logic
     const typed = $typedNoteCallerRange(node);
     const lead = typed ? typed.start : $charSeparatorPrefixLength(node);
     const keptEnd = typed ? typed.end : node.getTextContentSize();
-    const collapsed: (readonly [number, number])[] = collapsesSpaceRuns
-      ? collapsedSpaceRunRanges(node.getTextContent().slice(lead, keptEnd)).map(
-          ([start, end]) => [start + lead, end + lead] as const,
-        )
-      : [];
+    const kept = node.getTextContent().slice(lead, keptEnd);
+    const runRanges = collapsesSpaceRuns ? collapsedSpaceRunRanges(kept, continuesRun) : [];
+    if (collapsesSpaceRuns) {
+      let keptText = kept;
+      for (const [start, end] of [...runRanges].reverse())
+        keptText = keptText.slice(0, start) + keptText.slice(end);
+      if (keptText) continuesRun = endsInSpaceRun(keptText);
+    }
+    const collapsed: (readonly [number, number])[] = runRanges.map(
+      ([start, end]) => [start + lead, end + lead] as const,
+    );
     if (keptEnd < node.getTextContentSize()) collapsed.push([keptEnd, node.getTextContentSize()]);
     const segmentLength =
       node.getTextContentSize() -

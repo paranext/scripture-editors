@@ -34,9 +34,12 @@ import {
   $isAttributeRunNode,
   $isBookNode,
   $isChapterNode,
+  $getLogicalParent,
   $isCharNode,
   $isNoteNode,
+  $isPlainTextNode,
   $isUnknownNode,
+  $textRunThroughMarks,
   GENERATOR_NOTE_CALLER,
   MARKER_TRAILING_SPACE_TEXT_TYPE,
   NBSP,
@@ -59,37 +62,66 @@ import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
 import { $isNoteCallerSlot } from "./noteCallerSlot.utils";
 import { paratext9HtmlToUsfm } from "./paratext9Clipboard.utils";
 
-/** Spaces in runs display as NBSP so they are visible while typing. */
-export function $displayWhitespaceTransform(node: TextNode): void {
-  const text = node.getTextContent();
-  if (!text.includes(" ")) return;
+/**
+ * Whether `node` is display text whose spaces belong to a space run: content text, not an
+ * attribute run, a marker's trailing separator, an expanded note's caller slot, or a chapter's or
+ * an unknown block's own text.
+ */
+function $isSpaceRunText(node: LexicalNode): node is TextNode {
+  if (!$isPlainTextNode(node)) return false;
   const textType = $getState(node, textTypeState);
-  if (textType === "attribute" || textType === MARKER_TRAILING_SPACE_TEXT_TYPE) return;
+  if (textType === "attribute" || textType === MARKER_TRAILING_SPACE_TEXT_TYPE) return false;
   // An expanded note's caller slot is a structural space, the caller, and a structural NBSP -
   // with the caller deleted, just the two separators, which this mapping would turn into two
   // NBSPs and the caller's own transform straight back, forever. The caller's transform owns it.
-  if ($isNoteCallerSlot(node)) return;
+  if ($isNoteCallerSlot(node)) return false;
   for (let parent = node.getParent(); parent; parent = parent.getParent()) {
     // Note content and the `\id` line's content both display space runs as NBSP like any other
     // content — the USJ->editor adaptor already display-maps their text on load, so mapping while
     // typing is what keeps the live shape and the loaded one the same. A chapter's own text is its
     // `\c N` glyph rather than content, and unknown blocks keep literal text (degradation
     // property), so neither has a content run to map.
-    if ($isChapterNode(parent) || $isUnknownNode(parent)) return;
+    if ($isChapterNode(parent) || $isUnknownNode(parent)) return false;
   }
-  // A char span's text children carry a STRUCTURAL leading NBSP (the glyph separator the
-  // adaptor/materializer glues onto content). It is not a display space-run member, so it must
-  // not act as left context for the mapping: a genuine content-leading single space stays plain
-  // in the clean-loaded shape, and mapping it here would make edited (dirty) nodes emit
-  // different collab ops than clean-loaded ones for identical content.
-  const hasStructuralPrefix = text.startsWith(NBSP) && $isCharNode(node.getParent());
+  return true;
+}
+
+/**
+ * Spaces in runs display as NBSP so they are visible while typing.
+ *
+ * A run is read across the text nodes an annotation mark cuts one text into
+ * (`$textRunThroughMarks`): a mark is presentation, so a space typed beside a marked space makes
+ * the same run, displayed the same way, as with no mark there. Every node of the run that the
+ * mapping changes is rewritten, not only the one typed in.
+ */
+export function $displayWhitespaceTransform(node: TextNode): void {
+  if (!$isSpaceRunText(node)) return;
+  const run = $textRunThroughMarks(node, $isSpaceRunText);
+  const texts = run.map((member) => member.getTextContent());
+  if (!texts.some((text) => text.includes(" "))) return;
+  const text = texts.join("");
+  // A char span's text right after its opening glyph carries a STRUCTURAL leading NBSP (the glyph
+  // separator the adaptor/materializer glues onto content). It is not a display space-run member,
+  // so it must not act as left context for the mapping: a genuine content-leading single space
+  // stays plain in the clean-loaded shape, and mapping it here would make edited (dirty) nodes
+  // emit different collab ops than clean-loaded ones for identical content.
+  const first = run[0];
+  const hasStructuralPrefix = text.startsWith(NBSP) && $isCharNode($getLogicalParent(first));
   const body = hasStructuralPrefix ? text.slice(1) : text;
   const mapped =
     (hasStructuralPrefix ? NBSP : "") +
     body
       .replace(/ (?=[ \u00A0])/g, NBSP) // space followed by space/NBSP
       .replace(/(?<=\u00A0) /g, NBSP); // space preceded by NBSP
-  if (mapped !== text) node.setTextContent(mapped); // length-preserving: caret stays valid
+  if (mapped === text) return;
+  // Length-preserving, so each node keeps its length and a caret in any of them stays valid.
+  let start = 0;
+  run.forEach((member, index) => {
+    const end = start + texts[index].length;
+    const memberText = mapped.slice(start, end);
+    if (memberText !== texts[index]) member.setTextContent(memberText);
+    start = end;
+  });
 }
 
 /**

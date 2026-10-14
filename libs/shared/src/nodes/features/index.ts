@@ -4,6 +4,7 @@ export * from "./displayPieces.state.js";
 export * from "./decoratorPaint.js";
 export * from "./MarkerNode.js";
 export * from "./TypedMarkNode.js";
+export * from "./throughMarks.utils.js";
 export * from "./typedMarkWrap.utils.js";
 export * from "./ImmutableTypedTextNode.js";
 export * from "./ImmutableUnmatchedNode.js";
