@@ -1407,9 +1407,9 @@ describe("Editor Node Utilities", () => {
       });
     });
 
-    it("measures each text node on its own, as serialization does", () => {
-      // A run split across an annotation's edge is two single spaces to the exporter, which
-      // collapses each node's text before joining it with its neighbors.
+    it("collapses a run an annotation's edge cuts as one run, as serialization does", () => {
+      // A mark is presentation only: `a~~b` cut between its two spaces is still one run of two to
+      // the exporter, which drops the second space where the two texts join.
       let marked: TextNode;
       const { editor } = createBasicTestEnvironment(nodes, () => {
         marked = $createTextNode(`${NBSP}b`);
@@ -1425,8 +1425,32 @@ describe("Editor Node Utilities", () => {
         const [item] = $getLogicalContentItems($getRoot().getFirstChildOrThrow(), true);
         if (item?.type !== "text") throw new Error("Expected a text item");
 
-        expect(item.length).toBe(4);
-        expect($getLogicalTextLocation(marked, 1, true)?.offset).toBe(3);
+        expect(item.length).toBe("a b".length);
+        expect($getLogicalTextLocation(marked, 0, true)?.offset).toBe(2);
+        expect($getLogicalTextLocation(marked, 1, true)?.offset).toBe(2);
+        expect($getLogicalTextLocation(marked, 2, true)?.offset).toBe(3);
+      });
+    });
+
+    it("carries a run through a text that is nothing but spaces", () => {
+      let last: TextNode;
+      const { editor } = createBasicTestEnvironment(nodes, () => {
+        last = $createTextNode(`${NBSP}b`);
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createTextNode(`a${NBSP}`),
+            $createTypedMarkNode({ t: ["1"] }).append($createTextNode(NBSP)),
+            last,
+          ),
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        const [item] = $getLogicalContentItems($getRoot().getFirstChildOrThrow(), true);
+        if (item?.type !== "text") throw new Error("Expected a text item");
+
+        expect(item.length).toBe("a b".length);
+        expect($getLogicalTextLocation(last, 2, true)?.offset).toBe(3);
       });
     });
 
