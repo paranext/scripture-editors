@@ -52,7 +52,6 @@ import {
   $logicalText,
   $pieces,
   $setLogicalText,
-  $lastPiece,
 } from "shared";
 import { showParaMarkerPrefix } from "shared-react";
 
