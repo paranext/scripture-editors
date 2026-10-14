@@ -43,6 +43,7 @@ import { mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $getNodeByKey,
+  $getRoot,
   $hasUpdateTag,
   $getSelection,
   $getState,
@@ -86,6 +87,7 @@ import {
   $syncAndPendDisplayRun,
   AttributeRunNode,
   ANNOTATION_CHANGE_TAG,
+  ANNOTATION_MARKS_TAG,
   ChapterNode,
   CharNode,
   APP_PLACED_CARET_COMMAND,
@@ -211,16 +213,52 @@ const MAX_SETTLE_CASCADE_DEPTH = 8;
  */
 export const IDLE_SETTLE_DELAY_MS = 1000;
 
+/** The tags of an update that means only to set or clear annotations. */
+const ANNOTATION_TAGS = [ANNOTATION_CHANGE_TAG, ANNOTATION_MARKS_TAG];
+
+/**
+ * Each editor state's document text — every byte, read through marks and pieces — as the engine's
+ * passes first read it while that state was the one an update started from.
+ */
+const documentTextByState = new WeakMap<EditorState, string>();
+
+/**
+ * Whether an update carrying `tags` only set or cleared annotations: it carries an annotation tag
+ * AND the document's bytes are what they were before it (`before`, the text of the state it
+ * started from; `undefined` when no pass read it, which an update that edits text never leaves,
+ * since every text edit runs the engine's passes). The tag alone is not enough: Lexical runs an
+ * update requested inside another one in the same commit, with the tags of both, so a keystroke
+ * batched with an annotation commits under the annotation's tag. Bytes, not dirty nodes, because
+ * a mark wrap and a piece cut dirty nodes whose bytes they leave alone.
+ */
+function isAnnotationOnly(
+  tags: ReadonlySet<string>,
+  before: string | undefined,
+  readAfter: () => string,
+): boolean {
+  return (
+    ANNOTATION_TAGS.some((tag) => tags.has(tag)) && (before === undefined || readAfter() === before)
+  );
+}
+
 /**
  * Whether the engine's per-node passes sit out the active update: an IME composition still in
- * progress, or an update that only sets or clears annotations. An annotation edits no byte, but
- * wrapping content in a mark splits its text node, and cutting a display byte carrier into pieces
- * inserts siblings — both dirty nodes, and their neighbours, that nobody edited. A pass that read
- * that dirtiness as an edit would pend bytes the user never touched, and the next caret move would
- * settle them. Call inside an update.
+ * progress, or an update that only sets or clears annotations ({@link isAnnotationOnly}). An
+ * annotation edits no byte, but wrapping content in a mark splits its text node, and cutting a
+ * display byte carrier into pieces inserts siblings — both dirty nodes, and their neighbours, that
+ * nobody edited. A pass that read that dirtiness as an edit would pend bytes the user never
+ * touched, and the next caret move would settle them. Call inside an update.
  */
 function $skipsEnginePass(editor: LexicalEditor): boolean {
-  return editor.isComposing() || $hasUpdateTag(ANNOTATION_CHANGE_TAG);
+  if (editor.isComposing()) return true;
+  if (!ANNOTATION_TAGS.some((tag) => $hasUpdateTag(tag))) return false;
+  const previous = editor.getEditorState();
+  let before = documentTextByState.get(previous);
+  if (before === undefined) {
+    before = previous.read(() => $getRoot().getTextContent());
+    documentTextByState.set(previous, before);
+  }
+  return $getRoot().getTextContent() === before;
 }
 
 /**
@@ -306,7 +344,9 @@ function registerDestroyedOwnerPend(editor: LexicalEditor, context: MarkerEditCo
       payload.updateTags.has(HISTORIC_TAG) ||
       // Nodes an annotation change removes (a piece joined back, a text node a mark wrap merged)
       // hand their bytes to a neighbour: nothing was deleted.
-      payload.updateTags.has(ANNOTATION_CHANGE_TAG) ||
+      isAnnotationOnly(payload.updateTags, documentTextByState.get(payload.prevEditorState), () =>
+        editor.getEditorState().read(() => $getRoot().getTextContent()),
+      ) ||
       getApplyingUpdateSource(editor) === "remote"
     )
       return;
@@ -1302,7 +1342,7 @@ export function MarkerEditPlugin({
         },
         COMMAND_PRIORITY_LOW,
       ),
-      editor.registerUpdateListener(({ editorState, tags }) => {
+      editor.registerUpdateListener(({ editorState, prevEditorState, tags }) => {
         const isAppPlacedMove = caretPlacedByApp || tags.has(CURSOR_CHANGE_TAG);
         caretPlacedByApp = false;
         context.splitExpected.current = false;
@@ -1367,7 +1407,11 @@ export function MarkerEditPlugin({
           if (anchorKey !== undefined) lastAnchorKey = anchorKey;
           return;
         }
-        if (tags.has(ANNOTATION_CHANGE_TAG)) {
+        if (
+          isAnnotationOnly(tags, documentTextByState.get(prevEditorState), () =>
+            editorState.read(() => $getRoot().getTextContent()),
+          )
+        ) {
           // Setting or clearing an annotation is no caret move and no edit, so it neither arms the
           // idle clock nor departs anything. A mark wrap can re-key the node the caret is in, so
           // the anchor is still brought current.
