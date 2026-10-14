@@ -2,6 +2,7 @@
 
 import { closingMarkerText, openingMarkerText } from "../usj/markerText.utils.js";
 import { $logicalText, $mergePieces, $setLogicalText } from "./displayPieces.state.js";
+import { $isTypedMarkNode } from "./TypedMarkNode.js";
 import {
   $applyNodeReplacement,
   EditorConfig,
@@ -156,6 +157,18 @@ export class MarkerNode extends TextNode {
       dom.classList.add(this.__markerSyntax);
     }
     return isRecreated;
+  }
+
+  /**
+   * A glyph right after an annotation mark refuses text typed at its front. A mark is
+   * presentation and takes no text after it, so Lexical reads a caret at the end of the mark's
+   * content onto this glyph's start; text typed there is the content's, as it is with no mark
+   * there (where the caret rests at the end of the content text), so it goes into a text of its own
+   * before the glyph rather than into the glyph's bytes. Anywhere else a glyph takes text at its
+   * front as any text does.
+   */
+  override canInsertTextBefore(): boolean {
+    return !$isTypedMarkNode(this.getPreviousSibling());
   }
 
   override exportJSON(): SerializedMarkerNode {
