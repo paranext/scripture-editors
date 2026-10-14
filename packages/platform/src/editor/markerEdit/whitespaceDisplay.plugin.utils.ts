@@ -41,6 +41,7 @@ import {
   MARKER_TRAILING_SPACE_TEXT_TYPE,
   NBSP,
   textTypeState,
+  $logicalText,
 } from "shared";
 import {
   $hasCopyableSelection,
@@ -672,7 +673,8 @@ export function $handlePasteForStandardView(
  * closing marker) has nothing in the source USFM to reproduce and must contribute nothing.
  */
 function $isNoteInternalDisplaySeparator(node: TextNode): boolean {
-  if (node.getTextContent() !== NBSP) return false;
+  // Read whole: a lone NBSP piece an annotation cut off a note's caller is part of the caller.
+  if ($logicalText(node) !== NBSP) return false;
   const parent = node.getParent();
   if (!$isNoteNode(parent)) return false;
   return !$isImmutableNoteCallerNode(node.getPreviousSibling());

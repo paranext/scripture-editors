@@ -37,9 +37,11 @@ import {
   expectMismatchesListed,
   ExpectedFailures,
   keystrokesFor,
+  OracleKeystroke,
   oracleRows,
   outsideNotes,
   pendingOracleView,
+  PositionReport,
   readExpectedFailures,
   runKeystrokeCase,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
@@ -58,11 +60,13 @@ import {
   $carrierHoldableRange,
   $isDisplayAnnotationCarrier,
   $isMarkerTrailingSeparator,
+  $logicalText,
   NBSP,
   TypedMarkOnRemove,
   ZWSP,
 } from "shared";
-import { AnnotationRange, getEditorDelta, ViewOptions } from "shared-react";
+import { AnnotationRange, DeltaOp, getEditorDelta, ViewOptions } from "shared-react";
+import Delta from "quill-delta";
 import { writeFileSync } from "node:fs";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
@@ -103,7 +107,7 @@ function $isContentText(node: LexicalNode): node is TextNode {
  * paragraph, the ranges listed in the module comment, addressed as the host addresses them
  * (`UsjDocumentLocation`s).
  */
-function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
+export function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
   const leaves = $paragraphLeaves();
   const plan: PlannedAnnotation[] = [];
   let next = 0;
@@ -120,6 +124,17 @@ function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
     if (!$isDisplayAnnotationCarrier(leaf)) return;
     const before = leaves.slice(0, index).reverse().find($isContentText);
     const after = leaves.slice(index + 1).find($isContentText);
+    // A crossing starts or ends on a content byte that is not whitespace, never on the
+    // whitespace beside the carrier: a mark whose edge falls on a space splits the space run it is
+    // part of, which the editor's per-node whitespace rules (display mapping, the collapse on
+    // save) then no longer see as one run — a limit of marks over content, not of the display
+    // bytes under test. Carriers with no such byte beside them get no crossing on that side.
+    const beforeText = before?.getTextContent() ?? "";
+    const beforeStart = beforeText.trimEnd().length - 1;
+    const afterText = after?.getTextContent() ?? "";
+    const afterEnd = afterText.length - afterText.trimStart().length;
+    const canCrossBefore = before !== undefined && beforeStart >= 0;
+    const canCrossAfter = after !== undefined && afterEnd < afterText.length;
     if ($isTextNode(leaf)) {
       const text = leaf.getTextContent();
       const [low, high] = $carrierHoldableRange(leaf);
@@ -132,19 +147,19 @@ function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
       }
       if (high - low >= 3)
         add("inner", loc(low + 1, false), loc(high - 2, true), text.slice(low + 1, high - 1));
-      if (before)
+      if (canCrossBefore && before)
         add(
           "into",
-          $byteLoc(before, before.getTextContentSize() - 1, false, view),
+          $byteLoc(before, beforeStart, false, view),
           loc(low, true),
-          `${before.getTextContent().slice(-1)}…${text.slice(low, low + 1)}`,
+          `${beforeText.slice(beforeStart)}…${text.slice(low, low + 1)}`,
         );
-      if (after)
+      if (canCrossAfter && after)
         add(
           "outof",
           loc(high - 1, false),
-          $byteLoc(after, 0, true, view),
-          `${text.slice(high - 1, high)}…${after.getTextContent().slice(0, 1)}`,
+          $byteLoc(after, afterEnd, true, view),
+          `${text.slice(high - 1, high)}…${afterText.slice(0, afterEnd + 1)}`,
         );
       return;
     }
@@ -153,15 +168,20 @@ function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
     const end = $byteLoc(leaf, -1, true, view);
     const shown = `[${leaf.getType()}]`;
     add("whole", start, end, shown);
-    if (before)
+    if (canCrossBefore && before)
       add(
         "into",
-        $byteLoc(before, before.getTextContentSize() - 1, false, view),
+        $byteLoc(before, beforeStart, false, view),
         end,
-        `${before.getTextContent().slice(-1)}…${shown}`,
+        `${beforeText.slice(beforeStart)}…${shown}`,
       );
-    if (after)
-      add("outof", start, $byteLoc(after, 0, true, view), `${shown}…${after.getTextContent()[0]}`);
+    if (canCrossAfter && after)
+      add(
+        "outof",
+        start,
+        $byteLoc(after, afterEnd, true, view),
+        `${shown}…${afterText.slice(0, afterEnd + 1)}`,
+      );
   });
   return plan;
 }
@@ -195,7 +215,7 @@ async function applyAnnotations(
 }
 
 /** A caret position in the edited paragraph's editable texts, by the bytes before it. */
-interface GlobalSite {
+export interface GlobalSite {
   at: number;
   /** Whether the plain site was the start of its node, its end, or strictly inside it. */
   edge: "start" | "end" | "inside";
@@ -207,7 +227,7 @@ function $textsOf(shell: boolean): TextNode[] {
 }
 
 /** The plain run's site, restated by document bytes so the annotated tree can find it. */
-function $globalSite(index: number, offset: number, shell: boolean): GlobalSite {
+export function $globalSite(index: number, offset: number, shell: boolean): GlobalSite {
   const texts = $textsOf(shell);
   const node = texts[index];
   const at =
@@ -221,7 +241,7 @@ function $globalSite(index: number, offset: number, shell: boolean): GlobalSite 
  * A start or end site keeps its edge; a site inside a node that the tree now cuts at that byte
  * is both the end of the piece before the cut and the start of the piece after it.
  */
-function $spellings(site: GlobalSite): CaseSite[] {
+export function $spellings(site: GlobalSite): CaseSite[] {
   const texts = $textsOf(site.shell);
   const out: CaseSite[] = [];
   let start = 0;
@@ -242,20 +262,86 @@ function edgeOf({ node, offset }: CaseSite): "start" | "end" | "inside" {
   return offset === 0 ? "start" : offset === node.getTextContentSize() ? "end" : "inside";
 }
 
+/**
+ * The locations each document position reports, as one sorted set per position: a carrier cut
+ * into pieces spells a boundary position twice (the end of one piece, the start of the next), and
+ * both spellings report the same places, so the raw per-caret list is longer, not different.
+ */
+function positionSets(reports: readonly PositionReport[]): string {
+  const byPosition = new Map<number, Set<string>>();
+  for (const { position, location } of reports) {
+    let set = byPosition.get(position);
+    if (!set) byPosition.set(position, (set = new Set()));
+    set.add(location ?? "");
+  }
+  return JSON.stringify(
+    [...byPosition].sort(([a], [b]) => a - b).map(([position, set]) => [position, [...set].sort()]),
+  );
+}
+
+/**
+ * `ops` as a `Delta` pushes them: every run of adjacent inserts that share attributes joined,
+ * recursively through an embed's own `contents.ops`. The host composes ops, and a mark over
+ * content has always split one text into several nodes, each sending its own insert.
+ */
+function composedOps(ops: readonly DeltaOp[]): DeltaOp[] {
+  const delta = new Delta();
+  for (const op of ops) {
+    const copy: DeltaOp = { ...op };
+    const insert: unknown = copy.insert;
+    if (insert && typeof insert === "object" && "note" in insert) {
+      const note: unknown = insert.note;
+      if (note && typeof note === "object" && "contents" in note) {
+        const contents: unknown = note.contents;
+        if (
+          contents &&
+          typeof contents === "object" &&
+          "ops" in contents &&
+          Array.isArray(contents.ops)
+        )
+          copy.insert = {
+            note: { ...note, contents: { ...contents, ops: composedOps(contents.ops) } },
+          };
+      }
+    }
+    delta.push(copy);
+  }
+  return delta.ops;
+}
+
+/** The net change of a run's `onUsjChange` ops: every commit's ops composed in order. */
+function composedChange(commits: readonly (readonly DeltaOp[])[]): string {
+  const net = commits.reduce(
+    (acc, commit) => acc.compose(new Delta(composedOps(commit))),
+    new Delta(),
+  );
+  return JSON.stringify(net.ops);
+}
+
 /** What the transparency comparison reads of a run, each as one string. */
 function observables(run: CaseRun): { [name: string]: string } {
   return {
-    applied: String(run.applied),
     pending: JSON.stringify(run.pending),
     settled: JSON.stringify(run.settled),
     "pending text": run.before.text,
     "pending screen": run.before.screen ?? "",
-    "pending positions": JSON.stringify(run.before.reported),
+    "pending positions": positionSets(run.before.reported),
     "pending round trip": JSON.stringify(run.before.roundTrip),
     "settled screen": run.shownLines ?? "",
     "settled text": run.after.text,
-    "settled positions": JSON.stringify(run.after.reported),
+    "settled positions": positionSets(run.after.reported),
   };
+}
+
+/** `getEditorDelta`'s ops composed ({@link composedOps}), as one string. */
+function composedDelta(editor: LexicalEditor): string {
+  return JSON.stringify(composedOps(getEditorDelta(editor.getEditorState()).ops));
+}
+
+/** Whether `keystroke` acts on a node as a whole rather than at an offset in it. A content node a
+ * mark splits is not the node the plain run edits, so such a case compares nothing there. */
+function isNodeShaped(keystroke: OracleKeystroke): boolean {
+  return keystroke.name.includes("over the whole text");
 }
 
 /** The `text/plain` a copy of the whole edited paragraph puts on the clipboard. */
@@ -356,45 +442,61 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
             );
             if (!plain) continue;
             const expected = observables(plain);
-            expected.delta = JSON.stringify(getEditorDelta(plainMounted.lexical.getEditorState()));
-            expected.ops = JSON.stringify(plainMounted.ops);
+            expected.delta = composedDelta(plainMounted.lexical);
+            expected.ops = composedChange(plainMounted.ops);
             expected.copy = await copiedBytes(plainMounted);
+            const plainNodeText = plainMounted.lexical
+              .getEditorState()
+              .read(() => $spellings(site)[0]?.node.getTextContent());
             plainMounted.unmount();
-            // Every spelling the annotated tree gives the site, each run on a fresh mount.
-            let spellings: CaseSite[] | undefined;
-            for (let which = 0; spellings === undefined || which < spellings.length; which += 1) {
+            let anySpellingApplied = false;
+            // Every spelling the annotated tree gives the site, each run on a fresh mount (a
+            // node belongs to the editor it was read from, so each mount reads its own).
+            let spellingCount: number | undefined;
+            for (let which = 0; spellingCount === undefined || which < spellingCount; which += 1) {
               const mounted = await mountInView(usj, viewOptions);
               const applied = await applyAnnotations(mounted, plan);
               heldAnnotations = Math.max(heldAnnotations, applied.ids.length);
               // Setting an annotation emits no change, so the ops streams start equal here.
               const opsBefore = mounted.ops.length;
-              spellings ??= mounted.lexical.getEditorState().read(() => $spellings(site));
-              const spelling = spellings[which];
+              const { spelling, count, differentNode } = mounted.lexical
+                .getEditorState()
+                .read(() => {
+                  const all = $spellings(site);
+                  const found = all[which];
+                  return {
+                    spelling: found && { edge: edgeOf(found) },
+                    count: all.length,
+                    differentNode: found ? $logicalText(found.node) !== plainNodeText : false,
+                  };
+                });
+              spellingCount = count;
               if (!spelling) {
                 mounted.unmount();
                 break;
+              }
+              const label = `${plain.label}${count > 1 ? ` [spelling ${which + 1}/${count}]` : ""}`;
+              // A node-shaped keystroke on a content node a crossing mark has cut is not the
+              // plain run's keystroke: the plain node and this one hold different bytes.
+              if (isNodeShaped(keystroke) && differentNode) {
+                mounted.unmount();
+                continue;
               }
               const annotated = await runKeystrokeCase(
                 mounted,
                 view,
                 () => {
                   const found = $spellings(site)[which];
-                  return found && edgeOf(found) === edgeOf(spelling) ? found : undefined;
+                  return found && edgeOf(found) === spelling.edge ? found : undefined;
                 },
                 keystroke,
               );
-              const label = `${plain.label}${spellings.length > 1 ? ` [spelling ${which + 1}/${spellings.length}]` : ""}`;
-              if (!annotated) {
-                mismatches.set(
-                  `${label} [applied]`,
-                  `${label} [applied]\n    plain applied, annotated did not`,
-                );
-                continue;
-              }
+              if (!annotated) continue;
+              anySpellingApplied = true;
               comparedCases += 1;
               const actual = observables(annotated);
-              actual.delta = JSON.stringify(getEditorDelta(mounted.lexical.getEditorState()));
-              actual.ops = JSON.stringify(mounted.ops.slice(opsBefore));
+              actual.delta = composedDelta(mounted.lexical);
+              actual.ops = composedChange(mounted.ops.slice(opsBefore));
               actual.copy = await copiedBytes(mounted);
               for (const [name, value] of Object.entries(expected))
                 if (actual[name] !== value)
@@ -416,6 +518,11 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
                   mismatches.set(`${key} [annotated]`, `${detail}\n    (annotated run)`);
               mounted.unmount();
             }
+            if (!anySpellingApplied && !isNodeShaped(keystroke))
+              mismatches.set(
+                `${plain.label} [applied]`,
+                `${plain.label} [applied]\n    plain applied, no annotated spelling did`,
+              );
           }
         expect(comparedCases, "no case was compared").toBeGreaterThan(0);
         expect(heldAnnotations, "no annotation held a byte").toBeGreaterThan(0);
