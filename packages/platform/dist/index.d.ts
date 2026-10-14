@@ -467,12 +467,21 @@ export declare interface EditorRef {
    * own rule still binds: do not issue one while a palette session is open. A host whose pre-save
    * debounce can fire with the surface open must hold that save itself.
    *
-   * IF A RESUME IS MISSED, the editor heals itself: when it regains focus while still suspended,
-   * the suspension is lifted and a warning is logged. The editor only gets focus back once the
-   * surface is gone, so this does nothing on a normal close (it runs just after the host's own
-   * resume) and recovers a missed one at the next focus. It needs no timer, so a surface left open
-   * for a long time is unaffected. Until that focus arrives, held marker text stays literal on
-   * screen; nothing is lost, since `getUsj` settles on read.
+   * IF A RESUME IS MISSED, the editor heals itself — but on sustained focus, not on focus alone.
+   * When the editor holds DOM focus continuously for about a second while still suspended, the
+   * suspension is lifted, held edits settle, and a warning is logged. Anything that suggests the
+   * surface is still alive cancels it: another blur (a replacement surface taking focus back), or
+   * the host resuming.
+   *
+   * Focus alone is not evidence, because a host's own commit path returns focus to the editor
+   * mid-session, on purpose, to apply what the user chose — the marker palette's
+   * commit-and-reopen does exactly that. What separates the two is how long the focus lasts: a
+   * legitimate one is brief. Lifting late is also harmless, since a suspension only protects a
+   * surface that HOLDS focus and a settle can only steal focus that is somewhere else.
+   *
+   * A surface left open for a long time is unaffected: the timer only runs while the editor itself
+   * has focus. Until a lift, held marker text stays literal on screen; nothing is lost, since
+   * `getUsj` settles on read.
    *
    * The flag is per-`Editor` and RESETS WHEN THE EDITOR REMOUNTS — including when
    * `ViewOptions.verseLayout` changes, which rebuilds the whole editor. A host that is suspended

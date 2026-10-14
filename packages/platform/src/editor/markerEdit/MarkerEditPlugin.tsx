@@ -199,6 +199,16 @@ function $settleWithoutOwnUndoEntry<T>(settle: () => T): T {
 const MAX_SETTLE_CASCADE_DEPTH = 8;
 
 /**
+ * How long the editor must hold focus, with a suspension in force, before it concludes the host
+ * will never resume and lifts the suspension itself.
+ *
+ * Long enough to outlast a legitimate mid-session focus: a host commit returns focus to the editor
+ * to apply an edit, and a replacement surface retakes it within roughly 70-230ms. Short enough that
+ * a genuinely stuck suspension heals while the user is still in the text that it froze.
+ */
+export const SUSPENSION_LIFT_DELAY_MS = 1000;
+
+/**
  * How long the user must be IDLE — no keystroke, click, or other non-suppressed commit — before
  * the engine settles pending marker edits in place, INCLUDING the node the caret is parked in.
  * This is the second settle clock (Paratext 9's debounced-reformat delay); the caret-departure
@@ -731,8 +741,17 @@ export function MarkerEditPlugin({
      * alone would lift the suspension there, before the surface had ever taken focus.
      */
     let blurredWhileSuspended = false;
-    /** One warning per suspension, so a commit-heavy session cannot flood the log. */
-    let suspensionWarned = false;
+    /**
+     * The focus-then-wait lift, while one is pending. A mid-session focus is BRIEF — the host's
+     * commit returns focus to apply an edit, and either a replacement surface retakes focus within
+     * a few hundred milliseconds or the host resumes — so a focus that is still held when this
+     * fires is the signature of a suspension nobody is going to release.
+     */
+    let pendingSuspensionLift: ReturnType<typeof setTimeout> | undefined;
+    const cancelPendingSuspensionLift = () => {
+      if (pendingSuspensionLift !== undefined) clearTimeout(pendingSuspensionLift);
+      pendingSuspensionLift = undefined;
+    };
     const applyMarkerSettleSuspended = (suspended: boolean) => {
       // Idempotent: a host driving this from an effect can redispatch the value already in
       // force, and the resume branch below RE-ARMS the idle clock. Without this, a redundant
@@ -742,7 +761,9 @@ export function MarkerEditPlugin({
       if (markerSettleSuspendedRef.current === suspended) return;
       markerSettleSuspendedRef.current = suspended;
       blurredWhileSuspended = false;
-      suspensionWarned = false;
+      // Cancel on resume, and on a fresh suspend: either way the host is driving it deliberately,
+      // so a lift armed by an earlier focus no longer describes anything.
+      cancelPendingSuspensionLift();
       if (suspended) {
         // Cancel a timer that is ALREADY ticking. This is the part a delay change cannot do:
         // `markerSettleDelayMs: -1` is only read the next time something arms the clock, so a
@@ -791,7 +812,8 @@ export function MarkerEditPlugin({
       idleSettleTimer = undefined;
       if (disposed || context.pendingKeys.size === 0) return;
       // Suspended by the host (a marker palette is open): never arm. The suspend command cancels
-      // anything already ticking and the resume re-arms a full delay — see the handler itself.
+      // anything already ticking, and the resume settles what was held before re-arming — see
+      // the handler itself.
       if (markerSettleSuspendedRef.current) return;
       const delay = markerSettleDelayRef.current ?? IDLE_SETTLE_DELAY_MS;
       // A negative delay (canonically -1) turns the idle clock OFF: the timer armed above was
@@ -1240,33 +1262,48 @@ export function MarkerEditPlugin({
           // `getUsj` settles on read — but typed marker text stays literal on screen until the
           // user presses Enter, and no timer would ever heal it.
           //
-          // The editor regaining focus does NOT reliably mean the surface is gone, so this does
-          // not lift the suspension — it only reports it.
+          // FOCUS-THEN-WAIT. The editor regaining focus does not by itself mean the surface is
+          // gone: a host's own commit path returns focus to the editor MID-SESSION, on purpose, to
+          // apply what the user chose — the marker palette's commit-and-reopen commits the typed
+          // marker and opens a replacement palette in one keystroke. Lifting on that focus settles
+          // the document under a palette about to reappear, which is the failure the suspension
+          // exists to prevent (measured: `\` `nd` `\` reopened the palette and an immediate lift
+          // closed it).
           //
-          // The appealing version of this safeguard lifts here: the editor usually gets focus back
-          // only once the surface was dismissed, the user clicked into the text, or something else
-          // took focus. But a host's own commit path returns focus to the editor MID-SESSION, on
-          // purpose, to apply what the user chose — the marker palette's commit-and-reopen does
-          // exactly that, committing the typed marker and opening a replacement palette in one
-          // keystroke. Lifting there settles the document under a palette that is about to
-          // reappear, which is the failure the suspension exists to prevent. Measured in the real
-          // app: `\` `nd` `\` reopened the palette and this safeguard closed it.
+          // What separates the two is not the flag but HOW LONG the focus lasts. A legitimate
+          // mid-session focus is brief: a replacement surface retakes focus within a few hundred
+          // milliseconds (cancelling via BLUR), or the host resumes (cancelling via the suspension
+          // change). A missed resume leaves the editor focused and nothing cancels anything.
           //
-          // Deferring the lift does not separate the two either: the host re-asserts a suspension
-          // that is ALREADY in force, which is a no-op here, so nothing distinguishes "re-suspended
-          // for the replacement" from "never released".
+          // Lifting late is also safe, which is what makes the guess acceptable: a suspension only
+          // protects a surface that HOLDS focus, and a settle can only steal focus that is
+          // somewhere else. If the editor has held focus for this whole window, a settle has
+          // nothing to take. The one case left is a surface that takes longer than the window to
+          // grab focus; its blur settle then runs, which is the behaviour before any of this and
+          // is now confined to that case.
           //
-          // So the editor cannot tell, from focus alone, whether a host still needs its suspension.
-          // It warns instead, which turns an invisible stuck flag into one line in the log, and
-          // leaves the correctness of the pairing where it belongs — with the host.
-          if (markerSettleSuspendedRef.current && blurredWhileSuspended && !suspensionWarned) {
-            suspensionWarned = true;
-            context.logger?.warn(
-              "[MarkerEdit] the editor regained focus while marker settling was suspended. That " +
-                "is expected mid-session (a host commit returns focus to apply an edit), but if " +
-                "no surface is open the host has missed a resume and automatic settling is off " +
-                "until it calls setMarkerSettleSuspended(false).",
-            );
+          // Deliberately NOT extended to KEY_DOWN or CLICK. Some keys do reach the editor while a
+          // session is open, before the surface has focus — modifier and lock keys (Shift on the
+          // way to `+`), `Dead`, and IME keys — and lifting on those would release the suspension
+          // just before the blur settle it exists to hold.
+          if (markerSettleSuspendedRef.current && blurredWhileSuspended) {
+            cancelPendingSuspensionLift();
+            pendingSuspensionLift = setTimeout(() => {
+              pendingSuspensionLift = undefined;
+              if (disposed || !markerSettleSuspendedRef.current) return;
+              // Still focused after the whole window: nothing took focus back and the host never
+              // resumed. Re-checked rather than assumed, because the window is long enough for
+              // focus to have moved without a BLUR this handler saw.
+              const root = editor.getRootElement();
+              const active = root?.ownerDocument.activeElement;
+              if (!root || !active || !(root === active || root.contains(active))) return;
+              context.logger?.warn(
+                "[MarkerEdit] marker settling has been suspended while the editor held focus for " +
+                  `${SUSPENSION_LIFT_DELAY_MS}ms, so the suspension was lifted and held edits ` +
+                  "settled. The host did not resume on one of its close paths.",
+              );
+              applyMarkerSettleSuspended(false);
+            }, SUSPENSION_LIFT_DELAY_MS);
           }
           // Focus is a notification other plugins legitimately observe; never claim it.
           return false;
@@ -1323,8 +1360,11 @@ export function MarkerEditPlugin({
           if (markerSettleSuspendedRef.current) {
             // The surface has taken focus. Recorded so the FOCUS_COMMAND safeguard can tell a
             // genuine return of focus from Lexical refocusing the root before the surface ever
-            // had it.
+            // had it — and it cancels a pending lift, because something taking focus is exactly
+            // the evidence that the suspension is still doing its job. The `\` reopen lands here,
+            // the replacement palette taking focus within a few hundred milliseconds.
             blurredWhileSuspended = true;
+            cancelPendingSuspensionLift();
             return false;
           }
           // While the app-placed-caret window is armed (a scrRef-sync yank or an undo/redo
@@ -1509,6 +1549,7 @@ export function MarkerEditPlugin({
       disposed = true;
       if (idleSettleTimer !== undefined) clearTimeout(idleSettleTimer);
       idleSettleTimer = undefined;
+      cancelPendingSuspensionLift();
       unregisterPended();
       unregister();
       contextRef.current = undefined;

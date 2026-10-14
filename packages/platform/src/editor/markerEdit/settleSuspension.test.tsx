@@ -25,6 +25,7 @@ import {
   COMMIT_PENDING_MARKERS_COMMAND,
   IDLE_SETTLE_DELAY_MS,
   SET_MARKER_SETTLE_SUSPENDED_COMMAND,
+  SUSPENSION_LIFT_DELAY_MS,
 } from "./MarkerEditPlugin";
 import {
   $appendCharPara,
@@ -114,6 +115,14 @@ async function flush(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
   });
+}
+
+/**
+ * Puts real DOM focus on the editor root. The focus-then-wait safeguard re-checks it when the
+ * window expires, so a test that only dispatches FOCUS_COMMAND would never reach the lift.
+ */
+function focusEditorRoot(editor: LexicalEditor): void {
+  editor.getRootElement()?.focus();
 }
 
 async function advance(ms: number): Promise<void> {
@@ -380,13 +389,9 @@ describe("setMarkerSettleSuspended", () => {
     expectPending(editor, parts);
   });
 
-  it("WARNS but does not lift when the editor regains focus while suspended", async () => {
-    // The safeguard cannot lift: a host's own commit path returns focus to the editor mid-session
-    // to apply what the user chose, and the marker palette's commit-and-reopen does exactly that.
-    // Lifting there settles the document under a palette about to reappear — measured in the real
-    // app as `\\` `nd` `\\` reopening the palette and the safeguard closing it. Deferring does not
-    // separate the cases either, because the host re-asserts a suspension already in force, which
-    // is a no-op. So it reports and leaves the pairing to the host.
+  it("lifts and settles when the editor keeps focus for the whole window — a missed resume", async () => {
+    // Focus-then-wait. A mid-session focus is brief: a replacement surface retakes focus or the
+    // host resumes. A focus still held when the window expires is a suspension nobody will release.
     const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
     let para!: ParaNode;
     let marker!: MarkerNode;
@@ -395,6 +400,7 @@ describe("setMarkerSettleSuspended", () => {
       logger,
     );
     await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+    focusEditorRoot(editor);
 
     await setSuspended(editor, true);
     await act(async () => {
@@ -403,15 +409,56 @@ describe("setMarkerSettleSuspended", () => {
     await act(async () => {
       editor.dispatchCommand(FOCUS_COMMAND, undefined as never);
     });
-    await advance(IDLE_SETTLE_DELAY_MS * 2);
+
+    // Nothing cancels it: no surface takes focus back, no resume arrives.
+    await advance(SUSPENSION_LIFT_DELAY_MS + 50);
+    // The lift resumes, and the resume's settle runs on its own microtask and update.
+    await flush();
+    await advance(1);
     await flush();
 
-    // Still HELD — nothing settled, so nothing could steal focus from a palette still open.
-    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1"));
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("regained focus"));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("held focus"));
+    // Settling is RUNNING again, which is the point of the lift. Asserted through the idle clock
+    // rather than through the resume's own settle: with focus in the editor the caret's own node
+    // is excepted from that one, exactly as the blur and departure clocks except it.
+    await advance(IDLE_SETTLE_DELAY_MS * 2);
+    await flush();
+    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s2"));
   });
 
-  it("warns only once per suspension, so a commit-heavy session cannot flood the log", async () => {
+  it("does NOT lift when a surface takes focus back inside the window — the `\\` reopen", async () => {
+    // The commit-and-reopen case this safeguard previously broke: the host returns focus to the
+    // editor to apply the typed marker, then the replacement palette takes it ~70-230ms later.
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    let para!: ParaNode;
+    let marker!: MarkerNode;
+    const { editor } = await testEnvironmentWithDisplaySyncs(
+      () => ({ para, marker } = $appendHeadingPara()),
+      logger,
+    );
+    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+    focusEditorRoot(editor);
+
+    await setSuspended(editor, true);
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, undefined as never);
+    });
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, undefined as never);
+    });
+    await advance(200);
+    // The replacement palette takes focus.
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, undefined as never);
+    });
+    await advance(SUSPENSION_LIFT_DELAY_MS * 2);
+    await flush();
+
+    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1"));
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("does NOT lift or warn when the host resumes inside the window — a normal close", async () => {
     const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
     let marker!: MarkerNode;
     const { editor } = await testEnvironmentWithDisplaySyncs(
@@ -419,17 +466,51 @@ describe("setMarkerSettleSuspended", () => {
       logger,
     );
     await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+    focusEditorRoot(editor);
 
     await setSuspended(editor, true);
     await act(async () => {
       editor.dispatchCommand(BLUR_COMMAND, undefined as never);
     });
-    for (let i = 0; i < 3; i++)
-      await act(async () => {
-        editor.dispatchCommand(FOCUS_COMMAND, undefined as never);
-      });
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, undefined as never);
+    });
+    await advance(100);
+    await setSuspended(editor, false);
+    await advance(SUSPENSION_LIFT_DELAY_MS * 2);
+    await flush();
 
-    expect(logger.warn).toHaveBeenCalledOnce();
+    // The resume settled it, not the safeguard — and nothing was reported as a host mistake.
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("does NOT lift when the editor does not actually hold DOM focus", async () => {
+    // FOCUS_COMMAND is a notification, not proof: Lexical dispatches it in situations where the
+    // root is not the active element, and the window is long enough for focus to move afterwards
+    // without a BLUR this handler saw. The lift re-checks real focus when it fires rather than
+    // trusting the command that armed it.
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    let para!: ParaNode;
+    let marker!: MarkerNode;
+    const { editor } = await testEnvironmentWithDisplaySyncs(
+      () => ({ para, marker } = $appendHeadingPara()),
+      logger,
+    );
+    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+    // Deliberately NO focusEditorRoot: the root never becomes the active element.
+
+    await setSuspended(editor, true);
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, undefined as never);
+    });
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, undefined as never);
+    });
+    await advance(SUSPENSION_LIFT_DELAY_MS + 50);
+    await flush();
+
+    editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1"));
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it("does not lift the suspension on a focus that arrives before the surface took it", async () => {
