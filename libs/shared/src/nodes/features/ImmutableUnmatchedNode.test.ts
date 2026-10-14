@@ -82,7 +82,7 @@ describe("ImmutableUnmatchedNode cut into pieces", () => {
     let whole: HTMLElement[] = [];
     let tailOnly: HTMLElement[] = [];
     editor.read(() => {
-      const exported = $pieces(closer).map((piece) => piece.exportDOM(editor).element);
+      const exported = $pieces(closer).map((piece) => piece.exportDOM().element);
       whole = exported.filter((element): element is HTMLElement => element instanceof HTMLElement);
       tailOnly = whole.slice(1);
       // Bytes read outside the editor are the carrier's own, piece after piece.
