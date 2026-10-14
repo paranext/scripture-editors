@@ -3106,8 +3106,8 @@ function $appendNoteShellFragment(
   for (; index < children.length; index++) {
     const child = children[index];
     if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
-    // A glyph an annotation cut into pieces is spelled once, as one glyph.
-    if ($isPieceContinuation(child)) continue;
+    // Each piece of a glyph an annotation cuts spells its own bytes, so a hold on any of them has
+    // bytes to carry and the bytes after the shell keep their offsets.
     $appendNodesFragment([child], out, getMarkerFn, viewOptions);
   }
   const caller = children[index];

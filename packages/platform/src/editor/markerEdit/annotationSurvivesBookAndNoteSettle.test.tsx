@@ -471,6 +471,53 @@ describe("an annotation in a note closed at a typed closer", () => {
     expect(onRemove).not.toHaveBeenCalled();
   });
 
+  describe("on the marker name inside the note's opening glyph", () => {
+    /** The `f` of `\f `, so the glyph is cut into `\`, `f` and ` `. */
+    const fRange: AnnotationRange = {
+      start: { jsonPath: propertyPath([2, 1], "marker"), propertyOffset: 0 },
+      end: { jsonPath: propertyPath([2, 1], "marker"), propertyOffset: 1 },
+    };
+
+    it("holds the `f` and leaves the content after the shell where it was", async () => {
+      const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+      const mounted = await mountStandardViewEditor(unclosedNoteUsj);
+      await annotate(mounted, fRange, "1", onRemove);
+      await annotate(mounted, noteWordRange("alpha"), "in", onRemove);
+      expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["f"] });
+
+      await typeCloserAfterGap(mounted);
+      settleByBlurAndCommit(mounted);
+
+      expect(paraDocument(mounted.ref.current?.getUsj())).toEqual(closedPara);
+      expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["f"] });
+      expect(annotatedText(mounted.lexical)).toEqual({ in: ["alpha"] });
+      expect(onRemove).not.toHaveBeenCalled();
+    });
+
+    it("leaves a comment after the shell on its word in getUsj() while the close is pending", async () => {
+      const mounted = await mountStandardViewEditor(unclosedNoteUsj);
+      await annotate(mounted, fRange, "1");
+      await comment(mounted.lexical, "alpha", "k0");
+
+      await pendCloserAfterGap(mounted);
+      const pending = mounted.ref.current?.getUsj();
+      settleByBlurAndCommit(mounted);
+      const settled = mounted.ref.current?.getUsj();
+
+      expect(paraDocument(settled)).toEqual(closedPara);
+      const para = settled?.content[2];
+      const noteObject = typeof para === "object" ? para.content?.[1] : undefined;
+      const ft = typeof noteObject === "object" ? noteObject.content?.[0] : undefined;
+      expect(typeof ft === "object" ? ft.content : undefined).toEqual([
+        ...commented("alpha", "k0"),
+        " gap",
+      ]);
+      expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["f"] });
+      expect(annotatedText(mounted.lexical)).toEqual({ k0: ["alpha"] });
+      expect(pending).toEqual(settled);
+    });
+  });
+
   it("stays on both sides of the closer when notes stay expanded", async () => {
     const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
     const mounted = await mountExpandedNoteEditor(unclosedNoteUsj);
