@@ -28,9 +28,13 @@ import {
 import {
   $isPieceContinuation,
   $joinPieces,
+  $keepParentPoints,
   $logicalText,
   $pieceHead,
   $pieces,
+  $recordTokenPieces,
+  $removeBrokenTokenPieces,
+  $textHolds,
   displayPieceContinuationState,
   pieceHoldKeys,
 } from "./displayPieces.state.js";
@@ -161,6 +165,7 @@ function $carrierText(node: LexicalNode): string {
 
 /** `node`'s holds as stored, measured against its current storage text ({@link $storageText}). */
 function $storedAnnotations(node: LexicalNode): DisplayAnnotation[] {
+  if (!$isDecoratorNode(node)) return $textHolds(node);
   const held = $getState(node, displayAnnotationsState);
   return held ? remapAnnotations(held, $storageText(node)) : [];
 }
@@ -380,7 +385,7 @@ export function $displayAnnotationIdsAt(node: LexicalNode, type: string, offset:
 export function $syncDisplayAnnotationBasis(node: LexicalNode): void {
   const held = $getState(node, displayAnnotationsState);
   if (!held || held.basis === $storageText(node)) return;
-  $writeAnnotations(node, remapAnnotations(held, $storageText(node)));
+  $writeAnnotations(node, $storedAnnotations(node));
 }
 
 /** Host callbacks for an annotation held on display bytes, which has no mark node to keep them. */
@@ -487,20 +492,22 @@ function $splitPiece(piece: TextNode, cuts: number[]): void {
       if (point.type === "text" && point.key === piece.getKey())
         moved.push({ point, offset: point.offset });
   const parts: TextNode[] = [];
-  let previous: TextNode | undefined;
-  for (let index = 0; index + 1 < bounds.length; index++) {
-    const [start, end] = [bounds[index], bounds[index + 1]];
-    const part = text.slice(start, end);
-    const node = previous ? $copyNode(piece) : piece;
-    const writable = node.setTextContent(part);
-    $setState(writable, displayAnnotationsState, holdsOver(held, text, start, end));
-    if (previous) {
-      $setState(writable, displayPieceContinuationState, true);
-      previous.insertAfter(writable, false);
+  $keepParentPoints(piece.getParent(), piece.getIndexWithinParent(), cuts.length, () => {
+    let previous: TextNode | undefined;
+    for (let index = 0; index + 1 < bounds.length; index++) {
+      const [start, end] = [bounds[index], bounds[index + 1]];
+      const part = text.slice(start, end);
+      const node = previous ? $copyNode(piece) : piece;
+      const writable = node.setTextContent(part);
+      $setState(writable, displayAnnotationsState, holdsOver(held, text, start, end));
+      if (previous) {
+        $setState(writable, displayPieceContinuationState, true);
+        previous.insertAfter(writable, false);
+      }
+      parts.push(writable);
+      previous = writable;
     }
-    parts.push(writable);
-    previous = writable;
-  }
+  });
   for (const { point, offset } of moved) {
     // Left-biased: an offset on a cut names the end of the part before it.
     let index = bounds.findIndex((bound, i) => i > 0 && offset <= bound) - 1;
@@ -515,6 +522,8 @@ function $splitPiece(piece: TextNode, cuts: number[]): void {
  */
 export function $normalizeCarrierPieces(node: LexicalNode): void {
   if (!$isTextNode(node) || !node.isAttached()) return;
+  // A token carrier that lost a piece goes whole, as the unsplit token would have.
+  if ($removeBrokenTokenPieces(node)) return;
   // A continuation whose head is gone (deleted, or the piece was moved) is a carrier of its own.
   if ($isPieceContinuation(node) && $pieceHead(node).is(node))
     $setState(node, displayPieceContinuationState, undefined);
@@ -546,6 +555,7 @@ export function $normalizeCarrierPieces(node: LexicalNode): void {
     if (same) current = $joinPieces([current, next]);
     else current = next;
   }
+  $recordTokenPieces(current);
 }
 
 /**

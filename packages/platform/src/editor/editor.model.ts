@@ -367,8 +367,9 @@ export interface EditorRef {
    * DOM ranges over everything an annotation paints: each `<mark>` that holds its text, each
    * display byte it holds (only the part it holds), and the whitespace painted between them — in
    * document order, empty when nothing paints it. Measure, scroll to or hit-test an annotation with
-   * these; an element lookup by its `annotationId-<id>` class misses the display bytes painted
-   * with a highlight.
+   * these rather than by its `annotationId-<id>` class alone: a read-only glyph held in part paints
+   * a sub-span of its own, and the whitespace painted between two held bytes is an element of its
+   * own.
    *
    * @remarks **Live**: the ranges are over the editor's current DOM, including marker text the
    *   user is still typing; take them again after the next edit.

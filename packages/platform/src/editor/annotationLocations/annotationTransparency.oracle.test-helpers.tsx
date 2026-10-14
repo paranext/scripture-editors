@@ -360,7 +360,9 @@ function observables(run: CaseRun): { [name: string]: string } {
     "pending text": run.before.text,
     "pending screen": run.before.screen ?? "",
     "pending positions": positionSets(run.before.reported),
-    "pending round trip": JSON.stringify(run.before.roundTrip),
+    // Per document position, as the reports are: a cut inside a carrier is two caret positions at
+    // one document position, and the same failure from both is one failure there.
+    "pending round trip": JSON.stringify([...new Set(run.before.roundTrip)]),
     "settled screen": run.shownLines ?? "",
     "settled text": run.after.text,
     "settled positions": positionSets(run.after.reported),
@@ -370,6 +372,23 @@ function observables(run: CaseRun): { [name: string]: string } {
 /** `getEditorDelta`'s ops composed ({@link composedOps}), as one string. */
 function composedDelta(editor: LexicalEditor): string {
   return canonicalJson(composedOps(getEditorDelta(editor.getEditorState()).ops));
+}
+
+/**
+ * The pending/settled oracle's own checks of `run`, as the mismatch each produced by the check's
+ * key with the case label taken off (both runs' labels spell the same site). The same-place
+ * check needs the whole row's history and is not read here.
+ */
+function invariantResults(
+  run: CaseRun,
+  view: string,
+  loadedOutsideNotes: string,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [key, detail] of caseMismatches(run, view, loadedOutsideNotes, new Map()))
+    if (!key.includes("[same place]"))
+      out.set(key.startsWith(run.label) ? key.slice(run.label.length).trim() : key, detail);
+  return out;
 }
 
 /** Whether `keystroke` acts on a node as a whole rather than at an offset in it. A content node a
@@ -492,6 +511,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
             expected.delta = composedDelta(plainMounted.lexical);
             expected.ops = composedChange(plainMounted.ops);
             expected.copy = await copiedBytes(plainMounted, view);
+            const plainInvariants = invariantResults(plain, view, loadedOutsideNotes);
             const plainNodeText = plainMounted.lexical
               .getEditorState()
               .read(() => $spellings(site)[0]?.node.getTextContent());
@@ -554,15 +574,21 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               const paint = annotatedFailures(mounted, applied, annotated.history);
               if (paint.length > 0)
                 mismatches.set(`${label} [paint]`, `${label} [paint]\n    ${paint.join("\n    ")}`);
-              // The annotated run also keeps the pending/settled oracle's own invariants.
-              for (const [key, detail] of caseMismatches(
-                annotated,
-                view,
-                loadedOutsideNotes,
-                new Map(),
-              ))
-                if (!key.includes("[same place]"))
-                  mismatches.set(`${key} [annotated]`, `${detail}\n    (annotated run)`);
+              // The annotated run keeps the pending/settled oracle's own invariants exactly as
+              // the plain run does: a case that violates one does so identically in both.
+              const annotatedInvariants = invariantResults(annotated, view, loadedOutsideNotes);
+              for (const key of new Set([
+                ...plainInvariants.keys(),
+                ...annotatedInvariants.keys(),
+              ])) {
+                const inPlain = plainInvariants.get(key);
+                const inAnnotated = annotatedInvariants.get(key);
+                if (inPlain === inAnnotated) continue;
+                mismatches.set(
+                  `${label} [invariant] ${key}`,
+                  `${label} [invariant] ${key}\n    plain     ${inPlain ?? "(holds)"}\n    annotated ${inAnnotated ?? "(holds)"}`,
+                );
+              }
               mounted.unmount();
             }
             if (!anySpellingApplied && !isNodeShaped(keystroke))

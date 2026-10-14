@@ -30,6 +30,7 @@ import {
   $pieceHead,
   $pieces,
   $pieceStart,
+  $setLogicalText,
 } from "./displayPieces.state.js";
 import { $createMarkerNode, $isCanonicalMarkerNode, MarkerNode } from "./MarkerNode.js";
 import { TypedMarkNode } from "./TypedMarkNode.js";
@@ -292,6 +293,48 @@ describe("carrier pieces", () => {
     });
   });
 
+  it("keeps a caret at a boundary of the parent on the same child through a cut and a join", () => {
+    const editor = mount();
+    let closer!: MarkerNode;
+    let para!: LexicalNode;
+    editor.update(
+      () => {
+        const span = $span();
+        closer = span.closer;
+        para = span.char;
+        const after = $createMarkerNode("x");
+        span.char.append(after);
+        // The caret at the boundary in front of `after`, set while the closer is still one node.
+        span.char.select(after.getIndexWithinParent(), after.getIndexWithinParent());
+        $addDisplayAnnotation(closer, "check", "a", 2, 3);
+      },
+      { discrete: true },
+    );
+    const $caretChild = () => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !$isElementNode(para)) throw new Error("no caret");
+      expect(selection.anchor.type).toBe("element");
+      expect(selection.anchor.key).toBe(para.getKey());
+      return para.getChildAtIndex(selection.anchor.offset)?.getTextContent();
+    };
+    editor.read(() => {
+      expect(texts($pieces(closer))).toEqual(["\\w", "*"]);
+      expect($caretChild()).toBe("\\x");
+    });
+    editor.update(
+      () => {
+        if (!$isElementNode(para)) throw new Error("no span");
+        para.select(para.getChildrenSize() - 1, para.getChildrenSize() - 1);
+        $removeDisplayAnnotation($pieces(closer)[1], "check", "a");
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      expect($pieces(closer).length).toBe(1);
+      expect($caretChild()).toBe("\\x");
+    });
+  });
+
   it("makes a continuation whose head is gone a carrier of its own", () => {
     const editor = mount();
     let closer!: MarkerNode;
@@ -385,6 +428,167 @@ describe("carrier pieces", () => {
     expect(joined[1]).toBe(serialized.root.children[1]);
     expect(JSON.stringify(serialized)).toBe(before);
     expect(childrenOf(childrenOf(serialized.root.children[0])[0]).length).toBeGreaterThan(4);
+  });
+});
+
+describe("holds through a byte typed beside an identical one", () => {
+  /** `\v 1 ` with its `\` held, so cut into `\` | `v 1 `; the caret at the front of the head. */
+  function $heldBackslashVerse(): LexicalNode {
+    const verse = $createVerseNode("1", getVisibleOpenMarkerText("v", "1"));
+    $getRoot().append($createParaNode().append(verse, $createTextNode("In the")));
+    $addDisplayAnnotation(verse, "check", "a", 0, 1);
+    return verse;
+  }
+
+  function $caretAt(node: LexicalNode, offset: number): void {
+    const selection = $createRangeSelection();
+    selection.anchor.set(node.getKey(), offset, "text");
+    selection.focus.set(node.getKey(), offset, "text");
+    $setSelection(selection);
+  }
+
+  it("leaves the typed byte outside the hold, the way text typed beside a mark is", () => {
+    const editor = mount();
+    let verse!: LexicalNode;
+    editor.update(() => void (verse = $heldBackslashVerse()), { discrete: true });
+    editor.update(
+      () => {
+        $caretAt(verse, 0);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        selection.insertText("\\");
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      expect($logicalText(verse)).toBe(`\\\\v${NBSP}1 `);
+      expect(texts($pieces(verse))).toEqual(["\\", "\\", `v${NBSP}1 `]);
+      expect($pieces(verse).map($holdIds)).toEqual([[], ["a[0,1)"], []]);
+    });
+  });
+
+  it("keeps the hold on its byte when a rewrite then drops the typed duplicate", () => {
+    const editor = mount();
+    let verse!: LexicalNode;
+    editor.update(() => void (verse = $heldBackslashVerse()), { discrete: true });
+    editor.update(
+      () => {
+        $caretAt(verse, 0);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        selection.insertText("\\");
+      },
+      { discrete: true },
+    );
+    editor.update(
+      () => {
+        // The caret is still in the carrier, right after the typed byte; the rewrite is not the
+        // user's edit, so it must not be read as a deletion at the caret.
+        $setLogicalText(verse, `\\v${NBSP}1 `);
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      expect($logicalText(verse)).toBe(`\\v${NBSP}1 `);
+      expect($pieces(verse).map($holdIds)).toEqual([["a[0,1)"], []]);
+    });
+  });
+});
+
+describe("a rewrite in the update a byte was typed in", () => {
+  it("reads the typed byte at the caret before re-measuring across the rewrite", () => {
+    const editor = mount();
+    let run!: TextNode;
+    editor.update(
+      () => {
+        run = $setState($createTextNode("a"), textTypeState, "attribute");
+        $getRoot().append($createParaNode().append(run));
+        $addDisplayAnnotation(run, "check", "a", 0, 1);
+      },
+      { discrete: true },
+    );
+    editor.update(
+      () => {
+        run.select(0, 0);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        selection.insertText("a");
+        $setLogicalText(run, "aab");
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      expect($logicalText(run)).toBe("aab");
+      expect($pieces(run).map($holdIds)).toEqual([[], ["a[0,1)"], []]);
+    });
+  });
+});
+
+describe("a token carrier cut into pieces", () => {
+  /** A para of `a`, a token `\f` glyph cut into `\` | `f` by a hold on its `\`, and `b`. */
+  function $tokenGlyph(): { para: LexicalNode; glyph: MarkerNode } {
+    const glyph = $createMarkerNode("f").setMode("token");
+    const para = $createParaNode().append($createTextNode("a"), glyph, $createTextNode("b"));
+    $getRoot().append(para);
+    $addDisplayAnnotation(glyph, "check", "a", 0, 1);
+    return { para, glyph };
+  }
+
+  function childTexts(para: LexicalNode): string[] {
+    return $isElementNode(para) ? texts(para.getChildren()) : [];
+  }
+
+  it.each([
+    ["its first piece", 0],
+    ["its last piece", 1],
+  ])("goes whole when %s is removed, as the unsplit token does", (_, index) => {
+    const editor = mount();
+    let para!: LexicalNode;
+    let glyph!: MarkerNode;
+    editor.update(() => void ({ para, glyph } = $tokenGlyph()), { discrete: true });
+    editor.read(() => expect(texts($pieces(glyph))).toEqual(["\\", "f"]));
+    editor.update(() => $pieces(glyph)[index].remove(), { discrete: true });
+    // Lexical joins the plain text left on either side, as it does around a removed token.
+    editor.read(() => expect(childTexts(para)).toEqual(["ab"]));
+  });
+
+  it("goes whole when a middle piece is removed, keeping text typed in place of a piece", () => {
+    const editor = mount();
+    let para!: LexicalNode;
+    let caller!: TextNode;
+    editor.update(
+      () => {
+        caller = $createTextNode(` +${NBSP}`).setMode("token");
+        para = $createParaNode().append(caller);
+        $getRoot().append(para);
+        $addDisplayAnnotation(caller, "check", "a", 1, 2);
+      },
+      { discrete: true },
+    );
+    editor.read(() => expect(texts($pieces(caller))).toEqual([" ", "+", NBSP]));
+    editor.update(() => $pieces(caller)[0].replace($createTextNode("x")), { discrete: true });
+    editor.read(() => expect(childTexts(para)).toEqual(["x"]));
+  });
+
+  it("stays whole and cut through a rewrite of its text", () => {
+    const editor = mount();
+    let glyph!: MarkerNode;
+    editor.update(() => void ({ glyph } = $tokenGlyph()), { discrete: true });
+    editor.update(() => void glyph.setMarker("fe"), { discrete: true });
+    editor.read(() => {
+      expect(texts($pieces(glyph))).toEqual(["\\", "fe"]);
+      expect($pieces(glyph).map($holdIds)).toEqual([["a[0,1)"], []]);
+    });
+  });
+
+  it("writes no piece bookkeeping into the joined serialized node", () => {
+    const editor = mount();
+    editor.update(() => void $tokenGlyph(), { discrete: true });
+    const serialized = editor.getEditorState().toJSON();
+    const [para] = joinSerializedPieces(serialized.root.children);
+    const children = "children" in para && Array.isArray(para.children) ? para.children : [];
+    const glyph: SerializedLexicalNode = children[1];
+    expect(Object.keys(glyph[NODE_STATE_KEY] ?? {})).toEqual(["displayAnnotations"]);
   });
 });
 

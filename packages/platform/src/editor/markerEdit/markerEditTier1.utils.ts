@@ -99,6 +99,7 @@ import {
   $pieceAtLogicalOffset,
   $pieceHead,
   $pieces,
+  $previousSiblingThroughMarks,
   $setLogicalText,
   $isTypedMarkNode,
 } from "shared";
@@ -1256,7 +1257,8 @@ export function $moveLeadingSpaceOntoLeadingAttribute(node: TextNode): boolean {
   const text = node.getTextContent();
   const space = /^[ \u00A0]+/.exec(text)?.[0];
   if (!space) return false;
-  const previous = node.getPreviousSibling();
+  // The text an annotation mark holds is the same text right after the glyph.
+  const previous = $previousSiblingThroughMarks(node);
   const isProtectedCaller =
     $isTextNode(previous) && previous.getMode() === "token" && !!$noteOfCallerText(previous);
   if (!$isTextNode(previous) || !($isVerseNode(previous) || isProtectedCaller)) return false;
@@ -1270,12 +1272,13 @@ export function $moveLeadingSpaceOntoLeadingAttribute(node: TextNode): boolean {
     return false;
   const caret = selection.anchor.offset;
   const rest = text.slice(space.length);
-  const end = previous.getTextContentSize();
-  if (previous.getMode() === "token") previous.select(end, end);
-  else {
-    previous.setTextContent(previous.getTextContent() + space);
-    previous.select(end + caret, end + caret);
-  }
+  // A glyph an annotation cut into pieces is one glyph: its whole text, ending at its last piece.
+  const glyphText = $logicalText(previous);
+  const end = glyphText.length;
+  if (previous.getMode() === "token") {
+    const last = $lastPiece(previous);
+    last.select(last.getTextContentSize(), last.getTextContentSize());
+  } else $setLogicalText(previous, glyphText + space).select(end + caret, end + caret);
   if (rest) node.setTextContent(rest);
   else node.remove();
   return true;

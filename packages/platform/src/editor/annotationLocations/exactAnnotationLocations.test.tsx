@@ -1884,17 +1884,20 @@ describe("removal is reported by what holds the annotation now", () => {
     await userDeletesWord(mounted);
 
     // The selection removes the `grace` mark, which reports itself; the `\w` and `|grace`
-    // carriers add nothing while the `In the ` mark holds the annotation.
+    // carriers add nothing while the `In the ` mark holds the annotation. Its space now runs into
+    // the ` of God` after it, and a run of two shows as NBSPs, as in the text with no mark.
     expect(displayAnnotated(mounted.lexical)).toEqual({});
-    expect(mounted.lexical.getEditorState().read($marks)).toEqual(["In the "]);
+    expect(mounted.lexical.getEditorState().read($marks)).toEqual([`In the${NBSP}`]);
     expect(causes(onRemove)).toEqual(["destroyed"]);
 
     await act(async () => {
-      mounted.lexical.update(() => $textContaining("In the ").getParentOrThrow().remove());
+      mounted.lexical.update(() => $textContaining("In the").getParentOrThrow().remove());
       await Promise.resolve();
     });
 
-    expect(onRemove.mock.calls.slice(1)).toEqual([["external-test", "L", "destroyed", "In the "]]);
+    expect(onRemove.mock.calls.slice(1)).toEqual([
+      ["external-test", "L", "destroyed", `In the${NBSP}`],
+    ]);
   });
 
   it("reports nothing for content marks a settle of their paragraph rebuilds", async () => {
