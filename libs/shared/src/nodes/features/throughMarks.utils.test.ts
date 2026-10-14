@@ -11,6 +11,7 @@ import {
   $nodeAfterBoundaryThroughMarks,
   $nodeBeforeBoundaryThroughMarks,
   $previousSiblingThroughMarks,
+  $restoreCaretAtMarkEnd,
   $textRunThroughMarks,
 } from "./throughMarks.utils.js";
 import { $createTypedMarkNode, TypedMarkNode } from "./TypedMarkNode.js";
@@ -19,12 +20,15 @@ import {
   $createRangeSelection,
   $createTextNode,
   $getRoot,
+  $getSelection,
+  $isRangeSelection,
   $setState,
   ElementNode,
   LexicalNode,
   TextNode,
 } from "lexical";
 import { $createCharNode } from "../usj/CharNode.js";
+import { textTypeState } from "../collab/delta.state.js";
 
 const nodes = [TypedMarkNode, ...usjBaseNodes];
 
@@ -243,6 +247,77 @@ describe("walking the text a mark cuts", () => {
         expect($previousSiblingThroughMarks(inner)).toBeNull();
         expect($nextSiblingThroughMarks(inner)).toBeNull();
         expect($nextSiblingThroughMarks(before)?.getType()).toBe("char");
+      },
+      { discrete: true },
+    );
+  });
+});
+
+describe("restoring a caret Lexical read past a mark's end", () => {
+  /** Where `$restoreCaretAtMarkEnd` puts a caret at the start of `after`, the node right after a
+   * mark holding `grace`'s last byte inside `\w grace…\w*`: the caret's node and offset, and
+   * whether it moved. */
+  function restoredFrom(after: () => TextNode): string {
+    const { editor } = createBasicTestEnvironment(nodes);
+    let out = "";
+    editor.update(
+      () => {
+        const node = after();
+        $getRoot().append(
+          $createParaNode().append(
+            $createCharNode("w").append(
+              $createMarkerNode("w"),
+              $createTextNode("grac"),
+              $createTypedMarkNode({ t: ["1"] }).append($createTextNode("e")),
+              node,
+              $createMarkerNode("w", "closing"),
+            ),
+          ),
+        );
+        node.select(0, 0);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        const moved = $restoreCaretAtMarkEnd(selection);
+        out = `${moved} ${selection.anchor.getNode().getTextContent()}@${selection.anchor.offset}`;
+      },
+      { discrete: true },
+    );
+    return out;
+  }
+
+  it("puts it at the end of the mark's content, whatever node follows the mark", () => {
+    // With no mark, Lexical reads a caret at the start of each of these onto the end of `grace`.
+    expect(restoredFrom(() => $createMarkerNode("w", "closing"))).toBe("true e@1");
+    expect(
+      restoredFrom(() => {
+        const run = $createTextNode("|g");
+        $setState(run, textTypeState, "attribute");
+        return run;
+      }),
+    ).toBe("true e@1");
+    expect(restoredFrom(() => $createTextNode(" more"))).toBe("true e@1");
+  });
+
+  it("leaves a caret alone that is not at the start of the node after a mark", () => {
+    const { editor } = createBasicTestEnvironment(nodes);
+    editor.update(
+      () => {
+        const run = $createTextNode("|g");
+        $setState(run, textTypeState, "attribute");
+        $getRoot().append(
+          $createParaNode().append(
+            $createCharNode("w").append($createTextNode("grace"), run, $createMarkerNode("w")),
+          ),
+        );
+        run.select(0, 0);
+        let selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        expect($restoreCaretAtMarkEnd(selection)).toBe(false);
+        run.select(1, 1);
+        selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        expect($restoreCaretAtMarkEnd(selection)).toBe(false);
+        expect(selection.anchor.getNode().is(run)).toBe(true);
       },
       { discrete: true },
     );

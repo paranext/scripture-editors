@@ -12,7 +12,6 @@
  */
 
 import { $lastPiece, $pieceHead } from "./displayPieces.state.js";
-import { $isMarkerNode } from "./MarkerNode.js";
 import { $isTypedMarkNode } from "./TypedMarkNode.js";
 import {
   $getSelection,
@@ -227,31 +226,31 @@ export function $removeRangeSplitByMarks(selection: RangeSelection): boolean {
 }
 
 /**
- * Put a collapsed caret Lexical read onto the start of a glyph right after an annotation mark back
- * at the end of the mark's content, where it is in the document. Returns whether it moved.
+ * Put a collapsed caret Lexical read onto the start of the text node right after an annotation
+ * mark back at the end of the mark's content, where it is in the document
+ * ({@link $caretPlaceThroughMarks}). Returns whether it moved.
  *
  * Lexical reads the caret back from the screen after every commit. A caret at the end of an inline
  * element's last text, when the element takes no text after it (a mark does not), is read onto the
- * start of the text node after the element; after a mark that is a glyph, a different place from
- * the content's end: what the caret reports, and what a delete from it removes, would be the
- * glyph's. With no mark there, the same caret is read back to the end of the content text (Lexical
- * moves a caret at a text's start onto the end of the text before it), which is where this puts it.
- * Text typed at the glyph's start in the same update still goes before the glyph, not into it
- * (`MarkerNode.canInsertTextBefore`).
+ * start of the text node after the element, and a caret placed at that start stays there, since
+ * the node before it is the mark, not a text. When that node is a glyph or an attribute run, its
+ * start is a different place from the content's end: what the caret reports, what a delete from it
+ * removes and where a typed byte goes (into the run, pending it) would be the display bytes'. With
+ * no mark there, the same caret is read back to the end of the content text (Lexical moves a caret
+ * at a text's start onto the end of the text before it), which is where this puts it. Text typed
+ * at a glyph's start in the same update, before any handler runs, still goes before the glyph, not
+ * into it (`MarkerNode.canInsertTextBefore`).
  *
- * Mutating: call where the selection may be changed (a selection-change handler).
+ * Mutating: call where the selection may be changed (a selection-change or insertion command
+ * handler).
  */
 export function $restoreCaretAtMarkEnd(selection: RangeSelection): boolean {
   const { anchor } = selection;
   if (!selection.isCollapsed() || anchor.type !== "text" || anchor.offset !== 0) return false;
-  const glyph = anchor.getNode();
-  if (!$isMarkerNode(glyph)) return false;
-  const mark = glyph.getPreviousSibling();
-  if (!$isTypedMarkNode(mark)) return false;
-  const last = mark.getLastDescendant();
-  if (!$isTextNode(last)) return false;
-  const end = last.getTextContentSize();
-  anchor.set(last.getKey(), end, "text");
-  selection.focus.set(last.getKey(), end, "text");
+  if (!$isTypedMarkNode(anchor.getNode().getPreviousSibling())) return false;
+  const { node, offset } = $caretPlaceThroughMarks(anchor);
+  if (node.is(anchor.getNode())) return false;
+  anchor.set(node.getKey(), offset, "text");
+  selection.focus.set(node.getKey(), offset, "text");
   return true;
 }
