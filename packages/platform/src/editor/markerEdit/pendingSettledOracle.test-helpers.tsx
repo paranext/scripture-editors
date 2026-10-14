@@ -1261,12 +1261,12 @@ function $screenLines(): string | undefined {
  * A nameless paragraph's bytes with its glyph's `\` spelled as {@link NAMELESS_MARKER_NAME} names
  * it, where the tokenizer reads that `\` as the nameless marker: the glyph's first byte after any
  * whitespace, followed by whitespace, the end, or another `\`. Any other glyph is spelled as it
- * shows.
+ * shows. The glyph is read whole, across the pieces an annotation cuts it into.
  */
 function $namelessMarked(bytes: string, block: LexicalNode): string {
   const glyph = $isParaNode(block) && block.getMarker() === "" ? block.getFirstChild() : null;
   const opener = $isMarkerNode(glyph)
-    ? /^[\s\u00A0]*\\(?=[\s\u00A0\\]|$)/.exec(glyph.getTextContent())
+    ? /^[\s\u00A0]*\\(?=[\s\u00A0\\]|$)/.exec($logicalText(glyph))
     : null;
   if (!opener) return bytes;
   return `${opener[0]}${NAMELESS_MARKER_NAME}${bytes.slice(opener[0].length)}`;
