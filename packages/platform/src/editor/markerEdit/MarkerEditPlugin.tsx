@@ -67,6 +67,7 @@ import {
   PASTE_COMMAND,
   LexicalCommand,
   LexicalEditor,
+  LexicalNode,
   NodeKey,
   NodeMutation,
   RangeSelection,

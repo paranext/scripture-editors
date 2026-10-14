@@ -213,6 +213,38 @@ The wrap measures coverage by caret order: an inline element moves into a mark o
 covers it whole; otherwise its text is split and its glyphs hold the annotation. The wrap tags its
 update (`TYPED_MARK_WRAP_TAG`) so no transform takes the text it splits for typed text.
 
+**A mark is transparent to every reader, and so is an annotation update.** A mark cuts one run of
+content into several text nodes and puts a parent between a text and its neighbours, so any rule
+that reads "the node before/after" or "the text run" by direct siblings sees a different document
+once something is annotated. Those readers go through `libs/shared/src/nodes/features/throughMarks.utils.ts`
+(`$nextSiblingThroughMarks`, `$textRunThroughMarks`, `$isRangeSplitByMarks`, …), which also treat a
+piece chain as one node: the note-shell caret guard, the caret shield around a pending glyph, the
+chapter scope's fixed-point signature, the Standard-view space-run rule (a run of spaces is
+collapsed on save and shown as NBSPs as ONE run even when a mark splits it — the display rule, the
+exporter's text join and the position model all read the run across the join), and the
+leading-space move onto a verse. Typing or pasting over a range whose two ends sit in different
+parents only because a mark holds one of them first removes the range
+(`$removeRangeSplitByMarks`), since Lexical's own replacement would climb to the paragraph and pull
+the text after the span into it.
+
+A hold follows its bytes like a mark follows its text. When a carrier's text changes, the holds are
+re-measured through a character alignment; a byte typed at either edge of a held range stays
+outside it and a byte typed strictly inside grows it, so the alignment reads the user's edit at the
+caret first (an insertion of n bytes ending at the caret, a deletion of n bytes starting there) and
+only falls back to the longest common subsequence — held bytes preferred where one edit can slide
+over identical bytes — for an engine rewrite with no caret (`displayAnnotations.state.ts`). A
+`token` carrier (a protected note shell's glyphs) cut into pieces is one token: deleting any piece
+removes the chain, so the deletion transforms see what they see with no annotation. Cutting or
+joining pieces keeps an element point between a parent's children in place.
+
+Setting or removing an annotation edits no byte, so the marker-edit engine sits out an update that
+carries an annotation tag and changes no block's text (the mark wrap and the piece cut dirty the
+nodes beside them, which must not pend or settle anything), and the update adds no undo step
+(`HISTORY_MERGE_TAG`): an undo that reverts the edit an annotation was set on reverts the
+annotation with it, silently. A mark Lexical drops without `remove()` (a selection delete that
+empties it) still makes its one removal report, read from the previous state, unless the
+annotation was handed on to another holder in the same commit.
+
 ### The `\id` line is content, not a header
 
 `\id` is a `BookNode` at document root, not a `ParaNode` — but Paratext 9 treats the text after the
