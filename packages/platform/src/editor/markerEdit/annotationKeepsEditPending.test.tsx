@@ -10,11 +10,21 @@ import {
   mountInView,
   MountedInView,
 } from "../annotationLocations/annotationLocations.test-helpers";
-import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
+import { $addCommentAnnotation } from "../../marginal/comments/commentAnnotations.utils";
+import { $textContaining, twoParaUsj, typeOver } from "../positions/positions.test-helpers";
+import { settleByBlurAndCommit } from "./displayAnnotations.test-helpers";
 import { pendingOracleView } from "./pendingSettledOracle.test-helpers";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, $isElementNode, LexicalNode } from "lexical";
+import {
+  $createRangeSelection,
+  $getRoot,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  LexicalNode,
+  RootNode,
+} from "lexical";
 import {
   $isCharNode,
   $isMarkerNode,
@@ -25,6 +35,7 @@ import {
   getPendedDisplayOwners,
 } from "shared";
 import { AnnotationRange } from "shared-react";
+import { vi } from "vitest";
 
 const view = pendingOracleView("standard");
 
@@ -194,5 +205,79 @@ describe("an annotation and the marker edits the engine holds pending", () => {
     }
     expect(pendingUsj[1]).toBe(pendingUsj[0]);
     expect(pendingUsj[0]).toContain('"altnumber":"3x"');
+  });
+
+  it("keeps a typed literal pending when a comment is set over it, and settles it as it read", async () => {
+    const mounted = await mountInView(twoParaUsj(["plain body"]), view);
+    await typeOver(mounted.lexical, "plain body", "plain \\q1 body", 7);
+    expect(isPending(mounted)).toBe(true);
+    // The comment panel's own wrap, over `pl`, with the caret left where it was.
+    await commit(mounted, () => {
+      const literal = $textContaining("plain");
+      const range = $createRangeSelection();
+      range.anchor.set(literal.getKey(), 0, "text");
+      range.focus.set(literal.getKey(), 2, "text");
+      $addCommentAnnotation(range, "c1");
+    });
+    expect(isPending(mounted)).toBe(true);
+    const pending = JSON.stringify(mounted.ref.current?.getUsj());
+    settleByBlurAndCommit(mounted);
+    expect(isPending(mounted)).toBe(false);
+    expect(JSON.stringify(mounted.ref.current?.getUsj())).toBe(pending);
+    mounted.unmount();
+  });
+
+  it("still pends a keystroke that one commit batches with an annotation", async () => {
+    const mounted = await mountInView(twoParaUsj(["plain body"]), view);
+    const range = rangeOver(mounted, () => $textContaining("plain body"), 0, 2);
+    await commit(mounted, () => {
+      $textContaining("plain body").select(6, 6);
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) selection.insertText("\\");
+      // Lexical runs an update requested inside another in the same commit, with both tag sets.
+      mounted.ref.current?.setAnnotation(range, "test", "batched");
+    });
+    expect(mounted.lexical.getEditorState().read(() => $getRoot().getTextContent())).toContain(
+      "plain \\body",
+    );
+    expect(isPending(mounted)).toBe(true);
+    mounted.unmount();
+  });
+
+  it("decides an annotation changes no byte without reading the whole document", async () => {
+    // A host sets annotations in bulk on load: each decision must cost what the update touched,
+    // not the document.
+    const paragraphs = Array.from({ length: 200 }, (_, index) => `paragraph ${index} text`);
+    const mounted = await mountInView(
+      {
+        ...twoParaUsj([]),
+        content: [
+          ...twoParaUsj([]).content.slice(0, 2),
+          ...paragraphs.map((text) => ({ type: "para", marker: "p", content: [text] })),
+        ],
+      },
+      view,
+    );
+    const ranges = paragraphs
+      .slice(0, 40)
+      .map((text) => rangeOver(mounted, () => $textContaining(text), 0, 9));
+    // Lexical itself reads the root's (cached) text on every commit, for its text-content
+    // listeners and placeholder; only a read from inside the marker-edit engine counts here.
+    const original = RootNode.prototype.getTextContent;
+    let engineReads = 0;
+    const rootText = vi.spyOn(RootNode.prototype, "getTextContent").mockImplementation(function (
+      this: RootNode,
+    ) {
+      if (new Error().stack?.includes("MarkerEditPlugin")) engineReads += 1;
+      return original.call(this);
+    });
+    try {
+      for (const [index, range] of ranges.entries()) await annotate(mounted, range, `bulk${index}`);
+    } finally {
+      rootText.mockRestore();
+    }
+    expect(engineReads).toBe(0);
+    expect(isPending(mounted)).toBe(false);
+    mounted.unmount();
   });
 });

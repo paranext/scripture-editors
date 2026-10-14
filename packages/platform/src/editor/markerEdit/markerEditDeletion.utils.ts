@@ -51,6 +51,7 @@ import {
   $logicalNextSibling,
   $logicalText,
   $pieces,
+  $removeRangeSplitByMarks,
   $setLogicalText,
 } from "shared";
 import { showParaMarkerPrefix } from "shared-react";
@@ -319,6 +320,10 @@ export function $armCollapsedParaDeletion(context: MarkerEditContext): void {
  * that touches no glyph is left to the stock replacement, which is already delete-then-insert
  * for plain content; a PARTIALLY covered glyph keeps its surviving bytes and the typed text
  * joins them (`\` + typed `x` → the pending literal `\x`), exactly as delete-then-type implies.
+ * The one glyph-free range the stock replacement cannot take is one whose ends sit in different
+ * parents only because an annotation mark holds one of them (`$removeRangeSplitByMarks`): it
+ * climbs out of the span and pulls the paragraph's text after it in, so that range is removed
+ * here too.
  *
  * Mutating (arms context state and removes the selected text): call from a
  * CONTROLLED_TEXT_INSERTION_COMMAND handler registered above the default insertion and below
@@ -327,7 +332,10 @@ export function $armCollapsedParaDeletion(context: MarkerEditContext): void {
 export function $prepareReplaceSelection(context: MarkerEditContext): void {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return;
-  if (!selection.getNodes().some((node) => $isMarkerNode(node))) return;
+  if (!selection.getNodes().some((node) => $isMarkerNode(node))) {
+    $removeRangeSplitByMarks(selection);
+    return;
+  }
   $armWholeParaDeletion(context);
   selection.removeText();
 }

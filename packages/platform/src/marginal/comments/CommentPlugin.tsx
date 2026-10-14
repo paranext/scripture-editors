@@ -46,7 +46,6 @@ import { createPortal } from "react-dom";
 import {
   $createTypedMarkNode,
   $isTypedMarkNode,
-  $wrapSelectionInTypedMarkNode,
   COMMENT_MARK_TYPE,
   LoggerBasic,
   TypedMarkNode,
@@ -54,6 +53,7 @@ import {
 import { DisplayAnnotationIndex, useDisplayAnnotationIndex } from "shared-react";
 import {
   $commentIdsAt,
+  $addCommentAnnotation,
   $removeCommentAnnotation,
   $selectFirstCommentCarrier,
 } from "./commentAnnotations.utils";
@@ -819,14 +819,10 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
     ) => {
       commentStore.addComment(commentOrThread, thread);
       if (isInlineComment) {
-        editor.update(() => {
-          if ($isRangeSelection(selection)) {
-            // A comment on display bytes alone (a verse number, a glyph, an attribute value) is
-            // allowed, but getUsj() carries no zmsc for display bytes, so a reload leaves its
-            // thread without an anchor.
-            $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, commentOrThread.id);
-          }
-        });
+        // A comment on display bytes alone (a verse number, a glyph, an attribute value) is
+        // allowed, but getUsj() carries no zmsc for display bytes, so a reload leaves its thread
+        // without an anchor.
+        editor.update(() => $addCommentAnnotation(selection, commentOrThread.id));
         setShowCommentInput(false);
       }
     },

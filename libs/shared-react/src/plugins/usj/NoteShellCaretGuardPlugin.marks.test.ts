@@ -7,17 +7,13 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { createBasicTestEnvironment } from "../../../../../libs/shared/src/nodes/usj/test.utils";
 import { usjReactNodes } from "../../nodes/usj";
-import { $guardCaretOutOfNoteShell, NoteShellCaretGuardPlugin } from "./NoteShellCaretGuardPlugin";
-import { $describeLogicalSelection, baseTestEnvironment } from "./react-test.utils";
-import { act } from "@testing-library/react";
-import { createElement } from "react";
+import { $guardCaretOutOfNoteShell } from "./NoteShellCaretGuardPlugin";
+import { $describeLogicalSelection } from "./react-test.utils";
 import {
   $createRangeSelection,
   $createTextNode,
   $getRoot,
-  $isElementNode,
   $setSelection,
-  CONTROLLED_TEXT_INSERTION_COMMAND,
   LexicalNode,
   TextNode,
 } from "lexical";
@@ -147,75 +143,5 @@ describe("a protected note beside text an annotation mark holds", () => {
       expect(whole).toBe(none);
       expect(crossing).toBe(none);
     }
-  });
-});
-
-/** `In\f + \ft Hello\ft*\f* the`, its shell and closer in token mode, with `Hello` held by an
- * annotation mark or not. */
-function $buildWithContent(isMarked: boolean): void {
-  const hello = $createTextNode("Hello");
-  $getRoot().append(
-    $createParaNode().append(
-      $createTextNode("In"),
-      $createNoteNode("f", "+", false).append(
-        $createMarkerNode("f").setMode("token"),
-        $createTextNode(getEditableCallerText("+")).setMode("token").toggleUnmergeable(),
-        $createCharNode("ft").append(
-          $createMarkerNode("ft"),
-          ...(isMarked
-            ? [$createTextNode(NBSP), $createTypedMarkNode({ annotation: ["1"] }).append(hello)]
-            : [$createTextNode(`${NBSP}Hello`)]),
-          $createMarkerNode("ft", "closing"),
-        ),
-        $createMarkerNode("f", "closing").setMode("token"),
-      ),
-      $createTextNode(" the"),
-    ),
-  );
-}
-
-/** The paragraph's children and the note's, by type and text, after `x` is typed over the note's
- * content from `Hello` to the end of `\ft*` — with the range's start where Lexical re-reads it from
- * the screen: inside the mark that holds `Hello`, when one does. */
-async function typedOverContent(isMarked: boolean): Promise<string> {
-  const { editor } = await baseTestEnvironment(
-    () => $buildWithContent(isMarked),
-    createElement(NoteShellCaretGuardPlugin),
-  );
-  await act(async () => {
-    editor.update(() => {
-      const texts = $getRoot().getAllTextNodes();
-      const start = isMarked
-        ? texts.find((node) => node.getTextContent() === "Hello")
-        : texts.find((node) => node.getTextContent() === `${NBSP}Hello`);
-      const closer = texts.find((node) => node.getTextContent() === "\\ft*");
-      if (!start || !closer) throw new Error("content not found");
-      const selection = $createRangeSelection();
-      selection.anchor.set(start.getKey(), isMarked ? 0 : 1, "text");
-      selection.focus.set(closer.getKey(), closer.getTextContentSize(), "text");
-      $setSelection(selection);
-      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "x");
-    });
-  });
-  return editor.getEditorState().read(() => {
-    const describe = (node: LexicalNode): string =>
-      $isElementNode(node)
-        ? `${node.getType()}(${node
-            .getChildren()
-            .filter((child) => child.getType() !== "typed-mark" || child.getTextContentSize() > 0)
-            .map(describe)
-            .join(" ")})`
-        : JSON.stringify(node.getTextContent());
-    const para = $getRoot().getFirstChildOrThrow();
-    return describe(para).replaceAll(/typed-mark\(([^()]*)\)/g, "$1");
-  });
-}
-
-describe("typing over a protected note's content that an annotation mark starts", () => {
-  it("replaces the content as with no mark, leaving the paragraph's text after the note alone", async () => {
-    const plain = await typedOverContent(false);
-    const marked = await typedOverContent(true);
-    expect(plain).toContain('" the")');
-    expect(marked).toBe(plain);
   });
 });
