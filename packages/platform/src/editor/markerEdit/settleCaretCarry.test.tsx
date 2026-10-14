@@ -46,6 +46,7 @@ import {
   NBSP,
   textTypeState,
   ZWSP,
+  $setLogicalText,
 } from "shared";
 
 type Mounted = Awaited<ReturnType<typeof mountStandardViewEditor>>;
@@ -705,15 +706,16 @@ describe("an annotation on attribute bytes carried through a re-spelling settle"
     });
     // Re-spell `|grace` as `|lemma="grace"` in place with the caret in the value, the way typing
     // into the run does (the shape `a caret held in an attribute run…` above uses): a user edit
-    // the engine pends, not drift the sync would heal.
+    // the engine pends, not drift the sync would heal. The annotation cuts the run into pieces, so
+    // the run is re-spelled whole.
     await inOneUpdate(mounted.lexical, () => {
       const run = $getRoot()
         .getAllTextNodes()
         .find((node) => !$isMarkerNode(node) && $getState(node, textTypeState) === "attribute");
       if (!run) throw new Error("no attribute run");
-      run.setTextContent('|lemma="grace"');
+      const respelled = $setLogicalText(run, '|lemma="grace"');
       const caret = '|lemma="gr'.length;
-      run.select(caret, caret);
+      respelled.select(caret, caret);
     });
 
     await idleSettle();
