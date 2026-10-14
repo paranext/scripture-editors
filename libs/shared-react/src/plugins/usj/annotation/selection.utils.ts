@@ -2127,9 +2127,9 @@ function $nearestPointAfterContent(
       ];
   }
 
-  // A decorator (e.g. ImmutableChapterNode) or an element with no children: the start of what
-  // follows it is the nearest point there is.
-  const nextSibling = node.getNextSibling();
+  // A decorator (e.g. ImmutableChapterNode), a leaf carrier (whose pieces are one node), or an
+  // element with no children: the start of what follows it is the nearest point there is.
+  const nextSibling = $logicalNextSibling(node);
   if (nextSibling && $isElementNode(nextSibling)) return [nextSibling, 0];
 
   return $pointBeside(node, true);
