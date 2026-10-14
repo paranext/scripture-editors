@@ -71,6 +71,7 @@ import {
   $isVerseNode,
   $isVisibleMarkerNode,
   $lastPiece,
+  $logicalNextSibling,
   $logicalOffset,
   $logicalText,
   $noteEditableCallerNode,
@@ -1735,8 +1736,10 @@ function $locationFromNode(
     // Presentation-only text (the space Standard view shows after a paragraph's `\p` glyph, where
     // a caret at the paragraph's content start sits) is no USJ content of its own: a point in it
     // is the point beside it — the start of the text after it, or the end of the bytes before it.
-    const isAfter = offset > 0;
-    let neighbor = isAfter ? node.getNextSibling() : node.getPreviousSibling();
+    // A carrier cut into pieces is one node here: past its front is past the front of all of it,
+    // and its neighbours are the nodes beside the whole chain.
+    const isAfter = $logicalOffset(node, offset) > 0;
+    let neighbor = isAfter ? $logicalNextSibling(node) : $pieceHead(node).getPreviousSibling();
     // An annotation mark is transparent: the text beside it is its first or last leaf.
     while ($isTypedMarkNode(neighbor))
       neighbor = isAfter ? neighbor.getFirstChild() : neighbor.getLastChild();
@@ -1752,8 +1755,13 @@ function $locationFromNode(
   }
 
   // Anything else — presentation text with nothing beside it to defer to, a decorator the model
-  // counts as one item — is the gap in front of it, or after it for a point past its start.
-  return $locationBeside(node, offset > 0, collapsesSpaceRuns);
+  // counts as one item — is the gap in front of it, or after it for a point past its start (of the
+  // whole carrier, for a piece).
+  return $locationBeside(
+    node,
+    ($isTextNode(node) ? $logicalOffset(node, offset) : offset) > 0,
+    collapsesSpaceRuns,
+  );
 }
 
 /** Whether `node` is editable glyph text ending in its own trailing separator: a verse's `\v 1 `,
