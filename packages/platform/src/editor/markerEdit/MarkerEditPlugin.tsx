@@ -112,6 +112,8 @@ import {
   $deferToPieceHead,
   $isPieceContinuation,
   $pieceHead,
+  $caretPlaceThroughMarks,
+  $restCaretThroughMarks,
   $runDiverges,
 } from "shared";
 import {
@@ -308,10 +310,12 @@ function $skipsEnginePass(editor: LexicalEditor, node: LexicalNode): boolean {
 /**
  * The key of the node the caret's live end is in, for the departure clocks: the head of a carrier
  * an annotation cuts into pieces, so moving between its pieces is no departure, and it names the
- * node the carrier's pend is recorded on.
+ * node the carrier's pend is recorded on. Read through marks ({@link $caretPlaceThroughMarks}): a
+ * caret at the start of a node right after a mark is in the text node before the mark, as the
+ * same caret with no mark there is.
  */
 function $caretCarrierKey(selection: RangeSelection): NodeKey {
-  return $pieceHead(selection.focus.getNode()).getKey();
+  return $pieceHead($caretPlaceThroughMarks(selection.focus).node).getKey();
 }
 
 function $syncAndPendOwner(
@@ -830,6 +834,10 @@ export function MarkerEditPlugin({
       settleReason: SettleReason = "departure",
     ) => {
       editor.update(() => {
+        // Without annotation marks this update's caret, read back from the DOM, is where Lexical
+        // resolves it; a caret at the start of a node right after a mark is put there too, so the
+        // settle's caret-held checks read the caret the unmarked document has.
+        $restCaretThroughMarks();
         const mutated = $settleWithoutOwnUndoEntry(() =>
           $resolvePendingMarkers(context, exceptKey, settleReason),
         );
