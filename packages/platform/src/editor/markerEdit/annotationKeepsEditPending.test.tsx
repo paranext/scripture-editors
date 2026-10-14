@@ -23,6 +23,7 @@ import {
   $isElementNode,
   $isRangeSelection,
   LexicalNode,
+  RootNode,
 } from "lexical";
 import {
   $isCharNode,
@@ -34,6 +35,7 @@ import {
   getPendedDisplayOwners,
 } from "shared";
 import { AnnotationRange } from "shared-react";
+import { vi } from "vitest";
 
 const view = pendingOracleView("standard");
 
@@ -239,6 +241,43 @@ describe("an annotation and the marker edits the engine holds pending", () => {
       "plain \\body",
     );
     expect(isPending(mounted)).toBe(true);
+    mounted.unmount();
+  });
+
+  it("decides an annotation changes no byte without reading the whole document", async () => {
+    // A host sets annotations in bulk on load: each decision must cost what the update touched,
+    // not the document.
+    const paragraphs = Array.from({ length: 200 }, (_, index) => `paragraph ${index} text`);
+    const mounted = await mountInView(
+      {
+        ...twoParaUsj([]),
+        content: [
+          ...twoParaUsj([]).content.slice(0, 2),
+          ...paragraphs.map((text) => ({ type: "para", marker: "p", content: [text] })),
+        ],
+      },
+      view,
+    );
+    const ranges = paragraphs
+      .slice(0, 40)
+      .map((text) => rangeOver(mounted, () => $textContaining(text), 0, 9));
+    // Lexical itself reads the root's (cached) text on every commit, for its text-content
+    // listeners and placeholder; only a read from inside the marker-edit engine counts here.
+    const original = RootNode.prototype.getTextContent;
+    let engineReads = 0;
+    const rootText = vi.spyOn(RootNode.prototype, "getTextContent").mockImplementation(function (
+      this: RootNode,
+    ) {
+      if (new Error().stack?.includes("MarkerEditPlugin")) engineReads += 1;
+      return original.call(this);
+    });
+    try {
+      for (const [index, range] of ranges.entries()) await annotate(mounted, range, `bulk${index}`);
+    } finally {
+      rootText.mockRestore();
+    }
+    expect(engineReads).toBe(0);
+    expect(isPending(mounted)).toBe(false);
     mounted.unmount();
   });
 });

@@ -217,48 +217,70 @@ export const IDLE_SETTLE_DELAY_MS = 1000;
 const ANNOTATION_TAGS = [ANNOTATION_CHANGE_TAG, ANNOTATION_MARKS_TAG];
 
 /**
- * Each editor state's document text — every byte, read through marks and pieces — as the engine's
- * passes first read it while that state was the one an update started from.
+ * What the engine's passes found about the updates that started from each committed state: for
+ * every top-level block a pass compared, its text in that state, and whether any compared block's
+ * text has changed. Keyed by the state an update starts from, which the update listener receives
+ * as `prevEditorState`, so the listener reads the passes' verdict without entering that state.
  */
-const documentTextByState = new WeakMap<EditorState, string>();
+const blockCheckByPreviousState = new WeakMap<
+  EditorState,
+  { textBefore: Map<NodeKey, string | undefined>; changed: boolean }
+>();
 
 /**
- * Whether an update carrying `tags` only set or cleared annotations: it carries an annotation tag
- * AND the document's bytes are what they were before it (`before`, the text of the state it
- * started from; `undefined` when no pass read it, which an update that edits text never leaves,
- * since every text edit runs the engine's passes). The tag alone is not enough: Lexical runs an
- * update requested inside another one in the same commit, with the tags of both, so a keystroke
- * batched with an annotation commits under the annotation's tag. Bytes, not dirty nodes, because
- * a mark wrap and a piece cut dirty nodes whose bytes they leave alone.
+ * Whether the top-level block holding `node` reads a different text from the one it read in the
+ * state the active update started from — the byte check of {@link $skipsEnginePass}. Reads only
+ * that block, in both states, so an update costs what it touched, not the document (a host sets
+ * annotations in bulk on load). A mark or a piece cut moves no byte between blocks, and the block's
+ * text reads through both. Call inside an update.
  */
-function isAnnotationOnly(
-  tags: ReadonlySet<string>,
-  before: string | undefined,
-  readAfter: () => string,
-): boolean {
+function $blockBytesChanged(editor: LexicalEditor, node: LexicalNode): boolean {
+  const block = node.isAttached() ? node.getTopLevelElement() : null;
+  if (!block) return false;
+  const previous = editor.getEditorState();
+  let check = blockCheckByPreviousState.get(previous);
+  if (!check) {
+    check = { textBefore: new Map(), changed: false };
+    blockCheckByPreviousState.set(previous, check);
+  }
+  const key = block.getKey();
+  let before = check.textBefore.get(key);
+  if (!check.textBefore.has(key)) {
+    before = previous.read(() => $getNodeByKey(key)?.getTextContent());
+    check.textBefore.set(key, before);
+  }
+  const changed = block.getTextContent() !== (before ?? "");
+  if (changed) check.changed = true;
+  return changed;
+}
+
+/**
+ * Whether a committed update that started from `previous` and carried `tags` only set or cleared
+ * annotations: it carries an annotation tag and no pass of the engine found a byte changed. The tag
+ * alone is not enough: Lexical runs an update requested inside another one in the same commit, with
+ * the tags of both, so a keystroke batched with an annotation commits under the annotation's tag.
+ * Every text edit dirties a node the engine's passes run on, and each pass compares that node's
+ * block ({@link $blockBytesChanged}), so a commit no pass flagged changed no byte.
+ */
+function isAnnotationOnly(tags: ReadonlySet<string>, previous: EditorState): boolean {
   return (
-    ANNOTATION_TAGS.some((tag) => tags.has(tag)) && (before === undefined || readAfter() === before)
+    ANNOTATION_TAGS.some((tag) => tags.has(tag)) &&
+    !blockCheckByPreviousState.get(previous)?.changed
   );
 }
 
 /**
- * Whether the engine's per-node passes sit out the active update: an IME composition still in
- * progress, or an update that only sets or clears annotations ({@link isAnnotationOnly}). An
- * annotation edits no byte, but wrapping content in a mark splits its text node, and cutting a
- * display byte carrier into pieces inserts siblings — both dirty nodes, and their neighbours, that
- * nobody edited. A pass that read that dirtiness as an edit would pend bytes the user never
- * touched, and the next caret move would settle them. Call inside an update.
+ * Whether the engine's pass over `node` sits out the active update: an IME composition still in
+ * progress, or an update that only sets or clears annotations and leaves `node`'s block's bytes as
+ * they were. An annotation edits no byte, but wrapping content in a mark splits its text node, and
+ * cutting a display byte carrier into pieces inserts siblings — both dirty nodes, and their
+ * neighbours, that nobody edited. A pass that read that dirtiness as an edit would pend bytes the
+ * user never touched, and the next caret move would settle them. Call inside an update.
  */
-function $skipsEnginePass(editor: LexicalEditor): boolean {
+function $skipsEnginePass(editor: LexicalEditor, node: LexicalNode): boolean {
   if (editor.isComposing()) return true;
   if (!ANNOTATION_TAGS.some((tag) => $hasUpdateTag(tag))) return false;
-  const previous = editor.getEditorState();
-  let before = documentTextByState.get(previous);
-  if (before === undefined) {
-    before = previous.read(() => $getRoot().getTextContent());
-    documentTextByState.set(previous, before);
-  }
-  return $getRoot().getTextContent() === before;
+  return !$blockBytesChanged(editor, node);
 }
 
 /**
@@ -344,9 +366,7 @@ function registerDestroyedOwnerPend(editor: LexicalEditor, context: MarkerEditCo
       payload.updateTags.has(HISTORIC_TAG) ||
       // Nodes an annotation change removes (a piece joined back, a text node a mark wrap merged)
       // hand their bytes to a neighbour: nothing was deleted.
-      isAnnotationOnly(payload.updateTags, documentTextByState.get(payload.prevEditorState), () =>
-        editor.getEditorState().read(() => $getRoot().getTextContent()),
-      ) ||
+      isAnnotationOnly(payload.updateTags, payload.prevEditorState) ||
       getApplyingUpdateSource(editor) === "remote"
     )
       return;
@@ -857,7 +877,7 @@ export function MarkerEditPlugin({
     };
     const unregister = mergeRegister(
       editor.registerNodeTransform(MarkerNode, (node) => {
-        if ($skipsEnginePass(editor)) return;
+        if ($skipsEnginePass(editor, node)) return;
         // A glyph an annotation cuts into pieces is one glyph: its head's pass covers it whole.
         if ($deferToPieceHead(node)) return;
         $markerNodeTransform(node, context);
@@ -889,7 +909,7 @@ export function MarkerEditPlugin({
           $syncAndPendOwner(ref.owner, context);
       }),
       editor.registerNodeTransform(VerseNode, (node) => {
-        if ($skipsEnginePass(editor)) return;
+        if ($skipsEnginePass(editor, node)) return;
         // A verse an annotation cuts into pieces is one verse: its head's pass covers it whole.
         if ($deferToPieceHead(node)) return;
         $verseNodeTransform(node, context);
@@ -904,18 +924,18 @@ export function MarkerEditPlugin({
         $syncAndPendOwner(node, context);
       }),
       editor.registerNodeTransform(ChapterNode, (node) => {
-        if ($skipsEnginePass(editor)) return;
+        if ($skipsEnginePass(editor, node)) return;
         $chapterNodeTransform(node);
         // Self-healing `\ca` alternate-number run + the grace/pend pairing, the same shape the
         // NoteNode transform below carries for `\cat`.
         if (node.isAttached()) $syncAndPendOwner(node, context);
       }),
       editor.registerNodeTransform(ParaNode, (node) => {
-        if ($skipsEnginePass(editor)) return;
+        if ($skipsEnginePass(editor, node)) return;
         $paraMarkerDeletionTransform(node, context);
       }),
       editor.registerNodeTransform(CharNode, (node) => {
-        if ($skipsEnginePass(editor)) return;
+        if ($skipsEnginePass(editor, node)) return;
         $charNodeDeletionTransform(node, context);
         // Pend only — do NOT sync here. The char kind's sync has exactly one registration home,
         // CharNodePlugin.tsx (shared-react); this engine owns only the pend half for chars —
@@ -946,11 +966,11 @@ export function MarkerEditPlugin({
       // — the sync leaves it alone and the milestone is pended for the caret-departure settle
       // ($resolvePendingMarkers).
       editor.registerNodeTransform(MilestoneNode, (node) => {
-        if ($skipsEnginePass(editor)) return;
+        if ($skipsEnginePass(editor, node)) return;
         $syncAndPendOwner(node, context);
       }),
       editor.registerNodeTransform(AttributeRunNode, (node) => {
-        if ($skipsEnginePass(editor)) return;
+        if ($skipsEnginePass(editor, node)) return;
         // A piece INSIDE the wrapper being edited or removed dirties the WRAPPER, not the leaf
         // owner: a DecoratorNode-based MilestoneNode, a following-sibling-shaped verse run, and a
         // note's child-positioned `\cat` run would otherwise never notice. Re-drive the owner's
@@ -966,7 +986,7 @@ export function MarkerEditPlugin({
           $syncAndPendOwner(ref.owner, context);
       }),
       editor.registerNodeTransform(NoteNode, (node) => {
-        if ($skipsEnginePass(editor)) return;
+        if ($skipsEnginePass(editor, node)) return;
         $noteDeletionTransform(node, context);
         $restoreRemovedNoteCaller(node, context);
         $keepProtectedNoteCloser(node);
@@ -983,14 +1003,14 @@ export function MarkerEditPlugin({
       // Lexical dispatches transforms by exact node type, so neither the TextNode catch-all
       // below nor the MarkerNode transform above ever fires for this subclass.
       editor.registerNodeTransform(ImmutableUnmatchedNode, (node) => {
-        if ($skipsEnginePass(editor)) return;
+        if ($skipsEnginePass(editor, node)) return;
         $unmatchedNodeTransform(node, context);
       }),
       // Plain-TextNode catch-all for typed/pasted literal backslash sequences (Tier 2).
       // Lexical dispatches transforms by exact node type, so this never fires for
       // MarkerNode/VerseNode subclasses — TextSpacingPlugin relies on the same fact.
       editor.registerNodeTransform(TextNode, (node) => {
-        if ($skipsEnginePass(editor)) return;
+        if ($skipsEnginePass(editor, node)) return;
         $textNodeTier2Transform(node, context);
       }),
       // Plain TextNodes can't emit a DOM class from node state the way
@@ -1407,11 +1427,7 @@ export function MarkerEditPlugin({
           if (anchorKey !== undefined) lastAnchorKey = anchorKey;
           return;
         }
-        if (
-          isAnnotationOnly(tags, documentTextByState.get(prevEditorState), () =>
-            editorState.read(() => $getRoot().getTextContent()),
-          )
-        ) {
+        if (isAnnotationOnly(tags, prevEditorState)) {
           // Setting or clearing an annotation is no caret move and no edit, so it neither arms the
           // idle clock nor departs anything. A mark wrap can re-key the node the caret is in, so
           // the anchor is still brought current.
