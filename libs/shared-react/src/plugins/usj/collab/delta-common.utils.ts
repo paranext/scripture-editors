@@ -22,6 +22,7 @@ import {
   $isCursorPlaceholderOnlyText,
   $isDescendantOf,
   $isImmutableUnmatchedNode,
+  $charSeparatorPrefixLength,
   $isMilestoneNode,
   $isNoteNode,
   $isParaLikeNode,
@@ -594,6 +595,22 @@ export function $hasAttributeRunAncestor(node: LexicalNode): boolean {
 }
 
 /**
+ * True when `node` is the untagged NBSP-`|` form of attribute text, which deployed peers and
+ * persisted collab documents still carry (see the `isNodeAttributeText` comment in
+ * editor-delta.adaptor.ts). Text right after a char span's opening glyph is never that: its NBSP
+ * is the span's separator, and a `|…` after it is content the attribute grammar left literal —
+ * the same exception the editor→USJ conversion makes (`precedesOpeningCharGlyph`). The glyph is
+ * found through annotation marks and pieces ({@link $charSeparatorPrefixLength}), so a mark that
+ * cuts the content changes nothing. The ONE definition, shared by the ops stream and the
+ * delta-doc length side.
+ */
+export function $isLegacyAttributeText(node: TextNode): boolean {
+  return (
+    $logicalText(node).startsWith(NODE_ATTRIBUTE_PREFIX) && $charSeparatorPrefixLength(node) === 0
+  );
+}
+
+/**
  * Mirror of editor-delta.adaptor.ts's empty-char-placeholder skip, in delta-doc coordinates: the
  * lone stand-in text of an otherwise childless char span, which the ops stream never emits.
  */
@@ -698,7 +715,7 @@ function $getNodeOTContribution(node: LexicalNode, coordinates: OTCoordinateSyst
     // Read before the guard chain below: its type guards narrow `node` in later `||` operands
     // (a false branch of a `node is TextNode` guard leaves `never`), so member access there
     // does not typecheck even though the value is unchanged.
-    const nodeText = node.getTextContent();
+    const isLegacyAttributeText = $isLegacyAttributeText(node);
     if (
       coordinates === "delta-doc" &&
       // A bare cursor host (EmptyVerseCaretGuardPlugin) is a transient, collab-invisible node:
@@ -725,7 +742,7 @@ function $getNodeOTContribution(node: LexicalNode, coordinates: OTCoordinateSyst
         // the legacy NBSP-`|` byte-prefixed attribute text the ops stream still honors for
         // pre-state-tag peers and persisted deltas, and the empty-char placeholder. The
         // editable-mode note caller counts only its content bytes, below.
-        nodeText.startsWith(NODE_ATTRIBUTE_PREFIX) ||
+        isLegacyAttributeText ||
         $isEmptyCharPlaceholderText(node))
     )
       return 0;

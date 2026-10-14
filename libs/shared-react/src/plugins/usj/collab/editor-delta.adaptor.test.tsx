@@ -43,6 +43,7 @@ import {
   $createMilestoneNode,
   $createNoteNode,
   $createParaNode,
+  $createTypedMarkNode,
   $createUnknownNode,
   $createCursorPlaceholderNode,
   $createVerseNode,
@@ -365,6 +366,35 @@ describe("getEditorDelta", () => {
     expect(joined).toBe(`hello${LF}`);
     expect(joined).not.toContain("\\p");
     expect(joined).not.toContain(NBSP);
+  });
+
+  it("keeps `|…` typed right after a char span's opening glyph as content, marked or not", async () => {
+    // `\bd |bold`: the NBSP is the span's separator, so the `|` after it is content the attribute
+    // grammar leaves literal (the editor→USJ conversion keeps it), not the legacy NBSP-`|`
+    // attribute text the ops stream drops.
+    const $span = (...content: LexicalNode[]) =>
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("a "),
+          $createCharNode("bd").append($createMarkerNode("bd"), ...content),
+        ),
+      );
+    const plain = await getOpsFor(() => $span($createTextNode(`${NBSP}|bold`)));
+    expect(
+      plain
+        .filter((op): op is { insert: string } => typeof op.insert === "string")
+        .map((op) => op.insert)
+        .join(""),
+    ).toContain("|bold");
+    // A mark over the `b` cuts the text in three; the ops are the same.
+    const marked = await getOpsFor(() =>
+      $span(
+        $createTextNode(`${NBSP}|`),
+        $createTypedMarkNode({ test: ["1"] }).append($createTextNode("b")),
+        $createTextNode("old"),
+      ),
+    );
+    expect(marked).toEqual(plain);
   });
 
   it("should return the correct ops for nested chars", async () => {

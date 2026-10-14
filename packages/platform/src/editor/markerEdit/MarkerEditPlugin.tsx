@@ -19,6 +19,7 @@ import {
 } from "./markerEditNote.utils";
 import {
   $chapterNodeTransform,
+  $exceptKeysAround,
   $markerNodeTransform,
   $restoreRemovedNoteCaller,
   $keepProtectedNoteCloser,
@@ -42,6 +43,7 @@ import { mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $getNodeByKey,
+  $hasUpdateTag,
   $getSelection,
   $getState,
   $isRangeSelection,
@@ -83,6 +85,7 @@ import {
   $ownerOfRunPiece,
   $syncAndPendDisplayRun,
   AttributeRunNode,
+  ANNOTATION_CHANGE_TAG,
   ChapterNode,
   CharNode,
   APP_PLACED_CARET_COMMAND,
@@ -209,6 +212,18 @@ const MAX_SETTLE_CASCADE_DEPTH = 8;
 export const IDLE_SETTLE_DELAY_MS = 1000;
 
 /**
+ * Whether the engine's per-node passes sit out the active update: an IME composition still in
+ * progress, or an update that only sets or clears annotations. An annotation edits no byte, but
+ * wrapping content in a mark splits its text node, and cutting a display byte carrier into pieces
+ * inserts siblings — both dirty nodes, and their neighbours, that nobody edited. A pass that read
+ * that dirtiness as an edit would pend bytes the user never touched, and the next caret move would
+ * settle them. Call inside an update.
+ */
+function $skipsEnginePass(editor: LexicalEditor): boolean {
+  return editor.isComposing() || $hasUpdateTag(ANNOTATION_CHANGE_TAG);
+}
+
+/**
  * Sync and pend every run `node` owns (the shared `$syncAndPendDisplayRun` helper,
  * displayRunSync.utils.ts): the sync leaves a caret-held divergence alone, and the matching pend
  * lets caret departure settle it ($resolvePendingMarkers) — without it a run would silently
@@ -287,7 +302,13 @@ function registerDestroyedOwnerPend(editor: LexicalEditor, context: MarkerEditCo
     mutations: Map<NodeKey, NodeMutation>,
     payload: { updateTags: Set<string>; prevEditorState: EditorState },
   ) => {
-    if (payload.updateTags.has(HISTORIC_TAG) || getApplyingUpdateSource(editor) === "remote")
+    if (
+      payload.updateTags.has(HISTORIC_TAG) ||
+      // Nodes an annotation change removes (a piece joined back, a text node a mark wrap merged)
+      // hand their bytes to a neighbour: nothing was deleted.
+      payload.updateTags.has(ANNOTATION_CHANGE_TAG) ||
+      getApplyingUpdateSource(editor) === "remote"
+    )
       return;
     const destroyedRuns: (DisplayRunOwnerRef & { isPiece: boolean })[] = [];
     payload.prevEditorState.read(() => {
@@ -796,7 +817,7 @@ export function MarkerEditPlugin({
     };
     const unregister = mergeRegister(
       editor.registerNodeTransform(MarkerNode, (node) => {
-        if (editor.isComposing()) return;
+        if ($skipsEnginePass(editor)) return;
         // A glyph an annotation cuts into pieces is one glyph: its head's pass covers it whole.
         if ($deferToPieceHead(node)) return;
         $markerNodeTransform(node, context);
@@ -828,7 +849,7 @@ export function MarkerEditPlugin({
           $syncAndPendOwner(ref.owner, context);
       }),
       editor.registerNodeTransform(VerseNode, (node) => {
-        if (editor.isComposing()) return;
+        if ($skipsEnginePass(editor)) return;
         // A verse an annotation cuts into pieces is one verse: its head's pass covers it whole.
         if ($deferToPieceHead(node)) return;
         $verseNodeTransform(node, context);
@@ -843,18 +864,18 @@ export function MarkerEditPlugin({
         $syncAndPendOwner(node, context);
       }),
       editor.registerNodeTransform(ChapterNode, (node) => {
-        if (editor.isComposing()) return;
+        if ($skipsEnginePass(editor)) return;
         $chapterNodeTransform(node);
         // Self-healing `\ca` alternate-number run + the grace/pend pairing, the same shape the
         // NoteNode transform below carries for `\cat`.
         if (node.isAttached()) $syncAndPendOwner(node, context);
       }),
       editor.registerNodeTransform(ParaNode, (node) => {
-        if (editor.isComposing()) return;
+        if ($skipsEnginePass(editor)) return;
         $paraMarkerDeletionTransform(node, context);
       }),
       editor.registerNodeTransform(CharNode, (node) => {
-        if (editor.isComposing()) return;
+        if ($skipsEnginePass(editor)) return;
         $charNodeDeletionTransform(node, context);
         // Pend only — do NOT sync here. The char kind's sync has exactly one registration home,
         // CharNodePlugin.tsx (shared-react); this engine owns only the pend half for chars —
@@ -885,11 +906,11 @@ export function MarkerEditPlugin({
       // — the sync leaves it alone and the milestone is pended for the caret-departure settle
       // ($resolvePendingMarkers).
       editor.registerNodeTransform(MilestoneNode, (node) => {
-        if (editor.isComposing()) return;
+        if ($skipsEnginePass(editor)) return;
         $syncAndPendOwner(node, context);
       }),
       editor.registerNodeTransform(AttributeRunNode, (node) => {
-        if (editor.isComposing()) return;
+        if ($skipsEnginePass(editor)) return;
         // A piece INSIDE the wrapper being edited or removed dirties the WRAPPER, not the leaf
         // owner: a DecoratorNode-based MilestoneNode, a following-sibling-shaped verse run, and a
         // note's child-positioned `\cat` run would otherwise never notice. Re-drive the owner's
@@ -905,7 +926,7 @@ export function MarkerEditPlugin({
           $syncAndPendOwner(ref.owner, context);
       }),
       editor.registerNodeTransform(NoteNode, (node) => {
-        if (editor.isComposing()) return;
+        if ($skipsEnginePass(editor)) return;
         $noteDeletionTransform(node, context);
         $restoreRemovedNoteCaller(node, context);
         $keepProtectedNoteCloser(node);
@@ -922,14 +943,14 @@ export function MarkerEditPlugin({
       // Lexical dispatches transforms by exact node type, so neither the TextNode catch-all
       // below nor the MarkerNode transform above ever fires for this subclass.
       editor.registerNodeTransform(ImmutableUnmatchedNode, (node) => {
-        if (editor.isComposing()) return;
+        if ($skipsEnginePass(editor)) return;
         $unmatchedNodeTransform(node, context);
       }),
       // Plain-TextNode catch-all for typed/pasted literal backslash sequences (Tier 2).
       // Lexical dispatches transforms by exact node type, so this never fires for
       // MarkerNode/VerseNode subclasses — TextSpacingPlugin relies on the same fact.
       editor.registerNodeTransform(TextNode, (node) => {
-        if (editor.isComposing()) return;
+        if ($skipsEnginePass(editor)) return;
         $textNodeTier2Transform(node, context);
       }),
       // Plain TextNodes can't emit a DOM class from node state the way
@@ -1346,6 +1367,13 @@ export function MarkerEditPlugin({
           if (anchorKey !== undefined) lastAnchorKey = anchorKey;
           return;
         }
+        if (tags.has(ANNOTATION_CHANGE_TAG)) {
+          // Setting or clearing an annotation is no caret move and no edit, so it neither arms the
+          // idle clock nor departs anything. A mark wrap can re-key the node the caret is in, so
+          // the anchor is still brought current.
+          if (anchorKey !== undefined && !appPlacedCaret) lastAnchorKey = anchorKey;
+          return;
+        }
         if (isAppPlacedMove) {
           // Narrowing: arm the suppression window only when the app-placed commit
           // actually MOVED the caret to a different node — an app-placed yank. App-placed commits
@@ -1408,7 +1436,10 @@ export function MarkerEditPlugin({
         // nothing even though lastAnchorKey still points at the user's node. The BLUR handler, not
         // this deferred path, does the final sweep when focus is genuinely lost.
         if (resolveQueued || anchorKey === undefined) return;
-        if (![...context.pendingKeys].some((key) => key !== anchorKey)) return;
+        // The same shield the settle applies: the caret beside a pend in one run of content text
+        // (a mark cuts content into several nodes) has not departed it.
+        const shielded = editorState.read(() => $exceptKeysAround(anchorKey));
+        if (![...context.pendingKeys].some((key) => !shielded.has(key))) return;
         resolveQueued = true;
         queueMicrotask(() => {
           resolveQueued = false;
