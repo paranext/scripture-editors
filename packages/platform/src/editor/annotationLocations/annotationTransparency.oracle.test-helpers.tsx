@@ -42,6 +42,7 @@ import {
   outsideNotes,
   pendingOracleView,
   PositionReport,
+  PROTECTED_NOTE_SHELL_VIEW,
   readExpectedFailures,
   runKeystrokeCase,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
@@ -55,6 +56,7 @@ import {
   COPY_COMMAND,
   LexicalEditor,
   LexicalNode,
+  SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
 import {
@@ -363,12 +365,20 @@ function isNodeShaped(keystroke: OracleKeystroke): boolean {
   return keystroke.name.includes("over the whole text");
 }
 
-/** The `text/plain` a copy of the whole edited paragraph puts on the clipboard. */
-async function copiedBytes(mounted: MountedInView): Promise<string> {
+/**
+ * The `text/plain` a copy of the whole edited paragraph puts on the clipboard. In the popover's
+ * view the selection is announced as a change in the same update, as every caret placement there
+ * is, so the shell's caret guard confines it to the note before the copy reads it. Unannounced,
+ * whether the guard had run by then would depend on whether jsdom's own deferred `selectionchange`
+ * fired first.
+ */
+async function copiedBytes(mounted: MountedInView, view: string): Promise<string> {
   await act(async () => {
     mounted.lexical.update(() => {
       const para = $getRoot().getChildren()[2];
       if ($isElementNode(para)) para.select(0, para.getChildrenSize());
+      if (view === PROTECTED_NOTE_SHELL_VIEW)
+        mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
     });
   });
   const { event, getData } = copyEvent();
@@ -466,7 +476,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
             const expected = observables(plain);
             expected.delta = composedDelta(plainMounted.lexical);
             expected.ops = composedChange(plainMounted.ops);
-            expected.copy = await copiedBytes(plainMounted);
+            expected.copy = await copiedBytes(plainMounted, view);
             const plainNodeText = plainMounted.lexical
               .getEditorState()
               .read(() => $spellings(site)[0]?.node.getTextContent());
@@ -519,7 +529,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               const actual = observables(annotated);
               actual.delta = composedDelta(mounted.lexical);
               actual.ops = composedChange(mounted.ops.slice(opsBefore));
-              actual.copy = await copiedBytes(mounted);
+              actual.copy = await copiedBytes(mounted, view);
               for (const [name, value] of Object.entries(expected))
                 if (actual[name] !== value)
                   mismatches.set(
