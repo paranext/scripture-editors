@@ -4,7 +4,6 @@ import {
   $isRangeSelection,
   $isTextNode,
   BaseSelection,
-  HISTORY_MERGE_TAG,
   LexicalNode,
   NodeKey,
 } from "lexical";
@@ -29,9 +28,11 @@ export function $commentIdsAt(node: LexicalNode, offset: number): string[] {
 
 /**
  * Hold comment `id` over `selection`: a mark over its content, holds on its display bytes. Tags the
- * update {@link ANNOTATION_MARKS_TAG}, so nothing reads the nodes the wrap splits as edited, and
- * `HISTORY_MERGE_TAG`, so it joins the current undo step rather than making one of its own. A no-op
- * for a selection that is not a range. Mutating.
+ * update {@link ANNOTATION_MARKS_TAG}, so nothing reads the nodes the wrap splits as edited. The
+ * user adds a comment in the panel, so it is an undo step of its own, like any edit of theirs: the
+ * comment store does not follow undo, so joining the step before it would let an undo of the
+ * user's typing take the thread's anchor with it. A no-op for a selection that is not a range.
+ * Mutating.
  */
 export function $addCommentAnnotation(
   selection: BaseSelection | null | undefined,
@@ -39,14 +40,13 @@ export function $addCommentAnnotation(
 ): void {
   if (!$isRangeSelection(selection)) return;
   $addUpdateTag(ANNOTATION_MARKS_TAG);
-  $addUpdateTag(HISTORY_MERGE_TAG);
   $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, id);
 }
 
 /**
  * Remove comment `id` from the marks and the display-byte nodes holding it. Tags the update
- * {@link ANNOTATION_MARKS_TAG} and `HISTORY_MERGE_TAG`, as {@link $addCommentAnnotation} does.
- * Mutating.
+ * {@link ANNOTATION_MARKS_TAG} and is an undo step of its own, as {@link $addCommentAnnotation}
+ * is. Mutating.
  */
 export function $removeCommentAnnotation(
   id: string,
@@ -54,7 +54,6 @@ export function $removeCommentAnnotation(
   displayKeys: Iterable<NodeKey>,
 ): void {
   $addUpdateTag(ANNOTATION_MARKS_TAG);
-  $addUpdateTag(HISTORY_MERGE_TAG);
   $removeTypedMarkId(COMMENT_MARK_TYPE, id, markKeys);
   for (const key of displayKeys) {
     const node = $getNodeByKey(key);

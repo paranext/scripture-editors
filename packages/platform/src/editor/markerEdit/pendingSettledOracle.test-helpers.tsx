@@ -1453,9 +1453,10 @@ export { $editSites, $editableTexts, $shellTexts, outsideNotes, pendingOracleVie
 export type { PositionReport };
 
 /**
- * Run one keystroke case on `mounted` (which it unmounts): place the caret at the site `$site`
- * resolves, apply `keystroke`, read the pending document, depart, read the settled one.
- * `undefined` when the keystroke does nothing at the site, or the site is unreachable.
+ * Run one keystroke case on `mounted`: place the caret at the site `$site` resolves, apply
+ * `keystroke`, read the pending document, depart, read the settled one. `undefined` when the
+ * keystroke does nothing at the site, or the site is unreachable — `mounted` is unmounted then;
+ * after a run the caller unmounts it.
  *
  * Every step that moves the selection waits for the native `selectionchange` it queues, and the
  * editor's answer to it, before the next step ({@link drainNativeSelectionChange}): otherwise
@@ -1737,7 +1738,8 @@ export function caseMismatches(
  * Compare `mismatches` of `row` with the expected-failures `listed` for it: a failure the list
  * does not name fails the row, and so does a listed case that no longer fails, so the list only
  * shrinks. Each listed case names the reason it is left failing. With `write`, the row's list is
- * written into `written` instead, keeping the reasons of the cases still listed.
+ * written into `written` instead, keeping the reasons of the cases still listed. `context` is
+ * printed with an unlisted failure.
  */
 export function expectMismatchesListed(
   row: string,
@@ -1745,6 +1747,7 @@ export function expectMismatchesListed(
   listed: ExpectedFailures,
   written: ExpectedFailures,
   write: boolean,
+  context?: string,
 ): void {
   const reasons = listed[row] ?? {};
   if (write) {
@@ -1759,6 +1762,7 @@ export function expectMismatchesListed(
   const known = new Set(Object.keys(reasons));
   expect(
     [...mismatches].filter(([label]) => !known.has(label)).map(([, detail]) => detail),
+    context,
   ).toEqual([]);
   expect(
     [...known].filter((label) => !mismatches.has(label)),

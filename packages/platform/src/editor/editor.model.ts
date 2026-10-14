@@ -310,13 +310,16 @@ export interface EditorRef {
    * every `<mark>`'s and carrier's text joined in document order when they all leave in the same
    * edit; holders lost across separate edits leave only the text of the piece(s) still present at
    * the last one. A collapsed note caller's text is the note's caller. Undo, redo, and a `setUsj`
-   * reload report nothing; setting the id again starts a fresh reporting cycle for it. Setting or
-   * removing an annotation adds no undo step: an undo that reverts the edit it was set on reverts
-   * it too, silently — a host re-sets annotations from its own state on the next change, as it
-   * does after a reload. An
+   * reload report nothing; setting the id again starts a fresh reporting cycle for it. An
    * `onRemove` that throws — in a `<mark>`'s own report or in the one more report — does not stop
    * the edit or call that removed the annotation, or the other reports: the error is handed to the
    * editor's error handler, which rethrows it, in a later microtask.
+   *
+   * Setting or removing an annotation through this method or {@link EditorRef.removeAnnotation}
+   * adds no undo step: an undo that reverts the edit it was set on reverts it too, silently — a
+   * host re-sets annotations from its own state on the next change, as it does after a reload. A
+   * comment the user adds or deletes in `Marginal`'s comment panel is not set through this method:
+   * it is the user's own edit, an undo step of its own.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.
