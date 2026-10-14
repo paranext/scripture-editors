@@ -4,7 +4,7 @@ import { getVisibleOpenMarkerText } from "../usj/markerText.utils.js";
 import { NBSP } from "../usj/node-constants.js";
 import { $createParaNode } from "../usj/ParaNode.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
-import { $createVerseNode } from "../usj/VerseNode.js";
+import { $createVerseNode, VerseNode } from "../usj/VerseNode.js";
 import { textTypeState } from "../collab/delta.state.js";
 import {
   $addDisplayAnnotation,
@@ -14,14 +14,19 @@ import {
   registerDisplayAnnotationBasis,
 } from "./displayAnnotations.utils.js";
 import {
+  $deferToPieceHead,
   $isPieceContinuation,
+  $isPieceOf,
   $lastPiece,
   $logicalChildren,
   $logicalNextSibling,
   $logicalPreviousSibling,
+  $logicalOffset,
   $logicalText,
+  $pieceAt,
   $pieceHead,
   $pieces,
+  $pieceStart,
 } from "./displayPieces.state.js";
 import { $createMarkerNode, $isCanonicalMarkerNode, MarkerNode } from "./MarkerNode.js";
 import { TypedMarkNode } from "./TypedMarkNode.js";
@@ -305,6 +310,68 @@ describe("carrier pieces", () => {
     );
     editor.read(() => {
       expect($pieces(run).map((piece) => piece.getKey())).toEqual(keys);
+    });
+  });
+});
+
+describe("carrier offsets and per-node passes", () => {
+  /** `\v 12 ` cut into `\v `, `12` and ` ` by a hold on its number. */
+  function $cutVerse(): LexicalNode {
+    const verse = $createVerseNode("12", getVisibleOpenMarkerText("v", "12"));
+    $getRoot().append($createParaNode().append(verse, $createTextNode("In the")));
+    $addDisplayAnnotation(verse, "check", "a", 3, 5);
+    return verse;
+  }
+
+  it("maps whole-carrier offsets to pieces and back, ending a boundary on the piece before it", () => {
+    const editor = mount();
+    let verse!: LexicalNode;
+    editor.update(() => void (verse = $cutVerse()), { discrete: true });
+    editor.read(() => {
+      const pieces = $pieces(verse);
+      expect(texts(pieces)).toEqual([`\\v${NBSP}`, "12", " "]);
+      expect(pieces.map($pieceStart)).toEqual([0, 3, 5]);
+      expect(pieces.map((piece) => $isPieceOf(piece, pieces[2]))).toEqual([true, true, true]);
+      expect($isPieceOf($logicalNextSibling(verse), verse)).toBe(false);
+      expect($logicalOffset(verse, pieces[1].getKey(), 1)).toBe(4);
+      expect($logicalOffset(pieces[2], pieces[0].getKey(), 2)).toBe(2);
+      expect($logicalOffset(verse, "not-a-piece", 0)).toBeUndefined();
+      const at = (offset: number) => {
+        const { piece, offset: into } = $pieceAt(verse, offset);
+        return [piece.getTextContent(), into];
+      };
+      expect([0, 3, 4, 5, 6, 9].map(at)).toEqual([
+        [`\\v${NBSP}`, 0],
+        [`\\v${NBSP}`, 3],
+        ["12", 1],
+        ["12", 2],
+        [" ", 1],
+        [" ", 1],
+      ]);
+    });
+  });
+
+  it("hands a continuation's per-node pass to its head", () => {
+    const editor = mount();
+    let verse!: LexicalNode;
+    editor.update(() => void (verse = $cutVerse()), { discrete: true });
+    const visited: string[] = [];
+    const unregister = editor.registerNodeTransform(VerseNode, (node) => {
+      if ($deferToPieceHead(node)) return;
+      visited.push($logicalText(node));
+    });
+    editor.update(
+      () => {
+        $pieces(verse)[2].markDirty();
+      },
+      { discrete: true },
+    );
+    unregister();
+    expect(visited.at(-1)).toBe(`\\v${NBSP}12 `);
+    expect(visited.every((text) => text === `\\v${NBSP}12 `)).toBe(true);
+    editor.read(() => {
+      // A continuation whose head is gone is a carrier of its own: nothing to hand on.
+      expect($deferToPieceHead($getRoot())).toBe(false);
     });
   });
 });
