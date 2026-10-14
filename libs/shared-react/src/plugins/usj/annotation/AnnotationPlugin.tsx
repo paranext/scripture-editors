@@ -4,7 +4,16 @@ import { AnnotationRange } from "./selection.model";
 import { $getRangeFromUsjSelection } from "./selection.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister, registerNestedElementResolver } from "@lexical/utils";
-import { $getNodeByKey, HISTORY_MERGE_TAG, LexicalEditor, NodeKey } from "lexical";
+import {
+  $getNodeByKey,
+  $getSelection,
+  $isRangeSelection,
+  COMMAND_PRIORITY_CRITICAL,
+  HISTORY_MERGE_TAG,
+  LexicalEditor,
+  NodeKey,
+  SELECTION_CHANGE_COMMAND,
+} from "lexical";
 import { ForwardedRef, forwardRef, useEffect, useImperativeHandle, useMemo } from "react";
 import {
   $coveredDisplayText,
@@ -13,6 +22,7 @@ import {
   $isTypedMarkNode,
   $removeDisplayAnnotation,
   $removeTypedMarkId,
+  $restoreCaretAtMarkEnd,
   $wrapSelectionInTypedMarkNode,
   ANNOTATION_CHANGE_TAG,
   DecoratorHold,
@@ -136,6 +146,18 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
           });
         },
         { skipInitialization: true },
+      ),
+      // A caret at the end of a mark's content is read back from the screen onto the start of the
+      // glyph after the mark; it is put back where it is, first, so every selection listener reads
+      // the content's end, as with no mark there.
+      editor.registerCommand(
+        SELECTION_CHANGE_COMMAND,
+        () => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) $restoreCaretAtMarkEnd(selection);
+          return false;
+        },
+        COMMAND_PRIORITY_CRITICAL,
       ),
     );
   }, [editor, markNodeMap]);

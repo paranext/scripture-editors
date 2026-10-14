@@ -1079,6 +1079,8 @@ describe("a closed note's closing glyph, with the shell protected", () => {
         selection.focus.set(closer.getKey(), focusOffset(closer), "text");
         selection.removeText();
       });
+      // What the test then reads is the caret after the browser has told the editor where it is.
+      await drainNativeSelectionChange();
     });
   }
 
@@ -1108,8 +1110,8 @@ describe("a closed note's closing glyph, with the shell protected", () => {
       const note = findOnlyNote($getRoot());
       expect($closer(note).getMode()).toBe("token");
       expect($noteParagraphText()).toMatch(/\\ft A note\\f\* after$/);
-      // The caret is left in the note, in front of the closer: the next Backspace reaches the
-      // note's text rather than the closer again.
+      // The caret is left in the note, in front of the closer — at the closer's front, where the
+      // caret guard rests a caret at the end of the note's content, or before it.
       const selection = $getSelection();
       if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
       const { anchor } = selection;
@@ -1117,8 +1119,19 @@ describe("a closed note's closing glyph, with the shell protected", () => {
       expect(
         anchor.getNode().is(note)
           ? anchor.offset <= closer.getIndexWithinParent()
-          : note.isParentOf(anchor.getNode()) && anchor.getNode().isBefore(closer),
+          : (anchor.getNode().is(closer) && anchor.offset === 0) ||
+              (note.isParentOf(anchor.getNode()) && anchor.getNode().isBefore(closer)),
       ).toBe(true);
+    });
+    // The next Backspace reaches the note's text rather than the closer again: it is the ordinary
+    // delete, from the end of that text.
+    expect(await dispatchGuardedDelete(editor, DELETE_CHARACTER_COMMAND, true)).toBe(false);
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      const text = $noteContentText(findOnlyNote($getRoot()));
+      expect(selection.anchor.getNode().is(text)).toBe(true);
+      expect(selection.anchor.offset).toBe(text.getTextContentSize());
     });
     const { note, tail } = savedNoteAndTail(editor);
     expect(note).not.toHaveProperty("closed");
