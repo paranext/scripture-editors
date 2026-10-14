@@ -26,6 +26,7 @@ import {
   $displayAnnotationsOf,
   $logicalText,
   $setLogicalText,
+  setDecoratorPaint,
   DELTA_CHANGE_TAG,
   NBSP,
   TypedMarkOnRemove,
@@ -318,6 +319,38 @@ describe("annotation painting on read-only decorators", () => {
       mounted.unmount();
     },
   );
+
+  it("grades a decorator held in part by the characters it paints, not by any paint at all", async () => {
+    const mounted = await mountInView(paintUsj, oracleView("formatted"));
+    await annotate(mounted, digit, "digit");
+    const $verse = () => {
+      const index = $byteNodes().findIndex(([node]) => $isImmutableVerseNode(node));
+      const [node] = $byteNodes()[index];
+      return { index, key: node.getKey(), rendered: $decoratorRenderedText(node) };
+    };
+    const verse = mounted.lexical.getEditorState().read($verse);
+    const painted = () =>
+      mounted.lexical
+        .getEditorState()
+        .read(() => $paintedIndexes(mounted.lexical, "digit").has(verse.index));
+    expect(painted()).toBe(true);
+
+    // A sub-span still paints the annotation, but on the digit it does not hold.
+    const one = verse.rendered.indexOf("1");
+    await act(async () =>
+      setDecoratorPaint(mounted.lexical, verse.key, [
+        {
+          start: one,
+          end: one + 1,
+          classNames: ["annotationId-digit"],
+          annotationKeys: [JSON.stringify([HELD_TYPE, "digit"])],
+        },
+      ]),
+    );
+    expect(paintedText(mounted, "digit")).toBe("1");
+    expect(painted()).toBe(false);
+    mounted.unmount();
+  });
 
   // The verse decorator re-renders inside the commit here, so this pins the result of a renumber;
   // a decorator rendering after its commit is covered in `displayAnnotations.index.test.tsx`.
