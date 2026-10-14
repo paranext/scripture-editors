@@ -136,6 +136,8 @@ import {
   $logicalText,
   $pieces,
   $nextSiblingThroughMarks,
+  $isSeparatorPrefixHostText,
+  $textRunThroughMarks,
 } from "shared";
 import {
   $isImmutableNoteCallerNode,
@@ -712,6 +714,23 @@ function $flattenAttributeRuns(run: LexicalNode[]): LexicalNode[] {
 }
 
 /**
+ * `node`'s contribution, as a char span's own child, to its span's signature: the text
+ * {@link charOwnChildSignatureText} reads, applied to the text the unmarked tree has as ONE node.
+ * An annotation mark cuts content text where its range starts or ends, so a separator NBSP and the
+ * content after it can be two texts here and one without the mark; the rule tells a mixed text
+ * from a lone spacer, so it reads the whole run ({@link $textRunThroughMarks}), and the run's
+ * first text contributes it for all of them.
+ */
+function $charOwnChildSignatureOf(node: TextNode, text: string): string {
+  const run = $textRunThroughMarks(node, $isSeparatorPrefixHostText);
+  if (run.length === 1) return charOwnChildSignatureText(text);
+  if (!run[0].is(node)) return "";
+  return charOwnChildSignatureText(
+    run.map((member) => $textNodeFragmentText(member, $logicalText(member))).join(""),
+  );
+}
+
+/**
  * Structure-aware, sentinel-normalized signature of a node list, used ONLY to detect
  * a `$rebuildParas` no-op (fixed point). Marker glyphs and text contribute their
  * fragment text; every structural element (paragraph, CharNode span, verse-as-text,
@@ -876,7 +895,7 @@ function $appendSignature(
       );
     } else if ($isTextNode(node)) {
       const text = $textNodeFragmentText(node, $logicalText(node));
-      out.push(toFragmentText(insideCharChildren ? charOwnChildSignatureText(text) : text));
+      out.push(toFragmentText(insideCharChildren ? $charOwnChildSignatureOf(node, text) : text));
     } else if ($isCharNode(node)) {
       // A known-marker span that reaches here is NOT a sentinel ($isRebuildSentinel already
       // filtered unknown markers) — fold its own stored `unknownAttributes` into the signature
