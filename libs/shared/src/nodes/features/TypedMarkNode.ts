@@ -157,6 +157,9 @@ const removalReports = new WeakMap<LexicalEditor, [type: string, id: string][]>(
  * found here has already told the host and stays quiet the next time it goes. */
 const reportedMarks = new WeakMap<LexicalEditor, Map<string, Set<NodeKey>>>();
 
+/** Per editor a reporter listens to, the marks whose `remove()` ran since the last take. */
+const removedMarks = new WeakMap<LexicalEditor, Set<NodeKey>>();
+
 /**
  * Start recording the `type`/`id` pairs whose `onRemove` a mark of `editor` calls, for
  * {@link takeTypedMarkRemovalReports}. Returns the function that stops it and drops what was not
@@ -165,10 +168,26 @@ const reportedMarks = new WeakMap<LexicalEditor, Map<string, Set<NodeKey>>>();
 export function listenForTypedMarkRemovalReports(editor: LexicalEditor): () => void {
   removalReports.set(editor, []);
   reportedMarks.set(editor, new Map());
+  removedMarks.set(editor, new Set());
   return () => {
     removalReports.delete(editor);
     reportedMarks.delete(editor);
+    removedMarks.delete(editor);
   };
+}
+
+/**
+ * The marks of `editor` whose `remove()` has run since the last take, so a reporter can tell them
+ * from a mark Lexical dropped without calling it (an emptied mark a selection delete takes away, a
+ * mark inside a removed element). Each of these has made its own report, or was told not to (a
+ * merge or a rebuild handing its ids on to another mark). Clears the set. Empty unless
+ * {@link listenForTypedMarkRemovalReports} is recording for `editor`.
+ */
+export function takeRemovedTypedMarks(editor: LexicalEditor): Set<NodeKey> {
+  const taken = removedMarks.get(editor);
+  if (!taken) return new Set();
+  removedMarks.set(editor, new Set());
+  return taken;
 }
 
 /**
@@ -607,6 +626,7 @@ export class TypedMarkNode extends ElementNode {
   override remove(preserveEmptyParent?: boolean): void {
     const self = this.getWritable();
     const typedIDs = this.getTypedIDs();
+    removedMarks.get($getEditor())?.add(self.getKey());
     if (self.__suppressOnRemoveCallbacks) {
       self.__suppressOnRemoveCallbacks = undefined;
     } else {
