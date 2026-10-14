@@ -47,17 +47,26 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { $setBlocksType } from "@lexical/selection";
+import { $findMatchingParent } from "@lexical/utils";
 import { deepEqual } from "fast-equals";
 import {
   $addUpdateTag,
+  $createRangeSelection,
+  $getNodeByKey,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $isTextNode,
   $setSelection,
   EditorState,
   LexicalEditor,
+  LexicalNode,
   HISTORIC_TAG,
+  HISTORY_MERGE_TAG,
+  RangeSelection,
   REDO_COMMAND,
+  SELECTION_CHANGE_COMMAND,
+  SKIP_DOM_SELECTION_TAG,
   UNDO_COMMAND,
 } from "lexical";
 import {
@@ -74,6 +83,7 @@ import {
 } from "react";
 import {
   $createParaNode,
+  $isBookNode,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
@@ -82,6 +92,7 @@ import {
   externalTypedMarkType,
   getPendedDisplayOwners,
   LoggerBasic,
+  NoteNode,
   ParaNode,
   SELECTION_CHANGE_TAG,
   TypedMarkNode,
@@ -93,17 +104,23 @@ import {
 import {
   $applyUpdate,
   $getNoteByKeyOrIndex,
+  $getNoteIndex,
+  $getOTPositionOfNode,
   $getParticularNodeOps,
   $getUsjSelectionFromEditor,
   $getRangeFromUsjSelection,
   $getReplaceEmbedOps,
   $insertNote,
+  $selectAfterNote,
   $selectNote,
+  $selectNoteCategoryOffset,
+  $selectNoteTextOffset,
   AnnotationPlugin,
   AnnotationRange,
   AnnotationRef,
   ArrowNavigationPlugin,
   CharNodePlugin,
+  clearStaleDomSelection,
   ClipboardPlugin,
   CommandMenuPlugin,
   ContextMenuPlugin,
@@ -112,7 +129,10 @@ import {
   DecoratorBoundarySelectionPlugin,
   DeltaOnChangePlugin,
   DeltaOp,
+  DeltaSource,
   DisableHistoryShortcutsPlugin,
+  editorHoldsDomFocus,
+  EmptyNoteCaretGuardPlugin,
   EditableMarkerMenuHarness,
   EditablePlugin,
   EmptyVerseCaretGuardPlugin,
@@ -121,6 +141,8 @@ import {
   getViewClassList,
   isBlockVerseLayout,
   LoadStatePlugin,
+  NoteCallerHighlightHandle,
+  NoteCallerHighlightPlugin,
   NoteNodePlugin,
   NoteShellCaretGuardPlugin,
   OnSelectionChangePlugin,
@@ -129,6 +151,8 @@ import {
   ParaNodePlugin,
   pasteSelection,
   pasteSelectionAsPlainText,
+  readLatest,
+  releaseTagsAfterNextCommit,
   StateChangePlugin,
   StateChangeSnapshot,
   StructureKeyboardPlugin,
@@ -148,6 +172,55 @@ const defaultOptions: EditorOptions = {};
 
 function Placeholder(): ReactElement {
   return <div className="editor-placeholder">Enter some Scripture...</div>;
+}
+
+/**
+ * Records `noteNode`'s key in `expandedNoteKeyRef` when it is expanded, so `NoteNodePlugin` knows
+ * to collapse that note once the caret leaves it. No-op for a collapsed note or no note at all.
+ * Call inside `editor.update()`.
+ */
+function $rememberExpandedNote(
+  noteNode: NoteNode | null | undefined,
+  expandedNoteKeyRef: React.MutableRefObject<string | undefined>,
+): void {
+  if (noteNode && !noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
+}
+
+/** The ops for whatever follows `noteNode` in its paragraph (see `EditorRef.getOpsAfterNote`). */
+function $getOpsAfterNote(noteNode: NoteNode): DeltaOp[] {
+  const following = noteNode.getNextSiblings();
+  const first = following.at(0);
+  const last = following.at(-1);
+  if (!first || !last) return [];
+  const end = $isElementNode(last) ? (last.getLastDescendant() ?? last) : last;
+  return $getParticularNodeOps(first, end);
+}
+
+/**
+ * Retags every paragraph `selection` touches to `blockMarker`, keeping every paragraph's own
+ * text — the `EditorRef.formatPara` core, shared by its non-book path and (after splitting the
+ * `\id` line) its book path so the two cannot drift. `$setBlocksType` moves each affected block's
+ * children into a fresh `ParaNode` carrying the new marker state; it has no notion that a marker
+ * glyph is content it should rewrite, so it moves the OLD marker's visible prefix over unchanged —
+ * `$applyParaMarker` re-runs over every affected paragraph afterward to bring the glyph (editable
+ * marker mode) back into agreement with the new marker.
+ *
+ * Mutating: call inside `editor.update()`, with `selection` the live RangeSelection to retag.
+ */
+function $retagBlocksInSelection(
+  selection: RangeSelection,
+  blockMarker: string,
+  viewOptions: ViewOptions | undefined,
+): void {
+  $setBlocksType(selection, () => $createParaNode(blockMarker));
+  const updated = $getSelection();
+  if (!$isRangeSelection(updated)) return;
+  const affectedParas = new Set<ParaNode>();
+  updated.getNodes().forEach((node) => {
+    const block = node.getTopLevelElement();
+    if ($isParaNode(block)) affectedParas.add(block);
+  });
+  affectedParas.forEach((para) => $applyParaMarker(para, blockMarker, viewOptions));
 }
 
 /**
@@ -181,6 +254,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
 ): ReactElement {
   const editorRef = useRef<LexicalEditor | null>(null);
   const annotationRef = useRef<AnnotationRef | null>(null);
+  const noteCallerHighlightRef = useRef<NoteCallerHighlightHandle | null>(null);
   const toolbarEndRef = useRef<HTMLDivElement>(null);
   const editedUsjRef = useRef(defaultUsj);
   const expandedNoteKeyRef = useRef<string>(undefined);
@@ -429,6 +503,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     if (effectiveIsReadonly) throw new Error(`Cannot ${operation} in readonly mode`);
   };
 
+  /** See {@link editorHoldsDomFocus}. */
+  const holdsDomFocus = () => !!editorRef.current && editorHoldsDomFocus(editorRef.current);
+
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
       namespace: "platformEditor",
@@ -485,6 +562,74 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     );
   }, [viewOptions, markerLookup, stableLogger]);
 
+  /**
+   * `EditorRef.applyUpdate`, with `extraTag` (when given) riding on the update as well - how
+   * `takeOpsAfterNote` joins its removal to the undo step of the edit that left the text there.
+   */
+  function applyOps(ops: DeltaOp[], source: DeltaSource, extraTag?: string) {
+    // Delta ops address content by its position in the USJ, which this layout's regrouping
+    // changes, so applying them would edit the wrong nodes rather than fail. A remote op is not
+    // a caller error, and throwing into a host's op loop would tear it down, so report and drop
+    // it - a read-only view refreshes by being handed new USJ, not by replaying deltas.
+    if (isBlockVerse && source === "remote") {
+      loggerRef.current?.error(
+        "Editor: ignoring a remote update in the block verse layout; reload the view with the " +
+          "new USJ instead.",
+      );
+      return;
+    }
+    // Block verse only, not `effectiveIsReadonly`: a read-only pane in a collaborative session is
+    // a supported flow, and it stays current by having remote deltas applied to it. Throwing here
+    // would tear down the host's op loop for the same reason the remote branch above reports and
+    // drops instead of throwing.
+    assertNotBlockVerse("apply an update");
+    const holdsFocus = holdsDomFocus();
+    const unregisterTagRelease =
+      !holdsFocus && editorRef.current
+        ? releaseTagsAfterNextCommit(editorRef.current, SKIP_DOM_SELECTION_TAG)
+        : undefined;
+    editorRef.current?.update(
+      () => {
+        if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
+        if (!holdsFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+        if (extraTag) $addUpdateTag(extraTag);
+        $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
+      },
+      {
+        discrete: true,
+        // Reads the committed state and reports the change from `onUpdate` rather than right
+        // after this call, because `editor.update()` does not always run synchronously: a caller
+        // reached from inside another commit's own update listener (a host's `onUsjChange`
+        // calling back into `takeOpsAfterNote`, say) finds the editor already mid-commit, so
+        // Lexical queues this discrete update and applies it only once that outer commit's
+        // listeners finish. `onUpdate` fires exactly when THIS update's own commit lands, whether
+        // that is synchronously (the ordinary case, before `editor.update()` even returns) or
+        // after such a deferral, so the report is correct either way - and the unfocused tag
+        // release is disarmed only once the commit it guards has actually happened, never before.
+        onUpdate: () => {
+          unregisterTagRelease?.();
+          if (!holdsFocus && editorRef.current) clearStaleDomSelection(editorRef.current);
+          const editorState = editorRef.current?.getEditorState();
+          if (!editorState) return;
+
+          const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
+          if (newUsj) {
+            const isEdited = !deepEqual(editedUsjRef.current, newUsj);
+            if (isEdited) editedUsjRef.current = newUsj;
+            if (isEdited || !deepEqual(usj, newUsj)) {
+              // "apply" coordinates: `$applyUpdate` placed the inserted node by interpreting the
+              // retain with its own traversals (every embed opaque), so the reverse lookup must
+              // count the same way to find the node that was actually inserted.
+              const insertedNodeKey = getInsertedNodeKey(ops, editorState, "apply");
+              lastNotifiedUsjRef.current = newUsj;
+              onUsjChange?.(newUsj, ops, source, insertedNodeKey);
+            }
+          }
+        },
+      },
+    );
+  }
+
   // Built as a plain object (rebuilt per render, same as the previous inline useImperativeHandle
   // factory) and assigned to editorApiRef UNCONDITIONALLY below — never inside the
   // useImperativeHandle factory, which React only invokes when the consumer actually attached a
@@ -494,9 +639,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     focus() {
       editorRef.current?.focus();
     },
+    // Delegates to `holdsDomFocus` (above), the same check every internal caller here uses,
+    // rather than comparing `activeElement` to the root directly: a focused decorator inside the
+    // editor - a collapsed note's caller button, say - is the user being in THIS editor, and a
+    // host gating a keyboard shortcut or a PDP-sync deferral on `isFocused()` needs that answer,
+    // not a narrower one that reads such a caret as unfocused.
     isFocused() {
-      const root = editorRef.current?.getRootElement();
-      return !!root && root.ownerDocument.activeElement === root;
+      return holdsDomFocus();
     },
     undo() {
       editorRef.current?.dispatchCommand(UNDO_COMMAND, undefined);
@@ -527,15 +676,30 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       return readSettledUsj();
     },
     commitPendingMarkerEdits() {
+      const editor = editorRef.current;
+      if (!editor) return;
+      // A host settles this editor on the user's way OUT of it (into a note editor elsewhere, say),
+      // so the settle follows the same focus rule as `applyUpdate`: it must not write the DOM
+      // selection, and with it focus, back into this editor.
+      const skipDomSelection = !holdsDomFocus();
+      const unregisterTagRelease = skipDomSelection
+        ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
+        : undefined;
       // Discrete so the settle commits synchronously: `DeltaOnChangePlugin` then refreshes
       // `editedUsjRef` before this method returns, letting callers read fresh USJ via
       // `getUsj()` immediately (the host save path depends on this ordering).
-      editorRef.current?.update(
+      editor.update(
         () => {
-          editorRef.current?.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
+          if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+          editor.dispatchCommand(COMMIT_PENDING_MARKERS_COMMAND, undefined);
         },
         { discrete: true },
       );
+      // With nothing pending, `COMMIT_PENDING_MARKERS_COMMAND` finds no work and the update above
+      // commits nothing - disarm the listener rather than leave it to strip the tag off whatever
+      // commit happens next.
+      unregisterTagRelease?.();
+      if (skipDomSelection) clearStaleDomSelection(editor);
     },
     setTransientInput(input) {
       if (!input) {
@@ -579,45 +743,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       }
     },
     applyUpdate(ops, source = "remote") {
-      // Delta ops address content by its position in the USJ, which this layout's regrouping
-      // changes, so applying them would edit the wrong nodes rather than fail. A remote op is not
-      // a caller error, and throwing into a host's op loop would tear it down, so report and drop
-      // it - a read-only view refreshes by being handed new USJ, not by replaying deltas.
-      if (isBlockVerse && source === "remote") {
-        loggerRef.current?.error(
-          "Editor: ignoring a remote update in the block verse layout; reload the view with the " +
-            "new USJ instead.",
-        );
-        return;
-      }
-      // Block verse only, not `effectiveIsReadonly`: a read-only pane in a collaborative session is
-      // a supported flow, and it stays current by having remote deltas applied to it. Throwing here
-      // would tear down the host's op loop for the same reason the remote branch above reports and
-      // drops instead of throwing.
-      assertNotBlockVerse("apply an update");
-      editorRef.current?.update(
-        () => {
-          if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
-          $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
-        },
-        { discrete: true },
-      );
-      const editorState = editorRef.current?.getEditorState();
-      if (!editorState) return;
-
-      const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
-      if (newUsj) {
-        const isEdited = !deepEqual(editedUsjRef.current, newUsj);
-        if (isEdited) editedUsjRef.current = newUsj;
-        if (isEdited || !deepEqual(usj, newUsj)) {
-          // "apply" coordinates: `$applyUpdate` placed the inserted node by interpreting the
-          // retain with its own traversals (every embed opaque), so the reverse lookup must
-          // count the same way to find the node that was actually inserted.
-          const insertedNodeKey = getInsertedNodeKey(ops, editorState, "apply");
-          lastNotifiedUsjRef.current = newUsj;
-          onUsjChange?.(newUsj, ops, source, insertedNodeKey);
-        }
-      }
+      applyOps(ops, source);
     },
     replaceEmbedUpdate(embedNodeKey, insertEmbedOps) {
       const ops = editorRef.current?.read(() => $getReplaceEmbedOps(embedNodeKey, insertEmbedOps));
@@ -719,19 +845,85 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             );
             return;
           }
-          $setBlocksType(selection, () => $createParaNode(blockMarker));
-          // `$setBlocksType` MOVES each old block's children into its fresh ParaNode, so in
-          // editable marker mode the old marker's prefix glyph migrates over still reading the
-          // old marker. Re-apply the marker on every affected paragraph so glyph text (or a
-          // missing prefix) is brought back into agreement with the new marker state.
-          const updated = $getSelection();
-          if (!$isRangeSelection(updated)) return;
-          const affectedParas = new Set<ParaNode>();
-          updated.getNodes().forEach((node) => {
-            const block = node.getTopLevelElement();
-            if ($isParaNode(block)) affectedParas.add(block);
-          });
-          affectedParas.forEach((para) => $applyParaMarker(para, blockMarker, viewOptions));
+          // A book is never retagged: `\id` names the book, so a paragraph pick with the caret in
+          // the line can only SPLIT it, the tail after the caret becoming a new paragraph inserted
+          // directly after the book (docs/standard-view-invariants.md). `$setBlocksType` has no such
+          // rule — it would happily convert the BookNode itself into a `ParaNode`, dropping the book
+          // object (and its code) from the file while the stale `\id GEN` glyph stayed on screen
+          // inside the new paragraph. Route off the selection's START point, not its end: a
+          // selection can run either direction, and a forward selection out of the `\id` line
+          // leaves `focus` in the following paragraph while `anchor` is still in the book.
+          const start = selection.isBackward() ? selection.focus : selection.anchor;
+          const book = $findMatchingParent(start.getNode(), $isBookNode);
+          if (book) {
+            // `$splitBookWithMarker` deletes a non-collapsed selection before splitting — correct
+            // for a marker-palette pick (which replaces the selection), wrong for a retag, which
+            // must never delete text. Collapse to the START point before calling it, then reapply
+            // the SAME retag the non-book path below runs, over whatever the original selection
+            // still reached past the split.
+            const endPoint = selection.isBackward() ? selection.anchor : selection.focus;
+            // A selection that never leaves the `\id` line is entirely absorbed by the split below
+            // (everything from the caret to the end of the line's content becomes ONE new,
+            // already-tagged paragraph) — there is no later paragraph left to retag. It also isn't
+            // safe to remember: splitting can `splitText()` the very node `endPoint` names, which
+            // reassigns the moved half a NEW key and leaves the original key's remaining text too
+            // short for the remembered offset. Only remember an end point that reaches OUTSIDE the
+            // book, where the split cannot touch the node it names.
+            const endsOutsideBook =
+              !selection.isCollapsed() &&
+              !book.is(endPoint.getNode()) &&
+              !book.isParentOf(endPoint.getNode());
+            const originalEnd = endsOutsideBook
+              ? { key: endPoint.key, offset: endPoint.offset, type: endPoint.type }
+              : undefined;
+            const collapsedAtStart = $createRangeSelection();
+            collapsedAtStart.anchor.set(start.key, start.offset, start.type);
+            collapsedAtStart.focus.set(start.key, start.offset, start.type);
+            $setSelection(collapsedAtStart);
+            if (!$splitParagraphWithMarker(blockMarker, viewOptions)) {
+              logger?.warn(
+                `formatPara refused: could not split the \\id line at the caret to retag with "${blockMarker}"`,
+              );
+              return;
+            }
+            if (!originalEnd) return;
+            // Defensive: nothing in the split above is expected to detach the node the remembered
+            // end point named (it lives outside the book, which is all the split touches), but the
+            // retag below is meaningless against a point whose node is gone.
+            const endNode = $getNodeByKey(originalEnd.key);
+            if (!endNode?.isAttached()) return;
+            // The TOP-LEVEL block the selection ends in, not the nearest PARAGRAPH ancestor: the
+            // end point can land in a non-paragraph root sibling — a `\c` chapter line — which has
+            // no paragraph ancestor to find at all.
+            const endBlock = endNode.getTopLevelElement();
+            if (!endBlock) return;
+            const newPara = book.getNextSibling();
+            if (!$isParaNode(newPara)) return;
+            // Retag every PARAGRAPH between the split's new paragraph and the block the original
+            // selection reached, one at a time — never as a single selection spanning the whole
+            // reach: a `\c` chapter marker sits between the book and its first paragraph as a
+            // root-level sibling like any of them, and `$setBlocksType` has no notion of "skip
+            // this sibling" — given a selection that merely passes over a chapter on its way to a
+            // later paragraph, it converts the chapter into a paragraph right along with them. The
+            // `$isParaNode(sibling)` guard below is what keeps the chapter itself from ever being
+            // retagged even when it is the END block the walk stops at.
+            let sibling: LexicalNode | null = newPara.getNextSibling();
+            while (sibling) {
+              const isEndBlock = sibling.is(endBlock);
+              const next = sibling.getNextSibling();
+              if ($isParaNode(sibling)) {
+                const paraSelection = $createRangeSelection();
+                paraSelection.anchor.set(sibling.getKey(), 0, "element");
+                paraSelection.focus.set(sibling.getKey(), sibling.getChildrenSize(), "element");
+                $setSelection(paraSelection);
+                $retagBlocksInSelection(paraSelection, blockMarker, viewOptions);
+              }
+              if (isEndBlock) break;
+              sibling = next;
+            }
+            return;
+          }
+          $retagBlocksInSelection(selection, blockMarker, viewOptions);
         },
         { discrete: true },
       );
@@ -927,8 +1119,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             nodeOptions,
             stableLogger,
           );
-          if (noteNode && !noteNode.getIsCollapsed())
-            expandedNoteKeyRef.current = noteNode.getKey();
+          $rememberExpandedNote(noteNode, expandedNoteKeyRef);
         },
         { discrete: true },
       );
@@ -938,17 +1129,130 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
         if (noteNode) {
           $selectNote(noteNode, viewOptions);
-          if (!noteNode.getIsCollapsed()) expandedNoteKeyRef.current = noteNode.getKey();
+          $rememberExpandedNote(noteNode, expandedNoteKeyRef);
         }
       });
     },
-    getNoteOps(noteKeyOrIndex) {
-      return editorRef.current?.read(() => {
+    selectAfterNote(noteKeyOrIndex) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      // Placing a caret is a selection-only commit, so the focus rule matters more here than
+      // anywhere: a host putting the caret past a note it is showing elsewhere (a footnotes pane
+      // whose row editor holds focus) must not have that editor blurred underneath it. The skipped
+      // write must still leave the parked caret as the one a later `focus()` lands on: a
+      // selection-only commit does not retire its tag, and the stale DOM selection would be read
+      // back over the parked one.
+      const skipDomSelection = !holdsDomFocus();
+      const unregisterTagRelease = skipDomSelection
+        ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
+        : undefined;
+      editor.update(
+        () => {
+          if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+          const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+          if (noteNode) $selectAfterNote(noteNode);
+        },
+        { discrete: true },
+      );
+      // A stale `noteKeyOrIndex` leaves nothing to select, and the update above then commits
+      // nothing - disarm rather than leave the listener armed for whatever commit happens next.
+      unregisterTagRelease?.();
+      if (skipDomSelection) {
+        clearStaleDomSelection(editor);
+        // With no DOM selectionchange to fire, SELECTION_CHANGE_COMMAND never dispatches on its
+        // own, so ScriptureReferencePlugin (which reports scrRef only from that command) and
+        // OnSelectionChangePlugin (which drives `onSelectionChange`) never hear about this move.
+        // Dispatch it explicitly, the same way a live caret move would, so the host learns both.
+        // Wrapped in its own SKIP_DOM_SELECTION_TAG update, the same protection the placement
+        // update above carries: a caret-guard plugin reacting to this command (a trailing note
+        // host, say) can still correct the selection or even insert a node, and without the tag
+        // that correction's own DOM-selection reconcile would write a selection into this
+        // unfocused root and, as an intrinsic browser side effect, focus it - the exact steal this
+        // whole branch exists to avoid.
+        const unregisterDispatchTagRelease = releaseTagsAfterNextCommit(
+          editor,
+          SKIP_DOM_SELECTION_TAG,
+        );
+        editor.update(
+          () => {
+            $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+            editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+          },
+          { discrete: true },
+        );
+        unregisterDispatchTagRelease();
+      }
+    },
+    selectNoteTextOffset(noteKeyOrIndex, utf16Offset, options) {
+      editorRef.current?.update(() => {
         const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
-        if (!noteNode) return undefined;
-
-        return $getParticularNodeOps(noteNode);
+        if (!noteNode) return;
+        const glyph = options?.glyph;
+        // A note that shows no category run has no category to land in; its content's start is
+        // the position that follows the category everywhere else.
+        const placed =
+          options?.field === "category"
+            ? $selectNoteCategoryOffset(noteNode, utf16Offset, glyph) ||
+              $selectNoteTextOffset(noteNode, 0)
+            : $selectNoteTextOffset(noteNode, utf16Offset, glyph);
+        // A note with no content text has nowhere to put an offset; land where an offset-less
+        // request would, so the caret is always somewhere sensible inside the note.
+        if (!placed) $selectNote(noteNode, viewOptions);
+        $rememberExpandedNote(noteNode, expandedNoteKeyRef);
       });
+    },
+    getNoteOps(noteKeyOrIndex) {
+      const editor = editorRef.current;
+      return editor
+        ? readLatest(editor, () => {
+            const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+            if (!noteNode) return undefined;
+
+            return $getParticularNodeOps(noteNode);
+          })
+        : undefined;
+    },
+    getOpsAfterNote(noteKeyOrIndex) {
+      const editor = editorRef.current;
+      return editor
+        ? readLatest(editor, () => {
+            const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+            return noteNode ? $getOpsAfterNote(noteNode) : undefined;
+          })
+        : undefined;
+    },
+    takeOpsAfterNote(noteKeyOrIndex) {
+      const editor = editorRef.current;
+      const found = editor
+        ? readLatest(editor, () => {
+            const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+            if (!noteNode) return undefined;
+            const notePosition = $getOTPositionOfNode(noteNode, "apply");
+            return { ops: $getOpsAfterNote(noteNode), notePosition };
+          })
+        : undefined;
+      if (!found) return undefined;
+      const { ops, notePosition } = found;
+      if (ops.length === 0 || notePosition === undefined) return ops;
+      const length = ops.reduce(
+        (total, op) => total + (typeof op.insert === "string" ? op.insert.length : 1),
+        0,
+      );
+      applyOps([{ retain: notePosition + 1 }, { delete: length }], "remote", HISTORY_MERGE_TAG);
+      return ops;
+    },
+    getNoteIndex(noteKey) {
+      const editor = editorRef.current;
+      return editor ? readLatest(editor, () => $getNoteIndex(noteKey)) : undefined;
+    },
+    getNoteKey(noteIndex) {
+      const editor = editorRef.current;
+      return editor
+        ? readLatest(editor, () => $getNoteByKeyOrIndex(noteIndex)?.getKey())
+        : undefined;
+    },
+    highlightNote(noteKeyOrIndex) {
+      noteCallerHighlightRef.current?.setHighlightedNote(noteKeyOrIndex);
     },
     get toolbarEndRef() {
       return toolbarEndRef;
@@ -975,7 +1279,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   }, []);
 
   const handleChange = useCallback(
-    (editorState: EditorState, _editor: LexicalEditor, _tags: Set<string>, ops: DeltaOp[]) => {
+    (
+      editorState: EditorState,
+      _editor: LexicalEditor,
+      _tags: Set<string>,
+      ops: DeltaOp[],
+      prevEditorState: EditorState,
+    ) => {
       // No blacklisted-tag guard is needed here: `DeltaOnChangePlugin` is given
       // `ignoreTags={blackListedChangeTags}` and short-circuits before calling this handler, so
       // only local user edits (which carry no blacklisted tag) ever reach this point.
@@ -997,7 +1307,15 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           // `applyUpdate` never reach here - they emit `onUsjChange` with source "remote" directly.
           // Default "delta-doc" coordinates: these ops come from `DeltaOnChangePlugin`, whose
           // retains are doc-delta diff positions, so the reverse lookup must count the same way.
-          const insertedNodeKey = getInsertedNodeKey(ops, editorState);
+          // An edit inside an existing note diffs as that note replaced by its new self, so the
+          // ops alone read as an insertion of it. Only a node the previous state did not have is
+          // one: reporting an edited note as inserted is how a host comes to open a new-note editor
+          // on the note the user is typing in.
+          const opsNodeKey = getInsertedNodeKey(ops, editorState);
+          const insertedNodeKey =
+            opsNodeKey && !prevEditorState.read(() => $getNodeByKey(opsNodeKey))
+              ? opsNodeKey
+              : undefined;
           lastNotifiedUsjRef.current = newUsj;
           onUsjChange?.(newUsj, ops, "local", insertedNodeKey);
         }
@@ -1163,6 +1481,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           {/* Not gated on viewOptions: a decorator is atomic in every view, so the selection
               normalization that keeps a point out of one is too. */}
           <DecoratorBoundarySelectionPlugin />
+          {/* Not gated on viewOptions: it acts only on an EXPANDED note with no content. */}
+          <EmptyNoteCaretGuardPlugin />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects
@@ -1188,6 +1508,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             viewOptions={viewOptions}
             logger={stableLogger}
           />
+          <NoteCallerHighlightPlugin ref={noteCallerHighlightRef} />
           <NoteNodePlugin
             expandedNoteKeyRef={expandedNoteKeyRef}
             nodeOptions={nodeOptions}

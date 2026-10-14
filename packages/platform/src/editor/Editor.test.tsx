@@ -41,6 +41,8 @@ import {
 } from "lexical";
 import { createRef, PropsWithChildren, ReactElement, RefObject, useEffect, useState } from "react";
 import {
+  $isBookNode,
+  $isChapterNode,
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
@@ -1525,6 +1527,60 @@ describe("isFocused()", () => {
 
     document.body.removeChild(other);
   });
+
+  // A collapsed note renders its caller as a `<button>` decorator (ImmutableNoteCallerNode) - a
+  // focusable descendant of the root, never the root itself. `holdsDomFocus`/`editorHoldsDomFocus`
+  // count that as "the user is in this editor" on purpose (a focused decorator is how a host's
+  // keyboard-shortcut and PDP-sync-deferral gates stay scoped to the right editor instance), and
+  // `isFocused()` must agree rather than reading it as unfocused.
+  it("is true when a note caller decorator inside the root holds focus", async () => {
+    const usjWithNote: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+        { type: "chapter", marker: "c", number: "1" },
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            { type: "verse", marker: "v", number: "1" },
+            "before ",
+            {
+              type: "note",
+              marker: "f",
+              caller: "+",
+              content: [{ type: "char", marker: "ft", content: ["alpha"] }],
+            },
+            "after",
+          ],
+        },
+      ],
+    };
+    const ref = createRef<EditorRef>();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={usjWithNote}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        />,
+      );
+    });
+    const editor = ref.current;
+    if (!editor) throw new Error("Editor not mounted");
+    const root = document.querySelector<HTMLElement>(".editor-input");
+    if (!root) throw new Error("Editor root not found");
+    const caller = root.querySelector("button");
+    if (!caller) throw new Error("note caller button not found");
+
+    await act(async () => caller.focus());
+
+    expect(root.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(caller);
+    expect(document.activeElement).not.toBe(root);
+    expect(editor.isFocused()).toBe(true);
+  });
 });
 
 describe("insertMarker return value", () => {
@@ -1666,6 +1722,256 @@ describe("formatPara (standard view)", () => {
     });
   });
 
+  // `$setBlocksType` treats `BookNode` as an ordinary convertible block (nothing about it opts
+  // out), so a bare `$setBlocksType` with the caret in the `\id` line would convert the book
+  // itself into a `ParaNode` — dropping the book object and its code from the saved USJ while the
+  // stale `\id GEN` glyph stayed on screen inside the new paragraph. A book is never retagged: the
+  // pick can only SPLIT the line, starting a new paragraph after the book
+  // (docs/standard-view-invariants.md).
+  it("splits the \\id line instead of retagging the BookNode", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+
+    // Park the caret in the book's own text.
+    act(() => {
+      lexical.update(() => {
+        const textNode = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("Test Book"));
+        if (!textNode || !$isTextNode(textNode)) throw new Error("seed text node not found");
+        textNode.select(4, 4);
+      });
+    });
+    await act(async () => {
+      ref.current?.formatPara("p");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    lexical.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected the BookNode to remain at the root");
+      expect(book.getCode()).toBe("GEN");
+      // The tail after the caret became a new paragraph, inserted directly after the book.
+      const newPara = book.getNextSibling();
+      if (!$isParaNode(newPara)) throw new Error("expected a new ParaNode after the book");
+      expect(newPara.getMarker()).toBe("p");
+      expect(newPara.getTextContent()).toContain("Book");
+      expect(book.getTextContent()).not.toContain("Book");
+    });
+  });
+
+  // A selection can run either direction: `selection.focus` alone is the drag's END point, not
+  // its start. Routing on focus only finds the book when the drag runs backward (focus stays in
+  // the `\id` line); a forward drag — the direction a normal top-to-bottom selection takes —
+  // leaves focus in the following paragraph, so the book/split check must look at the START point
+  // instead.
+  it("splits the \\id line for a forward selection that ends past the book", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+
+    // Select forward: anchor in the book's own text, focus in the next paragraph's verse text.
+    act(() => {
+      lexical.update(() => {
+        const bookText = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("Test Book"));
+        const verseText = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("first verse text"));
+        if (!bookText || !$isTextNode(bookText)) throw new Error("seed book text node not found");
+        if (!verseText || !$isTextNode(verseText))
+          throw new Error("seed verse text node not found");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(bookText.getKey(), 4, "text");
+        selection.focus = $createPoint(verseText.getKey(), 4, "text");
+        $setSelection(selection);
+        expect(selection.isBackward()).toBe(false);
+      });
+    });
+    await act(async () => {
+      ref.current?.formatPara("p");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    lexical.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected the BookNode to remain at the root");
+      expect(book.getCode()).toBe("GEN");
+      // The book keeps only what stayed before the caret; nothing was deleted, the rest moved.
+      expect(book.getTextContent()).toContain("Test");
+      expect(book.getTextContent()).not.toContain("Book");
+      const newPara = book.getNextSibling();
+      if (!$isParaNode(newPara)) throw new Error("expected a new ParaNode after the book");
+      expect(newPara.getMarker()).toBe("p");
+      expect(newPara.getTextContent()).toContain("Book");
+      // The verse paragraph the selection reached into survived — text intact, still `\p`.
+      const versePara = $getRoot()
+        .getChildren()
+        .find((node) => $isParaNode(node) && node.getTextContent().includes("first verse text"));
+      if (!$isParaNode(versePara)) throw new Error("expected the verse ParaNode to remain");
+      expect(versePara.getMarker()).toBe("p");
+      expect(versePara.getTextContent()).toContain("first verse text");
+    });
+  });
+
+  // A selection that never leaves the `\id` line has nothing past the book to reach: the whole
+  // pick's tail becomes the split's one new paragraph, and nothing is deleted.
+  it("deletes nothing for a selection entirely inside the \\id line", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+
+    // Select forward within the book's own text: "Test Book" from after "Te" to after "Test B".
+    act(() => {
+      lexical.update(() => {
+        const bookText = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("Test Book"));
+        if (!bookText || !$isTextNode(bookText)) throw new Error("seed book text node not found");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(bookText.getKey(), 2, "text");
+        selection.focus = $createPoint(bookText.getKey(), 6, "text");
+        $setSelection(selection);
+        expect(selection.isBackward()).toBe(false);
+      });
+    });
+    await act(async () => {
+      ref.current?.formatPara("p");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    lexical.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected the BookNode to remain at the root");
+      const newPara = book.getNextSibling();
+      if (!$isParaNode(newPara)) throw new Error("expected a new ParaNode after the book");
+      // Every byte of "Test Book" survives, split across the book and the new paragraph — none
+      // of the selection's reach (nor anything outside it) was deleted.
+      expect(book.getTextContent()).toContain("Te");
+      expect(newPara.getTextContent()).toContain("st Book");
+    });
+  });
+
+  // The sibling walk's stopping point must be the selection's end BLOCK, not the nearest
+  // paragraph ancestor: a `\c` chapter sits between the book and a later paragraph as an ordinary
+  // root-level sibling, and when the selection's end point lands on the chapter itself (it has no
+  // text children of its own to select into), there is no paragraph ancestor to find at all.
+  it("retags every paragraph up to a selection ending ON the chapter, which stays a ChapterNode", async () => {
+    const titlesUsj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+        { type: "para", marker: "h", content: ["Genesis"] },
+        { type: "para", marker: "mt1", content: ["The First Book of Moses"] },
+        { type: "chapter", marker: "c", number: "1" },
+        {
+          type: "para",
+          marker: "p",
+          content: [{ type: "verse", marker: "v", number: "1" }, "text"],
+        },
+      ],
+    };
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={titlesUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+
+    // Select forward: anchor in the book's own text, focus an element point on the chapter (it
+    // has no text of its own for the selection to land in).
+    act(() => {
+      lexical.update(() => {
+        const bookText = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent().includes("Test Book"));
+        const chapter = $getRoot().getChildren().find($isChapterNode);
+        if (!bookText || !$isTextNode(bookText)) throw new Error("seed book text node not found");
+        if (!chapter) throw new Error("expected a ChapterNode");
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(bookText.getKey(), 4, "text");
+        selection.focus = $createPoint(chapter.getKey(), 0, "element");
+        $setSelection(selection);
+        expect(selection.isBackward()).toBe(false);
+      });
+    });
+    await act(async () => {
+      ref.current?.formatPara("p");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    lexical.getEditorState().read(() => {
+      const book = $getRoot().getFirstChild();
+      if (!$isBookNode(book)) throw new Error("expected the BookNode to remain at the root");
+      // The split inserts its own new paragraph (the book's tail, already tagged "p") directly
+      // after the book, ahead of the two title paragraphs under test.
+      const [splitTail, titleOne, titleTwo, chapter, versePara] = $getRoot().getChildren().slice(1);
+      if (!$isParaNode(splitTail)) throw new Error("expected the split's own new ParaNode");
+      expect(splitTail.getTextContent()).toContain("Book");
+      if (!$isParaNode(titleOne) || !$isParaNode(titleTwo))
+        throw new Error("expected the title paragraphs to remain ParaNodes");
+      expect(titleOne.getMarker()).toBe("p");
+      expect(titleOne.getTextContent()).toContain("Genesis");
+      expect(titleTwo.getMarker()).toBe("p");
+      expect(titleTwo.getTextContent()).toContain("First Book of Moses");
+      // The chapter is never retagged — it stays a ChapterNode, not converted to a paragraph.
+      if (!$isChapterNode(chapter)) throw new Error("expected the ChapterNode to remain");
+      expect(chapter.getNumber()).toBe("1");
+      // The paragraph AFTER the chapter was outside the selection and keeps its own marker.
+      if (!$isParaNode(versePara)) throw new Error("expected the verse ParaNode to remain");
+      expect(versePara.getMarker()).toBe("p");
+      expect(versePara.getTextContent()).toContain("text");
+    });
+  });
+
   // The host's paragraph dropdown is a popover: opening it takes focus off the editor, and
   // Lexical's blur processing can NULL the editor-state selection. `formatPara` then has nothing
   // to retag. It must still say so — a marker pick that changes nothing and logs nothing is
@@ -1778,6 +2084,114 @@ describe("commitPendingMarkerEdits (abandonment window)", () => {
 
     // Synchronously fresh - the host save reads getUsj() right after committing.
     expect(paraMarkerOf(ref.current?.getUsj())).toBe("q1");
+  });
+});
+
+describe("commitPendingMarkerEdits after the user has moved to another editor", () => {
+  // A host settles this editor as the user leaves it for a note editor in the same document; the
+  // settle must not write the DOM selection, and with it focus, back here.
+  it("settles without taking the caret from where the user went", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+    await act(async () => {
+      lexical.update(() => {
+        const glyph = $getRoot()
+          .getAllTextNodes()
+          .find((node): node is MarkerNode => $isMarkerNode(node) && node.getMarker() === "p");
+        if (!glyph) throw new Error("para marker glyph not found");
+        glyph.setTextContent("\\q1");
+        glyph.select(3, 3);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const otherEditor = document.body.appendChild(document.createElement("div"));
+    otherEditor.contentEditable = "true";
+    otherEditor.tabIndex = -1;
+    otherEditor.textContent = "note text";
+    otherEditor.focus();
+    const domSelection = document.getSelection();
+    if (!domSelection || !otherEditor.firstChild) throw new Error("no DOM selection");
+    domSelection.collapse(otherEditor.firstChild, 4);
+
+    try {
+      act(() => {
+        ref.current?.commitPendingMarkerEdits();
+      });
+
+      lexical.getEditorState().read(() => {
+        expect($getRoot().getChildren().find($isParaNode)?.getMarker()).toBe("q1");
+      });
+      expect(document.activeElement).toBe(otherEditor);
+      expect(otherEditor.contains(domSelection.anchorNode)).toBe(true);
+    } finally {
+      otherEditor.remove();
+    }
+  });
+});
+
+describe("commitPendingMarkerEdits with nothing pending", () => {
+  // `commitPendingMarkerEdits` (unfocused) registers a `releaseTagsAfterNextCommit` listener
+  // before dispatching COMMIT_PENDING_MARKERS_COMMAND. With nothing pending the command finds no
+  // work: the update changes no nodes and no selection, so Lexical's own no-op branch never
+  // commits it at all - the listener would never fire on its own and would stay armed, ready to
+  // strip SKIP_DOM_SELECTION_TAG off whatever commit happens next. `commitPendingMarkerEdits`
+  // must disarm it itself right after the (uncommitted) update.
+  it("disarms the SKIP_DOM_SELECTION_TAG release listener instead of leaving it armed", async () => {
+    const ref = createRef<EditorRef>();
+    const capture = lexicalCapture();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={sampleUsj}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+        >
+          {capture.plugin}
+        </Editor>,
+      );
+    });
+    const lexical = capture.get();
+    const rootElement = lexical.getRootElement();
+    if (!rootElement) throw new Error("editor root not found");
+    expect(rootElement.contains(rootElement.ownerDocument.activeElement)).toBe(false);
+
+    // Wrap every NEW registerUpdateListener call from this point on (every plugin's own mount-time
+    // registration already happened above) so the one `releaseTagsAfterNextCommit` makes can be
+    // told apart, and whether its OWN unregister has been called can be observed directly.
+    const calledFlags: boolean[] = [];
+    const originalRegister = lexical.registerUpdateListener.bind(lexical);
+    const registerSpy = vi
+      .spyOn(lexical, "registerUpdateListener")
+      .mockImplementation((listener) => {
+        const unregister = originalRegister(listener);
+        const index = calledFlags.push(false) - 1;
+        return () => {
+          calledFlags[index] = true;
+          unregister();
+        };
+      });
+
+    act(() => {
+      ref.current?.commitPendingMarkerEdits();
+    });
+
+    expect(registerSpy).toHaveBeenCalledTimes(1);
+    expect(calledFlags).toEqual([true]);
+
+    registerSpy.mockRestore();
   });
 });
 

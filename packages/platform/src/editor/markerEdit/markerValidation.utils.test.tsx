@@ -358,6 +358,94 @@ describe("$validateDocument — xq exemption and note exclusion", () => {
   });
 });
 
+describe("$validateDocument — the `\\id` line's content", () => {
+  it("a char span in the `\\id` line is only checked for being known (PT9: no ancestor::para)", async () => {
+    let unknownOpener: MarkerNode, unknownCloser: MarkerNode;
+    const { editor } = await baseTestEnvironment(() => {
+      const book = $createBookNode("RUT");
+      // `nd` occursUnder ["p"]: validated against a para it would be invalid, so its absence
+      // from the map shows the line's own chars are not context-validated.
+      const nd = $createCharNode("nd");
+      const zxx = $createCharNode("zxx");
+      unknownOpener = $createMarkerNode("zxx");
+      unknownCloser = $createMarkerNode("zxx", "closing");
+      $getRoot().append(
+        book.append(
+          $createTextNode(`${getVisibleOpenMarkerText("id", "RUT")} Title `),
+          nd.append(
+            $createMarkerNode("nd"),
+            $createTextNode(`${NBSP}Lord`),
+            $createMarkerNode("nd", "closing"),
+          ),
+          zxx.append(unknownOpener, $createTextNode(`${NBSP}text`), unknownCloser),
+        ),
+      );
+    });
+    editor.getEditorState().read(() => {
+      const map = $validateDocument(sheet);
+      expect(map.get(unknownOpener.getKey())).toBe("unknown");
+      expect(map.get(unknownCloser.getKey())).toBe("unknown");
+      expect(map.size).toBe(2);
+    });
+  });
+
+  it("a note in the `\\id` line validates its content against the note's marker", async () => {
+    let ndOpener: MarkerNode, ndCloser: MarkerNode;
+    const { editor } = await baseTestEnvironment(() => {
+      const book = $createBookNode("RUT");
+      const note = $createNoteNode("f");
+      const ft = $createCharNode("ft");
+      const nd = $createCharNode("nd");
+      ndOpener = $createMarkerNode("nd");
+      ndCloser = $createMarkerNode("nd", "closing");
+      $getRoot().append(
+        book.append(
+          $createTextNode(`${getVisibleOpenMarkerText("id", "RUT")} Title `),
+          note.append(
+            ft.append(
+              $createMarkerNode("ft"),
+              $createTextNode(`${NBSP}text`),
+              $createMarkerNode("ft", "closing"),
+            ),
+            nd.append(ndOpener, $createTextNode(`${NBSP}Lord`), ndCloser),
+          ),
+        ),
+      );
+    });
+    editor.getEditorState().read(() => {
+      const map = $validateDocument(sheet);
+      expect(map.get(ndOpener.getKey())).toBe("invalid");
+      expect(map.get(ndCloser.getKey())).toBe("invalid");
+      expect(map.size).toBe(2);
+    });
+  });
+
+  it("a scoped pass descends into the `\\id` line when it is in scope", async () => {
+    let book: ReturnType<typeof $createBookNode>, unknownOpener: MarkerNode;
+    const { editor } = await baseTestEnvironment(() => {
+      book = $createBookNode("RUT");
+      const zxx = $createCharNode("zxx");
+      unknownOpener = $createMarkerNode("zxx");
+      $getRoot().append(
+        book.append(
+          $createTextNode(`${getVisibleOpenMarkerText("id", "RUT")} `),
+          zxx.append(
+            unknownOpener,
+            $createTextNode(`${NBSP}text`),
+            $createMarkerNode("zxx", "closing"),
+          ),
+        ),
+      );
+    });
+    editor.getEditorState().read(() => {
+      expect($validateDocument(sheet, new Set([book.getKey()])).get(unknownOpener.getKey())).toBe(
+        "unknown",
+      );
+      expect($validateDocument(sheet, new Set()).size).toBe(0);
+    });
+  });
+});
+
 describe("$validateDocument — paragraph stack semantics (PT9 discriminators)", () => {
   it("an unknown para does NOT join the stack (PT9 TagValidator empty-occursUnder early return)", async () => {
     const probeSheet: StyleInfo = {

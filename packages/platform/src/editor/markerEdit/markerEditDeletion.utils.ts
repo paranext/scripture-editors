@@ -24,10 +24,13 @@ import {
 import {
   $createMarkerNode,
   $createMarkerTrailingSeparator,
+  $isCharNode,
   $isMarkerNode,
   $isMarkerTrailingSeparator,
+  $isSeparatorPrefixHostText,
   $isSynthesizedMarkerNode,
   $paraPrefixSeparatorCaretHeld,
+  $isParaLikeNode,
   $isParaNode,
   $placeCaretAtBoundary,
   canonicalAttributeText,
@@ -35,6 +38,7 @@ import {
   defaultMarkerAttribute,
   getEditableCallerText,
   MARKER_TRAILING_SPACE_TEXT_TYPE,
+  MarkerNode,
   NBSP,
   NoteNode,
   PARA_MARKER_DEFAULT,
@@ -345,12 +349,12 @@ function $suppliesOwnParaMarker(para: ParaNode, getMarkerFn: MarkerLookup): bool
 /**
  * The engine's `ParaNode` transform, policing what deleting paragraph-prefix bytes MEANS: heal a
  * partially-damaged prefix back to canonical, merge a paragraph whose whole prefix was deleted
- * into the previous paragraph (deleting the marker joins the paragraphs — the PT9 outcome), or
- * reap a paragraph whose ENTIRE visible representation the user's deletion covered (armed via
- * `MarkerEditContext.wholeParaDeleteExpected`; emptiness alone never reaps, because rebuilds
- * legitimately empty a paragraph transiently). Stands down entirely for surfaces that render no
- * paragraph prefixes (`showParaMarkerPrefixes: false`) — there a prefix-less paragraph is
- * canonical, not damage.
+ * into the previous paragraph or `\id` line (deleting the marker joins the paragraphs — the PT9
+ * outcome), or reap a paragraph whose ENTIRE visible representation the user's deletion covered
+ * (armed via `MarkerEditContext.wholeParaDeleteExpected`; emptiness alone never reaps, because
+ * rebuilds legitimately empty a paragraph transiently). Stands down entirely for surfaces that
+ * render no paragraph prefixes (`showParaMarkerPrefixes: false`) — there a prefix-less paragraph
+ * is canonical, not damage.
  *
  * Mutating: call inside `editor.update()` (registered by `MarkerEditPlugin` as the `ParaNode`
  * transform).
@@ -429,7 +433,11 @@ export function $paraMarkerDeletionTransform(para: ParaNode, context: MarkerEdit
   }
 
   const previous = para.getPreviousSibling();
-  if ($isParaNode(previous)) {
+  // `ParaLike`, not `ParaNode`: the previous block can be an ordinary paragraph, an IMPLIED
+  // (unmarked) paragraph — bare root-level content that precedes an explicit `\p` loads as one,
+  // `insertImpliedParasRecurse` in usj-editor.adaptor.ts — or the `\id` line's BookNode. All three
+  // hold content the way a paragraph does, so a paragraph right below any of them merges into it.
+  if ($isParaLikeNode(previous)) {
     // Deleting a para's marker text merges its content into the previous para.
     const children = para.getChildren().filter((child) => {
       if ($isMarkerTrailingSeparator(child)) return false; // drop the orphaned separator
@@ -514,6 +522,57 @@ export function $unwrapCharNode(char: CharNode): void {
     anchor = child;
   }
   char.remove();
+}
+
+/**
+ * The opening char glyph a forward Delete at `point` would empty: the next character after the
+ * caret is the glyph's last remaining one. `undefined` for anything else, including a glyph with
+ * more than one character left (deleting one of those is an ordinary text edit).
+ */
+function $openerGlyphEmptiedByForwardDelete(point: PointType): MarkerNode | undefined {
+  const node = point.getNode();
+  let candidate: LexicalNode | null | undefined;
+  if (point.type === "element" && $isElementNode(node))
+    candidate = node.getChildAtIndex(point.offset);
+  else if ($isMarkerNode(node) && point.offset === 0) candidate = node;
+  else if ($isTextNode(node) && point.offset === node.getTextContentSize())
+    candidate = node.getNextSibling();
+  if ($isCharNode(candidate)) candidate = candidate.getFirstChild();
+  if (!$isMarkerNode(candidate) || candidate.getMarkerSyntax() !== "opening") return undefined;
+  const char = candidate.getParent();
+  if (!$isCharNode(char) || !candidate.is(char.getFirstChild())) return undefined;
+  return candidate.getTextContentSize() === 1 ? candidate : undefined;
+}
+
+/**
+ * Forward Delete of the last character left of a char span's opening glyph — `\wj` deleted one
+ * character at a time from before its backslash. Deleting it deletes the marker, so the span
+ * unwraps, and exactly that one character goes: the marker's separator space is, with the marker
+ * gone, the text's own space, which the next Delete removes like any other character. The caret
+ * stays where it was, at the start of what was the span's content.
+ *
+ * Handled here rather than left to the rich-text delete: with the glyph gone, an UNCLOSED span's
+ * only child is its content led by the separator NBSP — the very shape of an empty span's
+ * placeholder with text typed after it — and the placeholder cleanup then dropped the NBSP too and
+ * threw the caret to the end of the span.
+ *
+ * Mutating: call inside `editor.update()` (dispatched from the `DELETE_CHARACTER_COMMAND` handler).
+ *
+ * @returns Whether the delete was handled.
+ */
+export function $deleteLastOpenerGlyphCharForward(): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const glyph = $openerGlyphEmptiedByForwardDelete(selection.anchor);
+  const char = glyph?.getParent();
+  if (!glyph || !$isCharNode(char)) return false;
+  const content = glyph.getNextSibling();
+  glyph.remove();
+  if ($isSeparatorPrefixHostText(content) && content.getTextContent().startsWith(NBSP))
+    content.setTextContent(` ${content.getTextContent().slice(NBSP.length)}`);
+  $unwrapCharNode(char);
+  if ($isTextNode(content) && content.isAttached()) content.select(0, 0);
+  return true;
 }
 
 /**

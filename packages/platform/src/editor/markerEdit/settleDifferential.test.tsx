@@ -204,6 +204,34 @@ const differentialShapes: DifferentialShape[] = [
     $edit: () => $typeLiteralPending("plain body", "plain \\q1 tail"),
   },
   {
+    // The same BLOCK literal typed into the `\id` line: the book scope keeps the line's head and
+    // starts the new paragraph AFTER the line, on both halves.
+    name: "typed \\ip block literal in the \\id line splits after the line",
+    expectSettled: (settled) => {
+      expect(settled.content).toHaveLength(5);
+      expect(bytes(settled.content?.[0])).not.toContain("tail");
+      expect((settled.content?.[1] as MarkerObject).marker).toBe("ip");
+      expect(bytes(settled.content?.[1])).toContain('"tail"');
+    },
+    view: "standard",
+    usj: twoParaUsj(["plain body"]),
+    $edit: () => $typeLiteralPending("GEN", "Genesis \\ip tail"),
+  },
+  {
+    // A paragraph marker at the very START of the `\id` line's content leaves the line empty — the
+    // typed `\p` must not be mistaken for the tokenizer's implied one and folded back into the line.
+    name: "typed \\p at the start of the \\id line's content empties the line",
+    expectSettled: (settled) => {
+      expect(settled.content).toHaveLength(5);
+      expect((settled.content?.[0] as MarkerObject).content ?? []).toEqual([]);
+      expect((settled.content?.[1] as MarkerObject).marker).toBe("p");
+      expect(bytes(settled.content?.[1])).toContain('"tail"');
+    },
+    view: "standard",
+    usj: twoParaUsj(["plain body"]),
+    $edit: () => $typeLiteralPending("GEN", "\\p tail"),
+  },
+  {
     // The chapter's own NUMBER: `\c 1` retyped to `\c 2`. The number lives in node state, so it
     // only reaches the document through a chapter-scope re-tokenization — both halves must land
     // the same new number.

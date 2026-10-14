@@ -20,6 +20,7 @@ import {
   $isTextNode,
   $setSelection,
   BLUR_COMMAND,
+  KEY_DOWN_COMMAND,
   LexicalEditor,
   LexicalNode,
   SELECTION_CHANGE_COMMAND,
@@ -28,10 +29,12 @@ import {
 import {
   $isNoteNode,
   $createCharNode,
+  CharNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createNoteNode,
   $createParaNode,
+  CURSOR_CHANGE_TAG,
   CURSOR_PLACEHOLDER_CHAR,
   NoteNode,
   ParaNode,
@@ -415,6 +418,210 @@ describe("TrailingNoteCaretGuardPlugin", () => {
     });
   });
 
+  describe("a range with an end inside a collapsed note", () => {
+    /** `\p before |note|` with the document's own text before and after, the note collapsed. */
+    async function mountRangeEnvironment(after = "") {
+      let before: TextNode;
+      let note: NoteNode;
+      let body: TextNode;
+      let para: ParaNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          before = $createTextNode("before ");
+          body = $createTextNode("note body");
+          note = $createNoteNode("f", "+").append(
+            $createMarkerNode("f", "opening"),
+            $createImmutableNoteCallerNode("+", "note preview"),
+            $createMarkerTrailingSeparator(),
+            $createCharNode("ft").append($createMarkerNode("ft", "opening"), body),
+            $createMarkerNode("f", "closing"),
+          );
+          para = $createParaNode("p");
+          $getRoot().append(para.append(before, note, ...(after ? [$createTextNode(after)] : [])));
+        },
+        <TrailingNoteCaretGuardPlugin />,
+      );
+      return { editor, before: before!, note: note!, body: body!, para: para! };
+    }
+
+    async function select(
+      editor: LexicalEditor,
+      anchor: [LexicalNode, number, "text" | "element"],
+      focus: [LexicalNode, number, "text" | "element"],
+    ) {
+      await act(async () => {
+        editor.update(() => {
+          const range = $createRangeSelection();
+          range.anchor.set(anchor[0].getKey(), anchor[1], anchor[2]);
+          range.focus.set(focus[0].getKey(), focus[1], focus[2]);
+          $setSelection(range);
+        });
+      });
+      await dispatchSelectionChange(editor);
+    }
+
+    /** The selection's two points as `[node, offset]`, in document order, or `undefined`. */
+    function orderedPoints(editor: LexicalEditor) {
+      return editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return undefined;
+        const [start, end] = selection.isBackward()
+          ? [selection.focus, selection.anchor]
+          : [selection.anchor, selection.focus];
+        return {
+          start: { key: start.key, offset: start.offset },
+          end: { key: end.key, offset: end.offset },
+        };
+      });
+    }
+
+    // The browser answers "select to the end of the document" with the position at the START of a
+    // collapsed note's hidden content, since it has no layout to put a position in.
+    it("takes the whole note when a forward range ends inside it", async () => {
+      const { editor, before, note, body, para } = await mountRangeEnvironment();
+
+      await select(editor, [before, 0, "text"], [body, 0, "text"]);
+
+      const points = orderedPoints(editor);
+      expect(points).toEqual({
+        start: { key: before.getKey(), offset: 0 },
+        end: {
+          key: para.getKey(),
+          offset: editor.getEditorState().read(() => note.getIndexWithinParent() + 1),
+        },
+      });
+    });
+
+    it("takes the whole note when a backward range ends inside it", async () => {
+      const { editor, before, note, body, para } = await mountRangeEnvironment(" after");
+      const after = editor.getEditorState().read(() => note.getNextSibling()!);
+
+      await select(editor, [after, 3, "text"], [body, 0, "text"]);
+
+      const points = orderedPoints(editor);
+      expect(points?.start).toEqual({
+        key: para.getKey(),
+        offset: editor.getEditorState().read(() => note.getIndexWithinParent()),
+      });
+      expect(points?.end).toEqual({ key: after.getKey(), offset: 3 });
+      expect(before).toBeDefined();
+    });
+
+    it("takes the whole note when a range starts inside it", async () => {
+      const { editor, note, body, para } = await mountRangeEnvironment(" after");
+      const after = editor.getEditorState().read(() => note.getNextSibling()!);
+
+      await select(editor, [body, 0, "text"], [after, 3, "text"]);
+
+      expect(orderedPoints(editor)?.start).toEqual({
+        key: para.getKey(),
+        offset: editor.getEditorState().read(() => note.getIndexWithinParent()),
+      });
+    });
+
+    it("leaves a range alone when both its ends are inside the same note", async () => {
+      const { editor, body } = await mountRangeEnvironment();
+
+      await select(editor, [body, 1, "text"], [body, 4, "text"]);
+
+      expect(orderedPoints(editor)).toEqual({
+        start: { key: body.getKey(), offset: 1 },
+        end: { key: body.getKey(), offset: 4 },
+      });
+    });
+
+    it("does not touch a caret inside the note", async () => {
+      const { editor, body } = await mountRangeEnvironment();
+
+      await select(editor, [body, 2, "text"], [body, 2, "text"]);
+
+      expect(orderedPoints(editor)?.start).toEqual({ key: body.getKey(), offset: 2 });
+    });
+  });
+
+  describe("a jump to the end of the line or document that selects a trailing note", () => {
+    /** Press `init` through the key command, as the editor sees a keydown before the browser acts. */
+    async function pressEnd(editor: LexicalEditor, init: KeyboardEventInit) {
+      await act(async () => {
+        editor.dispatchCommand(
+          KEY_DOWN_COMMAND,
+          new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }),
+        );
+      });
+    }
+
+    /** What a browser answers when there is no position past a note: the note itself, selected. */
+    async function selectNote(editor: LexicalEditor, para: ParaNode) {
+      await act(async () => {
+        editor.update(() => {
+          const range = $createRangeSelection();
+          const end = para.getChildrenSize();
+          range.anchor.set(para.getKey(), end - 1, "element");
+          range.focus.set(para.getKey(), end, "element");
+          $setSelection(range);
+        });
+      });
+      await dispatchSelectionChange(editor);
+    }
+
+    function selectionIsCaretPastNote(editor: LexicalEditor, para: ParaNode) {
+      return editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+        const host = para.getLastChild();
+        return $isTextNode(host) && selection.anchor.key === host.getKey();
+      });
+    }
+
+    async function mountTrailingNote() {
+      let para: ParaNode;
+      const { editor } = await baseTestEnvironment(
+        () => {
+          para = $createParaNode("p");
+          $getRoot().append(para.append($createTextNode("before "), $createTrailingNote()));
+        },
+        <TrailingNoteCaretGuardPlugin />,
+      );
+      return { editor, para: para! };
+    }
+
+    it.each([
+      ["Control+End", { key: "End", ctrlKey: true }],
+      ["End", { key: "End" }],
+      ["Meta+ArrowDown", { key: "ArrowDown", metaKey: true }],
+    ])("leaves the caret past the note after %s", async (_name, init) => {
+      const { editor, para } = await mountTrailingNote();
+
+      await pressEnd(editor, init);
+      await selectNote(editor, para);
+
+      expect(selectionIsCaretPastNote(editor, para)).toBe(true);
+    });
+
+    it("keeps a note selected by some other gesture", async () => {
+      const { editor, para } = await mountTrailingNote();
+
+      await selectNote(editor, para);
+
+      editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        expect($isRangeSelection(selection) && selection.isCollapsed()).toBe(false);
+      });
+    });
+
+    it("keeps a selection that Shift+End made", async () => {
+      const { editor, para } = await mountTrailingNote();
+
+      await pressEnd(editor, { key: "End", shiftKey: true });
+      await selectNote(editor, para);
+
+      editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        expect($isRangeSelection(selection) && selection.isCollapsed()).toBe(false);
+      });
+    });
+  });
+
   it("puts typed text after the note and strips the placeholder", async () => {
     let para: ParaNode;
     let note: NoteNode;
@@ -770,6 +977,50 @@ describe("TrailingNoteCaretGuardPlugin", () => {
       });
     });
 
+    // Reusing the host only moves the caret, and Lexical keeps a selection-only commit's tags
+    // pending: the repair's cursor-change tag would then ride onto the user's next keystroke, which
+    // the host's change listener skips as a caret move.
+    it("does not tag the keystroke typed into a reused host as a caret move", async () => {
+      const { editor } = await baseTestEnvironment(
+        () => {
+          $getRoot().append(
+            $createParaNode("p").append(
+              $createTextNode("before "),
+              $createTrailingNote(),
+              $createTextNode(CURSOR_PLACEHOLDER_CHAR),
+            ),
+          );
+        },
+        <TrailingNoteCaretGuardPlugin />,
+      );
+      const dom = noteParagraphDom(editor);
+      await resolveDomPosition(editor, dom.noteDom, 2);
+      const contentCommitTags: string[][] = [];
+      const unregister = editor.registerUpdateListener(({ tags, dirtyLeaves }) => {
+        if (dirtyLeaves.size > 0) contentCommitTags.push([...tags]);
+      });
+
+      // The keystroke follows the click's commit directly: nothing (no `selectionchange`) gets in
+      // between to clear pending tags on the repair's behalf.
+      await act(async () => {
+        putDomCaret(dom.noteDom, 2);
+        dom.paraDom.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+        editor.update(
+          () => {
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) selection.insertText("x");
+          },
+          { discrete: true },
+        );
+      });
+      unregister();
+      releaseDomSelection();
+
+      expect(contentCommitTags.length).toBeGreaterThan(0);
+      for (const tags of contentCommitTags) expect(tags).not.toContain(CURSOR_CHANGE_TAG);
+    });
+
     it("leaves a caret put inside the note by anything but a click alone", async () => {
       // The marker menu puts a caret inside a collapsed footnote on purpose, to insert a char
       // marker into it. Only the click is a bid for the end of the line; a caret that arrived any
@@ -893,6 +1144,66 @@ describe("TrailingNoteCaretGuardPlugin", () => {
         expect(note.getTextContent()).not.toContain(CURSOR_PLACEHOLDER_CHAR);
       });
       expect(allHosts(editor).length).toBe(1);
+    });
+
+    describe("when the note ends an unclosed char span", () => {
+      /** `\p before \wj stuff |note|` with no `\wj*`: nothing renders past the note in its line. */
+      async function unclosedSpanEnvironment(closed: boolean) {
+        let para: ParaNode;
+        let before: TextNode;
+        let wj: CharNode;
+        let note: NoteNode;
+        const { editor } = await baseTestEnvironment(
+          () => {
+            before = $createTextNode("before ");
+            note = $createTrailingNote();
+            wj = $createCharNode("wj", closed ? undefined : { closed: "false" });
+            para = $createParaNode("p");
+            $getRoot().append(
+              para.append(
+                before,
+                wj.append(
+                  $createMarkerNode("wj", "opening"),
+                  $createTextNode("stuff "),
+                  note,
+                  ...(closed ? [$createMarkerNode("wj", "closing")] : []),
+                ),
+              ),
+            );
+          },
+          <TrailingNoteCaretGuardPlugin />,
+        );
+        return { editor, para: para!, before: before!, wj: wj!, note: note! };
+      }
+
+      it("lands past the note, inside the span the note ends", async () => {
+        const { editor, before, wj, note } = await unclosedSpanEnvironment(false);
+        await giveEditorACaret(editor, before);
+        const { paraDom, callerDom } = noteParagraphDom(editor);
+
+        await clickIntoUnfocusedEditor(editor, paraDom, callerDom, 0);
+
+        editor.getEditorState().read(() => {
+          const host = wj.getLastChild();
+          if (!$isTextNode(host)) throw new Error("expected a text host past the note");
+          expect(host.getTextContent()).toBe(CURSOR_PLACEHOLDER_CHAR);
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+          expect(selection.anchor.key).toBe(host.getKey());
+          expect(note.getTextContent()).not.toContain(CURSOR_PLACEHOLDER_CHAR);
+        });
+        expect(allHosts(editor).length).toBe(1);
+      });
+
+      it("leaves a note alone when the span's closing glyph renders past it", async () => {
+        const { editor, before } = await unclosedSpanEnvironment(true);
+        await giveEditorACaret(editor, before);
+        const { paraDom, callerDom } = noteParagraphDom(editor);
+
+        await clickIntoUnfocusedEditor(editor, paraDom, callerDom, 0);
+
+        expect(allHosts(editor).length).toBe(0);
+      });
     });
 
     it("leaves a note that something in its block renders past alone", async () => {

@@ -29,6 +29,16 @@ const sampleUsj: Usj = {
 describe("Marginal ref delegation", () => {
   let consoleWarnSpy: MockInstance;
 
+  beforeAll(() => {
+    // jsdom has no layout engine and never implemented `Range.getBoundingClientRect`. Focusing the
+    // editor root makes jsdom collapse the selection to the root's start, the cursor guard moves
+    // that caret past the `\id` line's prefix glyph into text, and Lexical's post-commit
+    // scroll-into-view then reads a Range rect. Without this stub that read throws from Lexical's
+    // async commit, outside any test's promise chain, as an unhandled error. An empty rect is the
+    // honest stand-in, since there is no layout to report.
+    Range.prototype.getBoundingClientRect = () => new DOMRect();
+  });
+
   beforeEach(() => {
     // Marginal logs a deprecation warning on mount; keep test output clean.
     consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -68,6 +78,13 @@ describe("Marginal ref delegation", () => {
     expect(marginal.isFocused()).toBe(false);
 
     await act(async () => root.focus());
+    // Let jsdom's queued `selectionchange` from the focus run its update and commit inside this
+    // test, so whatever that commit does happens here rather than racing the next test.
+    await act(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    });
 
     expect(marginal.isFocused()).toBe(true);
   });
