@@ -102,6 +102,7 @@ import {
   $previousSiblingThroughMarks,
   $setLogicalText,
   $isTypedMarkNode,
+  $leafBesideThroughMarks,
 } from "shared";
 import { StructureProtectionMode } from "shared-react";
 
@@ -1916,16 +1917,17 @@ function $isPlainContentText(node: LexicalNode): node is TextNode {
 }
 
 /**
- * The caret shield as a SET: `exceptKey` plus every plain content-text sibling contiguous with
- * it. A literal the user is mid-typing is not guaranteed to be one node — the verse-split path
- * (and any boundary-point insertion) can leave `\` and the just-typed `v` as separate siblings —
- * and a shield that protects only the caret's own node then reads the rest of the run as
- * "departed" and settles it mid-word (the live `\vbut…` unknown-paragraph split). Contiguity is
- * the boundary: anything that is not plain content text (a glyph, the token separator, an
- * attribute value, an element) ends the run, so pends beyond it still settle on genuine
- * departure exactly as before.
+ * The caret shield as a SET: `exceptKey` plus every plain content-text node contiguous with it.
+ * A literal the user is mid-typing is not guaranteed to be one node — the verse-split path
+ * (and any boundary-point insertion) can leave `\` and the just-typed `v` as separate siblings,
+ * and an annotation's mark cuts content text into several — and a shield that protects only the
+ * caret's own node then reads the rest of the run as "departed" and settles it mid-word (the live
+ * `\vbut…` unknown-paragraph split). Contiguity reads through annotation marks
+ * ({@link $leafBesideThroughMarks}): anything that is not plain content text (a glyph, the token
+ * separator, an attribute value, any other element) ends the run, so pends beyond it still settle
+ * on genuine departure exactly as before. Call inside a read or an update.
  */
-function $exceptKeysAround(exceptKey: NodeKey | undefined): Set<NodeKey> {
+export function $exceptKeysAround(exceptKey: NodeKey | undefined): Set<NodeKey> {
   const keys = new Set<NodeKey>();
   if (exceptKey === undefined) return keys;
   keys.add(exceptKey);
@@ -1935,18 +1937,16 @@ function $exceptKeysAround(exceptKey: NodeKey | undefined): Set<NodeKey> {
   // recorded at its head.
   const pieces = $pieces(exceptNode);
   for (const piece of pieces) keys.add(piece.getKey());
-  for (
-    let sibling = pieces[0].getPreviousSibling();
-    sibling && $isPlainContentText(sibling);
-    sibling = sibling.getPreviousSibling()
-  )
-    keys.add(sibling.getKey());
-  for (
-    let sibling = pieces[pieces.length - 1].getNextSibling();
-    sibling && $isPlainContentText(sibling);
-    sibling = sibling.getNextSibling()
-  )
-    keys.add(sibling.getKey());
+  for (const [from, side] of [
+    [pieces[0], "previous"],
+    [pieces[pieces.length - 1], "next"],
+  ] as const)
+    for (
+      let leaf = $leafBesideThroughMarks(from, side);
+      leaf && $isPlainContentText(leaf);
+      leaf = $leafBesideThroughMarks(leaf, side)
+    )
+      keys.add(leaf.getKey());
   return keys;
 }
 

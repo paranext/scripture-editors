@@ -4,6 +4,7 @@ import {
   $hasAttributeRunAncestor,
   $isEmbedContinuation,
   $isElementNodeClosing,
+  $isLegacyAttributeText,
   $isOwnParaPrefixGlyph,
   DeltaOp,
   LF,
@@ -54,7 +55,6 @@ import {
   ImmutableUnmatchedNode,
   MilestoneNode,
   NBSP,
-  NODE_ATTRIBUTE_PREFIX,
   NoteNode,
   ParaLikeNode,
   ParaNode,
@@ -358,7 +358,7 @@ function $handleTextNodes(
   // region (see AttributeRunNode.ts), so anything riding inside it is presentation, not content,
   // whether or not it happens to also carry the "attribute" state tag.
   const isNodeAttributeText =
-    text.startsWith(NODE_ATTRIBUTE_PREFIX) ||
+    $isLegacyAttributeText(currentNode) ||
     $getState(currentNode, textTypeState) === "attribute" ||
     $hasAttributeRunAncestor(currentNode);
   const isPlaceholderText =
