@@ -453,6 +453,74 @@ describe("holds through a byte typed beside an identical one", () => {
   });
 });
 
+describe("a token carrier cut into pieces", () => {
+  /** A para of `a`, a token `\f` glyph cut into `\` | `f` by a hold on its `\`, and `b`. */
+  function $tokenGlyph(): { para: LexicalNode; glyph: MarkerNode } {
+    const glyph = $createMarkerNode("f").setMode("token");
+    const para = $createParaNode().append($createTextNode("a"), glyph, $createTextNode("b"));
+    $getRoot().append(para);
+    $addDisplayAnnotation(glyph, "check", "a", 0, 1);
+    return { para, glyph };
+  }
+
+  function childTexts(para: LexicalNode): string[] {
+    return $isElementNode(para) ? texts(para.getChildren()) : [];
+  }
+
+  it.each([
+    ["its first piece", 0],
+    ["its last piece", 1],
+  ])("goes whole when %s is removed, as the unsplit token does", (_, index) => {
+    const editor = mount();
+    let para!: LexicalNode;
+    let glyph!: MarkerNode;
+    editor.update(() => void ({ para, glyph } = $tokenGlyph()), { discrete: true });
+    editor.read(() => expect(texts($pieces(glyph))).toEqual(["\\", "f"]));
+    editor.update(() => $pieces(glyph)[index].remove(), { discrete: true });
+    // Lexical joins the plain text left on either side, as it does around a removed token.
+    editor.read(() => expect(childTexts(para)).toEqual(["ab"]));
+  });
+
+  it("goes whole when a middle piece is removed, keeping text typed in place of a piece", () => {
+    const editor = mount();
+    let para!: LexicalNode;
+    let caller!: TextNode;
+    editor.update(
+      () => {
+        caller = $createTextNode(` +${NBSP}`).setMode("token");
+        para = $createParaNode().append(caller);
+        $getRoot().append(para);
+        $addDisplayAnnotation(caller, "check", "a", 1, 2);
+      },
+      { discrete: true },
+    );
+    editor.read(() => expect(texts($pieces(caller))).toEqual([" ", "+", NBSP]));
+    editor.update(() => $pieces(caller)[0].replace($createTextNode("x")), { discrete: true });
+    editor.read(() => expect(childTexts(para)).toEqual(["x"]));
+  });
+
+  it("stays whole and cut through a rewrite of its text", () => {
+    const editor = mount();
+    let glyph!: MarkerNode;
+    editor.update(() => void ({ glyph } = $tokenGlyph()), { discrete: true });
+    editor.update(() => void glyph.setMarker("fe"), { discrete: true });
+    editor.read(() => {
+      expect(texts($pieces(glyph))).toEqual(["\\", "fe"]);
+      expect($pieces(glyph).map($holdIds)).toEqual([["a[0,1)"], []]);
+    });
+  });
+
+  it("writes no piece bookkeeping into the joined serialized node", () => {
+    const editor = mount();
+    editor.update(() => void $tokenGlyph(), { discrete: true });
+    const serialized = editor.getEditorState().toJSON();
+    const [para] = joinSerializedPieces(serialized.root.children);
+    const children = "children" in para && Array.isArray(para.children) ? para.children : [];
+    const glyph: SerializedLexicalNode = children[1];
+    expect(Object.keys(glyph[NODE_STATE_KEY] ?? {})).toEqual(["displayAnnotations"]);
+  });
+});
+
 describe("carrier offsets and per-node passes", () => {
   /** `\v 12 ` cut into `\v `, `12` and ` ` by a hold on its number. */
   function $cutVerse(): LexicalNode {

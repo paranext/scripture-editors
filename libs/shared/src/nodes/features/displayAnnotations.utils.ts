@@ -31,6 +31,8 @@ import {
   $logicalText,
   $pieceHead,
   $pieces,
+  $recordTokenPieces,
+  $removeBrokenTokenPieces,
   $textHolds,
   displayPieceContinuationState,
   pieceHoldKeys,
@@ -517,6 +519,8 @@ function $splitPiece(piece: TextNode, cuts: number[]): void {
  */
 export function $normalizeCarrierPieces(node: LexicalNode): void {
   if (!$isTextNode(node) || !node.isAttached()) return;
+  // A token carrier that lost a piece goes whole, as the unsplit token would have.
+  if ($removeBrokenTokenPieces(node)) return;
   // A continuation whose head is gone (deleted, or the piece was moved) is a carrier of its own.
   if ($isPieceContinuation(node) && $pieceHead(node).is(node))
     $setState(node, displayPieceContinuationState, undefined);
@@ -548,6 +552,7 @@ export function $normalizeCarrierPieces(node: LexicalNode): void {
     if (same) current = $joinPieces([current, next]);
     else current = next;
   }
+  $recordTokenPieces(current);
 }
 
 /**

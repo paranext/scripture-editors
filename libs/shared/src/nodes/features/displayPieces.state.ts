@@ -38,6 +38,17 @@ export const displayPieceContinuationState = createState("displayPieceContinuati
   parse: (value: unknown): true | undefined => (value === true ? true : undefined),
 });
 
+/**
+ * On every piece of a carrier in `token` mode that is cut into pieces (an atomic note shell glyph
+ * or caller, an unmatched closer): the whole carrier's text. A token is atomic — Lexical removes
+ * or replaces it whole — but each piece is a token of its own, so a deletion takes one piece only.
+ * A piece whose recorded text is no longer its carrier's tells the piece transform a piece was
+ * taken, and it removes the rest ({@link $removeBrokenTokenPieces}).
+ */
+export const displayPieceTokenTextState = createState("displayPieceTokenText", {
+  parse: (value: unknown): string | undefined => (typeof value === "string" ? value : undefined),
+});
+
 /** Whether `node` continues the carrier whose piece precedes it. */
 export function $isPieceContinuation(node: LexicalNode | null | undefined): boolean {
   return !!node && $isTextNode(node) && $getState(node, displayPieceContinuationState) === true;
@@ -279,8 +290,52 @@ export function $joinPieces<T extends LexicalNode>(pieces: readonly T[]): T {
     displayAnnotationsState,
     joined.length > 0 ? { basis: text, annotations: joined } : undefined,
   );
+  // The joined node is not the chain it recorded; the piece transform records the chain anew.
+  $setState(writable, displayPieceTokenTextState, undefined);
   for (const piece of rest) piece.remove();
   return writable;
+}
+
+/**
+ * When `node` is a piece of a `token` carrier that has lost a piece (its recorded whole text,
+ * {@link displayPieceTokenTextState}, is no longer its carrier's), remove every piece that
+ * recorded it, as Lexical removes a token whole: what is left is what removing the unsplit token
+ * leaves. A node that recorded nothing (text typed in place of a piece) stays. Returns whether
+ * anything was removed. Mutating.
+ */
+export function $removeBrokenTokenPieces(node: LexicalNode): boolean {
+  if (!$isTextNode(node)) return false;
+  // Cheap for plain text: only a recorded piece, or a node a continuation follows (text typed in
+  // place of a head piece), can be part of a broken token.
+  if (
+    $getState(node, displayPieceTokenTextState) === undefined &&
+    !$isPieceContinuation(node.getNextSibling())
+  )
+    return false;
+  const pieces = $pieces(node);
+  const text = $logicalText(node);
+  const broken = pieces.filter((piece) => {
+    const recorded = $getState(piece, displayPieceTokenTextState);
+    return recorded !== undefined && recorded !== text;
+  });
+  if (broken.length === 0) return false;
+  for (const piece of broken) piece.remove();
+  return true;
+}
+
+/**
+ * Record `node`'s carrier's whole text on each of its pieces when it is a `token` carrier cut into
+ * pieces, and clear the record from a carrier in one piece ({@link displayPieceTokenTextState}).
+ * Writes only what changes. Mutating.
+ */
+export function $recordTokenPieces(node: LexicalNode): void {
+  const pieces = $pieces(node);
+  const head = pieces[0];
+  const text =
+    pieces.length > 1 && $isTextNode(head) && head.isToken() ? $logicalText(head) : undefined;
+  for (const piece of pieces)
+    if ($getState(piece, displayPieceTokenTextState) !== text)
+      $setState(piece, displayPieceTokenTextState, text);
 }
 
 /**
@@ -350,7 +405,10 @@ function joinSerializedChain(pieces: readonly SerializedLexicalNode[]): Serializ
   }
   const state: { [key: string]: unknown } = Object.fromEntries(
     Object.entries(head[NODE_STATE_KEY] ?? {}).filter(
-      ([key]) => key !== displayPieceContinuationState.key && key !== displayAnnotationsState.key,
+      ([key]) =>
+        key !== displayPieceContinuationState.key &&
+        key !== displayPieceTokenTextState.key &&
+        key !== displayAnnotationsState.key,
     ),
   );
   const joined = coalesceAnnotations(annotations);
