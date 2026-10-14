@@ -54,6 +54,7 @@ function observed(run: CaseRun | undefined): { [name: string]: unknown } {
     settledScreen: run.shownLines,
     settledText: run.after.text,
     settledPositions: positionSets(run.after.reported),
+    pasteErrors: run.pasteErrors,
   };
 }
 

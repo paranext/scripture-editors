@@ -580,6 +580,7 @@ function observables(run: CaseRun): { [name: string]: string } {
     "settled screen": run.shownLines ?? "",
     "settled text": run.after.text,
     "settled positions": positionSets(run.after.reported),
+    "paste errors": JSON.stringify(run.pasteErrors),
   };
 }
 

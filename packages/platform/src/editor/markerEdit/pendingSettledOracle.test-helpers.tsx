@@ -125,7 +125,7 @@ import {
   ViewOptions,
 } from "shared-react";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountInView>>;
 
@@ -1479,6 +1479,13 @@ export interface CaseRun {
   };
   shownLines: string | undefined;
   after: { text: string; reported: PositionReport[] };
+  /**
+   * What a paste's insertion logged as an error, first line each: `@lexical/clipboard` catches an
+   * insertion that throws (Lexical's own `insertNodes` refuses inline nodes with no block around
+   * the caret) and logs it before trying the clipboard's next flavor, so a refused insertion leaves
+   * no other trace.
+   */
+  pasteErrors: string[];
 }
 
 /** The corpus rows the oracle runs in `view`. */
@@ -1633,8 +1640,12 @@ export async function runKeystrokeCase(
     await Promise.resolve();
     await drainNativeSelectionChange();
   });
-  if (applied && "copies" in keystroke)
-    applied = await copyAndPasteAtSite(mounted, isAnnounced, $site);
+  let pasteErrors: string[] = [];
+  if (applied && "copies" in keystroke) {
+    const pasted = await copyAndPasteAtSite(mounted, isAnnounced, $site);
+    applied = pasted !== undefined;
+    pasteErrors = pasted ?? [];
+  }
   // An empty `next` replaces a range with nothing: Backspace.
   const next =
     "character" in keystroke
@@ -1704,18 +1715,21 @@ export async function runKeystrokeCase(
     before,
     shownLines,
     after,
+    pasteErrors,
   };
 }
 
 /**
  * The second half of a {@link PasteKeystroke}, with its byte selected: copy it, place the caret at
- * the site again, and paste the copy there. `false` when the site is gone once the byte is copied.
+ * the site again, and paste the copy there. Returns what the paste logged as an error
+ * ({@link CaseRun.pasteErrors}), recorded rather than printed; `undefined` when the site is gone
+ * once the byte is copied.
  */
 async function copyAndPasteAtSite(
   mounted: Mounted,
   isAnnounced: boolean,
   $site: () => CaseSite | undefined,
-): Promise<boolean> {
+): Promise<string[] | undefined> {
   const { event, getData } = copyEvent({ native: true });
   await act(async () => {
     mounted.lexical.dispatchCommand(COPY_COMMAND, event);
@@ -1735,14 +1749,22 @@ async function copyAndPasteAtSite(
     });
     await drainNativeSelectionChange();
   });
-  if (!isPlaced) return false;
-  await act(async () => {
-    mounted.lexical.dispatchCommand(PASTE_COMMAND, pasteEvent(payload).event);
-    await Promise.resolve();
-    await Promise.resolve();
-    await drainNativeSelectionChange();
+  if (!isPlaced) return undefined;
+  const errors: string[] = [];
+  const consoleError = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    errors.push(String(args[0]).split("\n")[0]);
   });
-  return true;
+  try {
+    await act(async () => {
+      mounted.lexical.dispatchCommand(PASTE_COMMAND, pasteEvent(payload).event);
+      await Promise.resolve();
+      await Promise.resolve();
+      await drainNativeSelectionChange();
+    });
+  } finally {
+    consoleError.mockRestore();
+  }
+  return errors;
 }
 
 /**
