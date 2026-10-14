@@ -47,6 +47,7 @@ import {
   runKeystrokeCase,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
 import { copyEvent } from "../markerEdit/markerEdit.test-helpers";
+import { drainNativeSelectionChange } from "../editor-test.utils";
 import { UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -215,6 +216,9 @@ async function applyAnnotations(
       await Promise.resolve();
     });
   }
+  await act(async () => {
+    await drainNativeSelectionChange();
+  });
   return mounted.lexical.getEditorState().read(() => {
     const ids = plan.map(({ id }) => id).filter((id) => $heldIndexes(HELD_TYPE, id).size > 0);
     const marks = new Map(ids.map((id) => [id, $marksHolding(id)]));
@@ -396,9 +400,8 @@ function isNodeShaped(keystroke: OracleKeystroke): boolean {
 /**
  * The `text/plain` a copy of the whole edited paragraph puts on the clipboard. In the popover's
  * view the selection is announced as a change in the same update, as every caret placement there
- * is, so the shell's caret guard confines it to the note before the copy reads it. Unannounced,
- * whether the guard had run by then would depend on whether jsdom's own deferred `selectionchange`
- * fired first.
+ * is, and the native `selectionchange` it queues is drained ({@link drainNativeSelectionChange}),
+ * so the shell's caret guard has always confined it to the note before the copy reads it.
  */
 async function copiedBytes(mounted: MountedInView, view: string): Promise<string> {
   await act(async () => {
@@ -408,10 +411,12 @@ async function copiedBytes(mounted: MountedInView, view: string): Promise<string
       if (view === PROTECTED_NOTE_SHELL_VIEW)
         mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
     });
+    await drainNativeSelectionChange();
   });
   const { event, getData } = copyEvent();
   await act(async () => {
     mounted.lexical.dispatchCommand(COPY_COMMAND, event);
+    await drainNativeSelectionChange();
   });
   return getData("text/plain");
 }

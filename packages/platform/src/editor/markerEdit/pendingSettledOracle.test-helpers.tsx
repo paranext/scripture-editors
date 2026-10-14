@@ -13,11 +13,13 @@
  * (Delete) it, or — once per node — `x` typed over the node's whole text (a caller, a glyph, a word
  * selected and replaced) — and, as the delete-then-type gesture, Backspace or Delete followed by
  * `x` typed at the caret it leaves.
- * Typing is a direct splice into the node rather than `insertText`, so both nodes on either side
- * of a boundary are exercised: the editor can resolve a caret at a glyph's end to the end of the
- * glyph or to the start of the next text, and the two must settle alike. At every node boundary
- * each character is also typed the way a click and a keystroke arrive — the caret placed in one
- * update, `insertText` in the next — so the caret is wherever the selection listeners leave it.
+ * That first keystroke is a direct splice into the node rather than a key press, so both nodes on
+ * either side of a boundary are exercised: the editor can resolve a caret at a glyph's end to the
+ * end of the glyph or to the start of the next text, and the two must settle alike. Every later key
+ * is pressed the way a user presses it, as the command a key press dispatches (typing, Backspace,
+ * Delete), so every handler a key reaches takes part. At every node boundary each character is
+ * also typed the way a click and a keystroke arrive — the caret placed in one update, the key
+ * pressed in the next — so the caret is wherever the selection listeners leave it.
  *
  * In the footnote popover's view, whose note shell is `token` glyphs a user cannot splice, each
  * glyph is also visited at its two ends: a character typed with the caret placed there, and
@@ -68,6 +70,7 @@ import {
 import { SettledPositionContext } from "../positions/settledPositions.model";
 import { MarkerContent, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
+import { drainNativeSelectionChange } from "../editor-test.utils";
 import {
   $getRoot,
   $getSelection,
@@ -76,6 +79,8 @@ import {
   $isRangeSelection,
   $isTextNode,
   CLICK_COMMAND,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  DELETE_CHARACTER_COMMAND,
   HISTORY_PUSH_TAG,
   LexicalEditor,
   LexicalNode,
@@ -369,7 +374,7 @@ const deleteForward: Keystroke = (text, offset) =>
 
 /**
  * One keystroke at a node offset, as {@link Keystroke}; `typed` is the character it types, and
- * `then` a character typed next at the caret it leaves (`insertText`, in an update of its own) —
+ * `then` a character typed next at the caret it leaves (a key press, in an update of its own) —
  * the delete-then-type gesture, which reaches what a deletion leaves waiting for the next key (a
  * note's caller retyped after being deleted).
  */
@@ -428,8 +433,10 @@ const KEYSTROKES: KeystrokeCase[] = [
  * The keystrokes at a protected note shell's glyphs (`token` nodes), which a user cannot splice:
  * a character typed with the caret placed at either end of one — the selection change announced,
  * so the shell's caret guard moves a caret it does not allow there — and Backspace at its end or
- * Delete at its front, which Lexical's `deleteCharacter` turns into removing a one-character range
- * reaching into the glyph (the native selection's `modify`, which jsdom lacks, is what extends it).
+ * Delete at its front, pressed as the command a key press dispatches, which the shell's guard
+ * answers first and Lexical's `deleteCharacter` otherwise turns into removing a one-character range
+ * reaching into the glyph (extended with the native selection's `modify`, given to jsdom here by
+ * {@link modifyByCharacter}).
  */
 type ShellKeystroke =
   | { name: string; character: string }
@@ -541,17 +548,96 @@ function $shellTexts(): TextNode[] {
 }
 
 /** Click into the second paragraph, blur, and commit whatever is still pending. */
+
+/**
+ * The native selection's `modify` for one character, which jsdom does not implement and Lexical's
+ * `deleteCharacter` needs to extend a collapsed caret over the character Backspace or Delete
+ * removes: the focus moves one character back or forward through the editable text in document
+ * order (the end of one text node and the start of the next are one place, as in a browser), and
+ * the anchor stays unless the selection moves. Text inside a `contenteditable="false"` element is
+ * not stepped through; Lexical handles a decorator beside the caret before it asks `modify`.
+ * Other granularities are left alone.
+ */
+function modifyByCharacter(
+  this: Selection,
+  alter: string,
+  direction: string,
+  granularity: string,
+): void {
+  const { focusNode, focusOffset, anchorNode, anchorOffset } = this;
+  if (granularity !== "character" || !focusNode) return;
+  const root =
+    focusNode.parentElement?.closest('[contenteditable="true"]') ?? focusNode.ownerDocument?.body;
+  if (!root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (text) =>
+      text.parentElement?.closest('[contenteditable="false"]') || !text.textContent
+        ? NodeFilter.FILTER_SKIP
+        : NodeFilter.FILTER_ACCEPT,
+  });
+  const texts: Text[] = [];
+  for (let next = walker.nextNode(); next; next = walker.nextNode())
+    if (next instanceof Text) texts.push(next);
+  // The focus as a text position: in a text node, or before the first text after an element
+  // point.
+  let index = texts.findIndex((text) => text === focusNode);
+  let offset = focusOffset;
+  if (index < 0) {
+    const point = document.createRange();
+    point.setStart(focusNode, focusOffset);
+    index = texts.findIndex((text) => point.comparePoint(text, 0) >= 0);
+    offset = 0;
+    if (index < 0) {
+      index = texts.length - 1;
+      offset = texts[index]?.length ?? 0;
+    }
+  }
+  const backward = direction === "backward" || direction === "left";
+  let text = texts[index];
+  if (!text) return;
+  if (backward) {
+    while (offset === 0 && index > 0) {
+      index -= 1;
+      text = texts[index];
+      offset = text.length;
+    }
+    if (offset === 0) return;
+    offset -= 1;
+  } else {
+    while (offset === text.length && index < texts.length - 1) {
+      index += 1;
+      text = texts[index];
+      offset = 0;
+    }
+    if (offset === text.length) return;
+    offset += 1;
+  }
+  if (alter === "move" || !anchorNode) this.collapse(text, offset);
+  else this.setBaseAndExtent(anchorNode, anchorOffset, text, offset);
+}
+
+if (typeof Selection !== "undefined" && !("modify" in Selection.prototype))
+  Object.defineProperty(Selection.prototype, "modify", {
+    configurable: true,
+    writable: true,
+    value: modifyByCharacter,
+  });
+
 export async function depart(mounted: Mounted): Promise<void> {
   await act(async () => {
     mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
     mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
     await Promise.resolve();
     await Promise.resolve();
+    await drainNativeSelectionChange();
   });
   const rootElement = mounted.lexical.getRootElement();
   if (!rootElement) throw new Error("editor root not found");
   act(() => rootElement.blur());
   act(() => mounted.ref.current?.commitPendingMarkerEdits());
+  await act(async () => {
+    await drainNativeSelectionChange();
+  });
 }
 
 /** The marker lookup `Editor.tsx` classifies with when the host passes no stylesheet. */
@@ -1370,6 +1456,18 @@ export type { PositionReport };
  * Run one keystroke case on `mounted` (which it unmounts): place the caret at the site `$site`
  * resolves, apply `keystroke`, read the pending document, depart, read the settled one.
  * `undefined` when the keystroke does nothing at the site, or the site is unreachable.
+ *
+ * Every step that moves the selection waits for the native `selectionchange` it queues, and the
+ * editor's answer to it, before the next step ({@link drainNativeSelectionChange}): otherwise
+ * whether a selection listener (the note shell's caret guard) acted before a keystroke would vary
+ * from run to run, and so would the case's result.
+ *
+ * A key pressed at a caret or over a range is dispatched as the command a real key press
+ * dispatches — `CONTROLLED_TEXT_INSERTION_COMMAND` for a character, `DELETE_CHARACTER_COMMAND`
+ * for Backspace (backward) and Delete — so every handler a key press reaches, the note shell's
+ * guard and Lexical's own deletion included, takes part, as it does for a user. Only the first
+ * keystroke of a {@link KeystrokeCase} stays a splice into the node, which is what reaches both
+ * spellings of a boundary.
  */
 export async function runKeystrokeCase(
   mounted: Mounted,
@@ -1387,6 +1485,9 @@ export async function runKeystrokeCase(
   // does not let rest there. A splice at such a place is no keystroke a user can make
   // there, and is skipped.
   const isAnnounced = view === PROTECTED_NOTE_SHELL_VIEW && !("deletes" in keystroke);
+  await act(async () => {
+    await drainNativeSelectionChange();
+  });
   if (isAnnounced && !("character" in keystroke)) {
     await act(async () => {
       mounted.lexical.update(() => {
@@ -1395,6 +1496,7 @@ export async function runKeystrokeCase(
         site.node.select(site.offset, site.offset);
         mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
       });
+      await drainNativeSelectionChange();
     });
     const isReachable = mounted.lexical.getEditorState().read(() => {
       const selection = $getSelection();
@@ -1432,14 +1534,7 @@ export async function runKeystrokeCase(
         if (at !== (keystroke.deletes === "before" ? text.length : 0)) return;
         applied = true;
         node.select(offset, offset);
-        const selection = $getSelection();
-        if (!$isRangeSelection(selection)) return;
-        selection.focus.set(
-          node.getKey(),
-          keystroke.deletes === "before" ? offset - 1 : offset + 1,
-          "text",
-        );
-        selection.removeText();
+        mounted.lexical.dispatchCommand(DELETE_CHARACTER_COMMAND, keystroke.deletes === "before");
         return;
       }
       if ("extend" in keystroke) {
@@ -1488,6 +1583,7 @@ export async function runKeystrokeCase(
     });
     await Promise.resolve();
     await Promise.resolve();
+    await drainNativeSelectionChange();
   });
   // An empty `next` replaces a range with nothing: Backspace.
   const next =
@@ -1503,14 +1599,15 @@ export async function runKeystrokeCase(
     await act(async () => {
       mounted.lexical.update(
         () => {
-          const selection = $getSelection();
-          if ($isRangeSelection(selection)) selection.insertText(next);
+          if (next === "") mounted.lexical.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+          else mounted.lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, next);
         },
         // Its own history entry, so an undo can stop between the two keystrokes.
         history ? { tag: HISTORY_PUSH_TAG } : undefined,
       );
       await Promise.resolve();
       await Promise.resolve();
+      await drainNativeSelectionChange();
     });
   if (applied && history) {
     await depart(mounted);
@@ -1521,6 +1618,7 @@ export async function runKeystrokeCase(
           undefined,
         );
         await Promise.resolve();
+        await drainNativeSelectionChange();
       });
   }
   if (!applied) {
