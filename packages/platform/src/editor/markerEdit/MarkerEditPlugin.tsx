@@ -212,6 +212,18 @@ const MAX_SETTLE_CASCADE_DEPTH = 8;
 export const IDLE_SETTLE_DELAY_MS = 1000;
 
 /**
+ * Whether the engine's per-node passes sit out the active update: an IME composition still in
+ * progress, or an update that only sets or clears annotations. An annotation edits no byte, but
+ * wrapping content in a mark splits its text node, and cutting a display byte carrier into pieces
+ * inserts siblings — both dirty nodes, and their neighbours, that nobody edited. A pass that read
+ * that dirtiness as an edit would pend bytes the user never touched, and the next caret move would
+ * settle them. Call inside an update.
+ */
+function $skipsEnginePass(editor: LexicalEditor): boolean {
+  return editor.isComposing() || $hasUpdateTag(ANNOTATION_CHANGE_TAG);
+}
+
+/**
  * Sync and pend every run `node` owns (the shared `$syncAndPendDisplayRun` helper,
  * displayRunSync.utils.ts): the sync leaves a caret-held divergence alone, and the matching pend
  * lets caret departure settle it ($resolvePendingMarkers) — without it a run would silently
@@ -233,18 +245,6 @@ export const IDLE_SETTLE_DELAY_MS = 1000;
  * as a divergence, so `$caretHoldsRunSite` reports it caret-held and this pends it for the
  * departure settle to finish.
  */
-/**
- * Whether the engine's per-node passes sit out the active update: an IME composition still in
- * progress, or an update that only sets or clears annotations. An annotation edits no byte, but
- * wrapping content in a mark splits its text node, and cutting a display byte carrier into pieces
- * inserts siblings — both dirty nodes, and their neighbours, that nobody edited. A pass that read
- * that dirtiness as an edit would pend bytes the user never touched, and the next caret move would
- * settle them. Call inside an update.
- */
-function $skipsEnginePass(editor: LexicalEditor): boolean {
-  return editor.isComposing() || $hasUpdateTag(ANNOTATION_CHANGE_TAG);
-}
-
 /**
  * The key of the node the caret's live end is in, for the departure clocks: the head of a carrier
  * an annotation cuts into pieces, so moving between its pieces is no departure, and it names the
