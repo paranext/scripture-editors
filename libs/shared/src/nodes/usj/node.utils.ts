@@ -88,7 +88,7 @@ import {
 } from "./node-constants.js";
 import { isCursorPlaceholderOnly } from "../../plugins/CursorHandler/index.js";
 
-export { $getLogicalParent } from "./logicalParent.utils.js";
+export { $getLogicalParent, $leafBesideThroughMarks } from "./logicalParent.utils.js";
 export {
   closingMarkerText,
   getEditableCallerText,
