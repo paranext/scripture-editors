@@ -30,6 +30,7 @@ import {
   $pieceHead,
   $pieces,
   $pieceStart,
+  $setLogicalText,
 } from "./displayPieces.state.js";
 import { $createMarkerNode, $isCanonicalMarkerNode, MarkerNode } from "./MarkerNode.js";
 import { TypedMarkNode } from "./TypedMarkNode.js";
@@ -385,6 +386,70 @@ describe("carrier pieces", () => {
     expect(joined[1]).toBe(serialized.root.children[1]);
     expect(JSON.stringify(serialized)).toBe(before);
     expect(childrenOf(childrenOf(serialized.root.children[0])[0]).length).toBeGreaterThan(4);
+  });
+});
+
+describe("holds through a byte typed beside an identical one", () => {
+  /** `\v 1 ` with its `\` held, so cut into `\` | `v 1 `; the caret at the front of the head. */
+  function $heldBackslashVerse(): LexicalNode {
+    const verse = $createVerseNode("1", getVisibleOpenMarkerText("v", "1"));
+    $getRoot().append($createParaNode().append(verse, $createTextNode("In the")));
+    $addDisplayAnnotation(verse, "check", "a", 0, 1);
+    return verse;
+  }
+
+  function $caretAt(node: LexicalNode, offset: number): void {
+    const selection = $createRangeSelection();
+    selection.anchor.set(node.getKey(), offset, "text");
+    selection.focus.set(node.getKey(), offset, "text");
+    $setSelection(selection);
+  }
+
+  it("leaves the typed byte outside the hold, the way text typed beside a mark is", () => {
+    const editor = mount();
+    let verse!: LexicalNode;
+    editor.update(() => void (verse = $heldBackslashVerse()), { discrete: true });
+    editor.update(
+      () => {
+        $caretAt(verse, 0);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        selection.insertText("\\");
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      expect($logicalText(verse)).toBe(`\\\\v${NBSP}1 `);
+      expect(texts($pieces(verse))).toEqual(["\\", "\\", `v${NBSP}1 `]);
+      expect($pieces(verse).map($holdIds)).toEqual([[], ["a[0,1)"], []]);
+    });
+  });
+
+  it("keeps the hold on its byte when a rewrite then drops the typed duplicate", () => {
+    const editor = mount();
+    let verse!: LexicalNode;
+    editor.update(() => void (verse = $heldBackslashVerse()), { discrete: true });
+    editor.update(
+      () => {
+        $caretAt(verse, 0);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        selection.insertText("\\");
+      },
+      { discrete: true },
+    );
+    editor.update(
+      () => {
+        // The caret is still in the carrier, right after the typed byte; the rewrite is not the
+        // user's edit, so it must not be read as a deletion at the caret.
+        $setLogicalText(verse, `\\v${NBSP}1 `);
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      expect($logicalText(verse)).toBe(`\\v${NBSP}1 `);
+      expect($pieces(verse).map($holdIds)).toEqual([["a[0,1)"], []]);
+    });
   });
 });
 

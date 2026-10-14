@@ -216,10 +216,28 @@ export function coalesceAnnotations(annotations: DisplayAnnotation[]): DisplayAn
   return sortedAnnotations(out);
 }
 
+/** The offset of the collapsed caret when it is a text point in `node`; otherwise `undefined`. */
+export function $caretOffsetIn(node: LexicalNode): number | undefined {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+  const { anchor } = selection;
+  return anchor.type === "text" && anchor.key === node.getKey() ? anchor.offset : undefined;
+}
+
+/**
+ * The holds stored on text node `node`, measured against its current text. When the caret is in
+ * `node`, a change since the holds were measured is read as the user's edit at the caret
+ * ({@link remapAnnotations}), so a byte typed beside an identical held one stays outside the hold.
+ * Read-only.
+ */
+export function $textHolds(node: LexicalNode): DisplayAnnotation[] {
+  const held: DisplayAnnotations | undefined = $getState(node, displayAnnotationsState);
+  return held ? remapAnnotations(held, node.getTextContent(), $caretOffsetIn(node)) : [];
+}
+
 /** The holds stored on text piece `piece`, measured against its current text. */
 function $pieceHolds(piece: LexicalNode): DisplayAnnotation[] {
-  const held: DisplayAnnotations | undefined = $getState(piece, displayAnnotationsState);
-  return held ? remapAnnotations(held, piece.getTextContent()) : [];
+  return $textHolds(piece);
 }
 
 /** Move the selection's text points on `from` to `to`, `shift` bytes further in. */
@@ -281,8 +299,21 @@ export function $mergePieces<T extends LexicalNode>(node: T): T {
  */
 export function $setLogicalText<T extends LexicalNode>(node: T, text: string): T {
   const head = $mergePieces(node);
-  if ($isTextNode(head) && head.getTextContent() !== text) return head.setTextContent(text);
-  return head;
+  if (!$isTextNode(head) || head.getTextContent() === text) return head;
+  const held: DisplayAnnotations | undefined = $getState(head, displayAnnotationsState);
+  const writable = head.setTextContent(text);
+  if (!held) return writable;
+  // Re-measured here, not by the basis transform: a rewrite is not the user's edit, so a caret
+  // left in the carrier must not be read as where it happened.
+  const annotations = remapAnnotations(held, text).sort(
+    (a, b) => a.start - b.start || a.end - b.end,
+  );
+  $setState(
+    writable,
+    displayAnnotationsState,
+    annotations.length > 0 ? { basis: text, annotations } : undefined,
+  );
+  return writable;
 }
 
 /** A serialized node's text, when it is a serialized text node. */

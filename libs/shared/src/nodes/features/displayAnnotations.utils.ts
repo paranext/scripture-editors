@@ -31,6 +31,7 @@ import {
   $logicalText,
   $pieceHead,
   $pieces,
+  $textHolds,
   displayPieceContinuationState,
   pieceHoldKeys,
 } from "./displayPieces.state.js";
@@ -161,6 +162,7 @@ function $carrierText(node: LexicalNode): string {
 
 /** `node`'s holds as stored, measured against its current storage text ({@link $storageText}). */
 function $storedAnnotations(node: LexicalNode): DisplayAnnotation[] {
+  if (!$isDecoratorNode(node)) return $textHolds(node);
   const held = $getState(node, displayAnnotationsState);
   return held ? remapAnnotations(held, $storageText(node)) : [];
 }
@@ -380,7 +382,7 @@ export function $displayAnnotationIdsAt(node: LexicalNode, type: string, offset:
 export function $syncDisplayAnnotationBasis(node: LexicalNode): void {
   const held = $getState(node, displayAnnotationsState);
   if (!held || held.basis === $storageText(node)) return;
-  $writeAnnotations(node, remapAnnotations(held, $storageText(node)));
+  $writeAnnotations(node, $storedAnnotations(node));
 }
 
 /** Host callbacks for an annotation held on display bytes, which has no mark node to keep them. */
