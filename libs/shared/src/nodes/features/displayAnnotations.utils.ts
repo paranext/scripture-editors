@@ -50,17 +50,19 @@ import type {
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
 } from "./TypedMarkNode.js";
-import type { Klass, LexicalEditor, LexicalNode, PointType } from "lexical";
+import type { Klass, LexicalEditor, LexicalNode, NodeKey, PointType } from "lexical";
 import {
   $addUpdateTag,
   $copyNode,
   $getEditor,
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $getState,
   $hasUpdateTag,
   $isDecoratorNode,
   $isElementNode,
+  $isRootNode,
   $isRangeSelection,
   $isTextNode,
   $setState,
@@ -606,20 +608,65 @@ function $serializedDocument(node: LexicalNode): string {
 }
 
 /**
+ * The keys of the root children (top-level blocks) the update has changed so far, or `undefined`
+ * when it changed the root's own list of children. Read from the nodes the update has written or
+ * created (Lexical's per-update `_cloneNotNeeded`, which every `getWritable` and every new node
+ * adds to and each commit clears), each resolved to its block in the pending state or, for a node
+ * the update removed, in the state before it. Costs a walk up from each changed node.
+ */
+function $changedBlockKeys(): Set<NodeKey> | undefined {
+  const editor = $getEditor();
+  const root = $getRoot();
+  const blocks = new Set<NodeKey>();
+  const $blockOf = (key: NodeKey): NodeKey | null | undefined => {
+    const node = $getNodeByKey(key);
+    if (node?.isAttached()) {
+      if ($isRootNode(node)) return undefined;
+      return node.getTopLevelElement()?.getKey() ?? null;
+    }
+    return editor.getEditorState().read(() => {
+      const previous = $getNodeByKey(key);
+      return previous && !$isRootNode(previous)
+        ? (previous.getTopLevelElement()?.getKey() ?? null)
+        : null;
+    });
+  };
+  for (const key of editor._cloneNotNeeded) {
+    const block = $blockOf(key);
+    if (block === undefined) {
+      // The root itself was written: its children changed unless the same blocks stand in order.
+      const before = editor.getEditorState().read(() => $getRoot().getChildrenKeys().join(" "));
+      if (before !== root.getChildrenKeys().join(" ")) return undefined;
+    } else if (block !== null) blocks.add(block);
+  }
+  return blocks;
+}
+
+/**
  * The finalizer of an update that cut, joined or removed pieces ({@link DISPLAY_PIECES_CUT_TAG}):
  * when the document it leaves is the document it started from — a rewrite reverted in the same
  * update, the edit a restore transform undoes — it joins the current undo step
  * (`HISTORY_MERGE_TAG`), as Lexical's history merges an edit a transform reverted in its one node.
  * Pieces are presentation, so re-cutting a carrier must not make an undo step of its own: an
  * extra step would stand between the user's edits, and an undo or redo would stop on it. Compares
- * the whole document, so it costs a serialization of both states, and only on such an update.
+ * only the top-level blocks the update changed ({@link $changedBlockKeys}), each before and after
+ * with its pieces joined; a change to the root's list of blocks is a change.
  */
 function $joinUndoStepWhenOnlyPiecesChanged(): void {
   if (!$hasUpdateTag(DISPLAY_PIECES_CUT_TAG) || $hasUpdateTag(HISTORY_MERGE_TAG)) return;
+  const blocks = $changedBlockKeys();
+  if (!blocks) return;
+  const $serialized = (keys: Iterable<NodeKey>): string =>
+    [...keys]
+      .map((key) => {
+        const block = $getNodeByKey(key);
+        return block?.isAttached() ? $serializedDocument(block) : "";
+      })
+      .join("\n");
   const before = $getEditor()
     .getEditorState()
-    .read(() => $serializedDocument($getRoot()));
-  if (before === $serializedDocument($getRoot())) $addUpdateTag(HISTORY_MERGE_TAG);
+    .read(() => $serialized(blocks));
+  if (before === $serialized(blocks)) $addUpdateTag(HISTORY_MERGE_TAG);
 }
 
 /**
