@@ -21,18 +21,24 @@ import {
   $getRoot,
   $getSelection,
   $isElementNode,
+  $getState,
   $isRangeSelection,
+  $isTextNode,
   LexicalNode,
   RootNode,
+  TextNode,
 } from "lexical";
 import {
   $isCharNode,
   $isMarkerNode,
   $isTypedMarkNode,
   $logicalText,
+  $pieceAtLogicalOffset,
   $pieces,
   $setLogicalText,
   getPendedDisplayOwners,
+  MarkerNode,
+  textTypeState,
 } from "shared";
 import { AnnotationRange } from "shared-react";
 import { vi } from "vitest";
@@ -322,4 +328,52 @@ describe("an annotation and the marker edits the engine holds pending", () => {
     }
     expect(outcomes[1]).toBe(outcomes[0]);
   });
+
+  for (const typed of [undefined, "x"])
+    it(`settles a char span's attribute run Backspaced at its front as the plain document does${typed ? ", then a typed byte" : ""}`, async () => {
+      const outcomes: string[] = [];
+      for (const annotated of [false, true]) {
+        const mounted = await mountInView(
+          twoParaUsj(["a ", { type: "char", marker: "w", lemma: "g", content: ["grace"] }, " b"]),
+          view,
+        );
+        const $value = () =>
+          $find(
+            (node): node is TextNode =>
+              $isTextNode(node) && $getState(node, textTypeState) === "attribute",
+          );
+        if (annotated)
+          // From the word's last letter into the run's `|`: the `e` is marked, the run cut.
+          await annotate(
+            mounted,
+            mounted.lexical.getEditorState().read(() => {
+              const word = $textContaining("grace");
+              return {
+                start: $byteLoc(word, word.getTextContent().indexOf("e"), false, view),
+                end: $byteLoc($value(), 0, true, view),
+              };
+            }),
+            "crossing",
+          );
+        // Backspace the run's `|`, then (maybe) type, each a keystroke of its own.
+        await commit(mounted, () => {
+          const [piece, offset] = $pieceAtLogicalOffset($value(), 1);
+          piece.select(offset, offset);
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) return;
+          selection.focus.set(piece.getKey(), offset - 1, "text");
+          selection.removeText();
+        });
+        if (typed)
+          await commit(mounted, () => {
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) selection.insertText(typed);
+          });
+        outcomes.push(
+          JSON.stringify({ pending: isPending(mounted), usj: mounted.ref.current?.getUsj() }),
+        );
+        mounted.unmount();
+      }
+      expect(outcomes[1]).toBe(outcomes[0]);
+    });
 });

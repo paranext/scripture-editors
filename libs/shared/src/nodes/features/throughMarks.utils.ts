@@ -14,7 +14,9 @@
 import { $lastPiece, $pieceHead } from "./displayPieces.state.js";
 import { $isTypedMarkNode } from "./TypedMarkNode.js";
 import {
+  $getSelection,
   $isElementNode,
+  $isRangeSelection,
   $isTextNode,
   ElementNode,
   LexicalNode,
@@ -119,6 +121,47 @@ export function $textRunThroughMarks(
   )
     run.push(next);
   return run;
+}
+
+/** A caret position: a node and an offset into it. */
+export interface CaretPlace {
+  node: LexicalNode;
+  offset: number;
+}
+
+/**
+ * Where the caret at `point` is in the tree without annotation marks. Lexical resolves a caret it
+ * reads at the start of a text node onto the end of the text node directly before it, so with no
+ * mark there a caret at the start of a glyph or an attribute value right after content is at the
+ * end of that content. Across a mark it cannot: the caret stays at the start of the node after the
+ * mark. Read here, that caret is at the end of the text node before it through marks
+ * ({@link $previousSiblingThroughMarks}), as the unmarked tree has it; any other point is where it
+ * is.
+ */
+export function $caretPlaceThroughMarks(point: PointType): CaretPlace {
+  const node = point.getNode();
+  if (point.type === "text" && point.offset === 0 && !$isTextNode(node.getPreviousSibling())) {
+    const before = $previousSiblingThroughMarks(node);
+    if ($isTextNode(before)) {
+      const end = $lastPiece(before);
+      return { node: end, offset: end.getTextContentSize() };
+    }
+  }
+  return { node, offset: point.offset };
+}
+
+/**
+ * Move a collapsed caret to where {@link $caretPlaceThroughMarks} reads it: what Lexical's own
+ * resolution does to the same caret, read from the DOM, in a tree with no annotation marks. A
+ * no-op for any other selection. Mutating (the selection only): call inside an update.
+ */
+export function $restCaretThroughMarks(): void {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+  const { node, offset } = $caretPlaceThroughMarks(selection.anchor);
+  if (node.is(selection.anchor.getNode())) return;
+  selection.anchor.set(node.getKey(), offset, "text");
+  selection.focus.set(node.getKey(), offset, "text");
 }
 
 /** Whether `node` is a plain content `TextNode` (not a subclass such as a marker glyph or a

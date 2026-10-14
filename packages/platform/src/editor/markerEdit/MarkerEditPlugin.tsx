@@ -47,7 +47,6 @@ import {
   $getSelection,
   $getState,
   $isRangeSelection,
-  $isTextNode,
   BLUR_COMMAND,
   CLICK_COMMAND,
   COMMAND_PRIORITY_CRITICAL,
@@ -113,7 +112,8 @@ import {
   $deferToPieceHead,
   $isPieceContinuation,
   $pieceHead,
-  $previousSiblingThroughMarks,
+  $caretPlaceThroughMarks,
+  $restCaretThroughMarks,
   $runDiverges,
 } from "shared";
 import {
@@ -310,21 +310,12 @@ function $skipsEnginePass(editor: LexicalEditor, node: LexicalNode): boolean {
 /**
  * The key of the node the caret's live end is in, for the departure clocks: the head of a carrier
  * an annotation cuts into pieces, so moving between its pieces is no departure, and it names the
- * node the carrier's pend is recorded on.
- *
- * A text caret at the start of a node whose text node before it sits across an annotation mark is
- * in that text node: Lexical resolves a caret at the start of a text node onto the end of the text
- * node directly before it, so with no mark there the same caret is in that node, and a mark
- * between them must not change which node the caret is in (`$previousSiblingThroughMarks`).
+ * node the carrier's pend is recorded on. Read through marks ({@link $caretPlaceThroughMarks}): a
+ * caret at the start of a node right after a mark is in the text node before the mark, as the
+ * same caret with no mark there is.
  */
 function $caretCarrierKey(selection: RangeSelection): NodeKey {
-  const { focus } = selection;
-  const node = focus.getNode();
-  if (focus.type === "text" && focus.offset === 0 && !$isTextNode(node.getPreviousSibling())) {
-    const before = $previousSiblingThroughMarks(node);
-    if ($isTextNode(before)) return $pieceHead(before).getKey();
-  }
-  return $pieceHead(node).getKey();
+  return $pieceHead($caretPlaceThroughMarks(selection.focus).node).getKey();
 }
 
 function $syncAndPendOwner(
@@ -843,6 +834,10 @@ export function MarkerEditPlugin({
       settleReason: SettleReason = "departure",
     ) => {
       editor.update(() => {
+        // Without annotation marks this update's caret, read back from the DOM, is where Lexical
+        // resolves it; a caret at the start of a node right after a mark is put there too, so the
+        // settle's caret-held checks read the caret the unmarked document has.
+        $restCaretThroughMarks();
         const mutated = $settleWithoutOwnUndoEntry(() =>
           $resolvePendingMarkers(context, exceptKey, settleReason),
         );
