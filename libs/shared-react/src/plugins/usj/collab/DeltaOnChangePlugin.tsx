@@ -100,8 +100,9 @@ export function shouldSkipUpdateForOps(
     // stack — its bytes really did change, so it must reach `onChange` like any edit.
     // Without this exemption the cached USJ and the emitted delta both keep showing the
     // pre-settle bytes, and the host saves a document the editor is no longer displaying. A
-    // comment's `ANNOTATION_MARKS_TAG` commit is the same: it stays out of the undo stack, and
-    // its mark is a change to the USJ.
+    // comment's `ANNOTATION_MARKS_TAG` update is a change to the USJ too (its mark writes `zmsc`
+    // milestones); it carries no merge tag of its own, but Lexical commits updates queued
+    // together under all their tags, so it can share a commit with one that does.
     (options.ignoreHistoryMergeTagChange &&
       tags.has(HISTORY_MERGE_TAG) &&
       !tags.has(MARKER_SETTLE_TAG) &&
