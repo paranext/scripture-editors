@@ -60,6 +60,30 @@ const testID1 = "testID1";
 const testID2 = "testID2";
 
 describe("TypedMarkNode", () => {
+  it("re-creates its element after an undo brings back a mark that was rewritten in place", () => {
+    const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode], () => {
+      $getRoot().append(
+        $createParaNode().append(
+          $createTypedMarkNode({ comment: ["a"] }).append($createTextNode("held")),
+        ),
+      );
+    });
+    const $mark = () => {
+      const mark = $getRoot().getFirstChild<ParaNode>()?.getFirstChild();
+      if (!$isTypedMarkNode(mark)) throw new Error("no mark");
+      return mark;
+    };
+    // The element is reused here: the node is rewritten (a new node object) without createDOM.
+    editor.update(() => $mark().addID("comment", "b"), { discrete: true });
+    const kept = editor.getEditorState();
+    // The mark leaves, and its element with it.
+    editor.update(() => $mark().remove(), { discrete: true });
+    // Back: the same (frozen) node object needs a new element.
+    expect(() => editor.setEditorState(kept)).not.toThrow();
+    const element = editor.getEditorState().read(() => editor.getElementByKey($mark().getKey()));
+    expect(element?.tagName).toBe("MARK");
+  });
+
   describe("hasID()", () => {
     it("should work the specified type", () => {
       const { editor } = createBasicTestEnvironment([TypedMarkNode]);

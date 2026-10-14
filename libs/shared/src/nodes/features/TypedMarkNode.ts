@@ -256,9 +256,6 @@ export class TypedMarkNode extends ElementNode {
   __typedOnRemoves?: TypedOnRemoves;
   __typedOnMouseEnters?: TypedOnMouseEnters;
   __typedOnMouseLeaves?: TypedOnMouseLeaves;
-  __domOnClickListener?: (event: DomMouseEvent) => void;
-  __domOnMouseEnterListener?: (event: DomMouseEvent) => void;
-  __domOnMouseLeaveListener?: (event: DomMouseEvent) => void;
   __suppressOnRemoveCallbacks?: boolean;
 
   constructor(
@@ -329,12 +326,17 @@ export class TypedMarkNode extends ElementNode {
   override createDOM(config: EditorConfig, editor: LexicalEditor): HTMLElement {
     const element = document.createElement("mark");
     addClassNamesToElement(element, ...typedMarkClassNames(config.theme, this.__typedIDs));
-    const clickListener = this.getOrCreateDOMClickListener(editor);
-    element.addEventListener("click", clickListener);
-    const mouseEnterListener = this.getOrCreateDOMMouseEnterListener(editor);
-    element.addEventListener("mouseenter", mouseEnterListener);
-    const mouseLeaveListener = this.getOrCreateDOMMouseLeaveListener(editor);
-    element.addEventListener("mouseleave", mouseLeaveListener);
+    // Fresh listeners per element, stored nowhere on the node: a node object the reconciler has
+    // frozen (every node it has committed, DOM created for it or not) can need a new element
+    // later — an undo brings back a mark whose element went with its removal — and the handlers
+    // find the mark's current callbacks by key at event time anyway.
+    element.addEventListener("click", (event: DomMouseEvent) => this.handleDOMClick(event, editor));
+    element.addEventListener("mouseenter", (event: DomMouseEvent) =>
+      this.handleDOMMouseEnter(event, editor),
+    );
+    element.addEventListener("mouseleave", (event: DomMouseEvent) =>
+      this.handleDOMMouseLeave(event, editor),
+    );
     return element;
   }
 
@@ -623,15 +625,6 @@ export class TypedMarkNode extends ElementNode {
     super.remove.call(self, preserveEmptyParent);
   }
 
-  private getOrCreateDOMClickListener(editor: LexicalEditor): (event: DomMouseEvent) => void {
-    if (!this.__domOnClickListener) {
-      this.__domOnClickListener = (event: DomMouseEvent) => {
-        this.handleDOMClick(event, editor);
-      };
-    }
-    return this.__domOnClickListener;
-  }
-
   private handleDOMClick(event: DomMouseEvent, editor: LexicalEditor): void {
     const typedOnClicks = typedOnClickRegistry.get(this.getKey());
     if (!typedOnClicks) return;
@@ -651,15 +644,6 @@ export class TypedMarkNode extends ElementNode {
     }
   }
 
-  private getOrCreateDOMMouseEnterListener(editor: LexicalEditor): (event: DomMouseEvent) => void {
-    if (!this.__domOnMouseEnterListener) {
-      this.__domOnMouseEnterListener = (event: DomMouseEvent) => {
-        this.handleDOMMouseEnter(event, editor);
-      };
-    }
-    return this.__domOnMouseEnterListener;
-  }
-
   private handleDOMMouseEnter(event: DomMouseEvent, editor: LexicalEditor): void {
     const typedOnMouseEnters = typedOnMouseEnterRegistry.get(this.getKey());
     if (!typedOnMouseEnters) return;
@@ -677,15 +661,6 @@ export class TypedMarkNode extends ElementNode {
     for (const [callback, type, id] of callbacks) {
       callback(event, type, id, textContent);
     }
-  }
-
-  private getOrCreateDOMMouseLeaveListener(editor: LexicalEditor): (event: DomMouseEvent) => void {
-    if (!this.__domOnMouseLeaveListener) {
-      this.__domOnMouseLeaveListener = (event: DomMouseEvent) => {
-        this.handleDOMMouseLeave(event, editor);
-      };
-    }
-    return this.__domOnMouseLeaveListener;
   }
 
   private handleDOMMouseLeave(event: DomMouseEvent, editor: LexicalEditor): void {
