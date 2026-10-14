@@ -401,12 +401,15 @@ export function $mergePieces<T extends LexicalNode>(node: T): T {
 export function $setLogicalText<T extends LexicalNode>(node: T, text: string): T {
   const head = $mergePieces(node);
   if (!$isTextNode(head) || head.getTextContent() === text) return head;
-  const held: DisplayAnnotations | undefined = $getState(head, displayAnnotationsState);
+  // The holds as the text stands before the rewrite (a user's edit since they were measured read
+  // at the caret), then re-measured across the rewrite here rather than by the basis transform:
+  // the rewrite is not the user's edit, so a caret left in the carrier must not be read as where
+  // it happened.
+  const before = head.getTextContent();
+  const held = $getState(head, displayAnnotationsState) ? $textHolds(head) : undefined;
   const writable = head.setTextContent(text);
   if (!held) return writable;
-  // Re-measured here, not by the basis transform: a rewrite is not the user's edit, so a caret
-  // left in the carrier must not be read as where it happened.
-  const annotations = remapAnnotations(held, text).sort(
+  const annotations = remapAnnotations({ basis: before, annotations: held }, text).sort(
     (a, b) => a.start - b.start || a.end - b.end,
   );
   $setState(

@@ -495,6 +495,35 @@ describe("holds through a byte typed beside an identical one", () => {
   });
 });
 
+describe("a rewrite in the update a byte was typed in", () => {
+  it("reads the typed byte at the caret before re-measuring across the rewrite", () => {
+    const editor = mount();
+    let run!: TextNode;
+    editor.update(
+      () => {
+        run = $setState($createTextNode("a"), textTypeState, "attribute");
+        $getRoot().append($createParaNode().append(run));
+        $addDisplayAnnotation(run, "check", "a", 0, 1);
+      },
+      { discrete: true },
+    );
+    editor.update(
+      () => {
+        run.select(0, 0);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        selection.insertText("a");
+        $setLogicalText(run, "aab");
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      expect($logicalText(run)).toBe("aab");
+      expect($pieces(run).map($holdIds)).toEqual([[], ["a[0,1)"], []]);
+    });
+  });
+});
+
 describe("a token carrier cut into pieces", () => {
   /** A para of `a`, a token `\f` glyph cut into `\` | `f` by a hold on its `\`, and `b`. */
   function $tokenGlyph(): { para: LexicalNode; glyph: MarkerNode } {
