@@ -1,10 +1,20 @@
-import { $getNodeByKey, $isTextNode, LexicalNode, NodeKey } from "lexical";
+import {
+  $addUpdateTag,
+  $getNodeByKey,
+  $isRangeSelection,
+  $isTextNode,
+  BaseSelection,
+  LexicalNode,
+  NodeKey,
+} from "lexical";
 import {
   $carrierHoldableRange,
   $displayAnnotationIdsAt,
   $getMarkIDs,
   $removeDisplayAnnotation,
   $removeTypedMarkId,
+  $wrapSelectionInTypedMarkNode,
+  ANNOTATION_MARKS_TAG,
   COMMENT_MARK_TYPE,
 } from "shared";
 
@@ -16,12 +26,30 @@ export function $commentIdsAt(node: LexicalNode, offset: number): string[] {
   return [...new Set([...fromMark, ...fromBytes])];
 }
 
-/** Remove comment `id` from the marks and the display-byte nodes holding it. Mutating. */
+/**
+ * Hold comment `id` over `selection`: a mark over its content, holds on its display bytes. Tags the
+ * update {@link ANNOTATION_MARKS_TAG}, so nothing reads the nodes the wrap splits as edited. A no-op
+ * for a selection that is not a range. Mutating.
+ */
+export function $addCommentAnnotation(
+  selection: BaseSelection | null | undefined,
+  id: string,
+): void {
+  if (!$isRangeSelection(selection)) return;
+  $addUpdateTag(ANNOTATION_MARKS_TAG);
+  $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, id);
+}
+
+/**
+ * Remove comment `id` from the marks and the display-byte nodes holding it. Tags the update
+ * {@link ANNOTATION_MARKS_TAG}, as {@link $addCommentAnnotation} does. Mutating.
+ */
 export function $removeCommentAnnotation(
   id: string,
   markKeys: Iterable<NodeKey>,
   displayKeys: Iterable<NodeKey>,
 ): void {
+  $addUpdateTag(ANNOTATION_MARKS_TAG);
   $removeTypedMarkId(COMMENT_MARK_TYPE, id, markKeys);
   for (const key of displayKeys) {
     const node = $getNodeByKey(key);

@@ -102,7 +102,7 @@ import {
   $previousSiblingThroughMarks,
   $setLogicalText,
   $isTypedMarkNode,
-  $leafBesideThroughMarks,
+  $textRunThroughMarks,
 } from "shared";
 import { StructureProtectionMode } from "shared-react";
 
@@ -1923,7 +1923,7 @@ function $isPlainContentText(node: LexicalNode): node is TextNode {
  * and an annotation's mark cuts content text into several — and a shield that protects only the
  * caret's own node then reads the rest of the run as "departed" and settles it mid-word (the live
  * `\vbut…` unknown-paragraph split). Contiguity reads through annotation marks
- * ({@link $leafBesideThroughMarks}): anything that is not plain content text (a glyph, the token
+ * ({@link $textRunThroughMarks}): anything that is not plain content text (a glyph, the token
  * separator, an attribute value, any other element) ends the run, so pends beyond it still settle
  * on genuine departure exactly as before. Call inside a read or an update.
  */
@@ -1935,18 +1935,10 @@ export function $exceptKeysAround(exceptKey: NodeKey | undefined): Set<NodeKey> 
   if (!exceptNode?.isAttached()) return keys;
   // The caret in any piece of a carrier an annotation cuts is in the whole carrier, whose pend is
   // recorded at its head.
-  const pieces = $pieces(exceptNode);
-  for (const piece of pieces) keys.add(piece.getKey());
-  for (const [from, side] of [
-    [pieces[0], "previous"],
-    [pieces[pieces.length - 1], "next"],
-  ] as const)
-    for (
-      let leaf = $leafBesideThroughMarks(from, side);
-      leaf && $isPlainContentText(leaf);
-      leaf = $leafBesideThroughMarks(leaf, side)
-    )
-      keys.add(leaf.getKey());
+  for (const piece of $pieces(exceptNode)) keys.add(piece.getKey());
+  if ($isTextNode(exceptNode))
+    for (const node of $textRunThroughMarks(exceptNode, $isPlainContentText))
+      keys.add(node.getKey());
   return keys;
 }
 
