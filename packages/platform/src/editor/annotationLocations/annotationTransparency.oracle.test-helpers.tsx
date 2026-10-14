@@ -15,10 +15,15 @@
  * was planned to hold.
  *
  * Every site × keystroke a row attempts is accounted for: compared, or skipped for a stated reason
- * (the plain run did nothing there; a node-shaped keystroke on a content node a mark has cut). A
- * case the plain run applied that no annotated spelling applied is a failure of its own
- * (`[applied]`), and a row's failure prints its accounting. `ANNOTATION_TRANSPARENCY_ACCOUNTING=1`
- * prints every row's.
+ * (the plain run did nothing there; a keystroke on a content node a planned crossing cuts that is
+ * not the plain run's keystroke there). The plain run reaches each site as the pending/settled
+ * oracle does, and each site's restatement by document bytes must be that oracle's own caret, so a
+ * case the plain run skips is one that oracle skips. Every spelling of a case the plain run applied
+ * is compared, or skipped as such a cut, or — in the popover's view, whose caret guard keeps one
+ * caret of a document position — moved by the guard onto another spelling that compared: a
+ * spelling that did nothing else is a failure of its own (`[applied]`) even when another spelling
+ * compared. A row's failure prints its accounting; `ANNOTATION_TRANSPARENCY_ACCOUNTING=1` prints
+ * every row's, with every skip by label.
  *
  * The cases known to fail are listed per view in `annotationTransparency.<view>.expected-failures.json`,
  * in the pending/settled oracle's list format; `ANNOTATION_TRANSPARENCY_WRITE=1` rewrites a list.
@@ -60,7 +65,9 @@ import { UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $getRoot,
+  $getSelection,
   $isElementNode,
+  $isRangeSelection,
   $isTextNode,
   COPY_COMMAND,
   LexicalEditor,
@@ -75,6 +82,7 @@ import {
   $isMarkerTrailingSeparator,
   $isTypedMarkNode,
   $logicalText,
+  $pieceStart,
   NBSP,
   TypedMarkOnRemove,
   ZWSP,
@@ -336,7 +344,7 @@ function $holdMismatches(plan: readonly PlannedAnnotation[]): Map<string, string
 /** Why a site × keystroke attempt compared nothing. */
 type SkipReason =
   | "plain run did not apply"
-  | "node-shaped keystroke on a cut content node"
+  | "keystroke on a cut content node"
   | "no annotated spelling applied";
 
 /** What became of every site × keystroke a row attempted. */
@@ -344,20 +352,83 @@ interface Accounting {
   attempted: number;
   compared: number;
   skipped: { label: string; reason: SkipReason }[];
+  /** Spellings of a compared case that compared nothing, each for a stated reason. */
+  skippedSpellings: { label: string; reason: string }[];
 }
 
-/** `accounting` as text: the counts, by reason, and every skip but the plain run's own. */
-function describeAccounting(row: string, accounting: Accounting): string {
+/**
+ * `accounting` as text: the counts, by reason, and every skip by label — with `all`, the plain
+ * run's own too (`ANNOTATION_TRANSPARENCY_ACCOUNTING=1`).
+ */
+function describeAccounting(row: string, accounting: Accounting, all: boolean): string {
   const byReason = new Map<SkipReason, number>();
   for (const { reason } of accounting.skipped)
     byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
   const counts = [...byReason].map(([reason, count]) => `${count} ${reason}`).join(", ");
   return [
-    `${row}: ${accounting.attempted} attempted, ${accounting.compared} compared, ${accounting.skipped.length} skipped${counts ? ` (${counts})` : ""}`,
+    `${row}: ${accounting.attempted} attempted, ${accounting.compared} compared (${accounting.skippedSpellings.length} of their spellings skipped), ${accounting.skipped.length} skipped${counts ? ` (${counts})` : ""}`,
     ...accounting.skipped
-      .filter(({ reason }) => reason !== "plain run did not apply")
+      .filter(({ reason }) => all || reason !== "plain run did not apply")
       .map(({ label, reason }) => `  skipped ${label}: ${reason}`),
+    ...accounting.skippedSpellings.map(
+      ({ label, reason }) => `  skipped spelling ${label}: ${reason}`,
+    ),
   ].join("\n");
+}
+
+/** One edit site of the pending/settled oracle, with what the transparency run reads of it. */
+interface RowSite {
+  /** The site as the pending/settled oracle reaches it: an index into its texts, an offset. */
+  index: number;
+  offset: number;
+  global: GlobalSite;
+  /** The site's node and offset as a case label spells them, for a skip the plain run made. */
+  label: string;
+  /** The text of the site's node in the unannotated tree, before any keystroke. */
+  text: string;
+  /** Whether a planned crossing range starts or ends in the site's node, cutting it. */
+  isCrossed: boolean;
+}
+
+/**
+ * Every edit site of the pending/settled oracle in the unannotated tree, and every one whose
+ * restatement by document bytes ({@link $globalSite}, {@link $spellings}) is not the oracle's own
+ * caret there: the annotated run finds its spellings by that restatement, so a site it got wrong
+ * would be compared at another caret, or skipped, without a word.
+ */
+function $rowSites(plan: readonly PlannedAnnotation[]): {
+  sites: RowSite[];
+  unrestated: string[];
+} {
+  const bytes = $byteNodes();
+  const crossed = new Set<NodeKey>();
+  for (const { bytes: planned } of plan)
+    if (typeof planned !== "string")
+      for (const index of [planned.first, planned.last]) {
+        const node = bytes[index]?.[0];
+        if (node && $isContentText(node)) crossed.add(node.getKey());
+      }
+  const sites: RowSite[] = [];
+  const unrestated: string[] = [];
+  for (const { index, offset, shell } of $editSites()) {
+    const node = $textsOf(!!shell)[index];
+    const global = $globalSite(index, offset, !!shell);
+    const label = `${shell ? "shell " : ""}${node.getType()} ${JSON.stringify($logicalText(node).replaceAll(NBSP, "~"))}@${offset}`;
+    const [restated] = $spellings(global);
+    if (!restated?.node.is(node) || restated.offset !== offset)
+      unrestated.push(
+        `${label} restates as ${restated ? `${JSON.stringify(restated.node.getTextContent())}@${restated.offset}` : "nothing"}`,
+      );
+    sites.push({
+      index,
+      offset,
+      global,
+      label,
+      text: node.getTextContent(),
+      isCrossed: crossed.has(node.getKey()),
+    });
+  }
+  return { sites, unrestated };
 }
 
 /** The keys of the `<mark>`s holding `id` now, in document order. */
@@ -602,6 +673,43 @@ function annotatedFailures(
   return failures;
 }
 
+/**
+ * In the popover's view, the spelling of `site` that the caret is at once it is placed at spelling
+ * `which` and announced — as `runKeystrokeCase` places it there — when that is another spelling:
+ * the shell's caret guard keeps one caret of a document position, so a keystroke at the other
+ * spelling is the keystroke at this one. `undefined` when the caret stays or goes anywhere else.
+ */
+async function caretRespelledAt(
+  usj: Parameters<typeof mountInView>[0],
+  viewOptions: ViewOptions,
+  plan: PlannedAnnotation[],
+  site: GlobalSite,
+  which: number,
+): Promise<number | undefined> {
+  const mounted = await mountInView(usj, viewOptions);
+  await applyAnnotations(mounted, plan);
+  await act(async () => {
+    mounted.lexical.update(() => {
+      const found = $spellings(site)[which];
+      if (!found) return;
+      found.node.select(found.offset, found.offset);
+      mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+    await drainNativeSelectionChange();
+  });
+  const target = mounted.lexical.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+    const { key, offset } = selection.anchor;
+    const at = $spellings(site).findIndex(
+      (spelling) => spelling.node.getKey() === key && spelling.offset === offset,
+    );
+    return at >= 0 && at !== which ? at : undefined;
+  });
+  mounted.unmount();
+  return target;
+}
+
 /** Register the transparency oracle's rows for `view`, compared with `listFile`. */
 export function describeAnnotationTransparencyOracle(view: string, listFile: URL): void {
   const rows = oracleRows(view);
@@ -617,32 +725,43 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
       async (row, usj) => {
         const viewOptions = pendingOracleView(view);
         const probe = await mountInView(usj, viewOptions);
-        const { sites, plan, loadedOutsideNotes } = probe.lexical.getEditorState().read(() => ({
-          sites: $editSites().map(({ index, offset, shell }) =>
-            $globalSite(index, offset, !!shell),
-          ),
-          plan: $planAnnotations(viewOptions),
-          loadedOutsideNotes: outsideNotes(probe.ref.current?.getUsj()),
-        }));
+        const { plan, loadedOutsideNotes, sites, unrestated } = probe.lexical
+          .getEditorState()
+          .read(() => {
+            const planned = $planAnnotations(viewOptions);
+            return {
+              plan: planned,
+              loadedOutsideNotes: outsideNotes(probe.ref.current?.getUsj()),
+              ...$rowSites(planned),
+            };
+          });
         expect(plan.length, "the paragraph has display bytes to annotate").toBeGreaterThan(0);
+        expect(unrestated, "every site restates as the oracle's own caret").toEqual([]);
         await applyAnnotations(probe, plan);
         const mismatches = probe.lexical.getEditorState().read(() => $holdMismatches(plan));
         probe.unmount();
 
-        const accounting: Accounting = { attempted: 0, compared: 0, skipped: [] };
-        for (const site of sites)
+        const accounting: Accounting = {
+          attempted: 0,
+          compared: 0,
+          skipped: [],
+          skippedSpellings: [],
+        };
+        for (const { index, offset, global: site, label: siteLabel, text, isCrossed } of sites)
           for (const keystroke of keystrokesFor(view, site.shell)) {
             accounting.attempted += 1;
             const plainMounted = await mountInView(usj, viewOptions);
+            // The plain run reaches the site as the pending/settled oracle does, so a case it
+            // skips is one that oracle skips too.
             const plain = await runKeystrokeCase(
               plainMounted,
               view,
-              () => $spellings(site)[0],
+              () => ({ node: $textsOf(site.shell)[index], offset, shell: site.shell }),
               keystroke,
             );
             if (!plain) {
               accounting.skipped.push({
-                label: `${site.shell ? "shell " : ""}byte ${site.at} (${site.edge}) ${keystroke.name}`,
+                label: `${siteLabel} ${keystroke.name}`,
                 reason: "plain run did not apply",
               });
               continue;
@@ -652,12 +771,14 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
             expected.ops = composedChange(plainMounted.ops);
             expected.copy = await copiedBytes(plainMounted, view);
             const plainInvariants = invariantResults(plain, view, loadedOutsideNotes);
-            const plainNodeText = plainMounted.lexical
-              .getEditorState()
-              .read(() => $spellings(site)[0]?.node.getTextContent());
             plainMounted.unmount();
-            let comparedSpellings = 0;
-            let cutNodeSpellings = 0;
+            /** The spellings compared, by their place in the site's spellings. */
+            const comparedAt = new Set<number>();
+            const cutSpellings: string[] = [];
+            /** Spellings the caret guard moved to another spelling: label, and that one. */
+            const respelled: [label: string, to: number][] = [];
+            /** Each spelling the plain run's case did not run at: its failure's key, and why. */
+            const unrun: [key: string, why: string][] = [];
             // Every spelling the annotated tree gives the site, each run on a fresh mount (a
             // node belongs to the editor it was read from, so each mount reads its own).
             let spellingCount: number | undefined;
@@ -666,27 +787,40 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               const applied = await applyAnnotations(mounted, plan);
               // Setting an annotation emits no change, so the ops streams start equal here.
               const opsBefore = mounted.ops.length;
-              const { spelling, count, differentNode } = mounted.lexical
+              const { spelling, count, isCutNode, isSpliceable } = mounted.lexical
                 .getEditorState()
                 .read(() => {
                   const all = $spellings(site);
                   const found = all[which];
+                  const logical = found && $logicalText(found.node);
                   return {
                     spelling: found && { edge: edgeOf(found) },
                     count: all.length,
-                    differentNode: found ? $logicalText(found.node) !== plainNodeText : false,
+                    // A content node a planned crossing cuts: this spelling's node holds only
+                    // part of the plain node's bytes.
+                    isCutNode: isCrossed && logical !== undefined && logical !== text,
+                    // Whether the keystroke's splice can be made in this spelling's node.
+                    isSpliceable:
+                      !found ||
+                      !("apply" in keystroke) ||
+                      !!keystroke.apply(logical ?? "", $pieceStart(found.node) + found.offset),
                   };
                 });
-              spellingCount = count;
+              spellingCount ??= count;
+              const label = `${plain.label}${spellingCount > 1 ? ` [spelling ${which + 1}/${spellingCount}]` : ""}`;
+              if (count !== spellingCount)
+                unrun.push([
+                  `${label} [spellings]`,
+                  `this mount spells the site ${count} times, the first ${spellingCount}`,
+                ]);
               if (!spelling) {
                 mounted.unmount();
                 break;
               }
-              const label = `${plain.label}${count > 1 ? ` [spelling ${which + 1}/${count}]` : ""}`;
               // A node-shaped keystroke on a content node a crossing mark has cut is not the
               // plain run's keystroke: the plain node and this one hold different bytes.
-              if (isNodeShaped(keystroke) && differentNode) {
-                cutNodeSpellings += 1;
+              if (isNodeShaped(keystroke) && isCutNode) {
+                cutSpellings.push(label);
                 mounted.unmount();
                 continue;
               }
@@ -699,9 +833,26 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
                 },
                 keystroke,
               );
-              // `runKeystrokeCase` has unmounted a mount it did not run.
-              if (!annotated) continue;
-              comparedSpellings += 1;
+              // `runKeystrokeCase` has unmounted a mount it did not run. The oracle splices a
+              // keystroke into the one node at its caret, so at a cut in a content node a splice
+              // across the cut (Backspace at the start of the piece after it) is no keystroke
+              // there. Anywhere else a spelling that did nothing is a failure, unless the
+              // popover's caret guard moved its caret onto a spelling that compared (below).
+              if (!annotated) {
+                const to =
+                  view === PROTECTED_NOTE_SHELL_VIEW && !(isCutNode && !isSpliceable)
+                    ? await caretRespelledAt(usj, viewOptions, plan, site, which)
+                    : undefined;
+                if (isCutNode && !isSpliceable) cutSpellings.push(label);
+                else if (to !== undefined) respelled.push([label, to]);
+                else
+                  unrun.push([
+                    `${label} [applied]`,
+                    "plain applied, this annotated spelling did not",
+                  ]);
+                continue;
+              }
+              comparedAt.add(which);
               const actual = observables(annotated);
               actual.delta = composedDelta(mounted.lexical);
               actual.ops = composedChange(mounted.ops.slice(opsBefore));
@@ -732,31 +883,50 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               }
               mounted.unmount();
             }
-            if (comparedSpellings > 0) accounting.compared += 1;
-            else if (cutNodeSpellings > 0)
+            // A spelling the caret guard moved is covered by the spelling it moved to, when
+            // that one compared.
+            for (const [label, to] of respelled)
+              if (!comparedAt.has(to))
+                unrun.push([
+                  `${label} [applied]`,
+                  `the view moves this caret to spelling ${to + 1}, which compared nothing`,
+                ]);
+            // Every spelling of a case the plain run applied is compared or skipped for a stated
+            // reason: one that did nothing is a failure, even when another one compared.
+            for (const [key, why] of unrun) mismatches.set(key, `${key}\n    ${why}`);
+            if (comparedAt.size > 0) {
+              accounting.compared += 1;
+              accounting.skippedSpellings.push(
+                ...cutSpellings.map((label) => ({
+                  label,
+                  reason: "keystroke on a cut content node",
+                })),
+                ...respelled.map(([label, to]) => ({
+                  label,
+                  reason: `the view moves this caret to spelling ${to + 1}`,
+                })),
+              );
+            } else if (cutSpellings.length > 0 && unrun.length === 0)
               accounting.skipped.push({
                 label: plain.label,
-                reason: "node-shaped keystroke on a cut content node",
+                reason: "keystroke on a cut content node",
               });
             else {
               accounting.skipped.push({
                 label: plain.label,
                 reason: "no annotated spelling applied",
               });
-              mismatches.set(
-                `${plain.label} [applied]`,
-                `${plain.label} [applied]\n    plain applied, no annotated spelling did`,
-              );
+              if (unrun.length === 0)
+                mismatches.set(
+                  `${plain.label} [applied]`,
+                  `${plain.label} [applied]\n    the annotated tree has no spelling of the site`,
+                );
             }
           }
-        const summary = describeAccounting(row, accounting);
+        const summary = describeAccounting(row, accounting, false);
         if (ACCOUNTING)
           // eslint-disable-next-line no-console -- ANNOTATION_TRANSPARENCY_ACCOUNTING asks for this output.
-          console.info(summary);
-        expect(
-          accounting.compared + accounting.skipped.length,
-          `every attempted case is compared or skipped\n${summary}`,
-        ).toBe(accounting.attempted);
+          console.info(describeAccounting(row, accounting, true));
         expect(accounting.compared, `no case was compared\n${summary}`).toBeGreaterThan(0);
         expectMismatchesListed(row, mismatches, listed, written, WRITE, summary);
       },
