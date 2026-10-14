@@ -3161,6 +3161,23 @@ function $closedNoteRegionFragment(
 }
 
 /**
+ * The fragment over a run of sibling nodes, each walked as a paragraph's children are — for the
+ * settled-position basis of a note a typed closer closes, whose bytes run on past the note into its
+ * paragraph. Only pairs bytes for that basis; never tokenized.
+ *
+ * Read-only: walks the nodes, so call inside `editor.update()` or an editor-state read.
+ */
+export function $buildNodesFragment(
+  nodes: LexicalNode[],
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): FragmentAccumulator {
+  const out: FragmentAccumulator = { text: "", spans: [], sentinels: [] };
+  $appendNodesFragment(nodes, out, getMarkerFn, viewOptions);
+  return out;
+}
+
+/**
  * A foldable leading `\cat` span's category value, REMOVED from `content` — or `undefined` with
  * `content` untouched. Foldable mirrors ParatextData's note-category parse: explicitly closed
  * (no `closed` metadata and no other attributes riding the span), exactly one plain-text content

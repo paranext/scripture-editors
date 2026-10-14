@@ -1,7 +1,4 @@
 {
-  "unclosed note with an empty caller (unformatted view)": {
-    "marker \"\\\\ft\"@2 type \"*\" [positions]": "A closer typed into an unclosed note closes the note there, and what followed the closer moves after the note into the paragraph. The settled-position basis does not model that move yet, so while the close is pending a position past the typed closer is reported at the note's caller."
-  },
   "text touching a following verse (unformatted view)": {
     "verse \"\\\\v~2 \"@0 place the caret, then type \" \" [same place]": "Accepted whitespace normalization, not a defect: a space typed at offset 0 of a mid-paragraph verse glyph is whitespace in front of `\\v`, which ParatextData drops or normalizes when it reads the file, so the file does not keep it. The editor keeps the typed space on screen, in the glyph's leading separator run, rather than moving it out of the glyph and jumping the caret.",
     "verse \"\\\\v~2 \"@0 place the caret, then type \" \" [screen]": "Accepted whitespace normalization, not a defect: a space typed at offset 0 of a mid-paragraph verse glyph is whitespace in front of `\\v`, which ParatextData drops or normalizes when it reads the file, so the file does not keep it. The editor keeps the typed space on screen, in the glyph's leading separator run, rather than moving it out of the glyph and jumping the caret.",
