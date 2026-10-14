@@ -61,9 +61,9 @@ function $build(shape: Shape, isMarked: boolean): void {
           $createMarkerNode("nd"),
           $createTextNode(`${NBSP}one `),
           $createCharNode("wj").append(
-            $createMarkerNode("wj", "opening", undefined, true),
+            $createMarkerNode("wj", "opening", true),
             $createTextNode(`${NBSP}two`),
-            $createMarkerNode("wj", "closing", undefined, true),
+            $createMarkerNode("wj", "closing", true),
           ),
           ...word,
           $createMarkerNode("nd", "closing"),
