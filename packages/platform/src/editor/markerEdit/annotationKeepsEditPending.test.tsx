@@ -158,4 +158,41 @@ describe("an annotation and the marker edits the engine holds pending", () => {
       expect(documentText(mounted)).toContain("I\\n the beginning");
       mounted.unmount();
     });
+
+  it("settles a `\\ca` span's typed value as the plain document does, its glyph cut or not", async () => {
+    const caSpanUsj: Usj = {
+      ...cpSpanUsj,
+      content: cpSpanUsj.content.map((item) =>
+        typeof item === "object" && item.type === "char"
+          ? { ...item, marker: "ca", content: ["3"] }
+          : item,
+      ),
+    };
+    const pendingUsj: string[] = [];
+    for (const annotated of [false, true]) {
+      const mounted = await mountInView(caSpanUsj, view);
+      if (annotated) {
+        await annotate(
+          mounted,
+          rangeOver(mounted, () => $find($isMarkerNode), 0, 1),
+          "backslash",
+        );
+        mounted.lexical
+          .getEditorState()
+          .read(() => expect($pieces($find($isMarkerNode)).length).toBe(2));
+        // Cutting the glyph is no edit of it.
+        expect(isPending(mounted)).toBe(false);
+      }
+      await commit(mounted, () => {
+        const value = $textContaining("3");
+        const text = `${value.getTextContent()}x`;
+        value.setTextContent(text).select(text.length, text.length);
+      });
+      expect(isPending(mounted)).toBe(true);
+      pendingUsj.push(JSON.stringify(mounted.ref.current?.getUsj()));
+      mounted.unmount();
+    }
+    expect(pendingUsj[1]).toBe(pendingUsj[0]);
+    expect(pendingUsj[0]).toContain('"altnumber":"3x"');
+  });
 });
