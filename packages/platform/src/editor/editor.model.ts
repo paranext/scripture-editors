@@ -300,18 +300,20 @@ export interface EditorRef {
    *
    * `onRemove`: each `<mark>` reports its own removal when it goes away — one call per `<mark>`,
    * whatever else still holds the annotation — and only once: a `<mark>` an undo brings back stays
-   * quiet when it goes again. Beyond that, the annotation's last holder — a `<mark>` or a display
-   * byte — leaving the document without any `<mark>` having reported the annotation's removal since
-   * it was set fires ONE more report, through its display bytes: `"removed"` when
-   * `removeAnnotation` or setting the same id again takes it away, `"destroyed"` when it drops out
-   * of the document (an edit, a collaborator's edit, or a settle that discards those bytes). That
-   * report's text is every `<mark>`'s and carrier's text joined in document order when they all
-   * leave in the same edit; holders lost across separate edits leave only the text of the
-   * piece(s) still present at the last one. A collapsed note caller's text is the note's caller.
-   * Undo, redo, and a `setUsj` reload report nothing; setting the id again starts a fresh reporting
-   * cycle for it. An `onRemove` that throws — in a `<mark>`'s own report or in the one more
-   * report — does not stop the edit or call that removed the annotation, or the other reports: the
-   * error is handed to the editor's error handler, which rethrows it, in a later microtask.
+   * quiet when it goes again. A `<mark>` whose bytes an edit re-spells as display bytes (a settle
+   * turning typed text into a marker's attribute) hands the annotation on to them and reports
+   * nothing. Beyond that, the annotation's last holder — a `<mark>` or a display byte — leaving
+   * the document without any `<mark>` having reported the annotation's removal since it was set
+   * fires ONE more report, through its display bytes: `"removed"` when `removeAnnotation` or
+   * setting the same id again takes it away, `"destroyed"` when it drops out of the document (an
+   * edit, a collaborator's edit, or a settle that discards those bytes). That report's text is
+   * every `<mark>`'s and carrier's text joined in document order when they all leave in the same
+   * edit; holders lost across separate edits leave only the text of the piece(s) still present at
+   * the last one. A collapsed note caller's text is the note's caller. Undo, redo, and a `setUsj`
+   * reload report nothing; setting the id again starts a fresh reporting cycle for it. An
+   * `onRemove` that throws — in a `<mark>`'s own report or in the one more report — does not stop
+   * the edit or call that removed the annotation, or the other reports: the error is handed to the
+   * editor's error handler, which rethrows it, in a later microtask.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.

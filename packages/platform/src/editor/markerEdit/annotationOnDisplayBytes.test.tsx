@@ -18,6 +18,7 @@ import {
   $carrierHolding,
   appendToWord,
   displayAnnotated,
+  inOneUpdate,
   settleByBlurAndCommit,
 } from "./displayAnnotations.test-helpers";
 import { MarkerObject, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
@@ -26,6 +27,7 @@ import {
   $createRangeSelection,
   $getRoot,
   $isElementNode,
+  $setSelection,
   LexicalEditor,
   LexicalNode,
   UNDO_COMMAND,
@@ -37,6 +39,7 @@ import {
   $isTypedMarkNode,
   $isVerseNode,
   $lastPiece,
+  $logicalNextSibling,
   $logicalText,
   $ownerOfRunPiece,
   $pieces,
@@ -244,6 +247,75 @@ describe("an annotation across content and a verse number", () => {
 
     expect(displayAnnotated(mounted.lexical)).toEqual({});
     expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  /** Replace the whole of the marked `and` (its own text node) with `x`, as a selection over it
+   * and a typed key do. */
+  async function typeOverMarkedText(mounted: Mounted): Promise<void> {
+    await inOneUpdate(mounted.lexical, () => {
+      const and = $textContaining("and");
+      const selection = $createRangeSelection();
+      selection.anchor.set(and.getKey(), 0, "text");
+      selection.focus.set(and.getKey(), and.getTextContentSize(), "text");
+      $setSelection(selection);
+      selection.insertText("x");
+    });
+  }
+
+  /** Delete every byte of the verse `\v 2 `, leaving the text on both sides of it. */
+  async function deleteVerse(mounted: Mounted): Promise<void> {
+    await inOneUpdate(mounted.lexical, () => {
+      const before = $textContaining("in the beginning");
+      const verse = before.getNextSibling();
+      if (!$isVerseNode(verse)) throw new Error("no verse after the text");
+      const after = $logicalNextSibling(verse);
+      const selection = $createRangeSelection();
+      selection.anchor.set(before.getKey(), before.getTextContentSize(), "text");
+      if ($isElementNode(after)) selection.focus.set(after.getKey(), 0, "element");
+      else if (after) selection.focus.set(after.getKey(), 0, "text");
+      $setSelection(selection);
+      selection.removeText();
+    });
+  }
+
+  it("reports once, as destroyed, when an edit takes its mark while the verse still holds it, and nothing when the verse goes later", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(usj);
+    await annotate(mounted, markAndVerse, "1", onRemove);
+    expect(markTexts(mounted.lexical)).toEqual(["and"]);
+
+    await typeOverMarkedText(mounted);
+
+    expect(markTexts(mounted.lexical)).toEqual([]);
+    expect(displayAnnotated(mounted.lexical)["1"]?.join("")).toContain("2");
+    expect(onRemove.mock.calls).toEqual([["external-test", "1", "destroyed", "and"]]);
+    // The verse still paints it.
+    const painted = mounted.lexical
+      .getRootElement()
+      ?.getElementsByClassName("annotationId-1").length;
+    expect(painted).toBeGreaterThan(0);
+
+    await deleteVerse(mounted);
+
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports nothing when an edit takes the verse while its mark still holds it, and once when the mark goes later", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(usj);
+    await annotate(mounted, markAndVerse, "1", onRemove);
+
+    await deleteVerse(mounted);
+
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(markTexts(mounted.lexical)).toEqual(["and"]);
+    expect(onRemove).not.toHaveBeenCalled();
+
+    await typeOverMarkedText(mounted);
+
+    expect(markTexts(mounted.lexical)).toEqual([]);
+    expect(onRemove.mock.calls).toEqual([["external-test", "1", "destroyed", "and"]]);
   });
 
   it("reports once when its mark is deleted and the host then sets the same id again", async () => {

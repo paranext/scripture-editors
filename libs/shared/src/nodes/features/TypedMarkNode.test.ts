@@ -34,6 +34,7 @@ import {
   $isTypedMarkNode,
   listenForTypedMarkRemovalReports,
   setTypedMarkRemovalSilenced,
+  takeRemovedTypedMarks,
   takeTypedMarkRemovalReports,
   TypedMarkNode,
   TypedMarkOnMouseEnter,
@@ -43,6 +44,7 @@ import { $wrapSelectionInTypedMarkNode } from "./typedMarkWrap.utils.js";
 import {
   $createRangeSelection,
   $createTextNode,
+  $getNodeByKey,
   $getRoot,
   $getState,
   $isTextNode,
@@ -520,6 +522,41 @@ describe("TypedMarkNode", () => {
 
       expect(takeTypedMarkRemovalReports(editor)).toEqual([[testType1, testID1]]);
       expect(takeTypedMarkRemovalReports(editor)).toEqual([]);
+      stopListening();
+    });
+
+    it("tells a listening reporter which marks went through remove(), and not a mark Lexical dropped", () => {
+      const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode]);
+      const stopListening = listenForTypedMarkRemovalReports(editor);
+      let removedKey = "";
+      let droppedKey = "";
+      editor.update(
+        () => {
+          const removed = $createTypedMarkNode({ [testType1]: [testID1] });
+          const dropped = $createTypedMarkNode({ [testType1]: [testID1] });
+          const para = $createParaNode().append(
+            removed.append($createTextNode("x")),
+            dropped.append($createTextNode("y")),
+          );
+          $getRoot().append(para);
+          removedKey = removed.getKey();
+          droppedKey = dropped.getKey();
+        },
+        { discrete: true },
+      );
+      editor.update(
+        () => {
+          $getNodeByKey(removedKey)?.remove();
+          // Removing the emptied mark's last child drops the mark without its `remove()`.
+          $getNodeByKey<TypedMarkNode>(droppedKey)?.getFirstChild()?.remove();
+        },
+        { discrete: true },
+      );
+
+      const taken = takeRemovedTypedMarks(editor);
+      expect(taken.has(removedKey)).toBe(true);
+      expect(taken.has(droppedKey)).toBe(false);
+      expect(takeRemovedTypedMarks(editor).size).toBe(0);
       stopListening();
     });
 
