@@ -1,0 +1,611 @@
+// Should only be used on nodes that are initialized in the test environment.
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
+
+import { $createImmutableVerseNode } from "../../nodes/usj";
+import {
+  HiddenContentDeleteDecision,
+  HiddenContentDeleteHandler,
+  HiddenContentDeleteRequest,
+} from "./hidden-content-delete.model";
+import { HiddenContentDeleteGuardPlugin } from "./HiddenContentDeleteGuardPlugin";
+import { baseTestEnvironment, pressKey, sutUpdate, updateSelection } from "./react-test.utils";
+import { StructureProtectionMode } from "./structure-protection.model";
+import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
+import { act } from "@testing-library/react";
+import {
+  $createTextNode,
+  $getRoot,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  COMMAND_PRIORITY_LOW,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  CUT_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
+  DRAGSTART_COMMAND,
+  KEY_DOWN_COMMAND,
+  REMOVE_TEXT_COMMAND,
+  LexicalEditor,
+  TextNode,
+} from "lexical";
+import { $createParaNode, $createUnknownNode, $isUnknownNode, UnknownNode } from "shared";
+
+function $figure(caption = "caption"): UnknownNode {
+  return $createUnknownNode("figure", "fig").append($createTextNode(caption).setMode("token"));
+}
+
+function $sidebar(text = "sidebar text"): UnknownNode {
+  return $createUnknownNode("sidebar", "esb").append(
+    $createParaNode("p").append($createTextNode(text)),
+  );
+}
+
+// Settling an answer focuses the editor (the host's dialog took focus), and once the root has focus
+// every commit scrolls the DOM selection into view through `Range.getBoundingClientRect`, which
+// jsdom does not implement.
+const rangeProto = Range.prototype as Partial<
+  Pick<Range, "getBoundingClientRect" | "getClientRects">
+>;
+const originalGetBoundingClientRect = rangeProto.getBoundingClientRect;
+const originalGetClientRects = rangeProto.getClientRects;
+beforeAll(() => {
+  rangeProto.getBoundingClientRect = () => new DOMRect();
+  rangeProto.getClientRects = () => document.createElement("div").getClientRects();
+});
+afterAll(() => {
+  rangeProto.getBoundingClientRect = originalGetBoundingClientRect;
+  rangeProto.getClientRects = originalGetClientRects;
+});
+
+/** Lets the held edit's answer arrive and settle. */
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+async function guardedEnvironment(
+  $init: () => void,
+  handler: HiddenContentDeleteHandler | undefined,
+  options: {
+    isEnabled?: boolean;
+    structureProtectionMode?: StructureProtectionMode;
+    copyLimit?: number;
+  } = {},
+) {
+  const { isEnabled = true, structureProtectionMode, copyLimit } = options;
+  return baseTestEnvironment(
+    $init,
+    <>
+      <HiddenContentDeleteGuardPlugin
+        isEnabled={isEnabled}
+        structureProtectionMode={structureProtectionMode}
+        copyLimit={copyLimit}
+        onHiddenContentDelete={handler}
+      />
+      {structureProtectionMode && (
+        <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
+      )}
+    </>,
+  );
+}
+
+/**
+ * Claims any keystroke nothing above it claimed, ahead of Lexical's own native delete - which jsdom
+ * cannot perform (no `Selection.modify`) - so a test can see that the guard let a keystroke pass.
+ */
+function claimUnhandledKeys(editor: LexicalEditor) {
+  editor.registerCommand(KEY_DOWN_COMMAND, () => true, COMMAND_PRIORITY_LOW);
+}
+
+function answering(decision: HiddenContentDeleteDecision) {
+  return vi.fn<HiddenContentDeleteHandler>(() => decision);
+}
+
+function readTree(editor: LexicalEditor): string[] {
+  return editor.getEditorState().read(() =>
+    $getRoot()
+      .getChildren()
+      .map((block) =>
+        $isUnknownNode(block) || !$isElementNode(block)
+          ? `[${$isUnknownNode(block) ? block.getTag() : block.getType()}: ${block.getTextContent()}]`
+          : block
+              .getChildren()
+              .map((child) =>
+                $isUnknownNode(child)
+                  ? `[${child.getTag()}: ${child.getTextContent()}]`
+                  : child.getTextContent(),
+              )
+              .join(""),
+      ),
+  );
+}
+
+function readCaret(editor: LexicalEditor) {
+  return editor.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) return undefined;
+    const { key, offset } = selection.anchor;
+    return { key, offset, isCollapsed: selection.isCollapsed() };
+  });
+}
+
+describe("HiddenContentDeleteGuardPlugin", () => {
+  describe("a figure in running text", () => {
+    let before: TextNode;
+    let after: TextNode;
+    const $init = () => {
+      before = $createTextNode("before");
+      after = $createTextNode("after");
+      $getRoot().append($createParaNode("p").append(before, $figure(), after));
+    };
+
+    it("asks before Backspace reaches it, naming the figure", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, after!, 0);
+
+      const event = await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(handler).toHaveBeenCalledWith<[HiddenContentDeleteRequest]>({
+        items: [{ tag: "figure", marker: "fig" }],
+        action: "deleteBackward",
+      });
+    });
+
+    it("keeps the figure and moves the caret past it on 'keep'", async () => {
+      const { editor } = await guardedEnvironment($init, answering("keep"));
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+      expect(readCaret(editor)).toEqual({
+        key: before!.getKey(),
+        offset: "before".length,
+        isCollapsed: true,
+      });
+    });
+
+    it("removes the whole figure, and only the figure, on 'delete'", async () => {
+      const { editor } = await guardedEnvironment($init, answering("delete"));
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(readTree(editor)).toEqual(["beforeafter"]);
+    });
+
+    it("asks before Delete reaches it from the other side", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, before!, "before".length);
+
+      await pressKey(editor, "Delete");
+      await settle();
+
+      expect(handler).toHaveBeenCalledWith(expect.objectContaining({ action: "deleteForward" }));
+      expect(readTree(editor)).toEqual(["beforeafter"]);
+    });
+
+    it("leaves editing native when there is no handler to ask", async () => {
+      const { editor } = await guardedEnvironment($init, undefined);
+      claimUnhandledKeys(editor);
+      updateSelection(editor, after!, 0);
+
+      const event = await pressKey(editor, "Backspace");
+
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it("asks before a word delete reaches it, and skips past it on 'keep'", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, after!, 0);
+
+      await act(async () => {
+        editor.dispatchCommand(DELETE_WORD_COMMAND, true);
+      });
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+      expect(readCaret(editor)).toEqual({
+        key: before!.getKey(),
+        offset: "before".length,
+        isCollapsed: true,
+      });
+    });
+
+    it("leaves Shift+Delete, the cut chord off Apple platforms, to the cut handler", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler);
+      claimUnhandledKeys(editor);
+      updateSelection(editor, before!, "before".length);
+
+      const event = new KeyboardEvent("keydown", {
+        key: "Delete",
+        shiftKey: true,
+        cancelable: true,
+      });
+      await act(async () => {
+        editor.dispatchCommand(KEY_DOWN_COMMAND, event);
+      });
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("keeps the figure when the handler fails", async () => {
+      const { editor } = await guardedEnvironment(
+        $init,
+        vi.fn<HiddenContentDeleteHandler>(() => Promise.reject(new Error("dialog failed"))),
+      );
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("leaves ordinary deletes alone", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler);
+      claimUnhandledKeys(editor);
+      updateSelection(editor, after!, 3);
+
+      const event = await pressKey(editor, "Backspace");
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("does nothing when disabled (the content is visible)", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler, { isEnabled: false });
+      claimUnhandledKeys(editor);
+      updateSelection(editor, after!, 0);
+
+      const event = await pressKey(editor, "Backspace");
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("refuses other edits while the question is open, and asks once", async () => {
+      let answer: (decision: HiddenContentDeleteDecision) => void = () => undefined;
+      const handler = vi.fn<HiddenContentDeleteHandler>(
+        () => new Promise((resolve) => (answer = resolve)),
+      );
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      const second = await pressKey(editor, "Backspace");
+      const typed = await pressKey(editor, "x");
+      await act(async () => answer("delete"));
+      await settle();
+
+      expect(second.defaultPrevented).toBe(true);
+      expect(typed.defaultPrevented).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(readTree(editor)).toEqual(["beforeafter"]);
+    });
+
+    it("drops the edit when the document changed while asking", async () => {
+      let answer: (decision: HiddenContentDeleteDecision) => void = () => undefined;
+      const { editor } = await guardedEnvironment(
+        $init,
+        () => new Promise((resolve) => (answer = resolve)),
+      );
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      await sutUpdate(editor, () => before.setTextContent("changed elsewhere"));
+      await act(async () => answer("delete"));
+      await settle();
+
+      expect(readTree(editor)).toEqual(["changed elsewhere[figure: caption]after"]);
+    });
+  });
+
+  describe("a sidebar between paragraphs", () => {
+    let first: TextNode;
+    let second: TextNode;
+    const $init = () => {
+      first = $createTextNode("first");
+      second = $createTextNode("second");
+      $getRoot().append(
+        $createParaNode("p").append(first),
+        $sidebar(),
+        $createParaNode("q1").append(second),
+      );
+    };
+
+    it("keeps it on 'keep', moving the caret to the paragraph before it", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, second!, 0);
+
+      await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(handler).toHaveBeenCalledWith({
+        items: [{ tag: "sidebar", marker: "esb" }],
+        action: "deleteBackward",
+      });
+      expect(readTree(editor)).toEqual(["first", "[sidebar: sidebar text]", "second"]);
+      expect(readCaret(editor)).toEqual({
+        key: first!.getKey(),
+        offset: "first".length,
+        isCollapsed: true,
+      });
+    });
+
+    it("removes only the sidebar on Backspace + 'delete', never merging the paragraphs", async () => {
+      const { editor } = await guardedEnvironment($init, answering("delete"));
+      updateSelection(editor, second!, 0);
+
+      await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(readTree(editor)).toEqual(["first", "second"]);
+    });
+
+    it("removes only the sidebar on Delete + 'delete', never dissolving it into the paragraph", async () => {
+      const { editor } = await guardedEnvironment($init, answering("delete"));
+      updateSelection(editor, first!, "first".length);
+
+      await pressKey(editor, "Delete");
+      await settle();
+
+      expect(readTree(editor)).toEqual(["first", "second"]);
+    });
+
+    it("steps aside where protected structure blocks the delete outright", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler, {
+        structureProtectionMode: "protected",
+      });
+      updateSelection(editor, second!, 0);
+
+      const event = await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(event.defaultPrevented).toBe(true); // blocked by StructureKeyboardPlugin
+      expect(readTree(editor)).toEqual(["first", "[sidebar: sidebar text]", "second"]);
+    });
+
+    it("asks ahead of the guarded two-step delete", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler, {
+        structureProtectionMode: "guarded",
+      });
+      updateSelection(editor, second!, 0);
+
+      await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(readTree(editor)).toEqual(["first", "[sidebar: sidebar text]", "second"]);
+    });
+  });
+
+  describe("a selection covering hidden content", () => {
+    let before: TextNode;
+    let after: TextNode;
+    const $init = () => {
+      before = $createTextNode("before");
+      after = $createTextNode("after");
+      $getRoot().append(
+        $createParaNode("p").append($createImmutableVerseNode("1"), before, $figure(), after),
+      );
+    };
+
+    it("cancels a delete on 'keep'", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, before!, 3, after!, 2);
+
+      const event = await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(handler).toHaveBeenCalledWith({
+        items: [{ tag: "figure", marker: "fig" }],
+        action: "replaceSelection",
+      });
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("deletes the selection, figure included, on 'delete'", async () => {
+      const { editor } = await guardedEnvironment($init, answering("delete"));
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(readTree(editor)).toEqual(["befter"]);
+    });
+
+    it("types text read from a live input event on 'delete'", async () => {
+      const { editor } = await guardedEnvironment($init, answering("delete"));
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(
+          CONTROLLED_TEXT_INSERTION_COMMAND,
+          new InputEvent("beforeinput", { data: "Q", inputType: "insertReplacementText" }),
+        );
+      });
+      await settle();
+
+      expect(readTree(editor)).toEqual(["befQter"]);
+    });
+
+    it("refuses a cut over it under a copy limit, without asking", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler, { copyLimit: 1000 });
+      updateSelection(editor, before!, 3, after!, 2);
+
+      const cut = new ClipboardEvent("cut", { cancelable: true });
+      let isRefused = false;
+      await act(async () => {
+        isRefused = editor.dispatchCommand(CUT_COMMAND, cut);
+      });
+      await settle();
+
+      expect(isRefused).toBe(true);
+      expect(cut.defaultPrevented).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("refuses to start dragging it, and refuses its removal by a drag-move", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, before!, 3, after!, 2);
+
+      const dragStart = new DragEvent("dragstart", { cancelable: true });
+      let isDragRefused = false;
+      let isRemovalRefused = false;
+      await act(async () => {
+        isDragRefused = editor.dispatchCommand(DRAGSTART_COMMAND, dragStart);
+        isRemovalRefused = editor.dispatchCommand(REMOVE_TEXT_COMMAND, null);
+      });
+
+      expect(isDragRefused).toBe(true);
+      expect(dragStart.defaultPrevented).toBe(true);
+      expect(isRemovalRefused).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("asks before typing over it, then types on 'delete'", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "X");
+      });
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(readTree(editor)).toEqual(["befXter"]);
+    });
+
+    it("asks ahead of the guarded two-step delete of a selection holding a verse", async () => {
+      let verseText: TextNode;
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment(
+        () => {
+          verseText = $createTextNode("text");
+          $init();
+          $getRoot().append($createParaNode("p").append($createImmutableVerseNode("2"), verseText));
+        },
+        handler,
+        { structureProtectionMode: "guarded" },
+      );
+      updateSelection(editor, before!, 3, verseText!, 2);
+
+      await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(readTree(editor)).toEqual(["befxt"]);
+    });
+  });
+
+  it("steps aside where protected structure refuses typing over a selection outright", async () => {
+    let first: TextNode;
+    let second: TextNode;
+    const handler = answering("delete");
+    const { editor } = await guardedEnvironment(
+      () => {
+        first = $createTextNode("first");
+        second = $createTextNode("second");
+        $getRoot().append(
+          $createParaNode("p").append(first, $figure()),
+          $createParaNode("p").append(second),
+        );
+      },
+      handler,
+      { structureProtectionMode: "protected" },
+    );
+    updateSelection(editor, first!, 2, second!, 2);
+
+    await act(async () => {
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "X");
+    });
+    await settle();
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(readTree(editor)).toEqual(["first[figure: caption]", "second"]);
+  });
+
+  describe("a line delete", () => {
+    it("asks when hidden content lies anywhere toward the line's start", async () => {
+      let end: TextNode;
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment(() => {
+        end = $createTextNode(" b end");
+        $getRoot().append($createParaNode("p").append($createTextNode("a "), $figure(), end));
+      }, handler);
+      updateSelection(editor, end!, " b end".length);
+
+      await act(async () => {
+        editor.dispatchCommand(DELETE_LINE_COMMAND, true);
+      });
+      await settle();
+
+      expect(handler).toHaveBeenCalledWith({
+        items: [{ tag: "figure", marker: "fig" }],
+        action: "deleteBackward",
+      });
+      expect(readTree(editor)).toEqual(["a [figure: caption] b end"]);
+    });
+
+    it("names everything on the line, not just the figure at the caret, and cancels on 'keep'", async () => {
+      let end: TextNode;
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment(() => {
+        end = $createTextNode("end");
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createTextNode("a "),
+            $figure("one"),
+            $createTextNode(" b"),
+            $figure("two"),
+            end,
+          ),
+        );
+      }, handler);
+      updateSelection(editor, end!, 0);
+
+      await act(async () => {
+        editor.dispatchCommand(DELETE_LINE_COMMAND, true);
+      });
+      await settle();
+
+      expect(handler).toHaveBeenCalledWith({
+        items: [
+          { tag: "figure", marker: "fig" },
+          { tag: "figure", marker: "fig" },
+        ],
+        action: "deleteBackward",
+      });
+      // Cancelled, not skipped: a skip past the figure at the caret would leave the line delete's
+      // next press free to take the other one.
+      expect(readCaret(editor)).toEqual({ key: end!.getKey(), offset: 0, isCollapsed: true });
+      expect(readTree(editor)).toEqual(["a [figure: one] b[figure: two]end"]);
+    });
+  });
+});

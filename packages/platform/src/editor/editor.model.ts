@@ -15,6 +15,7 @@ import {
   ContextMenuOptionConfig,
   DeltaOp,
   DeltaSource,
+  HiddenContentDeleteHandler,
   SelectionRange,
   StateChangeSnapshot,
   StructureProtectionMode,
@@ -760,6 +761,22 @@ export interface EditorOptions {
    * Defaults to "off".
    */
   structureProtectionMode?: StructureProtectionMode;
+  /**
+   * Asks the user before an edit removes content the view does not show.
+   *
+   * Constructs the editor carries without modeling them - figures, sidebars, `\periph`, and the
+   * like - are hidden in every view but Standard (`view.markerMode` `"editable"`). A Backspace or
+   * Delete that would reach one, a word or line delete that would cover one, and any delete,
+   * typing, paste or cut over a selection holding one is held, and this is called to ask. On
+   * `"delete"` the edit goes ahead, removing the hidden content; a character delete removes exactly
+   * the hidden content and nothing else, so no paragraph is merged or dissolved around it. On
+   * `"keep"` nothing is removed: a caret stopped right at the hidden content moves past it, and
+   * anything else is cancelled. Dragging a selection that holds hidden content is refused, and so is
+   * cutting one while {@link EditorOptions.copyLimit} is set.
+   *
+   * Without this option editing is native, and such edits remove hidden content without asking.
+   */
+  onHiddenContentDelete?: HiddenContentDeleteHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */
   hasExternalUI?: boolean;
   /** Is the editor enabled for spell checking. */

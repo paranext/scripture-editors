@@ -70,6 +70,12 @@ refused. The public surface grew substantially; nothing was removed.
 - **Ctrl+Space removes character formatting from the selection.** On macOS this is ⌃Space rather than
   ⌘Space, which is Spotlight. It can collide with the macOS input-source switcher and with some IME
   on/off toggles; the handler declines while a composition is active.
+- `EditorOptions.onHiddenContentDelete`, with the types `HiddenContentDeleteHandler`,
+  `HiddenContentDeleteRequest`, `HiddenContentDeleteDecision`, `HiddenContentDeleteAction` and
+  `HiddenContentItem`: asks before an edit removes content the view does not show (a figure, a
+  sidebar, `\periph`, ...), which is hidden in every view but Standard. Answering `"delete"` lets
+  the edit remove it; `"keep"` moves a caret past it or cancels the edit. While the option is set,
+  dragging a selection that holds such content is refused. Without the option editing is unchanged.
 
 ### Changed
 
@@ -146,6 +152,13 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
+- In views that hide figures, sidebars and other constructs the editor does not model (every view
+  but Standard), Backspace and Delete no longer remove them silently. A character delete next to a
+  figure emptied its caption and left the caret stuck in the empty figure; at a paragraph's edge it
+  merged the paragraph into a hidden sidebar or dissolved the sidebar into the paragraph; and a line
+  delete, or any edit over a selection, removed whatever hidden content it covered. With
+  `EditorOptions.onHiddenContentDelete` set, each now asks first, and confirmed, a character delete
+  removes just the hidden construct without merging or dissolving any paragraph.
 - The caller of an unclosed note (which renders expanded, its caller as text) can be deleted; the
   note keeps an empty caller and shows both separators (`\f  \fr …`), as Paratext 9 does.
 - Typing a note's own closer (`\f*`) into an unclosed note closes it there; what followed the

@@ -134,6 +134,7 @@ export interface EditorOptions {
     markerMenuTrigger?: string;
     markerSettleDelayMs?: number;
     nodes?: UsjNodeOptions;
+    onHiddenContentDelete?: HiddenContentDeleteHandler;
     structureProtectionMode?: StructureProtectionMode;
     styleInfo?: StyleInfo;
     textDirection?: TextDirection;
@@ -269,6 +270,27 @@ export function getViewOptions(viewMode?: string | undefined): ViewOptions | und
 
 // @public
 export const HIDDEN_NOTE_CALLER = "-";
+
+// @public
+export type HiddenContentDeleteAction = "deleteBackward" | "deleteForward" | "replaceSelection";
+
+// @public
+export type HiddenContentDeleteDecision = "delete" | "keep";
+
+// @public
+export type HiddenContentDeleteHandler = (request: HiddenContentDeleteRequest) => HiddenContentDeleteDecision | Promise<HiddenContentDeleteDecision>;
+
+// @public
+export interface HiddenContentDeleteRequest {
+    action: HiddenContentDeleteAction;
+    items: HiddenContentItem[];
+}
+
+// @public
+export interface HiddenContentItem {
+    marker?: string;
+    tag: string;
+}
 
 // @public
 export function isBlockVerseLayout(viewOptions: ViewOptions | undefined): boolean;
