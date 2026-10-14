@@ -12,7 +12,7 @@ import {
   $globalSite,
   $spellings,
 } from "./annotationTransparency.oracle.test-helpers";
-import { mountInView, ORACLE_TYPE } from "./annotationLocations.test-helpers";
+import { $byteLoc, mountInView, ORACLE_TYPE } from "./annotationLocations.test-helpers";
 import {
   $editableTexts,
   CaseRun,
@@ -26,7 +26,7 @@ import { drainNativeSelectionChange } from "../editor-test.utils";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $logicalText, NBSP } from "shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 /** Each document position's reported locations, as one sorted set per position: a cut spells a
  * boundary position twice, and both spellings report the same places. */
@@ -137,6 +137,61 @@ describe("a byte of a carrier pasted inside it, between the pieces annotations c
           await pasteCase(view, row, carrier, at, copies, spelling),
           `spelling ${spelling}`,
         ).toEqual(plain);
+    },
+    120_000,
+  );
+});
+
+describe("an annotation over bytes a paste splits off a carrier", () => {
+  // Bytes a paste splits off a glyph are content, which holds no display annotation: an
+  // annotation over them alone holds nothing more and is reported removed, once; one that keeps
+  // bytes in the glyph keeps them and hears nothing.
+  it.each([
+    ["the closer's `w*` alone", "char span with an attribute", "\\w*", 1, 3, 1, ["destroyed"]],
+    ["the closer whole", "char span with an attribute", "\\w*", 0, 3, 1, []],
+    // Split off with the rest of the glyph, the number is read back into a verse, held.
+    ["a verse's number", "verse", `\\v${NBSP}1 `, 3, 4, 1, []],
+  ] as const)(
+    "%s (%s: %j bytes %i to %i, a paste at %i)",
+    async (_, row, carrier, from, to, at, reports) => {
+      const view = "standard";
+      const usj = oracleRows(view).find(([name]) => name.startsWith(`${row} (`))?.[1];
+      if (!usj) throw new Error(`no row ${row}`);
+      const viewOptions = pendingOracleView(view);
+      const mounted = await mountInView(usj, viewOptions);
+      const { range, site } = mounted.lexical.getEditorState().read(() => {
+        const index = $editableTexts().findIndex((text) => $logicalText(text) === carrier);
+        const node = $editableTexts()[index];
+        return {
+          range: {
+            start: $byteLoc(node, from, false, viewOptions),
+            end: $byteLoc(node, to, false, viewOptions),
+          },
+          site: $globalSite(index, at, false),
+        };
+      });
+      const onRemove = vi.fn();
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, "held", { onRemove });
+        await Promise.resolve();
+      });
+      const text = () =>
+        (mounted.ref.current?.getAnnotationRanges(ORACLE_TYPE, "held") ?? [])
+          .map((each) => each.toString())
+          .join("");
+      const held = text();
+      expect(held).not.toBe("");
+      const run = await runKeystrokeCase(
+        mounted,
+        view,
+        () => $spellings(site)[0],
+        PASTE_KEYSTROKES[0],
+      );
+      expect(run, "the paste applies").toBeDefined();
+      expect(onRemove.mock.calls.map(([, , reason]) => reason)).toEqual(reports);
+      if (reports.length > 0) expect(text()).toBe("");
+      else expect(text()).not.toBe("");
+      mounted.unmount();
     },
     120_000,
   );
