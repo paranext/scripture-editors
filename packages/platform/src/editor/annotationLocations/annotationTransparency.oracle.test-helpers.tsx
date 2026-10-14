@@ -11,7 +11,14 @@
  *
  * The annotated run is also graded on its own: every annotation paints exactly the bytes it holds
  * (plus whitespace), nothing is painted in part, and an annotation is reported removed exactly
- * when its bytes are gone.
+ * when its bytes are gone. Before any case runs, every planned annotation must hold the bytes it
+ * was planned to hold.
+ *
+ * Every site × keystroke a row attempts is accounted for: compared, or skipped for a stated reason
+ * (the plain run did nothing there; a node-shaped keystroke on a content node a mark has cut). A
+ * case the plain run applied that no annotated spelling applied is a failure of its own
+ * (`[applied]`), and a row's failure prints its accounting. `ANNOTATION_TRANSPARENCY_ACCOUNTING=1`
+ * prints every row's.
  *
  * The cases known to fail are listed per view in `annotationTransparency.<view>.expected-failures.json`,
  * in the pending/settled oracle's list format; `ANNOTATION_TRANSPARENCY_WRITE=1` rewrites a list.
@@ -22,6 +29,7 @@ import {
   $byteNodes,
   $heldIndexes,
   $paintedIndexes,
+  $separatorLen,
   HELD_TYPE,
   mountInView,
   MountedInView,
@@ -77,12 +85,19 @@ import { writeFileSync } from "node:fs";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
 const WRITE = process.env.ANNOTATION_TRANSPARENCY_WRITE === "1";
+const ACCOUNTING = process.env.ANNOTATION_TRANSPARENCY_ACCOUNTING === "1";
 
 /** One annotation of the fixed set: where it is set, and the bytes it is expected to hold. */
 interface PlannedAnnotation {
   id: string;
   range: AnnotationRange;
-  bytes: string;
+  /**
+   * The text of the bytes it holds, in document order, a decorator spelled `[type]`: all of it,
+   * or, for a range crossing between content and a carrier, the exact text it starts with and
+   * ends with — what lies between (other display bytes, a carrier's edge separator) is whatever
+   * the range covers there, which the plan does not restate.
+   */
+  bytes: string | readonly [start: string, end: string];
 }
 
 /** The leaves of the edited paragraph (the document's third block), in order. */
@@ -121,7 +136,7 @@ export function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
     kind: string,
     start: UsjDocumentLocation,
     end: UsjDocumentLocation,
-    bytes: string,
+    bytes: PlannedAnnotation["bytes"],
   ): void => {
     next += 1;
     plan.push({ id: `${kind}${next}`, range: { start, end }, bytes });
@@ -141,32 +156,48 @@ export function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
     const afterEnd = afterText.length - afterText.trimStart().length;
     const canCrossBefore = before !== undefined && beforeStart >= 0;
     const canCrossAfter = after !== undefined && afterEnd < afterText.length;
+    // A crossing out of a carrier holds the content after it from its first content byte: a
+    // marker's separator at the start of that text (`\w grace`'s space) is no content a mark
+    // holds, and no carrier's either.
+    const afterHead = afterText.slice(after ? $separatorLen(after) : 0, afterEnd + 1);
     if ($isTextNode(leaf)) {
       const text = leaf.getTextContent();
       const [low, high] = $carrierHoldableRange(leaf);
-      if (high <= low) return;
-      const loc = (offset: number, afterByte: boolean) => $byteLoc(leaf, offset, afterByte, view);
-      add("whole", loc(low, false), loc(high - 1, true), text.slice(low, high));
-      if (high - low >= 2) {
-        add("prefix", loc(low, false), loc(low, true), text.slice(low, low + 1));
-        add("suffix", loc(high - 1, false), loc(high - 1, true), text.slice(high - 1, high));
+      // The carrier's caret positions a host can address: a caret whose location is the same as
+      // the one before it is that one, the closest representable position to its left (the caret
+      // between the `\` and the `+` of a nested `\+wj` has no location of its own inside the
+      // marker), so a range starts and ends only at the first caret of each location, and holds
+      // the bytes between those.
+      const caretLoc = (offset: number) => $byteLoc(leaf, offset, false, view);
+      const stops: number[] = [];
+      for (let offset = low; offset <= high; offset += 1)
+        if (
+          offset === low ||
+          JSON.stringify(caretLoc(offset)) !== JSON.stringify(caretLoc(offset - 1))
+        )
+          stops.push(offset);
+      const units = stops.length - 1;
+      if (units < 1) return;
+      const first = stops[0];
+      const last = stops[units];
+      const span = (from: number, to: number) => text.slice(stops[from], stops[to]);
+      add("whole", caretLoc(first), caretLoc(last), span(0, units));
+      if (units >= 2) {
+        add("prefix", caretLoc(first), caretLoc(stops[1]), span(0, 1));
+        add("suffix", caretLoc(stops[units - 1]), caretLoc(last), span(units - 1, units));
       }
-      if (high - low >= 3)
-        add("inner", loc(low + 1, false), loc(high - 2, true), text.slice(low + 1, high - 1));
+      if (units >= 3)
+        add("inner", caretLoc(stops[1]), caretLoc(stops[units - 1]), span(1, units - 1));
       if (canCrossBefore && before)
-        add(
-          "into",
-          $byteLoc(before, beforeStart, false, view),
-          loc(low, true),
-          `${beforeText.slice(beforeStart)}…${text.slice(low, low + 1)}`,
-        );
+        add("into", $byteLoc(before, beforeStart, false, view), caretLoc(stops[1]), [
+          beforeText.slice(beforeStart),
+          span(0, 1),
+        ]);
       if (canCrossAfter && after)
-        add(
-          "outof",
-          loc(high - 1, false),
-          $byteLoc(after, afterEnd, true, view),
-          `${text.slice(high - 1, high)}…${afterText.slice(0, afterEnd + 1)}`,
-        );
+        add("outof", caretLoc(stops[units - 1]), $byteLoc(after, afterEnd, true, view), [
+          span(units - 1, units),
+          afterHead,
+        ]);
       return;
     }
     // A read-only decorator: held whole, and crossed into and out of.
@@ -175,19 +206,12 @@ export function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
     const shown = `[${leaf.getType()}]`;
     add("whole", start, end, shown);
     if (canCrossBefore && before)
-      add(
-        "into",
-        $byteLoc(before, beforeStart, false, view),
-        end,
-        `${beforeText.slice(beforeStart)}…${shown}`,
-      );
+      add("into", $byteLoc(before, beforeStart, false, view), end, [
+        beforeText.slice(beforeStart),
+        shown,
+      ]);
     if (canCrossAfter && after)
-      add(
-        "outof",
-        start,
-        $byteLoc(after, afterEnd, true, view),
-        `${shown}…${afterText.slice(0, afterEnd + 1)}`,
-      );
+      add("outof", start, $byteLoc(after, afterEnd, true, view), [shown, afterHead]);
   });
   return plan;
 }
@@ -200,7 +224,11 @@ interface AppliedAnnotations {
   removals: Map<string, Parameters<TypedMarkOnRemove>[]>;
 }
 
-/** Set every annotation of `plan` on `mounted`; only those that then hold a byte are kept. */
+/**
+ * Set every annotation of `plan` on `mounted`; only those that then hold a byte are kept, so a
+ * plan entry holding nothing is reported once per row ({@link $holdMismatches}) rather than as a
+ * removal failure in every case.
+ */
 async function applyAnnotations(
   mounted: MountedInView,
   plan: PlannedAnnotation[],
@@ -224,6 +252,69 @@ async function applyAnnotations(
     const marks = new Map(ids.map((id) => [id, $marksHolding(id)]));
     return { ids, marks, removals };
   });
+}
+
+/** The text of one byte of {@link $byteNodes}: its character, or a decorator's `[type]`. */
+function byteText([node, offset]: [LexicalNode, number]): string {
+  return offset >= 0 ? node.getTextContent()[offset] : `[${node.getType()}]`;
+}
+
+/**
+ * Every planned annotation whose held bytes, just after the whole plan was set, are not the bytes
+ * it was planned to hold — including one that holds nothing — keyed `hold <id>`.
+ */
+function $holdMismatches(plan: readonly PlannedAnnotation[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const bytes = $byteNodes();
+  for (const { id, bytes: planned } of plan) {
+    const held = [...$heldIndexes(HELD_TYPE, id).keys()]
+      .sort((a, b) => a - b)
+      .map((index) => byteText(bytes[index]))
+      .join("");
+    const holds =
+      typeof planned === "string"
+        ? held === planned
+        : held.length >= planned[0].length + planned[1].length &&
+          held.startsWith(planned[0]) &&
+          held.endsWith(planned[1]);
+    if (holds) continue;
+    const plannedText =
+      typeof planned === "string"
+        ? JSON.stringify(planned)
+        : `${JSON.stringify(planned[0])}…${JSON.stringify(planned[1])}`;
+    out.set(
+      `hold ${id}`,
+      `hold ${id}\n    planned ${plannedText}\n    holds   ${held === "" ? "nothing" : JSON.stringify(held)}`,
+    );
+  }
+  return out;
+}
+
+/** Why a site × keystroke attempt compared nothing. */
+type SkipReason =
+  | "plain run did not apply"
+  | "node-shaped keystroke on a cut content node"
+  | "no annotated spelling applied";
+
+/** What became of every site × keystroke a row attempted. */
+interface Accounting {
+  attempted: number;
+  compared: number;
+  skipped: { label: string; reason: SkipReason }[];
+}
+
+/** `accounting` as text: the counts, by reason, and every skip but the plain run's own. */
+function describeAccounting(row: string, accounting: Accounting): string {
+  const byReason = new Map<SkipReason, number>();
+  for (const { reason } of accounting.skipped)
+    byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
+  const counts = [...byReason].map(([reason, count]) => `${count} ${reason}`).join(", ");
+  return [
+    `${row}: ${accounting.attempted} attempted, ${accounting.compared} compared, ${accounting.skipped.length} skipped${counts ? ` (${counts})` : ""}`,
+    ...accounting.skipped
+      .filter(({ reason }) => reason !== "plain run did not apply")
+      .map(({ label, reason }) => `  skipped ${label}: ${reason}`),
+  ].join("\n");
 }
 
 /** The keys of the `<mark>`s holding `id` now, in document order. */
@@ -493,14 +584,15 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
           plan: $planAnnotations(viewOptions),
           loadedOutsideNotes: outsideNotes(probe.ref.current?.getUsj()),
         }));
-        probe.unmount();
         expect(plan.length, "the paragraph has display bytes to annotate").toBeGreaterThan(0);
+        await applyAnnotations(probe, plan);
+        const mismatches = probe.lexical.getEditorState().read(() => $holdMismatches(plan));
+        probe.unmount();
 
-        const mismatches = new Map<string, string>();
-        let comparedCases = 0;
-        let heldAnnotations = 0;
+        const accounting: Accounting = { attempted: 0, compared: 0, skipped: [] };
         for (const site of sites)
           for (const keystroke of keystrokesFor(view, site.shell)) {
+            accounting.attempted += 1;
             const plainMounted = await mountInView(usj, viewOptions);
             const plain = await runKeystrokeCase(
               plainMounted,
@@ -508,7 +600,13 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               () => $spellings(site)[0],
               keystroke,
             );
-            if (!plain) continue;
+            if (!plain) {
+              accounting.skipped.push({
+                label: `${site.shell ? "shell " : ""}byte ${site.at} (${site.edge}) ${keystroke.name}`,
+                reason: "plain run did not apply",
+              });
+              continue;
+            }
             const expected = observables(plain);
             expected.delta = composedDelta(plainMounted.lexical);
             expected.ops = composedChange(plainMounted.ops);
@@ -518,14 +616,14 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               .getEditorState()
               .read(() => $spellings(site)[0]?.node.getTextContent());
             plainMounted.unmount();
-            let anySpellingApplied = false;
+            let comparedSpellings = 0;
+            let cutNodeSpellings = 0;
             // Every spelling the annotated tree gives the site, each run on a fresh mount (a
             // node belongs to the editor it was read from, so each mount reads its own).
             let spellingCount: number | undefined;
             for (let which = 0; spellingCount === undefined || which < spellingCount; which += 1) {
               const mounted = await mountInView(usj, viewOptions);
               const applied = await applyAnnotations(mounted, plan);
-              heldAnnotations = Math.max(heldAnnotations, applied.ids.length);
               // Setting an annotation emits no change, so the ops streams start equal here.
               const opsBefore = mounted.ops.length;
               const { spelling, count, differentNode } = mounted.lexical
@@ -548,6 +646,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               // A node-shaped keystroke on a content node a crossing mark has cut is not the
               // plain run's keystroke: the plain node and this one hold different bytes.
               if (isNodeShaped(keystroke) && differentNode) {
+                cutNodeSpellings += 1;
                 mounted.unmount();
                 continue;
               }
@@ -560,9 +659,9 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
                 },
                 keystroke,
               );
+              // `runKeystrokeCase` has unmounted a mount it did not run.
               if (!annotated) continue;
-              anySpellingApplied = true;
-              comparedCases += 1;
+              comparedSpellings += 1;
               const actual = observables(annotated);
               actual.delta = composedDelta(mounted.lexical);
               actual.ops = composedChange(mounted.ops.slice(opsBefore));
@@ -593,15 +692,33 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               }
               mounted.unmount();
             }
-            if (!anySpellingApplied && !isNodeShaped(keystroke))
+            if (comparedSpellings > 0) accounting.compared += 1;
+            else if (cutNodeSpellings > 0)
+              accounting.skipped.push({
+                label: plain.label,
+                reason: "node-shaped keystroke on a cut content node",
+              });
+            else {
+              accounting.skipped.push({
+                label: plain.label,
+                reason: "no annotated spelling applied",
+              });
               mismatches.set(
                 `${plain.label} [applied]`,
                 `${plain.label} [applied]\n    plain applied, no annotated spelling did`,
               );
+            }
           }
-        expect(comparedCases, "no case was compared").toBeGreaterThan(0);
-        expect(heldAnnotations, "no annotation held a byte").toBeGreaterThan(0);
-        expectMismatchesListed(row, mismatches, listed, written, WRITE);
+        const summary = describeAccounting(row, accounting);
+        if (ACCOUNTING)
+          // eslint-disable-next-line no-console -- ANNOTATION_TRANSPARENCY_ACCOUNTING asks for this output.
+          console.info(summary);
+        expect(
+          accounting.compared + accounting.skipped.length,
+          `every attempted case is compared or skipped\n${summary}`,
+        ).toBe(accounting.attempted);
+        expect(accounting.compared, `no case was compared\n${summary}`).toBeGreaterThan(0);
+        expectMismatchesListed(row, mismatches, listed, written, WRITE, summary);
       },
       1_200_000,
     );
