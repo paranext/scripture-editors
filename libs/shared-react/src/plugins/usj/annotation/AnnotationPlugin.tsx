@@ -4,7 +4,7 @@ import { AnnotationRange } from "./selection.model";
 import { $getRangeFromUsjSelection } from "./selection.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister, registerNestedElementResolver } from "@lexical/utils";
-import { $getNodeByKey, LexicalEditor, NodeKey } from "lexical";
+import { $getNodeByKey, HISTORY_MERGE_TAG, LexicalEditor, NodeKey } from "lexical";
 import { ForwardedRef, forwardRef, useEffect, useImperativeHandle, useMemo } from "react";
 import {
   $coveredDisplayText,
@@ -239,7 +239,8 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
             { decoratorHolds },
           );
         },
-        { tag: ANNOTATION_CHANGE_TAG },
+        // A host's annotation is not a user's edit: it joins the current undo step.
+        { tag: [ANNOTATION_CHANGE_TAG, HISTORY_MERGE_TAG] },
       );
     },
 
@@ -258,7 +259,8 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
         () => {
           $removeAnnotationNodes(type, id, markNodeKeys);
         },
-        { tag: ANNOTATION_CHANGE_TAG },
+        // A host's annotation is not a user's edit: it joins the current undo step.
+        { tag: [ANNOTATION_CHANGE_TAG, HISTORY_MERGE_TAG] },
       );
     },
 

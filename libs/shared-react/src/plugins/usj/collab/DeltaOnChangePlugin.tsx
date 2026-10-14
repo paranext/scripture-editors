@@ -15,7 +15,12 @@ import type {
 import { $getNodeByKey, $isTextNode, HISTORY_MERGE_TAG } from "lexical";
 import Delta from "quill-delta";
 import { useLayoutEffect } from "react";
-import { $findFirstAncestorNoteNode, $isParaLikeNode, MARKER_SETTLE_TAG } from "shared";
+import {
+  $findFirstAncestorNoteNode,
+  $isParaLikeNode,
+  ANNOTATION_MARKS_TAG,
+  MARKER_SETTLE_TAG,
+} from "shared";
 
 /** Stable default for {@link DeltaOnChangePlugin}'s `ignoreTags` so the effect deps stay stable. */
 const EMPTY_TAGS: readonly string[] = [];
@@ -94,10 +99,13 @@ export function shouldSkipUpdateForOps(
     // A `MARKER_SETTLE_TAG` commit carries the merge tag only to stay out of the undo
     // stack — its bytes really did change, so it must reach `onChange` like any edit.
     // Without this exemption the cached USJ and the emitted delta both keep showing the
-    // pre-settle bytes, and the host saves a document the editor is no longer displaying.
+    // pre-settle bytes, and the host saves a document the editor is no longer displaying. A
+    // comment's `ANNOTATION_MARKS_TAG` commit is the same: it stays out of the undo stack, and
+    // its mark is a change to the USJ.
     (options.ignoreHistoryMergeTagChange &&
       tags.has(HISTORY_MERGE_TAG) &&
-      !tags.has(MARKER_SETTLE_TAG)) ||
+      !tags.has(MARKER_SETTLE_TAG) &&
+      !tags.has(ANNOTATION_MARKS_TAG)) ||
     options.ignoreTags.some((tag) => tags.has(tag)) ||
     prevEditorState.isEmpty()
   );

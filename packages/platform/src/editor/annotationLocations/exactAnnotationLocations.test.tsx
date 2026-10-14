@@ -1851,7 +1851,7 @@ describe("removal is reported by what holds the annotation now", () => {
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
-  it("reports removed once for the same annotation, and an undo brings it back without a report", async () => {
+  it("reports removed once for the same annotation, and an undo neither brings it back nor reports", async () => {
     const onRemove = vi.fn<TypedMarkOnRemove>();
     const mounted = await mountSetWhilePending(onRemove);
 
@@ -1859,8 +1859,10 @@ describe("removal is reported by what holds the annotation now", () => {
 
     expect(displayAnnotated(mounted.lexical)).toEqual({});
     expect(onRemove.mock.calls).toEqual([["external-test", "L", "removed", "grace"]]);
+    // Setting and removing an annotation add no undo step: the undo reverts the typing the
+    // annotation was set on, which had no annotation.
     await act(async () => mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined));
-    expect(displayAnnotated(mounted.lexical)).toEqual({ L: ["grace"] });
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
