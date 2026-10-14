@@ -33,10 +33,15 @@ import {
   $findFirstAncestorNoteNode,
   $isMarkerNode,
   $isNoteNode,
+  $lastPiece,
   $logicalOffset,
+  $nextSiblingThroughMarks,
+  $nodeAfterBoundaryThroughMarks,
+  $nodeBeforeBoundaryThroughMarks,
   $noteEditableCallerNode,
   $pieceHead,
   $pieces,
+  $previousSiblingThroughMarks,
   $placeCaretAtBoundary,
   APP_PLACED_CARET_COMMAND,
   NoteNode,
@@ -106,7 +111,8 @@ function $protectedCloser(note: NoteNode): TextNode | undefined {
  * The note whose protected closer a collapsed caret at `point` is inside or past, or `undefined`:
  * strictly inside the closer, at its end, or at any position that is the same place on screen —
  * the note's own boundary behind the closer, the boundary right after the note, or the start of a
- * text right after it.
+ * text right after it. An annotation mark is presentation, so "right after" reads through marks: a
+ * text a mark holds is the same text beside the note.
  *
  * None of those is a place the caret may rest. The host that protects a note's shell edits that
  * note alone — the footnote popover saves only the note — so a byte typed past the closer would
@@ -120,23 +126,24 @@ function $atOrPastProtectedCloser(point: PointType): NoteNode | undefined {
     // Past the front of the closer is inside it, in whichever of its pieces.
     if ($isNoteNode(note) && $protectedCloser(note)?.is($pieceHead(node)))
       return $logicalOffset(node, point.offset) > 0 ? note : undefined;
-    if (point.offset !== 0) return undefined;
-    const previous = node.getPreviousSibling();
+    if (point.offset !== 0 || !$pieceHead(node).is(node)) return undefined;
+    const previous = $previousSiblingThroughMarks(node);
     return $isNoteNode(previous) && $protectedCloser(previous) ? previous : undefined;
   }
   if ($isNoteNode(node)) {
     const closer = $protectedCloser(node);
     return closer && point.offset > closer.getIndexWithinParent() ? node : undefined;
   }
-  if (!$isElementNode(node) || point.offset === 0) return undefined;
-  const previous = node.getChildAtIndex(point.offset - 1);
+  if (!$isElementNode(node)) return undefined;
+  const previous = $nodeBeforeBoundaryThroughMarks(node, point.offset);
   return $isNoteNode(previous) && $protectedCloser(previous) ? previous : undefined;
 }
 
 /**
  * The note whose protected shell a collapsed caret at `point` is in front of, or `undefined`: at
  * the end of a text right before the note, at the boundary right before it, or inside the note
- * before its content starts. Each is the same place on screen as the shell's leading edge.
+ * before its content starts. Each is the same place on screen as the shell's leading edge. "Right
+ * before" reads through annotation marks, as {@link $atOrPastProtectedCloser} does.
  *
  * None of those is a place the caret may rest. The host that protects a note's shell edits that
  * note alone — the footnote popover saves only the note — so a byte typed in front of it would be
@@ -147,13 +154,13 @@ function $atOrBeforeProtectedOpener(point: PointType): NoteNode | undefined {
   const isProtected = (candidate: LexicalNode | null | undefined): candidate is NoteNode =>
     $isNoteNode(candidate) && $noteShellNodes(candidate).length > 0;
   if (point.type === "text") {
-    if (point.offset !== node.getTextContentSize()) return undefined;
-    const next = node.getNextSibling();
+    if (point.offset !== node.getTextContentSize() || !$lastPiece(node).is(node)) return undefined;
+    const next = $nextSiblingThroughMarks(node);
     return isProtected(next) ? next : undefined;
   }
   if (isProtected(node)) return point.offset < $contentStartIndex(node) ? node : undefined;
   if (!$isElementNode(node)) return undefined;
-  const next = node.getChildAtIndex(point.offset);
+  const next = $nodeAfterBoundaryThroughMarks(node, point.offset);
   return isProtected(next) ? next : undefined;
 }
 
@@ -291,7 +298,8 @@ function $contentEndCaret(note: NoteNode): PointType {
 /**
  * The protected note whose END `point` rests at illegitimately, or `undefined`: at or inside its
  * closing glyph, on the note past its content, or just past the whole note when nothing follows it
- * in its block (the end of a note editor's row).
+ * in its block (the end of a note editor's row) — read through annotation marks, which are not
+ * anything that follows.
  */
 function $noteEndAt(point: PointType): NoteNode | undefined {
   const node = point.getNode();
@@ -309,8 +317,10 @@ function $noteEndAt(point: PointType): NoteNode | undefined {
       ? node
       : undefined;
   if (!$isElementNode(node)) return undefined;
-  const before = node.getChildAtIndex(point.offset - 1);
-  return $isNoteNode(before) && $noteShellNodes(before).length > 0 && !before.getNextSibling()
+  const before = $nodeBeforeBoundaryThroughMarks(node, point.offset);
+  return $isNoteNode(before) &&
+    $noteShellNodes(before).length > 0 &&
+    !$nextSiblingThroughMarks(before)
     ? before
     : undefined;
 }
@@ -412,18 +422,21 @@ function $onDifferentLines(editor: LexicalEditor, a: PointType, b: PointType): b
 }
 
 /**
- * The node directly after `point`: the child at its offset for an ELEMENT point, or, for a TEXT
- * point resting at its node's end, that node's next sibling. `undefined` for a text point
- * anywhere else, where "directly after" is still inside the same node rather than a sibling.
+ * The node directly after `point`, read through annotation marks: the child at its offset for an
+ * ELEMENT point, or, for a TEXT point resting at its node's end, that node's next sibling.
+ * `undefined` for a text point anywhere else, where "directly after" is still inside the same node
+ * rather than a sibling.
  */
 function $nodeAfter(point: PointType): LexicalNode | undefined {
   if (point.type === "element") {
     const parent = point.getNode();
-    return $isElementNode(parent) ? (parent.getChildAtIndex(point.offset) ?? undefined) : undefined;
+    return $isElementNode(parent)
+      ? ($nodeAfterBoundaryThroughMarks(parent, point.offset) ?? undefined)
+      : undefined;
   }
   const node = point.getNode();
-  return node.getTextContentSize() === point.offset
-    ? (node.getNextSibling() ?? undefined)
+  return node.getTextContentSize() === point.offset && $lastPiece(node).is(node)
+    ? ($nextSiblingThroughMarks(node) ?? undefined)
     : undefined;
 }
 
