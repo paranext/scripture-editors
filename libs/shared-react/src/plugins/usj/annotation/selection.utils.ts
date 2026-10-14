@@ -71,13 +71,15 @@ import {
   $isVerseNode,
   $isVisibleMarkerNode,
   $lastPiece,
-  $logicalNextSibling,
   $logicalOffset,
   $logicalText,
+  $nextSiblingThroughMarks,
   $noteEditableCallerNode,
   $ownerOfRunPiece,
+  $parentOutsideMarks,
   $pieceAtLogicalOffset,
   $pieceHead,
+  $previousSiblingThroughMarks,
   $shouldIgnoreNodeForContentIndexes,
   $typedNoteCallerRange,
   canonicalAttributeText,
@@ -977,18 +979,15 @@ function $precedingTextLocation(
   node: LexicalNode,
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation | undefined {
-  // An annotation mark around the run is transparent: step out of it to find what precedes.
-  let start: LexicalNode = node;
-  for (let mark = start.getParent(); !start.getPreviousSibling() && $isTypedMarkNode(mark); ) {
-    start = mark;
-    mark = start.getParent();
-  }
-  // Walk back over text that would only defer to its neighbor — the deferral points forward, at
-  // this run, so taking it would cycle. Stepping strictly backwards through siblings terminates.
-  let previous = start.getPreviousSibling();
+  // An annotation mark is transparent: what precedes is read through it. Walk back over text that
+  // would only defer to its neighbor — the deferral points forward, at this run, so taking it
+  // would cycle. Stepping strictly backwards terminates.
+  let previous = $previousSiblingThroughMarks(node);
   while (previous && $defersToNeighbor(previous, collapsesSpaceRuns))
-    previous = previous.getPreviousSibling();
+    previous = $previousSiblingThroughMarks(previous);
   if (!previous) return undefined;
+  // The end of a carrier cut into pieces is the end of its last piece.
+  previous = $lastPiece(previous);
   const last = $isElementNode(previous) ? previous.getLastDescendant() : previous;
   if (last && ($isTextNode(last) || $isDisplayByteDecorator(last))) {
     // The same deferral one level down (a wrapper whose last descendant is that placeholder).
@@ -1738,11 +1737,10 @@ function $locationFromNode(
     // is the point beside it — the start of the text after it, or the end of the bytes before it.
     // A carrier cut into pieces is one node here: past its front is past the front of all of it,
     // and its neighbours are the nodes beside the whole chain.
+    // An annotation mark is transparent: the text beside it is read through it.
     const isAfter = $logicalOffset(node, offset) > 0;
-    let neighbor = isAfter ? $logicalNextSibling(node) : $pieceHead(node).getPreviousSibling();
-    // An annotation mark is transparent: the text beside it is its first or last leaf.
-    while ($isTypedMarkNode(neighbor))
-      neighbor = isAfter ? neighbor.getFirstChild() : neighbor.getLastChild();
+    const beside = isAfter ? $nextSiblingThroughMarks(node) : $previousSiblingThroughMarks(node);
+    const neighbor = beside && !isAfter ? $lastPiece(beside) : beside;
     if (
       $isTextNode(neighbor) &&
       ($displayBytesOf(neighbor) || $getLogicalTextLocation(neighbor, 0, collapsesSpaceRuns))
@@ -1788,17 +1786,11 @@ function $locationOfFirstByteAfter(
   node: LexicalNode,
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation | undefined {
-  let current = $lastPiece(node);
-  for (
-    let mark = current.getParent();
-    !current.getNextSibling() && $isTypedMarkNode(mark);
-    mark = current.getParent()
-  )
-    current = mark;
-  const next = current.getNextSibling();
+  // An annotation mark is transparent: what follows is read through it.
+  const next = $nextSiblingThroughMarks(node);
   if (!next) {
-    const parent = current.getParent();
-    if (!parent || $endsDocument(current)) return undefined;
+    const parent = $parentOutsideMarks($lastPiece(node));
+    if (!parent || $endsDocument($lastPiece(node))) return undefined;
     return $locationFromNode(parent, parent.getChildrenSize(), collapsesSpaceRuns);
   }
   const leaf = $isElementNode(next) ? (next.getFirstDescendant() ?? next) : next;

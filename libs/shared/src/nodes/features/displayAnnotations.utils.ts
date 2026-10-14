@@ -39,6 +39,7 @@ import {
   pieceHoldKeys,
 } from "./displayPieces.state.js";
 import { $isImmutableUnmatchedNode, ImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
+import { $parentOutsideMarks } from "./throughMarks.utils.js";
 import { ImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
 import { $isMarkerNode, MarkerNode } from "./MarkerNode.js";
 import type {
@@ -47,7 +48,6 @@ import type {
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
 } from "./TypedMarkNode.js";
-import { $isTypedMarkNode } from "./TypedMarkNode.js";
 import type { Klass, LexicalEditor, LexicalNode, PointType } from "lexical";
 import {
   $copyNode,
@@ -87,8 +87,7 @@ export function $isElementOwnerRunAnchor(node: LexicalNode): boolean {
   if (!$isTextNode(node)) return false;
   // A piece of a split anchor is the anchor too; the finders name its head.
   const head = $pieceHead(node);
-  let owner = head.getParent();
-  while ($isTypedMarkNode(owner)) owner = owner.getParent();
+  const owner = $parentOutsideMarks(head);
   if ($isNoteNode(owner)) return $noteEditableCallerNode(owner)?.is(head) ?? false;
   if ($isChapterNode(owner)) return $chapterGlyphTextNode(owner)?.is(head) ?? false;
   return false;

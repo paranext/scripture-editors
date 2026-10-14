@@ -58,6 +58,12 @@ import {
   $pieces,
   $setLogicalText,
 } from "../features/displayPieces.state.js";
+import {
+  $nextSiblingThroughMarks,
+  $nodeAfterBoundaryThroughMarks,
+  $parentOutsideMarks,
+  $previousSiblingThroughMarks,
+} from "../features/throughMarks.utils.js";
 import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { $isCharNode, CharNode } from "./CharNode.js";
@@ -123,17 +129,9 @@ export function $charSeparatorPrefixLength(node: TextNode): 0 | 1 {
   // sides. A host can annotate a range that starts on the opening glyph (a marker location), so
   // the glyph can share the text's mark, sit in a mark of its own, or be a plain sibling of the
   // mark the text is in.
-  let child: LexicalNode = node;
-  let previous: LexicalNode | null = child.getPreviousSibling();
-  let parent = child.getParent();
-  while (parent && $isTypedMarkNode(parent)) {
-    child = parent;
-    parent = child.getParent();
-    previous ??= child.getPreviousSibling();
-  }
+  const parent = $parentOutsideMarks(node);
   if (!$isCharNode(parent)) return 0;
-  // A mark that ends right before the text hides the glyph as its last descendant.
-  while ($isTypedMarkNode(previous)) previous = previous.getLastChild();
+  const previous = $previousSiblingThroughMarks(node);
   if (!$isMarkerNode(previous) || previous.getMarkerSyntax() !== "opening") return 0;
   // Only char-span glyphs take a separator (not a milestone's display run) — the same classifier
   // $openerSeparatorGap builds one with, so reading and writing can never disagree about which
@@ -148,9 +146,7 @@ export function $charSeparatorPrefixLength(node: TextNode): 0 | 1 {
  * removing it would mean, is a question about that content.
  */
 function $contentAfterOpener(opener: MarkerNode): LexicalNode | null {
-  let node = $logicalNextSibling(opener);
-  while ($isTypedMarkNode(node)) node = node.getFirstChild();
-  return node;
+  return $nextSiblingThroughMarks(opener);
 }
 
 /**
@@ -277,12 +273,13 @@ function $isCaretAtOpenerBoundary(opener: MarkerNode, char: CharNode): boolean {
   const anchorNode = selection.anchor.getNode();
   if ($pieces(opener).some((piece) => anchorNode.is(piece)) || anchorNode.is(char)) return true;
   if (selection.anchor.offset !== 0) return false;
-  for (let node = $logicalNextSibling(opener); node; ) {
-    if (anchorNode.is(node)) return true;
-    if (!$isTypedMarkNode(node)) return false;
-    node = node.getFirstChild();
-  }
-  return false;
+  const after = $nextSiblingThroughMarks(opener);
+  if (!after) return false;
+  // The front of a mark that starts there is the same place.
+  return (
+    anchorNode.is(after) ||
+    ($isTypedMarkNode(anchorNode) && after.is($nodeAfterBoundaryThroughMarks(anchorNode, 0)))
+  );
 }
 
 /**
@@ -419,14 +416,12 @@ function $prefixSeparator(text: TextNode): void {
  */
 export function $hasCaretHeldSeparatorGap(char: CharNode): boolean {
   if (!char.isAttached()) return false;
-  return char
-    .getChildren()
-    .some(
-      (child: LexicalNode) =>
-        $isMarkerNode(child) &&
-        $openerSeparatorGap(child, char) !== undefined &&
-        $isCaretAtOpenerBoundary(child, char),
-    );
+  return $logicalChildren(char).some(
+    (child: LexicalNode) =>
+      $isMarkerNode(child) &&
+      $openerSeparatorGap(child, char) !== undefined &&
+      $isCaretAtOpenerBoundary(child, char),
+  );
 }
 
 /**
@@ -440,14 +435,12 @@ export function $hasCaretHeldSeparatorGap(char: CharNode): boolean {
  */
 export function $hasUnsettledSeparatorGap(char: CharNode): boolean {
   if (!char.isAttached()) return false;
-  return char
-    .getChildren()
-    .some(
-      (child: LexicalNode) =>
-        $isMarkerNode(child) &&
-        $openerSeparatorGap(child, char) !== undefined &&
-        ($isCaretAtOpenerBoundary(child, char) || $isRenamingGap(child)),
-    );
+  return $logicalChildren(char).some(
+    (child: LexicalNode) =>
+      $isMarkerNode(child) &&
+      $openerSeparatorGap(child, char) !== undefined &&
+      ($isCaretAtOpenerBoundary(child, char) || $isRenamingGap(child)),
+  );
 }
 
 /**
@@ -460,14 +453,12 @@ export function $hasUnsettledSeparatorGap(char: CharNode): boolean {
  */
 export function $hasRenamingSeparatorGap(char: CharNode): boolean {
   if (!char.isAttached()) return false;
-  return char
-    .getChildren()
-    .some(
-      (child: LexicalNode) =>
-        $isMarkerNode(child) &&
-        $openerSeparatorGap(child, char) !== undefined &&
-        $isRenamingGap(child),
-    );
+  return $logicalChildren(char).some(
+    (child: LexicalNode) =>
+      $isMarkerNode(child) &&
+      $openerSeparatorGap(child, char) !== undefined &&
+      $isRenamingGap(child),
+  );
 }
 
 /**
