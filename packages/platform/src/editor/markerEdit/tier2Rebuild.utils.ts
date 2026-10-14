@@ -3084,17 +3084,22 @@ function $appendNoteShellFragment(
   for (; index < children.length; index++) {
     const child = children[index];
     if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
+    // A glyph an annotation cut into pieces is spelled once, as one glyph.
+    if ($isPieceContinuation(child)) continue;
     $appendNodesFragment([child], out, getMarkerFn, viewOptions);
   }
   const caller = children[index];
-  if ($isImmutableNoteCallerNode(caller)) pushText(out, caller, note.getCaller());
-  else if (
-    $isTextNode(caller) &&
-    caller.getTextContent() === getEditableCallerText(note.getCaller())
-  )
-    pushText(out, caller, toFragmentText(caller.getTextContent()));
-  else return index;
-  return index + 1;
+  if ($isImmutableNoteCallerNode(caller)) {
+    pushText(out, caller, note.getCaller());
+    return index + 1;
+  }
+  if ($isTextNode(caller) && $logicalText(caller) === getEditableCallerText(note.getCaller())) {
+    // Each piece of a cut caller gets its own span, so a hold on one of them has bytes to carry.
+    const pieces = $pieces(caller);
+    for (const piece of pieces) pushText(out, piece, toFragmentText(piece.getTextContent()));
+    return index + pieces.length;
+  }
+  return index;
 }
 
 /**
