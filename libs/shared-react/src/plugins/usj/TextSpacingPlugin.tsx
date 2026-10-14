@@ -23,6 +23,7 @@ import {
   $isNoteNode,
   $isTypedMarkNode,
   $isUnknownNode,
+  $pieceHead,
   $syncDisplayRun,
   CharNode,
   displayRunDescriptor,
@@ -66,9 +67,11 @@ function useTextSpacing(editor: LexicalEditor) {
       // shape CharNodePlugin uses for chars. $syncDisplayRun (displayRunSync.utils.ts, `shared`),
       // driven `\va` first so `\vp`'s scan and insertion anchor find the healed `\va` wrapper
       // already in place.
+      // A verse cut into pieces by an annotation is one owner: its first piece.
       editor.registerNodeTransform(VerseNode, (node) => {
-        $syncDisplayRun(displayRunDescriptor("va"), node);
-        $syncDisplayRun(displayRunDescriptor("vp"), node);
+        const verse = $pieceHead(node);
+        $syncDisplayRun(displayRunDescriptor("va"), verse);
+        $syncDisplayRun(displayRunDescriptor("vp"), verse);
       }),
     );
   }, [editor]);

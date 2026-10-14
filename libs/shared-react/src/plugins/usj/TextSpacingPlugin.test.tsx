@@ -7,7 +7,9 @@ import { $getRangeFromUsjSelection } from "./annotation/selection.utils";
 import { TextSpacingPlugin } from "./TextSpacingPlugin";
 import {
   baseTestEnvironment,
+  countContinuationPieces,
   createTextAtSelection,
+  cutEveryCarrierIntoPieces,
   deleteTextAtSelection,
   typeTextAfterNode,
   typeTextAtSelection,
@@ -37,10 +39,12 @@ import {
   $getLogicalContentItems,
   $isAttributeRunNode,
   $isCharNode,
+  $isMarkerNode,
   $isParaNode,
   $isTypedMarkNode,
   $isUnknownNode,
   $isVisibleMarkerNode,
+  $pieces,
   $verseAttributeRunPieces,
   $wrapSelectionInTypedMarkNode,
   displayRunDescriptor,
@@ -1094,6 +1098,39 @@ describe("TextSpacingPlugin", () => {
 
       editor.getEditorState().read(() => {
         expect($attributeRun(verse, "va")?.value.getTextContent()).toBe(`${NBSP}3`);
+      });
+    });
+
+    it("keeps one \\va and one \\vp run when the verse is cut into pieces", async () => {
+      let verse: VerseNode;
+      const { editor } = await testEnvironment(() => {
+        verse = $createVerseNode("1", "\\v 1 ", undefined, "2", "1b");
+        $getRoot().append($createParaNode().append(verse, $createTextNode("text")));
+      });
+      await act(async () => {
+        editor.update(() => {
+          verse.getWritable();
+        });
+      });
+      const uncut = editor.getEditorState().read(() => $getRoot().getTextContent());
+
+      await cutEveryCarrierIntoPieces(editor);
+      expect(countContinuationPieces(editor)).toBeGreaterThan(0);
+      // Every piece of the verse is dirtied, as an edit or a hold change to one does.
+      await act(async () => {
+        editor.update(() => {
+          for (const piece of $pieces(verse)) piece.markDirty();
+        });
+      });
+
+      editor.getEditorState().read(() => {
+        expect($getRoot().getTextContent()).toBe(uncut);
+        const openers = $getRoot()
+          .getAllTextNodes()
+          .filter((node) => $isMarkerNode(node) && node.getMarkerSyntax() === "opening")
+          .filter((node) => $pieces(node)[0].is(node))
+          .map((node) => node.getMarker());
+        expect(openers).toEqual(["va", "vp"]);
       });
     });
 

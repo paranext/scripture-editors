@@ -1,7 +1,13 @@
 // Should only be used on nodes that are initialized in the test environment.
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
-import { baseTestEnvironment, sutUpdate, updateSelection } from "./react-test.utils";
+import {
+  baseTestEnvironment,
+  countContinuationPieces,
+  cutEveryCarrierIntoPieces,
+  sutUpdate,
+  updateSelection,
+} from "./react-test.utils";
 import { $createImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
 import {
   $adjacentVerseMarker,
@@ -34,6 +40,7 @@ import {
   $createNoteNode,
   $createParaNode,
   $createImpliedParaNode,
+  $createMarkerNode,
   $createVerseNode,
   $isCharNode,
   $isNoteNode,
@@ -566,6 +573,57 @@ describe("$mergeParaIntoPrevious", () => {
     editor.getEditorState().read(() => {
       expect($getRoot().getChildrenSize()).toBe(1);
       expect(($getRoot().getChildren()[0] as ParaNode).getTextContent()).toBe("text");
+    });
+  });
+});
+
+describe("a carrier cut into pieces", () => {
+  // An annotation held over part of a carrier cuts it into pieces (`displayPieces.state.ts`); the
+  // pieces are one carrier.
+  it("$adjacentVerseMarker names the verse, not the piece the caret touches", async () => {
+    let before: TextNode;
+    let after: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      before = $createTextNode("before ");
+      after = $createTextNode("text");
+      $getRoot().append(
+        $createParaNode("p").append(before, $createVerseNode("2", "\\v 2 "), after),
+      );
+    });
+    await cutEveryCarrierIntoPieces(editor);
+    expect(countContinuationPieces(editor)).toBeGreaterThan(0);
+    const verseKey = editor
+      .getEditorState()
+      .read(() => $getRoot().getAllTextNodes().find($isSomeVerseNode)?.getKey());
+
+    updateSelection(editor, after!, 0);
+    editor.getEditorState().read(() => {
+      expect($adjacentVerseMarker($getSelection()!, "backward")?.getKey()).toBe(verseKey);
+    });
+    updateSelection(editor, before!, "before ".length);
+    editor.getEditorState().read(() => {
+      expect($adjacentVerseMarker($getSelection()!, "forward")?.getKey()).toBe(verseKey);
+    });
+  });
+
+  it("$mergeParaIntoPrevious drops every piece of the merged paragraph's marker glyph", async () => {
+    let q: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      q = $createParaNode("q1");
+      $getRoot().append(
+        $createParaNode("p").append($createMarkerNode("p"), $createTextNode("first")),
+        q.append($createMarkerNode("q1"), $createTextNode("second")),
+      );
+    });
+    await cutEveryCarrierIntoPieces(editor);
+    expect(countContinuationPieces(editor)).toBeGreaterThan(1);
+
+    await sutUpdate(editor, () => {
+      $mergeParaIntoPrevious(q!);
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toBe("\\pfirstsecond");
     });
   });
 });

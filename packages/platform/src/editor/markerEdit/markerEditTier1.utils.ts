@@ -92,7 +92,7 @@ import {
   $lastPiece,
   $logicalChildren,
   $logicalNextSibling,
-  $logicalOffset,
+  $logicalPointOffset,
   $logicalPreviousSibling,
   $logicalText,
   $mergePieces,
@@ -317,7 +317,7 @@ function markerNameSpan(text: string): { start: number; end: number } | undefine
 function $caretOffsetInMarkerName(node: MarkerNode): number | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
-  const offset = $logicalOffset(node, selection.anchor.key, selection.anchor.offset);
+  const offset = $logicalPointOffset(node, selection.anchor.key, selection.anchor.offset);
   if (offset === undefined) return undefined;
   const span = markerNameSpan($logicalText(node));
   if (!span) return undefined;
@@ -674,7 +674,7 @@ function $moveOuterGlyphSpaceOut(glyph: MarkerNode): boolean {
   const selection = $getSelection();
   const caret =
     $isRangeSelection(selection) && selection.isCollapsed()
-      ? $logicalOffset(glyph, selection.anchor.key, selection.anchor.offset)
+      ? $logicalPointOffset(glyph, selection.anchor.key, selection.anchor.offset)
       : undefined;
   const kept = isCloser ? text.slice(0, text.length - space.length) : text.slice(space.length);
   glyph = $setLogicalText(glyph, kept);
@@ -800,7 +800,7 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
       const selection = $getSelection();
       const caret =
         $isRangeSelection(selection) && selection.isCollapsed()
-          ? $logicalOffset(node, selection.anchor.key, selection.anchor.offset)
+          ? $logicalPointOffset(node, selection.anchor.key, selection.anchor.offset)
           : undefined;
       const caretOffset =
         caret !== undefined && caret > canonical.length ? caret - canonical.length : undefined;
@@ -860,7 +860,7 @@ function $splitTextTypedAfterMilestone(glyph: MarkerNode): boolean {
   const selection = $getSelection();
   const caret =
     $isRangeSelection(selection) && selection.isCollapsed()
-      ? $logicalOffset(glyph, selection.anchor.key, selection.anchor.offset)
+      ? $logicalPointOffset(glyph, selection.anchor.key, selection.anchor.offset)
       : undefined;
   const caretOffset =
     caret !== undefined && caret > canonical.length ? caret - canonical.length : undefined;
@@ -1064,7 +1064,7 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
       const selection = $getSelection();
       const caretOffset =
         $isRangeSelection(selection) && selection.isCollapsed()
-          ? $logicalOffset(node, selection.anchor.key, selection.anchor.offset)
+          ? $logicalPointOffset(node, selection.anchor.key, selection.anchor.offset)
           : undefined;
       context.pendingKeys.delete(node.getKey());
       const head = $setLogicalText(node, getVisibleOpenMarkerText("v", numberToken));
@@ -1286,7 +1286,7 @@ function $retagNoteCaller(node: TextNode, note: NoteNode, word: string, rest: st
   const selection = $getSelection();
   const caret =
     $isRangeSelection(selection) && selection.isCollapsed()
-      ? $logicalOffset(node, selection.anchor.key, selection.anchor.offset)
+      ? $logicalPointOffset(node, selection.anchor.key, selection.anchor.offset)
       : undefined;
   if (note.getCaller() !== word) note.setCaller(word); // PT9 GetNextWord: whole word, valid or not
   node = $setLogicalText(node, getEditableCallerText(word));
@@ -1322,7 +1322,7 @@ function $movePushedNameIntoNoteGlyph(callerNode: TextNode, caller: string): boo
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   const { anchor } = selection;
   if (anchor.type !== "text") return false;
-  const caret = $logicalOffset(callerNode, anchor.key, anchor.offset);
+  const caret = $logicalPointOffset(callerNode, anchor.key, anchor.offset);
   if (caret === undefined) return false;
   const text = $logicalText(callerNode);
   const pushed = text.slice(0, caret);
@@ -1356,7 +1356,7 @@ function $moveNoteGlyphTailToCaller(glyph: MarkerNode): boolean {
   // The glyph and the caller text are each read and written whole, however an annotation cuts them.
   const text = $logicalText(glyph);
   const { anchor } = selection;
-  if ($logicalOffset(glyph, anchor.key, anchor.offset) !== text.length) return false;
+  if ($logicalPointOffset(glyph, anchor.key, anchor.offset) !== text.length) return false;
   const spelled = openingMarkerText(glyph.getMarker());
   const tail = text.slice(spelled.length);
   if (!text.startsWith(spelled) || !/^[|\\\s]+$/.test(tail)) return false;
@@ -1399,7 +1399,7 @@ function $settleNoteCallerText(node: TextNode, note: NoteNode): void {
   const selection = $getSelection();
   const caret =
     $isRangeSelection(selection) && selection.isCollapsed()
-      ? $logicalOffset(node, selection.anchor.key, selection.anchor.offset)
+      ? $logicalPointOffset(node, selection.anchor.key, selection.anchor.offset)
       : undefined;
   node = $setLogicalText(node, getEditableCallerText(caller));
   const content = moved ? $prependNoteContent(note, node, moved) : undefined;

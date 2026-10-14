@@ -64,7 +64,7 @@
  *   about it — the marker-edit engine owns healing and settling.
  */
 
-import { $lastPiece, $logicalText, $pieceOffset } from "../features/displayPieces.state.js";
+import { $lastPiece, $logicalText, $pieceStart } from "../features/displayPieces.state.js";
 import { $isImmutableUnmatchedNode } from "../features/ImmutableUnmatchedNode.js";
 import { $isCanonicalMarkerNode, $isMarkerNode } from "../features/MarkerNode.js";
 import { MARKER_TRAILING_SPACE_TEXT_TYPE, textTypeState } from "../collab/delta.state.js";
@@ -174,7 +174,7 @@ function $glyphAtPoint(point: PointType): TextNode | undefined {
 /** Where a point on glyph piece `node` sits in the whole glyph's bytes, however an annotation has
  * cut it into pieces (`displayPieces.state.ts`), and how many bytes the whole glyph has. */
 function $offsetInGlyph(node: TextNode, offset: number): { at: number; size: number } {
-  return { at: $pieceOffset(node) + offset, size: $logicalText(node).length };
+  return { at: $pieceStart(node) + offset, size: $logicalText(node).length };
 }
 
 /** The glyph node a point sits strictly between two display bytes of, if it does. */

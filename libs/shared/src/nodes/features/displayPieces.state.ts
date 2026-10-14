@@ -88,20 +88,6 @@ export function $logicalText(node: LexicalNode): string {
     .join("");
 }
 
-/**
- * Where `node`'s own text starts in its carrier's text ({@link $logicalText}): `0` for the head,
- * and for a later piece the length of every piece before it. Adding a point's offset in `node`
- * gives the point's offset in the whole carrier.
- */
-export function $pieceOffset(node: LexicalNode): number {
-  let offset = 0;
-  for (const piece of $pieces(node)) {
-    if (piece.is(node)) break;
-    offset += piece.getTextContentSize();
-  }
-  return offset;
-}
-
 /** The node after `node`'s whole carrier (after its last piece). */
 export function $logicalNextSibling(node: LexicalNode): LexicalNode | null {
   return $lastPiece(node).getNextSibling();
@@ -135,9 +121,10 @@ export function $pieceStart(piece: LexicalNode): number {
 
 /**
  * The offset into `carrier`'s whole text that the text point at `offset` in node `key` names, or
- * `undefined` when `key` is no piece of `carrier`'s carrier.
+ * `undefined` when `key` is no piece of `carrier`'s carrier. ({@link $logicalOffset} is the same
+ * measure for a piece in hand.)
  */
-export function $logicalOffset(
+export function $logicalPointOffset(
   carrier: LexicalNode,
   key: NodeKey,
   offset: number,
@@ -148,27 +135,6 @@ export function $logicalOffset(
     start += piece.getTextContentSize();
   }
   return undefined;
-}
-
-/**
- * The piece of `carrier`'s carrier that whole-carrier offset `offset` falls in, and the offset
- * into that piece. Left-biased: an offset on the boundary between two pieces names the end of the
- * piece before it (as a cut moves a point there); an offset past the end names the last piece's
- * end.
- */
-export function $pieceAt<T extends LexicalNode>(
-  carrier: T,
-  offset: number,
-): { piece: T; offset: number } {
-  const pieces = $pieces(carrier);
-  let start = 0;
-  for (const piece of pieces) {
-    const end = start + piece.getTextContentSize();
-    if (offset <= end) return { piece, offset: Math.max(0, offset - start) };
-    start = end;
-  }
-  const last = pieces[pieces.length - 1];
-  return { piece: last, offset: last.getTextContentSize() };
 }
 
 /**
@@ -183,6 +149,36 @@ export function $deferToPieceHead(node: LexicalNode): boolean {
   if (head.is(node)) return false;
   head.markDirty();
   return true;
+}
+
+/**
+ * Where offset `offset` into piece `node` falls in its whole carrier's text: the texts of the
+ * pieces before it, plus `offset`. `offset` itself for a carrier in one piece.
+ */
+export function $logicalOffset(node: LexicalNode, offset: number): number {
+  let start = 0;
+  for (const piece of $pieces(node)) {
+    if (piece.is(node)) break;
+    start += piece.getTextContentSize();
+  }
+  return start + offset;
+}
+
+/**
+ * The piece of `node`'s carrier holding offset `offset` into the whole carrier's text, and the
+ * offset into that piece. An offset on a cut is the end of the piece before it (the side a split
+ * keeps a point on); an offset past the end is the end of the last piece.
+ */
+export function $pieceAtLogicalOffset<T extends LexicalNode>(node: T, offset: number): [T, number] {
+  const pieces = $pieces(node);
+  let start = 0;
+  for (const piece of pieces) {
+    const size = piece.getTextContentSize();
+    if (offset <= start + size) return [piece, Math.max(0, offset - start)];
+    start += size;
+  }
+  const last = pieces[pieces.length - 1];
+  return [last, last.getTextContentSize()];
 }
 
 /** Whether `node` is split into more than one piece. */

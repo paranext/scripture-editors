@@ -36,6 +36,8 @@ import {
   $isNoteNode,
   $isParaLikeNode,
   $isSomeParaNode,
+  $logicalText,
+  $pieces,
   CharNode,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   GENERATOR_NOTE_CALLER,
@@ -197,9 +199,10 @@ function $noteNodeTransform(node: NoteNode, viewOptions: ViewOptions | undefined
       // plants the caller word in the paragraph on every serialization round (live-observed as a
       // repeated `word~` spray). It must stay in place so MarkerEditPlugin's note-deletion
       // transform can recognize the damaged editable note and remove it whole. User-typed stray
-      // text at the note's start (any other text) is still salvaged out.
-      if (firstChild.getTextContent() !== getEditableCallerText(node.getCaller()))
-        node.insertBefore(firstChild);
+      // text at the note's start (any other text) is still salvaged out. A text an annotation cut
+      // into pieces is read, and moved, whole.
+      if ($logicalText(firstChild) !== getEditableCallerText(node.getCaller()))
+        for (const piece of $pieces(firstChild)) node.insertBefore(piece);
     }
   }
 }

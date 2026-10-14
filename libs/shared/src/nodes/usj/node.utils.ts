@@ -40,7 +40,7 @@ import {
   $logicalNextSibling,
   $logicalText,
   $pieceHead,
-  $pieceOffset,
+  $pieceStart,
   $pieces,
 } from "../features/displayPieces.state.js";
 import { $isMarkerNode, isSerializedMarkerNode } from "../features/MarkerNode.js";
@@ -1014,7 +1014,7 @@ export function $typedNoteCallerRange(
   const note = $getLogicalParent(caller);
   if (!$isNoteNode(note) || !$noteEditableCallerNode(note)?.is(caller)) return undefined;
   const typed = typedCallerRange($logicalText(caller), note.getCaller());
-  const offset = $pieceOffset(node);
+  const offset = $pieceStart(node);
   const start = Math.max(typed.start - offset, 0);
   const end = Math.min(typed.end - offset, node.getTextContentSize());
   return start < end ? { start, end } : undefined;

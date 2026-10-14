@@ -19,8 +19,11 @@ import {
   $createPoint,
   $createRangeSelection,
   $createTextNode,
+  $getRoot,
+  $getSelection,
   $insertNodes,
   $isElementNode,
+  $isRangeSelection,
   $setSelection,
   $setState,
   EditorUpdateOptions,
@@ -30,14 +33,23 @@ import {
   LexicalEditor,
   LexicalNode,
   LexicalNodeReplacement,
+  PointType,
   SerializedEditorState,
 } from "lexical";
 import { ReactNode, useEffect } from "react";
 import {
+  $addDisplayAnnotation,
   $createBookNode,
   $createImmutableTypedTextNode,
+  $isDisplayAnnotationCarrier,
+  $isPieceContinuation,
+  $logicalChildren,
+  $logicalOffset,
+  $logicalText,
+  $pieceHead,
   BookNode,
   NBSP,
+  registerDisplayAnnotationBasis,
   segmentState,
   SerializedNoteNode,
   SerializedParaNode,
@@ -454,4 +466,82 @@ export function removeNoteCallerOnClick(
   ] as SerializedNoteNode;
   const noteCaller = note.children[noteCallerIndex] as SerializedImmutableNoteCallerNode;
   delete noteCaller.onClick;
+}
+
+/** The annotation type {@link cutEveryCarrierIntoPieces} holds carriers with. */
+export const PIECE_CUT_ANNOTATION_TYPE = "piece-cut";
+
+/**
+ * Cut every editable display-byte carrier in the editor (a marker glyph, a verse, an attribute
+ * run's text, a note's editable caller, a chapter's `\c N` glyph, an unmatched closer) into
+ * pieces, the way an annotation held over part of it does: each carrier of two or more bytes is
+ * held over its interior (`[1, length - 1)`, or `[1, 2)` for two bytes), so it splits into two or
+ * three pieces. A carrier cut this way is the same document as the uncut one, so every reader must
+ * give the same answer for both.
+ *
+ * Registers the hold-basis and piece transforms on `editor` (as the annotation plugin does) and
+ * leaves them registered.
+ *
+ * @returns How many carriers were cut.
+ */
+export async function cutEveryCarrierIntoPieces(editor: LexicalEditor): Promise<number> {
+  registerDisplayAnnotationBasis(editor);
+  let cut = 0;
+  await act(async () => {
+    editor.update(
+      () => {
+        for (const node of $getRoot().getAllTextNodes()) {
+          if (!$isDisplayAnnotationCarrier(node)) continue;
+          const length = node.getTextContentSize();
+          if (length < 2) continue;
+          const end = length === 2 ? 2 : length - 1;
+          $addDisplayAnnotation(node, PIECE_CUT_ANNOTATION_TYPE, node.getKey(), 1, end);
+          cut += 1;
+        }
+      },
+      { discrete: true },
+    );
+  });
+  return cut;
+}
+
+/** How many continuation pieces the editor's tree holds. */
+export function countContinuationPieces(editor: LexicalEditor): number {
+  return editor
+    .getEditorState()
+    .read(() => $getRoot().getAllTextNodes().filter($isPieceContinuation).length);
+}
+
+/**
+ * A point as a document with no carrier cut into pieces spells it, so a cut and an uncut document
+ * can be compared point for point: a text point names its carrier (by the carrier's whole text,
+ * its parent's type and its place among the parent's carriers) and the offset into the whole
+ * carrier; an element point names the element and how many carriers stand in front of it. An
+ * element point in front of a later piece is inside that piece's carrier, and is named so.
+ */
+export function $describeLogicalPoint(node: LexicalNode, offset: number): string {
+  if ($isElementNode(node)) {
+    const child = node.getChildAtIndex(offset);
+    if (child && $isPieceContinuation(child)) return $describeLogicalPoint(child, 0);
+    const before = node
+      .getChildren()
+      .slice(0, offset)
+      .filter((sibling) => !$isPieceContinuation(sibling));
+    return `${node.getType()}[${before.length}]`;
+  }
+  const head = $pieceHead(node);
+  const parent = head.getParentOrThrow();
+  const index = $logicalChildren(parent).findIndex((child) => child.is(head));
+  const text = JSON.stringify($logicalText(head));
+  return `${parent.getType()}>${text}#${index}@${$logicalOffset(node, offset)}`;
+}
+
+/** The current selection, each end described by {@link $describeLogicalPoint}. */
+export function $describeLogicalSelection(): string {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return "no selection";
+  const point = (at: PointType) => $describeLogicalPoint(at.getNode(), at.offset);
+  return selection.isCollapsed()
+    ? point(selection.anchor)
+    : `${point(selection.anchor)}..${point(selection.focus)}`;
 }

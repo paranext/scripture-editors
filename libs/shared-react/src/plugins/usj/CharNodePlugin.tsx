@@ -19,6 +19,8 @@ import {
   $isCharNode,
   $isMarkerNode,
   $isSeparatorPrefixHostText,
+  $lastPiece,
+  $pieceHead,
   $syncDisplayRun,
   $syncNestedGlyphs,
   $syncOpenerSeparators,
@@ -106,7 +108,9 @@ function $rendersOwnGlyphs(node: CharNode): boolean {
 function $mergeIntoFollowingGlyphSpan(node: CharNode, target: CharNode): boolean {
   const opener = target.getFirstChild();
   if (!$isMarkerNode(opener) || opener.getMarkerSyntax() !== "opening") return false;
-  const oldFirstContent = opener.getNextSibling();
+  // An opener an annotation cut into pieces is one glyph: the content goes after its last piece.
+  const openerEnd = $lastPiece(opener);
+  const oldFirstContent = openerEnd.getNextSibling();
   if ($isSeparatorPrefixHostText(oldFirstContent)) {
     const text = oldFirstContent.getTextContent();
     if (text.startsWith(NBSP)) {
@@ -114,7 +118,7 @@ function $mergeIntoFollowingGlyphSpan(node: CharNode, target: CharNode): boolean
       else oldFirstContent.setTextContent(text.slice(NBSP.length));
     }
   }
-  target.splice(1, 0, node.getChildren());
+  target.splice(openerEnd.getIndexWithinParent() + 1, 0, node.getChildren());
   node.remove();
   return true;
 }
@@ -126,7 +130,9 @@ function $mergeIntoFollowingGlyphSpan(node: CharNode, target: CharNode): boolean
  * needs no attention in this direction — `target`'s first content keeps its role.
  */
 function $mergeIntoPrecedingGlyphSpan(node: CharNode, target: CharNode): void {
-  const closer = target.getLastChild();
+  // A closer an annotation cut into pieces is one glyph: the content goes before its first piece.
+  const last = target.getLastChild();
+  const closer = last && $pieceHead(last);
   const children = node.getChildren();
   if ($isMarkerNode(closer) && closer.getMarkerSyntax() === "closing") {
     children.forEach((child) => closer.insertBefore(child));

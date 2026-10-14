@@ -17,6 +17,7 @@ import {
   $isSomeChapterNode,
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
+  $pieceHead,
   SomeParaNode,
 } from "shared";
 
@@ -181,16 +182,17 @@ export function $adjacentVerseMarker(
     const idx = direction === "backward" ? anchor.offset - 1 : anchor.offset;
     if (idx < 0) return undefined;
     const candidate = children[idx];
-    return $isSomeVerseNode(candidate) ? candidate : undefined;
+    // A verse an annotation cut into pieces is named by its first piece, whichever is adjacent.
+    return $isSomeVerseNode(candidate) ? $pieceHead(candidate) : undefined;
   }
   if (direction === "backward") {
     if (anchor.offset !== 0) return undefined;
     const prev = node.getPreviousSibling();
-    return $isSomeVerseNode(prev) ? prev : undefined;
+    return $isSomeVerseNode(prev) ? $pieceHead(prev) : undefined;
   }
   if (anchor.offset !== node.getTextContentSize()) return undefined;
   const next = node.getNextSibling();
-  return $isSomeVerseNode(next) ? next : undefined;
+  return $isSomeVerseNode(next) ? $pieceHead(next) : undefined;
 }
 
 /** True when the paragraph holding the caret has a preceding block sibling. */
@@ -344,12 +346,12 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   // ImmutableTypedTextNode) is still its first child here; moving it into `prev` would fuse it
   // onto `prev`'s trailing text as a literal marker byte (e.g. `first\qsecond`), so it is dropped
   // along with the separator instead of moved.
-  const moved = para
-    .getChildren()
-    .filter(
-      (child) =>
-        !$isMarkerTrailingSeparator(child) && !(dropsLeadingPrefix && child.is(leadingPrefix)),
-    );
+  const moved = para.getChildren().filter(
+    (child) =>
+      !$isMarkerTrailingSeparator(child) &&
+      // Every piece of a prefix glyph an annotation cut into pieces.
+      !(dropsLeadingPrefix && $pieceHead(child).is(leadingPrefix)),
+  );
   prev.append(...moved);
   para.remove();
   // When `prev` had content, the junction is the end of its last child; when it was empty the

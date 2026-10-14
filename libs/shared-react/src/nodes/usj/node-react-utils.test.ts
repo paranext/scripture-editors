@@ -34,6 +34,7 @@ import {
   NodeKey,
 } from "lexical";
 import {
+  $addDisplayAnnotation,
   $createBookNode,
   $createCharNode,
   $createImmutableChapterNode,
@@ -46,6 +47,7 @@ import {
   $isNoteNode,
   $isParaNode,
   $isVerseBlockNode,
+  $pieces,
   CharNode,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   GENERATOR_NOTE_CALLER,
@@ -55,6 +57,7 @@ import {
   NoteNode,
   getVisibleOpenMarkerText,
   ParaNode,
+  registerDisplayAnnotationBasis,
   TypedMarkNode,
   VerseBlockNode,
   VerseNode,
@@ -1970,5 +1973,148 @@ describe("block verse layout traversal", () => {
 
       expect($findThisVerse(selection.anchor.getNode())?.getNumber()).toBe("1");
     });
+  });
+});
+
+describe("a verse cut into pieces", () => {
+  // An annotation held over part of a verse's glyph (here its number) cuts it into pieces
+  // (`displayPieces.state.ts`): `\v `, `2`, ` `. The pieces are one verse.
+  function setup() {
+    const { editor } = createBasicTestEnvironment([ParaNode, VerseNode, TypedMarkNode]);
+    registerDisplayAnnotationBasis(editor);
+    const keys: { [name: string]: NodeKey } = {};
+    editor.update(
+      () => {
+        const verse2 = $createVerseNode("2", "\\v 2 ");
+        const text1 = $createTextNode("one ");
+        const text2 = $createTextNode("two ");
+        const text3 = $createTextNode("three");
+        $getRoot().append(
+          $createParaNode().append(
+            $createVerseNode("1", "\\v 1 "),
+            text1,
+            verse2,
+            text2,
+            $createVerseNode("3", "\\v 3 "),
+            text3,
+          ),
+        );
+        $addDisplayAnnotation(verse2, "check", "a", 3, 4);
+        Object.assign(keys, {
+          verse2: verse2.getKey(),
+          text1: text1.getKey(),
+          text2: text2.getKey(),
+          text3: text3.getKey(),
+        });
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      const verse2 = $getNodeByKey(keys.verse2);
+      if (!verse2) throw new Error("no verse 2");
+      expect($pieces(verse2).map((piece) => piece.getTextContent())).toEqual(["\\v ", "2", " "]);
+    });
+    return { editor, keys };
+  }
+
+  /** Put the caret at `offset` into the text of `key` (or the piece of verse 2 at `piece`), run
+   * `$act`, and return the verse the caret then sits in and the caret's node key. */
+  function caretAt(
+    editor: ReturnType<typeof setup>["editor"],
+    key: NodeKey,
+    offset: number,
+    $act?: (selection: ReturnType<typeof $createRangeSelection>) => void,
+  ) {
+    editor.update(
+      () => {
+        const selection = $createRangeSelection();
+        selection.anchor = $createPoint(key, offset, "text");
+        selection.focus = $createPoint(key, offset, "text");
+        $setSelection(selection);
+        $act?.(selection);
+      },
+      { discrete: true },
+    );
+    return editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected range selection");
+      const node = selection.anchor.getNode();
+      return { verse: $findThisVerse(node), key: node.getKey(), offset: selection.anchor.offset };
+    });
+  }
+
+  it("is the verse a caret in any of its pieces is in", () => {
+    const { editor, keys } = setup();
+    const pieceKeys = editor
+      .getEditorState()
+      .read(() => $pieces($getNodeByKey(keys.verse2) as VerseNode).map((piece) => piece.getKey()));
+    for (const key of pieceKeys) expect(caretAt(editor, key, 0).verse?.getKey()).toBe(keys.verse2);
+    expect(caretAt(editor, keys.text2, 2).verse?.getKey()).toBe(keys.verse2);
+  });
+
+  it("moves down to the verse's content past all of its pieces", () => {
+    const { editor, keys } = setup();
+    const moved = caretAt(editor, keys.text1, 1, (selection) => $selectNextVerse(selection));
+    expect([moved.key, moved.offset]).toEqual([keys.text2, 0]);
+  });
+
+  it("moves down from inside the verse to the next verse", () => {
+    const { editor, keys } = setup();
+    const pieceKeys = editor
+      .getEditorState()
+      .read(() => $pieces($getNodeByKey(keys.verse2) as VerseNode).map((piece) => piece.getKey()));
+    for (const key of pieceKeys) {
+      const moved = caretAt(editor, key, 0, (selection) => $selectNextVerse(selection));
+      expect([moved.key, moved.offset]).toEqual([keys.text3, 0]);
+    }
+  });
+
+  it("moves up from inside the verse to the previous verse", () => {
+    const { editor, keys } = setup();
+    const pieceKeys = editor
+      .getEditorState()
+      .read(() => $pieces($getNodeByKey(keys.verse2) as VerseNode).map((piece) => piece.getKey()));
+    for (const key of pieceKeys) {
+      const moved = caretAt(editor, key, 0, (selection) => $selectPreviousVerse(selection));
+      expect([moved.key, moved.offset]).toEqual([keys.text1, 0]);
+    }
+  });
+
+  it("moves up to the verse's content past all of its pieces", () => {
+    const { editor, keys } = setup();
+    const moved = caretAt(editor, keys.text3, 1, (selection) => $selectPreviousVerse(selection));
+    expect([moved.key, moved.offset]).toEqual([keys.text2, 0]);
+  });
+
+  it("finds the next verse after it past all of its pieces", () => {
+    const { editor, keys } = setup();
+    editor.getEditorState().read(() => {
+      const verse2 = $getNodeByKey(keys.verse2) as VerseNode;
+      for (const piece of $pieces(verse2))
+        expect($findNextVerseAfter(piece)?.getNumber()).toBe("3");
+      const para = verse2.getParentOrThrow();
+      expect($findLastVerseInNode(para)?.getNumber()).toBe("3");
+      expect($findPreviousVerseInSiblings(para, para.getChildrenSize() - 2)?.getKey()).toBe(
+        keys.verse2,
+      );
+    });
+  });
+
+  it("reports the verse in BCV as the uncut verse does, by where the caret is in its bytes", () => {
+    const { editor, keys } = setup();
+    const [head, number, space] = editor
+      .getEditorState()
+      .read(() => $pieces($getNodeByKey(keys.verse2) as VerseNode).map((piece) => piece.getKey()));
+    const bcv = (key: NodeKey, offset: number) => {
+      caretAt(editor, key, offset);
+      return editor
+        .getEditorState()
+        .read(() =>
+          $getEffectiveVerseForBcv($getNodeByKey(keys.verse2) as VerseNode, $getSelection()),
+        ).verseNum;
+    };
+    // In front of the number (`\v ` and the start of `2`) is the previous verse; past it, this one.
+    expect([bcv(head, 0), bcv(head, 3), bcv(number, 0)]).toEqual([1, 1, 1]);
+    expect([bcv(number, 1), bcv(space, 0), bcv(space, 1)]).toEqual([2, 2, 2]);
   });
 });

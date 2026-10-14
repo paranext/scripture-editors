@@ -20,12 +20,12 @@ import {
   $lastPiece,
   $logicalChildren,
   $logicalNextSibling,
-  $logicalPreviousSibling,
   $logicalOffset,
+  $logicalPointOffset,
+  $logicalPreviousSibling,
   $logicalText,
-  $pieceAt,
+  $pieceAtLogicalOffset,
   $pieceHead,
-  $pieceOffset,
   $pieces,
   $pieceStart,
 } from "./displayPieces.state.js";
@@ -130,6 +130,30 @@ describe("carrier pieces", () => {
     });
   });
 
+  it("maps an offset into a piece to the whole carrier's offset and back", () => {
+    const editor = mount();
+    let run!: TextNode;
+    editor.update(
+      () => {
+        run = $span().run;
+        $addDisplayAnnotation(run, "check", "a", 23, 28);
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      const [first, held, last] = $pieces(run);
+      expect([$logicalOffset(first, 0), $logicalOffset(held, 0), $logicalOffset(last, 1)]).toEqual([
+        0, 23, 29,
+      ]);
+      expect($pieceAtLogicalOffset(run, 0)).toEqual([first, 0]);
+      // On a cut, the end of the piece before it.
+      expect($pieceAtLogicalOffset(held, 23)).toEqual([first, 23]);
+      expect($pieceAtLogicalOffset(run, 24)).toEqual([held, 1]);
+      expect($pieceAtLogicalOffset(run, 29)).toEqual([last, 1]);
+      expect($pieceAtLogicalOffset(run, 40)).toEqual([last, 1]);
+    });
+  });
+
   it("joins the pieces again once the hold is gone", () => {
     const editor = mount();
     let run!: TextNode;
@@ -169,7 +193,7 @@ describe("carrier pieces", () => {
       const pieces = $pieces(verse);
       expect(texts(pieces)).toEqual([`\\v${NBSP}`, "12", " "]);
       expect(pieces.map($holdIds)).toEqual([["a[0,3)"], ["a[0,2)", "b[0,2)"], []]);
-      expect(pieces.map($pieceOffset)).toEqual([0, 3, 5]);
+      expect(pieces.map($pieceStart)).toEqual([0, 3, 5]);
       // The carrier's own edge whitespace is its trailing space; the separator inside it is
       // holdable, so the first piece is holdable whole.
       expect(pieces.map($carrierHoldableRange)).toEqual([
@@ -335,11 +359,11 @@ describe("carrier offsets and per-node passes", () => {
       expect(pieces.map($pieceStart)).toEqual([0, 3, 5]);
       expect(pieces.map((piece) => $isPieceOf(piece, pieces[2]))).toEqual([true, true, true]);
       expect($isPieceOf($logicalNextSibling(verse), verse)).toBe(false);
-      expect($logicalOffset(verse, pieces[1].getKey(), 1)).toBe(4);
-      expect($logicalOffset(pieces[2], pieces[0].getKey(), 2)).toBe(2);
-      expect($logicalOffset(verse, "not-a-piece", 0)).toBeUndefined();
+      expect($logicalPointOffset(verse, pieces[1].getKey(), 1)).toBe(4);
+      expect($logicalPointOffset(pieces[2], pieces[0].getKey(), 2)).toBe(2);
+      expect($logicalPointOffset(verse, "not-a-piece", 0)).toBeUndefined();
       const at = (offset: number) => {
-        const { piece, offset: into } = $pieceAt(verse, offset);
+        const [piece, into] = $pieceAtLogicalOffset(verse, offset);
         return [piece.getTextContent(), into];
       };
       expect([0, 3, 4, 5, 6, 9].map(at)).toEqual([
