@@ -17,8 +17,8 @@ const applyingByEditor = new WeakMap<LexicalEditor, AppliedUpdateSource>();
 
 /**
  * Mark `editor` as committing an update applied from `source`, or as not applying one
- * (`undefined`). Set it around a DISCRETE update, cleared in a `finally`, so it covers exactly that
- * commit's transforms and listeners.
+ * (`undefined`). Set it inside a DISCRETE update and clear it once that commit lands (its
+ * `onUpdate`) or the update throws, so it covers exactly that commit's transforms and listeners.
  */
 export function markApplyingUpdate(
   editor: LexicalEditor,

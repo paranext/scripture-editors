@@ -247,7 +247,7 @@ describe("an annotation inside a figure caption", () => {
     expect(held).toBe(expectedHeld);
   });
 
-  it.each(["standard", "formatted"])("survives undo and redo (review focus) (%s)", async (name) => {
+  it.each(["standard", "formatted"])("survives undo and redo (%s)", async (name) => {
     const mounted = await mountInView(richUsj, oracleView(name));
     const before = mounted.ref.current?.getUsj();
 

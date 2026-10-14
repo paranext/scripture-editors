@@ -155,6 +155,40 @@ describe("an annotation on a char span's attribute value", () => {
     expect(onRemove).toHaveBeenCalledWith("external-test", "1", "removed", "grace");
   });
 
+  it("reports its removal when a mark that once held the same id still holds another", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(lemmaUsj);
+    const sharedContent: AnnotationRange = {
+      start: { jsonPath: contentPath([2, 0]), offset: 0 },
+      end: { jsonPath: contentPath([2, 0]), offset: "In".length },
+    };
+    await annotate(mounted, sharedContent, "other");
+    await annotate(mounted, sharedContent, "1");
+    await act(async () => mounted.ref.current?.removeAnnotation("test", "1"));
+    expect(markTexts(mounted.lexical)).toEqual(["In"]);
+
+    await annotate(mounted, lemmaRange, "1", onRemove);
+    await act(async () => mounted.ref.current?.removeAnnotation("test", "1"));
+
+    expect(onRemove.mock.calls).toEqual([["external-test", "1", "removed", "grace"]]);
+  });
+
+  it("finishes the removal when the host's onRemove throws", async () => {
+    const mounted = await mountStandardViewEditor(lemmaUsj);
+    const onError = vi.spyOn(mounted.lexical, "_onError").mockImplementation(() => undefined);
+    await annotate(mounted, lemmaRange, "1", () => {
+      throw new Error("host failure");
+    });
+
+    await act(async () => {
+      mounted.ref.current?.removeAnnotation("test", "1");
+      await Promise.resolve();
+    });
+
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "host failure" }));
+  });
+
   it("moves to a new range when set again with the same id", async () => {
     const mounted = await mountStandardViewEditor(lemmaUsj);
     await annotate(mounted, lemmaRange);
@@ -207,7 +241,7 @@ describe("an annotation across content and a verse number", () => {
 
     expect(displayAnnotated(mounted.lexical)).toEqual({});
     expect(mixed.mock.calls.every(([, , cause]) => cause === "removed")).toBe(true);
-    // The mixed annotation's marks report it (one call per mark, PT-4804); its verse adds none.
+    // The mixed annotation's marks report it (one call per mark); its verse adds none.
     expect(mixed).toHaveBeenCalledTimes(marksBefore);
     expect(control).toHaveBeenCalledTimes(1);
   });

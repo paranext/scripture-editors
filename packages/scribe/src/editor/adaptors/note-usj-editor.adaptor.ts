@@ -72,6 +72,7 @@ import {
   STARTING_MS_COMMENT_MARKER,
   UNKNOWN_MARKER_OBJECT_PROPS,
   UNKNOWN_VERSION,
+  UNMERGEABLE_TEXT_DETAIL,
   UnknownNode,
   VERSE_MARKER,
   VERSE_MARKER_OBJECT_PROPS,
@@ -504,13 +505,6 @@ function createMarker(
     version: 1,
   };
 }
-
-/**
- * The `detail` flag of a text node Lexical's normalization never merges with an adjacent text node
- * (`TextNode.toggleUnmergeable`). Lexical keeps its detail flags internal, so the value is spelled
- * here.
- */
-const UNMERGEABLE_TEXT_DETAIL = 2;
 
 function createText(text: string, mode: TextModeType = "normal"): SerializedTextNode {
   return {

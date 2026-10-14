@@ -396,6 +396,18 @@ describe("a remote applyUpdate", () => {
     expect(emissions[0].usj).toEqual(ref.current?.getUsj());
   });
 
+  it("that throws leaves the user's next edit announced as the user's own", async () => {
+    const { lexical, ref, emissions } = await mountSourced();
+    const malformed: DeltaOp[] = [{ insert: "abc\n", attributes: { char: { style: "bd" } } }];
+    expect(() => act(() => ref.current?.applyUpdate(malformed, "remote"))).toThrow();
+
+    appendNow(lexical, "beginning", "X");
+
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0].source).toBe("local");
+    expect(emissions[0].ops).toContainEqual({ insert: "X" });
+  });
+
   it("called inside an update of the editor is applied and announced once, with its ops", async () => {
     const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
     const emissions: SourcedEmission[] = [];

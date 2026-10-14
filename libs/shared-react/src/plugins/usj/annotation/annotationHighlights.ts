@@ -177,26 +177,30 @@ export class AnnotationHighlighter {
     for (const piece of pieces) this.use(piece.classNames).highlight.add(piece.range);
     if (pieces.length > 0) this.byLeaf.set(key, pieces);
     else this.byLeaf.delete(key);
-    this.release(previous, new Set(pieces.map(({ range }) => range)));
+    this.release(previous, pieces);
   }
 
   clearLeaf(key: NodeKey): void {
     const previous = this.byLeaf.get(key) ?? [];
     this.byLeaf.delete(key);
-    this.release(previous, new Set());
+    this.release(previous, []);
   }
 
-  /** Let go of `pieces`, keeping in their highlights any range in `kept`; a class set no piece
-   * uses any more is unregistered. */
-  private release(pieces: readonly LeafHighlight[], kept: ReadonlySet<Range>): void {
+  /** Let go of `pieces`, keeping a range in its class set's highlight while one of `kept` still
+   * paints it with that class set; a class set no piece uses any more is unregistered. */
+  private release(pieces: readonly LeafHighlight[], kept: readonly LeafHighlight[]): void {
     for (const piece of pieces) {
-      const entry = this.byClassSet.get(classSetKey(piece.classNames));
+      const key = classSetKey(piece.classNames);
+      const entry = this.byClassSet.get(key);
       if (!entry) continue;
-      if (!kept.has(piece.range)) entry.highlight.delete(piece.range);
+      const isKept = kept.some(
+        (other) => other.range === piece.range && classSetKey(other.classNames) === key,
+      );
+      if (!isKept) entry.highlight.delete(piece.range);
       if (--entry.uses > 0) continue;
       this.api.registry.delete(entry.name);
       classNamesByHighlight.delete(entry.name);
-      this.byClassSet.delete(classSetKey(piece.classNames));
+      this.byClassSet.delete(key);
       this.queueRender();
     }
   }

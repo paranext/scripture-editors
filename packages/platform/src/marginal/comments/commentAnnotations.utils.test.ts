@@ -98,7 +98,7 @@ describe("$selectFirstCommentCarrier", () => {
     );
     editor.update(
       () => {
-        $selectFirstCommentCarrier([run.getKey()]);
+        $selectFirstCommentCarrier("c1", [run.getKey()]);
       },
       { discrete: true },
     );
@@ -109,6 +109,31 @@ describe("$selectFirstCommentCarrier", () => {
       expect(selection.anchor.type).toBe("text");
       expect(selection.anchor.key).toBe(run.getKey());
       expect(selection.anchor.offset).toBe(1);
+    });
+  });
+
+  it("selects the start of the comment's own hold when it covers only part of a text carrier", () => {
+    const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
+    let glyph!: TextNode;
+    editor.update(
+      () => {
+        glyph = $setState($createTextNode("\\v 12 "), textTypeState, "attribute");
+        $getRoot().append($createParaNode().append(glyph));
+        $addDisplayAnnotation(glyph, COMMENT_MARK_TYPE, "c1", 4, 5);
+      },
+      { discrete: true },
+    );
+    editor.update(
+      () => {
+        $selectFirstCommentCarrier("c1", [glyph.getKey()]);
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.anchor.offset).toBe(4);
+      expect($commentIdsAt(glyph.getLatest(), selection.anchor.offset)).toEqual(["c1"]);
     });
   });
 
@@ -129,7 +154,7 @@ describe("$selectFirstCommentCarrier", () => {
     );
     editor.update(
       () => {
-        $selectFirstCommentCarrier([verse.getKey()]);
+        $selectFirstCommentCarrier("c1", [verse.getKey()]);
       },
       { discrete: true },
     );
@@ -158,7 +183,7 @@ describe("$selectFirstCommentCarrier", () => {
     );
     editor.update(
       () => {
-        $selectFirstCommentCarrier([second.getKey(), first.getKey()]);
+        $selectFirstCommentCarrier("c1", [second.getKey(), first.getKey()]);
       },
       { discrete: true },
     );

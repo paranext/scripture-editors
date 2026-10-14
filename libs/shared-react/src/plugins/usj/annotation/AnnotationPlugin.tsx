@@ -170,7 +170,7 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
    */
   const $removeAnnotationNodes = (type: string, id: string, nodeKeys?: Set<NodeKey>) => {
     const markKeys = Array.from(nodeKeys ?? markNodeMap.get(getTypeIDMapKey(type, id)) ?? []);
-    $removeTypedMarkId(type, id, markKeys);
+    const markCount = $removeTypedMarkId(type, id, markKeys);
     const covered: string[] = [];
     for (const key of Array.from(displayIndex.keysFor(type, id))) {
       const node = $getNodeByKey(key);
@@ -188,11 +188,19 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
     if (
       covered.length > 0 &&
       registration &&
-      markKeys.length === 0 &&
+      markCount === 0 &&
       !displayIndex.hasReported(type, id)
     ) {
       displayIndex.noteReported(type, id);
-      registration.onRemove?.(type, id, "removed", covered.join(""));
+      try {
+        registration.onRemove?.(type, id, "removed", covered.join(""));
+      } catch (error) {
+        // Thrown here, a host's error would make Lexical discard this removal. The editor's error
+        // handler gets it once the update is done instead.
+        queueMicrotask(() =>
+          editor._onError(error instanceof Error ? error : new Error(String(error))),
+        );
+      }
     }
   };
 

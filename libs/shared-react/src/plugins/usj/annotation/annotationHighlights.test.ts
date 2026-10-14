@@ -207,6 +207,28 @@ describe("AnnotationHighlighter", () => {
     expect(highlightCss()).toBe(css);
   });
 
+  it("moves a range painted again with another class set out of its old class set's highlight", () => {
+    const { highlighter, text } = setup();
+    const range = rangeOverText(text, 0, 1);
+    const other = rangeOverText(text, 7, 12);
+    if (!range || !other) throw new Error("the text renders 12 characters");
+    // Another leaf keeps class set `x` in use.
+    highlighter.setLeaf("other", [
+      { classNames: ["x"], annotations: ["a"], range: other, text: "grace" },
+    ]);
+    highlighter.setLeaf("k", [{ classNames: ["x"], annotations: ["a"], range, text: "|" }]);
+    highlighter.setLeaf("k", [{ classNames: ["y"], annotations: ["b"], range, text: "|" }]);
+
+    const painted = [...CSS.highlights].map(([name, highlight]) => ({
+      classNames: annotationHighlightClassNames(name),
+      size: highlight.size,
+    }));
+    expect(painted).toEqual([
+      { classNames: ["x"], size: 1 },
+      { classNames: ["y"], size: 1 },
+    ]);
+  });
+
   it("styles a class set a rule names only through an escaped selector", async () => {
     stylesheet(".annotationId-a\\:b { background-color: rgb(4, 5, 6); }");
     const { highlighter, text } = setup();
