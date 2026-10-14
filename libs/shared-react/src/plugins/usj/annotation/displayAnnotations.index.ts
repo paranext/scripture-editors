@@ -23,6 +23,7 @@ import {
   $getNodeByKey,
   $isDecoratorNode,
   COMMAND_PRIORITY_CRITICAL,
+  EditorState,
   HISTORIC_TAG,
   Klass,
   LexicalEditor,
@@ -61,6 +62,7 @@ import {
   forgetTypedMarkCallbacks,
   listenForTypedMarkRemovalReports,
   setTypedMarkRemovalSilenced,
+  takeRemovedTypedMarks,
   takeTypedMarkRemovalReports,
   TypedIDs,
   typedMarkClassNames,
@@ -191,6 +193,8 @@ function createIndex(editor: LexicalEditor): Entry {
   /** Set once the index is released: nothing paints after that. */
   let disposed = false;
   let emptied = new Set<string>();
+  /** Annotations a node began holding in the commit being made. */
+  let gainedHolder = new Set<string>();
   const theme = editor._config.theme;
 
   function holderCount(annotationKey: string): number {
@@ -203,7 +207,9 @@ function createIndex(editor: LexicalEditor): Entry {
   function addHolder(holders: Map<string, Set<NodeKey>>, annotationKey: string, key: NodeKey) {
     let keys = holders.get(annotationKey);
     if (!keys) holders.set(annotationKey, (keys = new Set()));
+    if (keys.has(key)) return;
     keys.add(key);
+    gainedHolder.add(annotationKey);
   }
 
   function dropHolder(holders: Map<string, Set<NodeKey>>, annotationKey: string, key: NodeKey) {
@@ -605,12 +611,29 @@ function createIndex(editor: LexicalEditor): Entry {
    * redo keeps the callbacks for the redo that brings the holders back. A settle that discards an
    * annotation's bytes, a collaborator's apply, and a selection delete that drops an emptied mark
    * without `remove()` all report.
+   *
+   * A mark Lexical drops without `remove()` (an emptied mark a selection delete takes away) cannot
+   * make its own report, so it is made here for it, with its own text — even while display bytes
+   * still hold the annotation, as a mark's own report is. Not when the annotation was handed on
+   * rather than lost: while another mark still holds it, or when a node began holding it in the
+   * same commit (a settle that re-spells a mark's bytes as a display byte, which then holds them).
+   * A cut that gives a held carrier a new piece in that commit also counts as a hand-on, so such a
+   * drop is left to the last holder's report.
    */
-  function reportDestroyed({ tags }: { tags: Set<string> }): void {
+  function reportDestroyed({
+    tags,
+    prevEditorState,
+  }: {
+    tags: Set<string>;
+    prevEditorState: EditorState;
+  }): void {
     takeMarkReports();
     const candidates = emptied;
     const heard = heardThisCommit;
     const dropped = droppedMarks;
+    const removedMarks = takeRemovedTypedMarks(editor);
+    const gained = gainedHolder;
+    gainedHolder = new Set();
     emptied = new Set();
     heardThisCommit = new Set();
     droppedMarks = new Map();
@@ -620,6 +643,17 @@ function createIndex(editor: LexicalEditor): Entry {
     }
     if (tags.has(HISTORIC_TAG)) return;
     const errors: unknown[] = [];
+    const report = (onRemove: TypedMarkOnRemove, type: string, id: string, text: string) => {
+      const annotationKey = indexKey(type, id);
+      reported.add(annotationKey);
+      setTypedMarkRemovalSilenced(editor, type, id, true);
+      for (const key of dropped.get(annotationKey) ?? []) forgetTypedMarkCallbacks(key, type, id);
+      try {
+        onRemove(type, id, "destroyed", text);
+      } catch (error) {
+        errors.push(error);
+      }
+    };
     for (const annotationKey of candidates) {
       if (holderCount(annotationKey) > 0) continue;
       const [type, id] = parseIndexKey(annotationKey);
@@ -629,14 +663,21 @@ function createIndex(editor: LexicalEditor): Entry {
       const text = coveredText.get(annotationKey) ?? "";
       forget(annotationKey, type, id);
       if (!onRemove || reported.has(annotationKey) || heard.has(annotationKey)) continue;
-      reported.add(annotationKey);
-      setTypedMarkRemovalSilenced(editor, type, id, true);
-      for (const key of dropped.get(annotationKey) ?? []) forgetTypedMarkCallbacks(key, type, id);
-      try {
-        onRemove(type, id, "destroyed", text);
-      } catch (error) {
-        errors.push(error);
-      }
+      report(onRemove, type, id, text);
+    }
+    for (const [annotationKey, keys] of dropped) {
+      if (holderCount(annotationKey) === 0 || (marksByAnnotation.get(annotationKey)?.size ?? 0) > 0)
+        continue;
+      if (gained.has(annotationKey) || reported.has(annotationKey) || heard.has(annotationKey))
+        continue;
+      const silent = keys.filter((key) => !removedMarks.has(key));
+      const onRemove = markOnRemove.get(annotationKey);
+      if (silent.length === 0 || !onRemove) continue;
+      const [type, id] = parseIndexKey(annotationKey);
+      const text = prevEditorState.read(() =>
+        silent.map((key) => $getNodeByKey(key)?.getTextContent() ?? "").join(""),
+      );
+      report(onRemove, type, id, text);
     }
     // Thrown from here, a host's error would skip the commit's later update listeners, its
     // deferred `onUpdate` callbacks and its queued updates. The editor's error handler gets it

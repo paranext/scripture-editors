@@ -725,6 +725,85 @@ describe("the display-annotation index", () => {
     release();
   });
 
+  /** `alpha` in a mark holding `m`, then the carrier `|grace` holding `m` whole. */
+  function $markThenCarrier(onRemove: TypedMarkOnRemove): { word: TextNode; carrier: TextNode } {
+    const mark = $createTypedMarkNode({});
+    mark.addID("external-spelling", "m", undefined, onRemove);
+    const word = $createTextNode("alpha");
+    const carrier = $setState($createTextNode("|grace"), textTypeState, "attribute");
+    $getRoot().append($createParaNode().append(mark.append(word), carrier));
+    $addDisplayAnnotation(carrier, "external-spelling", "m", 0, carrier.getTextContentSize());
+    $registerDisplayAnnotation("external-spelling", "m", { onRemove });
+    return { word, carrier };
+  }
+
+  it("reports a mark a selection delete empties once, with its own text, while a carrier still holds the annotation, and nothing when the carrier goes later", () => {
+    const { editor, release } = setup();
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    let word!: TextNode;
+    let carrier!: TextNode;
+    editor.update(
+      () => {
+        $getRoot().clear();
+        ({ word, carrier } = $markThenCarrier(onRemove));
+      },
+      { discrete: true },
+    );
+
+    // Lexical drops the emptied mark without calling its `remove()`.
+    editor.update(
+      () => {
+        const selection = $createRangeSelection();
+        selection.anchor.set(word.getKey(), 0, "text");
+        selection.focus.set(word.getKey(), word.getTextContentSize(), "text");
+        selection.removeText();
+      },
+      { discrete: true },
+    );
+
+    expect(onRemove.mock.calls).toEqual([["external-spelling", "m", "destroyed", "alpha"]]);
+    expect(
+      editor.getEditorState().read(() => $displayAnnotationsOf(carrier.getLatest()).length),
+    ).toBe(1);
+
+    editor.update(() => $removeCarrier(carrier), { discrete: true });
+
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    release();
+  });
+
+  it("reports nothing when a mark is dropped in the commit a carrier begins holding its annotation", () => {
+    const { editor, release } = setup();
+    const onRemove = vi.fn<TypedMarkOnRemove>();
+    let word!: TextNode;
+    editor.update(
+      () => {
+        $getRoot().clear();
+        const mark = $createTypedMarkNode({});
+        mark.addID("external-spelling", "m", undefined, onRemove);
+        word = $createTextNode("|grace");
+        $getRoot().append($createParaNode().append(mark.append(word)));
+      },
+      { discrete: true },
+    );
+
+    // A settle re-spelling the marked bytes as a display byte: the mark's paragraph is rebuilt
+    // and the new carrier holds the annotation.
+    editor.update(
+      () => {
+        const para = word.getLatest().getTopLevelElementOrThrow();
+        const carrier = $setState($createTextNode("|grace"), textTypeState, "attribute");
+        para.replace($createParaNode().append(carrier));
+        $addDisplayAnnotation(carrier, "external-spelling", "m", 0, carrier.getTextContentSize());
+        $registerDisplayAnnotation("external-spelling", "m", { onRemove });
+      },
+      { discrete: true },
+    );
+
+    expect(onRemove).not.toHaveBeenCalled();
+    release();
+  });
+
   it("keeps a type and an id apart even when both contain the NUL character", () => {
     const { editor, release } = setup();
     const nul = String.fromCharCode(0);

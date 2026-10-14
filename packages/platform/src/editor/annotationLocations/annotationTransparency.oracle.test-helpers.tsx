@@ -42,6 +42,7 @@ import {
   outsideNotes,
   pendingOracleView,
   PositionReport,
+  PROTECTED_NOTE_SHELL_VIEW,
   readExpectedFailures,
   runKeystrokeCase,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
@@ -55,12 +56,15 @@ import {
   COPY_COMMAND,
   LexicalEditor,
   LexicalNode,
+  NodeKey,
+  SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
 import {
   $carrierHoldableRange,
   $isDisplayAnnotationCarrier,
   $isMarkerTrailingSeparator,
+  $isTypedMarkNode,
   $logicalText,
   NBSP,
   TypedMarkOnRemove,
@@ -190,6 +194,8 @@ export function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
 /** The annotations set on `mounted`, with the removal reports each received. */
 interface AppliedAnnotations {
   ids: string[];
+  /** The `<mark>`s holding each id once set: each reports its own removal when it goes. */
+  marks: Map<string, NodeKey[]>;
   removals: Map<string, Parameters<TypedMarkOnRemove>[]>;
 }
 
@@ -209,10 +215,23 @@ async function applyAnnotations(
       await Promise.resolve();
     });
   }
-  const ids = mounted.lexical
-    .getEditorState()
-    .read(() => plan.map(({ id }) => id).filter((id) => $heldIndexes(HELD_TYPE, id).size > 0));
-  return { ids, removals };
+  return mounted.lexical.getEditorState().read(() => {
+    const ids = plan.map(({ id }) => id).filter((id) => $heldIndexes(HELD_TYPE, id).size > 0);
+    const marks = new Map(ids.map((id) => [id, $marksHolding(id)]));
+    return { ids, marks, removals };
+  });
+}
+
+/** The keys of the `<mark>`s holding `id` now, in document order. */
+function $marksHolding(id: string): NodeKey[] {
+  const keys: NodeKey[] = [];
+  const visit = (node: LexicalNode): void => {
+    if ($isTypedMarkNode(node) && (node.getTypedIDs()[HELD_TYPE] ?? []).includes(id))
+      keys.push(node.getKey());
+    if ($isElementNode(node)) node.getChildren().forEach(visit);
+  };
+  visit($getRoot());
+  return keys;
 }
 
 /** A caret position in the edited paragraph's editable texts, by the bytes before it. */
@@ -337,7 +356,9 @@ function observables(run: CaseRun): { [name: string]: string } {
     "pending text": run.before.text,
     "pending screen": run.before.screen ?? "",
     "pending positions": positionSets(run.before.reported),
-    "pending round trip": JSON.stringify(run.before.roundTrip),
+    // Per document position, as the reports are: a cut inside a carrier is two caret positions at
+    // one document position, and the same failure from both is one failure there.
+    "pending round trip": JSON.stringify([...new Set(run.before.roundTrip)]),
     "settled screen": run.shownLines ?? "",
     "settled text": run.after.text,
     "settled positions": positionSets(run.after.reported),
@@ -349,18 +370,43 @@ function composedDelta(editor: LexicalEditor): string {
   return canonicalJson(composedOps(getEditorDelta(editor.getEditorState()).ops));
 }
 
+/**
+ * The pending/settled oracle's own checks of `run`, as the mismatch each produced by the check's
+ * key with the case label taken off (both runs' labels spell the same site). The same-place
+ * check needs the whole row's history and is not read here.
+ */
+function invariantResults(
+  run: CaseRun,
+  view: string,
+  loadedOutsideNotes: string,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [key, detail] of caseMismatches(run, view, loadedOutsideNotes, new Map()))
+    if (!key.includes("[same place]"))
+      out.set(key.startsWith(run.label) ? key.slice(run.label.length).trim() : key, detail);
+  return out;
+}
+
 /** Whether `keystroke` acts on a node as a whole rather than at an offset in it. A content node a
  * mark splits is not the node the plain run edits, so such a case compares nothing there. */
 function isNodeShaped(keystroke: OracleKeystroke): boolean {
   return keystroke.name.includes("over the whole text");
 }
 
-/** The `text/plain` a copy of the whole edited paragraph puts on the clipboard. */
-async function copiedBytes(mounted: MountedInView): Promise<string> {
+/**
+ * The `text/plain` a copy of the whole edited paragraph puts on the clipboard. In the popover's
+ * view the selection is announced as a change in the same update, as every caret placement there
+ * is, so the shell's caret guard confines it to the note before the copy reads it. Unannounced,
+ * whether the guard had run by then would depend on whether jsdom's own deferred `selectionchange`
+ * fired first.
+ */
+async function copiedBytes(mounted: MountedInView, view: string): Promise<string> {
   await act(async () => {
     mounted.lexical.update(() => {
       const para = $getRoot().getChildren()[2];
       if ($isElementNode(para)) para.select(0, para.getChildrenSize());
+      if (view === PROTECTED_NOTE_SHELL_VIEW)
+        mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
     });
   });
   const { event, getData } = copyEvent();
@@ -376,7 +422,9 @@ const FILLER = new RegExp(`^[\\s${NBSP}${ZWSP}]$`);
 /**
  * The annotated run's own failures after `mounted` settled: a held byte nothing paints, a
  * non-whitespace byte painted but not held, a leaf painted in part, and a removal report that
- * disagrees with whether the annotation's bytes are gone.
+ * disagrees with `setAnnotation`'s `onRemove` contract — an annotation whose bytes are all gone
+ * reports once; one still held reports nothing, unless a `<mark>` that held it once it was set
+ * has gone (that mark reports its own removal, whatever else still holds the annotation).
  */
 function annotatedFailures(
   mounted: MountedInView,
@@ -404,7 +452,9 @@ function annotatedFailures(
       if (!history) {
         if (reports.length === 0 && held.size === 0)
           failures.push(`${id}: its bytes are gone but its removal was never reported`);
-        if (reports.length === 1 && held.size > 0)
+        const nowMarks = new Set($marksHolding(id));
+        const aMarkWent = (applied.marks.get(id) ?? []).some((key) => !nowMarks.has(key));
+        if (reports.length === 1 && held.size > 0 && !aMarkWent)
           failures.push(`${id}: reported removed (${reports[0][2]}) while it still holds bytes`);
       }
     }
@@ -455,7 +505,8 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
             const expected = observables(plain);
             expected.delta = composedDelta(plainMounted.lexical);
             expected.ops = composedChange(plainMounted.ops);
-            expected.copy = await copiedBytes(plainMounted);
+            expected.copy = await copiedBytes(plainMounted, view);
+            const plainInvariants = invariantResults(plain, view, loadedOutsideNotes);
             const plainNodeText = plainMounted.lexical
               .getEditorState()
               .read(() => $spellings(site)[0]?.node.getTextContent());
@@ -508,7 +559,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               const actual = observables(annotated);
               actual.delta = composedDelta(mounted.lexical);
               actual.ops = composedChange(mounted.ops.slice(opsBefore));
-              actual.copy = await copiedBytes(mounted);
+              actual.copy = await copiedBytes(mounted, view);
               for (const [name, value] of Object.entries(expected))
                 if (actual[name] !== value)
                   mismatches.set(
@@ -518,15 +569,21 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               const paint = annotatedFailures(mounted, applied, annotated.history);
               if (paint.length > 0)
                 mismatches.set(`${label} [paint]`, `${label} [paint]\n    ${paint.join("\n    ")}`);
-              // The annotated run also keeps the pending/settled oracle's own invariants.
-              for (const [key, detail] of caseMismatches(
-                annotated,
-                view,
-                loadedOutsideNotes,
-                new Map(),
-              ))
-                if (!key.includes("[same place]"))
-                  mismatches.set(`${key} [annotated]`, `${detail}\n    (annotated run)`);
+              // The annotated run keeps the pending/settled oracle's own invariants exactly as
+              // the plain run does: a case that violates one does so identically in both.
+              const annotatedInvariants = invariantResults(annotated, view, loadedOutsideNotes);
+              for (const key of new Set([
+                ...plainInvariants.keys(),
+                ...annotatedInvariants.keys(),
+              ])) {
+                const inPlain = plainInvariants.get(key);
+                const inAnnotated = annotatedInvariants.get(key);
+                if (inPlain === inAnnotated) continue;
+                mismatches.set(
+                  `${label} [invariant] ${key}`,
+                  `${label} [invariant] ${key}\n    plain     ${inPlain ?? "(holds)"}\n    annotated ${inAnnotated ?? "(holds)"}`,
+                );
+              }
               mounted.unmount();
             }
             if (!anySpellingApplied && !isNodeShaped(keystroke))

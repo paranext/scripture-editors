@@ -38,3 +38,42 @@ export function $getLogicalParent(node: LexicalNode): ElementNode | null {
   while (parent && $isContentTransparent(parent)) parent = parent.getParent();
   return parent;
 }
+
+/**
+ * The leaf beside `node` in reading order with every annotation mark unwrapped: a mark `node` ends
+ * is stepped out of, a mark beside it is stepped into (to its last leaf before `node`, its first
+ * after), and an empty mark is stepped over. `null` at the edge of the element the marks sit in.
+ * Content an annotation wraps is cut into several text nodes where it would otherwise be one, so a
+ * reader of "the text beside this one" reads through this to see what it sees without the mark.
+ */
+export function $leafBesideThroughMarks(
+  node: LexicalNode,
+  side: "previous" | "next",
+): LexicalNode | null {
+  const beside = (from: LexicalNode): LexicalNode | null =>
+    side === "next" ? from.getNextSibling() : from.getPreviousSibling();
+  // The leaf of `mark` nearest `node`, or `null` when the mark holds none.
+  const edgeLeaf = (mark: ElementNode): LexicalNode | null => {
+    const children = mark.getChildren();
+    if (side === "previous") children.reverse();
+    for (const child of children) {
+      const leaf = $isTypedMarkNode(child) ? edgeLeaf(child) : child;
+      if (leaf) return leaf;
+    }
+    return null;
+  };
+  let current = node;
+  for (;;) {
+    let sibling = beside(current);
+    while (!sibling) {
+      const parent = current.getParent();
+      if (!$isTypedMarkNode(parent)) return null;
+      current = parent;
+      sibling = beside(current);
+    }
+    if (!$isTypedMarkNode(sibling)) return sibling;
+    const leaf = edgeLeaf(sibling);
+    if (leaf) return leaf;
+    current = sibling;
+  }
+}
