@@ -246,7 +246,12 @@ function joinSerializedChain(pieces: readonly SerializedLexicalNode[]): Serializ
   );
   const joined = coalesceAnnotations(annotations);
   if (joined.length > 0) state[displayAnnotationsState.key] = { basis: text, annotations: joined };
-  return { ...head, text, [NODE_STATE_KEY]: Object.keys(state).length > 0 ? state : undefined };
+  const node: SerializedLexicalNode & { text: string } = {
+    ...head,
+    text,
+    [NODE_STATE_KEY]: Object.keys(state).length > 0 ? state : undefined,
+  };
+  return node;
 }
 
 /**
@@ -277,7 +282,12 @@ export function joinSerializedPieces(
     if ("children" in joined && Array.isArray(joined.children)) {
       const children: SerializedLexicalNode[] = joined.children;
       const joinedChildren = joinSerializedPieces(children);
-      if (joinedChildren !== children) joined = { ...joined, children: joinedChildren };
+      if (joinedChildren !== children) {
+        const withChildren: SerializedLexicalNode & {
+          children: readonly SerializedLexicalNode[];
+        } = { ...joined, children: joinedChildren };
+        joined = withChildren;
+      }
     }
     if (joined !== node) changed = true;
     out.push(joined);

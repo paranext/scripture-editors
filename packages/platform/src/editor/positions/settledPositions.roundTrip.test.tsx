@@ -17,7 +17,12 @@ import {
   $settledLocationFromLivePoint,
 } from "./settledPositions.utils";
 import { twoParaUsj } from "./positions.test-helpers";
-import { MarkerContent, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
+import {
+  isUsjClosingMarkerLocation,
+  MarkerContent,
+  Usj,
+  UsjDocumentLocation,
+} from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $dfs } from "@lexical/utils";
 import { $getNodeByKey, $getRoot, LexicalNode, TextNode } from "lexical";
@@ -651,12 +656,13 @@ describe.each(VIEWS)(
         const reported: (UsjDocumentLocation | undefined)[] = [];
         for (let offset = 0; offset <= head.getTextContentSize(); offset += 1)
           reported.push($settledLocationFromLivePoint(prepared, head, offset));
-        const jsonPath = reported[0]?.jsonPath ?? "";
+        const front = reported[0];
+        if (!isUsjClosingMarkerLocation(front)) throw new Error("expected a closer location");
         const takenBack: unknown[] = [];
         for (let offset = 0; offset <= "\\wx*".length; offset += 1)
           takenBack.push(
             $liveSelectionFromSettled(context, prepared, {
-              start: { jsonPath, closingMarkerOffset: offset },
+              start: { ...front, closingMarkerOffset: offset },
             }),
           );
         return { reported, takenBack };
@@ -721,11 +727,12 @@ describe.each(VIEWS)(
       return pending.mounted.lexical.getEditorState().read(() => {
         const prepared = $prepareSettleScopes(context);
         const head = pending.$closer();
-        const jsonPath = $settledLocationFromLivePoint(prepared, head, 0)?.jsonPath ?? "";
+        const front = $settledLocationFromLivePoint(prepared, head, 0);
+        if (!isUsjClosingMarkerLocation(front)) throw new Error("expected a closer location");
         const points: (number | string | undefined)[] = [];
         for (let offset = 0; offset <= "\\w*".length; offset += 1) {
           const point = $livePointFromSettledLocation(context, prepared, {
-            jsonPath,
+            ...front,
             closingMarkerOffset: offset,
           });
           const node = point && $getNodeByKey(point.key);
