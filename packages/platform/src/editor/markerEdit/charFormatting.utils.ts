@@ -33,6 +33,9 @@ import {
   $isSomeParaNode,
   $isTypedMarkNode,
   $liftOutOfCharStack,
+  $logicalOffset,
+  $logicalText,
+  $pieceAtLogicalOffset,
   $selectCharContentStart,
   NBSP,
   SomeParaNode,
@@ -116,10 +119,16 @@ export function $removeCharFormattingFromSelection(): boolean {
       return true;
     }
     // Outside any character style there is nothing to strip, so the key is a plain space —
-    // reusing the next character when it is already one (the caret just moves past it).
-    if ($isTextNode(anchorNode) && anchorNode.getTextContent()[offset] === " ") {
-      anchorNode.select(offset + 1, offset + 1);
-      return true;
+    // reusing the next character when it is already one (the caret just moves past it). A
+    // display-byte carrier an annotation cuts into pieces is read whole, so the next character
+    // can be the first of the next piece.
+    if ($isTextNode(anchorNode)) {
+      const at = $logicalOffset(anchorNode, offset);
+      if ($logicalText(anchorNode)[at] === " ") {
+        const [piece, pieceOffset] = $pieceAtLogicalOffset(anchorNode, at + 1);
+        piece.select(pieceOffset, pieceOffset);
+        return true;
+      }
     }
     selection.insertText(" ");
     return true;
@@ -142,9 +151,12 @@ export function $removeCharFormattingFromSelection(): boolean {
     // reopened span until its own turn), leaving `target` stale — and `setTextContent` compares
     // the new text against the STALE instance's own, so the shed would silently no-op exactly
     // when the pre-prefix text equals the post-shed text, leaving the separator byte in the file.
+    // Only a text whose whole carrier starts with the separator carries one: a later piece of a
+    // display-byte carrier an annotation cuts (a note caller's closing no-break space) is not where
+    // a span's content starts.
     const latest = target.getLatest();
-    const text = latest.getTextContent();
-    if (text.startsWith(NBSP)) latest.setTextContent(text.slice(NBSP.length));
+    if ($logicalOffset(latest, 0) === 0 && $logicalText(latest).startsWith(NBSP))
+      latest.setTextContent(latest.getTextContent().slice(NBSP.length));
   }
   // Always handled, even with nothing to strip. PT9 inserts no space on a range, so declining is
   // not "nothing happened" — it hands the keystroke to the browser, which types a literal space
