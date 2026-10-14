@@ -21,6 +21,8 @@ import {
 } from "./displayAnnotations.state.js";
 import {
   $addUpdateTag,
+  $getEditor,
+  $getNodeByKey,
   $getSelection,
   $getState,
   $isRangeSelection,
@@ -109,6 +111,25 @@ export function $logicalText(node: LexicalNode): string {
   return $pieces(node)
     .map((piece) => piece.getTextContent())
     .join("");
+}
+
+/**
+ * The whole text of `node`'s carrier in the editor's last committed state — the state the active
+ * update started from — or `undefined` when its head did not exist there. A per-node pass that
+ * acts only on a change of a carrier's bytes compares against this, not against its node being
+ * dirty: cutting or joining pieces beside a carrier dirties it (Lexical rewrites a neighbour's
+ * sibling links) without changing a byte of it.
+ *
+ * Read-only: call inside `editor.update()`.
+ */
+export function $logicalTextBeforeUpdate(node: LexicalNode): string | undefined {
+  const key = $pieceHead(node).getKey();
+  return $getEditor()
+    .getEditorState()
+    .read(() => {
+      const before = $getNodeByKey(key);
+      return before ? $logicalText(before) : undefined;
+    });
 }
 
 /** The node after `node`'s whole carrier (after its last piece). */

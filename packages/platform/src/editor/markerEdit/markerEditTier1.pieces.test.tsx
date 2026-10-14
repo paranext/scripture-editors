@@ -7,8 +7,17 @@ import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetU
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { inOneUpdate } from "./displayAnnotations.test-helpers";
 import { $keepProtectedNoteCloser } from "./markerEditTier1.utils";
+import { drainNativeSelectionChange } from "../editor-test.utils";
+import { act } from "@testing-library/react";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
-import { $createTextNode, $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
+import {
+  $createTextNode,
+  $getRoot,
+  $isElementNode,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  LexicalEditor,
+  LexicalNode,
+} from "lexical";
 import {
   $addDisplayAnnotation,
   $coveredDisplayText,
@@ -24,8 +33,10 @@ import {
   $logicalText,
   $noteEditableCallerNode,
   $pieces,
+  $setLogicalText,
   CharNode,
   getEditableCallerText,
+  NBSP,
   NoteNode,
   ParaNode,
 } from "shared";
@@ -240,5 +251,42 @@ describe("a carrier an annotation cuts into pieces", () => {
       expect(found.getTextContent().endsWith(`a notex${closerText}`)).toBe(true);
     });
     expect(heldBytes(mounted.lexical)).toEqual({ star: "*" });
+  });
+
+  it("leaves a deleted caller waiting when the next key renames the cut opener before it", async () => {
+    // `\f \ft note\f*`: the empty caller is its two separators. Deleting the first leaves the
+    // caret at the caller's start, which is the opener's end, so the `x` typed next renames the
+    // opener (`\fx`), and the caller waits as deleted until the caret leaves the note.
+    const note: MarkerObject = {
+      type: "note",
+      marker: "f",
+      caller: "",
+      content: [{ type: "char", marker: "ft", content: ["note"] }],
+    };
+    const noteText = async (cutOpener: boolean) => {
+      const mounted = await mountExpandedNoteEditor(twoParaUsj(["a", note, " b"]));
+      if (cutOpener)
+        await inOneUpdate(mounted.lexical, () => {
+          const opener = $find($isNoteNode).getFirstChild();
+          if (!$isMarkerNode(opener)) throw new Error("no opener");
+          // `\f`: hold the `f` alone, so the opener is cut in two.
+          $addDisplayAnnotation(opener, "test", "name", 1, 2);
+        });
+      await inOneUpdate(mounted.lexical, () => {
+        const caller = $noteEditableCallerNode($find($isNoteNode));
+        if (!caller) throw new Error("no caller text");
+        $setLogicalText(caller, $logicalText(caller).slice(1)).select(0, 0);
+      });
+      await act(async () => {
+        await drainNativeSelectionChange();
+      });
+      await inOneUpdate(mounted.lexical, () => {
+        mounted.lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "x");
+      });
+      return mounted.lexical.getEditorState().read(() => $find($isNoteNode).getTextContent());
+    };
+    const uncut = await noteText(false);
+    expect(uncut.startsWith(`\\fx${NBSP}\\ft`)).toBe(true);
+    expect(await noteText(true)).toBe(uncut);
   });
 });
