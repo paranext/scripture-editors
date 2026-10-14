@@ -5,16 +5,29 @@ import { $createMarkerNode } from "../nodes/features/MarkerNode.js";
 import { $createUnknownNode, UnknownNode } from "../nodes/features/UnknownNode.js";
 import { $createAttributeRunNode } from "../nodes/usj/AttributeRunNode.js";
 import { $createCharNode } from "../nodes/usj/CharNode.js";
-import { $createChapterNode } from "../nodes/usj/ChapterNode.js";
+import { $createChapterNode, ChapterNode } from "../nodes/usj/ChapterNode.js";
 import { $createMilestoneNode } from "../nodes/usj/MilestoneNode.js";
-import { $createNoteNode } from "../nodes/usj/NoteNode.js";
+import { $createNoteNode, NoteNode } from "../nodes/usj/NoteNode.js";
 import { $createParaNode } from "../nodes/usj/ParaNode.js";
-import { $createVerseNode } from "../nodes/usj/VerseNode.js";
+import { $createVerseNode, VerseNode } from "../nodes/usj/VerseNode.js";
 import { $runDiverges, $runEntirelyAbsent } from "../nodes/usj/displayRunSync.utils.js";
 import { getEditableCallerText, getVisibleOpenMarkerText } from "../nodes/usj/node.utils.js";
 import { NBSP } from "../nodes/usj/node-constants.js";
 import { createBasicTestEnvironment } from "../nodes/usj/test.utils.js";
-import { $createTextNode, $getRoot, $setState } from "lexical";
+import {
+  $addDisplayAnnotation,
+  registerDisplayAnnotationBasis,
+} from "../nodes/features/displayAnnotations.utils.js";
+import { $pieces } from "../nodes/features/displayPieces.state.js";
+import {
+  $createRangeSelection,
+  $createTextNode,
+  $getRoot,
+  $setSelection,
+  $setState,
+  LexicalNode,
+  TextNode,
+} from "lexical";
 import { describe, expect, it } from "vitest";
 
 describe("displayRunRegistry expectedPieces", () => {
@@ -719,5 +732,164 @@ describe("every registered kind declares every duty", () => {
         "nestedGlyph",
       ]),
     );
+  });
+});
+
+describe("displayRunRegistry reads a carrier an annotation cut into pieces as one carrier", () => {
+  function mount() {
+    const { editor } = createBasicTestEnvironment();
+    registerDisplayAnnotationBasis(editor);
+    return editor;
+  }
+
+  /** An attribute-tagged value text. */
+  function $value(text: string): TextNode {
+    return $setState($createTextNode(text), textTypeState, "attribute");
+  }
+
+  function $caretAt(node: LexicalNode, offset: number): void {
+    const selection = $createRangeSelection();
+    selection.anchor.set(node.getKey(), offset, "text");
+    selection.focus.set(node.getKey(), offset, "text");
+    $setSelection(selection);
+  }
+
+  it("makes only a verse's head its runs' owner", () => {
+    const editor = mount();
+    let verse!: VerseNode;
+    editor.update(
+      () => {
+        verse = $createVerseNode("12", getVisibleOpenMarkerText("v", "12"), undefined, "2");
+        $getRoot().append($createParaNode("p").append(verse));
+        $addDisplayAnnotation(verse, "check", "a", 3, 4);
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      const pieces = $pieces(verse);
+      expect(pieces.length).toBe(3);
+      for (const kind of ["va", "vp"] as const)
+        expect(pieces.map((piece) => displayRunDescriptor(kind).ownerPredicate(piece))).toEqual([
+          true,
+          false,
+          false,
+        ]);
+    });
+  });
+
+  it("owns every piece of a loose \\va value by its verse", () => {
+    const editor = mount();
+    let verse!: VerseNode;
+    let value!: TextNode;
+    editor.update(
+      () => {
+        verse = $createVerseNode("1", getVisibleOpenMarkerText("v", "1"), undefined, "12");
+        value = $value(`${NBSP}12`);
+        $getRoot().append(
+          $createParaNode("p").append(
+            verse,
+            $createMarkerNode("va"),
+            value,
+            $createMarkerNode("va", "closing"),
+          ),
+        );
+        $addDisplayAnnotation(value, "check", "a", 1, 2);
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      const pieces = $pieces(value);
+      expect(pieces.length).toBe(3);
+      for (const piece of pieces)
+        expect(displayRunDescriptor("va").ownerOf(piece)?.getKey()).toBe(verse.getKey());
+    });
+  });
+
+  it("owns every piece of a loose \\cat value by its note", () => {
+    const editor = mount();
+    let note!: NoteNode;
+    let value!: TextNode;
+    editor.update(
+      () => {
+        note = $createNoteNode("f", "+", false, "People");
+        value = $value(`${NBSP}People`);
+        note.append(
+          $createMarkerNode("f"),
+          $createTextNode(getEditableCallerText("+")),
+          $createMarkerNode("cat"),
+          value,
+          $createMarkerNode("cat", "closing"),
+          $createTextNode("note body"),
+        );
+        $getRoot().append($createParaNode("p").append(note));
+        $addDisplayAnnotation(value, "check", "a", 1, 3);
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      const pieces = $pieces(value);
+      expect(pieces.length).toBe(3);
+      for (const piece of pieces)
+        expect(displayRunDescriptor("cat").ownerOf(piece)?.getKey()).toBe(note.getKey());
+    });
+  });
+
+  it("owns every piece of a loose \\ca value by its chapter", () => {
+    const editor = mount();
+    let chapter!: ChapterNode;
+    let value!: TextNode;
+    editor.update(
+      () => {
+        chapter = $createChapterNode("1", undefined, "12");
+        value = $value(`${NBSP}12`);
+        chapter.append(
+          $createTextNode(getVisibleOpenMarkerText("c", "1") ?? ""),
+          $createMarkerNode("ca"),
+          value,
+          $createMarkerNode("ca", "closing"),
+        );
+        $getRoot().append(chapter);
+        $addDisplayAnnotation(value, "check", "a", 1, 2);
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      const pieces = $pieces(value);
+      expect(pieces.length).toBe(3);
+      for (const piece of pieces)
+        expect(displayRunDescriptor("ca").ownerOf(piece)?.getKey()).toBe(chapter.getKey());
+    });
+  });
+
+  it("graces a missing \\cat run at the end of a cut caller, not at a cut inside it", () => {
+    const editor = mount();
+    let note!: NoteNode;
+    let caller!: TextNode;
+    editor.update(
+      () => {
+        note = $createNoteNode("f", "+", false, "People");
+        caller = $createTextNode(getEditableCallerText("+"));
+        note.append($createMarkerNode("f"), caller, $createTextNode("note body"));
+        $getRoot().append($createParaNode("p").append(note));
+        $addDisplayAnnotation(caller, "check", "a", 1, 2);
+      },
+      { discrete: true },
+    );
+    const graced = (piece: number, at: "start" | "end") => {
+      let result = false;
+      editor.update(
+        () => {
+          const node = $pieces(caller)[piece];
+          $caretAt(node, at === "start" ? 0 : node.getTextContentSize());
+          result = displayRunDescriptor("cat").graceSite(note, {});
+        },
+        { discrete: true },
+      );
+      return result;
+    };
+    editor.read(() => expect($pieces(caller).length).toBe(3));
+    expect(graced(2, "end")).toBe(true);
+    expect(graced(0, "end")).toBe(false);
+    expect(graced(1, "start")).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 /** Conforms with USJ v3.1 @see https://docs.usfm.bible/usfm/3.1/cv/v.html */
 
+import { $pieces } from "../features/displayPieces.state.js";
 import { UnknownAttributes, VERSE_CLASS_NAME } from "./node-constants.js";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import {
@@ -99,6 +100,16 @@ export class VerseNode extends TextNode {
       .setUnknownAttributes(serializedNode.unknownAttributes);
   }
 
+  /**
+   * Apply `write` to a writable copy of every piece of this verse — one piece unless an annotation
+   * has cut the verse (`displayPieces.state.ts`) — so every piece keeps the verse's fields and any
+   * piece read for them answers for the whole verse. Returns this piece, writable. Mutating.
+   */
+  private $writeEveryPiece(write: (piece: this) => void): this {
+    for (const piece of $pieces(this)) write(piece.getWritable());
+    return this.getWritable();
+  }
+
   setMarker(marker: VerseMarker): this {
     if (this.__marker === marker) return this;
 
@@ -115,9 +126,7 @@ export class VerseNode extends TextNode {
   setNumber(verseNumber: string): this {
     if (this.__number === verseNumber) return this;
 
-    const self = this.getWritable();
-    self.__number = verseNumber;
-    return self;
+    return this.$writeEveryPiece((piece) => (piece.__number = verseNumber));
   }
 
   getNumber(): string {
@@ -128,9 +137,7 @@ export class VerseNode extends TextNode {
   setSid(sid: string | undefined): this {
     if (this.__sid === sid) return this;
 
-    const self = this.getWritable();
-    self.__sid = sid;
-    return self;
+    return this.$writeEveryPiece((piece) => (piece.__sid = sid));
   }
 
   getSid(): string | undefined {
@@ -141,9 +148,7 @@ export class VerseNode extends TextNode {
   setAltnumber(altnumber: string | undefined): this {
     if (this.__altnumber === altnumber) return this;
 
-    const self = this.getWritable();
-    self.__altnumber = altnumber;
-    return self;
+    return this.$writeEveryPiece((piece) => (piece.__altnumber = altnumber));
   }
 
   getAltnumber(): string | undefined {
@@ -154,9 +159,7 @@ export class VerseNode extends TextNode {
   setPubnumber(pubnumber: string | undefined): this {
     if (this.__pubnumber === pubnumber) return this;
 
-    const self = this.getWritable();
-    self.__pubnumber = pubnumber;
-    return self;
+    return this.$writeEveryPiece((piece) => (piece.__pubnumber = pubnumber));
   }
 
   getPubnumber(): string | undefined {
@@ -165,9 +168,7 @@ export class VerseNode extends TextNode {
   }
 
   setUnknownAttributes(unknownAttributes: UnknownAttributes | undefined): this {
-    const self = this.getWritable();
-    self.__unknownAttributes = unknownAttributes;
-    return self;
+    return this.$writeEveryPiece((piece) => (piece.__unknownAttributes = unknownAttributes));
   }
 
   getUnknownAttributes(): UnknownAttributes | undefined {

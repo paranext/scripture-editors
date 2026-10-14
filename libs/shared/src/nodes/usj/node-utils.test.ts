@@ -1,8 +1,14 @@
 import { $createImmutableTypedTextNode } from "../features/ImmutableTypedTextNode.js";
-import { $createMarkerNode } from "../features/MarkerNode.js";
+import { $createMarkerNode, MarkerNode } from "../features/MarkerNode.js";
+import {
+  $addDisplayAnnotation,
+  registerDisplayAnnotationBasis,
+} from "../features/displayAnnotations.utils.js";
+import { $pieces } from "../features/displayPieces.state.js";
 import { $createTypedMarkNode, TypedMarkNode } from "../features/TypedMarkNode.js";
 import { $createCursorPlaceholderNode } from "../../plugins/CursorHandler/index.js";
-import { textTypeState } from "../collab/delta.state.js";
+import { MARKER_TRAILING_SPACE_TEXT_TYPE, textTypeState } from "../collab/delta.state.js";
+import { $createBookNode } from "./BookNode.js";
 import { $createAttributeRunNode } from "./AttributeRunNode.js";
 import { $createChapterNode, ChapterNode } from "./ChapterNode.js";
 import { $createCharNode, $isCharNode, CharNode } from "./CharNode.js";
@@ -18,12 +24,15 @@ import {
   $getLogicalPointFromElementPoint,
   $getLogicalTextLocation,
   $getTextNodeAtLogicalOffset,
+  $isBookPrefixGlyph,
   $isSomeChapterNode,
+  $paraPrefixSeparatorCaretHeld,
   $setCharNodeMarker,
   $shouldIgnoreNodeForContentIndexes,
   closingMarkerText,
   getEditableCallerText,
   getNextVerse,
+  getVisibleOpenMarkerText,
   getUnknownAttributes,
   isSelectionStartNodeExpectedError,
   isValidNumberedMarker,
@@ -37,15 +46,20 @@ import {
   removeNodesBeforeNode,
 } from "./node.utils.js";
 import { IMMUTABLE_NOTE_CALLER_NODE_TYPE, NBSP } from "./node-constants.js";
-import { $createParaNode } from "./ParaNode.js";
+import { $createParaNode, $isParaNode, ParaNode } from "./ParaNode.js";
 import { createBasicTestEnvironment } from "./test.utils.js";
 import { $createVerseNode, VerseNode } from "./VerseNode.js";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 import {
+  $createRangeSelection,
   $getNodeByKey,
   $getRoot,
+  $isTextNode,
+  $setSelection,
   $setState,
   DecoratorNode,
+  LexicalEditor,
+  LexicalNode,
   NodeKey,
   $createTextNode,
   $isElementNode,
@@ -1831,3 +1845,192 @@ function buildAnnotatedPara() {
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   return { editor, t1: t1!, t2: t2!, t3: t3! };
 }
+
+describe("a display-byte carrier an annotation cut into pieces", () => {
+  /** An editor whose carriers an annotation cuts into pieces where its hold ends. */
+  function mount($build: () => void): LexicalEditor {
+    const { editor } = createBasicTestEnvironment(nodes);
+    registerDisplayAnnotationBasis(editor);
+    editor.update($build, { discrete: true });
+    return editor;
+  }
+
+  function $cut(node: LexicalNode, start: number, end: number): void {
+    $addDisplayAnnotation(node, "check", "cut", start, end);
+  }
+
+  function $caretAt(node: LexicalNode, offset: number): void {
+    const selection = $createRangeSelection();
+    selection.anchor.set(node.getKey(), offset, "text");
+    selection.focus.set(node.getKey(), offset, "text");
+    $setSelection(selection);
+  }
+
+  function $firstPara(): ParaNode {
+    const para = $getRoot().getFirstChild();
+    if (!$isParaNode(para)) throw new Error("no paragraph");
+    return para;
+  }
+
+  /** Text, a verse, text: the verse is cut into `\v` + NBSP, `12`, and its trailing space. */
+  function mountCutVerse(cut: boolean): LexicalEditor {
+    return mount(() => {
+      const verse = $createVerseNode("12", getVisibleOpenMarkerText("v", "12"));
+      $getRoot().append(
+        $createParaNode().append($createTextNode("In the "), verse, $createTextNode("beginning")),
+      );
+      if (cut) $cut(verse, 3, 5);
+    });
+  }
+
+  it("is one content item, wherever an element point or a logical index falls", () => {
+    const shape = (editor: LexicalEditor) =>
+      editor.getEditorState().read(() => {
+        const para = $firstPara();
+        return $getLogicalContentItems(para, false).map((item) => item.type);
+      });
+    expect(shape(mountCutVerse(true))).toEqual(shape(mountCutVerse(false)));
+
+    const editor = mountCutVerse(true);
+    editor.getEditorState().read(() => {
+      const para = $firstPara();
+      // Children: 0="In the "  1=`\v `  2="12"  3=" "  4="beginning".
+      expect(para.getChildrenSize()).toBe(5);
+      expect($getLogicalIndexOfChild(para, para.getChildAtIndex(2) ?? para)).toBe(1);
+      // A point between two pieces of the verse is inside it: the closest point to its left is in
+      // front of the verse.
+      for (const offset of [2, 3])
+        expect($getLogicalPointFromElementPoint(para, offset, false)).toEqual({
+          type: "index",
+          index: 1,
+        });
+      expect($getLogicalPointFromElementPoint(para, 4, false)).toEqual({ type: "index", index: 2 });
+      // After the verse is after its last piece.
+      expect($getElementPointFromLogicalIndex(para, 2)).toEqual([para, 4]);
+    });
+  });
+
+  it("reads typed bytes in a cut note caller as the same content as in a whole one", () => {
+    const build = (cut: boolean) =>
+      mount(() => {
+        const caller = $createTextNode(` +x${NBSP}`).toggleUnmergeable();
+        const note = $createNoteNode("f", "+", false).append(
+          $createMarkerNode("f"),
+          caller,
+          $createCharNode("ft").append($createTextNode("body")),
+        );
+        $getRoot().append($createParaNode().append(note));
+        if (cut) $cut(caller, 1, 2);
+      });
+    const read = (editor: LexicalEditor) =>
+      editor.getEditorState().read(() => {
+        const note = $firstPara().getFirstChild();
+        if (!$isElementNode(note)) throw new Error("no note");
+        const items = $getLogicalContentItems(note, false).map((item) =>
+          item.type === "text"
+            ? item.segments.map((segment) =>
+                segment.node.getTextContent().slice(segment.lead, segment.lead + segment.length),
+              )
+            : item.node.getType(),
+        );
+        const ignored = note
+          .getChildren()
+          .filter($isTextNode)
+          .map((child) => [child.getTextContent(), $shouldIgnoreNodeForContentIndexes(child)]);
+        return { items, ignored };
+      });
+    const whole = read(build(false));
+    const cut = read(build(true));
+    expect(whole.items).toEqual([["x"], "char"]);
+    expect(cut.items).toEqual([["x"], "char"]);
+    expect(cut.ignored).toEqual([
+      ["\\f", true],
+      [" ", true],
+      ["+", true],
+      [`x${NBSP}`, false],
+    ]);
+  });
+
+  it("knows every piece of the book's `\\id` glyph as the book's prefix", () => {
+    let glyph!: MarkerNode;
+    const editor = mount(() => {
+      glyph = $createMarkerNode("id");
+      $getRoot().append($createBookNode("GEN").append(glyph, $createTextNode("Genesis")));
+      $cut(glyph, 1, 2);
+    });
+    editor.getEditorState().read(() => {
+      const pieces = $pieces(glyph);
+      expect(pieces.length).toBe(3);
+      expect(pieces.map((piece) => $isBookPrefixGlyph(piece))).toEqual([true, true, true]);
+    });
+  });
+
+  it("finds a cut paragraph glyph's separator after the whole glyph", () => {
+    let glyph!: MarkerNode;
+    const editor = mount(() => {
+      glyph = $createMarkerNode("p");
+      $getRoot().append(
+        $createParaNode().append(
+          glyph,
+          $setState($createTextNode(" "), textTypeState, MARKER_TRAILING_SPACE_TEXT_TYPE),
+          $createTextNode("In the beginning"),
+        ),
+      );
+      $cut(glyph, 1, 2);
+    });
+    const held = (piece: number, offset: number) => {
+      let result = false;
+      editor.update(
+        () => {
+          $caretAt($pieces(glyph)[piece], offset);
+          result = $paraPrefixSeparatorCaretHeld($firstPara());
+        },
+        { discrete: true },
+      );
+      return result;
+    };
+    // The separator is there: nothing is held, wherever the caret is in the glyph.
+    expect(held(1, 0)).toBe(false);
+    expect(held(1, 1)).toBe(false);
+    editor.update(
+      () => {
+        $firstPara().getChildAtIndex(2)?.remove();
+      },
+      { discrete: true },
+    );
+    // Gone: a caret anywhere in the glyph holds the gap open.
+    expect(held(1, 1)).toBe(true);
+    expect(held(0, 1)).toBe(true);
+  });
+
+  it("retargets a cut glyph's whole spelling when its span's marker changes", () => {
+    let char!: CharNode;
+    const editor = mount(() => {
+      const opener = $createMarkerNode("add");
+      const closer = $createMarkerNode("add", "closing");
+      char = $createCharNode("add").append(opener, $createTextNode(`${NBSP}word`), closer);
+      $getRoot().append($createParaNode().append(char));
+      $cut(opener, 1, 3);
+      $cut(closer, 4, 5);
+    });
+    editor.update(
+      () => {
+        $setCharNodeMarker(char, "nd");
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      expect(char.getTextContent()).toBe(`\\nd${NBSP}word\\nd*`);
+    });
+    editor.update(
+      () => {
+        $setCharNodeMarker(char, "ft");
+      },
+      { discrete: true },
+    );
+    editor.getEditorState().read(() => {
+      // A note-content marker is written without a closer: every piece of it goes.
+      expect(char.getTextContent()).toBe(`\\ft${NBSP}word`);
+    });
+  });
+});

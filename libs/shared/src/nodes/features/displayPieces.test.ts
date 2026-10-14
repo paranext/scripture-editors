@@ -25,6 +25,7 @@ import {
   $logicalText,
   $pieceAt,
   $pieceHead,
+  $pieceOffset,
   $pieces,
   $pieceStart,
 } from "./displayPieces.state.js";
@@ -168,6 +169,7 @@ describe("carrier pieces", () => {
       const pieces = $pieces(verse);
       expect(texts(pieces)).toEqual([`\\v${NBSP}`, "12", " "]);
       expect(pieces.map($holdIds)).toEqual([["a[0,3)"], ["a[0,2)", "b[0,2)"], []]);
+      expect(pieces.map($pieceOffset)).toEqual([0, 3, 5]);
       // The carrier's own edge whitespace is its trailing space; the separator inside it is
       // holdable, so the first piece is holdable whole.
       expect(pieces.map($carrierHoldableRange)).toEqual([

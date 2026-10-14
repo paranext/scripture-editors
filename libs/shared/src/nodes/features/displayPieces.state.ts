@@ -88,6 +88,20 @@ export function $logicalText(node: LexicalNode): string {
     .join("");
 }
 
+/**
+ * Where `node`'s own text starts in its carrier's text ({@link $logicalText}): `0` for the head,
+ * and for a later piece the length of every piece before it. Adding a point's offset in `node`
+ * gives the point's offset in the whole carrier.
+ */
+export function $pieceOffset(node: LexicalNode): number {
+  let offset = 0;
+  for (const piece of $pieces(node)) {
+    if (piece.is(node)) break;
+    offset += piece.getTextContentSize();
+  }
+  return offset;
+}
+
 /** The node after `node`'s whole carrier (after its last piece). */
 export function $logicalNextSibling(node: LexicalNode): LexicalNode | null {
   return $lastPiece(node).getNextSibling();

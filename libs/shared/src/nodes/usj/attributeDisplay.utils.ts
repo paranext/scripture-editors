@@ -416,7 +416,8 @@ export function $noteEditableCallerNode(note: NoteNode): TextNode | undefined {
   }
   const caller = $throughMarks(children[index]);
   if (!$isTextNode(caller) || caller.getType() !== TextNode.getType()) return undefined;
-  if (caller.getTextContent() === getEditableCallerText(note.getCaller())) return caller;
+  // A caller an annotation cut into pieces is read whole; its head is the caller.
+  if ($logicalText(caller) === getEditableCallerText(note.getCaller())) return caller;
   return caller.isUnmergeable() ? caller : undefined;
 }
 
