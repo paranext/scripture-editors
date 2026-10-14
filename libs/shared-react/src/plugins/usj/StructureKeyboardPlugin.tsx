@@ -33,7 +33,7 @@ import {
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { $isSomeVerseNode } from "../../nodes/usj";
-import { $isSomeParaNode } from "shared";
+import { $isSomeParaNode, $pieces } from "shared";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 
@@ -107,10 +107,12 @@ export function StructureKeyboardPlugin({
         const node = $getNodeByKey(armed.key) ?? undefined;
         if (armed.kind === "verse") {
           if (node) {
+            // Every piece of a verse an annotation cut into pieces.
+            const pieces = $pieces(node);
             const parent = node.getParent();
-            const prev = node.getPreviousSibling();
-            const next = node.getNextSibling();
-            node.remove();
+            const prev = pieces[0].getPreviousSibling();
+            const next = pieces[pieces.length - 1].getNextSibling();
+            pieces.forEach((piece) => piece.remove());
             if (prev) $placeCaretAtEnd(prev);
             else if (next && $isTextNode(next)) next.select(0, 0);
             else parent?.selectStart();
