@@ -56,6 +56,7 @@ import {
   COPY_COMMAND,
   LexicalEditor,
   LexicalNode,
+  NodeKey,
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
@@ -63,6 +64,7 @@ import {
   $carrierHoldableRange,
   $isDisplayAnnotationCarrier,
   $isMarkerTrailingSeparator,
+  $isTypedMarkNode,
   $logicalText,
   NBSP,
   TypedMarkOnRemove,
@@ -192,8 +194,8 @@ export function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
 /** The annotations set on `mounted`, with the removal reports each received. */
 interface AppliedAnnotations {
   ids: string[];
-  /** The ids a `<mark>` held once set: each such mark reports its own removal when it goes. */
-  markHeld: Set<string>;
+  /** The `<mark>`s holding each id once set: each reports its own removal when it goes. */
+  marks: Map<string, NodeKey[]>;
   removals: Map<string, Parameters<TypedMarkOnRemove>[]>;
 }
 
@@ -214,15 +216,22 @@ async function applyAnnotations(
     });
   }
   return mounted.lexical.getEditorState().read(() => {
-    const ids: string[] = [];
-    const markHeld = new Set<string>();
-    for (const { id } of plan) {
-      const held = $heldIndexes(HELD_TYPE, id);
-      if (held.size > 0) ids.push(id);
-      if ([...held.values()].includes("mark")) markHeld.add(id);
-    }
-    return { ids, markHeld, removals };
+    const ids = plan.map(({ id }) => id).filter((id) => $heldIndexes(HELD_TYPE, id).size > 0);
+    const marks = new Map(ids.map((id) => [id, $marksHolding(id)]));
+    return { ids, marks, removals };
   });
+}
+
+/** The keys of the `<mark>`s holding `id` now, in document order. */
+function $marksHolding(id: string): NodeKey[] {
+  const keys: NodeKey[] = [];
+  const visit = (node: LexicalNode): void => {
+    if ($isTypedMarkNode(node) && (node.getTypedIDs()[HELD_TYPE] ?? []).includes(id))
+      keys.push(node.getKey());
+    if ($isElementNode(node)) node.getChildren().forEach(visit);
+  };
+  visit($getRoot());
+  return keys;
 }
 
 /** A caret position in the edited paragraph's editable texts, by the bytes before it. */
@@ -395,8 +404,8 @@ const FILLER = new RegExp(`^[\\s${NBSP}${ZWSP}]$`);
  * The annotated run's own failures after `mounted` settled: a held byte nothing paints, a
  * non-whitespace byte painted but not held, a leaf painted in part, and a removal report that
  * disagrees with `setAnnotation`'s `onRemove` contract — an annotation whose bytes are all gone
- * reports once; one still held reports nothing, unless a `<mark>` held it and none does any more
- * (that mark reports its own removal, whatever display bytes still hold the annotation).
+ * reports once; one still held reports nothing, unless a `<mark>` that held it once it was set
+ * has gone (that mark reports its own removal, whatever else still holds the annotation).
  */
 function annotatedFailures(
   mounted: MountedInView,
@@ -424,8 +433,9 @@ function annotatedFailures(
       if (!history) {
         if (reports.length === 0 && held.size === 0)
           failures.push(`${id}: its bytes are gone but its removal was never reported`);
-        const markReported = applied.markHeld.has(id) && ![...held.values()].includes("mark");
-        if (reports.length === 1 && held.size > 0 && !markReported)
+        const nowMarks = new Set($marksHolding(id));
+        const aMarkWent = (applied.marks.get(id) ?? []).some((key) => !nowMarks.has(key));
+        if (reports.length === 1 && held.size > 0 && !aMarkWent)
           failures.push(`${id}: reported removed (${reports[0][2]}) while it still holds bytes`);
       }
     }
