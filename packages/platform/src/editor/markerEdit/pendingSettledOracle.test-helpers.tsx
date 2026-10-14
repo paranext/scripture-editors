@@ -1265,8 +1265,9 @@ function $screenLines(): string | undefined {
  */
 function $namelessMarked(bytes: string, block: LexicalNode): string {
   const glyph = $isParaNode(block) && block.getMarker() === "" ? block.getFirstChild() : null;
+  // The glyph is read whole, however an annotation cuts it into pieces.
   const opener = $isMarkerNode(glyph)
-    ? /^[\s\u00A0]*\\(?=[\s\u00A0\\]|$)/.exec(glyph.getTextContent())
+    ? /^[\s\u00A0]*\\(?=[\s\u00A0\\]|$)/.exec($logicalText(glyph))
     : null;
   if (!opener) return bytes;
   return `${opener[0]}${NAMELESS_MARKER_NAME}${bytes.slice(opener[0].length)}`;
