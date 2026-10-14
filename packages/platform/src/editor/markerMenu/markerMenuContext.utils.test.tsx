@@ -3,7 +3,10 @@
  * menus. Port of PT9's `MarkerDropdownEditHandler.HandleBackslash` selection-shape rule,
  * adapted to the Lexical tree.
  */
-import { $getMarkerMenuContext } from "./markerMenuContext.utils";
+import { $getMarkerMenuContext, $isAtParagraphContentStart } from "./markerMenuContext.utils";
+// Reaching inside only for tests.
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import { createBasicTestEnvironment } from "../../../../../libs/shared/src/nodes/usj/test.utils";
 import {
   $noteContentText,
   findOnlyNote,
@@ -12,7 +15,9 @@ import {
 } from "../markerEdit/markerEdit.test-helpers";
 import { act } from "@testing-library/react";
 import { $createTextNode, $getRoot, $setState, TextNode } from "lexical";
+import { usjReactNodes } from "shared-react";
 import {
+  $addDisplayAnnotation,
   $createBookNode,
   $createChapterNode,
   $createCharNode,
@@ -23,6 +28,9 @@ import {
   getVisibleOpenMarkerText,
   MarkerNode,
   NBSP,
+  ParaNode,
+  $pieces,
+  registerDisplayAnnotationBasis,
   textTypeState,
 } from "shared";
 
@@ -350,5 +358,60 @@ describe("$getMarkerMenuContext", () => {
 
     const context = editor.getEditorState().read(() => $getMarkerMenuContext());
     expect(context?.inMarkerText).toBe(true);
+  });
+});
+
+describe("a paragraph marker glyph an annotation cuts into pieces", () => {
+  /** `\\q1 Blessed`, its glyph cut between `\\` and `q1`. */
+  function cutPrefix() {
+    let para!: ParaNode;
+    let prefix!: MarkerNode;
+    let content!: TextNode;
+    const { editor } = createBasicTestEnvironment(usjReactNodes, () => {
+      para = $createParaNode("q1");
+      prefix = $createMarkerNode("q1");
+      const trailing = $createTextNode(NBSP);
+      $setState(trailing, textTypeState, "marker-trailing-space");
+      content = $createTextNode("Blessed");
+      $getRoot().append(para.append(prefix, trailing, content));
+    });
+    registerDisplayAnnotationBasis(editor);
+    editor.update(() => $addDisplayAnnotation(prefix, "test", "a", 1, 3), { discrete: true });
+    const $last = () => {
+      const pieces = $pieces(prefix);
+      expect(pieces.length).toBe(2);
+      return pieces[1];
+    };
+    return { editor, para, prefix, content, $last };
+  }
+
+  it("offers the paragraph palette for a caret in any piece of the glyph", () => {
+    const { editor, $last } = cutPrefix();
+    for (const offset of [0, 1, 2]) {
+      editor.update(() => $last().select(offset, offset), { discrete: true });
+      expect(editor.getEditorState().read(() => $getMarkerMenuContext())?.source).toBe("paragraph");
+    }
+  });
+
+  it("offers the paragraph palette directly right of the whole glyph, before its separator", () => {
+    const { editor, $last } = cutPrefix();
+    editor.update(
+      () => {
+        const separator = $last().getNextSibling();
+        if (!(separator instanceof TextNode)) throw new Error("expected the separator");
+        separator.select(0, 0);
+      },
+      { discrete: true },
+    );
+    expect(editor.getEditorState().read(() => $getMarkerMenuContext())?.source).toBe("paragraph");
+  });
+
+  it("reads a caret in any piece of the glyph, or at content start, as the paragraph's content start", () => {
+    const { editor, para, content, $last } = cutPrefix();
+    editor.getEditorState().read(() => {
+      expect($isAtParagraphContentStart(para, $last(), 1)).toBe(true);
+      expect($isAtParagraphContentStart(para, content, 0)).toBe(true);
+      expect($isAtParagraphContentStart(para, content, 1)).toBe(false);
+    });
   });
 });
