@@ -470,10 +470,15 @@ function $guardCollapsedDeletion(
   const caret = selection.anchor;
   const ended = $noteEndAt(caret);
   if (ended) {
+    const isAtCloserFront =
+      caret.type === "text" && caret.offset === 0 && !!$protectedCloser(ended)?.is(caret.getNode());
     $setCollapsed(selection, $contentEndPoint(ended));
-    return true;
+    // The closer's front is where this guard rests a caret at the end of the note's content, so a
+    // Backspace from there is a Backspace from that end, not a refused one: it goes on below from
+    // the content's end. Anything else past the content is refused, the caret put back at its end.
+    if (!(isBackward && isAtCloserFront)) return true;
   }
-  const note = $protectedNoteOf(caret.getNode());
+  const note = $protectedNoteOf(selection.anchor.getNode());
   if (!note) {
     if (isBackward) return false;
     const after = $nodeAfter(selection.focus);
