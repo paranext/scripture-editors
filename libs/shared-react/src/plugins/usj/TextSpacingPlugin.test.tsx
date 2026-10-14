@@ -1127,8 +1127,12 @@ describe("TextSpacingPlugin", () => {
         expect($getRoot().getTextContent()).toBe(uncut);
         const openers = $getRoot()
           .getAllTextNodes()
-          .filter((node) => $isMarkerNode(node) && node.getMarkerSyntax() === "opening")
-          .filter((node) => $pieces(node)[0].is(node))
+          .filter(
+            (node): node is ReturnType<typeof $createMarkerNode> =>
+              $isMarkerNode(node) &&
+              node.getMarkerSyntax() === "opening" &&
+              $pieces(node)[0].is(node),
+          )
           .map((node) => node.getMarker());
         expect(openers).toEqual(["va", "vp"]);
       });

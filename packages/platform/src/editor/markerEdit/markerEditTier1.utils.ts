@@ -96,7 +96,7 @@ import {
   $logicalPreviousSibling,
   $logicalText,
   $mergePieces,
-  $pieceAt,
+  $pieceAtLogicalOffset,
   $pieceHead,
   $pieces,
   $setLogicalText,
@@ -379,7 +379,7 @@ function $landCaretAfterRename(node: MarkerNode, caretOffsetInName: number | und
     const latest = node.getLatest();
     const span = markerNameSpan($logicalText(latest));
     if (span) {
-      const { piece, offset } = $pieceAt(
+      const [piece, offset] = $pieceAtLogicalOffset(
         latest,
         Math.min(span.start + caretOffsetInName, span.end),
       );
