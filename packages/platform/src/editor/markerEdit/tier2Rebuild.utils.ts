@@ -2627,7 +2627,17 @@ function $carryCapturedThroughScratch<T>(
         ids.forEach((id) => to.addID(type, id)),
       ),
   );
-  scratch.update(() => $restoreMarkByteRanges(captured, $materialize($getRoot())), {
+  // The scratch tree is read once and discarded, so its marks carry no host callbacks: a mark
+  // the scratch's own normalization removes (an emptied nested mark) must not report a
+  // destruction the live document never had.
+  const silent: CapturedMarks = {
+    ...captured,
+    ranges: captured.ranges.map((range) => ({
+      ...range,
+      annotations: range.annotations.map(({ type, id }) => ({ type, id })),
+    })),
+  };
+  scratch.update(() => $restoreMarkByteRanges(silent, $materialize($getRoot())), {
     discrete: true,
   });
   return scratch.getEditorState().read(() => $read($getRoot()));
