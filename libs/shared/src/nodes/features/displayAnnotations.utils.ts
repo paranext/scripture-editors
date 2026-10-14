@@ -530,6 +530,7 @@ function $splitPiece(piece: TextNode, cuts: number[]): void {
  * normalized carrier is left untouched, so the transform converges). Mutating.
  */
 export function $normalizeCarrierPieces(node: LexicalNode): void {
+  if ($hasUpdateTag(DISPLAY_PIECES_CUT_TAG)) $ensureUndoStepFinalizer();
   if (!$isTextNode(node) || !node.isAttached()) return;
   // A token carrier that lost a piece goes whole, as the unsplit token would have.
   if ($removeBrokenTokenPieces(node)) return;
@@ -565,6 +566,27 @@ export function $normalizeCarrierPieces(node: LexicalNode): void {
     else current = next;
   }
   $recordTokenPieces(current);
+}
+
+/** The editors {@link registerDisplayAnnotationBasis} serves. */
+const basisEditors = new WeakSet<LexicalEditor>();
+/** Each editor's registered {@link $joinUndoStepWhenOnlyPiecesChanged}, by its unregister. */
+const undoStepFinalizers = new WeakMap<LexicalEditor, () => void>();
+
+/**
+ * Register {@link $joinUndoStepWhenOnlyPiecesChanged} as the root's transform, once per editor, from
+ * the first update that cuts or joins pieces; the root is transformed last, so it runs from that
+ * update on. Registering a transform marks every node of its class dirty in an update of its own,
+ * and the root always exists: registered with the editor, that update would reach the host as a
+ * change of the empty document before anything is loaded. Mutating.
+ */
+function $ensureUndoStepFinalizer(): void {
+  const editor = $getEditor();
+  if (!basisEditors.has(editor) || undoStepFinalizers.has(editor)) return;
+  undoStepFinalizers.set(
+    editor,
+    editor.registerNodeTransform(RootNode, $joinUndoStepWhenOnlyPiecesChanged),
+  );
 }
 
 /** `node` and everything under it as `exportJSON` writes them, with each carrier's pieces joined
@@ -628,7 +650,11 @@ export function registerDisplayAnnotationBasis(
   const unregisters = klasses
     .filter((klass) => editor.hasNodes([klass]))
     .map((klass) => editor.registerNodeTransform(klass, $transform));
-  // The root's transform runs last in an update: the place to judge the update as a whole.
-  unregisters.push(editor.registerNodeTransform(RootNode, $joinUndoStepWhenOnlyPiecesChanged));
-  return () => unregisters.forEach((unregister) => unregister());
+  basisEditors.add(editor);
+  return () => {
+    unregisters.forEach((unregister) => unregister());
+    basisEditors.delete(editor);
+    undoStepFinalizers.get(editor)?.();
+    undoStepFinalizers.delete(editor);
+  };
 }
