@@ -512,7 +512,11 @@ function baseStateOf(node: TextNode): string {
 /**
  * Whether neighbouring texts `before` and `after` are two Lexical merges into one
  * (`$normalizeTextNode`: both simple text, neither unmergeable, with the same mode, format, style
- * and node state) once the states a cut or a hold puts on them are set aside.
+ * and node state) once the states a cut or a hold puts on them are set aside. Symmetric, as
+ * Lexical's rule is in effect: `$canSimpleTextNodesBeMerged` also merges whenever the first node's
+ * `__state` is `null`, but a node's state starts `undefined` and is never set to `null`, and a
+ * state holding only defaults compares equal to none. The displayPieces tests compare this with
+ * Lexical's own merge for each pair of states, in both orders.
  */
 function $isMergeableButForPieces(before: LexicalNode | null, after: LexicalNode | null): boolean {
   return (
