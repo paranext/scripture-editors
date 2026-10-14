@@ -616,7 +616,11 @@ describe("a token carrier cut into pieces", () => {
     editor.read(() => expect(childTexts(para)).toEqual(["ab"]));
   });
 
-  it("goes whole when a middle piece is removed, keeping text typed in place of a piece", () => {
+  it.each([
+    ["its first piece", 0],
+    ["its middle piece", 1],
+    ["its last piece", 2],
+  ])("goes whole when text is typed in place of %s, keeping the typed text", (_, index) => {
     const editor = mount();
     let para!: LexicalNode;
     let caller!: TextNode;
@@ -630,7 +634,7 @@ describe("a token carrier cut into pieces", () => {
       { discrete: true },
     );
     editor.read(() => expect(texts($pieces(caller))).toEqual([" ", "+", NBSP]));
-    editor.update(() => $pieces(caller)[0].replace($createTextNode("x")), { discrete: true });
+    editor.update(() => $pieces(caller)[index].replace($createTextNode("x")), { discrete: true });
     editor.read(() => expect(childTexts(para)).toEqual(["x"]));
   });
 
