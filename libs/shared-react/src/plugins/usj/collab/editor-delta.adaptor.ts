@@ -34,6 +34,7 @@ import {
   $isImpliedParaNode,
   $isMarkerNode,
   $isMilestoneNode,
+  $isNbspContentAtMark,
   $isNoteNode,
   $isParaLikeNode,
   $isParaNode,
@@ -307,7 +308,8 @@ function $handleTextNodes(
   // markerEditDeletion.utils.ts); the apply side re-synthesizes the whole prefix, so its text
   // must never enter content ops.
   if ($getState(currentNode, textTypeState) === "marker-trailing-space") return;
-  let text = $logicalText(currentNode);
+  const nodeText = $logicalText(currentNode);
+  let text = nodeText;
   // A bare cursor host (EmptyVerseCaretGuardPlugin) is collab-invisible: its insertion is never
   // emitted, so it must never appear in a delta op either.
   if (isCursorPlaceholderOnly(text)) return;
@@ -385,7 +387,12 @@ function $handleTextNodes(
   const textOp = $getTextOp(currentNode, embedScopedCharNodes);
   textOp.insert = text;
   if (activeEmbed) {
-    if (!text || text === NBSP || isNodeAttributeText) return;
+    // A text that is one NBSP is a display spacer (an empty span's placeholder, a visible view's
+    // separator) unless an annotation mark split it off content — the rule the editor→USJ
+    // conversion drops it by. It is the text's own bytes that are read, not what is left once the
+    // separator is stripped: a separator followed by an `~` the author wrote is content.
+    const isSpacer = nodeText === NBSP && !$isNbspContentAtMark(currentNode);
+    if (!text || isSpacer || isNodeAttributeText) return;
     activeEmbed.contentsOps?.push(textOp);
   } else {
     // Attribute display text is presentation-only regardless of WHERE it rides — inside a char

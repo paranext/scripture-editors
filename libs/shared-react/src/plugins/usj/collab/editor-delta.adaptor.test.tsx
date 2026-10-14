@@ -1701,6 +1701,57 @@ describe("a carrier cut into pieces", () => {
   });
 });
 
+describe("a no-break space after a note span's separator", () => {
+  // `\f + \ft ~note\f*` in an editable view: the span's text is the separator NBSP, then the
+  // author's own `~`, then `note`.
+  const $note = (...content: LexicalNode[]) =>
+    $getRoot().append(
+      $createParaNode("p").append(
+        $createTextNode("a"),
+        $createNoteNode("f", "+", false).append(
+          $createMarkerNode("f"),
+          $createTextNode(getEditableCallerText("+")).toggleUnmergeable(),
+          $createCharNode("ft").append($createMarkerNode("ft"), ...content),
+          $createMarkerNode("f", "closing"),
+        ),
+      ),
+    );
+
+  it("is content, whatever a mark cuts after it", async () => {
+    const plain = noteContentsText(
+      await getOpsFor(() => $note($createTextNode(`${NBSP}${NBSP}note`))),
+    );
+    expect(plain).toBe(`${NBSP}note`);
+    // A mark over the `n` leaves the separator and the `~` a text of their own.
+    const marked = noteContentsText(
+      await getOpsFor(() =>
+        $note(
+          $createTextNode(`${NBSP}${NBSP}`),
+          $createTypedMarkNode({ test: ["1"] }).append($createTextNode("n")),
+          $createTextNode("ote"),
+        ),
+      ),
+    );
+    expect(marked).toBe(plain);
+  });
+
+  it("is content when it is the span's only content, as the editor→USJ conversion keeps it", async () => {
+    const contents = noteContentsText(
+      await getOpsFor(() => $note($createTextNode(`${NBSP}${NBSP}`))),
+    );
+    expect(contents).toBe(NBSP);
+  });
+});
+
+/** The text inserts of the first note's `contents` in `ops`, joined. */
+function noteContentsText(ops: DeltaOp[]): string {
+  const note = ops.find((op) => isInsertEmbedOpOfType("note", op));
+  if (!isInsertEmbedOpOfType("note", note)) throw new Error("no note op");
+  return (note.insert.note?.contents?.ops ?? [])
+    .map((op) => (typeof op.insert === "string" ? op.insert : ""))
+    .join("");
+}
+
 async function testEnvironment($initialEditorState?: () => void) {
   return baseTestEnvironment($initialEditorState);
 }
