@@ -43,8 +43,11 @@ import { usjReactNodes, ViewOptions } from "shared-react";
 import { createBasicTestEnvironment } from "../../../../../libs/shared/src/nodes/usj/test.utils";
 
 const verse2: MarkerObject = { type: "verse", marker: "v", number: "2", altnumber: "3" };
-const word: MarkerObject = { type: "char", marker: "w", lemma: "grace", content: ["grace"] };
-const quote: MarkerObject = { type: "ms", marker: "qt-s", who: "Pilate" };
+/** A span or milestone with an attribute, which `MarkerObject` leaves untyped. */
+type WithAttributes = MarkerObject & { [attribute: string]: unknown };
+
+const word: WithAttributes = { type: "char", marker: "w", lemma: "grace", content: ["grace"] };
+const quote: WithAttributes = { type: "ms", marker: "qt-s", who: "Pilate" };
 const note: MarkerObject = {
   type: "note",
   marker: "f",
