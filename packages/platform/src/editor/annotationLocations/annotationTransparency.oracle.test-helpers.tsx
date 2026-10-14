@@ -337,7 +337,9 @@ function observables(run: CaseRun): { [name: string]: string } {
     "pending text": run.before.text,
     "pending screen": run.before.screen ?? "",
     "pending positions": positionSets(run.before.reported),
-    "pending round trip": JSON.stringify(run.before.roundTrip),
+    // Per document position, as the reports are: a cut inside a carrier is two caret positions at
+    // one document position, and the same failure from both is one failure there.
+    "pending round trip": JSON.stringify([...new Set(run.before.roundTrip)]),
     "settled screen": run.shownLines ?? "",
     "settled text": run.after.text,
     "settled positions": positionSets(run.after.reported),
