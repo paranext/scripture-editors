@@ -9,7 +9,13 @@ import { $createImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
 import { UsjNodeOptions } from "../../nodes/usj/usj-node-options.model";
 import { ViewOptions } from "../../views/view-options.utils";
 import { CounterStyleRuleLike, NoteNodePlugin } from "./NoteNodePlugin";
-import { $createBookLine, baseTestEnvironment, updateSelection } from "./react-test.utils";
+import {
+  $createBookLine,
+  baseTestEnvironment,
+  countContinuationPieces,
+  cutEveryCarrierIntoPieces,
+  updateSelection,
+} from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
   $getRoot,
@@ -365,6 +371,48 @@ describe("NoteNodePlugin", () => {
           .filter((child): child is TextNode => $isTextNode(child) && !$isNoteNode(child))
           .map((child) => child.getTextContent());
         expect(paraTexts).not.toContain(callerText);
+      });
+    });
+
+    it("does not eject a caller an annotation cut into pieces", async () => {
+      let noteKey: string;
+      const callerText = getEditableCallerText("+");
+      const { editor } = await testEnvironment(
+        undefined,
+        { markerMode: "editable", noteMode: "expanded", hasSpacing: false, isFormattedFont: false },
+        () => {
+          const note = $createNoteNode("f", "+", false);
+          note.append(
+            $createMarkerNode("f"),
+            $createTextNode(callerText).toggleUnmergeable(),
+            $createCharNode("ft").append($createMarkerNode("ft"), $createTextNode(`${NBSP}text`)),
+          );
+          noteKey = note.getKey();
+          $getRoot().append(
+            $createParaNode().append($createTextNode("before "), note, $createTextNode(" after")),
+          );
+        },
+      );
+      await cutEveryCarrierIntoPieces(editor);
+      expect(countContinuationPieces(editor)).toBeGreaterThan(0);
+      // The opening glyph is deleted: the caller's first piece is now the note's first child.
+      await act(async () => {
+        editor.update(() => {
+          const note = $getNodeByKey<NoteNode>(noteKey);
+          for (const child of note?.getChildren() ?? []) if ($isMarkerNode(child)) child.remove();
+        });
+      });
+
+      editor.getEditorState().read(() => {
+        const note = $getNodeByKey<NoteNode>(noteKey);
+        expect(note?.getTextContent().startsWith(callerText)).toBe(true);
+        const para = $getRoot().getChildren().filter($isParaNode)[0];
+        expect(
+          para
+            .getChildren()
+            .filter((child) => !$isNoteNode(child))
+            .map((child) => child.getTextContent()),
+        ).toEqual(["before ", " after"]);
       });
     });
 
