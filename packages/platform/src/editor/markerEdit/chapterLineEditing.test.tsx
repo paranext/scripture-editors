@@ -21,7 +21,9 @@ import { act } from "@testing-library/react";
 import {
   $createRangeSelection,
   $getRoot,
+  $getSelection,
   $isElementNode,
+  $isRangeSelection,
   $setSelection,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   CUT_COMMAND,
@@ -885,5 +887,92 @@ describe("a chapter line whose bytes are no longer a chapter marker", () => {
       { type: "para", marker: "q1", content: ["2 "] },
       ...rest,
     ]);
+  });
+});
+
+describe("text typed ahead of a chapter marker", () => {
+  // USFM puts text that stands behind a line break with no marker of its own into the paragraph
+  // before it, which is where the chapter's save and reload put it and where Paratext 9 keeps it.
+
+  const NOTE: MarkerContent = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "ft", content: ["note"] }],
+  };
+  const VERSE_2: MarkerContent = { type: "verse", marker: "v", number: "2" };
+
+  /** Types `typed` at the very start of the chapter line, ahead of its backslash. */
+  async function typeAheadOfChapter(editor: LexicalEditor, typed: string): Promise<void> {
+    await act(async () => editor.update(() => $glyph().select(0, 0)));
+    await typeText(editor, typed);
+  }
+
+  it.each([
+    ["ends in text", ["stuff"], "x", ["stuff x"]],
+    ["ends in a space", ["stuff "], "x", ["stuff x"]],
+    ["ends in a note", ["stuff", NOTE], "x", ["stuff", NOTE, " x"]],
+    ["ends in a verse marker", [VERSE_2], "x", [VERSE_2, "x"]],
+    ["is empty", [], "x", ["x"]],
+    ["ends in text, joined by text that starts with a space", ["stuff"], " x", ["stuff x"]],
+  ])(
+    "joins the paragraph before it, when that paragraph %s",
+    async (_label, before, typed, after) => {
+      const doc: Usj = {
+        type: "USJ",
+        version: "3.1",
+        content: [{ type: "para", marker: "toc1", content: before }, CHAPTER_2, VERSE_1_PARA],
+      };
+      const joined = [{ type: "para", marker: "toc1", content: after }, CHAPTER_2, VERSE_1_PARA];
+      const { ref, lexical } = await mountStandardViewEditor(doc);
+      await typeAheadOfChapter(lexical, typed);
+      expect(ref.current?.getUsj()?.content).toEqual(joined);
+      await act(async () => {
+        ref.current?.commitPendingMarkerEdits();
+      });
+      expect(ref.current?.getUsj()?.content).toEqual(joined);
+      lexical.getEditorState().read(() => {
+        expect($getRoot().getChildrenSize()).toBe(3);
+        expect($isChapterNode($getRoot().getChildAtIndex(1))).toBe(true);
+      });
+    },
+  );
+
+  it("joins a markerless line before it", async () => {
+    const doc: Usj = { type: "USJ", version: "3.1", content: ["loose", CHAPTER_2, VERSE_1_PARA] };
+    const { ref, lexical } = await mountStandardViewEditor(doc);
+    await typeAheadOfChapter(lexical, "x");
+    await act(async () => {
+      ref.current?.commitPendingMarkerEdits();
+    });
+    expect(ref.current?.getUsj()?.content).toEqual(["loose x", CHAPTER_2, VERSE_1_PARA]);
+  });
+
+  it("keeps the caret just past the typed text", async () => {
+    const doc: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [{ type: "para", marker: "toc1", content: ["stuff"] }, CHAPTER_2, VERSE_1_PARA],
+    };
+    const { ref, lexical } = await mountStandardViewEditor(doc);
+    await typeAheadOfChapter(lexical, "xy");
+    await act(async () => {
+      ref.current?.commitPendingMarkerEdits();
+    });
+    lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      const text = selection.anchor.getNode().getTextContent();
+      expect(text.slice(0, selection.anchor.offset)).toBe("stuff xy");
+    });
+  });
+
+  it("stays a line of its own when nothing comes before the chapter", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await typeAheadOfChapter(lexical, "x");
+    await act(async () => {
+      ref.current?.commitPendingMarkerEdits();
+    });
+    expect(ref.current?.getUsj()?.content).toEqual(["x", CHAPTER_2, VERSE_1_PARA, POETRY_PARA]);
   });
 });

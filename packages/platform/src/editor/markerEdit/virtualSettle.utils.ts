@@ -55,6 +55,7 @@ import {
   extractLeadingCategoryFold,
   FragmentAccumulator,
   FragmentSpan,
+  joinSerializedLeadingLineToPreviousParagraph,
   serializedChildren,
   serializedMarkerGlyphText,
   serializedSignatureOf,
@@ -1265,6 +1266,7 @@ export function $settledUsj(
     const index = site.siblings.indexOf(site.node);
     if (index < 0) continue;
     site.siblings.splice(index, regionSize, ...rebuilt);
+    joinSerializedLeadingLineToPreviousParagraph(site.siblings, index);
   }
 
   // Husks LAST, deliberately AFTER the notes/para/book passes above, not before: a husk pended
