@@ -26,6 +26,7 @@ import { drainNativeSelectionChange } from "../editor-test.utils";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $logicalText, NBSP } from "shared";
+import { StructureProtectionMode } from "shared-react";
 import { describe, expect, it, vi } from "vitest";
 
 /** Each document position's reported locations, as one sorted set per position: a cut spells a
@@ -60,9 +61,9 @@ function observed(run: CaseRun | undefined): { [name: string]: unknown } {
 
 /**
  * Paste the byte `copies` the caret at byte `at` of the carrier spelled `carrier` in the
- * `row` document of `view`: in the document as loaded (`spelling` undefined), or with every
- * carrier of the edited paragraph cut by the oracle's ranges over it, at the caret's `spelling`-th
- * spelling there.
+ * `row` document of `view` (with `structureProtectionMode`, off when not given): in the document as
+ * loaded (`spelling` undefined), or with every carrier of the edited paragraph cut by the oracle's
+ * ranges over it, at the caret's `spelling`-th spelling there.
  */
 async function pasteCase(
   view: string,
@@ -71,11 +72,12 @@ async function pasteCase(
   at: number,
   copies: "before" | "after",
   spelling?: number,
+  structureProtectionMode?: StructureProtectionMode,
 ): Promise<{ [name: string]: unknown }> {
   const usj: Usj | undefined = oracleRows(view).find(([name]) => name.startsWith(`${row} (`))?.[1];
   if (!usj) throw new Error(`no row ${row}`);
   const viewOptions = pendingOracleView(view);
-  const mounted = await mountInView(usj, viewOptions);
+  const mounted = await mountInView(usj, viewOptions, structureProtectionMode);
   const site = mounted.lexical.getEditorState().read(() => {
     const index = $editableTexts().findIndex((text) => $logicalText(text) === carrier);
     if (index < 0) throw new Error(`no carrier ${JSON.stringify(carrier)}`);
@@ -136,6 +138,29 @@ describe("a byte of a carrier pasted inside it, between the pieces annotations c
       for (const spelling of [0, 1])
         expect(
           await pasteCase(view, row, carrier, at, copies, spelling),
+          `spelling ${spelling}`,
+        ).toEqual(plain);
+    },
+    120_000,
+  );
+});
+
+describe("a byte of a carrier pasted inside it in a structure-protected document", () => {
+  // Protection inserts a paste the Standard-view handler declines (the editor's own copy, outside
+  // an attribute run) from its `text/html`, through its own insertion.
+  it.each([
+    ["standard", "char span with an attribute", "\\w*", 1, "before"],
+    ["standard", "verse", `\\v${NBSP}1 `, 4, "before"],
+    ["standard+expandedNotes", "note", "\\ft", 2, "after"],
+    ["unformatted", "char span with an attribute", "|g", 1, "before"],
+  ] as const)(
+    "%s view, %s: %j at %i, the byte %s it",
+    async (view, row, carrier, at, copies) => {
+      const plain = await pasteCase(view, row, carrier, at, copies, undefined, "protected");
+      expect(plain.applied, "the paste applies in the document as loaded").not.toBe(false);
+      for (const spelling of [0, 1])
+        expect(
+          await pasteCase(view, row, carrier, at, copies, spelling, "protected"),
           `spelling ${spelling}`,
         ).toEqual(plain);
     },
