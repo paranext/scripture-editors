@@ -443,6 +443,48 @@ describe("TextSpacingPlugin", () => {
     });
   });
 
+  it("should remove an empty verse's space that an annotation holds", async () => {
+    // The mark is presentation only: the unmarked document has the verse, its space-only content,
+    // then the next verse, and that space goes as it does without the mark.
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createParaNode().append(
+          $createImmutableVerseNode("1"),
+          $createTypedMarkNode({ t: ["1"] }).append($createTextNode(" ")),
+          $createImmutableVerseNode("2"),
+        ),
+      );
+    });
+
+    await act(async () => editor.update(() => undefined));
+
+    editor.getEditorState().read(() => {
+      const para = $getRoot().getFirstChild();
+      if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+      expect($getLogicalContentItems(para, false)).toHaveLength(2);
+      expect(para.getTextContent()).toBe("");
+    });
+  });
+
+  it("should keep a space an annotation holds after an empty verse when text follows it", async () => {
+    // Unmarked, the space and the text after it are one text: not an empty verse's content.
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createParaNode().append(
+          $createImmutableVerseNode("1"),
+          $createTypedMarkNode({ t: ["1"] }).append($createTextNode(" ")),
+          $createTextNode("a"),
+        ),
+      );
+    });
+
+    await act(async () => editor.update(() => undefined));
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toBe(" a");
+    });
+  });
+
   it("should move typed text out of an UnknownNode and add space before verse", async () => {
     let unknownNode: UnknownNode;
     let innerTextNode: TextNode;

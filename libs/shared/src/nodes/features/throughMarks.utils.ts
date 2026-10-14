@@ -128,7 +128,7 @@ export function $isPlainTextNode(node: LexicalNode | null | undefined): node is 
 }
 
 /** The nearest ancestor of `node` that is not an annotation mark. */
-function $parentOutsideMarks(node: LexicalNode): ElementNode | null {
+export function $parentOutsideMarks(node: LexicalNode): ElementNode | null {
   let parent = node.getParent();
   while ($isTypedMarkNode(parent)) parent = parent.getParent();
   return parent;
