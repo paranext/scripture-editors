@@ -28,6 +28,7 @@ import {
   createState,
   ElementNode,
   LexicalNode,
+  NodeKey,
 } from "lexical";
 
 /** `true` on every piece of a carrier but its first. */
@@ -101,6 +102,73 @@ export function $logicalPreviousSibling(node: LexicalNode): LexicalNode | null {
 /** `element`'s children with every continuation piece left out: one node per carrier. */
 export function $logicalChildren(element: ElementNode): LexicalNode[] {
   return element.getChildren().filter((child) => !$isPieceContinuation(child));
+}
+
+/** Whether `node` is one of the pieces of `carrier`'s carrier. */
+export function $isPieceOf(node: LexicalNode | null | undefined, carrier: LexicalNode): boolean {
+  return !!node && $pieces(carrier).some((piece) => piece.is(node));
+}
+
+/** Where piece `piece` starts in its whole carrier's text. */
+export function $pieceStart(piece: LexicalNode): number {
+  let start = 0;
+  for (const other of $pieces(piece)) {
+    if (other.is(piece)) break;
+    start += other.getTextContentSize();
+  }
+  return start;
+}
+
+/**
+ * The offset into `carrier`'s whole text that the text point at `offset` in node `key` names, or
+ * `undefined` when `key` is no piece of `carrier`'s carrier.
+ */
+export function $logicalOffset(
+  carrier: LexicalNode,
+  key: NodeKey,
+  offset: number,
+): number | undefined {
+  let start = 0;
+  for (const piece of $pieces(carrier)) {
+    if (piece.getKey() === key) return start + offset;
+    start += piece.getTextContentSize();
+  }
+  return undefined;
+}
+
+/**
+ * The piece of `carrier`'s carrier that whole-carrier offset `offset` falls in, and the offset
+ * into that piece. Left-biased: an offset on the boundary between two pieces names the end of the
+ * piece before it (as a cut moves a point there); an offset past the end names the last piece's
+ * end.
+ */
+export function $pieceAt<T extends LexicalNode>(
+  carrier: T,
+  offset: number,
+): { piece: T; offset: number } {
+  const pieces = $pieces(carrier);
+  let start = 0;
+  for (const piece of pieces) {
+    const end = start + piece.getTextContentSize();
+    if (offset <= end) return { piece, offset: Math.max(0, offset - start) };
+    start = end;
+  }
+  const last = pieces[pieces.length - 1];
+  return { piece: last, offset: last.getTextContentSize() };
+}
+
+/**
+ * For a node transform (or any per-node pass) over a carrier class: when `node` is a continuation
+ * piece, mark its carrier's head dirty, so the head's own pass reads and writes the whole carrier,
+ * and return `true` — the caller then leaves `node` alone. A continuation whose head is gone is a
+ * carrier of its own and returns `false`. Mutating: call inside `editor.update()`.
+ */
+export function $deferToPieceHead(node: LexicalNode): boolean {
+  if (!$isPieceContinuation(node)) return false;
+  const head = $pieceHead(node);
+  if (head.is(node)) return false;
+  head.markDirty();
+  return true;
 }
 
 /** Whether `node` is split into more than one piece. */

@@ -20,6 +20,7 @@ import {
   LexicalNode,
   PointType,
   RangeSelection,
+  TextNode,
 } from "lexical";
 import {
   $createMarkerNode,
@@ -45,6 +46,12 @@ import {
   MarkerLookup,
   ParaNode,
   textTypeState,
+  $lastPiece,
+  $logicalChildren,
+  $logicalNextSibling,
+  $logicalText,
+  $pieces,
+  $setLogicalText,
 } from "shared";
 import { showParaMarkerPrefix } from "shared-react";
 
@@ -160,7 +167,8 @@ export function $setParaMarkerWithPrefix(para: ParaNode, marker: string): void {
 function $healMarkerTrailingSeparator(para: ParaNode, context: MarkerEditContext): void {
   const glyph = para.getFirstChild();
   if (!glyph) return;
-  const second = glyph.getNextSibling();
+  // A glyph an annotation cuts into pieces ends at its last piece.
+  const second = $logicalNextSibling(glyph);
   if ($isMarkerTrailingSeparator(second)) return; // canonical separator present
   if (
     $isTextNode(second) &&
@@ -191,7 +199,7 @@ function $healMarkerTrailingSeparator(para: ParaNode, context: MarkerEditContext
     context.pendingKeys.add(para.getKey());
     return;
   }
-  glyph.insertAfter($createMarkerTrailingSeparator());
+  $lastPiece(glyph).insertAfter($createMarkerTrailingSeparator());
 }
 
 /**
@@ -536,7 +544,8 @@ function $openerGlyphEmptiedByForwardDelete(point: PointType): MarkerNode | unde
   if (!$isMarkerNode(candidate) || candidate.getMarkerSyntax() !== "opening") return undefined;
   const char = candidate.getParent();
   if (!$isCharNode(char) || !candidate.is(char.getFirstChild())) return undefined;
-  return candidate.getTextContentSize() === 1 ? candidate : undefined;
+  // The glyph's LAST character: the whole glyph, however an annotation cuts it into pieces.
+  return $logicalText(candidate).length === 1 ? candidate : undefined;
 }
 
 /**
@@ -561,7 +570,7 @@ export function $deleteLastOpenerGlyphCharForward(): boolean {
   const glyph = $openerGlyphEmptiedByForwardDelete(selection.anchor);
   const char = glyph?.getParent();
   if (!glyph || !$isCharNode(char)) return false;
-  const content = glyph.getNextSibling();
+  const content = $logicalNextSibling(glyph);
   glyph.remove();
   if ($isSeparatorPrefixHostText(content) && content.getTextContent().startsWith(NBSP))
     content.setTextContent(` ${content.getTextContent().slice(NBSP.length)}`);
@@ -630,10 +639,13 @@ export function $noteDeletionTransform(note: NoteNode, context: MarkerEditContex
     // evidence at all (shapes built by non-editable creation paths) are left alone, as for
     // collapsed.
     const caller = note.getCaller();
-    const hasEditableCaller = children.some(
-      (c) =>
-        $isTextNode(c) && !$isMarkerNode(c) && c.getTextContent() === getEditableCallerText(caller),
-    );
+    // Each child is read whole, however an annotation cuts it into pieces.
+    const logicalChildren = $logicalChildren(note);
+    const isEditableCaller = (child: LexicalNode): child is TextNode =>
+      $isTextNode(child) &&
+      !$isMarkerNode(child) &&
+      $logicalText(child) === getEditableCallerText(caller);
+    const hasEditableCaller = logicalChildren.some(isEditableCaller);
     const hasAnyMarkerGlyph = $dfs(note).some(({ node: n }) => $isMarkerNode(n));
     if (!hasEditableCaller && !hasAnyMarkerGlyph) return; // glyph-less shape — not ours
     // UNWRAP, don't delete: an expanded note's content is visible inline (an unclosed note may
@@ -642,12 +654,14 @@ export function $noteDeletionTransform(note: NoteNode, context: MarkerEditContex
     // becomes a plain space so it can't leak into USJ as `~`), remaining glyphs go with the
     // note, and the content stays in the paragraph. Contrast: a COLLAPSED note is an atomic
     // object — glyph damage removes the whole note (below).
-    children.forEach((child) => {
+    logicalChildren.forEach((child) => {
       if ($isMarkerNode(child)) return; // closing glyph (if any) dissolves with the note
       // An empty caller's two separators stand for the one space between marker and content.
-      if ($isTextNode(child) && child.getTextContent() === getEditableCallerText(caller))
-        child.setTextContent(caller ? ` ${caller} ` : " ");
-      note.insertBefore(child);
+      if (isEditableCaller(child)) {
+        note.insertBefore($setLogicalText(child, caller ? ` ${caller} ` : " "));
+        return;
+      }
+      for (const piece of $pieces(child)) note.insertBefore(piece);
     });
     note.remove();
     context.logger?.debug(

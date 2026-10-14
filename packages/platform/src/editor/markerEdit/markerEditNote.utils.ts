@@ -30,6 +30,7 @@ import {
   MarkerLookup,
   MarkerType,
   NoteNode,
+  $pieces,
 } from "shared";
 
 /**
@@ -296,15 +297,21 @@ function $startFpAtCaret(): boolean {
     // The caret is on the note's OWN text (a spacer) or not on text at all, so there is no stack
     // to lift out of: splice the break in at the note's own level and take the anchor's tail with
     // it. Its following siblings are separate note children and stay where they are.
+    // A text an annotation cuts into pieces (an editable caller) is one text: the pieces after
+    // the caret's go with its tail.
+    const laterPieces = textAnchor
+      ? $pieces(textAnchor).filter((piece) => textAnchor.isBefore(piece))
+      : [];
     const afterCaret =
       textAnchor && offset < size
         ? [offset === 0 ? textAnchor : textAnchor.splitText(offset)[1]]
         : [];
+    afterCaret.push(...laterPieces);
     noteChild.insertAfter(fp);
     const [firstMoved] = afterCaret;
     if (firstMoved) {
       $withCharContentNbspPrefix(firstMoved);
-      fp.append(firstMoved);
+      fp.append(...afterCaret);
     }
   }
   // Nothing after the caret anywhere: the break opens an empty `\fp`, which needs placeholder

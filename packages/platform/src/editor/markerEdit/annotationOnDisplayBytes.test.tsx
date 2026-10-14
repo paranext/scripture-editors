@@ -36,6 +36,8 @@ import {
   $isCharNode,
   $isTypedMarkNode,
   $isVerseNode,
+  $lastPiece,
+  $logicalText,
   $ownerOfRunPiece,
   $wrapSelectionInTypedMarkNode,
   COMMENT_MARK_TYPE,
@@ -505,8 +507,10 @@ describe("an annotated chapter number", () => {
     await act(async () => {
       mounted.lexical.update(() => {
         const chapter = $getRoot().getChildren().find($isChapterNode);
-        const glyph = chapter && $chapterGlyphTextNode(chapter);
-        if (!glyph) throw new Error("no chapter glyph");
+        const head = chapter && $chapterGlyphTextNode(chapter);
+        if (!head) throw new Error("no chapter glyph");
+        // Typed at the glyph's end: the annotation cuts the glyph, so its end is its last piece.
+        const glyph = $lastPiece(head);
         glyph.setTextContent(`${glyph.getTextContent()}\\ca 5\\ca*`);
         glyph.select(glyph.getTextContentSize(), glyph.getTextContentSize());
       });
@@ -590,8 +594,9 @@ describe("the display-run sync rewriting an annotated run to a new owner value",
     });
   }
 
+  /** The whole run holding the annotation, however the annotation cuts it into pieces. */
   function $annotatedRunText(mounted: Mounted): string {
-    return mounted.lexical.getEditorState().read(() => $carrierHolding("1").getTextContent());
+    return mounted.lexical.getEditorState().read(() => $logicalText($carrierHolding("1")));
   }
 
   it("keeps the annotation on the value's surviving bytes, change after change", async () => {
