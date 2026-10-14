@@ -189,8 +189,8 @@ Lexical maps one DOM text node to one `TextNode`, an editable carrier held only 
 every hold boundary into **pieces** (`displayPieces.state.ts`): adjacent siblings of the same class
 and identity, the first the carrier's own node, every later one carrying the continuation state,
 each held whole or not at all, joined again where neighbours are held by the same annotations. Every
-piece carries its chain's id, and a continuation continues only the piece before it with the same
-id: a class match alone is not a chain, so when a carrier's first piece is deleted the rest becomes
+piece of a carrier cut into more than one piece carries its chain's id (a carrier in one piece
+carries none), and a continuation continues only the piece before it with the same id: a class match alone is not a chain, so when a carrier's first piece is deleted the rest becomes
 a carrier of its own rather than joining a neighbour of its class (in `\v 1 \v 2 ` with a hold on
 the `2`, deleting verse 2's `\v ` piece never makes the `2` part of verse 1). The piece transform
 beside the hold-basis transform keeps that so after every update. A read-only

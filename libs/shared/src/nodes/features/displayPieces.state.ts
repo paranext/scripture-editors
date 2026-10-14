@@ -5,9 +5,10 @@
  * text node to one `TextNode` — so it is split, at every hold boundary, into pieces: adjacent
  * siblings of the same class and identity, each held whole or not at all. The first piece is the
  * carrier's own node ("head"); every later one carries {@link displayPieceContinuationState}, and
- * every piece carries the chain's {@link displayPieceChainState}. The chain is the carrier: what a
- * reader of the carrier's text, of the node after it, or of a parent's children must see as ONE
- * node.
+ * every piece of a carrier cut into more than one piece carries the chain's
+ * {@link displayPieceChainState} (a carrier in one piece carries none). The chain is the carrier:
+ * what a reader of the carrier's text, of the node after it, or of a parent's children must see as
+ * ONE node.
  *
  * This module holds the state and the chain primitives only. It imports nothing but Lexical and
  * the annotation state, so a node class can read its own chain without an import cycle; the
@@ -401,13 +402,11 @@ export function $joinPieces<T extends LexicalNode>(pieces: readonly T[]): T {
  */
 export function $removeBrokenTokenPieces(node: LexicalNode): boolean {
   if (!$isTextNode(node)) return false;
-  // Cheap for plain text: only a recorded piece, or a node a continuation follows (text typed in
-  // place of a head piece), can be part of a broken token.
-  if (
-    $getState(node, displayPieceTokenTextState) === undefined &&
-    !$isPieceContinuation(node.getNextSibling())
-  )
-    return false;
+  // Cheap for plain text: only a piece that recorded its token's text can find it broken. Text
+  // typed in place of a piece records nothing and carries no chain id, so it is no piece of the
+  // token's chain. The piece left next to it is transformed too (its sibling changed) and removes
+  // its own chain's broken pieces.
+  if ($getState(node, displayPieceTokenTextState) === undefined) return false;
   const pieces = $pieces(node);
   const text = $logicalText(node);
   const broken = pieces.filter((piece) => {
