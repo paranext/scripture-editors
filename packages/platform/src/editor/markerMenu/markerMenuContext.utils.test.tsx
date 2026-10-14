@@ -362,7 +362,7 @@ describe("$getMarkerMenuContext", () => {
 });
 
 describe("a paragraph marker glyph an annotation cuts into pieces", () => {
-  /** `\\q1 Blessed`, its glyph cut between `\\` and `q1`. */
+  /** `\q1 Blessed`, its glyph cut between `\` and `q1`. */
   function cutPrefix() {
     let para!: ParaNode;
     let prefix!: MarkerNode;
