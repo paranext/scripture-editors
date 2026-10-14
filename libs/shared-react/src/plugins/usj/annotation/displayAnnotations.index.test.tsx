@@ -1111,6 +1111,36 @@ describe("the display-annotation index", () => {
       release();
     });
 
+    it("keeps a head pasted between its source's pieces from taking the source's continuation", () => {
+      const { editor, run, release } = setup();
+      // Held apart, the source's two pieces never merge with an unheld copy beside them.
+      wrap(editor, run, 0, 1, "external-spelling", "a");
+      wrap(editor, run, 1, 6, "external-spelling", "b");
+      let pasted!: TextNode;
+      let grace!: TextNode;
+      editor.update(
+        () => {
+          const [head, continuation] = $pieces(run.getLatest());
+          grace = continuation;
+          pasted = $copyNode(head);
+          editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+            nodes: [pasted],
+            selection: $getSelection() ?? $createRangeSelection(),
+          });
+          // Where a paste at the caret between the two pieces puts it.
+          head.insertAfter(pasted);
+        },
+        { discrete: true },
+      );
+      editor.read(() => {
+        expect($getRoot().getTextContent()).toBe("In the ||grace");
+        // The copy carried the source's chain id until the paste restated it; the piece after it
+        // is still the source's, never a piece of the copy.
+        expect($pieceHead(grace.getLatest()).getKey()).not.toBe(pasted.getKey());
+      });
+      release();
+    });
+
     it("keeps no token record of the chain it was copied from", () => {
       const { editor, release } = setup();
       editor.update(
