@@ -22,6 +22,7 @@ import { $getRoot, $getSelection, $isElementNode, $isRangeSelection, LexicalNode
 import {
   $findFirstAncestorNoteNode,
   $isBookNode,
+  $isChapterNode,
   $isCharNode,
   $isMarkerTrailingSeparator,
   $isParaNode,
@@ -62,6 +63,9 @@ function $collectOpenCharMarkers(node: LexicalNode): string[] {
  * paragraph-typed in the sheet). Chapters match via `$isSomeChapterNode` — the same
  * predicate the validation walk uses — so a decorator `ImmutableChapterNode` contributes
  * its `\c` just like the mutable variant.
+ *
+ * A `node` on an editable chapter line counts that chapter too: a paragraph applied there starts
+ * after the chapter line (see `chapterLine.utils.ts`), so it is the chapter that precedes it.
  */
 function $collectPreviousParaMarkers(node: LexicalNode): string[] {
   const topLevel = node.getTopLevelElement();
@@ -75,7 +79,7 @@ function $collectPreviousParaMarkers(node: LexicalNode): string[] {
       // before checking what follows it). Otherwise a caret in the line reports an empty stack,
       // and the Enter palette offers every paragraph marker, including ones invalid straight
       // after `\id`.
-      if ($isBookNode(child)) markers.push(child.getMarker());
+      if ($isBookNode(child) || $isChapterNode(child)) markers.push(child.getMarker());
       break;
     }
     if ($isBookNode(child) || $isSomeChapterNode(child) || $isParaNode(child)) {

@@ -350,17 +350,18 @@ describe("chapter \\ca alternate-number run", () => {
     );
   });
 
-  it("refuses a rebuild whose bytes no longer tokenize as a chapter (kind change)", async () => {
+  it("becomes what its bytes now are when they no longer tokenize as a chapter", async () => {
     const { editor } = await renderChapterEditor(chapterUsj({ altnumber: "2" }));
     await act(async () =>
       editor.update(() => {
         const chapter = $findChapter();
         const glyph = requireDefined($chapterGlyphTextNode(chapter), "glyph not found");
         glyph.setTextContent("\\q1 1");
-        expect($rebuildChapter(chapter, context)).toBe(false);
-        // Preserve-or-refuse: the chapter and its state survive untouched.
-        expect($isChapterNode($findChapter())).toBe(true);
-        expect($findChapter().getAltnumber()).toBe("2");
+        expect($rebuildChapter(chapter, context)).toBe(true);
+        // The `\\q1` typed over the `\\c` is a paragraph now, and the `\\ca` run rides in it.
+        const para = $getRoot().getChildren().find($isParaNode);
+        expect(para?.getMarker()).toBe("q1");
+        expect($getRoot().getChildren().some($isChapterNode)).toBe(false);
       }),
     );
   });

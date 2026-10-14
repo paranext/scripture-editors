@@ -27,6 +27,7 @@ import {
   USJ_VERSION,
 } from "@eten-tech-foundation/scripture-utilities";
 import {
+  $createTextNode,
   $getNodeByKey,
   $getSelection,
   $getState,
@@ -75,6 +76,7 @@ import {
   ImpliedParaNode,
   LoggerBasic,
   MarkerLookup,
+  MarkerNode,
   MarkerType,
   NBSP,
   NoteNode,
@@ -2583,6 +2585,176 @@ export function $buildChapterFragment(
   return out;
 }
 
+/** A bare backslash and the separator after it: a marker with no name. */
+const NAMELESS_MARKER_REGEX = /^\\(?:\s|$)/;
+
+/** A `\p` spelled at the start of a fragment, which the tokenizer then opens as typed. */
+const LEADING_PARA_MARKER_REGEX = /^\s*\\p(?:\s|$)/;
+
+/**
+ * What a chapter's displayed bytes tokenize to, in the shape the document holds them.
+ *
+ * The tokenizer reads a fragment as paragraph content, so it opens a `\p` for text that comes
+ * before any paragraph marker. On a chapter line nobody typed that `\p`: bytes left there that are
+ * no longer a chapter marker (`c 2`, or text typed ahead of the `\c`) stand markerless, as
+ * Paratext 9 keeps them, and a bare backslash (`\ 2`) opens a paragraph with no marker name. Neither is the glyph's trailing separator their content — it is display —
+ * so a line left as text does not keep it.
+ *
+ * Exported for the read-only settle (virtualSettle.utils.ts), which must read the same content.
+ */
+export function chapterFragmentContent(text: string, getMarkerFn: MarkerLookup): MarkerContent[] {
+  const content = usfmFragmentToUsjContent(text, { getMarker: getMarkerFn });
+  const [first, ...others] = content;
+  if (
+    typeof first !== "object" ||
+    first.type !== "para" ||
+    first.marker !== "p" ||
+    LEADING_PARA_MARKER_REGEX.test(text)
+  )
+    return content;
+  const lineContent = [...(first.content ?? [])];
+  const last = lineContent.at(-1);
+  if (typeof last === "string") {
+    const trimmed = last.trimEnd();
+    if (trimmed) lineContent[lineContent.length - 1] = trimmed;
+    else lineContent.pop();
+  }
+  // A bare backslash is a marker with no name, which is how ParatextData reads `\ 2` and writes it
+  // back; holding the same paragraph means the saved chapter reads back as what was sent.
+  const [lead, ...afterLead] = lineContent;
+  if (typeof lead === "string" && NAMELESS_MARKER_REGEX.test(lead)) {
+    const leadText = lead.replace(NAMELESS_MARKER_REGEX, "");
+    const content = leadText ? [leadText, ...afterLead] : afterLead;
+    return [{ type: "para", marker: "", content }, ...others];
+  }
+  return [...lineContent, ...others];
+}
+
+/**
+ * Whether text joining the end of a paragraph needs a space put between them. The line break the
+ * text stood behind is whitespace in USFM, so ParatextData reads `\toc1 stuff` and then `x\c 1` as
+ * `\toc1 stuff x`. Nothing is added where whitespace is already there: at the end of the
+ * paragraph's text, in its marker's separator or a verse's, or at the start of the text.
+ *
+ * @param lastType The `type` of the paragraph's last child, or `undefined` when it has none.
+ * @param lastText That child's text when it is a text or a verse node, which can end in whitespace.
+ * @param firstText The joining text's first text, when it starts with text.
+ */
+function needsJoiningSpace(
+  lastType: string | undefined,
+  lastText: string | undefined,
+  firstText: string | undefined,
+): boolean {
+  if (lastType === undefined || /^\s/.test(firstText ?? "")) return false;
+  if (lastText !== undefined) return !/\s$/.test(lastText);
+  // A marker glyph is followed by its separator, which supplies the space itself.
+  return lastType !== MarkerNode.getType();
+}
+
+/** Whether a node of `type` carries text that can end in whitespace. */
+function isTextBearingType(type: string): boolean {
+  return type === TextNode.getType() || type === VerseNode.getType();
+}
+
+/**
+ * Joins the markerless line a chapter settle left first onto the end of the paragraph before it.
+ * USFM puts text standing behind a line break with no marker of its own into the paragraph before
+ * it, so the chapter's save and reload put it there too, and Paratext 9 keeps it there as typed.
+ * The line's nodes move as they are, so a caret restored into them stays with them.
+ *
+ * @param line The first node the settle put in the chapter's place.
+ */
+function $joinLeadingLineToPreviousParagraph(line: LexicalNode | undefined): void {
+  if (!$isImpliedParaNode(line)) return;
+  const previous = line.getPreviousSibling();
+  if (!$isParaNode(previous) && !$isImpliedParaNode(previous)) return;
+  const moving = line.getChildren();
+  const last = previous.getLastChild();
+  const first = moving.at(0);
+  const lastType = last?.getType();
+  if (
+    needsJoiningSpace(
+      lastType,
+      last && lastType && isTextBearingType(lastType) ? last.getTextContent() : undefined,
+      $isTextNode(first) ? first.getTextContent() : undefined,
+    )
+  )
+    previous.append($createTextNode(" "));
+  previous.append(...moving);
+  line.remove();
+}
+
+/** Whether two serialized text nodes differ only in their text, as text Lexical merges does. */
+function areSerializedTextsMergeable(
+  previous: SerializedLexicalNode,
+  next: SerializedLexicalNode,
+): boolean {
+  if (serializedType(previous) !== TextNode.getType()) return false;
+  if (serializedType(next) !== TextNode.getType()) return false;
+  const { text: _previousText, ...previousRest } = previous as { text?: string };
+  const { text: _nextText, ...nextRest } = next as { text?: string };
+  return JSON.stringify(previousRest) === JSON.stringify(nextRest);
+}
+
+/** A plain serialized space, the node `$createTextNode(" ")` exports. */
+const SERIALIZED_SPACE = {
+  type: "text",
+  version: 1,
+  detail: 0,
+  format: 0,
+  mode: "normal",
+  style: "",
+  text: " ",
+};
+
+/**
+ * The read-only mirror of {@link $joinLeadingLineToPreviousParagraph}, over a serialized document:
+ * joins the markerless line at `siblings[index]` onto the end of the paragraph before it, as the
+ * live settle does, including the text merge Lexical makes once the moved text sits beside the
+ * paragraph's own.
+ *
+ * Exported for the read-only settle (virtualSettle.utils.ts).
+ *
+ * @param siblings The children the chapter's settled nodes were spliced into.
+ * @param index Where the first of those nodes now is.
+ */
+export function joinSerializedLeadingLineToPreviousParagraph(
+  siblings: SerializedLexicalNode[],
+  index: number,
+): void {
+  const line = siblings.at(index);
+  const previous = index > 0 ? siblings[index - 1] : undefined;
+  if (!line || !previous || serializedType(line) !== ImpliedParaNode.getType()) return;
+  const previousType = serializedType(previous);
+  if (previousType !== ParaNode.getType() && previousType !== ImpliedParaNode.getType()) return;
+  const moving = serializedChildren(line);
+  const children = serializedChildren(previous);
+  if (!moving || !children) return;
+  const last = children.at(-1);
+  const first = moving.at(0);
+  const lastType = last ? serializedType(last) : undefined;
+  if (
+    needsJoiningSpace(
+      lastType,
+      last && lastType && isTextBearingType(lastType) ? serializedText(last) : undefined,
+      first ? serializedText(first) : undefined,
+    )
+  )
+    children.push({ ...SERIALIZED_SPACE });
+  for (const node of moving) {
+    const end = children.at(-1);
+    if (end && areSerializedTextsMergeable(end, node))
+      Object.assign(end, { text: `${serializedText(end) ?? ""}${serializedText(node) ?? ""}` });
+    else children.push(node);
+  }
+  siblings.splice(index, 1);
+}
+
+/** Whether `item` is a chapter marker. */
+function isChapterContent(item: MarkerContent | undefined): item is MarkerContent & object {
+  return typeof item === "object" && item.type === "chapter";
+}
+
 /**
  * Chapter-scoped Tier 2 re-tokenization — the third settle scope, beside `$rebuildParas` and
  * `$rebuildNoteContent`. The whole chapter node re-serializes from its re-tokenized bytes:
@@ -2590,10 +2762,14 @@ export function $buildChapterFragment(
  * attrCapture folds well-formed `\ca`/`\cp` spans back onto the chapter), while `sid` — never
  * derivable from visible bytes — is carried over.
  *
- * Preserve-or-refuse: the re-tokenized output must BE a chapter — an edit that would change the
- * node's KIND (the `\c` bytes rewritten into some other marker, or deleted) refuses and stays a
- * pending literal rather than restructuring the document from a chapter-scoped settle. Deleting
- * a chapter outright is `$chapterNodeTransform`'s existing empty-children path, not this one.
+ * Bytes that no longer read as a chapter marker — `\ 2` or `c 2` after a deletion, another marker
+ * typed over the `\c`, text typed ahead of it — become what they now are
+ * ({@link chapterFragmentContent}): the region is replaced by that content, as Paratext 9 keeps
+ * the bytes it holds, and the host puts back a marker the chapter needs on save. Markerless text
+ * left first then joins a paragraph before the chapter
+ * ({@link $joinLeadingLineToPreviousParagraph}). Bytes that are nothing at all once the glyph's
+ * separator is set aside remove the region, but not while the caret is in it, which would leave
+ * the caret nowhere; deleting a chapter outright is `$chapterNodeTransform`'s empty-children path.
  */
 export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): boolean {
   const { viewOptions, getMarker: getMarkerFn, logger } = context;
@@ -2629,20 +2805,23 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
       );
   }
 
-  const content: MarkerContent[] = usfmFragmentToUsjContent(out.text, { getMarker: getMarkerFn });
-  const [freshChapter] = content;
-  if (content.length === 0 || typeof freshChapter !== "object" || freshChapter.type !== "chapter") {
-    logger?.debug("[MarkerEdit] Chapter Tier 2 skipped: bytes no longer tokenize as a chapter");
+  const content = chapterFragmentContent(out.text, getMarkerFn);
+  if (content.length === 0 && anchorInRegion) {
+    logger?.debug("[MarkerEdit] Chapter Tier 2 deferred: emptied chapter line holds the caret");
     return false;
   }
   if (countSentinels(content) !== 0) {
     logger?.warn("[MarkerEdit] Chapter Tier 2 aborted: unexpected preserved-node placeholder");
     return false;
   }
+  const [first] = content;
+  const freshChapter = isChapterContent(first) ? first : undefined;
 
   // Sid carry-over BEFORE serialization — never derivable from visible bytes. `altnumber` and
   // `pubnumber` both come from the bytes now that both runs display: absent bytes mean deleted.
-  if (chapter.getSid() !== undefined) freshChapter.sid = chapter.getSid();
+  // Carried to the chapter even when text typed ahead of it now comes first.
+  const survivingChapter = content.find(isChapterContent);
+  if (survivingChapter && chapter.getSid() !== undefined) survivingChapter.sid = chapter.getSid();
 
   const serialized = usjEditorAdaptor.serializeEditorState(
     { type: USJ_TYPE, version: USJ_VERSION, content },
@@ -2661,8 +2840,9 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
   // materializes no live nodes — see `$rebuildParas`' fixed-point comment for why orphan-free
   // refusal is load-bearing.
   if (
+    freshChapter &&
     serializedSignatureOf(serialized.root.children, getMarkerFn) ===
-    $signatureOf(region, getMarkerFn)
+      $signatureOf(region, getMarkerFn)
   ) {
     let reconciled = false;
     if (chapter.getNumber() !== (freshChapter.number ?? "")) {
@@ -2683,14 +2863,10 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
   }
 
   const newNodes = serialized.root.children.map((child) => $parseSerializedNode(child));
-  if (!$isChapterNode(newNodes[0])) {
-    logger?.warn("[MarkerEdit] Chapter Tier 2 aborted: serialized output is not a chapter");
-    return false;
-  }
-
   newNodes.forEach((node) => chapter.insertBefore(node));
   region.forEach((node) => node.remove());
   $restoreSelectionAtOffset(newNodes, caretAnchor, anchorInRegion, getMarkerFn, viewOptions);
+  $joinLeadingLineToPreviousParagraph(newNodes.at(0));
   return true;
 }
 

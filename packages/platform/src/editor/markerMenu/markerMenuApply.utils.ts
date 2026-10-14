@@ -20,6 +20,7 @@
 import { $insertNoteForMarker, getUsjMarkerAction } from "../adaptors/usj-marker-action.utils";
 import { $applyParaMarker } from "../markerEdit/applyParaMarker.utils";
 import { LITERAL_TRIGGER_PREFIX_REGEX } from "../markerEdit/markerName.pattern";
+import { $moveCaretOffChapterLine, $splitOnChapterLine } from "../markerEdit/chapterLine.utils";
 import {
   $breakAndLiftCharStack,
   $outermostCharStackAncestor,
@@ -57,12 +58,19 @@ import {
   $normalizeSelectionOutOfGlyphText,
   $selectCharContentStart,
   BookNode,
+  createMarkerLookup,
+  defaultStyleInfo,
   LoggerBasic,
   NoteNode,
   ParaNode,
   StyleInfo,
 } from "shared";
-import { showParaMarkerPrefix, UsjNodeOptions, ViewOptions } from "shared-react";
+import {
+  getDefaultViewOptions,
+  showParaMarkerPrefix,
+  UsjNodeOptions,
+  ViewOptions,
+} from "shared-react";
 import { MutableRefObject } from "react";
 
 /**
@@ -491,6 +499,16 @@ export function $applyMarkerMenuSelection(
   // host re-derive it from delta-doc coordinates (getInsertedNodeKey) — a wrong key there makes
   // replaceEmbedUpdate silently no-op. Same reason EditorRef.insertMarker returns it.
   if (NoteNode.isValidMarker(item.marker, deps.nodeOptions?.extraValidMarkers)) {
+    // A caret on an editable chapter line has no block to insert the note into; move it to where
+    // content after the chapter number goes (see `chapterLine.utils.ts`).
+    if (
+      !$moveCaretOffChapterLine({
+        viewOptions: deps.viewOptions ?? getDefaultViewOptions(),
+        getMarker: createMarkerLookup(deps.styleInfo ?? defaultStyleInfo),
+        logger: deps.logger,
+      })
+    )
+      return undefined;
     return $insertNoteForMarker(
       item.marker,
       reference,
@@ -552,8 +570,14 @@ export function $applyMarkerMenuSelection(
  * `$canSplitBookAt` guard refuses. Existing callers that only need the split to happen are
  * unaffected by ignoring the return value; `EditorRef.formatPara` uses it to surface a refused
  * `\id`-line split the same way it already surfaces "no selection to retag".
+ *
+ * A caret on a chapter line starts the new paragraph after the chapter line, exactly as Enter there
+ * does: because this bypasses `INSERT_PARAGRAPH_COMMAND`, the handling registered on that command
+ * never sees it, and Lexical would otherwise split at the document root (see
+ * `chapterLine.utils.ts`).
  */
 export function $splitParagraphWithMarker(marker: string, viewOptions?: ViewOptions): boolean {
+  if ($splitOnChapterLine(marker, viewOptions)) return true;
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
   $normalizeSelectionOutOfGlyphText(selection);

@@ -5,10 +5,11 @@
  * DOM export cannot express at all, so it is where a carrier mismatch shows up first.
  *
  * The rule these pins state: `$handlePasteForStandardView`
- * (`whitespaceDisplay.plugin.utils.ts`) handles a protected paste with the SAME bytes an
- * unprotected one gets, and protection changes only two things — a selection
- * `StructureKeyboardPlugin` refuses to replace is declined here so that refusal keeps one owner,
- * and a multi-line payload's newlines become single spaces instead of paragraph splits.
+ * (`whitespaceDisplay.plugin.utils.ts`) handles a protected paste with the byte rules an
+ * unprotected one gets, and protection changes three things — a selection
+ * `StructureKeyboardPlugin` refuses to replace is declined here so that refusal keeps one owner, a
+ * multi-line payload's newlines become single spaces instead of paragraph splits, and pasted
+ * structure markers (paragraph markers and `\v`) are dropped, as the keyboard cannot type them.
  *
  * Why the bytes cannot be left to the html sanitizer: declining the whole paste under protection
  * handed it to `StructureKeyboardPlugin.$sanitizeAndInsert`, which reads `text/html` and nothing
@@ -17,11 +18,9 @@
  * — and routing around it cost the protected mode three guarantees the unprotected mode has: the
  * `\c`/`\id` strip (a pasted chapter marker creates a SECOND chapter node, after which every save
  * fails with the data provider's "Multiple chapter markers present" — an error that surfaces only in
- * the renderer log), the positional NBSP rule, and the Paratext 9 `usfm:`-comment decode. The
- * sanitizer was never protecting this view from marker BYTES in the first place: the marker engine
- * has no protection gate, so a pasted or typed `\v`/`\p` literal tokenizes into a real marker in
- * both modes, and `$sanitizeNodesForProtectedStructure` only strips verse/para NODES out of an html
- * DOM import.
+ * the renderer log), the positional NBSP rule, and the Paratext 9 `usfm:`-comment decode. Nor did
+ * the sanitizer keep structure out: `$sanitizeNodesForProtectedStructure` only strips verse/para
+ * NODES out of an html DOM import, and pasted marker bytes re-tokenize into real markers.
  */
 
 import { pasteEvent } from "./markerEdit.test-helpers";
@@ -34,13 +33,14 @@ import { $dfs } from "@lexical/utils";
 import {
   $getRoot,
   $getSelection,
+  $getState,
   $isRangeSelection,
   $isTextNode,
   LexicalEditor,
   PASTE_COMMAND,
   TextNode,
 } from "lexical";
-import { $isParaNode, NBSP } from "shared";
+import { $isAttributeRunNode, $isParaNode, NBSP, textTypeState } from "shared";
 import { StructureProtectionMode } from "shared-react";
 
 // jsdom implements neither `ClipboardEvent` nor `DragEvent`; Lexical's own paste fallback
@@ -414,5 +414,198 @@ describe("the byte rules a structure-protected paste keeps", () => {
     );
     expect(note).toBeDefined();
     expect(display).toContain(CAPTION);
+  });
+});
+
+// Structure protection keeps a user from typing a structure marker (the marker menu disables every
+// paragraph marker and `\v` under it), and pasted text re-tokenizes into markers exactly as typed
+// text does, so a protected paste drops those markers and keeps the text around them.
+describe("structure markers in a structure-protected paste", () => {
+  const STRUCTURE_PASTE = "aa \\v 9 bb \\p cc";
+
+  /** Every verse number the first paragraph exports. */
+  function verseNumbers(usj: Usj | undefined): string[] {
+    return firstParaContent(usj)
+      .filter((item): item is MarkerObject => typeof item !== "string" && item.type === "verse")
+      .map((verse) => (verse as unknown as { number: string }).number);
+  }
+
+  it("drops a pasted verse and paragraph marker, keeping the text", async () => {
+    const { usj } = await pasteInto("protected", { "text/plain": STRUCTURE_PASTE });
+    expect(firstParaContent(usj)).toEqual([hostContent[0], "Before aa bb ccafter"]);
+    expect($paraCount(usj)).toBe(2);
+  });
+
+  it("keeps them when protection is off", async () => {
+    const { usj } = await pasteInto("off", { "text/plain": STRUCTURE_PASTE });
+    expect(verseNumbers(usj)).toEqual(["18", "9"]);
+    expect($paraCount(usj)).toBe(3);
+  });
+
+  it("drops the paragraph markers of a multi-line paste, joining its lines", async () => {
+    const { usj } = await pasteInto("protected", { "text/plain": "\\p aa\n\\q1 bb" });
+    expect(firstParaContent(usj)).toEqual([hostContent[0], "Before aa bbafter"]);
+    expect($paraCount(usj)).toBe(2);
+  });
+
+  it("keeps a character marker, which is content rather than structure", async () => {
+    const { usj } = await pasteInto("protected", { "text/plain": "\\nd Lord\\nd* " });
+    expect(firstParaContent(usj)).toEqual([
+      hostContent[0],
+      "Before ",
+      { type: "char", marker: "nd", content: ["Lord"] },
+      " after",
+    ]);
+  });
+
+  // A copy made in this editor carries its own rich payload, which under protection would otherwise
+  // reach the html sanitizer — and it inserts the copy's USFM bytes as text, which then re-tokenize
+  // into a verse and a paragraph.
+  it("drops them from a copy made in this editor too", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(figureUsj(hostContent), {
+      structureProtectionMode: "protected",
+    });
+    const { event } = pasteEvent({
+      "text/plain": STRUCTURE_PASTE,
+      "text/html": usfmToClipboardHtml(STRUCTURE_PASTE),
+      "application/x-lexical-editor": JSON.stringify({
+        namespace: lexical._config.namespace,
+        nodes: [],
+      }),
+    });
+    await act(async () =>
+      lexical.update(() => {
+        $placeMidProse();
+        lexical.dispatchCommand(PASTE_COMMAND, event);
+      }),
+    );
+    await settle();
+    const usj = ref.current?.getUsj();
+    expect(firstParaContent(usj)).toEqual([hostContent[0], "Before aa bb ccafter"]);
+    expect($paraCount(usj)).toBe(2);
+  });
+});
+
+// `$insertPastedTextIntoAttributeContext` (whitespaceDisplay.plugin.utils.ts) is the OTHER branch
+// `$handlePasteForStandardView` sends a paste to whenever the selection touches attribute-display
+// text (a verse's `\va`/`\vp` run here; a char span's `|attrs` run and a milestone's attribute run
+// share the same textType "attribute" tag). It never ran `stripPastedBlockMarkers`, so a pasted
+// `\v`/paragraph marker there re-tokenized into real structure even under protection — this block
+// pins that it now does.
+describe("structure markers in an attribute run under protection", () => {
+  /** A host paragraph whose verse carries a `\va` alternate-number attribute run — editable marker
+   * mode always builds a `\va value\va*` triplet when `altnumber` is set. */
+  const hostContentWithAttrRun: ParaContent = [
+    { type: "verse", marker: "v", number: "18", altnumber: "18a" } as unknown as MarkerObject,
+    "Before after",
+  ];
+
+  /** The `\va` run's own value text — the one TextNode tagged textType "attribute". */
+  function $vaValueText(): TextNode {
+    const para = $getRoot().getChildren().filter($isParaNode)[0];
+    const run = para.getChildren().find($isAttributeRunNode);
+    if (!run) throw new Error("expected the \\va attribute run");
+    const value = run
+      .getChildren()
+      .find(
+        (node): node is TextNode =>
+          $isTextNode(node) && $getState(node, textTypeState) === "attribute",
+      );
+    if (!value) throw new Error("expected the \\va run's value text");
+    return value;
+  }
+
+  /** Collapsed caret at the end of the `\va` run's value text — WHOLLY inside the attribute node
+   * ({@link $isSelectionWithinOneAttributeNode} is true for any collapsed caret there): sub-case
+   * (b), the paste-≡-typed value-byte shape. */
+  function $placeInsideAttrRun(): void {
+    const value = $vaValueText();
+    value.select(value.getTextContentSize(), value.getTextContentSize());
+  }
+
+  /** A range from the end of the `\va` run's value text into the following prose — TOUCHES the run
+   * without staying wholly inside it: sub-case (a), the body-content shape. */
+  function $placeAcrossAttrRunIntoProse(): void {
+    $placeInsideAttrRun();
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+    const para = $getRoot().getChildren().filter($isParaNode)[0];
+    const prose = para
+      .getChildren()
+      .find(
+        (node): node is TextNode => $isTextNode(node) && node.getTextContent().includes("Before"),
+      );
+    if (!prose) throw new Error("expected the prose text node");
+    selection.focus.set(prose.getKey(), 3, "text");
+  }
+
+  describe("sub-case (b): a collapsed caret wholly within the \\va run's value", () => {
+    it("strips a pasted verse, keeping the text", async () => {
+      const { usj } = await pasteInto(
+        "protected",
+        { "text/plain": "x \\v 9 y" },
+        $placeInsideAttrRun,
+        hostContentWithAttrRun,
+      );
+      expect(firstParaContent(usj)).toEqual([
+        { type: "verse", marker: "v", number: "18", altnumber: "18ax y" },
+        "Before after",
+      ]);
+    });
+
+    it("keeps the verse when protection is off", async () => {
+      const { usj } = await pasteInto(
+        "off",
+        { "text/plain": "x \\v 9 y" },
+        $placeInsideAttrRun,
+        hostContentWithAttrRun,
+      );
+      expect(firstParaContent(usj)).toEqual([
+        { type: "verse", marker: "v", number: "18" },
+        {
+          type: "char",
+          marker: "va",
+          content: ["18ax ", { type: "verse", marker: "v", number: "9" }, "y"],
+        },
+        "Before after",
+      ]);
+    });
+
+    // Unlike a verse, which re-tokenizes in place, a paragraph marker SPLITS — and before this fix
+    // the split landed mid-run, stranding the `\va` run's own closer as an unmatched marker in the
+    // new paragraph.
+    it("strips a pasted paragraph marker, not splitting the paragraph", async () => {
+      const { usj } = await pasteInto(
+        "protected",
+        { "text/plain": "x \\p y" },
+        $placeInsideAttrRun,
+        hostContentWithAttrRun,
+      );
+      expect(firstParaContent(usj)).toEqual([
+        { type: "verse", marker: "v", number: "18", altnumber: "18ax y" },
+        "Before after",
+      ]);
+      expect($paraCount(usj)).toBe(2);
+    });
+  });
+
+  describe("sub-case (a): a selection that only touches the \\va run", () => {
+    // The range runs from inside the value through the run's own closer into the prose that
+    // follows, so (independent of this fix — see `$insertPastedTextIntoAttributeContext`'s doc
+    // comment) removing it takes the closer with it: what survives lands as the run's own
+    // closer-less content, the pre-existing "touches a run" shape. The point pinned here is that
+    // no verse 9 is among it.
+    it("strips a pasted verse, keeping the text", async () => {
+      const { usj } = await pasteInto(
+        "protected",
+        { "text/plain": "x \\v 9 y" },
+        $placeAcrossAttrRunIntoProse,
+        hostContentWithAttrRun,
+      );
+      expect(firstParaContent(usj)).toEqual([
+        { type: "verse", marker: "v", number: "18" },
+        { type: "char", marker: "va", closed: "false", content: ["18ax yore after"] },
+      ]);
+    });
   });
 });
