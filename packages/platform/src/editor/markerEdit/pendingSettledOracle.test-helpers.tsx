@@ -71,6 +71,7 @@ import { SettledPositionContext } from "../positions/settledPositions.model";
 import { MarkerContent, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { drainNativeSelectionChange } from "../editor-test.utils";
+import { copyEvent, pasteEvent } from "./markerEdit.test-helpers";
 import {
   $getRoot,
   $getSelection,
@@ -80,11 +81,13 @@ import {
   $isTextNode,
   CLICK_COMMAND,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  COPY_COMMAND,
   DELETE_CHARACTER_COMMAND,
   HISTORY_PUSH_TAG,
   LexicalEditor,
   LexicalNode,
   NodeKey,
+  PASTE_COMMAND,
   REDO_COMMAND,
   SELECT_ALL_COMMAND,
   SELECTION_CHANGE_COMMAND,
@@ -122,7 +125,7 @@ import {
   ViewOptions,
 } from "shared-react";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountInView>>;
 
@@ -472,6 +475,41 @@ const RANGE_KEYSTROKES: RangeKeystroke[] = (
   { name: `${gesture}, then type "x"`, extend, edit: "x" as const },
   { name: `${gesture}, then Backspace`, extend, edit: "" as const },
 ]);
+
+/**
+ * One byte of the text at the caret copied the way a user copies it — the byte selected, then the
+ * copy command the editor's copy plugins answer — and pasted back at the caret with every flavor
+ * the copy wrote, as the paste command a paste dispatches. `copies` names the byte: the one before
+ * the caret or the one after it. Not one of the pending/settled oracle's keystrokes: the
+ * annotation-transparency oracle runs it, where the byte of a carrier an annotation has cut into
+ * pieces is copied out of its piece and pasted back at every spelling of the caret, a cut
+ * included.
+ */
+interface PasteKeystroke {
+  name: string;
+  copies: "before" | "after";
+}
+
+export const PASTE_KEYSTROKES: PasteKeystroke[] = [
+  { name: "copy the byte before the caret, then paste it there", copies: "before" },
+  { name: "copy the byte after the caret, then paste it there", copies: "after" },
+];
+
+/** The clipboard flavors a copy in this editor can write, every one a paste then reads. */
+const CLIPBOARD_FLAVORS = ["application/x-lexical-editor", "text/html", "text/plain"];
+
+/** The piece of `node`'s carrier holding byte `byte` of the whole carrier's text, and the byte's
+ * offset in that piece. */
+function $pieceHoldingByte(node: TextNode, byte: number): [TextNode, number] | undefined {
+  if (byte < 0) return undefined;
+  let start = 0;
+  for (const piece of $pieces(node)) {
+    const size = piece.getTextContentSize();
+    if (byte < start + size) return [piece, byte - start];
+    start += size;
+  }
+  return undefined;
+}
 
 /** Whether `node` is shown inside a collapsed note, where nothing can be typed. */
 function $isInCollapsedNote(node: LexicalNode): boolean {
@@ -1410,7 +1448,7 @@ export interface CaseSite {
 }
 
 /** The oracle's keystroke kinds, as one union. */
-export type OracleKeystroke = KeystrokeCase | ShellKeystroke | RangeKeystroke;
+export type OracleKeystroke = KeystrokeCase | ShellKeystroke | RangeKeystroke | PasteKeystroke;
 
 /** The keystrokes the oracle runs at a site of `view`. */
 export function keystrokesFor(view: string, shell: boolean): OracleKeystroke[] {
@@ -1441,6 +1479,13 @@ export interface CaseRun {
   };
   shownLines: string | undefined;
   after: { text: string; reported: PositionReport[] };
+  /**
+   * What a paste's insertion logged as an error, first line each: `@lexical/clipboard` catches an
+   * insertion that throws (Lexical's own `insertNodes` refuses inline nodes with no block around
+   * the caret) and logs it before trying the clipboard's next flavor, so a refused insertion leaves
+   * no other trace.
+   */
+  pasteErrors: string[];
 }
 
 /** The corpus rows the oracle runs in `view`. */
@@ -1538,6 +1583,15 @@ export async function runKeystrokeCase(
         mounted.lexical.dispatchCommand(DELETE_CHARACTER_COMMAND, keystroke.deletes === "before");
         return;
       }
+      if ("copies" in keystroke) {
+        const held = $pieceHoldingByte(node, keystroke.copies === "before" ? at - 1 : at);
+        if (!held) return;
+        applied = true;
+        const [piece, byte] = held;
+        piece.select(byte, byte + 1);
+        if (isAnnounced) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        return;
+      }
       if ("extend" in keystroke) {
         if (!isInNote) return;
         applied = true;
@@ -1586,6 +1640,12 @@ export async function runKeystrokeCase(
     await Promise.resolve();
     await drainNativeSelectionChange();
   });
+  let pasteErrors: string[] = [];
+  if (applied && "copies" in keystroke) {
+    const pasted = await copyAndPasteAtSite(mounted, isAnnounced, $site);
+    applied = pasted !== undefined;
+    pasteErrors = pasted ?? [];
+  }
   // An empty `next` replaces a range with nothing: Backspace.
   const next =
     "character" in keystroke
@@ -1655,7 +1715,56 @@ export async function runKeystrokeCase(
     before,
     shownLines,
     after,
+    pasteErrors,
   };
+}
+
+/**
+ * The second half of a {@link PasteKeystroke}, with its byte selected: copy it, place the caret at
+ * the site again, and paste the copy there. Returns what the paste logged as an error
+ * ({@link CaseRun.pasteErrors}), recorded rather than printed; `undefined` when the site is gone
+ * once the byte is copied.
+ */
+async function copyAndPasteAtSite(
+  mounted: Mounted,
+  isAnnounced: boolean,
+  $site: () => CaseSite | undefined,
+): Promise<string[] | undefined> {
+  const { event, getData } = copyEvent({ native: true });
+  await act(async () => {
+    mounted.lexical.dispatchCommand(COPY_COMMAND, event);
+    await drainNativeSelectionChange();
+  });
+  const payload = Object.fromEntries(
+    CLIPBOARD_FLAVORS.map((flavor) => [flavor, getData(flavor)]).filter(([, data]) => data !== ""),
+  );
+  let isPlaced = false;
+  await act(async () => {
+    mounted.lexical.update(() => {
+      const site = $site();
+      if (!site) return;
+      isPlaced = true;
+      site.node.select(site.offset, site.offset);
+      if (isAnnounced) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+    await drainNativeSelectionChange();
+  });
+  if (!isPlaced) return undefined;
+  const errors: string[] = [];
+  const consoleError = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    errors.push(String(args[0]).split("\n")[0]);
+  });
+  try {
+    await act(async () => {
+      mounted.lexical.dispatchCommand(PASTE_COMMAND, pasteEvent(payload).event);
+      await Promise.resolve();
+      await Promise.resolve();
+      await drainNativeSelectionChange();
+    });
+  } finally {
+    consoleError.mockRestore();
+  }
+  return errors;
 }
 
 /**

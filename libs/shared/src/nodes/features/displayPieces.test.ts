@@ -2,7 +2,8 @@ import { $chapterGlyphTextNode } from "../usj/attributeDisplay.utils.js";
 import { $createChapterNode, $isChapterNode } from "../usj/ChapterNode.js";
 import { $createCharNode, CharNode } from "../usj/CharNode.js";
 import { usjBaseNodes } from "../usj/index.js";
-import { getVisibleOpenMarkerText } from "../usj/markerText.utils.js";
+import { getEditableCallerText, getVisibleOpenMarkerText } from "../usj/markerText.utils.js";
+import { $createNoteNode } from "../usj/NoteNode.js";
 import { NBSP } from "../usj/node-constants.js";
 import { $createParaNode, ParaNode } from "../usj/ParaNode.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
@@ -33,6 +34,7 @@ import {
   $pieces,
   $pieceStart,
   $setLogicalText,
+  $splitCarrierAt,
 } from "./displayPieces.state.js";
 import { $createMarkerNode, $isCanonicalMarkerNode, MarkerNode } from "./MarkerNode.js";
 import { TypedMarkNode } from "./TypedMarkNode.js";
@@ -495,6 +497,151 @@ describe("carrier pieces", () => {
   });
 });
 
+describe("a carrier split where nodes are inserted", () => {
+  it("splits a carrier in pieces at a cut as splitText splits it in one piece", () => {
+    const editor = mount();
+    let closer!: MarkerNode;
+    let plain!: MarkerNode;
+    editor.update(
+      () => {
+        closer = $span().closer;
+        $addDisplayAnnotation(closer, "check", "a", 0, 1);
+        $addDisplayAnnotation(closer, "check", "b", 1, 3);
+        plain = $span().closer;
+      },
+      { discrete: true },
+    );
+    editor.read(() => expect(texts($pieces(closer))).toEqual(["\\", "w*"]));
+    let split: [string, string][] = [];
+    let expected: [string, string][] = [];
+    editor.update(
+      () => {
+        // At the cut, where an insertion finds no text left to split.
+        const before = $splitCarrierAt(closer, 1);
+        const after = before?.getNextSibling();
+        split = [before, after].map((part) => [
+          part?.getType() ?? "",
+          part?.getTextContent() ?? "",
+        ]);
+        const [left, right] = plain.splitText(1);
+        expected = [left, right].map((part) => [part.getType(), part.getTextContent()]);
+      },
+      { discrete: true },
+    );
+    // The bytes after the caret are a text of their own, as `splitText` leaves them.
+    expect(split).toEqual(expected);
+    expect(split).toEqual([
+      ["marker", "\\"],
+      ["text", "w*"],
+    ]);
+    editor.read(() => {
+      const before = closer.getLatest();
+      expect($pieces(before)).toEqual([before]);
+      expect($holdIds(before)).toEqual(["a[0,1)"]);
+    });
+  });
+
+  it("splits inside a piece, each part keeping the holds over its own bytes", () => {
+    const editor = mount();
+    let run!: TextNode;
+    editor.update(
+      () => {
+        run = $span().run;
+        $addDisplayAnnotation(run, "check", "a", 1, 6);
+      },
+      { discrete: true },
+    );
+    // Something goes in between, as the insertion the split makes room for puts it.
+    editor.update(() => void $splitCarrierAt(run, 3)?.insertAfter($createMarkerNode("x")), {
+      discrete: true,
+    });
+    editor.read(() => {
+      const before = run.getLatest();
+      const after = $lastPiece(before).getNextSibling()?.getNextSibling();
+      if (!after) throw new Error("no part after the split");
+      expect($logicalText(before)).toBe("|le");
+      expect($pieces(before).map($holdIds)).toEqual([[], ["a[0,2)"]]);
+      // An attribute run's bytes stay an attribute run, holds and all.
+      expect($logicalText(after)).toBe('mma="grace" strong="G5485"');
+      expect($pieces(after).map($holdIds)).toEqual([["a[0,3)"], []]);
+      expect($pieceHead(after)).toBe(after);
+    });
+  });
+
+  it("leaves a carrier whole at its edges", () => {
+    const editor = mount();
+    editor.update(
+      () => {
+        const { closer } = $span();
+        expect($splitCarrierAt(closer, 0)).toBeUndefined();
+        expect($splitCarrierAt(closer, 3)).toBeUndefined();
+      },
+      { discrete: true },
+    );
+  });
+});
+
+describe("a carrier beside a text Lexical would merge it with", () => {
+  it("joins the text into the carrier, keeping each hold on its own bytes", () => {
+    const editor = mount();
+    let run!: TextNode;
+    editor.update(
+      () => {
+        run = $span().run;
+        $addDisplayAnnotation(run, "check", "a", 0, 1);
+        // A copy of the run's state, as a paste of one of its bytes brings.
+        run.insertAfter($setState($createTextNode("|"), textTypeState, "attribute"));
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      const head = run.getLatest();
+      expect($logicalText(head)).toBe('|lemma="grace" strong="G5485"|');
+      expect($pieces(head).map($holdIds)).toEqual([["a[0,1)"], []]);
+      expect($logicalNextSibling(head)?.getTextContent()).toBe("\\w*");
+    });
+  });
+
+  it("leaves a text of another kind beside it alone", () => {
+    const editor = mount();
+    let run!: TextNode;
+    editor.update(
+      () => {
+        run = $span().run;
+        $addDisplayAnnotation(run, "check", "a", 0, 1);
+        run.insertAfter($createTextNode("content"));
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      expect($logicalText(run)).toBe('|lemma="grace" strong="G5485"');
+      expect($logicalNextSibling(run)?.getTextContent()).toBe("content");
+    });
+  });
+});
+
+describe("a text that is no carrier", () => {
+  it("holds no display annotation and is never cut", () => {
+    const editor = mount();
+    editor.update(
+      () => {
+        // A caller's bytes outside any note's caller slot are content.
+        const text = $createTextNode(` +${NBSP}`);
+        $getRoot().append($createParaNode().append($createTextNode("a"), text));
+        $addDisplayAnnotation(text, "check", "a", 1, 2);
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      // Held by nothing, Lexical merges it with the text before it, as it does with no annotation.
+      const para = $getRoot().getFirstChild();
+      const children = $isElementNode(para) ? para.getChildren() : [];
+      expect(texts(children)).toEqual([`a +${NBSP}`]);
+      expect(children.map($displayAnnotationsOf)).toEqual([[]]);
+    });
+  });
+});
+
 describe("holds through a byte typed beside an identical one", () => {
   /** `\v 1 ` with its `\` held, so cut into `\` | `v 1 `; the caret at the front of the head. */
   function $heldBackslashVerse(): LexicalNode {
@@ -622,20 +769,21 @@ describe("a token carrier cut into pieces", () => {
     ["its last piece", 2],
   ])("goes whole when text is typed in place of %s, keeping the typed text", (_, index) => {
     const editor = mount();
-    let para!: LexicalNode;
+    let note!: LexicalNode;
     let caller!: TextNode;
     editor.update(
       () => {
-        caller = $createTextNode(` +${NBSP}`).setMode("token");
-        para = $createParaNode().append(caller);
-        $getRoot().append(para);
+        // A protected note shell's caller: a token in the note's caller slot.
+        caller = $createTextNode(getEditableCallerText("+")).setMode("token");
+        note = $createNoteNode("f", "+").append($createMarkerNode("f"), caller);
+        $getRoot().append($createParaNode().append(note));
         $addDisplayAnnotation(caller, "check", "a", 1, 2);
       },
       { discrete: true },
     );
     editor.read(() => expect(texts($pieces(caller))).toEqual([" ", "+", NBSP]));
     editor.update(() => $pieces(caller)[index].replace($createTextNode("x")), { discrete: true });
-    editor.read(() => expect(childTexts(para)).toEqual(["x"]));
+    editor.read(() => expect(childTexts(note)).toEqual(["\\f", "x"]));
   });
 
   it("stays whole and cut through a rewrite of its text", () => {

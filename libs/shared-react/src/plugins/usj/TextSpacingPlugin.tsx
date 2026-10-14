@@ -256,12 +256,15 @@ function $verseNodeTransform(node: SomeVerseNode): void {
   //   TypedMarkNode parents), so the space is inserted here instead and coalesces onto the same
   //   USJ text run. Only when that text does not already end in one — the rule
   //   `$addTrailingSpace` applies to bare text — or a comment ending beside the verse writes a
-  //   second space into the document.
+  //   second space into the document — and only where bare text would get one: never where the
+  //   text owns its spacing, read as the unmarked document has it (`$ownsItsSpacing`; an
+  //   editable verse is a text, so the text before it gets none).
   if (
     $isCharNode(previousSibling) ||
     ($isTextNode(previousSibling) &&
       $isTypedMarkNode(previousSibling.getParent()) &&
-      !$endsInSpace(previousSibling))
+      !$endsInSpace(previousSibling) &&
+      !$ownsItsSpacing(previousSibling, $parentOutsideMarks(previousSibling), node))
   )
     node.insertBefore($createTextNode(" "));
 }

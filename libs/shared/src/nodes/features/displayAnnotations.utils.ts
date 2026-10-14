@@ -26,7 +26,9 @@ import {
   remapAnnotations,
 } from "./displayAnnotations.state.js";
 import {
+  $hasPieceState,
   $isPieceContinuation,
+  $joinMergeableNeighbours,
   $joinPieces,
   $keepParentPoints,
   $logicalText,
@@ -540,15 +542,27 @@ export function $normalizeCarrierPieces(node: LexicalNode): void {
   // A continuation whose head is gone (deleted, or the piece was moved) is a carrier of its own.
   if ($isPieceContinuation(node) && $pieceHead(node).is(node))
     $setState(node, displayPieceContinuationState, undefined);
-  const head = $pieceHead(node);
-  // Plain content never holds and never splits; the check is what keeps this cheap for every
-  // typed character.
+  // Plain content never holds and never splits, and beside text no annotation holds it has nothing
+  // to join; the check is what keeps this cheap for every typed character.
+  const first = $pieceHead(node);
   if (
-    !$isDisplayAnnotationCarrier(head) &&
-    !$isPieceContinuation(head.getNextSibling()) &&
-    $displayAnnotationsOf(head).length === 0
+    !$isDisplayAnnotationCarrier(first) &&
+    !$isPieceContinuation(first.getNextSibling()) &&
+    !$hasPieceState(first) &&
+    !$hasPieceState(first.getPreviousSibling()) &&
+    !$hasPieceState(first.getNextSibling())
   )
     return;
+  // Only a carrier holds a display byte's annotation. A text that is none — the bytes a split took
+  // off a glyph or a verse, a caller moved out of its slot — is content, which holds annotations
+  // only in marks and which no reader of content expects cut into pieces: its holds go, and the
+  // loop below joins its pieces.
+  if (!$isDisplayAnnotationCarrier(first))
+    for (const piece of $pieces(first))
+      if ($getState(piece, displayAnnotationsState) !== undefined)
+        $setState(piece, displayAnnotationsState, undefined);
+  // Joined first with the texts Lexical would have merged it with, were they not cut or held.
+  const head = $joinMergeableNeighbours(first);
   // Cut every piece where a hold starts or ends inside it.
   for (const piece of $pieces(head)) {
     if (!$isTextNode(piece)) continue;

@@ -897,6 +897,30 @@ describe("TextSpacingPlugin", () => {
     });
   });
 
+  it.each([false, true])(
+    "spaces text before an editable verse alike whether an annotation holds it (held: %s)",
+    async (isHeld) => {
+      // An editable verse is a text node, and the text before it owns its spacing as the start of
+      // that verse's run, so no space is added there; a mark holding the text changes nothing.
+      const { editor } = await testEnvironment(() => {
+        const text = $createTextNode("a");
+        $getRoot().append(
+          $createParaNode().append(
+            isHeld ? $createTypedMarkNode({ t: ["1"] }).append(text) : text,
+            $createVerseNode("1", "\\v 1 "),
+          ),
+        );
+      });
+
+      // Trigger an update (transforms run).
+      await act(async () => editor.update(() => undefined));
+
+      editor.getEditorState().read(() => {
+        expect($getRoot().getTextContent()).toBe("a\\v 1 ");
+      });
+    },
+  );
+
   it("should insert the structural space when an annotation ending on a CharNode precedes a verse", async () => {
     // A space between a char and a following verse marker is structural, not content: USJ→USFM
     // conversion needs it and Paratext 9 re-inserts it when removed. Canonical USJ therefore has

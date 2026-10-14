@@ -8,6 +8,9 @@
  * and settled `getUsj()`, the screen and document text, every caret position's report and its
  * round trip, and the collab delta. A site inside a carrier an annotation has cut into pieces is
  * reached at every spelling the cut gives it, and each spelling must agree with the unsplit run.
+ * At a site strictly inside a carrier a paste runs too: a byte of the carrier copied out of its
+ * piece and pasted at the caret (`PASTE_KEYSTROKES`), with the carriers cut by the ranges over them
+ * alone, so a paste between two pieces must join the carrier as a paste into the unsplit one does.
  *
  * The annotated run is also graded on its own: every annotation paints exactly the bytes it holds
  * (plus whitespace), nothing is painted in part, and an annotation is reported removed exactly
@@ -53,6 +56,7 @@ import {
   OracleKeystroke,
   oracleRows,
   outsideNotes,
+  PASTE_KEYSTROKES,
   pendingOracleView,
   PositionReport,
   PROTECTED_NOTE_SHELL_VIEW,
@@ -388,6 +392,9 @@ interface RowSite {
   text: string;
   /** Whether a planned crossing range starts or ends in the site's node, cutting it. */
   isCrossed: boolean;
+  /** Whether the site is strictly inside a display-byte carrier: where a paste splits it, and
+   * where the plan's ranges over it cut it into pieces. */
+  isInsideCarrier: boolean;
 }
 
 /**
@@ -426,6 +433,8 @@ function $rowSites(plan: readonly PlannedAnnotation[]): {
       label,
       text: node.getTextContent(),
       isCrossed: crossed.has(node.getKey()),
+      isInsideCarrier:
+        $isDisplayAnnotationCarrier(node) && offset > 0 && offset < node.getTextContentSize(),
     });
   }
   return { sites, unrestated };
@@ -571,6 +580,7 @@ function observables(run: CaseRun): { [name: string]: string } {
     "settled screen": run.shownLines ?? "",
     "settled text": run.after.text,
     "settled positions": positionSets(run.after.reported),
+    "paste errors": JSON.stringify(run.pasteErrors),
   };
 }
 
@@ -740,6 +750,10 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
         await applyAnnotations(probe, plan);
         const mismatches = probe.lexical.getEditorState().read(() => $holdMismatches(plan));
         probe.unmount();
+        // A paste is compared with the carriers cut by the ranges over them alone: a crossing's
+        // mark beside the pasted bytes would cut the whitespace run they can form with the content
+        // there, the limit of marks over content the plan's crossings already keep clear of.
+        const piecePlan = plan.filter(({ bytes }) => typeof bytes === "string");
 
         const accounting: Accounting = {
           attempted: 0,
@@ -747,8 +761,20 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
           skipped: [],
           skippedSpellings: [],
         };
-        for (const { index, offset, global: site, label: siteLabel, text, isCrossed } of sites)
-          for (const keystroke of keystrokesFor(view, site.shell)) {
+        for (const {
+          index,
+          offset,
+          global: site,
+          label: siteLabel,
+          text,
+          isCrossed,
+          isInsideCarrier,
+        } of sites)
+          for (const keystroke of [
+            ...keystrokesFor(view, site.shell),
+            ...(isInsideCarrier ? PASTE_KEYSTROKES : []),
+          ]) {
+            const casePlan = "copies" in keystroke ? piecePlan : plan;
             accounting.attempted += 1;
             const plainMounted = await mountInView(usj, viewOptions);
             // The plain run reaches the site as the pending/settled oracle does, so a case it
@@ -784,7 +810,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
             let spellingCount: number | undefined;
             for (let which = 0; spellingCount === undefined || which < spellingCount; which += 1) {
               const mounted = await mountInView(usj, viewOptions);
-              const applied = await applyAnnotations(mounted, plan);
+              const applied = await applyAnnotations(mounted, casePlan);
               // Setting an annotation emits no change, so the ops streams start equal here.
               const opsBefore = mounted.ops.length;
               const { spelling, count, isCutNode, isSpliceable } = mounted.lexical
@@ -841,7 +867,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               if (!annotated) {
                 const to =
                   view === PROTECTED_NOTE_SHELL_VIEW && !(isCutNode && !isSpliceable)
-                    ? await caretRespelledAt(usj, viewOptions, plan, site, which)
+                    ? await caretRespelledAt(usj, viewOptions, casePlan, site, which)
                     : undefined;
                 if (isCutNode && !isSpliceable) cutSpellings.push(label);
                 else if (to !== undefined) respelled.push([label, to]);
