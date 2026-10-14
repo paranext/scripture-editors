@@ -595,7 +595,12 @@ function $ensureUndoStepFinalizer(): void {
 function $serializedDocument(node: LexicalNode): string {
   const $tree = (current: LexicalNode): SerializedLexicalNode => {
     const json = current.exportJSON();
-    return $isElementNode(current) ? { ...json, children: current.getChildren().map($tree) } : json;
+    if (!$isElementNode(current)) return json;
+    const withChildren: SerializedLexicalNode & { children: SerializedLexicalNode[] } = {
+      ...json,
+      children: current.getChildren().map($tree),
+    };
+    return withChildren;
   };
   return JSON.stringify(joinSerializedPieces([$tree(node)]));
 }
