@@ -6,7 +6,7 @@
 import { deserializeEditorState } from "../adaptors/editor-usj.adaptor";
 import { testEnvironment, viewOptions } from "./markerEdit.test-helpers";
 import { act } from "@testing-library/react";
-import { $createTextNode, $getRoot, LexicalNode, TextNode } from "lexical";
+import { $createTextNode, $getRoot, ElementNode, LexicalNode, TextNode } from "lexical";
 import {
   $createMarkerNode,
   $createParaNode,
@@ -44,7 +44,7 @@ async function spaceTypedAfterVerse(
     }),
   );
   const screen = editor.getEditorState().read(() => {
-    const para = $getRoot().getFirstChildOrThrow();
+    const para = $getRoot().getFirstChildOrThrow<ElementNode>();
     return para
       .getAllTextNodes()
       .map((node) => `[${node.getType()}:${node.getTextContent()}]`)
