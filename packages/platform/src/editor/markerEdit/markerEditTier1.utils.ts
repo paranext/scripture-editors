@@ -96,12 +96,12 @@ import {
   $logicalPreviousSibling,
   $logicalText,
   $mergePieces,
+  $nextSiblingThroughMarks,
   $pieceAtLogicalOffset,
   $pieceHead,
   $pieces,
   $previousSiblingThroughMarks,
   $setLogicalText,
-  $isTypedMarkNode,
   $textRunThroughMarks,
 } from "shared";
 import { StructureProtectionMode } from "shared-react";
@@ -647,14 +647,6 @@ function $markerGlyphCaretHeld(glyph: MarkerNode): boolean {
  *
  * @returns Whether the whitespace moved.
  */
-/** `node` itself, or — for an annotation mark — its `edge` text descendant. */
-function $textThroughMarks(node: LexicalNode | null, edge: "first" | "last"): LexicalNode | null {
-  let current = node;
-  while ($isTypedMarkNode(current))
-    current = edge === "first" ? current.getFirstChild() : current.getLastChild();
-  return current;
-}
-
 function $moveOuterGlyphSpaceOut(glyph: MarkerNode): boolean {
   // A glyph an annotation cuts into pieces is one glyph: read whole, written whole, and flanked by
   // the nodes outside its chain.
@@ -678,12 +670,10 @@ function $moveOuterGlyphSpaceOut(glyph: MarkerNode): boolean {
     if ($isParaNode(parent)) return false;
     beside = parent;
   }
-  // An annotation mark beside the glyph is transparent: the text the whitespace goes onto is the
-  // mark's text at that edge.
-  const holder = $textThroughMarks(
-    isCloser ? $lastPiece(beside).getNextSibling() : $pieceHead(beside).getPreviousSibling(),
-    isCloser ? "first" : "last",
-  );
+  // An annotation mark beside the glyph is transparent: the text the whitespace goes onto is read
+  // through it — the front of what follows a closer, the end of what precedes an opener.
+  const preceding = isCloser ? null : $previousSiblingThroughMarks(beside);
+  const holder = isCloser ? $nextSiblingThroughMarks(beside) : preceding && $lastPiece(preceding);
   if (!$isTextNode(holder)) return false;
   const selection = $getSelection();
   const caret =
@@ -1601,9 +1591,9 @@ export function $keepProtectedNoteCloser(note: NoteNode): void {
   // annotation cuts into pieces ends at its last piece; its pieces stay together.
   const closerHead = closer;
   for (
-    let behind = $lastPiece(closerHead).getNextSibling();
+    let behind = $logicalNextSibling(closerHead);
     behind;
-    behind = $lastPiece(closerHead).getNextSibling()
+    behind = $logicalNextSibling(closerHead)
   )
     closerHead.insertBefore(behind);
 

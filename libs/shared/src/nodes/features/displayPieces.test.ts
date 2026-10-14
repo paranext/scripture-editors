@@ -2,7 +2,7 @@ import { $createCharNode, CharNode } from "../usj/CharNode.js";
 import { usjBaseNodes } from "../usj/index.js";
 import { getVisibleOpenMarkerText } from "../usj/markerText.utils.js";
 import { NBSP } from "../usj/node-constants.js";
-import { $createParaNode } from "../usj/ParaNode.js";
+import { $createParaNode, ParaNode } from "../usj/ParaNode.js";
 import { createBasicTestEnvironment } from "../usj/test.utils.js";
 import { $createVerseNode, VerseNode } from "../usj/VerseNode.js";
 import { textTypeState } from "../collab/delta.state.js";
@@ -41,14 +41,17 @@ import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $isTextNode,
   $setSelection,
   $setState,
+  HISTORY_MERGE_TAG,
   LexicalEditor,
   LexicalNode,
   NODE_STATE_KEY,
   SerializedLexicalNode,
   TextNode,
 } from "lexical";
+import { onTestFinished, vi } from "vitest";
 
 function mount(): LexicalEditor {
   const { editor } = createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]);
@@ -651,5 +654,113 @@ describe("carrier offsets and per-node passes", () => {
       // A continuation whose head is gone is a carrier of its own: nothing to hand on.
       expect($deferToPieceHead($getRoot())).toBe(false);
     });
+  });
+});
+
+describe("an update that only re-cuts a carrier", () => {
+  /** The tags each commit after mounting carried. */
+  function $mountWithTags(): { editor: LexicalEditor; tags: string[][] } {
+    const editor = mount();
+    const tags: string[][] = [];
+    editor.registerUpdateListener(({ tags: committed }) => void tags.push([...committed]));
+    return { editor, tags };
+  }
+
+  it("joins the current undo step, as an edit a transform reverts in one node does", () => {
+    const { editor, tags } = $mountWithTags();
+    let verse!: LexicalNode;
+    editor.update(
+      () => {
+        verse = $createVerseNode("1", getVisibleOpenMarkerText("v", "1"));
+        $getRoot().append($createParaNode().append(verse, $createTextNode("In the")));
+        $addDisplayAnnotation(verse, "check", "a", 3, 4);
+      },
+      { discrete: true },
+    );
+    tags.length = 0;
+    // A rewrite and its reversal in one update: the document is as it was, but the pieces were
+    // joined and cut again.
+    editor.update(
+      () => {
+        $setLogicalText(verse, `\\v${NBSP}1  `);
+        $setLogicalText(verse, `\\v${NBSP}1 `);
+      },
+      { discrete: true },
+    );
+    expect(tags.at(-1)).toContain(HISTORY_MERGE_TAG);
+  });
+
+  it("leaves an update that changes a byte to the history's own rules", () => {
+    const { editor, tags } = $mountWithTags();
+    let verse!: LexicalNode;
+    editor.update(
+      () => {
+        verse = $createVerseNode("1", getVisibleOpenMarkerText("v", "1"));
+        $getRoot().append($createParaNode().append(verse, $createTextNode("In the")));
+        $addDisplayAnnotation(verse, "check", "a", 3, 4);
+      },
+      { discrete: true },
+    );
+    tags.length = 0;
+    editor.update(() => void $setLogicalText(verse, `\\v${NBSP}2 `), { discrete: true });
+    expect(tags.at(-1)).not.toContain(HISTORY_MERGE_TAG);
+  });
+});
+
+describe("the cost of judging a re-cut update", () => {
+  /** 200 paragraphs, each a verse and some text; returns the verses. */
+  function $bigDocument(): LexicalNode[] {
+    const verses: LexicalNode[] = [];
+    for (let index = 1; index <= 200; index++) {
+      const verse = $createVerseNode(`${index}`, getVisibleOpenMarkerText("v", `${index}`));
+      verses.push(verse);
+      $getRoot().append($createParaNode().append(verse, $createTextNode("In the beginning")));
+    }
+    return verses;
+  }
+
+  it("serializes only the paragraphs the update changed", () => {
+    const editor = mount();
+    let verses: LexicalNode[] = [];
+    editor.update(() => void (verses = $bigDocument()), { discrete: true });
+    const serialized: string[] = [];
+    const exportJSON = ParaNode.prototype.exportJSON;
+    const spy = vi.spyOn(ParaNode.prototype, "exportJSON").mockImplementation(function (
+      this: ParaNode,
+    ) {
+      serialized.push(this.getKey());
+      return exportJSON.call(this);
+    });
+    onTestFinished(() => spy.mockRestore());
+    const touched = [10, 100, 190].map((index) => verses[index]);
+    for (const verse of touched)
+      editor.update(() => $addDisplayAnnotation(verse, "check", verse.getKey(), 3, 4), {
+        discrete: true,
+      });
+    const touchedParas = editor
+      .getEditorState()
+      .read(() => new Set(touched.map((verse) => verse.getParentOrThrow().getKey())));
+    expect(serialized.length).toBeGreaterThan(0);
+    expect(serialized.every((key) => touchedParas.has(key))).toBe(true);
+  });
+
+  it("does not join an update that also changed a paragraph its cuts did not touch", () => {
+    const editor = mount();
+    const tags: string[][] = [];
+    let verses: LexicalNode[] = [];
+    editor.update(() => void (verses = $bigDocument()), { discrete: true });
+    editor.update(() => $addDisplayAnnotation(verses[0], "check", "a", 3, 4), { discrete: true });
+    editor.registerUpdateListener(({ tags: committed }) => void tags.push([...committed]));
+    editor.update(
+      () => {
+        // A rewrite reverted in this update re-cuts verse 1; paragraph 2's text really changes.
+        $setLogicalText(verses[0], `\\v${NBSP}1  `);
+        $setLogicalText(verses[0], `\\v${NBSP}1 `);
+        const text = verses[1].getNextSibling();
+        if ($isTextNode(text)) text.setTextContent("In the end");
+      },
+      { discrete: true },
+    );
+    expect(tags.at(-1)).not.toContain(HISTORY_MERGE_TAG);
   });
 });

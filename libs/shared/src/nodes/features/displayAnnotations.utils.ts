@@ -35,10 +35,13 @@ import {
   $recordTokenPieces,
   $removeBrokenTokenPieces,
   $textHolds,
+  DISPLAY_PIECES_CUT_TAG,
   displayPieceContinuationState,
+  joinSerializedPieces,
   pieceHoldKeys,
 } from "./displayPieces.state.js";
 import { $isImmutableUnmatchedNode, ImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
+import { $parentOutsideMarks } from "./throughMarks.utils.js";
 import { ImmutableTypedTextNode } from "./ImmutableTypedTextNode.js";
 import { $isMarkerNode, MarkerNode } from "./MarkerNode.js";
 import type {
@@ -47,17 +50,25 @@ import type {
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
 } from "./TypedMarkNode.js";
-import { $isTypedMarkNode } from "./TypedMarkNode.js";
-import type { Klass, LexicalEditor, LexicalNode, PointType } from "lexical";
+import type { Klass, LexicalEditor, LexicalNode, NodeKey, PointType } from "lexical";
 import {
+  $addUpdateTag,
   $copyNode,
   $getEditor,
+  $getNodeByKey,
+  $getRoot,
   $getSelection,
   $getState,
+  $hasUpdateTag,
   $isDecoratorNode,
+  $isElementNode,
+  $isRootNode,
   $isRangeSelection,
   $isTextNode,
   $setState,
+  HISTORY_MERGE_TAG,
+  RootNode,
+  SerializedLexicalNode,
   TextNode,
 } from "lexical";
 
@@ -87,8 +98,7 @@ export function $isElementOwnerRunAnchor(node: LexicalNode): boolean {
   if (!$isTextNode(node)) return false;
   // A piece of a split anchor is the anchor too; the finders name its head.
   const head = $pieceHead(node);
-  let owner = head.getParent();
-  while ($isTypedMarkNode(owner)) owner = owner.getParent();
+  const owner = $parentOutsideMarks(head);
   if ($isNoteNode(owner)) return $noteEditableCallerNode(owner)?.is(head) ?? false;
   if ($isChapterNode(owner)) return $chapterGlyphTextNode(owner)?.is(head) ?? false;
   return false;
@@ -492,6 +502,7 @@ function $splitPiece(piece: TextNode, cuts: number[]): void {
       if (point.type === "text" && point.key === piece.getKey())
         moved.push({ point, offset: point.offset });
   const parts: TextNode[] = [];
+  $addUpdateTag(DISPLAY_PIECES_CUT_TAG);
   $keepParentPoints(piece.getParent(), piece.getIndexWithinParent(), cuts.length, () => {
     let previous: TextNode | undefined;
     for (let index = 0; index + 1 < bounds.length; index++) {
@@ -521,6 +532,7 @@ function $splitPiece(piece: TextNode, cuts: number[]): void {
  * normalized carrier is left untouched, so the transform converges). Mutating.
  */
 export function $normalizeCarrierPieces(node: LexicalNode): void {
+  if ($hasUpdateTag(DISPLAY_PIECES_CUT_TAG)) $ensureUndoStepFinalizer();
   if (!$isTextNode(node) || !node.isAttached()) return;
   // A token carrier that lost a piece goes whole, as the unsplit token would have.
   if ($removeBrokenTokenPieces(node)) return;
@@ -558,6 +570,105 @@ export function $normalizeCarrierPieces(node: LexicalNode): void {
   $recordTokenPieces(current);
 }
 
+/** The editors {@link registerDisplayAnnotationBasis} serves. */
+const basisEditors = new WeakSet<LexicalEditor>();
+/** Each editor's registered {@link $joinUndoStepWhenOnlyPiecesChanged}, by its unregister. */
+const undoStepFinalizers = new WeakMap<LexicalEditor, () => void>();
+
+/**
+ * Register {@link $joinUndoStepWhenOnlyPiecesChanged} as the root's transform, once per editor, from
+ * the first update that cuts or joins pieces; the root is transformed last, so it runs from that
+ * update on. Registering a transform marks every node of its class dirty in an update of its own,
+ * and the root always exists: registered with the editor, that update would reach the host as a
+ * change of the empty document before anything is loaded. Mutating.
+ */
+function $ensureUndoStepFinalizer(): void {
+  const editor = $getEditor();
+  if (!basisEditors.has(editor) || undoStepFinalizers.has(editor)) return;
+  undoStepFinalizers.set(
+    editor,
+    editor.registerNodeTransform(RootNode, $joinUndoStepWhenOnlyPiecesChanged),
+  );
+}
+
+/** `node` and everything under it as `exportJSON` writes them, with each carrier's pieces joined
+ * (`joinSerializedPieces`), so two trees compare equal when they hold the same document whatever
+ * their cuts and node keys. */
+function $serializedDocument(node: LexicalNode): string {
+  const $tree = (current: LexicalNode): SerializedLexicalNode => {
+    const json = current.exportJSON();
+    if (!$isElementNode(current)) return json;
+    const withChildren: SerializedLexicalNode & { children: SerializedLexicalNode[] } = {
+      ...json,
+      children: current.getChildren().map($tree),
+    };
+    return withChildren;
+  };
+  return JSON.stringify(joinSerializedPieces([$tree(node)]));
+}
+
+/**
+ * The keys of the root children (top-level blocks) the update has changed so far, or `undefined`
+ * when it changed the root's own list of children. Read from the nodes the update has written or
+ * created (Lexical's per-update `_cloneNotNeeded`, which every `getWritable` and every new node
+ * adds to and each commit clears), each resolved to its block in the pending state or, for a node
+ * the update removed, in the state before it. Costs a walk up from each changed node.
+ */
+function $changedBlockKeys(): Set<NodeKey> | undefined {
+  const editor = $getEditor();
+  const root = $getRoot();
+  const blocks = new Set<NodeKey>();
+  const $blockOf = (key: NodeKey): NodeKey | null | undefined => {
+    const node = $getNodeByKey(key);
+    if (node?.isAttached()) {
+      if ($isRootNode(node)) return undefined;
+      return node.getTopLevelElement()?.getKey() ?? null;
+    }
+    return editor.getEditorState().read(() => {
+      const previous = $getNodeByKey(key);
+      return previous && !$isRootNode(previous)
+        ? (previous.getTopLevelElement()?.getKey() ?? null)
+        : null;
+    });
+  };
+  for (const key of editor._cloneNotNeeded) {
+    const block = $blockOf(key);
+    if (block === undefined) {
+      // The root itself was written: its children changed unless the same blocks stand in order.
+      const before = editor.getEditorState().read(() => $getRoot().getChildrenKeys().join(" "));
+      if (before !== root.getChildrenKeys().join(" ")) return undefined;
+    } else if (block !== null) blocks.add(block);
+  }
+  return blocks;
+}
+
+/**
+ * The finalizer of an update that cut, joined or removed pieces ({@link DISPLAY_PIECES_CUT_TAG}):
+ * when the document it leaves is the document it started from — a rewrite reverted in the same
+ * update, the edit a restore transform undoes — it joins the current undo step
+ * (`HISTORY_MERGE_TAG`), as Lexical's history merges an edit a transform reverted in its one node.
+ * Pieces are presentation, so re-cutting a carrier must not make an undo step of its own: an
+ * extra step would stand between the user's edits, and an undo or redo would stop on it. Compares
+ * only the top-level blocks the update changed ({@link $changedBlockKeys}), each before and after
+ * with its pieces joined; a change to the root's list of blocks is a change.
+ */
+function $joinUndoStepWhenOnlyPiecesChanged(): void {
+  if (!$hasUpdateTag(DISPLAY_PIECES_CUT_TAG) || $hasUpdateTag(HISTORY_MERGE_TAG)) return;
+  const blocks = $changedBlockKeys();
+  if (!blocks) return;
+  const $serialized = (keys: Iterable<NodeKey>): string =>
+    [...keys]
+      .map((key) => {
+        const block = $getNodeByKey(key);
+        return block?.isAttached() ? $serializedDocument(block) : "";
+      })
+      .join("\n");
+  const before = $getEditor()
+    .getEditorState()
+    .read(() => $serialized(blocks));
+  if (before === $serialized(blocks)) $addUpdateTag(HISTORY_MERGE_TAG);
+}
+
 /**
  * Keep every carrier's ranges measured against its current text, so an annotation follows its
  * bytes the way a mark follows its text, and keep every editable carrier cut into pieces exactly
@@ -591,5 +702,11 @@ export function registerDisplayAnnotationBasis(
   const unregisters = klasses
     .filter((klass) => editor.hasNodes([klass]))
     .map((klass) => editor.registerNodeTransform(klass, $transform));
-  return () => unregisters.forEach((unregister) => unregister());
+  basisEditors.add(editor);
+  return () => {
+    unregisters.forEach((unregister) => unregister());
+    basisEditors.delete(editor);
+    undoStepFinalizers.get(editor)?.();
+    undoStepFinalizers.delete(editor);
+  };
 }

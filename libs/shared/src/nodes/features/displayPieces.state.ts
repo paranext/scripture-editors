@@ -20,6 +20,7 @@ import {
   remapAnnotations,
 } from "./displayAnnotations.state.js";
 import {
+  $addUpdateTag,
   $getSelection,
   $getState,
   $isRangeSelection,
@@ -49,6 +50,14 @@ export const displayPieceContinuationState = createState("displayPieceContinuati
 export const displayPieceTokenTextState = createState("displayPieceTokenText", {
   parse: (value: unknown): string | undefined => (typeof value === "string" ? value : undefined),
 });
+
+/**
+ * The update tag every cut, join or removal of pieces adds. Pieces are presentation: an update
+ * that only re-cuts a carrier changes no byte of the document, and
+ * `$joinUndoStepWhenOnlyPiecesChanged` reads this tag to keep such an update out of the undo
+ * stack.
+ */
+export const DISPLAY_PIECES_CUT_TAG = "display-pieces-cut";
 
 /** Whether `node` continues the carrier whose piece precedes it. */
 export function $isPieceContinuation(node: LexicalNode | null | undefined): boolean {
@@ -325,6 +334,7 @@ export function $joinPieces<T extends LexicalNode>(pieces: readonly T[]): T {
   );
   // The joined node is not the chain it recorded; the piece transform records the chain anew.
   $setState(writable, displayPieceTokenTextState, undefined);
+  $addUpdateTag(DISPLAY_PIECES_CUT_TAG);
   // A boundary between pieces is a place in the joined text: the end of the piece before it.
   const ends: number[] = [];
   let end = 0;
@@ -365,6 +375,7 @@ export function $removeBrokenTokenPieces(node: LexicalNode): boolean {
     return recorded !== undefined && recorded !== text;
   });
   if (broken.length === 0) return false;
+  $addUpdateTag(DISPLAY_PIECES_CUT_TAG);
   for (const piece of broken) piece.remove();
   return true;
 }

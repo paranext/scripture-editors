@@ -4,6 +4,7 @@ import {
   $isRangeSelection,
   $isTextNode,
   BaseSelection,
+  HISTORY_MERGE_TAG,
   LexicalNode,
   NodeKey,
 } from "lexical";
@@ -28,7 +29,8 @@ export function $commentIdsAt(node: LexicalNode, offset: number): string[] {
 
 /**
  * Hold comment `id` over `selection`: a mark over its content, holds on its display bytes. Tags the
- * update {@link ANNOTATION_MARKS_TAG}, so nothing reads the nodes the wrap splits as edited. A no-op
+ * update {@link ANNOTATION_MARKS_TAG}, so nothing reads the nodes the wrap splits as edited, and
+ * `HISTORY_MERGE_TAG`, so it joins the current undo step rather than making one of its own. A no-op
  * for a selection that is not a range. Mutating.
  */
 export function $addCommentAnnotation(
@@ -37,12 +39,14 @@ export function $addCommentAnnotation(
 ): void {
   if (!$isRangeSelection(selection)) return;
   $addUpdateTag(ANNOTATION_MARKS_TAG);
+  $addUpdateTag(HISTORY_MERGE_TAG);
   $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, id);
 }
 
 /**
  * Remove comment `id` from the marks and the display-byte nodes holding it. Tags the update
- * {@link ANNOTATION_MARKS_TAG}, as {@link $addCommentAnnotation} does. Mutating.
+ * {@link ANNOTATION_MARKS_TAG} and `HISTORY_MERGE_TAG`, as {@link $addCommentAnnotation} does.
+ * Mutating.
  */
 export function $removeCommentAnnotation(
   id: string,
@@ -50,6 +54,7 @@ export function $removeCommentAnnotation(
   displayKeys: Iterable<NodeKey>,
 ): void {
   $addUpdateTag(ANNOTATION_MARKS_TAG);
+  $addUpdateTag(HISTORY_MERGE_TAG);
   $removeTypedMarkId(COMMENT_MARK_TYPE, id, markKeys);
   for (const key of displayKeys) {
     const node = $getNodeByKey(key);

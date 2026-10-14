@@ -38,6 +38,7 @@ import {
   SomeParaNode,
   textTypeState,
   TypedMarkNode,
+  $nodeAfterBoundaryThroughMarks,
 } from "shared";
 
 /**
@@ -425,8 +426,8 @@ export function $splitParagraphAtCharStack(): boolean {
   const newPara = para.insertNewAfter(selection, false);
   newPara.append(...moving);
   // A reopened span may sit inside the continuation of an annotation mark wrapper the break split.
-  let reopened: LexicalNode | undefined = moving[0];
-  while ($isTypedMarkNode(reopened)) reopened = reopened.getFirstChild() ?? undefined;
+  const reopened =
+    moving[0] && $nodeAfterBoundaryThroughMarks(newPara, moving[0].getIndexWithinParent());
   if ($isCharNode(reopened)) {
     // Typing continues the reopened style: the caret goes to the start of its content, past the
     // separator, exactly where the user interrupted the run. `$injectMarkerPrefix` leaves a caret

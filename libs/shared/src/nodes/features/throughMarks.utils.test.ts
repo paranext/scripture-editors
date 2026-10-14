@@ -192,3 +192,59 @@ describe("reading through annotation marks", () => {
     });
   });
 });
+
+describe("walking the text a mark cuts", () => {
+  const $mark = () => $createTypedMarkNode({ test: ["1"] });
+
+  /** Every node reached from `start` stepping to `side` until `null`, as its text. */
+  function $walk(start: LexicalNode, side: "previous" | "next"): string[] {
+    const step = side === "next" ? $nextSiblingThroughMarks : $previousSiblingThroughMarks;
+    const out: string[] = [];
+    for (let node = step(start); node; node = step(node)) out.push(node.getTextContent());
+    return out;
+  }
+
+  it("reads text a mark cuts as the one run it is without the mark", () => {
+    const { editor } = createBasicTestEnvironment(nodes);
+    editor.update(
+      () => {
+        // `In the beginning` with `I` and `e b` marked, and an empty mark between.
+        const first = $createTextNode("I");
+        const last = $createTextNode("eginning");
+        $getRoot().append(
+          $createParaNode().append(
+            $mark().append(first),
+            $createTextNode("n th"),
+            $mark(),
+            $mark().append($mark().append($createTextNode("e ")), $createTextNode("b")),
+            last,
+          ),
+        );
+        expect($walk(first, "next")).toEqual(["n th", "e ", "b", "eginning"]);
+        expect($walk(last, "previous")).toEqual(["b", "e ", "n th", "I"]);
+      },
+      { discrete: true },
+    );
+  });
+
+  it("stops at the edge of the element the marks sit in", () => {
+    const { editor } = createBasicTestEnvironment(nodes);
+    editor.update(
+      () => {
+        const inner = $createTextNode("grace");
+        const before = $createTextNode("In the ");
+        $getRoot().append(
+          $createParaNode().append(
+            before,
+            $createCharNode("w").append($mark().append(inner)),
+            $createTextNode(" of God"),
+          ),
+        );
+        expect($previousSiblingThroughMarks(inner)).toBeNull();
+        expect($nextSiblingThroughMarks(inner)).toBeNull();
+        expect($nextSiblingThroughMarks(before)?.getType()).toBe("char");
+      },
+      { discrete: true },
+    );
+  });
+});

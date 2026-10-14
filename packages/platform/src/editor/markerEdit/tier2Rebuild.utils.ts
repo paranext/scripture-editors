@@ -135,6 +135,9 @@ import {
   $logicalChildren,
   $logicalText,
   $pieces,
+  $nextSiblingThroughMarks,
+  $isSeparatorPrefixHostText,
+  $textRunThroughMarks,
 } from "shared";
 import {
   $isImmutableNoteCallerNode,
@@ -684,15 +687,7 @@ function $hasEditedOwnGlyph(char: CharNode): boolean {
 /** Whether the next content after `lineBreak` in its paragraph is a verse, looking through any
  * annotation mark wrapping either of them (a mark contributes no bytes). */
 function $isVerseLineBreak(lineBreak: LexicalNode): boolean {
-  let at: LexicalNode = lineBreak;
-  let parent = at.getParent();
-  while (!at.getNextSibling() && $isTypedMarkNode(parent)) {
-    at = parent;
-    parent = at.getParent();
-  }
-  let next = at.getNextSibling();
-  while ($isTypedMarkNode(next)) next = next.getFirstChild();
-  return $isVerseNode(next);
+  return $isVerseNode($nextSiblingThroughMarks(lineBreak));
 }
 
 /**
@@ -716,6 +711,23 @@ export const SIGNATURE_CLOSE = String.fromCharCode(2);
  */
 function $flattenAttributeRuns(run: LexicalNode[]): LexicalNode[] {
   return run.flatMap((node) => ($isAttributeRunNode(node) ? node.getChildren() : [node]));
+}
+
+/**
+ * `node`'s contribution, as a char span's own child, to its span's signature: the text
+ * {@link charOwnChildSignatureText} reads, applied to the text the unmarked tree has as ONE node.
+ * An annotation mark cuts content text where its range starts or ends, so a separator NBSP and the
+ * content after it can be two texts here and one without the mark; the rule tells a mixed text
+ * from a lone spacer, so it reads the whole run ({@link $textRunThroughMarks}), and the run's
+ * first text contributes it for all of them.
+ */
+function $charOwnChildSignatureOf(node: TextNode, text: string): string {
+  const run = $textRunThroughMarks(node, $isSeparatorPrefixHostText);
+  if (run.length === 1) return charOwnChildSignatureText(text);
+  if (!run[0].is(node)) return "";
+  return charOwnChildSignatureText(
+    run.map((member) => $textNodeFragmentText(member, $logicalText(member))).join(""),
+  );
 }
 
 /**
@@ -883,7 +895,7 @@ function $appendSignature(
       );
     } else if ($isTextNode(node)) {
       const text = $textNodeFragmentText(node, $logicalText(node));
-      out.push(toFragmentText(insideCharChildren ? charOwnChildSignatureText(text) : text));
+      out.push(toFragmentText(insideCharChildren ? $charOwnChildSignatureOf(node, text) : text));
     } else if ($isCharNode(node)) {
       // A known-marker span that reaches here is NOT a sentinel ($isRebuildSentinel already
       // filtered unknown markers) — fold its own stored `unknownAttributes` into the signature

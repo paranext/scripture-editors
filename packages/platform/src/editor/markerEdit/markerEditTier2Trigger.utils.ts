@@ -62,7 +62,6 @@ import {
   $isImmutableUnmatchedNode,
   $isInLiteralOnlyBlock,
   $isMarkerNode,
-  $isTypedMarkNode,
   $isUnknownNode,
   $isVerseNode,
   $openerSeparatorGapFollowingBytes,
@@ -81,9 +80,10 @@ import {
   NBSP,
   $deferToPieceHead,
   $isPieceContinuation,
-  $logicalNextSibling,
   $logicalText,
   $setLogicalText,
+  $nextSiblingThroughMarks,
+  $parentOutsideMarks,
 } from "shared";
 
 /**
@@ -137,8 +137,7 @@ function $displayRunValueAtRest(node: TextNode): boolean {
 
 /** The char span `node` is content of: its parent, read through any annotation marks. */
 function $spanOfContentText(node: LexicalNode): CharNode | undefined {
-  let parent = node.getParent();
-  while ($isTypedMarkNode(parent)) parent = parent.getParent();
+  const parent = $parentOutsideMarks(node);
   return $isCharNode(parent) ? parent : undefined;
 }
 
@@ -169,8 +168,7 @@ function $movePushedNameIntoGlyph(node: TextNode, span: CharNode): boolean {
   const glyph = span.getFirstChild();
   if (!$isMarkerNode(glyph) || glyph.getMarkerSyntax() !== "opening") return false;
   // The opener is read and written whole, however an annotation cuts it into pieces.
-  let afterGlyph = $logicalNextSibling(glyph);
-  while ($isTypedMarkNode(afterGlyph)) afterGlyph = afterGlyph.getFirstChild();
+  const afterGlyph = $nextSiblingThroughMarks(glyph);
   if (!node.is(afterGlyph) || !BARE_OPENER_REGEX.test($logicalText(glyph))) return false;
   const text = node.getTextContent();
   const name = text.slice(0, anchor.offset);

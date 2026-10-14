@@ -57,7 +57,7 @@ import {
   $pieceHead,
 } from "../features/displayPieces.state.js";
 import { $isCanonicalMarkerNode, $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
-import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
+import { $nodeAfterBoundaryThroughMarks } from "../features/throughMarks.utils.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { $isAttributeRunNode, AttributeRunNode } from "./AttributeRunNode.js";
 import { ChapterNode } from "./ChapterNode.js";
@@ -378,19 +378,6 @@ function $attributeMarkerRunPieces(
 }
 
 /**
- * The node an annotation mark wraps, unwrapped — marks are transparent to every USJ-facing view
- * of the tree (the exporter splices them, the logical content model splices them), so a slot that
- * identifies a node by its position among its parent's children has to see through one or the
- * construct dissolves the moment a comment is placed on it. Nested marks only exist transiently
- * before the AnnotationPlugin flattens them, hence the loop.
- */
-function $throughMarks(node: LexicalNode | undefined): LexicalNode | undefined {
-  let current = node;
-  while ($isTypedMarkNode(current)) current = current.getChildren()[0];
-  return current;
-}
-
-/**
  * The TextNode carrying a note's EDITABLE caller (` + ` with an NBSP tail —
  * `getEditableCallerText`), skipping any leading opening glyph(s) and looking through any
  * annotation mark wrapping it — the anchor a note's `\cat` run scans from and is inserted after.
@@ -414,7 +401,9 @@ export function $noteEditableCallerNode(note: NoteNode): TextNode | undefined {
     if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
     index++;
   }
-  const caller = $throughMarks(children[index]);
+  // The caller slot is identified by position, which an annotation mark wrapping the caller does
+  // not change.
+  const caller = $nodeAfterBoundaryThroughMarks(note, index);
   if (!$isTextNode(caller) || caller.getType() !== TextNode.getType()) return undefined;
   // A caller an annotation cut into pieces is read whole; its head is the caller.
   if ($logicalText(caller) === getEditableCallerText(note.getCaller())) return caller;

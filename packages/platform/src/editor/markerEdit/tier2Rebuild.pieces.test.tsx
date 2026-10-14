@@ -21,6 +21,7 @@ import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { $getRoot, $isElementNode, $isTextNode, LexicalEditor, LexicalNode } from "lexical";
 import {
   $addDisplayAnnotation,
+  $createTypedMarkNode,
   $carrierHoldableRange,
   $coveredDisplayText,
   $displayAnnotationsOf,
@@ -147,6 +148,40 @@ describe("a Tier-2 rebuild over carriers an annotation cuts into pieces", () => 
           .map((block) => $signatureOf([block], bundledGetMarker)),
       );
     expect(signatures(cut)).toEqual(signatures(plain));
+  });
+
+  it("signs a span whose content a mark cuts right after its separator as the span uncut", () => {
+    // `\ca 3\ca*` beside the chapter: the separator and the `3` are one text uncut, and a mark
+    // over the `3` leaves the separator a text of its own.
+    const caUsj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+      ],
+    };
+    const viewOptions = requireStandardViewOptions();
+    const plain = load(caUsj, viewOptions);
+    const marked = load(caUsj, viewOptions);
+    marked.update(
+      () => {
+        const char = $getRoot().getLastChild();
+        const content = $isElementNode(char) ? char.getChildAtIndex(1) : null;
+        if (!$isTextNode(content)) throw new Error("expected the span's content text");
+        const [, three] = content.splitText(1);
+        const mark = $createTypedMarkNode({ test: ["m"] });
+        three.insertBefore(mark);
+        mark.append(three);
+      },
+      { discrete: true },
+    );
+    const signature = (editor: LexicalEditor) =>
+      editor
+        .getEditorState()
+        .read(() => $signatureOf($getRoot().getChildren().slice(1), bundledGetMarker));
+    expect(signature(marked)).toBe(signature(plain));
   });
 
   it("refuses every unedited scope as a fixed point, and leaves every hold on its bytes", () => {
