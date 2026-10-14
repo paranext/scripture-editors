@@ -91,7 +91,7 @@ function valueDiverges(actual: string | undefined, expected: string | undefined)
 
 /** The run's displayed value bytes: the whole value carrier's text, however an annotation has
  * cut it into pieces (`displayPieces.state.ts`). */
-function valueTextOf(pieces: ScannedRun): string | undefined {
+function $valueTextOf(pieces: ScannedRun): string | undefined {
   return pieces.value ? $logicalText(pieces.value) : undefined;
 }
 
@@ -112,7 +112,7 @@ export function $runDiverges(
   expected: ExpectedRun,
 ): boolean {
   if (!expected.wantsRun) return runHasPieces(pieces);
-  if (valueDiverges(valueTextOf(pieces), expected.valueText)) return true;
+  if (valueDiverges($valueTextOf(pieces), expected.valueText)) return true;
   // A closer-less kind (`closerSyntax: "none"` — a chapter's `\cp`) owes only its opener; every
   // other glyph-bearing kind owes both glyphs.
   if (descriptor.byteFormat.glyphs !== "none") {
@@ -141,7 +141,7 @@ export function $runNeedsOnlyWrapMigration(
   const expected = descriptor.expectedPieces(owner);
   if (!expected.wantsRun) return false;
   const pieces = descriptor.scanPieces(owner);
-  if (valueDiverges(valueTextOf(pieces), expected.valueText)) return false;
+  if (valueDiverges($valueTextOf(pieces), expected.valueText)) return false;
   if (descriptor.byteFormat.glyphs !== "none") {
     if (!pieces.opener) return false;
     if (descriptor.byteFormat.closerSyntax !== "none" && !pieces.closer) return false;

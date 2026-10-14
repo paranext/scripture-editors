@@ -1,5 +1,5 @@
 import { LexicalEditor, NodeKey } from "lexical";
-import { Fragment, ReactElement, useCallback, useSyncExternalStore } from "react";
+import { Fragment, ReactElement, ReactNode, useCallback, useSyncExternalStore } from "react";
 import {
   DECORATOR_PAINT_ATTRIBUTE,
   DecoratorPaint,
@@ -29,9 +29,9 @@ export function DecoratorPaintedText({
   editor: LexicalEditor;
   nodeKey: NodeKey;
   text: string;
-}): ReactElement {
+}): ReactNode {
   const paint = useDecoratorPaint(editor, nodeKey);
-  if (paint.length === 0) return <>{text}</>;
+  if (paint.length === 0) return text;
   const parts: ReactElement[] = [];
   let at = 0;
   paint.forEach((segment, index) => {
@@ -51,5 +51,5 @@ export function DecoratorPaintedText({
     at = end;
   });
   if (at < text.length) parts.push(<Fragment key="tail">{text.slice(at)}</Fragment>);
-  return <>{parts}</>;
+  return parts;
 }

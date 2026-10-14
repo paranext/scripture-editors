@@ -362,7 +362,7 @@ function createIndex(editor: LexicalEditor): Entry {
     if (previous && previous !== element) paintElement(previous, []);
     if (!node || !element || !annotationKeys || annotationKeys.size === 0) {
       if (element) paintElement(element, []);
-      if (node && $isDecoratorNode(node)) paintDecorator(node, element, []);
+      if (node && $isDecoratorNode(node)) $paintDecorator(node, element, []);
       else setDecoratorPaint(editor, key, []);
       leafElement.delete(key);
       wholeLeaves.delete(key);
@@ -390,13 +390,13 @@ function createIndex(editor: LexicalEditor): Entry {
     if (holds) wire(element);
     if (plan.whole) {
       wholeLeaves.add(key);
-      paintDecorator(node, element, []);
+      $paintDecorator(node, element, []);
       paintElement(element, classNamesFor(annotationKeys));
       return;
     }
     wholeLeaves.delete(key);
     paintElement(element, []);
-    paintDecorator(
+    $paintDecorator(
       node,
       element,
       plan.segments.map(({ start, end, annotations }) => ({
@@ -410,7 +410,7 @@ function createIndex(editor: LexicalEditor): Entry {
 
   /** Give decorator `node` its sub-span paint: through the store for one React renders, and
    * straight into its element for one that writes its own bytes. */
-  function paintDecorator(node: LexicalNode, element: HTMLElement | null, paint: DecoratorPaint) {
+  function $paintDecorator(node: LexicalNode, element: HTMLElement | null, paint: DecoratorPaint) {
     if (!$isDecoratorNode(node)) return;
     setDecoratorPaint(editor, node.getKey(), paint);
     if (element && isDomPaintedDecorator(element))
