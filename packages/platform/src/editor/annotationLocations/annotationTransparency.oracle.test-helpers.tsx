@@ -87,17 +87,25 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 const WRITE = process.env.ANNOTATION_TRANSPARENCY_WRITE === "1";
 const ACCOUNTING = process.env.ANNOTATION_TRANSPARENCY_ACCOUNTING === "1";
 
+/**
+ * The bytes a range crossing between content and a carrier is planned to hold, by byte index (the
+ * indexing of {@link $byteNodes}): the first and the last. It holds every byte between them too,
+ * but for a byte no hold has to cover ({@link $isGapByte}).
+ */
+interface PlannedCrossing {
+  first: number;
+  last: number;
+}
+
 /** One annotation of the fixed set: where it is set, and the bytes it is expected to hold. */
 interface PlannedAnnotation {
   id: string;
   range: AnnotationRange;
   /**
-   * The text of the bytes it holds, in document order, a decorator spelled `[type]`: all of it,
-   * or, for a range crossing between content and a carrier, the exact text it starts with and
-   * ends with — what lies between (other display bytes, a carrier's edge separator) is whatever
-   * the range covers there, which the plan does not restate.
+   * The text of the bytes it holds, in document order, a decorator spelled `[type]`, for a range
+   * over one carrier; the byte indexes it spans for a range crossing between content and a carrier.
    */
-  bytes: string | readonly [start: string, end: string];
+  bytes: string | PlannedCrossing;
 }
 
 /** The leaves of the edited paragraph (the document's third block), in order. */
@@ -130,6 +138,12 @@ function $isContentText(node: LexicalNode): node is TextNode {
  */
 export function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
   const leaves = $paragraphLeaves();
+  const byteIndexes = new Map(
+    $byteNodes().map(([node, offset], index) => [`${node.getKey()}:${offset}`, index]),
+  );
+  /** The byte index of char `offset` of `node` (-1: a decorator), -1 when it is no byte. */
+  const indexOf = (node: LexicalNode, offset: number): number =>
+    byteIndexes.get(`${node.getKey()}:${offset}`) ?? -1;
   const plan: PlannedAnnotation[] = [];
   let next = 0;
   const add = (
@@ -156,10 +170,6 @@ export function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
     const afterEnd = afterText.length - afterText.trimStart().length;
     const canCrossBefore = before !== undefined && beforeStart >= 0;
     const canCrossAfter = after !== undefined && afterEnd < afterText.length;
-    // A crossing out of a carrier holds the content after it from its first content byte: a
-    // marker's separator at the start of that text (`\w grace`'s space) is no content a mark
-    // holds, and no carrier's either.
-    const afterHead = afterText.slice(after ? $separatorLen(after) : 0, afterEnd + 1);
     if ($isTextNode(leaf)) {
       const text = leaf.getTextContent();
       const [low, high] = $carrierHoldableRange(leaf);
@@ -189,15 +199,15 @@ export function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
       if (units >= 3)
         add("inner", caretLoc(stops[1]), caretLoc(stops[units - 1]), span(1, units - 1));
       if (canCrossBefore && before)
-        add("into", $byteLoc(before, beforeStart, false, view), caretLoc(stops[1]), [
-          beforeText.slice(beforeStart),
-          span(0, 1),
-        ]);
+        add("into", $byteLoc(before, beforeStart, false, view), caretLoc(stops[1]), {
+          first: indexOf(before, beforeStart),
+          last: indexOf(leaf, stops[1] - 1),
+        });
       if (canCrossAfter && after)
-        add("outof", caretLoc(stops[units - 1]), $byteLoc(after, afterEnd, true, view), [
-          span(units - 1, units),
-          afterHead,
-        ]);
+        add("outof", caretLoc(stops[units - 1]), $byteLoc(after, afterEnd, true, view), {
+          first: indexOf(leaf, stops[units - 1]),
+          last: indexOf(after, afterEnd),
+        });
       return;
     }
     // A read-only decorator: held whole, and crossed into and out of.
@@ -206,12 +216,15 @@ export function $planAnnotations(view: ViewOptions): PlannedAnnotation[] {
     const shown = `[${leaf.getType()}]`;
     add("whole", start, end, shown);
     if (canCrossBefore && before)
-      add("into", $byteLoc(before, beforeStart, false, view), end, [
-        beforeText.slice(beforeStart),
-        shown,
-      ]);
+      add("into", $byteLoc(before, beforeStart, false, view), end, {
+        first: indexOf(before, beforeStart),
+        last: indexOf(leaf, -1),
+      });
     if (canCrossAfter && after)
-      add("outof", start, $byteLoc(after, afterEnd, true, view), [shown, afterHead]);
+      add("outof", start, $byteLoc(after, afterEnd, true, view), {
+        first: indexOf(leaf, -1),
+        last: indexOf(after, afterEnd),
+      });
   });
   return plan;
 }
@@ -259,33 +272,63 @@ function byteText([node, offset]: [LexicalNode, number]): string {
   return offset >= 0 ? node.getTextContent()[offset] : `[${node.getType()}]`;
 }
 
+/** Bytes an annotation may paint without holding: whitespace between or beside held bytes. */
+const FILLER = new RegExp(`^[\\s${NBSP}${ZWSP}]$`);
+
+/**
+ * Whether a range crossing over byte `[node, offset]` may leave it unheld: whitespace (a carrier's
+ * edge whitespace, which no hold covers, or the space between content and a glyph), or a marker's
+ * separator (`\w grace`'s space, a trailing separator node), which is no content a mark holds and
+ * no carrier's either. Every other byte between a crossing's first and last is held.
+ */
+function $isGapByte([node, offset]: [LexicalNode, number]): boolean {
+  if (offset < 0) return false;
+  return FILLER.test(node.getTextContent()[offset]) || offset < $separatorLen(node);
+}
+
+/** `indexes` as text: each byte's text, a byte left out between two spelled `…`. */
+function heldText(bytes: readonly [LexicalNode, number][], indexes: readonly number[]): string {
+  return indexes
+    .map(
+      (index, i) => `${i > 0 && index !== indexes[i - 1] + 1 ? "…" : ""}${byteText(bytes[index])}`,
+    )
+    .join("");
+}
+
 /**
  * Every planned annotation whose held bytes, just after the whole plan was set, are not the bytes
- * it was planned to hold — including one that holds nothing — keyed `hold <id>`.
+ * it was planned to hold — including one that holds nothing — keyed `hold <id>`. A range over one
+ * carrier holds exactly the planned text. A crossing holds its planned first and last byte and
+ * every byte between them but a gap byte ({@link $isGapByte}).
  */
 function $holdMismatches(plan: readonly PlannedAnnotation[]): Map<string, string> {
   const out = new Map<string, string>();
   const bytes = $byteNodes();
   for (const { id, bytes: planned } of plan) {
-    const held = [...$heldIndexes(HELD_TYPE, id).keys()]
-      .sort((a, b) => a - b)
-      .map((index) => byteText(bytes[index]))
-      .join("");
-    const holds =
-      typeof planned === "string"
-        ? held === planned
-        : held.length >= planned[0].length + planned[1].length &&
-          held.startsWith(planned[0]) &&
-          held.endsWith(planned[1]);
+    const indexes = [...$heldIndexes(HELD_TYPE, id).keys()].sort((a, b) => a - b);
+    const held = new Set(indexes);
+    let plannedText: string;
+    let holds: boolean;
+    if (typeof planned === "string") {
+      plannedText = JSON.stringify(planned);
+      holds = indexes.map((index) => byteText(bytes[index])).join("") === planned;
+    } else {
+      const { first, last } = planned;
+      const between = Array.from({ length: Math.max(last - first + 1, 0) }, (_, i) => first + i);
+      const required = between.filter((index) => !$isGapByte(bytes[index]));
+      plannedText = `bytes ${first}..${last} ${JSON.stringify(heldText(bytes, required))}`;
+      holds =
+        first >= 0 &&
+        indexes[0] === first &&
+        indexes.at(-1) === last &&
+        required.every((index) => held.has(index));
+    }
     if (holds) continue;
-    const plannedText =
-      typeof planned === "string"
-        ? JSON.stringify(planned)
-        : `${JSON.stringify(planned[0])}…${JSON.stringify(planned[1])}`;
-    out.set(
-      `hold ${id}`,
-      `hold ${id}\n    planned ${plannedText}\n    holds   ${held === "" ? "nothing" : JSON.stringify(held)}`,
-    );
+    const heldRange =
+      indexes.length === 0
+        ? "nothing"
+        : `bytes ${indexes[0]}..${indexes.at(-1)} ${JSON.stringify(heldText(bytes, indexes))}`;
+    out.set(`hold ${id}`, `hold ${id}\n    planned ${plannedText}\n    holds   ${heldRange}`);
   }
   return out;
 }
@@ -513,9 +556,6 @@ async function copiedBytes(mounted: MountedInView, view: string): Promise<string
   });
   return getData("text/plain");
 }
-
-/** Bytes an annotation may paint without holding: whitespace between or beside held bytes. */
-const FILLER = new RegExp(`^[\\s${NBSP}${ZWSP}]$`);
 
 /**
  * The annotated run's own failures after `mounted` settled: a held byte nothing paints, a
