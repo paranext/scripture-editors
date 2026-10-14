@@ -57,6 +57,7 @@ import {
   ImmutableUnmatchedNode,
   MarkerNode,
   registerDisplayAnnotationBasis,
+  $restatePastedPieces,
   setDecoratorBytesReader,
   clearTypedMarkRemovalSilences,
   forgetTypedMarkCallbacks,
@@ -128,12 +129,16 @@ function parseIndexKey(key: string): [string, string] {
   return parsed;
 }
 
-/** Remove `displayAnnotationsState` from `node` and its whole subtree. A piece a hold cut off
- * keeps its continuation state, so the piece transform joins it back once the holds are gone.
- * Mutating. */
-function $stripDisplayAnnotations(node: LexicalNode): void {
-  $setState(node, displayAnnotationsState, undefined);
-  if ($isElementNode(node)) node.getChildren().forEach($stripDisplayAnnotations);
+/** Remove `displayAnnotationsState` from pasted sibling `nodes` and their whole subtrees, and
+ * make the pieces among them pieces of the paste alone (`$restatePastedPieces`): a carrier pasted
+ * whole stays one carrier, which the piece transform joins once the holds are gone, and a piece
+ * pasted without its head is a carrier of its own. Mutating. */
+function $stripDisplayAnnotations(nodes: readonly LexicalNode[]): void {
+  $restatePastedPieces(nodes);
+  for (const node of nodes) {
+    $setState(node, displayAnnotationsState, undefined);
+    if ($isElementNode(node)) $stripDisplayAnnotations(node.getChildren());
+  }
 }
 
 interface Entry {
@@ -725,7 +730,7 @@ function createIndex(editor: LexicalEditor): Entry {
       SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
       ({ nodes }) => {
         // A check result or a comment names one place; a pasted copy of its bytes is not it.
-        nodes.forEach($stripDisplayAnnotations);
+        $stripDisplayAnnotations(nodes);
         return false;
       },
       // Critical, and never handling the command, so a handler that does handle it cannot skip the

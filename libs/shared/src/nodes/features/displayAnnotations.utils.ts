@@ -32,6 +32,7 @@ import {
   $logicalText,
   $pieceHead,
   $pieces,
+  $recordPieceChain,
   $recordTokenPieces,
   $removeBrokenTokenPieces,
   $textHolds,
@@ -567,6 +568,7 @@ export function $normalizeCarrierPieces(node: LexicalNode): void {
     if (same) current = $joinPieces([current, next]);
     else current = next;
   }
+  $recordPieceChain(current);
   $recordTokenPieces(current);
 }
 

@@ -1,3 +1,5 @@
+import { $chapterGlyphTextNode } from "../usj/attributeDisplay.utils.js";
+import { $createChapterNode, $isChapterNode } from "../usj/ChapterNode.js";
 import { $createCharNode, CharNode } from "../usj/CharNode.js";
 import { usjBaseNodes } from "../usj/index.js";
 import { getVisibleOpenMarkerText } from "../usj/markerText.utils.js";
@@ -361,6 +363,65 @@ describe("carrier pieces", () => {
       const last = char.getLastChild();
       expect(last?.getTextContent()).toBe("*");
       expect($isPieceContinuation(last)).toBe(false);
+    });
+  });
+
+  it("makes a continuation whose head is gone a carrier of its own beside a carrier of its class", () => {
+    const editor = mount();
+    let first!: VerseNode;
+    let second!: VerseNode;
+    editor.update(
+      () => {
+        first = $createVerseNode("1", getVisibleOpenMarkerText("v", "1"));
+        second = $createVerseNode("2", getVisibleOpenMarkerText("v", "2"));
+        $getRoot().append($createParaNode().append(first, second, $createTextNode("text")));
+        $addDisplayAnnotation(second, "check", "a", 3, 4);
+      },
+      { discrete: true },
+    );
+    editor.read(() => expect(texts($pieces(second))).toEqual([`\\v${NBSP}`, "2", " "]));
+    // The `\v ` piece of verse 2 is its head, the verse node itself.
+    editor.update(() => second.remove(), { discrete: true });
+    editor.read(() => {
+      expect($logicalText(first)).toBe(getVisibleOpenMarkerText("v", "1"));
+      expect(texts($pieces(first))).toEqual([getVisibleOpenMarkerText("v", "1")]);
+      const orphan = $logicalNextSibling(first);
+      if (!orphan) throw new Error("the rest of verse 2 is gone");
+      expect(orphan.getTextContent()).toBe("2");
+      expect($isPieceContinuation(orphan)).toBe(false);
+      expect(texts($pieces(orphan))).toEqual(["2", " "]);
+      expect($pieces(orphan).map($holdIds)).toEqual([["a[0,1)"], []]);
+    });
+  });
+
+  it("keeps a carrier's pieces apart when its tree is read back from JSON", () => {
+    const glyphText = getVisibleOpenMarkerText("c", "1") ?? "";
+    const editor = mount();
+    editor.update(
+      () => {
+        const glyph = $createTextNode(glyphText);
+        $getRoot().append($createChapterNode("1").append(glyph));
+        $addDisplayAnnotation(glyph, "check", "a", 3, 4);
+      },
+      { discrete: true },
+    );
+    const $glyphPieces = (): TextNode[] => {
+      const chapter = $getRoot().getFirstChild();
+      const glyph = $isChapterNode(chapter) ? $chapterGlyphTextNode(chapter) : undefined;
+      if (!glyph) throw new Error("no chapter glyph");
+      return $pieces(glyph);
+    };
+    editor.read(() => expect(texts($glyphPieces())).toEqual([`\\c${NBSP}`, "1", " "]));
+
+    const imported = mount();
+    imported.setEditorState(imported.parseEditorState(JSON.stringify(editor.getEditorState())));
+    // Any update that touches the glyph's text lets Lexical join adjacent plain texts it may merge.
+    imported.update(() => $glyphPieces().forEach((piece) => piece.markDirty()), {
+      discrete: true,
+    });
+    imported.read(() => {
+      expect(texts($glyphPieces())).toEqual([`\\c${NBSP}`, "1", " "]);
+      expect($glyphPieces().map($holdIds)).toEqual([[], ["a[0,1)"], []]);
     });
   });
 
