@@ -135,6 +135,7 @@ import {
   $logicalChildren,
   $logicalText,
   $pieces,
+  $nextSiblingThroughMarks,
 } from "shared";
 import {
   $isImmutableNoteCallerNode,
@@ -684,15 +685,7 @@ function $hasEditedOwnGlyph(char: CharNode): boolean {
 /** Whether the next content after `lineBreak` in its paragraph is a verse, looking through any
  * annotation mark wrapping either of them (a mark contributes no bytes). */
 function $isVerseLineBreak(lineBreak: LexicalNode): boolean {
-  let at: LexicalNode = lineBreak;
-  let parent = at.getParent();
-  while (!at.getNextSibling() && $isTypedMarkNode(parent)) {
-    at = parent;
-    parent = at.getParent();
-  }
-  let next = at.getNextSibling();
-  while ($isTypedMarkNode(next)) next = next.getFirstChild();
-  return $isVerseNode(next);
+  return $isVerseNode($nextSiblingThroughMarks(lineBreak));
 }
 
 /**

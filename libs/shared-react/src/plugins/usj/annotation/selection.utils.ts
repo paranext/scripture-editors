@@ -72,6 +72,7 @@ import {
   $isVisibleMarkerNode,
   $lastPiece,
   $logicalOffset,
+  $logicalNextSibling,
   $logicalText,
   $nextSiblingThroughMarks,
   $noteEditableCallerNode,
@@ -1737,10 +1738,13 @@ function $locationFromNode(
     // is the point beside it — the start of the text after it, or the end of the bytes before it.
     // A carrier cut into pieces is one node here: past its front is past the front of all of it,
     // and its neighbours are the nodes beside the whole chain.
-    // An annotation mark is transparent: the text beside it is read through it.
     const isAfter = $logicalOffset(node, offset) > 0;
-    const beside = isAfter ? $nextSiblingThroughMarks(node) : $previousSiblingThroughMarks(node);
-    const neighbor = beside && !isAfter ? $lastPiece(beside) : beside;
+    let neighbor = isAfter ? $logicalNextSibling(node) : $pieceHead(node).getPreviousSibling();
+    // A mark beside the text is transparent: the text beside it is its first or last leaf. A mark
+    // the text sits in is not stepped out of — the text at its edge answers for the mark's own
+    // edge, the place the mark's first content starts.
+    while ($isTypedMarkNode(neighbor))
+      neighbor = isAfter ? neighbor.getFirstChild() : neighbor.getLastChild();
     if (
       $isTextNode(neighbor) &&
       ($displayBytesOf(neighbor) || $getLogicalTextLocation(neighbor, 0, collapsesSpaceRuns))
