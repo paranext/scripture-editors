@@ -4,9 +4,10 @@
  * an annotation over only PART of its text cannot be painted as one element — Lexical maps one DOM
  * text node to one `TextNode` — so it is split, at every hold boundary, into pieces: adjacent
  * siblings of the same class and identity, each held whole or not at all. The first piece is the
- * carrier's own node ("head"); every later one carries {@link displayPieceContinuationState}. The
- * chain is the carrier: what a reader of the carrier's text, of the node after it, or of a parent's
- * children must see as ONE node.
+ * carrier's own node ("head"); every later one carries {@link displayPieceContinuationState}, and
+ * every piece carries the chain's {@link displayPieceChainState}. The chain is the carrier: what a
+ * reader of the carrier's text, of the node after it, or of a parent's children must see as ONE
+ * node.
  *
  * This module holds the state and the chain primitives only. It imports nothing but Lexical and
  * the annotation state, so a node class can read its own chain without an import cycle; the
@@ -43,6 +44,17 @@ export const displayPieceContinuationState = createState("displayPieceContinuati
 });
 
 /**
+ * On every piece of a carrier cut into more than one piece: the chain's id, the key its head had
+ * when it was first cut. A continuation continues only the piece before it that carries the same
+ * id, so a continuation whose own head is gone never joins a neighbouring carrier of its class,
+ * even one with the same marker or number. Copies of a piece (Lexical's own copies, a cut that
+ * copies its piece) keep the id; a pasted copy is given its own ({@link $restatePastedPieces}).
+ */
+export const displayPieceChainState = createState("displayPieceChain", {
+  parse: (value: unknown): string | undefined => (typeof value === "string" ? value : undefined),
+});
+
+/**
  * On every piece of a carrier in `token` mode that is cut into pieces (an atomic note shell glyph
  * or caller, an unmatched closer): the whole carrier's text. A token is atomic — Lexical removes
  * or replaces it whole — but each piece is a token of its own, so a deletion takes one piece only.
@@ -66,22 +78,29 @@ export function $isPieceContinuation(node: LexicalNode | null | undefined): bool
   return !!node && $isTextNode(node) && $getState(node, displayPieceContinuationState) === true;
 }
 
-/** Whether `node` is a piece of the same class as `head`: pieces are made by copying the head,
- * and a Lexical node type names exactly one class. */
-function $isSameClass<T extends LexicalNode>(node: LexicalNode | null, head: T): node is T {
-  return node !== null && node.getType() === head.getType();
+/**
+ * Whether `node` is of `piece`'s chain: the same class (pieces are made by copying the head, and a
+ * Lexical node type names exactly one class) and the same chain id
+ * ({@link displayPieceChainState}).
+ */
+function $isSameChain<T extends LexicalNode>(node: LexicalNode | null, piece: T): node is T {
+  return (
+    node !== null &&
+    node.getType() === piece.getType() &&
+    $getState(node, displayPieceChainState) === $getState(piece, displayPieceChainState)
+  );
 }
 
 /**
  * The first piece of the carrier `node` is a piece of: `node` itself unless it is a continuation
- * whose previous sibling is a piece of the same class. A continuation with no such sibling (its
- * head was deleted) is its own head; the piece transform promotes it.
+ * whose previous sibling is a piece of its chain. A continuation with no such sibling (its head was
+ * deleted) is its own head; the piece transform promotes it.
  */
 export function $pieceHead<T extends LexicalNode>(node: T): T {
   let head = node;
   while ($isPieceContinuation(head)) {
     const previous = head.getPreviousSibling();
-    if (!$isSameClass(previous, head)) break;
+    if (!$isSameChain(previous, head)) break;
     head = previous;
   }
   return head;
@@ -93,7 +112,7 @@ export function $pieces<T extends LexicalNode>(node: T): T[] {
   const pieces = [head];
   for (
     let next = head.getNextSibling();
-    $isSameClass(next, head) && $isPieceContinuation(next);
+    $isSameChain(next, head) && $isPieceContinuation(next);
     next = next.getNextSibling()
   )
     pieces.push(next);
@@ -417,6 +436,52 @@ export function $recordTokenPieces(node: LexicalNode): void {
 }
 
 /**
+ * Record `node`'s carrier's chain id on each of its pieces when it is cut into more than one piece
+ * — the id its head carries, or the head's key for a carrier cut for the first time — and clear it
+ * from a carrier in one piece ({@link displayPieceChainState}). Writes only what changes. Mutating.
+ */
+export function $recordPieceChain(node: LexicalNode): void {
+  const pieces = $pieces(node);
+  const [head] = pieces;
+  const id =
+    pieces.length > 1 ? ($getState(head, displayPieceChainState) ?? head.getKey()) : undefined;
+  for (const piece of pieces)
+    if ($getState(piece, displayPieceChainState) !== id)
+      $setState(piece, displayPieceChainState, id);
+}
+
+/**
+ * Make the pieces among pasted sibling `nodes` (in paste order) pieces of the paste alone: a
+ * continuation pasted right after a piece of its chain stays that piece's continuation, under a
+ * chain id of the pasted head's own, so the copy never joins the carrier it was copied from; a
+ * continuation pasted without its head is a carrier of its own, keeping its class and state; and
+ * no piece keeps the token record of the chain it came from. The piece transform then joins or
+ * re-cuts each pasted carrier where it lands. One sibling list only, not the nodes' children.
+ * Mutating: call inside `editor.update()`.
+ */
+export function $restatePastedPieces(nodes: readonly LexicalNode[]): void {
+  let previous: { node: LexicalNode; chain: string | undefined } | undefined;
+  let headKey: NodeKey | undefined;
+  for (const node of nodes) {
+    const chain = $getState(node, displayPieceChainState);
+    const continues =
+      $isPieceContinuation(node) &&
+      previous !== undefined &&
+      previous.node.getType() === node.getType() &&
+      previous.chain === chain;
+    if (!continues) {
+      if ($isPieceContinuation(node)) $setState(node, displayPieceContinuationState, undefined);
+      headKey = node.getKey();
+    }
+    const pastedChain = chain === undefined ? undefined : headKey;
+    if (chain !== pastedChain) $setState(node, displayPieceChainState, pastedChain);
+    if ($getState(node, displayPieceTokenTextState) !== undefined)
+      $setState(node, displayPieceTokenTextState, undefined);
+    previous = { node, chain };
+  }
+}
+
+/**
  * Join `node`'s whole carrier back into one node ({@link $joinPieces}). Returns the head; a
  * carrier in one piece is returned untouched. Mutating.
  */
@@ -457,6 +522,11 @@ function serializedText(node: SerializedLexicalNode): string | undefined {
   return "text" in node && typeof node.text === "string" ? node.text : undefined;
 }
 
+/** The chain id serialized `node` carries ({@link displayPieceChainState}), if any. */
+function serializedChainId(node: SerializedLexicalNode): unknown {
+  return node[NODE_STATE_KEY]?.[displayPieceChainState.key];
+}
+
 /** Whether serialized `node` is a continuation piece ({@link displayPieceContinuationState}). */
 export function isSerializedPieceContinuation(node: SerializedLexicalNode): boolean {
   return (
@@ -488,6 +558,7 @@ function joinSerializedChain(pieces: readonly SerializedLexicalNode[]): Serializ
     Object.entries(head[NODE_STATE_KEY] ?? {}).filter(
       ([key]) =>
         key !== displayPieceContinuationState.key &&
+        key !== displayPieceChainState.key &&
         key !== displayPieceTokenTextState.key &&
         key !== displayAnnotationsState.key,
     ),
@@ -505,8 +576,8 @@ function joinSerializedChain(pieces: readonly SerializedLexicalNode[]): Serializ
 /**
  * The serialized twin of {@link $logicalChildren} and {@link $logicalText}, at every depth:
  * `nodes` (as `exportJSON`/`EditorState.toJSON()` write them) with each carrier's chain — a node
- * followed by its continuation pieces of the same `type` — written as ONE node, the one
- * {@link $mergePieces} would leave: the head, carrying the chain's whole text and every hold
+ * followed by its continuation pieces of the same `type` and chain id — written as ONE node, the
+ * one {@link $mergePieces} would leave: the head, carrying the chain's whole text and every hold
  * restated in it. A reader of a serialized tree that must see one node per carrier (an exporter, a
  * comparison against a fresh, never-split build) reads it through this. Nodes that are not part of
  * a chain, and subtrees with no chain in them, are returned as the same objects (and `nodes`
@@ -523,7 +594,8 @@ export function joinSerializedPieces(
     while (
       index + 1 < nodes.length &&
       nodes[index + 1].type === node.type &&
-      isSerializedPieceContinuation(nodes[index + 1])
+      isSerializedPieceContinuation(nodes[index + 1]) &&
+      serializedChainId(nodes[index + 1]) === serializedChainId(node)
     )
       chain.push(nodes[++index]);
     let joined = chain.length > 1 ? joinSerializedChain(chain) : node;

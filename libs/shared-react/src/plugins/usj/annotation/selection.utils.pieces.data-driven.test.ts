@@ -31,6 +31,8 @@ import {
   LexicalNode,
 } from "lexical";
 import {
+  $addDisplayAnnotation,
+  $createCharNode,
   $createParaNode,
   $createVerseNode,
   $isDisplayAnnotationCarrier,
@@ -42,6 +44,7 @@ import {
   $pieceHead,
   $pieces,
   getVisibleOpenMarkerText,
+  registerDisplayAnnotationBasis,
   TypedMarkNode,
 } from "shared";
 import { lexicalEditable2Sa, usjLocations2Sa } from "test-data";
@@ -188,5 +191,40 @@ describe("a carrier whose text spells no display bytes, cut into pieces", () => 
         .map((actual) => `@${offset}: ${actual} ≠ ${uncut[offset]}`),
     );
     expect(mismatches).toEqual([]);
+  });
+});
+
+describe("a place after a leaf carrier's content, cut into pieces", () => {
+  it("resolves where the uncut carrier puts it", async () => {
+    // A verse attribute no byte of the verse spells resolves after the verse, which a char span
+    // follows.
+    const { editor } = createBasicTestEnvironment([TypedMarkNode, ...usjReactNodes]);
+    let verse!: LexicalNode;
+    editor.update(
+      () => {
+        verse = $createVerseNode("2", getVisibleOpenMarkerText("v", "2"));
+        $getRoot().append(
+          $createParaNode().append(verse, $createCharNode("w").append($createTextNode("word"))),
+        );
+      },
+      { discrete: true },
+    );
+    const resolve = (): string =>
+      editor.getEditorState().read(() => {
+        const selection = $getRangeFromUsjSelection(
+          { start: { jsonPath: "$.content[0].content[0]", keyName: "altnumber", keyOffset: 0 } },
+          undefined,
+        );
+        return selection
+          ? $logicalPoint(selection.anchor.getNode(), selection.anchor.offset)
+          : "unresolved";
+      });
+    const uncut = resolve();
+    expect(uncut).not.toBe("unresolved");
+
+    registerDisplayAnnotationBasis(editor);
+    editor.update(() => void $addDisplayAnnotation(verse, "check", "a", 3, 4), { discrete: true });
+    expect(editor.getEditorState().read(() => $pieces(verse).length)).toBe(3);
+    expect(resolve()).toBe(uncut);
   });
 });

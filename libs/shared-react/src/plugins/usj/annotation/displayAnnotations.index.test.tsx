@@ -10,10 +10,12 @@ import {
 } from "./displayAnnotations.index";
 import {
   $addUpdateTag,
+  $copyNode,
   $createRangeSelection,
   $createTextNode,
   $getRoot,
   $getSelection,
+  $getState,
   $setState,
   COMMAND_PRIORITY_HIGH,
   createEditor,
@@ -26,7 +28,13 @@ import {
 import {
   $addDisplayAnnotation,
   $createCharNode,
+  $isPieceContinuation,
+  $lastPiece,
+  $logicalText,
+  $pieceHead,
   $pieces,
+  displayPieceTokenTextState,
+  NBSP,
   getDecoratorPaint,
   $createMarkerNode,
   $createNoteNode,
@@ -1039,5 +1047,84 @@ describe("the display-annotation index", () => {
     );
     unregister();
     release();
+  });
+
+  describe("a pasted copy of a carrier's pieces", () => {
+    /** Paste `nodes` through the command, then put them after the run's last piece, as the
+     * default handler inserts a paste at a caret there. */
+    function $paste(editor: LexicalEditor, run: TextNode, nodes: LexicalNode[]): void {
+      editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+        nodes,
+        selection: $getSelection() ?? $createRangeSelection(),
+      });
+      let after: LexicalNode = $lastPiece(run.getLatest());
+      for (const node of nodes) {
+        after.insertAfter(node);
+        after = node;
+      }
+    }
+
+    it("makes a piece pasted without its head a carrier of its own", () => {
+      const { editor, run, release } = setup();
+      wrap(editor, run, 1, 6, "external-spelling", "a");
+      let pasted!: TextNode;
+      editor.update(
+        () => {
+          const [, grace] = $pieces(run.getLatest());
+          expect($isPieceContinuation(grace)).toBe(true);
+          pasted = $copyNode(grace);
+          $paste(editor, run, [pasted]);
+          expect($isPieceContinuation(pasted)).toBe(false);
+        },
+        { discrete: true },
+      );
+      editor.read(() => {
+        expect($logicalText(run)).toBe("|grace");
+        expect($pieceHead(pasted).is(pasted)).toBe(true);
+        expect($logicalText(pasted)).toBe("grace");
+        expect($getState(pasted, textTypeState)).toBe("attribute");
+        expect($displayAnnotationsOf(pasted)).toEqual([]);
+      });
+      release();
+    });
+
+    it("keeps a carrier pasted whole one carrier, apart from the one it was copied from", () => {
+      const { editor, run, release } = setup();
+      wrap(editor, run, 1, 6, "external-spelling", "a");
+      let pasted!: TextNode[];
+      editor.update(
+        () => {
+          pasted = $pieces(run.getLatest()).map((piece) => $copyNode(piece));
+          $paste(editor, run, pasted);
+          expect(pasted.map($isPieceContinuation)).toEqual([false, true]);
+        },
+        { discrete: true },
+      );
+      editor.read(() => {
+        expect($logicalText(run)).toBe("|grace");
+        expect($pieces(run).map((piece) => piece.getTextContent())).toEqual(["|", "grace"]);
+        // Held by nothing, the pasted pieces are joined into one carrier.
+        const [copy] = pasted;
+        expect(copy.getTextContent()).toBe("|grace");
+        expect($pieces(copy)).toEqual([copy.getLatest()]);
+      });
+      release();
+    });
+
+    it("keeps no token record of the chain it was copied from", () => {
+      const { editor, release } = setup();
+      editor.update(
+        () => {
+          const pasted = $setState($createTextNode("+"), displayPieceTokenTextState, ` +${NBSP}`);
+          editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+            nodes: [pasted],
+            selection: $getSelection() ?? $createRangeSelection(),
+          });
+          expect($getState(pasted, displayPieceTokenTextState)).toBeUndefined();
+        },
+        { discrete: true },
+      );
+      release();
+    });
   });
 });

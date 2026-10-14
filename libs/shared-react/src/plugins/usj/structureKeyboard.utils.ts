@@ -17,6 +17,11 @@ import {
   $isSomeChapterNode,
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
+  $lastPiece,
+  $logicalNextSibling,
+  $logicalOffset,
+  $logicalPreviousSibling,
+  $logicalText,
   $pieceHead,
   SomeParaNode,
 } from "shared";
@@ -182,16 +187,21 @@ export function $adjacentVerseMarker(
     const idx = direction === "backward" ? anchor.offset - 1 : anchor.offset;
     if (idx < 0) return undefined;
     const candidate = children[idx];
-    // A verse an annotation cut into pieces is named by its first piece, whichever is adjacent.
-    return $isSomeVerseNode(candidate) ? $pieceHead(candidate) : undefined;
+    if (!$isSomeVerseNode(candidate)) return undefined;
+    // A verse an annotation cut into pieces is named by its first piece. A point between two of
+    // its pieces is inside it, not beside it.
+    const edge = direction === "backward" ? $lastPiece(candidate) : $pieceHead(candidate);
+    return edge.is(candidate) ? $pieceHead(candidate) : undefined;
   }
+  // A caret in a carrier cut into pieces is at its edge only at the edge of the whole carrier.
+  const offset = $logicalOffset(node, anchor.offset);
   if (direction === "backward") {
-    if (anchor.offset !== 0) return undefined;
-    const prev = node.getPreviousSibling();
-    return $isSomeVerseNode(prev) ? $pieceHead(prev) : undefined;
+    if (offset !== 0) return undefined;
+    const prev = $logicalPreviousSibling(node);
+    return $isSomeVerseNode(prev) ? prev : undefined;
   }
-  if (anchor.offset !== node.getTextContentSize()) return undefined;
-  const next = node.getNextSibling();
+  if (offset !== $logicalText(node).length) return undefined;
+  const next = $logicalNextSibling(node);
   return $isSomeVerseNode(next) ? $pieceHead(next) : undefined;
 }
 

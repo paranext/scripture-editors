@@ -27,6 +27,7 @@ import {
 import { createRef, ReactElement, RefObject } from "react";
 import {
   $charSeparatorPrefixLength,
+  $decoratorRenderedText,
   $displayAnnotationsOf,
   $isDisplayAnnotationCarrier,
   $isMarkerNode,
@@ -34,6 +35,7 @@ import {
   $isTypedMarkNode,
   LoggerBasic,
   NBSP,
+  ZWSP,
 } from "shared";
 import {
   $getLocationFromNode,
@@ -325,10 +327,19 @@ function paintedWhole(painted: Element[], element: Element): boolean {
 
 /**
  * What paints annotation `id` on screen now, by byte index (the indexing of {@link $byteNodes}):
- * an element whose classes name it — a `<mark>`, a display byte painted whole — or, for a
- * decorator, any sub-span of it painted with the class. Read from the DOM, never from the model.
+ * an element whose classes name it — a `<mark>`, a display byte painted whole — or a decorator
+ * whose sub-spans painted with the class are exactly what its holds name. A decorator is one byte
+ * here, so its sub-spans are graded character by character against its `type` holds and the
+ * decorator counts as painted only when every character a hold names is painted and every other
+ * painted character is whitespace (an interior gap's fill, {@link GAP_FILL}); a decorator with no
+ * hold it displays counts as painted when anything of it is. The paint is read from the DOM, never
+ * from the model; only the holds a decorator's paint is graded against are read from the model.
  */
-export function $paintedIndexes(lexical: LexicalEditor, id: string): Set<number> {
+export function $paintedIndexes(
+  lexical: LexicalEditor,
+  id: string,
+  type: string = HELD_TYPE,
+): Set<number> {
   const painted = paintedElements(lexical, id);
   const result = new Set<number>();
   $byteNodes().forEach(([node, offset], index) => {
@@ -338,9 +349,40 @@ export function $paintedIndexes(lexical: LexicalEditor, id: string): Set<number>
       result.add(index);
       return;
     }
-    if (offset < 0 && painted.some((candidate) => element.contains(candidate))) result.add(index);
+    if (offset < 0 && $isDecoratorPaintedAsHeld(lexical, node, type, id)) result.add(index);
   });
   return result;
+}
+
+/** A character an interior gap may paint though no hold names it. */
+const GAP_FILL = new RegExp(`^[\\s${NBSP}${ZWSP}]$`);
+
+/**
+ * Whether decorator `node` (not painted whole) paints annotation `type`/`id` on exactly the
+ * characters its holds name, through sub-spans ({@link $paintedIndexes}).
+ */
+function $isDecoratorPaintedAsHeld(
+  lexical: LexicalEditor,
+  node: LexicalNode,
+  type: string,
+  id: string,
+): boolean {
+  const { chars, any } = $paintedDecoratorChars(lexical, node, id);
+  if (!any) return false;
+  const rendered = $decoratorRenderedText(node);
+  const holds = $displayAnnotationsOf(node).filter(
+    (annotation) => annotation.type === type && annotation.id === id && !annotation.undisplayed,
+  );
+  if (holds.length === 0) return true;
+  const held = new Set<number>();
+  for (const { start, end } of holds) {
+    const [from, to] = start === end ? [0, rendered.length] : [start, end];
+    for (let char = from; char < Math.min(to, rendered.length); char++) held.add(char);
+  }
+  for (const char of held) if (!chars.has(char)) return false;
+  for (const char of chars)
+    if (!held.has(char) && !GAP_FILL.test(rendered[char] ?? "")) return false;
+  return true;
 }
 
 /**
