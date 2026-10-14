@@ -35,7 +35,9 @@ import {
   $recordTokenPieces,
   $removeBrokenTokenPieces,
   $textHolds,
+  DISPLAY_PIECES_CUT_TAG,
   displayPieceContinuationState,
+  joinSerializedPieces,
   pieceHoldKeys,
 } from "./displayPieces.state.js";
 import { $isImmutableUnmatchedNode, ImmutableUnmatchedNode } from "./ImmutableUnmatchedNode.js";
@@ -50,14 +52,21 @@ import type {
 } from "./TypedMarkNode.js";
 import type { Klass, LexicalEditor, LexicalNode, PointType } from "lexical";
 import {
+  $addUpdateTag,
   $copyNode,
   $getEditor,
+  $getRoot,
   $getSelection,
   $getState,
+  $hasUpdateTag,
   $isDecoratorNode,
+  $isElementNode,
   $isRangeSelection,
   $isTextNode,
   $setState,
+  HISTORY_MERGE_TAG,
+  RootNode,
+  SerializedLexicalNode,
   TextNode,
 } from "lexical";
 
@@ -491,6 +500,7 @@ function $splitPiece(piece: TextNode, cuts: number[]): void {
       if (point.type === "text" && point.key === piece.getKey())
         moved.push({ point, offset: point.offset });
   const parts: TextNode[] = [];
+  $addUpdateTag(DISPLAY_PIECES_CUT_TAG);
   $keepParentPoints(piece.getParent(), piece.getIndexWithinParent(), cuts.length, () => {
     let previous: TextNode | undefined;
     for (let index = 0; index + 1 < bounds.length; index++) {
@@ -557,6 +567,34 @@ export function $normalizeCarrierPieces(node: LexicalNode): void {
   $recordTokenPieces(current);
 }
 
+/** `node` and everything under it as `exportJSON` writes them, with each carrier's pieces joined
+ * (`joinSerializedPieces`), so two trees compare equal when they hold the same document whatever
+ * their cuts and node keys. */
+function $serializedDocument(node: LexicalNode): string {
+  const $tree = (current: LexicalNode): SerializedLexicalNode => {
+    const json = current.exportJSON();
+    return $isElementNode(current) ? { ...json, children: current.getChildren().map($tree) } : json;
+  };
+  return JSON.stringify(joinSerializedPieces([$tree(node)]));
+}
+
+/**
+ * The finalizer of an update that cut, joined or removed pieces ({@link DISPLAY_PIECES_CUT_TAG}):
+ * when the document it leaves is the document it started from — a rewrite reverted in the same
+ * update, the edit a restore transform undoes — it joins the current undo step
+ * (`HISTORY_MERGE_TAG`), as Lexical's history merges an edit a transform reverted in its one node.
+ * Pieces are presentation, so re-cutting a carrier must not make an undo step of its own: an
+ * extra step would stand between the user's edits, and an undo or redo would stop on it. Compares
+ * the whole document, so it costs a serialization of both states, and only on such an update.
+ */
+function $joinUndoStepWhenOnlyPiecesChanged(): void {
+  if (!$hasUpdateTag(DISPLAY_PIECES_CUT_TAG) || $hasUpdateTag(HISTORY_MERGE_TAG)) return;
+  const before = $getEditor()
+    .getEditorState()
+    .read(() => $serializedDocument($getRoot()));
+  if (before === $serializedDocument($getRoot())) $addUpdateTag(HISTORY_MERGE_TAG);
+}
+
 /**
  * Keep every carrier's ranges measured against its current text, so an annotation follows its
  * bytes the way a mark follows its text, and keep every editable carrier cut into pieces exactly
@@ -590,5 +628,7 @@ export function registerDisplayAnnotationBasis(
   const unregisters = klasses
     .filter((klass) => editor.hasNodes([klass]))
     .map((klass) => editor.registerNodeTransform(klass, $transform));
+  // The root's transform runs last in an update: the place to judge the update as a whole.
+  unregisters.push(editor.registerNodeTransform(RootNode, $joinUndoStepWhenOnlyPiecesChanged));
   return () => unregisters.forEach((unregister) => unregister());
 }
