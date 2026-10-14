@@ -16,7 +16,7 @@ import {
   NodeKey,
 } from "lexical";
 import { createRef } from "react";
-import { $addDisplayAnnotation, $isMarkerNode, COMMENT_MARK_TYPE } from "shared";
+import { $addDisplayAnnotation, $isMarkerNode, $lastPiece, COMMENT_MARK_TYPE } from "shared";
 import { $isImmutableNoteCallerNode, getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
 import { MockInstance, vi } from "vitest";
 
@@ -348,7 +348,9 @@ describe("Marginal comments panel", () => {
         const charNode = $getNodeByKey(charKey);
         if (!opener || !charNode || !$isElementNode(charNode))
           throw new Error("expected the char span and its opener glyph");
-        const index = opener.getIndexWithinParent();
+        // Behind the whole glyph: the comment cuts it into pieces, and behind its first piece is
+        // inside it.
+        const index = $lastPiece(opener).getIndexWithinParent();
         charNode.select(index + 1, index + 1);
       });
       // The effect that marks an active carrier "selected" schedules its own commit on a 0ms timer.
