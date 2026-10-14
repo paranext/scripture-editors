@@ -293,6 +293,48 @@ describe("carrier pieces", () => {
     });
   });
 
+  it("keeps a caret at a boundary of the parent on the same child through a cut and a join", () => {
+    const editor = mount();
+    let closer!: MarkerNode;
+    let para!: LexicalNode;
+    editor.update(
+      () => {
+        const span = $span();
+        closer = span.closer;
+        para = span.char;
+        const after = $createMarkerNode("x");
+        span.char.append(after);
+        // The caret at the boundary in front of `after`, set while the closer is still one node.
+        span.char.select(after.getIndexWithinParent(), after.getIndexWithinParent());
+        $addDisplayAnnotation(closer, "check", "a", 2, 3);
+      },
+      { discrete: true },
+    );
+    const $caretChild = () => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !$isElementNode(para)) throw new Error("no caret");
+      expect(selection.anchor.type).toBe("element");
+      expect(selection.anchor.key).toBe(para.getKey());
+      return para.getChildAtIndex(selection.anchor.offset)?.getTextContent();
+    };
+    editor.read(() => {
+      expect(texts($pieces(closer))).toEqual(["\\w", "*"]);
+      expect($caretChild()).toBe("\\x");
+    });
+    editor.update(
+      () => {
+        if (!$isElementNode(para)) throw new Error("no span");
+        para.select(para.getChildrenSize() - 1, para.getChildrenSize() - 1);
+        $removeDisplayAnnotation($pieces(closer)[1], "check", "a");
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      expect($pieces(closer).length).toBe(1);
+      expect($caretChild()).toBe("\\x");
+    });
+  });
+
   it("makes a continuation whose head is gone a carrier of its own", () => {
     const editor = mount();
     let closer!: MarkerNode;

@@ -30,6 +30,7 @@ import {
   LexicalNode,
   NODE_STATE_KEY,
   NodeKey,
+  PointType,
   SerializedLexicalNode,
 } from "lexical";
 
@@ -262,6 +263,38 @@ function $movePoints(from: LexicalNode, to: LexicalNode, shift: number): void {
 }
 
 /**
+ * Run `mutate`, which cuts or joins the pieces right after child `index` of `parent`, and keep
+ * every selection point on `parent` itself (a caret at a boundary between its children) at the
+ * same place: a point after the changed run is moved by `delta` (the children `mutate` adds, or
+ * minus the ones it removes); a point between two joined pieces (`index` < offset ≤
+ * `index - delta`, for a join) is put on the joined node where the boundary was, through `inside`.
+ * Lexical moves no such point when a piece is inserted without restoring the selection, and on a
+ * removal it may re-anchor one onto a neighbouring text, so the points are restated here. Mutating.
+ */
+export function $keepParentPoints(
+  parent: ElementNode | null,
+  index: number,
+  delta: number,
+  mutate: () => void,
+  inside?: (offset: number) => [LexicalNode, number],
+): void {
+  const selection = $getSelection();
+  const kept: { point: PointType; offset: number }[] = [];
+  if (parent && $isRangeSelection(selection))
+    for (const point of [selection.anchor, selection.focus])
+      if (point.type === "element" && point.key === parent.getKey() && point.offset > index)
+        kept.push({ point, offset: point.offset });
+  mutate();
+  if (!parent) return;
+  for (const { point, offset } of kept) {
+    if (delta < 0 && offset <= index - delta && inside) {
+      const [node, at] = inside(offset);
+      point.set(node.getKey(), at, "text");
+    } else point.set(parent.getKey(), offset + delta, "element");
+  }
+}
+
+/**
  * Join consecutive pieces `pieces` (the first one first) into one node: the first takes every
  * later piece's text and holds (each hold restated at its offset in the joined text, ranges of one
  * annotation that then touch joined), the selection and composition move with their bytes, and
@@ -292,7 +325,20 @@ export function $joinPieces<T extends LexicalNode>(pieces: readonly T[]): T {
   );
   // The joined node is not the chain it recorded; the piece transform records the chain anew.
   $setState(writable, displayPieceTokenTextState, undefined);
-  for (const piece of rest) piece.remove();
+  // A boundary between pieces is a place in the joined text: the end of the piece before it.
+  const ends: number[] = [];
+  let end = 0;
+  for (const piece of pieces.slice(0, -1)) ends.push((end += piece.getTextContentSize()));
+  const index = writable.getIndexWithinParent();
+  $keepParentPoints(
+    writable.getParent(),
+    index,
+    -rest.length,
+    () => {
+      for (const piece of rest) piece.remove();
+    },
+    (offset) => [writable, ends[offset - index - 1]],
+  );
   return writable;
 }
 

@@ -28,6 +28,7 @@ import {
 import {
   $isPieceContinuation,
   $joinPieces,
+  $keepParentPoints,
   $logicalText,
   $pieceHead,
   $pieces,
@@ -491,20 +492,22 @@ function $splitPiece(piece: TextNode, cuts: number[]): void {
       if (point.type === "text" && point.key === piece.getKey())
         moved.push({ point, offset: point.offset });
   const parts: TextNode[] = [];
-  let previous: TextNode | undefined;
-  for (let index = 0; index + 1 < bounds.length; index++) {
-    const [start, end] = [bounds[index], bounds[index + 1]];
-    const part = text.slice(start, end);
-    const node = previous ? $copyNode(piece) : piece;
-    const writable = node.setTextContent(part);
-    $setState(writable, displayAnnotationsState, holdsOver(held, text, start, end));
-    if (previous) {
-      $setState(writable, displayPieceContinuationState, true);
-      previous.insertAfter(writable, false);
+  $keepParentPoints(piece.getParent(), piece.getIndexWithinParent(), cuts.length, () => {
+    let previous: TextNode | undefined;
+    for (let index = 0; index + 1 < bounds.length; index++) {
+      const [start, end] = [bounds[index], bounds[index + 1]];
+      const part = text.slice(start, end);
+      const node = previous ? $copyNode(piece) : piece;
+      const writable = node.setTextContent(part);
+      $setState(writable, displayAnnotationsState, holdsOver(held, text, start, end));
+      if (previous) {
+        $setState(writable, displayPieceContinuationState, true);
+        previous.insertAfter(writable, false);
+      }
+      parts.push(writable);
+      previous = writable;
     }
-    parts.push(writable);
-    previous = writable;
-  }
+  });
   for (const { point, offset } of moved) {
     // Left-biased: an offset on a cut names the end of the part before it.
     let index = bounds.findIndex((bound, i) => i > 0 && offset <= bound) - 1;
