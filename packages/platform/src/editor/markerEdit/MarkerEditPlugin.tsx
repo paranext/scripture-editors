@@ -67,6 +67,7 @@ import {
   LexicalEditor,
   NodeKey,
   NodeMutation,
+  RangeSelection,
   TextNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
@@ -103,6 +104,10 @@ import {
   registerPendedDisplayOwners,
   textTypeState,
   VerseNode,
+  $deferToPieceHead,
+  $isPieceContinuation,
+  $pieceHead,
+  $runDiverges,
 } from "shared";
 import {
   $selectionReachesIntoOpaqueBlock,
@@ -225,6 +230,15 @@ export const IDLE_SETTLE_DELAY_MS = 1000;
  * as a divergence, so `$caretHoldsRunSite` reports it caret-held and this pends it for the
  * departure settle to finish.
  */
+/**
+ * The key of the node the caret's live end is in, for the departure clocks: the head of a carrier
+ * an annotation cuts into pieces, so moving between its pieces is no departure, and it names the
+ * node the carrier's pend is recorded on.
+ */
+function $caretCarrierKey(selection: RangeSelection): NodeKey {
+  return $pieceHead(selection.focus.getNode()).getKey();
+}
+
 function $syncAndPendOwner(
   node: VerseNode | MilestoneNode | NoteNode | ChapterNode,
   context: MarkerEditContext,
@@ -275,21 +289,40 @@ function registerDestroyedOwnerPend(editor: LexicalEditor, context: MarkerEditCo
   ) => {
     if (payload.updateTags.has(HISTORIC_TAG) || getApplyingUpdateSource(editor) === "remote")
       return;
-    const destroyedRuns: DisplayRunOwnerRef[] = [];
+    const destroyedRuns: (DisplayRunOwnerRef & { isPiece: boolean })[] = [];
     payload.prevEditorState.read(() => {
       for (const [key, mutation] of mutations) {
         if (mutation !== "destroyed") continue;
         const destroyed = $getNodeByKey(key);
         if (!destroyed) continue;
         const ref = $ownerOfRunPiece(destroyed);
-        if (ref) destroyedRuns.push({ owner: ref.owner, kind: ref.kind });
+        if (ref)
+          destroyedRuns.push({
+            owner: ref.owner,
+            kind: ref.kind,
+            isPiece: $isPieceContinuation(destroyed),
+          });
       }
     });
     if (destroyedRuns.length === 0) return;
     editor.getEditorState().read(() => {
-      for (const { owner: previousOwner, kind } of destroyedRuns) {
+      for (const { owner: previousOwner, kind, isPiece } of destroyedRuns) {
         const owner = $getNodeByKey(previousOwner.getKey());
         if (!owner?.isAttached()) continue;
+        // A piece an annotation cut off a run's glyph or value goes when the cut does, joined
+        // back into the piece before it: its bytes live on, so only a run that no longer spells
+        // what its owner wants lost any.
+        if (isPiece) {
+          const descriptor = displayRunDescriptor(kind);
+          if (
+            !$runDiverges(
+              descriptor,
+              descriptor.scanPieces(owner),
+              descriptor.expectedPieces(owner),
+            )
+          )
+            continue;
+        }
         // A sync's OWN legitimate heal-removal (the owner's state no longer calls for a run) is
         // also a "destroyed" mutation here. Only pend when the owner's CURRENT state still wants
         // the run: a genuine clear must settle quietly rather than sit pended — and so exempted
@@ -764,6 +797,8 @@ export function MarkerEditPlugin({
     const unregister = mergeRegister(
       editor.registerNodeTransform(MarkerNode, (node) => {
         if (editor.isComposing()) return;
+        // A glyph an annotation cuts into pieces is one glyph: its head's pass covers it whole.
+        if ($deferToPieceHead(node)) return;
         $markerNodeTransform(node, context);
         // A run can ride loose for one transient commit — heal-forward wraps `\va` and `\vp`
         // independently, so mid-edit caret-grace on one marker can leave the other unwrapped. A
@@ -794,6 +829,8 @@ export function MarkerEditPlugin({
       }),
       editor.registerNodeTransform(VerseNode, (node) => {
         if (editor.isComposing()) return;
+        // A verse an annotation cuts into pieces is one verse: its head's pass covers it whole.
+        if ($deferToPieceHead(node)) return;
         $verseNodeTransform(node, context);
         // Same grace/pend pairing for a deleted or diverged \va/\vp attribute run
         // (displayRunSync.utils.ts): while the caret holds a run's site, the sync leaves it alone,
@@ -1195,7 +1232,7 @@ export function MarkerEditPlugin({
             const selection = $getSelection();
             // Focus, not anchor: the focus point is the caret's live end, so the exception is
             // the right node even when a range selection is extended backward.
-            exceptKey = $isRangeSelection(selection) ? selection.focus.key : lastAnchorKey;
+            exceptKey = $isRangeSelection(selection) ? $caretCarrierKey(selection) : lastAnchorKey;
           }
           $settleWithoutOwnUndoEntry(() => $resolvePendingMarkers(context, exceptKey));
           return true;
@@ -1236,7 +1273,9 @@ export function MarkerEditPlugin({
           // this guard prevents), so fall back to `lastAnchorKey` — the last committed caret node,
           // which the update listener preserves through null-selection commits.
           const selection = $getSelection();
-          const anchorKey = $isRangeSelection(selection) ? selection.focus.key : lastAnchorKey;
+          const anchorKey = $isRangeSelection(selection)
+            ? $caretCarrierKey(selection)
+            : lastAnchorKey;
           $settleWithoutOwnUndoEntry(() => $resolvePendingMarkers(context, anchorKey));
           return false;
         },
@@ -1267,7 +1306,7 @@ export function MarkerEditPlugin({
         // just for this one commit.
         const anchorKey = editorState.read(() => {
           const selection = $getSelection();
-          return $isRangeSelection(selection) ? selection.focus.key : undefined;
+          return $isRangeSelection(selection) ? $caretCarrierKey(selection) : undefined;
         });
         // "Did THIS commit move the caret to a different node" — tracked per commit (app-placed or
         // not) so the app-placed branch comparison below is never stale. NOT read from

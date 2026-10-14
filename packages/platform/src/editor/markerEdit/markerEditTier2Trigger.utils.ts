@@ -79,6 +79,11 @@ import {
   textTypeState,
   milestoneEjectionPending,
   NBSP,
+  $deferToPieceHead,
+  $isPieceContinuation,
+  $logicalNextSibling,
+  $logicalText,
+  $setLogicalText,
 } from "shared";
 
 /**
@@ -163,16 +168,16 @@ function $movePushedNameIntoGlyph(node: TextNode, span: CharNode): boolean {
   if (anchor.key !== node.getKey() || anchor.type !== "text") return false;
   const glyph = span.getFirstChild();
   if (!$isMarkerNode(glyph) || glyph.getMarkerSyntax() !== "opening") return false;
-  let afterGlyph = glyph.getNextSibling();
+  // The opener is read and written whole, however an annotation cuts it into pieces.
+  let afterGlyph = $logicalNextSibling(glyph);
   while ($isTypedMarkNode(afterGlyph)) afterGlyph = afterGlyph.getFirstChild();
-  if (!node.is(afterGlyph) || !BARE_OPENER_REGEX.test(glyph.getTextContent())) return false;
+  if (!node.is(afterGlyph) || !BARE_OPENER_REGEX.test($logicalText(glyph))) return false;
   const text = node.getTextContent();
   const name = text.slice(0, anchor.offset);
   if (!BYTES_READ_WITH_MARKER_REGEX.test(name) || text[anchor.offset] !== NBSP) return false;
-  const glyphText = glyph.getTextContent() + name;
+  const glyphText = $logicalText(glyph) + name;
   node.setTextContent(text.slice(name.length));
-  glyph.setTextContent(glyphText);
-  glyph.select(glyphText.length, glyphText.length);
+  $setLogicalText(glyph, glyphText).select(glyphText.length, glyphText.length);
   return true;
 }
 
@@ -194,7 +199,10 @@ function $movePushedNameIntoGlyph(node: TextNode, span: CharNode): boolean {
  * `TextNode` transform).
  */
 export function $textNodeTier2Transform(node: TextNode, context: MarkerEditContext): void {
-  const text = node.getTextContent();
+  // A display-byte carrier an annotation cuts into pieces (a run's value, a caller, a chapter's
+  // glyph text) is one node: its head reads it whole, and a continuation hands its pass there.
+  if ($deferToPieceHead(node)) return;
+  const text = $logicalText(node);
   const textType = $getState(node, textTypeState);
   // A plain TextNode inside an editable CHAPTER is the chapter's own `\c N` glyph (or stray
   // mid-edit text beside it) — bytes whose CANONICAL form already contains a terminated marker
@@ -413,6 +421,8 @@ function $isStaticSettleShape(descriptor: DisplayRunDescriptor, owner: LexicalNo
  */
 export function $rependPendShapedNodes(context: MarkerEditContext): void {
   const visit = (node: LexicalNode): void => {
+    // A carrier an annotation cuts into pieces is read whole at its head and pends there.
+    if ($isPieceContinuation(node)) return;
     if ($isMarkerNode(node)) {
       // Mid-edit glyph text (an undone rename settle) — $markerNodeTransform's pend shape.
       if (!$isCanonicalMarkerNode(node)) context.pendingKeys.add(node.getKey());
@@ -438,7 +448,7 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
       // A diverged verse glyph (an undone number-edit settle) — $verseNodeTransform's pend
       // shape. The caret-held \va/\vp run divergence pend ($syncAndPendOwner's run pend,
       // MarkerEditPlugin.tsx) is the shared loop above.
-      if (node.getTextContent() !== getVisibleOpenMarkerText("v", node.getNumber()))
+      if ($logicalText(node) !== getVisibleOpenMarkerText("v", node.getNumber()))
         context.pendingKeys.add(node.getKey());
       return;
     }
@@ -459,7 +469,7 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
       // path. Anything non-canonical re-pends for departure's $rebuildChapter, like the live arm.
       const chapterParent = node.getParent();
       if ($isChapterNode(chapterParent)) {
-        if (node.getTextContent() !== getVisibleOpenMarkerText("c", chapterParent.getNumber()))
+        if ($logicalText(node) !== getVisibleOpenMarkerText("c", chapterParent.getNumber()))
           context.pendingKeys.add(node.getKey());
         return;
       }
@@ -468,7 +478,7 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
       // departure puts it back unless it has become a caller word again.
       const callerNote = $noteOfCallerText(node);
       if (callerNote) {
-        if (node.getTextContent() !== getEditableCallerText(callerNote.getCaller()))
+        if ($logicalText(node) !== getEditableCallerText(callerNote.getCaller()))
           context.pendingKeys.add(node.getKey());
         return;
       }

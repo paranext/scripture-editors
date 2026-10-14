@@ -128,6 +128,12 @@ import {
   usfmFragmentToUsjContent,
   UsfmFragmentOptions,
   VerseNode,
+  $isPieceContinuation,
+  $isPieceOf,
+  $lastPiece,
+  $logicalChildren,
+  $logicalText,
+  $pieces,
 } from "shared";
 import {
   $isImmutableNoteCallerNode,
@@ -351,8 +357,7 @@ const NAME_ENDING_AT_NBSP_REGEX = /^[^\s\u200B\\|*]+(?=\u00A0)/;
  * typed at content start was dropped here, so the rebuild reproduced the paragraph unchanged and
  * the literal never settled). Substitute the separator only while the node is pure whitespace.
  */
-function $textNodeFragmentText(node: TextNode): string {
-  const text = node.getTextContent();
+function $textNodeFragmentText(node: TextNode, text = node.getTextContent()): string {
   if (!$isMarkerTrailingSeparator(node)) return text;
   return /^[\s\u00A0]*$/.test(text) ? " " : text;
 }
@@ -410,9 +415,10 @@ function $milestoneDisplayRun(children: LexicalNode[], index: number): LexicalNo
     next.getMarker() !== milestone.getMarker()
   )
     return [];
-  const run: LexicalNode[] = [next];
-  if (attribute) run.push(attribute);
-  if (closing) run.push(closing);
+  // Slot accounting counts nodes: every piece of a glyph or value an annotation cuts is in the run.
+  const run: LexicalNode[] = [...$pieces(next)];
+  if (attribute) run.push(...$pieces(attribute));
+  if (closing) run.push(...$pieces(closing));
   return run;
 }
 
@@ -479,7 +485,9 @@ function $verseAttributeRun(children: LexicalNode[], index: number): LexicalNode
       run.push(wrapper);
       anchor = wrapper;
     } else if (opener && value && closer) {
-      run.push(opener, value, closer);
+      // Slot accounting counts nodes: every piece of a glyph or value an annotation cuts is in
+      // the run.
+      run.push(...$pieces(opener), ...$pieces(value), ...$pieces(closer));
       anchor = closer;
     } else if (opener || value || closer) {
       break; // partial match — true extent can't be inferred from here, so stop the scan
@@ -538,10 +546,11 @@ export function $isLiteralNoteShell(note: NoteNode): boolean {
     return false;
   const attributes = Object.keys(note.getUnknownAttributes() ?? {});
   if (attributes.some((name) => name !== "closed")) return false;
-  return note.getChildren().some((child) => {
+  // Each glyph is read whole, however an annotation cuts it into pieces.
+  return $logicalChildren(note).some((child) => {
     if (!$isMarkerNode(child) || $isCanonicalMarkerNode(child)) return false;
     if (child.getMarkerSyntax() !== "opening") return true;
-    const text = child.getTextContent();
+    const text = $logicalText(child);
     const name = (BARE_OPENER_REGEX.exec(text) ?? TERMINATED_OPENER_REGEX.exec(text))?.[1];
     return (
       name === undefined ||
@@ -733,6 +742,10 @@ function $appendSignature(
 ): void {
   for (let index = 0; index < children.length; index++) {
     const node = children[index];
+    // A carrier an annotation cuts into pieces is one node: its head contributes the whole
+    // carrier, read through the chain, and its continuations nothing. The fresh rebuild this is
+    // compared with is never cut, so a piece-by-piece signature would never reach a fixed point.
+    if ($isPieceContinuation(node)) continue;
     if ($isMilestoneNode(node)) {
       // Mirror `$appendChildrenFragment`: a re-tokenizable milestone's display run (opening
       // MarkerNode, optional attribute text, self-closing MarkerNode) is ordinary signature
@@ -822,7 +835,7 @@ function $appendSignature(
         out.push(
           SIGNATURE_OPEN,
           "verse",
-          toFragmentText(node.getTextContent()),
+          toFragmentText($logicalText(node)),
           JSON.stringify({
             number: node.getNumber(),
             altnumber: node.getAltnumber() ?? null,
@@ -832,12 +845,13 @@ function $appendSignature(
         $appendSignature($flattenAttributeRuns(run), out, getMarkerFn);
         out.push(SIGNATURE_CLOSE);
       }
-      index += run.length;
+      // The run follows the verse's last piece.
+      index += $pieces(node).length - 1 + run.length;
     } else if ($isMarkerNode(node)) {
       // Delimited and tagged (not bare glyph text) so text moving across the
       // glyph/content boundary — e.g. glyph "\q extra" vs. glyph "\q" + content
       // "extra" — changes the signature instead of silently canceling out.
-      out.push(SIGNATURE_OPEN, "marker", toFragmentText(node.getTextContent()), SIGNATURE_CLOSE);
+      out.push(SIGNATURE_OPEN, "marker", toFragmentText($logicalText(node)), SIGNATURE_CLOSE);
     } else if ($isImmutableUnmatchedNode(node)) {
       // Tagged for the same reason as marker glyphs: an unmatched element's BYTES are identical
       // to the literal text it resolves from (`\*` typed as text vs the flagged element), so a
@@ -848,7 +862,7 @@ function $appendSignature(
       out.push(
         SIGNATURE_OPEN,
         "unmatched",
-        toFragmentText(node.getTextContent()),
+        toFragmentText($logicalText(node)),
         node.getMarker(),
         SIGNATURE_CLOSE,
       );
@@ -863,17 +877,12 @@ function $appendSignature(
       out.push(
         SIGNATURE_OPEN,
         "attribute",
-        toFragmentText($textNodeFragmentText(node)),
+        toFragmentText($textNodeFragmentText(node, $logicalText(node))),
         SIGNATURE_CLOSE,
       );
     } else if ($isTextNode(node)) {
-      out.push(
-        toFragmentText(
-          insideCharChildren
-            ? charOwnChildSignatureText($textNodeFragmentText(node))
-            : $textNodeFragmentText(node),
-        ),
-      );
+      const text = $textNodeFragmentText(node, $logicalText(node));
+      out.push(toFragmentText(insideCharChildren ? charOwnChildSignatureText(text) : text));
     } else if ($isCharNode(node)) {
       // A known-marker span that reaches here is NOT a sentinel ($isRebuildSentinel already
       // filtered unknown markers) — fold its own stored `unknownAttributes` into the signature
@@ -1260,9 +1269,11 @@ function $appendNodesFragment(
       consumeCharLead();
       // The note's bytes as the screen shows them; the caller text's no-break space is the
       // separator after the caller, as a glyph's is.
+      // Every piece of a caller an annotation cuts is the caller's.
       const caller = $noteEditableCallerNode(node);
       for (const child of node.getChildren())
-        if (caller?.is(child)) pushText(out, child, toFragmentText(child.getTextContent()));
+        if (caller && $isPieceOf(child, caller))
+          pushText(out, child, toFragmentText(child.getTextContent()));
         else $appendNodesFragment([child], out, getMarkerFn, viewOptions);
     } else if ($isNoteNode(node) || $isUnknownNode(node)) {
       consumeCharLead();
@@ -1277,14 +1288,18 @@ function $appendNodesFragment(
       // Otherwise (the common case) the verse's own glyph text flows into the fragment like any
       // other content, immediately followed by its run's bytes as ordinary siblings — the
       // tokenizer's attrCapture folds `\va`/`\vp` right back onto the freshly re-derived verse.
+      // A verse an annotation cuts into pieces is one verse: its pieces ride together (each spells
+      // its own bytes, so caret and mark anchors stay per piece), and its run follows the last.
+      const pieces = $pieces(node);
       const run = $verseAttributeRun(children, index);
       if (verseNeedsSentinel(node)) {
-        pushSentinel(out, [node, ...run]);
+        pushSentinel(out, [...pieces, ...run]);
       } else {
-        pushText(out, node, toFragmentText($textNodeFragmentText(node)));
+        for (const piece of pieces)
+          pushText(out, piece, toFragmentText($textNodeFragmentText(piece)));
         $appendNodesFragment(run, out, getMarkerFn, viewOptions);
       }
-      index += run.length;
+      index += pieces.length - 1 + run.length;
     } else if ($isCharNode(node)) {
       consumeCharLead();
       // Unknown-marker spans (custom.sty) are not text-recoverable: the tokenizer would degrade
@@ -1306,10 +1321,11 @@ function $appendNodesFragment(
       // flattening in every view; everything else is a content run, where the flattening is
       // view-dependent (see `contentFragmentText`).
       const parent = node.getParent();
+      const chapterGlyph = $isChapterNode(parent) ? $chapterGlyphTextNode(parent) : undefined;
       const isStructuralRun =
         $isMarkerTrailingSeparator(node) ||
         $getState(node, textTypeState) === "attribute" ||
-        ($isChapterNode(parent) && !!$chapterGlyphTextNode(parent)?.is(node));
+        (!!chapterGlyph && $isPieceOf(node, chapterGlyph));
       const structuralLead = consumeCharLead() && !isStructuralRun;
       pushText(
         out,
@@ -1544,7 +1560,8 @@ function $replaceSentinels(roots: LexicalNode[], originals: LexicalNode[][]): vo
  */
 function $collectVerseNodes(nodes: LexicalNode[], out: VerseNode[] = []): VerseNode[] {
   for (const node of nodes) {
-    if ($isVerseNode(node)) out.push(node);
+    // A verse an annotation cuts into pieces is one verse.
+    if ($isVerseNode(node) && !$isPieceContinuation(node)) out.push(node);
     else if ($isElementNode(node)) $collectVerseNodes(node.getChildren(), out);
   }
   return out;
@@ -1797,7 +1814,7 @@ function $pointAfterSentinelRun(span: FragmentSpan): FragmentPoint | undefined {
     : $isMilestoneNode(first)
       ? $milestoneDisplayRun(siblings, index)
       : [];
-  const last = run[run.length - 1] ?? first;
+  const last = run[run.length - 1] ?? $lastPiece(first);
   return { key: parent.getKey(), offset: last.getIndexWithinParent() + 1, type: "element" };
 }
 
@@ -2176,7 +2193,8 @@ function $preservedRunAt(key: NodeKey): LexicalNode[] | undefined {
     : $isMilestoneNode(first)
       ? $milestoneDisplayRun(siblings, index)
       : [];
-  return [first, ...run];
+  // Every piece of a verse an annotation cuts rides with it.
+  return [...$pieces(first), ...run];
 }
 
 /**
@@ -2938,12 +2956,13 @@ function $noteContentNodes(note: NoteNode): LexicalNode[] | undefined {
   // TextNode); anything else in this slot is an unexpected shape, so refuse.
   const callerNode = children[start];
   if (!callerNode) return undefined;
+  // An editable caller an annotation cuts into pieces is one caller, read whole and skipped whole.
   const isCaller =
     $isImmutableNoteCallerNode(callerNode) ||
     ($isTextNode(callerNode) &&
-      callerNode.getTextContent() === getEditableCallerText(note.getCaller()));
+      $logicalText(callerNode) === getEditableCallerText(note.getCaller()));
   if (!isCaller) return undefined;
-  start++;
+  start += $pieces(callerNode).length;
   // Skip the trailing closing-marker(s).
   let end = children.length;
   while (end > start) {
@@ -3281,7 +3300,8 @@ function $closeNoteAtOwnCloser(
  */
 function $bookContentNodes(book: BookNode): LexicalNode[] {
   const children = book.getChildren();
-  return $isBookPrefixGlyph(children[0]) ? children.slice(1) : children;
+  // A prefix glyph an annotation cuts into pieces is skipped whole.
+  return $isBookPrefixGlyph(children[0]) ? children.slice($pieces(children[0]).length) : children;
 }
 
 /**

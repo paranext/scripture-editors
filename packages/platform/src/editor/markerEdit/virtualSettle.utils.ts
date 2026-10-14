@@ -113,6 +113,11 @@ import {
   ParaNode,
   SerializedVerseNode,
   UnknownNode,
+  $isPieceContinuation,
+  $logicalChildren,
+  $logicalText,
+  $pieceHead,
+  $pieces,
 } from "shared";
 
 /** Where a live node's serialized counterpart sits: the JSON node itself, plus the children array
@@ -621,8 +626,10 @@ export function $settledParaScope(
 function $collectLiveVerseSids(nodes: LexicalNode[]): { number: string; sid?: string }[] {
   const out: { number: string; sid?: string }[] = [];
   const visit = (node: LexicalNode): void => {
-    if ($isVerseNode(node)) out.push({ number: node.getNumber(), sid: node.getSid() });
-    else if ($isElementNode(node)) node.getChildren().forEach(visit);
+    // A verse an annotation cuts into pieces is one verse.
+    if ($isVerseNode(node)) {
+      if (!$isPieceContinuation(node)) out.push({ number: node.getNumber(), sid: node.getSid() });
+    } else if ($isElementNode(node)) node.getChildren().forEach(visit);
   };
   nodes.forEach(visit);
   return out;
@@ -905,17 +912,19 @@ function $noteGlyphRenameTarget(
   node: LexicalNode,
 ): { glyph: MarkerNode; note: NoteNode; oldMarker: string; newMarker: string } | undefined {
   if (!$isMarkerNode(node) || node.getMarkerSyntax() !== "opening") return undefined;
-  const parent = node.getParent();
+  // A glyph an annotation cuts into pieces is one glyph, read whole from its head.
+  const glyph = $pieceHead(node);
+  const parent = glyph.getParent();
   if (!$isNoteNode(parent)) return undefined;
-  const text = node.getTextContent();
-  if ($isCanonicalMarkerNode(node)) return undefined;
+  const text = $logicalText(glyph);
+  if ($isCanonicalMarkerNode(glyph)) return undefined;
   const bare = BARE_OPENER_REGEX.exec(text);
   if (!bare) return undefined;
   const newMarker = bare[1];
   if (newMarker.startsWith("+")) return undefined;
-  const oldMarker = node.getMarker();
+  const oldMarker = glyph.getMarker();
   if (parent.getMarker() !== oldMarker) return undefined;
-  return { glyph: node, note: parent, oldMarker, newMarker };
+  return { glyph, note: parent, oldMarker, newMarker };
 }
 
 /** Rewrites one serialized MarkerNode glyph's own `marker` field, and its derived `text` (mirroring
@@ -929,6 +938,28 @@ function rewriteSettledGlyphMarker(json: SerializedLexicalNode, marker: string):
   };
   glyph.marker = marker;
   glyph.text = serializedMarkerGlyphText(marker, glyph.markerSyntax, glyph.nested);
+}
+
+/**
+ * Rewrites the serialized copy of `glyph`'s whole chain to `marker` — the mirror of
+ * `MarkerNode.setMarker`, which joins a glyph an annotation cut into pieces before respelling it:
+ * the head's copy takes the whole new spelling, and every later piece's copy is left empty.
+ */
+function $rewriteSettledGlyphChain(
+  glyph: MarkerNode,
+  sites: Map<NodeKey, SerializedSite>,
+  marker: string,
+): void {
+  const [head, ...rest] = $pieces(glyph);
+  const headSite = sites.get(head.getKey());
+  if (headSite) rewriteSettledGlyphMarker(headSite.node, marker);
+  for (const piece of rest) {
+    const site = sites.get(piece.getKey());
+    if (!site) continue;
+    const json = site.node as SerializedLexicalNode & { marker?: string; text?: string };
+    json.marker = marker;
+    json.text = "";
+  }
 }
 
 /**
@@ -964,19 +995,16 @@ export function $applySettledNoteGlyphRename(
   const noteSite = sites.get(note.getKey());
   if (noteSite) (noteSite.node as SerializedLexicalNode & { marker?: string }).marker = newMarker;
 
-  const glyphSite = sites.get(glyph.getKey());
-  if (glyphSite) rewriteSettledGlyphMarker(glyphSite.node, newMarker);
+  $rewriteSettledGlyphChain(glyph, sites, newMarker);
 
   // Mirrors $applyOpenerRename's own closer lookup exactly: the LAST closing-syntax MarkerNode
   // child whose marker still matches the opener's OLD marker. An unclosed note (no closing glyph
   // at all) simply has no match here, same as the real branch's own `if (closer)` no-op.
-  const closer = note
-    .getChildren()
+  const closer = $logicalChildren(note)
     .filter($isMarkerNode)
     .filter((child) => child.getMarkerSyntax() === "closing" && child.getMarker() === oldMarker)
     .at(-1);
-  const closerSite = closer && sites.get(closer.getKey());
-  if (closerSite) rewriteSettledGlyphMarker(closerSite.node, newMarker);
+  if (closer) $rewriteSettledGlyphChain(closer, sites, newMarker);
 }
 
 /** `fragment` with `[start, end)` replaced by `bytes`, every span re-stated against the new text:
@@ -1004,15 +1032,20 @@ function replaceFragmentBytes(
   };
 }
 
-/** Replace the bytes of the span keyed `key` in `fragment` with `bytes`; `fragment` itself when it
- * has no such span. */
-function replaceSpanBytes(
+/** Replace the bytes `node`'s whole carrier spans in `fragment` with `bytes` — every piece an
+ * annotation cut it into, from its head's first byte to its last piece's last; `fragment` itself
+ * when it spans none of them. */
+function $replaceCarrierBytes(
   fragment: FragmentAccumulator,
-  key: NodeKey,
+  node: LexicalNode,
   bytes: string,
 ): FragmentAccumulator {
-  const span = fragment.spans.find((candidate) => candidate.key === key && !candidate.isSentinel);
-  return span ? replaceFragmentBytes(fragment, span.start, span.end, bytes) : fragment;
+  const keys = new Set($pieces(node).map((piece) => piece.getKey()));
+  const spans = fragment.spans.filter((span) => keys.has(span.key) && !span.isSentinel);
+  if (spans.length === 0) return fragment;
+  const start = Math.min(...spans.map((span) => span.start));
+  const end = Math.max(...spans.map((span) => span.end));
+  return replaceFragmentBytes(fragment, start, end, bytes);
 }
 
 /** Every key in `node`'s subtree, `node` included. */
@@ -1079,9 +1112,9 @@ export function $fragmentWithCharOpenerRenames(
       continue;
     }
     if (closer)
-      result = replaceSpanBytes(
+      result = $replaceCarrierBytes(
         result,
-        closer.getKey(),
+        closer,
         toFragmentText(serializedMarkerGlyphText(newMarker, "closing", closer.getNested())),
       );
   }
@@ -1101,10 +1134,8 @@ export function $applySettledCharOpenerRename(
   const { char, glyph, closer, newMarker } = rename;
   const charSite = sites.get(char.getKey());
   if (charSite) (charSite.node as SerializedLexicalNode & { marker?: string }).marker = newMarker;
-  const glyphSite = sites.get(glyph.getKey());
-  if (glyphSite) rewriteSettledGlyphMarker(glyphSite.node, newMarker);
-  const closerSite = closer && sites.get(closer.getKey());
-  if (closerSite) rewriteSettledGlyphMarker(closerSite.node, newMarker);
+  $rewriteSettledGlyphChain(glyph, sites, newMarker);
+  if (closer) $rewriteSettledGlyphChain(closer, sites, newMarker);
 }
 
 /**
@@ -1337,8 +1368,10 @@ export function $collectSettleScopes(
     else paraScopes.set(scope.getKey(), [scope]);
   };
   for (const key of pendedKeys) {
-    const node = $getNodeByKey(key);
-    if (!node?.isAttached()) continue;
+    const pended = $getNodeByKey(key);
+    if (!pended?.isAttached()) continue;
+    // A pend on any piece of a carrier an annotation cuts stands for the whole carrier.
+    const node = $pieceHead(pended);
     // An in-place char opener rename re-tokenizes nothing on the live side either.
     const charRename = $pendingCharOpenerRename(node, context.getMarker);
     if (charRename) {
