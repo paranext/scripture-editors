@@ -769,6 +769,44 @@ describe.each(VIEWS)(
       const whole = livePoints(uncut);
       expect(livePoints(cut)).toEqual(whole);
     });
+
+    /** What every caret point on the `\w*` closer reports, keyed by its offset into the whole
+     * closer: one entry per spelling, so a cut boundary is reported from both sides of it. */
+    function reportedByOffset(pending: Awaited<ReturnType<typeof pendingParagraph>>) {
+      const viewOptions = oracleView(view);
+      const context = positionContext(pending.mounted.lexical, viewOptions);
+      return pending.mounted.lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const reported: [number, UsjDocumentLocation | undefined][] = [];
+        let start = 0;
+        for (const piece of $pieces(pending.$closer())) {
+          for (let offset = 0; offset <= piece.getTextContentSize(); offset += 1)
+            reported.push([start + offset, $settledLocationFromLivePoint(prepared, piece, offset)]);
+          start += piece.getTextContentSize();
+        }
+        return reported;
+      });
+    }
+
+    it("reports the end of a closer, cut or not, as the closer's own end", async () => {
+      const uncut = await pendingParagraph(false);
+      const cut = await pendingParagraph(true);
+      expect(
+        cut.mounted.lexical.getEditorState().read(() => $pieces(cut.$closer()).length),
+      ).toBeGreaterThan(2);
+      const whole = reportedByOffset(uncut);
+      const [, front] = whole[0];
+      if (!isUsjClosingMarkerLocation(front)) throw new Error("expected a closer location");
+      // A caret at the closer's end rests on the closer, as it reports outside a pending scope;
+      // the content after it starts at the same place but is not where the caret is.
+      expect(whole.at(-1)).toEqual([
+        "\\w*".length,
+        { jsonPath: front.jsonPath, closingMarkerOffset: "\\w*".length },
+      ]);
+      const byOffset = new Map(whole);
+      const pieced = reportedByOffset(cut);
+      expect(pieced).toEqual(pieced.map(([offset]) => [offset, byOffset.get(offset)]));
+    });
   },
 );
 

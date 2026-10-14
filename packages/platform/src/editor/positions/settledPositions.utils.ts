@@ -189,6 +189,16 @@ function $closingGlyphByte(
     : undefined;
 }
 
+/** Whether `offset` in `node` is the end of a whole closing glyph: the end of its last piece. */
+function $isClosingGlyphEnd(node: LexicalNode, offset: number): boolean {
+  return (
+    $isMarkerNode(node) &&
+    node.getMarkerSyntax() !== "opening" &&
+    node.is($lastPiece(node)) &&
+    offset === node.getTextContentSize()
+  );
+}
+
 /**
  * The point just past a closing glyph that DIRECTLY precedes ANOTHER closing glyph `anchor`'s
  * target byte lands at the front of — offset 0 of a closer with no closer of its own to report
@@ -1644,6 +1654,21 @@ function $scratchLocationFromLivePoint(
     if (inPreservedRun) return inPreservedRun;
     logger?.error("settled-position basis out of date — rebuilt");
     return undefined;
+  }
+  // The end of a closing glyph is a caret resting on that closer, which reports the closer's own
+  // end outside a pending scope too. The byte addressing below spells the same place as the front
+  // of whatever follows the glyph, so it is asked for the glyph's last byte instead, one past it.
+  if (offset > 0 && $isClosingGlyphEnd(node, offset)) {
+    const lastByte = $scratchLocationFromLivePoint(
+      plan,
+      sides,
+      node,
+      offset - 1,
+      viewOptions,
+      logger,
+    );
+    if (isUsjClosingMarkerLocation(lastByte))
+      return { ...lastByte, closingMarkerOffset: lastByte.closingMarkerOffset + 1 };
   }
   const anchored = $anchorForPoint(liveFragment, node, cutFragmentOffset(plan, node, offset));
   if (!anchored) return undefined;

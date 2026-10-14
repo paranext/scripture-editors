@@ -11,12 +11,14 @@ import {
 } from "../react-test.utils";
 import { DeltaOp } from "./delta-common.utils";
 import { DeltaOnChangePlugin } from "./DeltaOnChangePlugin";
+import { getEditorDelta } from "./editor-delta.adaptor";
 import {
   $createTextNode,
   $getRoot,
   $isTextNode,
   EditorState,
   LexicalEditor,
+  LexicalNode,
   TextNode,
   $setState,
   $getState,
@@ -243,6 +245,68 @@ describe("OnChangePlugin", () => {
         if (!$isTextNode(t2)) throw new Error("Expected TextNode");
         expect(t2.getTextContent()).toBe("and all the brethren who are with me");
       });
+    });
+  });
+
+  describe("An edit inside one text node", () => {
+    // A single-node edit is sent as the whole-document diff sends it, however the text around it
+    // is cut into nodes (an annotation mark cuts one text into several) and whatever its ancestors
+    // give its bytes.
+    async function typedOps(
+      $build: () => { paragraph: LexicalNode[]; typedInto: TextNode },
+      text: string,
+      offset: number,
+    ) {
+      let typedInto: TextNode | undefined;
+      const { editor } = await testEnvironment(() => {
+        const built = $build();
+        typedInto = built.typedInto;
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          $createImpliedParaNode().append(...built.paragraph),
+        );
+      });
+      const prevState = editor.getEditorState();
+      if (!typedInto) throw new Error("expected the node to type into");
+      await typeTextAtSelection(editor, text, typedInto, offset);
+      const wholeDocumentDiff = getEditorDelta(prevState).diff(
+        getEditorDelta(editor.getEditorState()),
+      ).ops;
+      return { sent: updateOps, wholeDocumentDiff };
+    }
+
+    /** `texts` as adjacent text nodes, kept apart by giving each its own format. */
+    function $texts(texts: string[]) {
+      const nodes = texts.map((text, index) => $createTextNode(text).setFormat(index));
+      return { paragraph: nodes, typedInto: nodes[0] };
+    }
+
+    it.each([
+      ["in one text node", ["ab"]],
+      ["in a node that ends where the equal byte does", ["a", "b"]],
+    ])(
+      "places a byte typed beside an equal byte where the document diff does (%s)",
+      async (_name, texts) => {
+        const { sent, wholeDocumentDiff } = await typedOps(() => $texts(texts), "a", 0);
+        expect(wholeDocumentDiff).toEqual([{ retain: 1 }, { insert: "a" }]);
+        expect(sent).toEqual(wholeDocumentDiff);
+      },
+    );
+
+    it("sends a byte typed in a char span with the span's attribute", async () => {
+      const { sent, wholeDocumentDiff } = await typedOps(
+        () => {
+          const text = $createTextNode("ac");
+          return { paragraph: [$createCharNode("wj").append(text)], typedInto: text };
+        },
+        "b",
+        1,
+      );
+      expect(wholeDocumentDiff).toEqual([
+        { retain: 2 },
+        { insert: "b", attributes: { char: { style: "wj" } } },
+      ]);
+      expect(sent).toEqual(wholeDocumentDiff);
     });
   });
 
