@@ -34,7 +34,6 @@ import {
   CaseRun,
   CaseSite,
   caseMismatches,
-  drainNativeSelectionChange,
   expectMismatchesListed,
   ExpectedFailures,
   keystrokesFor,
@@ -48,6 +47,7 @@ import {
   runKeystrokeCase,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
 import { copyEvent } from "../markerEdit/markerEdit.test-helpers";
+import { drainNativeSelectionChange } from "../editor-test.utils";
 import { UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {

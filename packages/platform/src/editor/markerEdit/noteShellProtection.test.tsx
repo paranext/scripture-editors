@@ -35,6 +35,7 @@ import editorUsjAdaptor, {
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
 import { act } from "@testing-library/react";
+import { drainNativeSelectionChange } from "../editor-test.utils";
 import {
   $createTextNode,
   $getRoot,
@@ -138,6 +139,7 @@ async function placeCaretInShell(
       // the caret came FROM rather than where it just went.
       editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
     });
+    await drainNativeSelectionChange();
   });
 }
 
@@ -160,6 +162,7 @@ async function clickCaretInShell(
       editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
     });
     doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    await drainNativeSelectionChange();
   });
 }
 
@@ -173,6 +176,7 @@ async function focusPastNoteContent(editor: LexicalEditor): Promise<void> {
     editor.update(() => {
       findOnlyNote($getRoot()).getLastChild()?.selectEnd();
     });
+    await drainNativeSelectionChange();
   });
 }
 
@@ -210,11 +214,15 @@ function expectShellIntact(editor: LexicalEditor) {
  * test rather than no-op. A trap registered just below the guard's `COMMAND_PRIORITY_CRITICAL`
  * (but above the default handler's `COMMAND_PRIORITY_EDITOR`) catches an unrefused command there
  * instead and reports it undone — real text is never actually touched either way.
+ *
+ * `$placeCaret`, when given, places the caret in the same update the key arrives in, so no
+ * selection change can reach the editor between the two.
  */
 async function dispatchGuardedDelete(
   editor: LexicalEditor,
   command: LexicalCommand<boolean>,
   isBackward: boolean,
+  $placeCaret?: () => void,
 ): Promise<boolean> {
   let reachedDefaultHandler = false;
   const unregister = editor.registerCommand(
@@ -228,6 +236,7 @@ async function dispatchGuardedDelete(
   try {
     await act(async () => {
       editor.update(() => {
+        $placeCaret?.();
         editor.dispatchCommand(command, isBackward);
       });
     });
@@ -319,6 +328,7 @@ describe("expanded note shell", () => {
           editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
         });
         doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
+        await drainNativeSelectionChange();
       });
     }
 
@@ -471,6 +481,7 @@ describe("expanded note shell", () => {
             .find((node) => $isMarkerNode(node) && node.getTextContent().startsWith("\\ft"));
           requireDefined(glyph, "content run's opening glyph").select(0, 0);
         });
+        await drainNativeSelectionChange();
       });
     }
 
@@ -637,41 +648,37 @@ describe("expanded note shell", () => {
     }
 
     /** Caret as a TEXT point at the end of the text immediately before the note. */
-    async function caretAtTextEndBeforeNote(editor: LexicalEditor) {
-      await act(async () => {
-        editor.update(() => {
-          const { note } = $noteAndIndex();
-          const before = note.getPreviousSibling();
-          const text = requireDefined(
-            $isTextNode(before) ? before : undefined,
-            "text before the note",
-          );
-          text.select(text.getTextContentSize(), text.getTextContentSize());
-        });
-      });
+    function $caretAtTextEndBeforeNote() {
+      const { note } = $noteAndIndex();
+      const before = note.getPreviousSibling();
+      const text = requireDefined($isTextNode(before) ? before : undefined, "text before the note");
+      text.select(text.getTextContentSize(), text.getTextContentSize());
     }
 
     /**
      * Caret as an ELEMENT point on the paragraph, right before the note — what a leftward arrow
      * out of the note's own content leaves it at (`$placeCaretAtBoundary`).
      */
-    async function caretAtParagraphBoundaryBeforeNote(editor: LexicalEditor) {
-      await act(async () => {
-        editor.update(() => {
-          const { parent, index } = $noteAndIndex();
-          parent.select(index, index);
-        });
-      });
+    function $caretAtParagraphBoundaryBeforeNote() {
+      const { parent, index } = $noteAndIndex();
+      parent.select(index, index);
     }
 
     it.each([
-      ["a text point", caretAtTextEndBeforeNote],
-      ["an element point", caretAtParagraphBoundaryBeforeNote],
-    ] as const)("keeps the note whole with the caret as %s", async (_label, placeCaret) => {
+      ["a text point", $caretAtTextEndBeforeNote],
+      ["an element point", $caretAtParagraphBoundaryBeforeNote],
+    ] as const)("keeps the note whole with the caret as %s", async (_label, $placeCaret) => {
       const { editor } = await mount(protectedShell);
-      await placeCaret(editor);
 
-      const handled = await dispatchGuardedDelete(editor, DELETE_CHARACTER_COMMAND, false);
+      // The key arrives with the caret still outside the note: once a selection change reaches
+      // the editor, the guard moves a caret there into the note, and the Delete is then an
+      // ordinary one at the content's start.
+      const handled = await dispatchGuardedDelete(
+        editor,
+        DELETE_CHARACTER_COMMAND,
+        false,
+        $placeCaret,
+      );
 
       // Refused: a forward delete from here would otherwise eat the `\f` opener and unwrap the
       // whole note into plain paragraph text.
@@ -1215,6 +1222,7 @@ describe("a range selection beside a protected note shell", () => {
         select(findOnlyNote($getRoot()));
         editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
       });
+      await drainNativeSelectionChange();
     });
     await act(async () => {
       editor.update(() => {
