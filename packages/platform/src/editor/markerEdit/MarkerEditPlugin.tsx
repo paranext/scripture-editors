@@ -47,6 +47,7 @@ import {
   $getSelection,
   $getState,
   $isRangeSelection,
+  $isTextNode,
   BLUR_COMMAND,
   CLICK_COMMAND,
   COMMAND_PRIORITY_CRITICAL,
@@ -112,6 +113,7 @@ import {
   $deferToPieceHead,
   $isPieceContinuation,
   $pieceHead,
+  $previousSiblingThroughMarks,
   $runDiverges,
 } from "shared";
 import {
@@ -309,9 +311,20 @@ function $skipsEnginePass(editor: LexicalEditor, node: LexicalNode): boolean {
  * The key of the node the caret's live end is in, for the departure clocks: the head of a carrier
  * an annotation cuts into pieces, so moving between its pieces is no departure, and it names the
  * node the carrier's pend is recorded on.
+ *
+ * A text caret at the start of a node whose text node before it sits across an annotation mark is
+ * in that text node: Lexical resolves a caret at the start of a text node onto the end of the text
+ * node directly before it, so with no mark there the same caret is in that node, and a mark
+ * between them must not change which node the caret is in (`$previousSiblingThroughMarks`).
  */
 function $caretCarrierKey(selection: RangeSelection): NodeKey {
-  return $pieceHead(selection.focus.getNode()).getKey();
+  const { focus } = selection;
+  const node = focus.getNode();
+  if (focus.type === "text" && focus.offset === 0 && !$isTextNode(node.getPreviousSibling())) {
+    const before = $previousSiblingThroughMarks(node);
+    if ($isTextNode(before)) return $pieceHead(before).getKey();
+  }
+  return $pieceHead(node).getKey();
 }
 
 function $syncAndPendOwner(

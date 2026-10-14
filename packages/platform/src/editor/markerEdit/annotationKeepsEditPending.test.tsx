@@ -280,4 +280,46 @@ describe("an annotation and the marker edits the engine holds pending", () => {
     expect(isPending(mounted)).toBe(false);
     mounted.unmount();
   });
+
+  it("settles a closer damaged at its front as the plain document does, the content before it marked", async () => {
+    const outcomes: string[] = [];
+    for (const annotated of [false, true]) {
+      const mounted = await mountInView(cpSpanUsj, view);
+      const $closer = () =>
+        $find(
+          (node): node is MarkerNode => $isMarkerNode(node) && node.getMarkerSyntax() === "closing",
+        );
+      if (annotated)
+        // From the content's `A` into the closer's `\`: the `A` is marked, the closer cut.
+        await annotate(
+          mounted,
+          mounted.lexical.getEditorState().read(() => {
+            const content = $textContaining("A");
+            return {
+              start: $byteLoc(content, content.getTextContent().indexOf("A"), false, view),
+              end: $byteLoc($closer(), 0, true, view),
+            };
+          }),
+          "crossing",
+        );
+      // Delete at the closer's front, then type, each a keystroke of its own.
+      await commit(mounted, () => {
+        const closer = $closer();
+        closer.select(0, 0);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return;
+        selection.focus.set(closer.getKey(), 1, "text");
+        selection.removeText();
+      });
+      await commit(mounted, () => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) selection.insertText("x");
+      });
+      outcomes.push(
+        JSON.stringify({ pending: isPending(mounted), usj: mounted.ref.current?.getUsj() }),
+      );
+      mounted.unmount();
+    }
+    expect(outcomes[1]).toBe(outcomes[0]);
+  });
 });
