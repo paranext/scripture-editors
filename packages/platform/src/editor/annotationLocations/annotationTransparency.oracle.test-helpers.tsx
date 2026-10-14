@@ -401,7 +401,9 @@ function isNodeShaped(keystroke: OracleKeystroke): boolean {
  * The `text/plain` a copy of the whole edited paragraph puts on the clipboard. In the popover's
  * view the selection is announced as a change in the same update, as every caret placement there
  * is, and the native `selectionchange` it queues is drained ({@link drainNativeSelectionChange}),
- * so the shell's caret guard has always confined it to the note before the copy reads it.
+ * so the shell's caret guard has always confined it to the note before the copy reads it. The
+ * event is one Lexical's default copy handler fills in (`native`), so a view with no copy plugin
+ * of its own still yields the bytes it copies rather than an `execCommand` fallback.
  */
 async function copiedBytes(mounted: MountedInView, view: string): Promise<string> {
   await act(async () => {
@@ -413,7 +415,7 @@ async function copiedBytes(mounted: MountedInView, view: string): Promise<string
     });
     await drainNativeSelectionChange();
   });
-  const { event, getData } = copyEvent();
+  const { event, getData } = copyEvent({ native: true });
   await act(async () => {
     mounted.lexical.dispatchCommand(COPY_COMMAND, event);
     await drainNativeSelectionChange();
