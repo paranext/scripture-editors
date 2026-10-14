@@ -40,6 +40,7 @@ import {
   $logicalText,
   $ownerOfRunPiece,
   $pieces,
+  $setLogicalText,
   $wrapSelectionInTypedMarkNode,
   COMMENT_MARK_TYPE,
   NBSP,
@@ -546,12 +547,12 @@ describe("typing inside an annotated alternate number", () => {
     for (const mounted of [plain, annotated])
       await act(async () => {
         mounted.lexical.update(() => {
+          // The annotated value is cut into pieces at the hold: edited as one carrier.
           const value = $getRoot()
             .getAllTextNodes()
-            .find((node) => node.getTextContent() === `${NBSP}3`);
+            .find((node) => $logicalText(node) === `${NBSP}3`);
           if (!value) throw new Error("no \\va value");
-          value.setTextContent(`${NBSP}34`);
-          value.select(3, 3);
+          $setLogicalText(value, `${NBSP}34`).select(3, 3);
         });
         await Promise.resolve();
       });

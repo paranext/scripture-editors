@@ -3772,8 +3772,9 @@ describe("marker apply at a glyph's caret positions", () => {
 
 describe("$applyMarkerMenuSelection — a paragraph glyph an annotation cuts into pieces", () => {
   // A retag that respells the glyph joins its pieces first, so the prefix is one node again
-  // when the caret is placed.
-  it.each(["q2"])(
+  // when the caret is placed; a retag to the same marker keeps the pieces and places the caret
+  // past all of them.
+  it.each(["q2", "q1"])(
     "retags to %s with the caret at the content start, as it does an uncut glyph",
     (marker) => {
       let para!: ParaNode;

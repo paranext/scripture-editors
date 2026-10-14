@@ -19,11 +19,13 @@ import { typeOver } from "../positions/positions.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $dfs } from "@lexical/utils";
-import { $addUpdateTag, REDO_COMMAND, UNDO_COMMAND } from "lexical";
+import { $addUpdateTag, $getRoot, REDO_COMMAND, UNDO_COMMAND } from "lexical";
 import { vi } from "vitest";
 import {
   $decoratorRenderedText,
   $displayAnnotationsOf,
+  $logicalText,
+  $setLogicalText,
   DELTA_CHANGE_TAG,
   NBSP,
   TypedMarkOnRemove,
@@ -213,7 +215,18 @@ describe("annotation painting in Standard view", () => {
       "one",
     );
     expect(paintedText(mounted, "one")).toBe("1");
-    await typeOver(mounted.lexical, "12", `\\v${NBSP}13 `);
+    // The hold cuts the verse glyph into pieces: it is retyped as one carrier.
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const verse = $getRoot()
+          .getAllTextNodes()
+          .find((node) => $logicalText(node).includes("12"));
+        if (!verse) throw new Error("no verse glyph");
+        $setLogicalText(verse, `\\v${NBSP}13 `).select(0, 0);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(paintedText(mounted, "one")).toBe("1");
 
     await act(async () => mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined));

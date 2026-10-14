@@ -52,6 +52,7 @@ import {
   $logicalText,
   $pieces,
   $setLogicalText,
+  $lastPiece,
 } from "shared";
 import { showParaMarkerPrefix } from "shared-react";
 
@@ -83,7 +84,9 @@ export function $createMarkerPrefix(marker: string) {
  * boundary by scanning when the shape is not known.
  */
 export function $selectParaContentStart(para: ParaNode): void {
-  $placeCaretAtBoundary(para, 2);
+  // Past the whole prefix glyph, however an annotation has cut it, and its separator.
+  const glyph = para.getFirstChild();
+  $placeCaretAtBoundary(para, glyph ? $lastPiece(glyph).getIndexWithinParent() + 2 : 2);
 }
 
 /**
