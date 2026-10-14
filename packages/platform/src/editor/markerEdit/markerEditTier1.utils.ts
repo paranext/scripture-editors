@@ -95,6 +95,7 @@ import {
   $logicalPointOffset,
   $logicalPreviousSibling,
   $logicalText,
+  $logicalTextBeforeUpdate,
   $mergePieces,
   $nextSiblingThroughMarks,
   $pieceAtLogicalOffset,
@@ -1197,6 +1198,11 @@ export function $noteCallerTextTransform(node: TextNode, context: MarkerEditCont
     return true;
   }
   if (!node.isUnmergeable()) return false;
+  // A caller waiting as typed keeps waiting until its own bytes change or the caret departs: an
+  // update can dirty it without touching them (cutting or joining the pieces of the opener beside
+  // it, as a name typed onto the opener does, rewrites its sibling links).
+  if (context.pendingKeys.has(node.getKey()) && $logicalTextBeforeUpdate(node) === text)
+    return true;
   context.pendingKeys.delete(node.getKey());
   const retagged = NOTE_CALLER_TEXT_REGEX.exec(text);
   if (retagged) {
