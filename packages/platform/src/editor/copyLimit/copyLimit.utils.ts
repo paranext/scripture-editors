@@ -16,7 +16,15 @@ import {
 } from "lexical";
 import { $dfs, $findMatchingParent } from "@lexical/utils";
 import { graphemeSegments } from "unicode-segmenter/grapheme";
-import { $isChapterNode, $isGlyphTextNode, $isNoteNode, $isSomeChapterNode } from "shared";
+import {
+  $isChapterNode,
+  $isGlyphTextNode,
+  $isNoteNode,
+  $isPieceContinuation,
+  $isSomeChapterNode,
+  $pieceHead,
+  $pieces,
+} from "shared";
 import { $isImmutableNoteCallerNode, $isOpaqueBlockNode, $isSomeVerseNode } from "shared-react";
 
 /**
@@ -187,10 +195,26 @@ export function $limitSelectionLength(
  * Whether `node` is text that a limited copy or cut takes whole or not at all: a token-mode node,
  * which Lexical selects and deletes whole; glyph text (`$isGlyphTextNode`), which pictures a node's
  * own state; or a chapter line's `\c` text, whose partial removal would break the chapter it
- * spells.
+ * spells. Such text an annotation cuts into pieces is one atom: every piece of it
+ * (`$pieces`) is kept or left out together.
  */
 function $isAtomicText(node: TextNode): boolean {
   return node.isToken() || $isGlyphTextNode(node) || $isChapterNode(node.getParent());
+}
+
+/**
+ * The end in front of atomic text `node`, all of its pieces included: the start of its first piece,
+ * or the selection's start when the selection starts inside it (`startOffset` into `nodes[0]`).
+ */
+function $endInFrontOfAtom(
+  node: TextNode,
+  nodes: LexicalNode[],
+  startOffset: number,
+): { node: TextNode; offset: number } {
+  const first = nodes[0];
+  if ($isTextNode(first) && $pieces(node).some((piece) => piece.is(first)))
+    return { node: first, offset: startOffset };
+  return { node: $pieceHead(node), offset: 0 };
 }
 
 /**
@@ -234,6 +258,8 @@ function $findEnd(
   let count = 0;
   let prevWasElement = true;
   let lastTextEnd: { node: TextNode; offset: number } | undefined;
+  // The end in front of the atomic text the walk is in, kept for its later pieces.
+  let endBeforeAtom: typeof lastTextEnd;
   // The outermost note or opaque construct the walk is inside, and the end to fall back to if the
   // limit runs out in it.
   let openGroup: { node: LexicalNode; endBefore: typeof lastTextEnd } | undefined;
@@ -285,7 +311,9 @@ function $findEnd(
       const to = i === lastIndex ? endOffset : node.getTextContentSize();
       const available = to - from;
       const isAtomic = $isAtomicText(node);
-      if (isAtomic && count + available > limit) return end(lastTextEnd);
+      if (isAtomic && !$isPieceContinuation(node)) endBeforeAtom = lastTextEnd;
+      if (isAtomic && count + available > limit)
+        return end($isPieceContinuation(node) ? endBeforeAtom : lastTextEnd);
       if (!isAtomic && count + available >= limit) {
         const boundary = graphemeBoundaryAtOrBefore(node.getTextContent(), from + (limit - count));
         return end({ node, offset: Math.max(from, boundary) });
@@ -344,15 +372,14 @@ function $endOnClusterBoundary(
 
   const isStart = (node: TextNode) => nodes[0]?.is(node) ?? false;
   // An atomic node is kept whole, so the end moves to before all of it.
-  if ($isAtomicText(point.node)) return { ...point, offset: isStart(point.node) ? startOffset : 0 };
+  if ($isAtomicText(point.node)) return $endInFrontOfAtom(point.node, nodes, startOffset);
   if (boundary >= ownStart) {
     const offset = boundary - ownStart;
     return offset >= (isStart(point.node) ? startOffset : 0) ? { ...point, offset } : undefined;
   }
   const previous = index > first ? texts[index - 1] : undefined;
   if (!previous || !nodes.some((node) => node.is(previous))) return undefined;
-  if ($isAtomicText(previous))
-    return { node: previous, offset: isStart(previous) ? startOffset : 0 };
+  if ($isAtomicText(previous)) return $endInFrontOfAtom(previous, nodes, startOffset);
   const offset = boundary - starts[0];
   return offset >= (isStart(previous) ? startOffset : 0) ? { node: previous, offset } : undefined;
 }

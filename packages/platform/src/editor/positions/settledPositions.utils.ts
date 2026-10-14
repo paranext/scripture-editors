@@ -84,7 +84,10 @@ import {
   $isImpliedParaNode,
   $isMarkerNode,
   $isNoteNode,
+  $isPieceContinuation,
+  $lastPiece,
   $noteEditableCallerNode,
+  $pieceHead,
 } from "shared";
 import {
   $getJsonPathIndexes,
@@ -177,7 +180,11 @@ function $closingGlyphByte(
 ): FragmentPoint | undefined {
   const byte = $resolveFragmentByteAnchor(fragment, anchor, { addressDisplayBytes: true });
   const glyph = byte && $getNodeByKey(byte.key);
-  return byte && byte.offset > 0 && $isMarkerNode(glyph) && glyph.getMarkerSyntax() !== "opening"
+  // The front of a closer's later piece is inside the closer: an annotation cut it there.
+  return byte &&
+    (byte.offset > 0 || $isPieceContinuation(glyph)) &&
+    $isMarkerNode(glyph) &&
+    glyph.getMarkerSyntax() !== "opening"
     ? byte
     : undefined;
 }
@@ -1717,10 +1724,12 @@ function $exactSettledLocationInScope(
     // content settle hands them through unchanged: the same location, at the note's settled path.
     const note = plan.liveNodes[0];
     // The end of the caller text is also the front of the content: the settled note spells it from
-    // the content, so it crosses as the content's first position does.
+    // the content, so it crosses as the content's first position does. The end of a caller an
+    // annotation cuts into pieces is the end of its last piece.
     const twin =
       $isNoteNode(note) &&
-      $noteEditableCallerNode(note)?.is(node) &&
+      $noteEditableCallerNode(note)?.is($pieceHead(node)) &&
+      node.is($lastPiece(node)) &&
       offset === node.getTextContentSize()
         ? $twinCaret(node, offset)
         : undefined;
@@ -1868,7 +1877,7 @@ export function $settledLocationFromLivePoint(
 ): UsjDocumentLocation | undefined {
   const plan = prepared.planContaining(node);
   if (plan) return $settledLocationInScope(prepared, plan, node, offset);
-  const renamed = prepared.renamedClosers.get(node.getKey());
+  const renamed = prepared.renamedClosers.get($pieceHead(node).getKey());
   if (renamed) {
     // Restated after the live closer's own location is taken: the settled offset can run past the
     // live closer's end (`\w*` renamed `\wx*`), and the live node would clamp it.

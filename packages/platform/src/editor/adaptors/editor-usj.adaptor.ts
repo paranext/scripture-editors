@@ -73,6 +73,7 @@ import {
   UNMATCHED_TAG_NAME,
   UNMERGEABLE_TEXT_DETAIL,
   isSerializedVerseBlockNode,
+  joinSerializedPieces,
   VerseBlockNode,
   VerseNode,
 } from "shared";
@@ -145,7 +146,9 @@ export function deserializeSerializedEditorState(
 ): Usj | undefined {
   if (!serializedEditorState.root || !serializedEditorState.root.children) return;
 
-  const rootChildren = serializedEditorState.root.children;
+  // A display-byte carrier an annotation holds in part is several sibling nodes (its pieces); the
+  // document has it once, so every reader below sees each carrier as the one node it is.
+  const rootChildren = [...joinSerializedPieces(serializedEditorState.root.children)];
   // check for default empty implied-para node
   if (
     rootChildren.length === 1 &&

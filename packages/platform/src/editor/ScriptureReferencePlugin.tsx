@@ -96,6 +96,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { mergeRegister } from "@lexical/utils";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import {
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $isElementNode,
@@ -104,6 +105,9 @@ import {
   EditorState,
   ElementNode,
   LexicalEditor,
+  MutationListener,
+  NodeKey,
+  NodeMutation,
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
@@ -116,7 +120,9 @@ import {
   $isBookNode,
   $isNoteNode,
   $isParaNode,
+  $isPieceContinuation,
   $isSomeChapterNode,
+  $lastPiece,
   $placeCaretAtBoundary,
   BookNode,
   APP_PLACED_CARET_COMMAND,
@@ -320,9 +326,15 @@ export function ScriptureReferencePlugin({
   // BookNode listener above is not load-bearing now that this dispatch is deferred - see the note
   // there.
   useEffect(() => {
-    const onVerseDestroyed = (nodeMutations: Map<string, "created" | "updated" | "destroyed">) => {
-      const hasCreatedOrDestroyedVerse = [...nodeMutations.values()].some(
-        (m) => m === "created" || m === "destroyed",
+    const onVerseDestroyed: MutationListener = (nodeMutations, { prevEditorState }) => {
+      // A piece an annotation cuts off a verse marker, or joins back to it, is not a verse: the
+      // verse is still there, whole.
+      const isPiece = (key: NodeKey, mutation: NodeMutation) =>
+        (mutation === "destroyed" ? prevEditorState : editor.getEditorState()).read(() =>
+          $isPieceContinuation($getNodeByKey(key)),
+        );
+      const hasCreatedOrDestroyedVerse = [...nodeMutations].some(
+        ([key, m]) => (m === "created" || m === "destroyed") && !isPiece(key, m),
       );
       // Defer one microtask: dispatching synchronously inside a mutation listener runs a reentrant
       // update while the triggering edit's history entry is still being recorded, corrupting the
@@ -599,14 +611,16 @@ function $moveCaretToVerseStart(chapterNum: number, verseNum: number) {
 function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   const para = verse.getParent();
   if (!para) return;
-  const contentStart = verse.getIndexWithinParent() + 1;
+  // An editable marker an annotation cuts into pieces ends with its last piece.
+  const marker = $lastPiece(verse);
+  const contentStart = marker.getIndexWithinParent() + 1;
 
   // The verse has no content of its own when nothing follows the marker or the next verse marker
   // does — and an editable verse marker is itself a TextNode, so this has to be asked before the
   // caret-host question, which would otherwise answer with the NEXT verse's marker.
   const opening = para.getChildAtIndex(contentStart);
   if (!opening || $isSomeVerseNode(opening)) {
-    if ($isTextNode(verse)) verse.selectEnd();
+    if ($isTextNode(marker)) marker.selectEnd();
     else $placeCaretAtBoundary(para, contentStart);
     return;
   }
@@ -618,8 +632,8 @@ function $placeCaretAtVerseContentStart(verse: SomeVerseNode) {
   }
 
   // Content the caret must stay in front of, with nothing at the boundary able to carry a point.
-  if ($isTextNode(verse)) {
-    verse.selectEnd();
+  if ($isTextNode(marker)) {
+    marker.selectEnd();
     return;
   }
 

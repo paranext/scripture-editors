@@ -28,7 +28,9 @@ import {
   createState,
   ElementNode,
   LexicalNode,
+  NODE_STATE_KEY,
   NodeKey,
+  SerializedLexicalNode,
 } from "lexical";
 
 /** `true` on every piece of a carrier but its first. */
@@ -281,4 +283,92 @@ export function $setLogicalText<T extends LexicalNode>(node: T, text: string): T
   const head = $mergePieces(node);
   if ($isTextNode(head) && head.getTextContent() !== text) return head.setTextContent(text);
   return head;
+}
+
+/** A serialized node's text, when it is a serialized text node. */
+function serializedText(node: SerializedLexicalNode): string | undefined {
+  return "text" in node && typeof node.text === "string" ? node.text : undefined;
+}
+
+/** Whether serialized `node` is a continuation piece ({@link displayPieceContinuationState}). */
+export function isSerializedPieceContinuation(node: SerializedLexicalNode): boolean {
+  return (
+    serializedText(node) !== undefined &&
+    node[NODE_STATE_KEY]?.[displayPieceContinuationState.key] === true
+  );
+}
+
+/** The holds a serialized text piece stores, measured against its own text. */
+function serializedPieceHolds(node: SerializedLexicalNode): DisplayAnnotation[] {
+  const held = displayAnnotationsState.parse(node[NODE_STATE_KEY]?.[displayAnnotationsState.key]);
+  const text = serializedText(node);
+  return held && text !== undefined ? remapAnnotations(held, text) : [];
+}
+
+/** Serialized `pieces` (a head, then its continuations) as the one node {@link $joinPieces} makes
+ * of them: the head with the chain's text and every piece's holds restated in it. */
+function joinSerializedChain(pieces: readonly SerializedLexicalNode[]): SerializedLexicalNode {
+  const [head] = pieces;
+  const annotations: DisplayAnnotation[] = [];
+  let text = "";
+  for (const piece of pieces) {
+    const offset = text.length;
+    for (const held of serializedPieceHolds(piece))
+      annotations.push({ ...held, start: held.start + offset, end: held.end + offset });
+    text += serializedText(piece) ?? "";
+  }
+  const state: { [key: string]: unknown } = Object.fromEntries(
+    Object.entries(head[NODE_STATE_KEY] ?? {}).filter(
+      ([key]) => key !== displayPieceContinuationState.key && key !== displayAnnotationsState.key,
+    ),
+  );
+  const joined = coalesceAnnotations(annotations);
+  if (joined.length > 0) state[displayAnnotationsState.key] = { basis: text, annotations: joined };
+  const node: SerializedLexicalNode & { text: string } = {
+    ...head,
+    text,
+    [NODE_STATE_KEY]: Object.keys(state).length > 0 ? state : undefined,
+  };
+  return node;
+}
+
+/**
+ * The serialized twin of {@link $logicalChildren} and {@link $logicalText}, at every depth:
+ * `nodes` (as `exportJSON`/`EditorState.toJSON()` write them) with each carrier's chain — a node
+ * followed by its continuation pieces of the same `type` — written as ONE node, the one
+ * {@link $mergePieces} would leave: the head, carrying the chain's whole text and every hold
+ * restated in it. A reader of a serialized tree that must see one node per carrier (an exporter, a
+ * comparison against a fresh, never-split build) reads it through this. Nodes that are not part of
+ * a chain, and subtrees with no chain in them, are returned as the same objects (and `nodes`
+ * itself when nothing in it is a chain); nothing passed in is modified.
+ */
+export function joinSerializedPieces(
+  nodes: readonly SerializedLexicalNode[],
+): readonly SerializedLexicalNode[] {
+  const out: SerializedLexicalNode[] = [];
+  let changed = false;
+  for (let index = 0; index < nodes.length; index++) {
+    const node = nodes[index];
+    const chain = [node];
+    while (
+      index + 1 < nodes.length &&
+      nodes[index + 1].type === node.type &&
+      isSerializedPieceContinuation(nodes[index + 1])
+    )
+      chain.push(nodes[++index]);
+    let joined = chain.length > 1 ? joinSerializedChain(chain) : node;
+    if ("children" in joined && Array.isArray(joined.children)) {
+      const children: SerializedLexicalNode[] = joined.children;
+      const joinedChildren = joinSerializedPieces(children);
+      if (joinedChildren !== children) {
+        const withChildren: SerializedLexicalNode & {
+          children: readonly SerializedLexicalNode[];
+        } = { ...joined, children: joinedChildren };
+        joined = withChildren;
+      }
+    }
+    if (joined !== node) changed = true;
+    out.push(joined);
+  }
+  return changed ? out : nodes;
 }

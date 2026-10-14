@@ -18,6 +18,8 @@ import {
   $isPieceContinuation,
   $isPieceOf,
   $lastPiece,
+  isSerializedPieceContinuation,
+  joinSerializedPieces,
   $logicalChildren,
   $logicalNextSibling,
   $logicalOffset,
@@ -42,6 +44,8 @@ import {
   $setState,
   LexicalEditor,
   LexicalNode,
+  NODE_STATE_KEY,
+  SerializedLexicalNode,
   TextNode,
 } from "lexical";
 
@@ -337,6 +341,50 @@ describe("carrier pieces", () => {
     editor.read(() => {
       expect($pieces(run).map((piece) => piece.getKey())).toEqual(keys);
     });
+  });
+
+  it("writes each chain as one node of a serialized tree, holds restated in its whole text", () => {
+    const editor = mount();
+    editor.update(
+      () => {
+        const { run, closer } = $span();
+        $addDisplayAnnotation(run, "check", "a", 23, 28);
+        $addDisplayAnnotation(closer, "check", "b", 2, 3);
+        $getRoot().append($createParaNode().append($createTextNode("plain")));
+      },
+      { discrete: true },
+    );
+    const serialized = editor.getEditorState().toJSON();
+    const before = JSON.stringify(serialized);
+    const childrenOf = (
+      node: SerializedLexicalNode | undefined,
+    ): readonly SerializedLexicalNode[] =>
+      node && "children" in node && Array.isArray(node.children) ? node.children : [];
+    const textOf = (node: SerializedLexicalNode): string =>
+      "text" in node && typeof node.text === "string" ? node.text : "";
+
+    const joined = joinSerializedPieces(serialized.root.children);
+
+    const char = childrenOf(childrenOf(joined[0])[0]);
+    expect(char.map(textOf)).toEqual([
+      "\\w",
+      `${NBSP}grace`,
+      '|lemma="grace" strong="G5485"',
+      "\\w*",
+    ]);
+    expect(char.some(isSerializedPieceContinuation)).toBe(false);
+    expect(char[2][NODE_STATE_KEY]?.displayAnnotations).toEqual({
+      basis: '|lemma="grace" strong="G5485"',
+      annotations: [{ type: "check", id: "a", start: 23, end: 28 }],
+    });
+    expect(char[3][NODE_STATE_KEY]?.displayAnnotations).toEqual({
+      basis: "\\w*",
+      annotations: [{ type: "check", id: "b", start: 2, end: 3 }],
+    });
+    // A subtree with no chain in it is the same object; the input is left as it was.
+    expect(joined[1]).toBe(serialized.root.children[1]);
+    expect(JSON.stringify(serialized)).toBe(before);
+    expect(childrenOf(childrenOf(serialized.root.children[0])[0]).length).toBeGreaterThan(4);
   });
 });
 
