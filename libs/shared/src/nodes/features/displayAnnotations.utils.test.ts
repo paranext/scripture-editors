@@ -201,6 +201,21 @@ describe("remapAnnotations", () => {
       ],
       ["keeps the bytes a re-spelling shares", "\\v 12", [[3, 5]], "\\va 12", [[4, 6]]],
       ["a held range respelled entirely is dropped", "\\v 1", [[3, 4]], "\\v 2", []],
+      [
+        "a hold whose bytes are deleted is dropped, not moved onto identical bytes elsewhere",
+        "12 12a",
+        [[3, 6]],
+        "12",
+        [],
+      ],
+      [
+        "a deletion either of two identical runs could be takes the unheld one",
+        "ab-ab",
+        [[3, 5]],
+        "ab",
+        [[0, 2]],
+      ],
+      ["a replacement is matched by bytes alone, holds aside", "12a 12", [[0, 3]], "12b", [[0, 2]]],
       ["a tie no hold decides goes to the earliest match", "a", [[0, 1]], "aa", [[0, 1]]],
     ])("%s", (_, before, holds, after, expected) => {
       expect(remap(before, holds, after)).toEqual(expected);
