@@ -19,9 +19,15 @@ import { $paintIntervalsOf, $paintText, leafPaint, PaintIntervals } from "./anno
 import { addClassNamesToElement, mergeRegister, removeClassNamesFromElement } from "@lexical/utils";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import {
+  BaseSelection,
+  $findMatchingParent,
+  INTERNAL_$isBlock,
   $getNearestNodeFromDOMNode,
   $getNodeByKey,
+  $getSelection,
   $isDecoratorNode,
+  $isRangeSelection,
+  $isTextNode,
   COMMAND_PRIORITY_CRITICAL,
   EditorState,
   HISTORIC_TAG,
@@ -58,6 +64,9 @@ import {
   MarkerNode,
   registerDisplayAnnotationBasis,
   $restatePastedPieces,
+  $isSplitCarrier,
+  $logicalOffset,
+  $splitCarrierAt,
   setDecoratorBytesReader,
   clearTypedMarkRemovalSilences,
   forgetTypedMarkCallbacks,
@@ -139,6 +148,40 @@ function $stripDisplayAnnotations(nodes: readonly LexicalNode[]): void {
     $setState(node, displayAnnotationsState, undefined);
     if ($isElementNode(node)) $stripDisplayAnnotations(node.getChildren());
   }
+}
+
+/**
+ * Before pasted nodes go in at the caret, split the carrier the caret is inside where the insertion
+ * splits a text (`$splitCarrierAt`): `RangeSelection.insertNodes` splits the text node at the
+ * caret, but in a carrier cut into pieces the caret may sit between two of them, where no text is
+ * left to split, and in one holding an annotation each part would re-measure the holds it copied
+ * rather than keep its own. A range is removed first, as the insertion removes it. Mutating. */
+function $splitCarrierAtInsertion(
+  nodes: readonly LexicalNode[],
+  insertion: BaseSelection | null,
+): void {
+  if (!$isRangeSelection(insertion)) return;
+  if (!insertion.isCollapsed()) insertion.removeText();
+  // The removal may have set a selection of its own, which the insertion then reads.
+  const current = $getSelection();
+  const { anchor } = $isRangeSelection(current) ? current : insertion;
+  // A caret on the parent between two pieces is the end of the piece before it.
+  const node =
+    anchor.type === "text"
+      ? anchor.getNode()
+      : $isElementNode(anchor.getNode())
+        ? anchor.getNode().getChildAtIndex(anchor.offset - 1)
+        : null;
+  if (!$isTextNode(node)) return;
+  if (!$isSplitCarrier(node) && $displayAnnotationsOf(node).length === 0) return;
+  // Inline nodes go into the block the caret is in; with no block there the insertion refuses,
+  // splitting nothing.
+  const isInline = (pasted: LexicalNode) =>
+    !($isElementNode(pasted) || $isDecoratorNode(pasted)) || pasted.isInline();
+  if (nodes.every(isInline) && !$isElementNode($findMatchingParent(node, INTERNAL_$isBlock)))
+    return;
+  const offset = anchor.type === "text" ? anchor.offset : node.getTextContentSize();
+  $splitCarrierAt(node, $logicalOffset(node, offset));
 }
 
 interface Entry {
@@ -728,9 +771,10 @@ function createIndex(editor: LexicalEditor): Entry {
     },
     editor.registerCommand(
       SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
-      ({ nodes }) => {
+      ({ nodes, selection }) => {
         // A check result or a comment names one place; a pasted copy of its bytes is not it.
         $stripDisplayAnnotations(nodes);
+        $splitCarrierAtInsertion(nodes, selection);
         return false;
       },
       // Critical, and never handling the command, so a handler that does handle it cannot skip the

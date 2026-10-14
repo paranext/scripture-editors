@@ -868,7 +868,9 @@ describe("displayRunRegistry reads a carrier an annotation cut into pieces as on
     editor.update(
       () => {
         note = $createNoteNode("f", "+", false, "People");
-        caller = $createTextNode(getEditableCallerText("+"));
+        // Unmergeable, as the note builders make a caller, so it stays apart from the content
+        // after it.
+        caller = $createTextNode(getEditableCallerText("+")).toggleUnmergeable();
         note.append($createMarkerNode("f"), caller, $createTextNode("note body"));
         $getRoot().append($createParaNode("p").append(note));
         $addDisplayAnnotation(caller, "check", "a", 1, 2);

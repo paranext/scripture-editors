@@ -16,6 +16,9 @@ import {
   $getRoot,
   $getSelection,
   $getState,
+  $isElementNode,
+  $isRangeSelection,
+  $isTextNode,
   $setState,
   COMMAND_PRIORITY_HIGH,
   createEditor,
@@ -29,7 +32,7 @@ import {
   $addDisplayAnnotation,
   $createCharNode,
   $isPieceContinuation,
-  $lastPiece,
+  $logicalChildren,
   $logicalText,
   $pieceHead,
   $pieces,
@@ -1050,17 +1053,20 @@ describe("the display-annotation index", () => {
   });
 
   describe("a pasted copy of a carrier's pieces", () => {
-    /** Paste `nodes` through the command, then put them after the run's last piece, as the
-     * default handler inserts a paste at a caret there. */
+    /** Paste `nodes` through the command, then put them at the start of the run's paragraph, as
+     * the default handler inserts a paste at a caret there: before its content text, which no
+     * attribute text merges with, so the pasted carrier stands apart from the run it was copied
+     * from. */
     function $paste(editor: LexicalEditor, run: TextNode, nodes: LexicalNode[]): void {
       editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
         nodes,
         selection: $getSelection() ?? $createRangeSelection(),
       });
-      let after: LexicalNode = $lastPiece(run.getLatest());
-      for (const node of nodes) {
-        after.insertAfter(node);
-        after = node;
+      let before = run.getLatest().getParent()?.getFirstChild();
+      if (!before) throw new Error("the run has no paragraph");
+      for (const node of [...nodes].reverse()) {
+        before.insertBefore(node);
+        before = node;
       }
     }
 
@@ -1134,11 +1140,158 @@ describe("the display-annotation index", () => {
       );
       editor.read(() => {
         expect($getRoot().getTextContent()).toBe("In the ||grace");
-        // The copy carried the source's chain id until the paste restated it; the piece after it
-        // is still the source's, never a piece of the copy.
-        expect($pieceHead(grace.getLatest()).getKey()).not.toBe(pasted.getKey());
+        // The copy carried the source's chain id until the paste restated it, so the piece after
+        // it is never the copy's: the copy, held by nothing, joins the run as a paste into the run
+        // not cut joins it, under the source's own head, and each hold stays on its own bytes.
+        const head = $pieceHead(grace.getLatest());
+        expect(head.getKey()).not.toBe(pasted.getKey());
+        expect($logicalText(head)).toBe("||grace");
+        expect(
+          $pieces(head).map((piece) => [
+            piece.getTextContent(),
+            $displayAnnotationsOf(piece).map(({ id }) => id),
+          ]),
+        ).toEqual([
+          ["|", ["a"]],
+          ["|", []],
+          ["grace", ["b"]],
+        ]);
       });
       release();
+    });
+
+    /** Insert `nodes` at the caret the way a paste does (`@lexical/clipboard`'s
+     * `$insertGeneratedNodes`): the command, then, unless a handler took it, the selection's own
+     * insertion. */
+    function $insertPasted(editor: LexicalEditor, nodes: LexicalNode[]): void {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no caret to paste at");
+      if (!editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, { nodes, selection }))
+        selection.insertNodes(nodes);
+    }
+
+    /** The paragraph's children as a reader sees them: one per carrier, its class and its whole
+     * text. */
+    function $carriers(): string[] {
+      const para = $getRoot().getFirstChild();
+      if (!$isElementNode(para)) throw new Error("no paragraph");
+      return $logicalChildren(para).map(
+        (node) => `${node.getType()} ${JSON.stringify($logicalText(node))}`,
+      );
+    }
+
+    /** The pieces of the carrier `node` is a piece of: each one's text and the ids holding it. */
+    function $holdsByPiece(node: LexicalNode): [string, string[]][] {
+      return $pieces(node.getLatest()).map((piece) => [
+        piece.getTextContent(),
+        $displayAnnotationsOf(piece).map(({ id }) => id),
+      ]);
+    }
+
+    /** What pasting `$copy()` at byte `at` of the carrier `$carrier()` reads, with the carrier cut
+     * by the holds `holds` (none: unsplit) and the caret at its `spelling`-th spelling there. */
+    function pasteInto(
+      $carrier: (run: TextNode) => TextNode,
+      holds: [from: number, to: number, id: string][],
+      $copy: (carrier: TextNode) => LexicalNode,
+      at: number,
+      spelling: 0 | 1,
+    ): { carriers: string[]; holds: [string, string[]][] } {
+      const { editor, run, release } = setup();
+      let carrier!: TextNode;
+      editor.update(() => (carrier = $carrier(run)), { discrete: true });
+      for (const [from, to, id] of holds) wrap(editor, carrier, from, to, "external-spelling", id);
+      editor.update(
+        () => {
+          const pasted = $copy(carrier.getLatest());
+          // A caret at a cut is the end of the piece before it, or the start of the piece after.
+          const [key, offset] = $pointInCarrier(carrier, at);
+          const piece = $pieces(carrier.getLatest()).find((each) => each.getKey() === key);
+          if (!piece) throw new Error("no piece at the caret");
+          const next = piece.getNextSibling();
+          if (spelling === 1 && offset === piece.getTextContentSize() && $isTextNode(next))
+            next.select(0, 0);
+          else piece.select(offset, offset);
+          $insertPasted(editor, [pasted]);
+        },
+        { discrete: true },
+      );
+      const read = editor.read(() => ({
+        carriers: $carriers(),
+        holds: $holdsByPiece($pieceHead(carrier.getLatest())),
+      }));
+      release();
+      return read;
+    }
+
+    describe("joins the copy into the carrier where a paste into the unsplit carrier joins it", () => {
+      const $attributeRun = (run: TextNode) => run;
+      const $closer = (run: TextNode) => run.replace($createMarkerNode("w", "closing"));
+      it.each([0, 1] as const)(
+        "a copy of an attribute run's byte, pasted at a cut between its pieces (spelling %i)",
+        (spelling) => {
+          const $copyOfBar = () => $setState($createTextNode("|"), textTypeState, "attribute");
+          const plain = pasteInto($attributeRun, [], $copyOfBar, 1, spelling);
+          expect(plain.carriers).toEqual(['text "In the "', 'text "||grace"']);
+          // One hold: the bar is not held, its copy is the same bytes.
+          const oneHold = pasteInto(
+            $attributeRun,
+            [[1, 6, "b"]],
+            (carrier) => $copyNode($pieces(carrier)[0]),
+            1,
+            spelling,
+          );
+          expect(oneHold.carriers).toEqual(plain.carriers);
+          expect(oneHold.holds).toEqual([
+            ["||", []],
+            ["grace", ["b"]],
+          ]);
+          // Two holds: each stays on its own bytes; the copy, pasted between them, holds nothing.
+          const twoHolds = pasteInto(
+            $attributeRun,
+            [
+              [0, 1, "a"],
+              [1, 6, "b"],
+            ],
+            (carrier) => $copyNode($pieces(carrier)[0]),
+            1,
+            spelling,
+          );
+          expect(twoHolds.carriers).toEqual(plain.carriers);
+          expect(twoHolds.holds).toEqual([
+            ["|", ["a"]],
+            ["|", []],
+            ["grace", ["b"]],
+          ]);
+        },
+      );
+
+      it.each([0, 1] as const)(
+        "a copy of a glyph's byte, pasted at a cut between its pieces (spelling %i)",
+        (spelling) => {
+          const $copyOfBackslash = (carrier: TextNode) =>
+            $copyNode($pieceHead(carrier)).setTextContent("\\");
+          const plain = pasteInto($closer, [], $copyOfBackslash, 1, spelling);
+          // The insertion splits the glyph: the bytes after the caret are a text of their own.
+          expect(plain.carriers).toEqual([
+            'text "In the "',
+            'marker "\\\\"',
+            'marker "\\\\"',
+            'text "w*"',
+          ]);
+          const annotated = pasteInto(
+            $closer,
+            [
+              [0, 1, "a"],
+              [1, 2, "b"],
+            ],
+            (carrier) => $copyNode($pieces(carrier)[0]),
+            1,
+            spelling,
+          );
+          expect(annotated.carriers).toEqual(plain.carriers);
+        },
+      );
     });
 
     it("keeps no token record of the chain it was copied from", () => {
