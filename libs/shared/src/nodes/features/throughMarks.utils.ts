@@ -13,7 +13,15 @@
 
 import { $lastPiece, $pieceHead } from "./displayPieces.state.js";
 import { $isTypedMarkNode } from "./TypedMarkNode.js";
-import { $isTextNode, ElementNode, LexicalNode, TextNode } from "lexical";
+import {
+  $isElementNode,
+  $isTextNode,
+  ElementNode,
+  LexicalNode,
+  PointType,
+  RangeSelection,
+  TextNode,
+} from "lexical";
 
 /**
  * The first node at or after the child boundary `index` of `parent` that is not an annotation
@@ -117,4 +125,43 @@ export function $textRunThroughMarks(
  * verse), the kind of node a mark cuts content text into. */
 export function $isPlainTextNode(node: LexicalNode | null | undefined): node is TextNode {
   return $isTextNode(node) && node.getType() === TextNode.getType();
+}
+
+/** The nearest ancestor of `node` that is not an annotation mark. */
+function $parentOutsideMarks(node: LexicalNode): ElementNode | null {
+  let parent = node.getParent();
+  while ($isTypedMarkNode(parent)) parent = parent.getParent();
+  return parent;
+}
+
+/** The element a selection point's node sits in: the node itself for an element point. */
+function $pointParent(point: PointType): ElementNode | null {
+  const node = point.getNode();
+  return point.type === "element" && $isElementNode(node) ? node : node.getParent();
+}
+
+/**
+ * Whether `selection`'s two ends sit in different parents only because an annotation mark holds
+ * one or both of them: the parents differ, but their nearest non-mark ancestors are one element.
+ *
+ * The unmarked document has both ends in that one element. Lexical's `insertText` over a range
+ * whose ends sit in different INLINE parents treats it as reaching across elements: it climbs to
+ * the enclosing block and moves the block's content after the range's end into the start's
+ * parent, so a range inside a char span, cut by a mark at either end, pulls the paragraph's text
+ * after the span into the span. Removing such a range first (`RangeSelection.removeText`, which
+ * walks the range node by node) leaves a caret the insertion then types at, as in the unmarked
+ * document.
+ */
+export function $isRangeSplitByMarks(selection: RangeSelection): boolean {
+  const anchorParent = $pointParent(selection.anchor);
+  const focusParent = $pointParent(selection.focus);
+  if (!anchorParent || !focusParent || anchorParent.is(focusParent)) return false;
+  if (!$isTypedMarkNode(anchorParent) && !$isTypedMarkNode(focusParent)) return false;
+  const anchorOutside = $isTypedMarkNode(anchorParent)
+    ? $parentOutsideMarks(anchorParent)
+    : anchorParent;
+  const focusOutside = $isTypedMarkNode(focusParent)
+    ? $parentOutsideMarks(focusParent)
+    : focusParent;
+  return !!anchorOutside && !!focusOutside && anchorOutside.is(focusOutside);
 }

@@ -6,6 +6,7 @@ import { $createVerseNode } from "../usj/VerseNode.js";
 import { $createMarkerNode } from "./MarkerNode.js";
 import {
   $isPlainTextNode,
+  $isRangeSplitByMarks,
   $nextSiblingThroughMarks,
   $nodeAfterBoundaryThroughMarks,
   $nodeBeforeBoundaryThroughMarks,
@@ -14,7 +15,16 @@ import {
 } from "./throughMarks.utils.js";
 import { $createTypedMarkNode, TypedMarkNode } from "./TypedMarkNode.js";
 import { displayPieceContinuationState } from "./displayPieces.state.js";
-import { $createTextNode, $getRoot, $setState, ElementNode, LexicalNode, TextNode } from "lexical";
+import {
+  $createRangeSelection,
+  $createTextNode,
+  $getRoot,
+  $setState,
+  ElementNode,
+  LexicalNode,
+  TextNode,
+} from "lexical";
+import { $createCharNode } from "../usj/CharNode.js";
 
 const nodes = [TypedMarkNode, ...usjBaseNodes];
 
@@ -143,6 +153,42 @@ describe("reading through annotation marks", () => {
         " o",
         "f God",
       ]);
+    });
+  });
+
+  it("tells a range a mark splits from one that reaches across elements", () => {
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      $getRoot().append(
+        $createParaNode().append(
+          $createTextNode("before"),
+          $createCharNode("w").append(
+            $createMarkerNode("w"),
+            $createTextNode("a"),
+            $createTypedMarkNode({ t: ["1"] }).append($createTextNode("marked")),
+            $createTextNode("b"),
+          ),
+        ),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      const text = (content: string) => {
+        const found = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === content);
+        if (!found) throw new Error(content);
+        return found;
+      };
+      const range = (from: TextNode, to: TextNode) => {
+        const selection = $createRangeSelection();
+        selection.anchor.set(from.getKey(), 0, "text");
+        selection.focus.set(to.getKey(), to.getTextContentSize(), "text");
+        return selection;
+      };
+      expect($isRangeSplitByMarks(range(text("marked"), text("b")))).toBe(true);
+      expect($isRangeSplitByMarks(range(text("a"), text("marked")))).toBe(true);
+      expect($isRangeSplitByMarks(range(text("a"), text("b")))).toBe(false);
+      expect($isRangeSplitByMarks(range(text("before"), text("marked")))).toBe(false);
     });
   });
 });

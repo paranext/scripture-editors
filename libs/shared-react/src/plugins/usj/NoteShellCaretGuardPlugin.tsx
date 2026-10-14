@@ -11,6 +11,7 @@ import {
   COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_EDITOR,
   COMMAND_PRIORITY_HIGH,
+  COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   CUT_COMMAND,
   DELETE_CHARACTER_COMMAND,
@@ -33,6 +34,7 @@ import {
   $findFirstAncestorNoteNode,
   $isMarkerNode,
   $isNoteNode,
+  $isRangeSplitByMarks,
   $lastPiece,
   $logicalOffset,
   $nextSiblingThroughMarks,
@@ -551,6 +553,23 @@ export function NoteShellCaretGuardPlugin(): null {
       if (!$confineRangeToProtectedNote(selection)) return false;
       return isDeletion && selection.isCollapsed();
     };
+    // Lexical re-reads a range's ends into an annotation mark that starts or ends there, and its
+    // `insertText` over a range whose ends then sit in different inline parents moves the
+    // paragraph's text after the note into the note's content. So typing over such a range in a
+    // protected note removes it first and types at the caret, as with no mark there. LOW: after
+    // every refusal and every handler that prepares or claims the replacement, right before the
+    // default insertion.
+    const $removeMarkSplitRange = () => {
+      const selection = $getSelection();
+      if (
+        $isRangeSelection(selection) &&
+        !selection.isCollapsed() &&
+        $protectedNoteTouchedBy(selection) &&
+        $isRangeSplitByMarks(selection)
+      )
+        selection.removeText();
+      return false;
+    };
     const insertion = narrowBeforeEdit(false);
     const deletion = narrowBeforeEdit(true);
     const collapsedDeletion =
@@ -565,6 +584,11 @@ export function NoteShellCaretGuardPlugin(): null {
         CONTROLLED_TEXT_INSERTION_COMMAND,
         insertion,
         COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        $removeMarkSplitRange,
+        COMMAND_PRIORITY_LOW,
       ),
       editor.registerCommand(PASTE_COMMAND, insertion, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(INSERT_PARAGRAPH_COMMAND, insertion, COMMAND_PRIORITY_CRITICAL),
