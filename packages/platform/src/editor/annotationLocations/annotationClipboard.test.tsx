@@ -20,6 +20,7 @@ import {
   OracleKeystroke,
   oracleRows,
   pendingOracleView,
+  PLAIN_PASTE_KEYSTROKES,
   runKeystrokeCase,
   TRANSPARENCY_RANGE_KEYSTROKES,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
@@ -158,6 +159,33 @@ describe("a range with an end at a mark's edge beside a span", () => {
       const plain = await gestureCase(view, row, text, at, keystroke);
       expect(plain.applied, "the gesture applies in the document as loaded").not.toBe(false);
       expect(await gestureCase(view, row, text, at, keystroke, 0)).toEqual(plain);
+    },
+    120_000,
+  );
+});
+
+describe("a line break pasted between the pieces of a glyph", () => {
+  it.each([
+    // Enter in a glyph splits its text, as in any text: the bytes after the caret are content of
+    // the next paragraph, however an annotation cut the glyph.
+    ["standard", "closed char span", "\\w*", 2],
+    ["standard", "closed char span", "\\w*", 1],
+    ["standard", "closed char span", "\\w", 1],
+    ["standard", "closed char span", "\\p", 1],
+  ] as const)(
+    "%s view, %s: %j at %i",
+    async (view, row, text, at) => {
+      const keystroke = named(
+        PLAIN_PASTE_KEYSTROKES,
+        'paste "p", a line break and "q" as plain text',
+      );
+      const plain = await gestureCase(view, row, text, at, keystroke);
+      expect(plain.applied, "the gesture applies in the document as loaded").not.toBe(false);
+      for (const spelling of [0, 1])
+        expect(
+          await gestureCase(view, row, text, at, keystroke, spelling),
+          `spelling ${spelling}`,
+        ).toEqual(plain);
     },
     120_000,
   );

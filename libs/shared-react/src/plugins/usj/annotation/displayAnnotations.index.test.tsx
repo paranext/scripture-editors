@@ -26,6 +26,7 @@ import {
   COMMAND_PRIORITY_HIGH,
   createEditor,
   HISTORIC_TAG,
+  INSERT_PARAGRAPH_COMMAND,
   LexicalEditor,
   LexicalNode,
   NodeKey,
@@ -1056,6 +1057,37 @@ describe("the display-annotation index", () => {
     );
     unregister();
     release();
+  });
+
+  describe("a paragraph break inside a cut carrier", () => {
+    it("splits the carrier's text at the caret, as a break in the carrier no annotation cuts does", () => {
+      const { editor, run, release } = setup();
+      let closer!: TextNode;
+      editor.update(() => (closer = run.replace($createMarkerNode("w", "closing"))), {
+        discrete: true,
+      });
+      wrap(editor, closer, 0, 1, "external-spelling", "a");
+      editor.update(
+        () => {
+          const [head] = $pieces(closer.getLatest());
+          head.select(1, 1);
+          editor.dispatchCommand(INSERT_PARAGRAPH_COMMAND, undefined);
+        },
+        { discrete: true },
+      );
+      editor.read(() => {
+        // The generic break would split the text it finds at the caret, and leave the rest there.
+        const para = $getRoot().getFirstChild();
+        if (!$isElementNode(para)) throw new Error("no paragraph");
+        expect(
+          para.getChildren().map((node) => `${node.getType()} ${node.getTextContent()}`),
+        ).toEqual(["text In the ", "marker \\", "text w*"]);
+        expect(
+          $displayAnnotationsOf(para.getChildAtIndex(1) ?? closer).map(({ id }) => id),
+        ).toEqual(["a"]);
+      });
+      release();
+    });
   });
 
   describe("a pasted copy of a carrier's pieces", () => {

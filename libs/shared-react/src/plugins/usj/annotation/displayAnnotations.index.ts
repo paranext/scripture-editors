@@ -29,13 +29,16 @@ import {
   $isRangeSelection,
   $isTextNode,
   COMMAND_PRIORITY_CRITICAL,
+  COMMAND_PRIORITY_LOW,
   EditorState,
   HISTORIC_TAG,
+  INSERT_PARAGRAPH_COMMAND,
   Klass,
   LexicalEditor,
   LexicalNode,
   NodeKey,
   NodeMutation,
+  RangeSelection,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
   TextNode,
   $isElementNode,
@@ -166,7 +169,31 @@ function $splitCarrierAtInsertion(
   // The insertion splits the text at the editor's own range selection when there is one (Lexical's
   // `$removeTextAndSplitBlock`), else at its own anchor.
   const current = $getSelection();
-  const at = $isRangeSelection(current) ? current : insertion;
+  // Inline nodes go into the block the caret is in; with no block there the insertion refuses,
+  // splitting nothing.
+  const isInline = (pasted: LexicalNode) =>
+    !($isElementNode(pasted) || $isDecoratorNode(pasted)) || pasted.isInline();
+  $splitCarrierAtPoint($isRangeSelection(current) ? current : insertion, nodes.every(isInline));
+}
+
+/**
+ * Before a paragraph break goes in at a collapsed caret, split the carrier the caret is inside
+ * where the break splits a text, as {@link $splitCarrierAtInsertion} does for a paste:
+ * `RangeSelection.insertParagraph` splits the text at the caret, so the bytes of a glyph after the
+ * caret go on as content of the new paragraph, and between two pieces of a cut glyph it would find
+ * no text to split. Mutating. */
+function $splitCarrierAtBreak(): void {
+  const selection = $getSelection();
+  if ($isRangeSelection(selection) && selection.isCollapsed())
+    $splitCarrierAtPoint(selection, true);
+}
+
+/**
+ * Split the carrier `at`'s anchor is inside at the anchor, with `splitText` on its whole text
+ * (`$splitCarrierAt`), when it is cut into pieces or holds an annotation, and restate `at`'s points
+ * on the split: the end of the part before the caret. `needsBlock`: only inside a block, where an
+ * insertion of inline nodes or a paragraph break goes in at all. Mutating. */
+function $splitCarrierAtPoint(at: RangeSelection, needsBlock: boolean): void {
   const { anchor } = at;
   // A caret on the parent between two pieces is the end of the piece before it.
   const node =
@@ -177,12 +204,7 @@ function $splitCarrierAtInsertion(
         : null;
   if (!$isTextNode(node)) return;
   if (!$isSplitCarrier(node) && $displayAnnotationsOf(node).length === 0) return;
-  // Inline nodes go into the block the caret is in; with no block there the insertion refuses,
-  // splitting nothing.
-  const isInline = (pasted: LexicalNode) =>
-    !($isElementNode(pasted) || $isDecoratorNode(pasted)) || pasted.isInline();
-  if (nodes.every(isInline) && !$isElementNode($findMatchingParent(node, INTERNAL_$isBlock)))
-    return;
+  if (needsBlock && !$isElementNode($findMatchingParent(node, INTERNAL_$isBlock))) return;
   const offset = anchor.type === "text" ? anchor.offset : node.getTextContentSize();
   const isCollapsed = at.isCollapsed();
   const before = $splitCarrierAt(node, $logicalOffset(node, offset));
@@ -789,6 +811,16 @@ function createIndex(editor: LexicalEditor): Entry {
       // Critical, and never handling the command, so a handler that does handle it cannot skip the
       // strip.
       COMMAND_PRIORITY_CRITICAL,
+    ),
+    editor.registerCommand(
+      INSERT_PARAGRAPH_COMMAND,
+      () => {
+        $splitCarrierAtBreak();
+        return false;
+      },
+      // Low, never handling the command: after every handler that claims a break (a guard that
+      // refuses it, a split of its own) and before the generic one, whose text split this is.
+      COMMAND_PRIORITY_LOW,
     ),
   );
 
