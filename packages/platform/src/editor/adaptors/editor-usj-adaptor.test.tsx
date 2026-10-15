@@ -1582,4 +1582,46 @@ describe("Editor USJ Adaptor — comment milestones", () => {
       },
     ]);
   });
+
+  describe("beside an annotation that is not a comment", () => {
+    it.each([
+      [
+        "an adjacent one",
+        () => [
+          $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] }).append($createTextNode("alpha")),
+          $createTypedMarkNode({ "external-find": ["f1"] }).append($createTextNode("bravo")),
+        ],
+        ["alpha", "bravo"],
+      ],
+      [
+        "an overlapping one",
+        () => [
+          $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] }).append($createTextNode("alpha")),
+          $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"], "external-find": ["f1"] }).append(
+            $createTextNode("bravo"),
+          ),
+          $createTypedMarkNode({ "external-find": ["f1"] }).append($createTextNode("charlie")),
+        ],
+        ["alpha", "bravo", "charlie"],
+      ],
+    ])("ends the comment and keeps every text on reload (%s)", (_label, $marks, words) => {
+      const { editor: markEditor } = createBasicTestEnvironment(nodes, () => {
+        $getRoot().append($createParaNode("p").append(...$marks()));
+      });
+
+      const usj = editorUsjAdaptor.deserializeEditorState(markEditor.getEditorState());
+
+      if (!usj) throw new Error("expected the editor state to export");
+      const milestones = JSON.stringify(usj).match(/"marker":"zmsc-[se]"/g);
+      expect(milestones).toEqual(['"marker":"zmsc-s"', '"marker":"zmsc-e"']);
+      const view = getViewOptions(FORMATTED_VIEW_MODE);
+      initializeSerialize(undefined, undefined);
+      reset();
+      const state = serializeEditorState(usj, view);
+      const { editor: reloaded } = createBasicTestEnvironment(nodes);
+      reloaded.setEditorState(reloaded.parseEditorState(JSON.stringify({ root: state.root })));
+      const text = reloaded.getEditorState().read(() => $getRoot().getTextContent());
+      expect(text).toBe(words.join(""));
+    });
+  });
 });
