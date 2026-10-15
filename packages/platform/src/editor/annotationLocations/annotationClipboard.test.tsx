@@ -452,3 +452,55 @@ describe("a copy of carriers an annotation cut into pieces", () => {
     120_000,
   );
 });
+
+describe("a copy of annotated text", () => {
+  it.each([
+    ["unformatted", "verse"],
+    ["unformatted", "closed char span"],
+    ["standard", "closed char span"],
+  ] as const)(
+    "leaves the editor's state untouched (%s view, %s)",
+    async (view, row) => {
+      for (const isAnnotated of [false, true]) {
+        const usj = oracleRows(view).find(([name]) => name.startsWith(`${row} (`))?.[1];
+        if (!usj) throw new Error(`no row ${row}`);
+        const viewOptions = pendingOracleView(view);
+        const mounted = await mountInView(usj, viewOptions);
+        if (isAnnotated) {
+          const plan = mounted.lexical.getEditorState().read(() => $planAnnotations(viewOptions));
+          for (const { id, range } of plan)
+            await act(async () => {
+              mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, id);
+              await Promise.resolve();
+            });
+        }
+        await act(async () => {
+          mounted.lexical.update(() => {
+            const para = $getRoot().getChildren()[2];
+            if ($isElementNode(para)) para.select(0, para.getChildrenSize());
+          });
+          await drainNativeSelectionChange();
+        });
+        const before = mounted.lexical.getEditorState();
+        const opsBefore = mounted.ops.length;
+        const dirty: string[] = [];
+        const unregister = mounted.lexical.registerUpdateListener(
+          ({ dirtyLeaves, dirtyElements }) => {
+            dirty.push(...dirtyLeaves, ...dirtyElements.keys());
+          },
+        );
+        const { event } = copyEvent({ native: true });
+        await act(async () => {
+          mounted.lexical.dispatchCommand(COPY_COMMAND, event);
+          await drainNativeSelectionChange();
+        });
+        unregister();
+        expect(mounted.lexical.getEditorState(), `annotated: ${isAnnotated}`).toBe(before);
+        expect(dirty).toEqual([]);
+        expect(mounted.ops.length).toBe(opsBefore);
+        mounted.unmount();
+      }
+    },
+    120_000,
+  );
+});

@@ -12,12 +12,8 @@
  * (`MarkerEditPlugin.tsx`) — they must not run in other view modes.
  */
 
-import {
-  $getClipboardDataFromSelection,
-  $getLexicalContent,
-  copyToClipboard,
-  LexicalClipboardData,
-} from "@lexical/clipboard";
+import { $uncutClipboardData } from "./uncutClipboard.utils";
+import { $getLexicalContent, copyToClipboard, LexicalClipboardData } from "@lexical/clipboard";
 import {
   $getCharacterOffsets,
   $getEditor,
@@ -49,9 +45,7 @@ import {
   MARKER_TRAILING_SPACE_TEXT_TYPE,
   NBSP,
   textTypeState,
-  $isSplitCarrier,
   $logicalText,
-  $mergePieces,
   $removeRangeSplitByMarks,
 } from "shared";
 import {
@@ -968,7 +962,11 @@ export function $getStandardViewClipboardData(
     "text/html": usfmToClipboardHtml(usfm),
   };
   if ($selectionReachesIntoOpaqueBlock() || $selectionTouchesBookOrChapter(selection)) return data;
-  const lexical = $getLexicalContent(editor);
+  // An annotated selection's internal flavor is written as the document with no annotation
+  // writes it.
+  const lexical =
+    $uncutClipboardData(editor, selection)?.["application/x-lexical-editor"] ??
+    $getLexicalContent(editor);
   if (lexical) data["application/x-lexical-editor"] = lexical;
   return data;
 }
@@ -1071,37 +1069,28 @@ export function $writeCopyPayload(
 }
 
 /**
- * A copy or cut of a selection touching a carrier an annotation cut into pieces, for a view whose
- * copy is Lexical's own (no view handler claimed it above): the carriers are joined back into one
- * node each (`$mergePieces`, the selection moving with its bytes) and the clipboard written from
- * them, as from the same document with no annotation. Lexical's HTML writes each node as an
- * element of its own, so a verse in four pieces would paste back as four verses. Joined and copied
- * in this one listener, since Lexical runs every listener of a command in an update of its own and
- * the piece transform cuts the carriers again at the end of each; a copy changes no byte, so that
- * update joins the current undo step. Declines a selection touching no cut carrier.
+ * A copy or cut of a selection touching anything an annotation puts in the tree, for a view whose
+ * copy is Lexical's own (no view handler claimed it above): the clipboard is written as the same
+ * selection in the document with no annotation writes it (`$uncutClipboardData`), the document
+ * only read. Declines a selection that touches no annotation, which Lexical's own copy writes.
  *
- * Mutating: call inside `editor.update()` — in practice, from a `COPY_COMMAND` or `CUT_COMMAND`
- * handler.
+ * Mutating only for a cut, which removes the range: call inside `editor.update()` — in practice,
+ * from a `COPY_COMMAND` or `CUT_COMMAND` handler.
  */
-export function $copyCarriersWhole(
+export function $copyWithoutAnnotations(
   event: ClipboardEvent | null,
   editor: LexicalEditor,
   isCut: boolean,
 ): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-  const carriers = selection
-    .getNodes()
-    .filter((node): node is TextNode => $isTextNode(node) && $isSplitCarrier(node));
-  if (carriers.length === 0) return false;
-  for (const carrier of carriers) if (carrier.isAttached()) $mergePieces(carrier);
-  const joined = $getSelection();
-  if (!$isRangeSelection(joined)) return false;
+  const data = $uncutClipboardData(editor, selection);
+  if (!data) return false;
   return $writeClipboardData(
     event,
     editor,
-    $getClipboardDataFromSelection(joined),
-    isCut && editor.isEditable() ? () => joined.removeText() : undefined,
+    data,
+    isCut && editor.isEditable() ? () => selection.removeText() : undefined,
   );
 }
 
