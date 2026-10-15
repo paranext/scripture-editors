@@ -152,3 +152,17 @@ describe("Enter inside a verse or an attribute run an annotation cuts into piece
     120_000,
   );
 });
+
+describe("Shift+Enter in a char span's content at an annotation mark's edge", () => {
+  // The line break tears the span in two; the halves settle as the uncut span's halves do.
+  it.each([
+    ["standard", "closed char span", `${NBSP}grace`, 1],
+    ["standard", "nested char span", `${NBSP}two`, 1],
+  ] as const)(
+    "%s view, %s: %j at %i",
+    async (view, row, text, at) => {
+      await expectTransparent(view, row, text, at, true, [0, 1]);
+    },
+    120_000,
+  );
+});
