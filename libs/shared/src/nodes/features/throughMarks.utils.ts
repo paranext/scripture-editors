@@ -294,6 +294,68 @@ export function $removeRangeSplitByMarks(selection: RangeSelection): boolean {
 }
 
 /**
+ * The place a range's start at an edge of an annotation mark's text is at outside every mark it
+ * starts or ends with: the element the outermost of them sits in, and the node that will stand to
+ * the left of that place once the range is removed (`undefined`: the element's start). `undefined`
+ * when `point` is at no mark's edge.
+ */
+function $placeOutsideMarks(
+  point: PointType,
+): { parent: ElementNode; $left: () => LexicalNode | null } | undefined {
+  if (point.type !== "text") return undefined;
+  let node: LexicalNode = point.getNode();
+  const isAtStart = point.offset === 0;
+  const isAtEnd = point.offset === node.getTextContentSize();
+  let parent = node.getParent();
+  let outer: LexicalNode | undefined;
+  while (
+    $isTypedMarkNode(parent) &&
+    ((isAtStart && node.is(parent.getFirstChild())) || (isAtEnd && node.is(parent.getLastChild())))
+  ) {
+    outer = parent;
+    node = parent;
+    parent = parent.getParent();
+  }
+  if (!outer || !parent) return undefined;
+  const mark = outer;
+  const before = mark.getPreviousSibling();
+  return {
+    parent,
+    // At a mark's start the place follows what precedes the mark; at its end, the mark itself
+    // while the removal leaves it.
+    $left: () => (isAtStart || !mark.isAttached() ? before : mark),
+  };
+}
+
+/**
+ * Remove `selection`'s range, before text replaces it, when the replacement would not go where it
+ * goes with no mark: its ends sit in different parents only because a mark holds one of them
+ * ({@link $isRangeSplitByMarks}), or it starts at an edge of a mark's text. Lexical replaces a
+ * range in a parent that takes no text before or after it (a mark) by clearing it and typing at
+ * the place it then resolves, which is past the node before the mark (into a glyph's run) rather
+ * than where the range was. So the range is removed here, and a caret that started at a mark's
+ * edge is put where the range was, outside the mark, as the text typed there is with no mark.
+ *
+ * Mutating: call inside `editor.update()`, before the insertion that replaces the range.
+ *
+ * @returns Whether the range was removed.
+ */
+export function $removeRangeHeldByMarks(selection: RangeSelection): boolean {
+  if (selection.isCollapsed()) return false;
+  const start = selection.isBackward() ? selection.focus : selection.anchor;
+  const place = $placeOutsideMarks(start);
+  if (!place && !$isRangeSplitByMarks(selection)) return false;
+  selection.removeText();
+  if (place?.parent.isAttached()) {
+    const left = place.$left();
+    const offset = left?.isAttached() ? left.getIndexWithinParent() + 1 : 0;
+    selection.anchor.set(place.parent.getKey(), offset, "element");
+    selection.focus.set(place.parent.getKey(), offset, "element");
+  }
+  return true;
+}
+
+/**
  * Put a collapsed caret Lexical read onto the start of the text node right after an annotation
  * mark back at the end of the mark's content, where it is in the document
  * ({@link $caretPlaceThroughMarks}). Returns whether it moved.

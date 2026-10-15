@@ -46,7 +46,7 @@ import {
   NBSP,
   textTypeState,
   $logicalText,
-  $removeRangeSplitByMarks,
+  $removeRangeHeldByMarks,
 } from "shared";
 import {
   $hasCopyableSelection,
@@ -664,10 +664,10 @@ export function $handlePasteForStandardView(
   const normalized = normalizePastedNbsp(stripPastedChapterAndBookId(text));
   if (!normalized) return true;
   const lines = normalized.split("\n");
-  // A range an annotation mark splits is removed first, so the insertions below type at a caret
-  // rather than through Lexical's range replacement, which climbs out of it
-  // (`$removeRangeSplitByMarks`).
-  $removeRangeSplitByMarks(selection);
+  // A range an annotation mark holds an end of is removed first, so the insertions below type at
+  // the caret it leaves rather than through Lexical's range replacement, which climbs out of a mark
+  // or past the node before it (`$removeRangeHeldByMarks`).
+  $removeRangeHeldByMarks(selection);
   // A protected document never gains a paragraph from a paste: each newline becomes a single space
   // and the payload goes in as one insertion, so the block structure the user sees is exactly the
   // one they had. Every byte-level rule above still applied.

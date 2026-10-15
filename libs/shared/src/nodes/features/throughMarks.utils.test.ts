@@ -11,6 +11,7 @@ import {
   $nodeAfterBoundaryThroughMarks,
   $nodeBeforeBoundaryThroughMarks,
   $previousSiblingThroughMarks,
+  $removeRangeHeldByMarks,
   $resolveRangeEndsThroughMarks,
   $restoreCaretAtMarkEnd,
   $textRunThroughMarks,
@@ -418,5 +419,35 @@ describe("restating a range's ends Lexical read beside a mark", () => {
     expect(resolved(["In th", 2], [" o", 1])).toBe("false In th@2  o@1");
     // A range's start at the start of a text, and its end at the end of one, stay.
     expect(resolved(["e ", 0], ["f God", 5])).toBe("false e @0 f God@5");
+  });
+});
+
+describe("removing a range that starts at a mark's edge", () => {
+  it("leaves the caret where the range was, outside the mark", () => {
+    const { editor } = createBasicTestEnvironment(nodes);
+    let out = "";
+    editor.update(
+      () => {
+        const held = $createTextNode("b");
+        const para = $createParaNode().append(
+          $createTextNode("a "),
+          $createMarkerNode("w"),
+          $createTypedMarkNode({ t: ["1"] }).append(held),
+        );
+        $getRoot().append(para);
+        held.select(0, 1);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        const removed = $removeRangeHeldByMarks(selection);
+        selection.insertText("x");
+        out = `${removed} ${para
+          .getChildren()
+          .map((child) => `${child.getType()}:${child.getTextContent()}`)
+          .join(",")}`;
+      },
+      { discrete: true },
+    );
+    // With no mark, "x" replaces "b" after the glyph; it does not join the glyph.
+    expect(out).toBe("true text:a ,marker:\\w,text:x");
   });
 });

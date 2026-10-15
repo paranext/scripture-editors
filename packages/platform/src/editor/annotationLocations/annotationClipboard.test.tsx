@@ -229,6 +229,10 @@ describe("a range with an end at a mark's edge beside a span", () => {
     // and read back as part of the note.
     ["standard", "note", "a", 1, 'Shift+Right, then type "x"'],
     ["standard", "note", " b", 0, 'Shift+Left, then type "x"'],
+    // Typing over a range that starts where a mark starts: the typed text goes where the range
+    // was, as with no mark, not past the run before the mark.
+    ["standard", "milestone", "b", 0, 'Shift+Right, then type "x"'],
+    ["standard", "milestone", "b", 1, 'Shift+Left, then type "x"'],
     // The range's end at the start of a mark, after a span: with no mark it ends inside the span.
     ["standard", "closed char span", " of God", 0, "cut the byte before the caret"],
   ] as const)(
