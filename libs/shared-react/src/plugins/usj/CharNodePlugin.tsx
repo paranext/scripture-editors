@@ -22,6 +22,7 @@ import {
   $lastPiece,
   $pieceHead,
   $syncDisplayRun,
+  $charLacksOpeningGlyph,
   $syncNestedGlyphs,
   $syncOpenerSeparators,
   charIdState,
@@ -57,9 +58,10 @@ function useCharNode(editor: LexicalEditor) {
       // whenever a span is dirtied — heals remote collab updates (delta-apply only calls
       // setUnknownAttributes) and structure surgery. $syncDisplayRun (displayRunSync.utils.ts,
       // `shared`), driven here with the char descriptor from displayRunRegistry.ts (`shared`).
-      editor.registerNodeTransform(CharNode, (node) =>
-        $syncDisplayRun(displayRunDescriptor("char"), node),
-      ),
+      // A span missing its opener is transient, and its run is left to its resolution.
+      editor.registerNodeTransform(CharNode, (node) => {
+        if (!$charLacksOpeningGlyph(node)) $syncDisplayRun(displayRunDescriptor("char"), node);
+      }),
       editor.registerNodeTransform(TextNode, $charTextNodeTransform),
     );
   }, [editor]);

@@ -156,6 +156,21 @@ describe("a copy pasted where an annotation mark starts", () => {
       5,
       "copy the whole block, then paste it at the caret",
     ],
+    // The same, in a span with an attribute run before its closer: the run goes with the closer.
+    [
+      "standard",
+      "char span with an attribute",
+      `${NBSP}grace`,
+      1,
+      "copy three bytes either side of the caret, then paste them at the caret",
+    ],
+    [
+      "standard",
+      "char span with an attribute",
+      `${NBSP}grace`,
+      5,
+      "copy the whole block, then paste it at the caret",
+    ],
   ] as const)(
     "%s view, %s: %j at %i, %s",
     async (view, row, text, at, name) => {
