@@ -1199,8 +1199,8 @@ export declare type HiddenContentDeleteAction =
 /**
  * The user's answer.
  * - `"delete"`: go ahead and remove the hidden content along with the edit.
- * - `"keep"`: keep it. A caret the hidden content stopped moves past it without removing it;
- *   anything else (a selection, a line delete) is cancelled.
+ * - `"keep"`: keep it. The caret moves past it when the request's `canSkip` is `true`; otherwise
+ *   the edit is cancelled.
  */
 export declare type HiddenContentDeleteDecision = "delete" | "keep";
 
@@ -1220,6 +1220,13 @@ export declare interface HiddenContentDeleteRequest {
   items: HiddenContentItem[];
   /** What the user did. */
   action: HiddenContentDeleteAction;
+  /**
+   * Whether `"keep"` moves the caret past the hidden content, leaving the user free to keep going.
+   * When `false`, `"keep"` cancels the edit and the caret stays where it was. Only a caret delete
+   * whose whole extent is the hidden content right at the caret can skip; a word or line delete
+   * reaching hidden content further along, and any selection edit, cannot.
+   */
+  canSkip: boolean;
 }
 
 /** One construct the current view cannot show, which an edit is about to remove. */

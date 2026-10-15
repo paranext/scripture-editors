@@ -283,6 +283,7 @@ export type HiddenContentDeleteHandler = (request: HiddenContentDeleteRequest) =
 // @public
 export interface HiddenContentDeleteRequest {
     action: HiddenContentDeleteAction;
+    canSkip: boolean;
     items: HiddenContentItem[];
 }
 

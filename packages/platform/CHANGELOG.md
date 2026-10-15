@@ -74,7 +74,8 @@ refused. The public surface grew substantially; nothing was removed.
   `HiddenContentDeleteRequest`, `HiddenContentDeleteDecision`, `HiddenContentDeleteAction` and
   `HiddenContentItem`: asks before an edit removes content the view does not show (a figure, a
   sidebar, `\periph`, ...), which is hidden in every view but Standard. Answering `"delete"` lets
-  the edit remove it; `"keep"` moves a caret past it or cancels the edit. While the option is set,
+  the edit remove it; `"keep"` moves a caret past it or cancels the edit, and the request's
+  `canSkip` says which, so a host can label its choice to match. While the option is set,
   dragging a selection that holds such content is refused. Without the option editing is unchanged.
 
 ### Changed

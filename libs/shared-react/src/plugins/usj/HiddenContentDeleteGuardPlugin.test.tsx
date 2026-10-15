@@ -153,6 +153,7 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(handler).toHaveBeenCalledWith<[HiddenContentDeleteRequest]>({
         items: [{ tag: "figure", marker: "fig" }],
         action: "deleteBackward",
+        canSkip: true,
       });
     });
 
@@ -214,6 +215,7 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       await settle();
 
       expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith(expect.objectContaining({ canSkip: true }));
       expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
       expect(readCaret(editor)).toEqual({
         key: before!.getKey(),
@@ -339,6 +341,7 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(handler).toHaveBeenCalledWith({
         items: [{ tag: "sidebar", marker: "esb" }],
         action: "deleteBackward",
+        canSkip: true,
       });
       expect(readTree(editor)).toEqual(["first", "[sidebar: sidebar text]", "second"]);
       expect(readCaret(editor)).toEqual({
@@ -421,6 +424,7 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(handler).toHaveBeenCalledWith({
         items: [{ tag: "figure", marker: "fig" }],
         action: "replaceSelection",
+        canSkip: false,
       });
       expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
     });
@@ -569,6 +573,7 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(handler).toHaveBeenCalledWith({
         items: [{ tag: "figure", marker: "fig" }],
         action: "deleteBackward",
+        canSkip: false,
       });
       expect(readTree(editor)).toEqual(["a [figure: caption] b end"]);
     });
@@ -601,6 +606,7 @@ describe("HiddenContentDeleteGuardPlugin", () => {
           { tag: "figure", marker: "fig" },
         ],
         action: "deleteBackward",
+        canSkip: false,
       });
       // Cancelled, not skipped: a skip past the figure at the caret would leave the line delete's
       // next press free to take the other one.

@@ -77,7 +77,10 @@ interface HeldEdit {
 
 /** What to do once the user answers. Both run with the held selection restored. */
 interface Settlement {
-  /** Mutating, inside the update that restores the selection. Defaults to leaving it there. */
+  /**
+   * Moves the caret past the hidden content, inside the update that restores the selection. Its
+   * presence is what the request reports as `canSkip`; without it, "keep" cancels the edit.
+   */
   $keep?: () => void;
   /** Runs after that update, with the editor focused. Free to dispatch commands. */
   delete: () => void;
@@ -194,7 +197,11 @@ export function HiddenContentDeleteGuardPlugin({
       settlement: Settlement,
     ): true => {
       const held = $snapshot(selection, hidden);
-      const request = { items: $hiddenContentItems(hidden), action };
+      const request: HiddenContentDeleteRequest = {
+        items: $hiddenContentItems(hidden),
+        action,
+        canSkip: !!settlement.$keep,
+      };
       isPending = true;
       void ask(request).then((decision) => {
         isPending = false;
