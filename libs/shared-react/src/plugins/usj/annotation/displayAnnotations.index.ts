@@ -221,6 +221,8 @@ function $splitCarrierAtBreak(): false {
   const node = anchor.getNode();
   if (anchor.type !== "text" || !$isTextNode(node)) return false;
   if (!$isSplitCarrier(node) && $displayAnnotationsOf(node).length === 0) return false;
+  // A break goes into the block the caret is in; with no block there it splits nothing.
+  if (!$isElementNode($findMatchingParent(node, INTERNAL_$isBlock))) return false;
   const before = $splitCarrierAt(node, $logicalOffset(node, anchor.offset));
   if (!before) return false;
   for (const point of [selection.anchor, selection.focus])

@@ -39,13 +39,14 @@ import {
   getPastePayload,
 } from "./whitespaceDisplay.plugin.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { mergeRegister } from "@lexical/utils";
+import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $getNodeByKey,
   $hasUpdateTag,
   $getSelection,
   $getState,
+  $isElementNode,
   $isRangeSelection,
   BLUR_COMMAND,
   CLICK_COMMAND,
@@ -61,7 +62,9 @@ import {
   EditorState,
   HISTORIC_TAG,
   HISTORY_MERGE_TAG,
+  INSERT_LINE_BREAK_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
+  INTERNAL_$isBlock,
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   PASTE_COMMAND,
@@ -1287,6 +1290,19 @@ export function MarkerEditPlugin({
           // out unformatted with its closing markers gone. Claiming the command performs the whole
           // split here so the generic one never runs on this shape.
           return $splitParagraphAtCharStack();
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+      // A line break goes into a block, and Lexical's insertion throws where no block holds the
+      // caret (a chapter's `\ca`/`\cp` span sits at the root): there the key does nothing.
+      editor.registerCommand(
+        INSERT_LINE_BREAK_COMMAND,
+        () => {
+          const selection = $getSelection();
+          return (
+            $isRangeSelection(selection) &&
+            !$isElementNode($findMatchingParent(selection.anchor.getNode(), INTERNAL_$isBlock))
+          );
         },
         COMMAND_PRIORITY_HIGH,
       ),
