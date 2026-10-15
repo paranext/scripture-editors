@@ -182,6 +182,10 @@ describe("a range with an end at a mark's edge beside a span", () => {
     // The range's end at the start of a mark, after a paragraph marker's separator: with no mark
     // it ends in the separator.
     ["standard", "closed char span", "In the ", 0, 'Shift+Left, then type "x"'],
+    // A range from the end of a paragraph into the next one's marker, its start at a mark's end:
+    // with no mark the marker's remaining byte is pending under the caret, and becomes text.
+    ["standard", "char span with an attribute", " b", 2, "Shift+Right, then Delete"],
+    ["standard", "char span with an attribute", " b", 2, "Shift+Right, then Backspace"],
     // The range's end at the start of a mark, after a span: with no mark it ends inside the span.
     ["standard", "closed char span", " of God", 0, "cut the byte before the caret"],
   ] as const)(
