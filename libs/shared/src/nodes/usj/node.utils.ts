@@ -44,7 +44,7 @@ import {
   $pieces,
 } from "../features/displayPieces.state.js";
 import { $isMarkerNode, isSerializedMarkerNode } from "../features/MarkerNode.js";
-import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
+import { $isTypedMarkNode, isSerializedTypedMarkNode } from "../features/TypedMarkNode.js";
 import { $isUnknownNode, UnknownNode } from "../features/UnknownNode.js";
 import { $isAttributeRunNode } from "./AttributeRunNode.js";
 import { $isBookNode, BookNode } from "./BookNode.js";
@@ -553,11 +553,49 @@ function extractTextFromNode(node: SerializedLexicalNode): string {
     // If it's an ElementNode, process its children recursively and join their text
     // We join with '' here because spacing is usually handled by spaces within TextNodes
     // or potentially by joining results from the top-level nodes with spaces later.
-    return node.children.map((child) => extractTextFromNode(child)).join("");
+    return withoutMarks(node.children)
+      .map((child) => extractTextFromNode(child))
+      .join("");
   }
 
   // Ignore other node types (e.g., LineBreakNode, custom nodes without text/children)
   return "";
+}
+
+/** Whether `node` is plain content text, the kind an annotation mark's wrap splits at its edges. */
+function isSerializedPlainText(
+  node: SerializedLexicalNode | undefined,
+): node is SerializedTextNode {
+  return isSerializedTextNode(node) && serializedTextType(node) === undefined;
+}
+
+/**
+ * `nodes` with every annotation mark replaced by its children, and a text the mark's edge split off
+ * joined back onto the plain text beside it. A mark is presentation: the preview reads the text as
+ * it reads the same text with no mark, which the wrap never split — so a mark's text is neither
+ * lost nor spaced apart from its neighbours, and a no-break space a mark holds alone stays content.
+ */
+function withoutMarks(nodes: SerializedLexicalNode[]): SerializedLexicalNode[] {
+  const out: SerializedLexicalNode[] = [];
+  let isAtMarkEdge = false;
+  const add = (node: SerializedLexicalNode): void => {
+    const last = out[out.length - 1];
+    if (isAtMarkEdge && isSerializedPlainText(last) && isSerializedPlainText(node)) {
+      const joined: SerializedTextNode = { ...last, text: last.text + node.text };
+      out[out.length - 1] = joined;
+    } else out.push(node);
+    isAtMarkEdge = false;
+  };
+  for (const node of nodes) {
+    if (!isSerializedTypedMarkNode(node)) {
+      add(node);
+      continue;
+    }
+    isAtMarkEdge = true;
+    withoutMarks(node.children).forEach(add);
+    isAtMarkEdge = true;
+  }
+  return out;
 }
 
 /**
@@ -567,7 +605,7 @@ function extractTextFromNode(node: SerializedLexicalNode): string {
  * @returns The preview text.
  */
 export function getPreviewTextFromSerializedNodes(childNodes: SerializedLexicalNode[]): string {
-  const previewText = childNodes
+  const previewText = withoutMarks(childNodes)
     .map((node) => extractTextFromNode(node))
     .filter((text) => text.length > 0)
     .join(" ")
@@ -585,7 +623,10 @@ export function getPreviewTextFromSerializedNodes(childNodes: SerializedLexicalN
 export function $getNoteCallerPreviewText(childNodes: LexicalNode[]): string {
   const parts: string[] = [];
 
-  for (const node of childNodes) {
+  // A span an annotation mark wraps whole is the note's span all the same.
+  const $throughMarks = (nodes: LexicalNode[]): LexicalNode[] =>
+    nodes.flatMap((node) => ($isTypedMarkNode(node) ? $throughMarks(node.getChildren()) : [node]));
+  for (const node of $throughMarks(childNodes)) {
     if (!$isCharNode(node)) continue;
 
     const textContent = $getTextContentExcludingMarkers(node);
