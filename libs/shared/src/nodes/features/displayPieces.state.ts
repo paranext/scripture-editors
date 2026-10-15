@@ -459,9 +459,11 @@ export function $recordPieceChain(node: LexicalNode): void {
  * the chain it came from. Where a pasted copy then joins a carrier is the piece transform's to
  * decide, as Lexical decides it for text no annotation holds: beside a text Lexical would merge it
  * with, it is joined into that carrier (`$joinMergeableNeighbours`), and nowhere else. One sibling
- * list only, not the nodes' children. Mutating: call inside `editor.update()`.
+ * list only, not the nodes' children; each node may have been built from the clipboard's JSON in
+ * this update ({@link $parsePastedPieceStates}). Mutating: call inside `editor.update()`.
  */
 export function $restatePastedPieces(nodes: readonly LexicalNode[]): void {
+  nodes.forEach($parsePastedPieceStates);
   // The pasted chains, each a head and the continuations pasted right after it.
   const chains: LexicalNode[][] = [];
   let previous: { node: LexicalNode; chain: string | undefined } | undefined;
@@ -492,12 +494,34 @@ export function $restatePastedPieces(nodes: readonly LexicalNode[]): void {
 }
 
 /** The node states a cut or a hold puts on a text: everything a text no annotation holds lacks. */
-const PIECE_STATE_KEYS: ReadonlySet<string> = new Set([
-  displayPieceContinuationState.key,
-  displayPieceChainState.key,
-  displayPieceTokenTextState.key,
-  displayAnnotationsState.key,
-]);
+const PIECE_STATES = [
+  displayPieceContinuationState,
+  displayPieceChainState,
+  displayPieceTokenTextState,
+  displayAnnotationsState,
+] as const;
+
+/** The keys of {@link PIECE_STATES}. */
+const PIECE_STATE_KEYS: ReadonlySet<string> = new Set(PIECE_STATES.map(({ key }) => key));
+
+/**
+ * Make the piece and hold states ({@link PIECE_STATES}) that `node`, built from a clipboard's JSON
+ * in this update, was copied with writable. Lexical parses a state a node's JSON brings only once
+ * the editor knows that state for nodes of its type; until then the value stays in the node's
+ * record of unparsed states, which `$getState` falls back to whenever the parsed value is the
+ * default, until the node is next copied. So in an editor that has not yet read a state on a node
+ * of the pasted node's type (a fresh editor, another editor on the page), `$setState(node, state,
+ * undefined)` would not take: the paste would keep the holds and the chain it was copied with, and
+ * a transform clearing them would run forever. Reading each state makes it known; re-reading the
+ * node from its own JSON then parses it out of the unparsed record. Mutating.
+ */
+function $parsePastedPieceStates(node: LexicalNode): void {
+  const json = node.exportJSON();
+  const state = json[NODE_STATE_KEY];
+  if (!state || !Object.keys(state).some((key) => PIECE_STATE_KEYS.has(key))) return;
+  for (const config of PIECE_STATES) $getState(node, config);
+  node.updateFromJSON(json);
+}
 
 /** `node`'s node state without {@link PIECE_STATE_KEYS}, as one comparable string. */
 function baseStateOf(node: TextNode): string {

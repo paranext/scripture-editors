@@ -33,20 +33,24 @@ import {
   $pieceHead,
   $pieces,
   $pieceStart,
+  $restatePastedPieces,
   $setLogicalText,
   $splitCarrierAt,
+  displayPieceChainState,
 } from "./displayPieces.state.js";
 import { $createMarkerNode, $isCanonicalMarkerNode, MarkerNode } from "./MarkerNode.js";
 import { TypedMarkNode } from "./TypedMarkNode.js";
 import {
   $createRangeSelection,
   $createTextNode,
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $getState,
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  $parseSerializedNode,
   $setSelection,
   $setState,
   HISTORY_MERGE_TAG,
@@ -425,6 +429,54 @@ describe("carrier pieces", () => {
     imported.read(() => {
       expect(texts($glyphPieces())).toEqual([`\\c${NBSP}`, "1", " "]);
       expect($glyphPieces().map($holdIds)).toEqual([[], ["a[0,1)"], []]);
+    });
+  });
+
+  it("restates pieces a paste reads from JSON in an editor that has not read their states", () => {
+    // What a copy writes for a closing glyph cut into `\` (held) and `w*`.
+    const copied: SerializedLexicalNode[] = [
+      { text: "\\", holds: true, continues: false },
+      { text: "w*", holds: false, continues: true },
+    ].map(({ text, holds, continues }) => ({
+      ...{ type: "marker", version: 1, text, detail: 0, format: 0, mode: "normal", style: "" },
+      ...{ marker: "w", markerSyntax: "closing" },
+      [NODE_STATE_KEY]: {
+        displayPieceChain: "91",
+        ...(continues ? { displayPieceContinuation: true } : {}),
+        ...(holds
+          ? {
+              displayAnnotations: {
+                basis: text,
+                annotations: [{ type: "check", id: "a", start: 0, end: 1 }],
+              },
+            }
+          : {}),
+      },
+    }));
+    // A fresh editor: no glyph of it has had a piece state read yet.
+    const editor = mount();
+    let keys!: string[];
+    editor.update(
+      () => {
+        const para = $createParaNode().append($createTextNode("a "));
+        $getRoot().append(para);
+        for (const json of copied) {
+          // Pasted alone, each is a carrier of its own.
+          const node = $parseSerializedNode(json);
+          $restatePastedPieces([node]);
+          para.append(node);
+        }
+        keys = para.getChildren().map((node) => node.getKey());
+      },
+      { discrete: true },
+    );
+    editor.read(() => {
+      const [, head, continuation] = keys.map((key) => $getNodeByKey(key));
+      for (const node of [head, continuation]) {
+        if (!node) throw new Error("a pasted glyph is gone");
+        expect($getState(node, displayPieceChainState)).toBeUndefined();
+        expect($isPieceContinuation(node)).toBe(false);
+      }
     });
   });
 

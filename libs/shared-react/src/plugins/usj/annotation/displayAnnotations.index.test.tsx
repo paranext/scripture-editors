@@ -13,12 +13,14 @@ import {
   $copyNode,
   $createRangeSelection,
   $createTextNode,
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $getState,
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  $parseSerializedNode,
   $setSelection,
   $setState,
   COMMAND_PRIORITY_HIGH,
@@ -26,7 +28,9 @@ import {
   HISTORIC_TAG,
   LexicalEditor,
   LexicalNode,
+  NodeKey,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+  SerializedLexicalNode,
   TextNode,
 } from "lexical";
 import {
@@ -37,6 +41,7 @@ import {
   $logicalText,
   $pieceHead,
   $pieces,
+  displayPieceChainState,
   displayPieceTokenTextState,
   NBSP,
   getDecoratorPaint,
@@ -1438,6 +1443,78 @@ describe("the display-annotation index", () => {
         { discrete: true },
       );
       release();
+    });
+
+    // A paste builds its nodes from the clipboard's JSON (`$parseSerializedNode`) in the update
+    // that inserts them, into an editor where no carrier of their class may have been cut yet (a
+    // fresh editor, another editor of the page), so the states they were copied with are read
+    // from that JSON there.
+    describe("built from the clipboard's JSON in another editor", () => {
+      /** The serialized pieces of a closing glyph `\w*` held by one annotation over its `\`,
+       * each piece as a copy writes it. */
+      function copiedPieces(): SerializedLexicalNode[] {
+        const { editor, run, release } = setup();
+        let closer!: TextNode;
+        editor.update(() => (closer = run.replace($createMarkerNode("w", "closing"))), {
+          discrete: true,
+        });
+        wrap(editor, closer, 0, 1, "external-spelling", "a");
+        const json = editor.read(() =>
+          $pieces(closer.getLatest()).map((piece) => piece.exportJSON()),
+        );
+        release();
+        return json;
+      }
+
+      /** Paste `json` into a fresh editor ({@link $paste}); the pasted nodes' keys. */
+      function pasteFresh(json: SerializedLexicalNode[]) {
+        const target = setup();
+        let keys!: NodeKey[];
+        target.editor.update(
+          () => {
+            const nodes = json.map((each) => $parseSerializedNode(each));
+            keys = nodes.map((node) => node.getKey());
+            $paste(target.editor, target.run, nodes);
+          },
+          { discrete: true },
+        );
+        return { ...target, keys };
+      }
+
+      it("holds nothing it was copied holding", () => {
+        const { editor, release } = pasteFresh(copiedPieces());
+        editor.read(() => {
+          const para = $getRoot().getFirstChild();
+          if (!$isElementNode(para)) throw new Error("no paragraph");
+          expect(para.getAllTextNodes().flatMap((node) => $displayAnnotationsOf(node))).toEqual([]);
+        });
+        expect(painted(editor)).toEqual([]);
+        release();
+      });
+
+      it("makes a head pasted without its continuation a carrier of its own, of no chain", () => {
+        const [head] = copiedPieces();
+        const { editor, keys, release } = pasteFresh([head]);
+        editor.read(() => {
+          const node = $getNodeByKey(keys[0]);
+          if (!node) throw new Error("the pasted head is gone");
+          expect($pieces(node).map((piece) => piece.getTextContent())).toEqual(["\\"]);
+          expect($getState(node, displayPieceChainState)).toBeUndefined();
+        });
+        release();
+      });
+
+      it("makes a continuation pasted without its head a carrier of its own", () => {
+        const [, continuation] = copiedPieces();
+        const { editor, keys, release } = pasteFresh([continuation]);
+        editor.read(() => {
+          const node = $getNodeByKey(keys[0]);
+          if (!node) throw new Error("the pasted continuation is gone");
+          expect($isPieceContinuation(node)).toBe(false);
+          expect($getState(node, displayPieceChainState)).toBeUndefined();
+        });
+        release();
+      });
     });
   });
 });
