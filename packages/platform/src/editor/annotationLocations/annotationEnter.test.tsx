@@ -24,7 +24,7 @@ import {
 import { drainNativeSelectionChange } from "../editor-test.utils";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $logicalText } from "shared";
+import { $logicalText, NBSP } from "shared";
 
 /** Each document position's reported locations, as one sorted set per position: a cut spells a
  * boundary position twice, and both spellings report the same places. */
@@ -132,6 +132,22 @@ describe("Enter in a note's glyph an annotation cuts into pieces", () => {
     "%s view: %j at %i (Shift: %s)",
     async (view, text, at, isShift, spellings) => {
       await expectTransparent(view, "note", text, at, isShift, spellings);
+    },
+    120_000,
+  );
+});
+
+describe("Enter inside a verse or an attribute run an annotation cuts into pieces", () => {
+  // The bytes after the caret leave the carrier as the split of the uncut carrier leaves them.
+  it.each([
+    ["standard", "verse", `\\v${NBSP}1 `, 1, false],
+    ["standard", "verse", `\\v${NBSP}1 `, 4, false],
+    ["standard", "verse", `\\v${NBSP}1 `, 1, true],
+    ["standard", "char span with an attribute", "|g", 1, true],
+  ] as const)(
+    "%s view, %s: %j at %i (Shift: %s)",
+    async (view, row, text, at, isShift) => {
+      await expectTransparent(view, row, text, at, isShift, [0, 1]);
     },
     120_000,
   );
