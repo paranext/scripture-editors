@@ -1,4 +1,4 @@
-import { ImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
+import { $isImmutableVerseNode, ImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
 import {
   $addTrailingSpace,
   $isSomeVerseNode,
@@ -228,12 +228,14 @@ function $verseNodeTransform(node: SomeVerseNode): void {
   // - Text inside an annotation wrapper: bare text gets its structural space from
   //   $textNodeTrailingSpaceTransform, but wrapped text can't (that transform skips
   //   TypedMarkNode parents), so the space is inserted here instead and coalesces onto the same
-  //   USJ text run. Only when that text does not already end in one — the rule
-  //   `$addTrailingSpace` applies to bare text — or a comment ending beside the verse writes a
-  //   second space into the document.
+  //   USJ text run. Only where bare text would get one — before an ImmutableVerseNode, since that
+  //   transform leaves text in front of a VerseNode (itself a TextNode) alone — and only when the
+  //   text does not already end in one, the rule `$addTrailingSpace` applies to bare text.
+  //   Anywhere else, setting an annotation would write a space into the document.
   if (
     $isCharNode(previousSibling) ||
-    ($isTextNode(previousSibling) &&
+    ($isImmutableVerseNode(node) &&
+      $isTextNode(previousSibling) &&
       $isTypedMarkNode(previousSibling.getParent()) &&
       !$endsInSpace(previousSibling))
   )

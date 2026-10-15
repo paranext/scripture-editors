@@ -250,3 +250,24 @@ describe("a comment starting at a char span's opening marker", () => {
     expect(withoutComments(para.content)).toEqual(["the ", nd, " made"]);
   });
 });
+
+describe("an annotation ending flush against a verse", () => {
+  it("leaves the document unchanged when the text has no space before the verse", async () => {
+    // Bare text abutting a verse gains no space in Standard view, so annotated text must not either.
+    const usj = twoParaUsj([
+      "in the beginning",
+      { type: "verse", marker: "v", number: "2" },
+      "God said",
+    ]);
+    const mounted = await mountStandardViewEditor(usj);
+    expect(mounted.ref.current?.getUsj()).toEqual(usj);
+
+    await annotate(mounted, {
+      start: { jsonPath: contentPath([2, 0]), offset: "in ".length },
+      end: { jsonPath: contentPath([2, 0]), offset: "in the beginning".length },
+    });
+
+    expect(annotatedText(mounted.lexical)).toEqual(["the beginning"]);
+    expect(mounted.ref.current?.getUsj()).toEqual(usj);
+  });
+});

@@ -883,6 +883,60 @@ describe("TextSpacingPlugin", () => {
     });
   });
 
+  it("should not space annotated text before a VerseNode, as it does not space bare text there", async () => {
+    // A VerseNode is the verse of the views that show marker text, where text abutting a verse is
+    // left as the source has it; the annotation wrapper must not change that.
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createParaNode().append(
+          $createTextNode("the "),
+          $createTypedMarkNode({ t: ["1"] }).append($createTextNode("beginning")),
+          $createVerseNode("2", `\\v 2${NBSP}`),
+          $createTextNode("God said"),
+        ),
+      );
+      $getRoot().append(
+        $createParaNode().append(
+          $createTextNode("the beginning"),
+          $createVerseNode("2", `\\v 2${NBSP}`),
+          $createTextNode("God said"),
+        ),
+      );
+    });
+
+    await act(async () => editor.update(() => undefined));
+
+    editor.getEditorState().read(() => {
+      const [annotated, bare] = $getRoot().getChildren();
+      expect(annotated.getTextContent()).toBe(`the beginning\\v 2${NBSP}God said`);
+      expect(bare.getTextContent()).toBe(`the beginning\\v 2${NBSP}God said`);
+    });
+  });
+
+  it.each<[string, () => LexicalNode, string]>([
+    ["VerseNode", () => $createVerseNode("2", `\\v 2${NBSP}`), `foo\\v 2${NBSP}`],
+    ["ImmutableVerseNode", () => $createImmutableVerseNode("2"), "foo "],
+  ])(
+    "should settle a %s inside an annotation wrapper instead of looping",
+    async (_label, $verse, expected) => {
+      // The verse's own predecessor is the wrapped text, so once a space is inserted in front of
+      // the verse it is that space the next pass sees.
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append(
+          $createParaNode().append(
+            $createTypedMarkNode({ t: ["1"] }).append($createTextNode("foo"), $verse()),
+          ),
+        );
+      });
+
+      await act(async () => editor.update(() => undefined));
+
+      editor.getEditorState().read(() => {
+        expect($getRoot().getFirstChildOrThrow().getTextContent()).toBe(expected);
+      });
+    },
+  );
+
   it("should not insert a space before a verse for an empty annotation wrapper", async () => {
     // An empty TypedMarkNode resolves to no content, so no structural space belongs after it —
     // inserting one would add exporter-visible USJ content because of a presentation-only node.
