@@ -175,7 +175,9 @@ export function $restCaretThroughMarks(): void {
  * element along, and typing over the second replaces the separator. Read through marks
  * ({@link $nextSiblingThroughMarks}, {@link $previousSiblingThroughMarks}), each end moves as it
  * does with no mark; a display-byte carrier cut into pieces is one node. A collapsed caret is left
- * alone ({@link $restoreCaretAtMarkEnd} restates that). Mutating (the selection only).
+ * alone ({@link $restoreCaretAtMarkEnd} restates that); a range's start Lexical read onto the
+ * start of the text after a mark is put back at the end of the mark's content first, as that
+ * caret is. Mutating (the selection only).
  *
  * @returns Whether an end moved.
  */
@@ -190,6 +192,19 @@ export function $resolveRangeEndsThroughMarks(selection: RangeSelection): boolea
     rawNeighbour: LexicalNode | null,
   ): node is ElementNode =>
     $isElementNode(node) && !$isTypedMarkNode(node) && node.isInline() && !node.is(rawNeighbour);
+  if (start.type === "text" && start.offset === 0) {
+    // Lexical reads a range's start at the end of a mark's content onto the start of the text
+    // after the mark; the start is put back at the content's end, as a caret there is
+    // ({@link $restoreCaretAtMarkEnd}).
+    const node = start.getNode();
+    if ($isTypedMarkNode(node.getPreviousSibling())) {
+      const { node: place, offset } = $caretPlaceThroughMarks(start);
+      if (!place.is(node)) {
+        start.set(place.getKey(), offset, "text");
+        moved = true;
+      }
+    }
+  }
   if (start.type === "text") {
     const node = start.getNode();
     if (start.offset === node.getTextContentSize() && $lastPiece(node).is(node)) {

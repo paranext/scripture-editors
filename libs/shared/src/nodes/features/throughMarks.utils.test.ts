@@ -408,6 +408,11 @@ describe("restating a range's ends Lexical read beside a mark", () => {
     expect(resolved(["P ", 0], ["e ", 0], false, "P ")).toBe("true P @0 P @2");
   });
 
+  it("puts a range's start Lexical read past a mark's end back at the mark's content end", () => {
+    // Lexical reads a start at the end of a mark's content onto the start of the text after it.
+    expect(resolved(["f God", 0], ["f God", 3])).toBe("true  o@2 f God@3");
+  });
+
   it("leaves ends alone that no mark keeps from Lexical's own reading", () => {
     expect(resolved(["In the ", 7], ["\\w", 1], true)).toBe("false In the @7 \\w@1");
     expect(resolved(["In th", 2], [" o", 1])).toBe("false In th@2  o@1");
