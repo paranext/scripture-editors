@@ -89,6 +89,15 @@ describe("a copy pasted where an annotation mark starts", () => {
       1,
       "copy three bytes either side of the caret, then paste them at the caret",
     ],
+    // A copy holding a whole span of the same marker, pasted in front of a mark inside the span:
+    // the whole span lands between the two halves.
+    [
+      "standard",
+      "closed char span",
+      `${NBSP}grace`,
+      5,
+      "copy the whole block, then paste it at the caret",
+    ],
   ] as const)(
     "%s view, %s: %j at %i, %s",
     async (view, row, text, at, name) => {

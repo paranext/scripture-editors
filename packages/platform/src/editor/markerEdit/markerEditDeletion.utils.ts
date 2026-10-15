@@ -741,8 +741,9 @@ function $needsMissingCloser(char: CharNode): boolean {
 
 /**
  * Whether `char`, a span with no opening glyph, is the second half of a span Lexical split to
- * insert nodes inside it: it holds a closing glyph, and an earlier span of the same marker in its
- * parent — read through annotation marks — holds an opener and lacks the closer it needs.
+ * insert nodes inside it: it holds a closing glyph, and the nearest earlier span of the same marker
+ * in its parent — read through annotation marks, past whole spans the insertion put between them —
+ * holds an opener and lacks the closer it needs.
  */
 function $isSecondHalfOfSplitSpan(char: CharNode): boolean {
   if (!$hasCloserGlyph(char)) return false;
@@ -753,9 +754,10 @@ function $isSecondHalfOfSplitSpan(char: CharNode): boolean {
   )
     if ($isCharNode(node) && node.getMarker() === char.getMarker()) {
       const opener = node.getFirstChild();
-      return (
-        $isMarkerNode(opener) && opener.getMarkerSyntax() === "opening" && $needsMissingCloser(node)
-      );
+      const hasOpener = $isMarkerNode(opener) && opener.getMarkerSyntax() === "opening";
+      // A whole span between the two halves is one the insertion put there.
+      if (hasOpener && $hasCloserGlyph(node)) continue;
+      return hasOpener && $needsMissingCloser(node);
     }
   return false;
 }
