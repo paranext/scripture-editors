@@ -156,6 +156,21 @@ describe("a copy pasted where an annotation mark starts", () => {
       5,
       "copy the whole block, then paste it at the caret",
     ],
+    // The same, in a span nested in another: the inner span's halves sit in the outer one's.
+    [
+      "standard",
+      "nested char span",
+      `${NBSP}two`,
+      1,
+      "copy three bytes either side of the caret, then paste them at the caret",
+    ],
+    [
+      "standard",
+      "nested char span",
+      `${NBSP}two`,
+      3,
+      "copy the whole block, then paste it at the caret",
+    ],
     // The same, in a span with an attribute run before its closer: the run goes with the closer.
     [
       "standard",

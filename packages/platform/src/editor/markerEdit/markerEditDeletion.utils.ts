@@ -11,6 +11,7 @@ import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
 import { $dfs } from "@lexical/utils";
 import {
   $createTextNode,
+  $findMatchingParent,
   $getSelection,
   $getState,
   $isElementNode,
@@ -51,7 +52,6 @@ import {
   $logicalNextSibling,
   $logicalText,
   $pieces,
-  $previousSiblingThroughMarks,
   $removeRangeSplitByMarks,
   $setLogicalText,
 } from "shared";
@@ -742,22 +742,25 @@ function $needsMissingCloser(char: CharNode): boolean {
 /**
  * Whether `char`, a span with no opening glyph, is the second half of a span Lexical split to
  * insert nodes inside it: it holds a closing glyph, and the nearest earlier span of the same marker
- * in its parent — read through annotation marks, past whole spans the insertion put between them —
- * holds an opener and lacks the closer it needs.
+ * in its block — in document order, past whole spans the insertion put between them — holds an
+ * opener and lacks the closer it needs. A nested span's halves sit in the two halves of the span
+ * around it, so the search is the block's, not the parent's.
  */
 function $isSecondHalfOfSplitSpan(char: CharNode): boolean {
   if (!$hasCloserGlyph(char)) return false;
-  for (
-    let node = $previousSiblingThroughMarks(char);
-    node;
-    node = $previousSiblingThroughMarks(node)
-  )
-    if ($isCharNode(node) && node.getMarker() === char.getMarker()) {
-      const opener = node.getFirstChild();
-      const hasOpener = $isMarkerNode(opener) && opener.getMarkerSyntax() === "opening";
-      // A whole span between the two halves is one the insertion put there.
-      if (hasOpener && $hasCloserGlyph(node)) continue;
-      return hasOpener && $needsMissingCloser(node);
-    }
+  const block = $findMatchingParent(char, (node) => $isElementNode(node) && !node.isInline());
+  if (!block) return false;
+  const spans = $dfs(block)
+    .map(({ node }) => node)
+    .filter($isCharNode);
+  const at = spans.findIndex((span) => span.is(char));
+  for (const span of spans.slice(0, Math.max(at, 0)).reverse()) {
+    if (span.getMarker() !== char.getMarker()) continue;
+    const opener = span.getFirstChild();
+    const hasOpener = $isMarkerNode(opener) && opener.getMarkerSyntax() === "opening";
+    // A whole span between the two halves is one the insertion put there.
+    if (hasOpener && $hasCloserGlyph(span)) continue;
+    return hasOpener && $needsMissingCloser(span);
+  }
   return false;
 }
