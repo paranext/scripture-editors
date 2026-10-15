@@ -30,6 +30,7 @@ import {
   MarkerLookup,
   MarkerType,
   NoteNode,
+  $lastPiece,
   $pieces,
 } from "shared";
 
@@ -308,7 +309,9 @@ function $startFpAtCaret(): boolean {
         ? [offset === 0 ? textAnchor : textAnchor.splitText(offset)[1]]
         : [];
     afterCaret.push(...laterPieces);
-    noteChild.insertAfter(fp);
+    // A glyph the caret is on is one glyph however an annotation cuts it: the break goes after it
+    // whole. A text's pieces after the caret move into the break, so it goes after the caret's.
+    (textAnchor ? noteChild : $lastPiece(noteChild)).insertAfter(fp);
     const [firstMoved] = afterCaret;
     if (firstMoved) {
       $withCharContentNbspPrefix(firstMoved);
