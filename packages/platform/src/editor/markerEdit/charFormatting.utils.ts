@@ -33,6 +33,7 @@ import {
   $isSomeParaNode,
   $isTypedMarkNode,
   $liftOutOfCharStack,
+  CharStackLiftOptions,
   $logicalOffset,
   $logicalText,
   $pieceAtLogicalOffset,
@@ -314,14 +315,30 @@ export function $breakAndLiftCharStack(point: PointType): CharStackBreak {
     else if (container) container.append(breakPoint);
     else return { parent: undefined, moving: [] };
   }
-  for (let parent = breakPoint.getParent(); ; parent = breakPoint.getParent()) {
-    if ($isCharNode(parent)) $liftOutOfCharStack(breakPoint, { renderGlyphs: true });
-    else if (!$isTypedMarkNode(parent) || !$liftOutOfTypedMark(breakPoint, parent)) break;
-  }
+  $liftOutOfCharStackThroughMarks(breakPoint, { renderGlyphs: true });
   const moving = breakPoint.getNextSiblings();
   const parent = breakPoint.getParent() ?? undefined;
   breakPoint.remove();
   return { parent, moving };
+}
+
+/**
+ * Lifts `node` out of every char span AND every annotation mark wrapper enclosing it, in any
+ * interleaving: each char level closes before it and reopens after it (`$liftOutOfCharStack`),
+ * and each mark splits around it ({@link $liftOutOfTypedMark}), so a mark between the stack and
+ * its container stops the lift no more than it would stop it with no mark there. `node` comes to
+ * rest in the nearest container that is neither.
+ *
+ * Mutating: call inside `editor.update()`, with a range selection (a mark split needs one).
+ */
+export function $liftOutOfCharStackThroughMarks(
+  node: LexicalNode,
+  options: CharStackLiftOptions,
+): void {
+  for (let parent = node.getParent(); ; parent = node.getParent()) {
+    if ($isCharNode(parent)) $liftOutOfCharStack(node, options);
+    else if (!$isTypedMarkNode(parent) || !$liftOutOfTypedMark(node, parent)) break;
+  }
 }
 
 /**

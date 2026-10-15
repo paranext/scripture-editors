@@ -392,6 +392,8 @@ describe("Enter at the end of content whose last byte a mark holds, right before
     ["standard", "note", "a"],
     // An expanded note's opening glyph.
     ["standard+expandedNotes", "note", "a"],
+    // A note content span's closing glyph.
+    ["standard+expandedNotes", "note", `${NBSP}note text`],
     // A verse.
     ["unformatted", "text touching a following verse", "a"],
     ["unformatted", "closed char span", `${NBSP}grace`],
