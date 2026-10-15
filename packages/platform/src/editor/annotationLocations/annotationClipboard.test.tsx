@@ -224,6 +224,11 @@ describe("a range with an end at a mark's edge beside a span", () => {
     // with no mark the marker's remaining byte is pending under the caret, and becomes text.
     ["standard", "char span with an attribute", " b", 2, "Shift+Right, then Delete"],
     ["standard", "char span with an attribute", " b", 2, "Shift+Right, then Backspace"],
+    // A range set by code is left as set, as Lexical leaves it: only one read from the screen is
+    // resolved. Resolved early, the range over a collapsed note is written to the screen otherwise
+    // and read back as part of the note.
+    ["standard", "note", "a", 1, 'Shift+Right, then type "x"'],
+    ["standard", "note", " b", 0, 'Shift+Left, then type "x"'],
     // The range's end at the start of a mark, after a span: with no mark it ends inside the span.
     ["standard", "closed char span", " of God", 0, "cut the byte before the caret"],
   ] as const)(
