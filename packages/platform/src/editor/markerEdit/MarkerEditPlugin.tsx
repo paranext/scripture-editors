@@ -62,6 +62,7 @@ import {
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   PASTE_COMMAND,
+  SKIP_DOM_SELECTION_TAG,
   LexicalCommand,
   LexicalEditor,
   NodeKey,
@@ -106,8 +107,10 @@ import {
   $shouldBlockSelectionReplacement,
   $shouldBlockStructuralEdit,
   EditIntent,
+  editorHoldsDomFocus,
   hasStandardViewWhitespace,
   keyDownToIntent,
+  releaseTagsAfterNextCommit,
   StructureProtectionMode,
   ViewOptions,
 } from "shared-react";
@@ -720,13 +723,27 @@ export function MarkerEditPlugin({
     const settlePendingNow = (
       exceptKey: NodeKey | undefined,
       settleReason: SettleReason = "departure",
+      skipDomSelectionWhenBlurred = false,
     ) => {
+      // A settle that runs while the editor does NOT hold DOM focus must not re-assert the DOM
+      // selection: Lexical would pull the caret, and focus with it, back into an editor the user
+      // has already left. `commitPendingMarkerEdits` guards its own settle the same way.
+      const skipDomSelection = skipDomSelectionWhenBlurred && !editorHoldsDomFocus(editor);
+      const releaseTag = skipDomSelection
+        ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
+        : undefined;
       editor.update(() => {
+        if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
         const mutated = $settleWithoutOwnUndoEntry(() =>
           $resolvePendingMarkers(context, exceptKey, settleReason),
         );
         settleCascadeDepth = mutated ? settleCascadeDepth + 1 : 0;
       });
+      // Disarmed straight away: this update is always called from a fresh macrotask/microtask,
+      // never from inside another commit, so it has already committed — or committed nothing,
+      // having found no pending marker to settle, in which case the listener would otherwise stay
+      // armed and strip the tag off an unrelated commit later.
+      releaseTag?.();
     };
     /**
      * Whether the editor has actually lost focus since the current suspension began. The
@@ -791,7 +808,10 @@ export function MarkerEditPlugin({
           // everything pending EXCEPT the node the caret is parked in, which a palette's own
           // apply still needs. `lastAnchorKey` is read here rather than at dispatch so the
           // freshest anchor wins, exactly as the departure microtask does.
-          if (!appPlacedCaret && !settleCascadeExceeded()) settlePendingNow(lastAnchorKey);
+          // Opts into the blurred-settle guard: a resume typically arrives as the host's surface
+          // closes, which is exactly when the editor may not have focus back yet.
+          if (!appPlacedCaret && !settleCascadeExceeded())
+            settlePendingNow(lastAnchorKey, "departure", true);
           // Always re-arm, including when the settle above was skipped: the caret's own node
           // is still pending and the idle clock is what eventually takes it.
           armIdleSettle();
@@ -1294,9 +1314,15 @@ export function MarkerEditPlugin({
               // Still focused after the whole window: nothing took focus back and the host never
               // resumed. Re-checked rather than assumed, because the window is long enough for
               // focus to have moved without a BLUR this handler saw.
+              // `hasFocus()` as well as `activeElement`: a document keeps its `activeElement`
+              // after focus leaves the whole iframe, so containment alone still reports "focused"
+              // for an editor that no longer is — and the lift would fire on a suspension the host
+              // is still legitimately holding from another frame.
               const root = editor.getRootElement();
-              const active = root?.ownerDocument.activeElement;
-              if (!root || !active || !(root === active || root.contains(active))) return;
+              const doc = root?.ownerDocument;
+              const active = doc?.activeElement;
+              if (!root || !doc?.hasFocus()) return;
+              if (!active || !(root === active || root.contains(active))) return;
               context.logger?.warn(
                 "[MarkerEdit] marker settling has been suspended while the editor held focus for " +
                   `${SUSPENSION_LIFT_DELAY_MS}ms, so the suspension was lifted and held edits ` +

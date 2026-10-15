@@ -50,6 +50,7 @@ import {
   CLICK_COMMAND,
   KEY_DOWN_COMMAND,
   LexicalEditor,
+  SKIP_DOM_SELECTION_TAG,
 } from "lexical";
 
 /** A heading para with its own marker glyph — same shape the Tier-1 blur tests use. */
@@ -511,6 +512,90 @@ describe("setMarkerSettleSuspended", () => {
 
     editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1"));
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("does NOT lift while the whole iframe has lost focus, even with the root still active", async () => {
+    // `activeElement` survives focus leaving the document: a root that was focused stays the
+    // active element after the user clicks into another frame, so containment alone still reports
+    // "focused". Lifting there would release a suspension the host is legitimately still holding
+    // from the frame that now has focus.
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    let para!: ParaNode;
+    let marker!: MarkerNode;
+    const { editor } = await testEnvironmentWithDisplaySyncs(
+      () => ({ para, marker } = $appendHeadingPara()),
+      logger,
+    );
+    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+    // The root IS the active element — only the document-level focus is gone.
+    focusEditorRoot(editor);
+    const rootDocument = editor.getRootElement()?.ownerDocument;
+    if (!rootDocument) throw new Error("editor has no root element");
+    const hasFocusSpy = vi.spyOn(rootDocument, "hasFocus").mockReturnValue(false);
+
+    try {
+      await setSuspended(editor, true);
+      await act(async () => {
+        editor.dispatchCommand(BLUR_COMMAND, undefined as never);
+      });
+      await act(async () => {
+        editor.dispatchCommand(FOCUS_COMMAND, undefined as never);
+      });
+      await advance(SUSPENSION_LIFT_DELAY_MS + 50);
+      await flush();
+
+      editor.getEditorState().read(() => expect(para.getMarker()).toBe("s1"));
+      expect(logger.warn).not.toHaveBeenCalled();
+    } finally {
+      hasFocusSpy.mockRestore();
+    }
+  });
+
+  it("tags the RESUME settle to skip the DOM selection when the editor is blurred", async () => {
+    // The resume usually arrives as the host's surface closes, with focus not yet back in the
+    // editor. Without the tag Lexical re-asserts the DOM selection for this commit and drags the
+    // caret — and focus with it — back into an editor the user has left.
+    let marker!: MarkerNode;
+    const { editor } = await testEnvironment(() => ({ marker } = $appendHeadingPara()));
+    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+
+    await setSuspended(editor, true);
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, undefined as never);
+    });
+
+    const settleTags: Set<string>[] = [];
+    // Unregisters itself from inside the callback: a teardown called afterwards, or left to fire
+    // during the environment's own unmount commit, throws inside Lexical.
+    const stopWatching = editor.registerUpdateListener(({ tags }) => {
+      settleTags.push(new Set(tags));
+      stopWatching();
+    });
+    await setSuspended(editor, false);
+    await flush();
+
+    expect(settleTags.some((tags) => tags.has(SKIP_DOM_SELECTION_TAG))).toBe(true);
+  });
+
+  it("does NOT tag the resume settle when the editor still holds DOM focus", async () => {
+    // Focused, the DOM selection is the user's own and Lexical should keep it in step as usual.
+    let marker!: MarkerNode;
+    const { editor } = await testEnvironment(() => ({ marker } = $appendHeadingPara()));
+    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+    focusEditorRoot(editor);
+
+    await setSuspended(editor, true);
+    const settleTags: Set<string>[] = [];
+    // Unregisters itself from inside the callback: a teardown called afterwards, or left to fire
+    // during the environment's own unmount commit, throws inside Lexical.
+    const stopWatching = editor.registerUpdateListener(({ tags }) => {
+      settleTags.push(new Set(tags));
+      stopWatching();
+    });
+    await setSuspended(editor, false);
+    await flush();
+
+    expect(settleTags.some((tags) => tags.has(SKIP_DOM_SELECTION_TAG))).toBe(false);
   });
 
   it("does not lift the suspension on a focus that arrives before the surface took it", async () => {
