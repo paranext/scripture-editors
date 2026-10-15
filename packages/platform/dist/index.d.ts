@@ -566,18 +566,18 @@ export declare interface EditorRef {
    * the annotation themselves. Setting an annotation never changes the document, a position, or
    * what `getSelection` reports.
    *
-   * Painting is exact: an annotation paints the bytes it holds, plus the whitespace the editor
-   * shows between two of them in one paragraph (a marker's separator, a verse number's trailing
-   * space) — never whitespace at its edges, and never the rest of a display byte it holds only part
-   * of. A display byte painted over all of its text gets the same class names a `<mark>` gets
-   * (`<typedMark>-<type>`, `<typedMarkOverlap>-<type>` where two ids of a type overlap,
-   * `annotationId-<id>`) plus `display-annotation`. A part of one is painted with a CSS Custom
-   * Highlight instead, which the editor styles from the same class rules: it copies the
-   * properties a highlight can paint (`background-color`, `color`, a `text-decoration` that draws
-   * a line, `text-shadow`) and otherwise draws a bottom border as an underline. Other properties
-   * and `:hover` rules apply only to elements, and the rules must not depend on ancestors inside
-   * the editable content. Where the browser has no highlight API, a display byte is painted whole.
-   * Find painted annotations with {@link EditorRef.getAnnotationRanges}, not by class.
+   * Painting is exact, and always by element: an annotation paints the bytes it holds, plus the
+   * whitespace the editor shows between two of them in one paragraph (a marker's separator, a
+   * verse number's trailing space) — never whitespace at its edges, and never the rest of a
+   * display byte it holds only part of. Every painted element gets the same class names a
+   * `<mark>` gets (`<typedMark>-<type>`, `<typedMarkOverlap>-<type>` where two ids of a type
+   * overlap, `annotationId-<id>`); a display byte gets `display-annotation` too. An editable
+   * display byte held in part is cut at the hold's edges into pieces of its own kind, so the held
+   * part is its own element and is painted whole; a read-only glyph held in part paints a sub-span
+   * of its text. So every host class rule — background, border, padding, font, `:hover`,
+   * `::selection` — applies to everything an annotation paints. Find painted annotations with
+   * {@link EditorRef.getAnnotationRanges}, which lists every element it paints, rather than by
+   * class alone.
    *
    * A read-only glyph, verse number or chapter number (the views without editable markers) holds
    * and paints exactly the part of what it shows that the range names. A range that names only
@@ -611,18 +611,26 @@ export declare interface EditorRef {
    *
    * `onRemove`: each `<mark>` reports its own removal when it goes away — one call per `<mark>`,
    * whatever else still holds the annotation — and only once: a `<mark>` an undo brings back stays
-   * quiet when it goes again. Beyond that, the annotation's last holder — a `<mark>` or a display
-   * byte — leaving the document without any `<mark>` having reported the annotation's removal since
-   * it was set fires ONE more report, through its display bytes: `"removed"` when
-   * `removeAnnotation` or setting the same id again takes it away, `"destroyed"` when it drops out
-   * of the document (an edit, a collaborator's edit, or a settle that discards those bytes). That
-   * report's text is every `<mark>`'s and carrier's text joined in document order when they all
-   * leave in the same edit; holders lost across separate edits leave only the text of the
-   * piece(s) still present at the last one. A collapsed note caller's text is the note's caller.
-   * Undo, redo, and a `setUsj` reload report nothing; setting the id again starts a fresh reporting
-   * cycle for it. An `onRemove` that throws — in a `<mark>`'s own report or in the one more
-   * report — does not stop the edit or call that removed the annotation, or the other reports: the
-   * error is handed to the editor's error handler, which rethrows it, in a later microtask.
+   * quiet when it goes again. A `<mark>` whose bytes an edit re-spells as display bytes (a settle
+   * turning typed text into a marker's attribute) hands the annotation on to them and reports
+   * nothing. Beyond that, the annotation's last holder — a `<mark>` or a display byte — leaving
+   * the document without any `<mark>` having reported the annotation's removal since it was set
+   * fires ONE more report, through its display bytes: `"removed"` when `removeAnnotation` or
+   * setting the same id again takes it away, `"destroyed"` when it drops out of the document (an
+   * edit, a collaborator's edit, or a settle that discards those bytes). That report's text is
+   * every `<mark>`'s and carrier's text joined in document order when they all leave in the same
+   * edit; holders lost across separate edits leave only the text of the piece(s) still present at
+   * the last one. A collapsed note caller's text is the note's caller. Undo, redo, and a `setUsj`
+   * reload report nothing; setting the id again starts a fresh reporting cycle for it. An
+   * `onRemove` that throws — in a `<mark>`'s own report or in the one more report — does not stop
+   * the edit or call that removed the annotation, or the other reports: the error is handed to the
+   * editor's error handler, which rethrows it, in a later microtask.
+   *
+   * Setting or removing an annotation through this method or {@link EditorRef.removeAnnotation}
+   * adds no undo step: an undo that reverts the edit it was set on reverts it too, silently — a
+   * host re-sets annotations from its own state on the next change, as it does after a reload. A
+   * comment the user adds or deletes in `Marginal`'s comment panel is not set through this method:
+   * it is the user's own edit, an undo step of its own.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.
@@ -676,8 +684,9 @@ export declare interface EditorRef {
    * DOM ranges over everything an annotation paints: each `<mark>` that holds its text, each
    * display byte it holds (only the part it holds), and the whitespace painted between them — in
    * document order, empty when nothing paints it. Measure, scroll to or hit-test an annotation with
-   * these; an element lookup by its `annotationId-<id>` class misses the display bytes painted
-   * with a highlight.
+   * these rather than by its `annotationId-<id>` class alone: a read-only glyph held in part paints
+   * a sub-span of its own, and the whitespace painted between two held bytes is an element of its
+   * own.
    *
    * @remarks **Live**: the ranges are over the editor's current DOM, including marker text the
    *   user is still typing; take them again after the next edit.
