@@ -12,7 +12,9 @@ import {
   $spellings,
   observables,
 } from "./annotationTransparency.oracle.test-helpers";
-import { mountInView, ORACLE_TYPE } from "./annotationLocations.test-helpers";
+import { $byteLoc, mountInView, ORACLE_TYPE } from "./annotationLocations.test-helpers";
+import { copyEvent, pasteEvent } from "../markerEdit/markerEdit.test-helpers";
+import { $textContaining } from "../positions/positions.test-helpers";
 import {
   $editableTexts,
   COPY_PASTE_KEYSTROKES,
@@ -25,9 +27,39 @@ import {
   TRANSPARENCY_RANGE_KEYSTROKES,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
 import { drainNativeSelectionChange } from "../editor-test.utils";
+import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $logicalText, NBSP } from "shared";
-import { describe, expect, it } from "vitest";
+import {
+  $createRangeSelection,
+  $getRoot,
+  $isElementNode,
+  $setSelection,
+  COPY_COMMAND,
+  NodeKey,
+  PASTE_COMMAND,
+  TextNode,
+} from "lexical";
+import {
+  $isCharNode,
+  $isMarkerNode,
+  $isTypedMarkNode,
+  $lastPiece,
+  $logicalText,
+  $pieces,
+  $wrapSelectionInTypedMarkNode,
+  COMMENT_MARK_TYPE,
+  MarkerNode,
+  NBSP,
+} from "shared";
+import { $getRangeFromUsjSelection } from "shared-react";
+import { describe, expect, it, vi } from "vitest";
+
+/** The closing glyph of the char span whose content `text` is. */
+function $closerOf(text: TextNode): MarkerNode {
+  const closer = text.getParentOrThrow().getLastChild();
+  if (!$isMarkerNode(closer)) throw new Error("no closing glyph");
+  return $pieces(closer)[0];
+}
 
 /**
  * Run `keystroke` at byte `at` of the editable text spelled `text` in the `row` document of
@@ -186,6 +218,127 @@ describe("a line break pasted between the pieces of a glyph", () => {
           await gestureCase(view, row, text, at, keystroke, spelling),
           `spelling ${spelling}`,
         ).toEqual(plain);
+    },
+    120_000,
+  );
+});
+
+describe("a pasted copy of annotated bytes", () => {
+  /** The comment milestones of `id` in `usj`, `zmsc-s` and `zmsc-e`, in document order. */
+  function commentMilestones(usj: Usj | undefined, id: string): string[] {
+    const out: string[] = [];
+    const visit = (content: MarkerContent[] | undefined): void => {
+      for (const item of content ?? []) {
+        if (typeof item === "string") continue;
+        const ids: { sid?: unknown; eid?: unknown } = item;
+        if (item.marker?.startsWith("zmsc-") && (ids.sid === id || ids.eid === id))
+          out.push(item.marker);
+        visit(item.content);
+      }
+    };
+    visit(usj?.content);
+    return out;
+  }
+
+  it.each([
+    ["the annotated bytes", true],
+    ["the whole paragraph", false],
+  ] as const)(
+    "is not the annotated place (copying %s)",
+    async (_, range) => {
+      const view = "standard";
+      const usj = oracleRows(view).find(([name]) => name.startsWith("closed char span ("))?.[1];
+      if (!usj) throw new Error("no row");
+      const viewOptions = pendingOracleView(view);
+      const mounted = await mountInView(usj, viewOptions);
+      // `grace` and the closer after it: a mark over the content, a hold on the glyph's bytes.
+      const annotated = mounted.lexical.getEditorState().read(() => {
+        const text = $editableTexts().find((node) => $logicalText(node) === `${NBSP}grace`);
+        if (!text) throw new Error("no span content");
+        const closer = $closerOf(text);
+        return {
+          start: $byteLoc(text, 1, false, viewOptions),
+          end: $byteLoc(closer, closer.getTextContentSize() - 1, true, viewOptions),
+        };
+      });
+      const onRemove = vi.fn();
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(annotated, ORACLE_TYPE, "a", undefined, onRemove);
+        mounted.lexical.update(() => {
+          const selection = $getRangeFromUsjSelection(annotated, viewOptions);
+          if (!selection) throw new Error("the range did not resolve");
+          $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+        });
+        await Promise.resolve();
+        await drainNativeSelectionChange();
+      });
+      const held = () =>
+        (mounted.ref.current?.getAnnotationRanges(ORACLE_TYPE, "a") ?? [])
+          .map((each) => each.toString())
+          .join("|");
+      const heldBefore = held();
+      expect(heldBefore).toBe(`grace|\\w*`);
+      expect(commentMilestones(mounted.ref.current?.getUsj(), "c1")).toEqual(["zmsc-s", "zmsc-e"]);
+
+      // Copy the bytes, or the paragraph, and paste the copy into the next paragraph.
+      const { event, getData } = copyEvent({ native: true });
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const para = $getRoot().getChildren()[2];
+          if (!$isElementNode(para)) throw new Error("no paragraph");
+          if (!range) {
+            para.select(0, para.getChildrenSize());
+            return;
+          }
+          // From the mark's first text, the `g`, through the closer's last piece.
+          const char = para.getChildren().find($isCharNode);
+          const first = char?.getAllTextNodes().find((node) => $isTypedMarkNode(node.getParent()));
+          const last = char?.getLastChild();
+          if (!first || !$isMarkerNode(last)) throw new Error("no annotated span");
+          const closer = $lastPiece(last);
+          const selection = $createRangeSelection();
+          selection.anchor.set(first.getKey(), 0, "text");
+          selection.focus.set(closer.getKey(), closer.getTextContentSize(), "text");
+          $setSelection(selection);
+        });
+        await drainNativeSelectionChange();
+      });
+      await act(async () => {
+        mounted.lexical.dispatchCommand(COPY_COMMAND, event);
+        await drainNativeSelectionChange();
+      });
+      const payload = Object.fromEntries(
+        ["application/x-lexical-editor", "text/html", "text/plain"]
+          .map((flavor) => [flavor, getData(flavor)])
+          .filter(([, data]) => data !== ""),
+      );
+      expect(Object.keys(payload)).toContain("application/x-lexical-editor");
+      let target!: NodeKey;
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const depart = $textContaining("depart here");
+          target = depart.getParentOrThrow().getKey();
+          depart.select(3, 3);
+        });
+        await drainNativeSelectionChange();
+      });
+      await act(async () => {
+        mounted.lexical.dispatchCommand(PASTE_COMMAND, pasteEvent(payload).event);
+        await Promise.resolve();
+        await drainNativeSelectionChange();
+      });
+
+      expect(held(), "the annotation holds only its own bytes").toBe(heldBefore);
+      expect(onRemove).not.toHaveBeenCalled();
+      const pasted = mounted.lexical.getElementByKey(target);
+      expect(pasted?.textContent, "the copy was pasted").toContain("grace");
+      expect(
+        pasted?.querySelectorAll(".annotationId-a, .annotationId-c1, [data-annotation-keys]")
+          .length,
+        "nothing pasted is painted",
+      ).toBe(0);
+      expect(commentMilestones(mounted.ref.current?.getUsj(), "c1")).toEqual(["zmsc-s", "zmsc-e"]);
+      mounted.unmount();
     },
     120_000,
   );
