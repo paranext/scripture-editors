@@ -1,5 +1,5 @@
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
-import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { mountExpandedNoteEditor, mountStandardViewEditor } from "../settledGetUsj.test-helpers";
 import {
   copyEvent,
   execCommandSpy,
@@ -37,6 +37,7 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  $getState,
   $isRangeSelection,
   $isTextNode,
   $setSelection,
@@ -176,6 +177,167 @@ describe("typing invariant", () => {
     editor
       .getEditorState()
       .read(() => expect(text.getTextContent()).toBe(`${NBSP}a${NBSP}${NBSP}b`));
+  });
+});
+
+describe("a lone display NBSP", () => {
+  const twoWords: Usj["content"] = [
+    { type: "char", marker: "w", content: ["In"] },
+    "  ",
+    { type: "char", marker: "w", content: ["the"] },
+  ];
+
+  function paraUsj(content: Usj["content"]): Usj {
+    return {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: [] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "para", marker: "p", content },
+      ],
+    };
+  }
+
+  /** The text between the paragraph's two char spans. */
+  function $betweenSpans(): TextNode {
+    const node = $getRoot()
+      .getAllTextNodes()
+      .find((text) => $isCharNode(text.getPreviousSibling()) && $isCharNode(text.getNextSibling()));
+    if (!node) throw new Error("no text between the spans");
+    return node;
+  }
+
+  it.each([
+    ["at the end of the run", 2],
+    ["after the first space", 1],
+  ])(
+    "saves the space left between two char spans by a backspace %s",
+    async (_label, caretOffset) => {
+      const { lexical, ref } = await mountStandardViewEditor(paraUsj(twoWords));
+      lexical
+        .getEditorState()
+        .read(() => expect($betweenSpans().getTextContent()).toBe(`${NBSP}${NBSP}`));
+
+      // What Backspace does to the text: remove the character in front of the caret.
+      await act(async () =>
+        lexical.update(() => {
+          $betweenSpans().spliceText(caretOffset - 1, 1, "", true);
+        }),
+      );
+
+      expect(ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: [twoWords[0], " ", twoWords[2]],
+      });
+    },
+  );
+
+  /** Every text node holding exactly one NBSP, with its parent's type. */
+  function loneNbsps(lexical: LexicalEditor): string[] {
+    return lexical.getEditorState().read(() =>
+      $getRoot()
+        .getAllTextNodes()
+        .filter((text) => text.getTextContent() === NBSP)
+        .map((text) => text.getParentOrThrow().getType()),
+    );
+  }
+
+  const footnote: Usj["content"] = [
+    "before",
+    {
+      type: "note",
+      marker: "f",
+      caller: "+",
+      content: [
+        { type: "char", marker: "fr", content: ["1.1 "] },
+        { type: "char", marker: "ft", content: ["note body"] },
+      ],
+    },
+    " after",
+  ];
+
+  it.each<[string, Usj["content"], typeof mountStandardViewEditor]>([
+    [
+      "an empty char span",
+      ["before ", { type: "char", marker: "nd" }, " after"],
+      mountStandardViewEditor,
+    ],
+    [
+      "a char span opening with a nested span",
+      [
+        "say ",
+        {
+          type: "char",
+          marker: "nd",
+          content: [{ type: "char", marker: "wj", content: ["God"] }],
+        },
+        " now",
+      ],
+      mountStandardViewEditor,
+    ],
+    ["a collapsed footnote", footnote, mountStandardViewEditor],
+    ["an expanded footnote", footnote, mountExpandedNoteEditor],
+  ])("leaves the structural spacers of %s alone", async (_label, content, mount) => {
+    const usj = paraUsj(content);
+    const { lexical, ref } = await mount(usj);
+    const loaded = ref.current?.getUsj();
+    const spacers = loneNbsps(lexical);
+    expect(spacers.length).toBeGreaterThan(0);
+
+    await act(async () =>
+      lexical.update(() =>
+        $getRoot()
+          .getAllTextNodes()
+          .forEach((text) => text.markDirty()),
+      ),
+    );
+
+    expect(loneNbsps(lexical)).toEqual(spacers);
+    expect(ref.current?.getUsj()).toEqual(loaded);
+    expect(ref.current?.getUsj()?.content[2]).toEqual(usj.content[2]);
+  });
+
+  // Each separator sits in front of an element, so the untagged NBSP has no text to merge into.
+  it.each<[string, Usj["content"], (separator: TextNode) => boolean]>([
+    [
+      "a paragraph's",
+      [{ type: "char", marker: "w", content: ["In"] }, " the"],
+      (separator) => $isParaNode(separator.getParent()),
+    ],
+    [
+      "a footnote's",
+      footnote,
+      (separator) => separator.getParent()?.getType() === NoteNode.getType(),
+    ],
+  ])("leaves %s separator alone when it has lost its tag", async (_label, content, isSlot) => {
+    const usj = paraUsj(content);
+    const { lexical, ref } = await mountStandardViewEditor(usj);
+
+    await act(async () =>
+      lexical.update(() => {
+        const separator = $getRoot()
+          .getAllTextNodes()
+          .find(
+            (text) =>
+              text.getTextContent() === NBSP &&
+              $getState(text, textTypeState) !== undefined &&
+              isSlot(text),
+          );
+        if (!separator) throw new Error("no tagged separator in that slot");
+        separator.replace($createTextNode(NBSP));
+      }),
+    );
+
+    expect(ref.current?.getUsj()?.content[2]).toEqual(usj.content[2]);
+    lexical.getEditorState().read(() =>
+      expect(
+        $getRoot()
+          .getAllTextNodes()
+          .some((text) => text.getTextContent() === " "),
+      ).toBe(false),
+    );
   });
 });
 

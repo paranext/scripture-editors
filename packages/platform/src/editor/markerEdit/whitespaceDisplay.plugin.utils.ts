@@ -35,7 +35,9 @@ import {
   $isBookNode,
   $isChapterNode,
   $isCharNode,
+  $isMarkerNode,
   $isNoteNode,
+  $isTypedMarkNode,
   $isUnknownNode,
   GENERATOR_NOTE_CALLER,
   MARKER_TRAILING_SPACE_TEXT_TYPE,
@@ -58,10 +60,12 @@ import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
 import { $isNoteCallerSlot } from "./noteCallerSlot.utils";
 import { paratext9HtmlToUsfm } from "./paratext9Clipboard.utils";
 
-/** Spaces in runs display as NBSP so they are visible while typing. */
+/** Spaces in runs display as NBSP so they are visible while typing, and a lone display NBSP left
+ * standing on its own goes back to a plain space ({@link $isLeftoverDisplaySpace}). */
 export function $displayWhitespaceTransform(node: TextNode): void {
   const text = node.getTextContent();
-  if (!text.includes(" ")) return;
+  const isLoneNbsp = text === NBSP;
+  if (!isLoneNbsp && !text.includes(" ")) return;
   const textType = $getState(node, textTypeState);
   if (textType === "attribute" || textType === MARKER_TRAILING_SPACE_TEXT_TYPE) return;
   // An expanded note's caller slot is a structural space, the caller, and a structural NBSP -
@@ -76,6 +80,10 @@ export function $displayWhitespaceTransform(node: TextNode): void {
     // property), so neither has a content run to map.
     if ($isChapterNode(parent) || $isUnknownNode(parent)) return;
   }
+  if (isLoneNbsp) {
+    if ($isLeftoverDisplaySpace(node)) node.setTextContent(" ");
+    return;
+  }
   // A char span's text children carry a STRUCTURAL leading NBSP (the glyph separator the
   // adaptor/materializer glues onto content). It is not a display space-run member, so it must
   // not act as left context for the mapping: a genuine content-leading single space stays plain
@@ -89,6 +97,45 @@ export function $displayWhitespaceTransform(node: TextNode): void {
       .replace(/ (?=[ \u00A0])/g, NBSP) // space followed by space/NBSP
       .replace(/(?<=\u00A0) /g, NBSP); // space preceded by NBSP
   if (mapped !== text) node.setTextContent(mapped); // length-preserving: caret stays valid
+}
+
+/**
+ * Whether `node`, an untagged text that is exactly one NBSP, is what is left of a displayed space
+ * run — two spaces between two char spans display as two NBSPs, and a backspace leaves one — rather
+ * than one of the engine's structural lone-NBSP nodes. Content NBSP displays as `~`, so in content
+ * a lone NBSP is one or the other, and the editor→USJ conversion drops every lone NBSP as
+ * structural: left as it is, the space would be lost from the file while the screen still shows
+ * it. A plain space is the shape the same single space loads as.
+ *
+ * Every structural lone NBSP sits where this says no:
+ *
+ * - under a `CharNode`: an empty span's placeholder (`EMPTY_CHAR_PLACEHOLDER_TEXT`), the spacer in
+ *   front of a span's leading nested element, a separator a split stranded;
+ * - directly under a `NoteNode`: a collapsed note's display separators, and the bare separator
+ *   `NoteNodePlugin` turns into its tagged one after a caller or a top-level span;
+ * - right after a marker glyph: a paragraph's or note's separator that lost its tag;
+ * - inside or beside an annotation mark, where a lone NBSP may be content the wrap split off
+ *   (`$isNbspContentAtMark`) or a run piece the mark separated from the rest of its run;
+ * - inside an attribute display run.
+ *
+ * Nor is a token-mode or tagged node one; a note's caller slot, and chapter and unknown-block text,
+ * are ruled out before this is asked.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ */
+function $isLeftoverDisplaySpace(node: TextNode): boolean {
+  if (node.getMode() !== "normal" || $getState(node, textTypeState) !== undefined) return false;
+  const parent = node.getParent();
+  if (
+    $isCharNode(parent) ||
+    $isNoteNode(parent) ||
+    $isTypedMarkNode(parent) ||
+    $isAttributeRunNode(parent)
+  )
+    return false;
+  const previous = node.getPreviousSibling();
+  const next = node.getNextSibling();
+  return !$isMarkerNode(previous) && !$isTypedMarkNode(previous) && !$isTypedMarkNode(next);
 }
 
 /**
