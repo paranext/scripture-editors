@@ -103,9 +103,12 @@ import {
   $isNoteNode,
   $isParaNode,
   $isVerseNode,
+  $isDisplayAnnotationCarrier,
+  $isPlainTextNode,
   $logicalText,
   $pieces,
   $setLogicalText,
+  $textRunThroughMarks,
   createMarkerLookup,
   defaultStyleInfo,
   canonicalAttributeText,
@@ -517,13 +520,16 @@ export const TRANSPARENCY_RANGE_KEYSTROKES: RangeKeystroke[] = (
 ]);
 
 /**
- * One end of a range a clipboard gesture selects: the caret itself (`"site"`), or the place `n`
+ * One end of a range a clipboard gesture selects: the caret itself (`"site"`); the place `n`
  * document text positions away from it (negative: before it), at the caret there nearest the
  * site — the start of the later of two texts meeting there for an end before the site, the end of
- * the earlier one for an end after it. A place with no caret (inside a `token` glyph, in a
- * collapsed note) moves on away from the site, to the edited block's edge at most.
+ * the earlier one for an end after it — where a place with no caret (inside a `token` glyph, in a
+ * collapsed note) moves on away from the site, to the edited block's edge at most; the start of
+ * the text the caret is in (`"textStart"`); or the end of the text after that one
+ * (`"nextTextEnd"`). A text is read whole: a carrier with all its pieces, content with every part
+ * a mark cut it into ({@link $wholeText}).
  */
-type RangeEnd = "site" | number;
+type RangeEnd = "site" | number | "textStart" | "nextTextEnd";
 
 /** A range a clipboard gesture selects: from `anchor` to `focus`, or (`"block"`) the whole content
  * of the edited block. */
@@ -571,6 +577,10 @@ interface PlainPasteKeystroke {
  * crosses the glyph's edges with, into the content beside it. */
 const AROUND: GestureRange = { anchor: -3, focus: 3 };
 
+/** The text the caret is in and the text after it, whole: a glyph or a verse with the content
+ * after it, content with the glyph after it. */
+const TWO_TEXTS: GestureRange = { anchor: "textStart", focus: "nextTextEnd" };
+
 /** The cuts the annotation-transparency oracle makes at a caret. */
 export const CUT_KEYSTROKES: CutKeystroke[] = [
   { name: "cut the byte before the caret", cuts: { anchor: "site", focus: -1 } },
@@ -582,18 +592,18 @@ export const CUT_KEYSTROKES: CutKeystroke[] = [
  * once per document. */
 export const BLOCK_CUT_KEYSTROKE: CutKeystroke = { name: "cut the whole block", cuts: "block" };
 
-/** The copies the annotation-transparency oracle pastes at a caret: the bytes either side of it,
- * pasted at the caret and over the byte either side of it, and the edited block's whole content,
- * pasted at the caret. */
+/** The copies the annotation-transparency oracle pastes at a caret: the text the caret is in and
+ * the text after it, pasted at the caret and over the byte either side of it, and the edited
+ * block's whole content, pasted at the caret. */
 export const COPY_PASTE_KEYSTROKES: CopyPasteKeystroke[] = [
   {
-    name: "copy three bytes either side of the caret, then paste them at the caret",
-    copiesRange: AROUND,
+    name: "copy the text at the caret and the text after it, then paste them at the caret",
+    copiesRange: TWO_TEXTS,
     pastesOver: "site",
   },
   {
-    name: "copy three bytes either side of the caret, then paste them over the byte either side of it",
-    copiesRange: AROUND,
+    name: "copy the text at the caret and the text after it, then paste them over the byte either side of the caret",
+    copiesRange: TWO_TEXTS,
     pastesOver: { anchor: -1, focus: 1 },
   },
   {
@@ -1987,6 +1997,20 @@ function $blockCarets(): CaretPosition[] {
   );
 }
 
+/**
+ * The whole text `node` is a part of: a carrier's pieces ({@link $pieces}), or the content text
+ * marks cut into parts, read through the marks; in document order.
+ */
+function $wholeText(node: TextNode): TextNode[] {
+  if ($isPlainTextNode(node) && !$isDisplayAnnotationCarrier(node))
+    return $textRunThroughMarks(
+      node,
+      (candidate): candidate is TextNode =>
+        $isPlainTextNode(candidate) && !$isDisplayAnnotationCarrier(candidate),
+    );
+  return $pieces(node);
+}
+
 /** The caret a {@link RangeEnd} names from `site`; `undefined` when the site is no caret. */
 function $rangeEndCaret(site: CaseSite, end: RangeEnd): CaretPosition | undefined {
   const all = $caretPositions();
@@ -1994,6 +2018,28 @@ function $rangeEndCaret(site: CaseSite, end: RangeEnd): CaretPosition | undefine
   if (!here) return undefined;
   if (end === "site") return here;
   const carets = $blockCarets();
+  if (end === "textStart" || end === "nextTextEnd") {
+    const text = $wholeText(site.node);
+    if (end === "textStart")
+      return all.find(({ node, offset }) => node.is(text[0]) && offset === 0);
+    const last = text[text.length - 1];
+    const textEnd = all.find(
+      ({ node, offset }) => node.is(last) && offset === last.getTextContentSize(),
+    );
+    const next = carets.find(
+      ({ node, position }) =>
+        textEnd !== undefined &&
+        position >= textEnd.position &&
+        !text.some((part) => part.is(node)) &&
+        node.getTextContentSize() > 0,
+    );
+    if (!next) return textEnd;
+    const nextText = $wholeText(next.node);
+    const nextLast = nextText[nextText.length - 1];
+    return all.find(
+      ({ node, offset }) => node.is(nextLast) && offset === nextLast.getTextContentSize(),
+    );
+  }
   const target = here.position + end;
   if (end < 0) return carets.filter(({ position }) => position <= target).at(-1) ?? carets[0];
   return carets.find(({ position }) => position >= target) ?? carets.at(-1);
