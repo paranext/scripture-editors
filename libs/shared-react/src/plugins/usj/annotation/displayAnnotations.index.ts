@@ -182,11 +182,12 @@ function $splitCarrierAtInsertion(
  * where the break splits a text, as {@link $splitCarrierAtInsertion} does for a paste:
  * `RangeSelection.insertParagraph` splits the text at the caret, so the bytes of a glyph after the
  * caret go on as content of the new paragraph, and between two pieces of a cut glyph it would find
- * no text to split. Mutating. */
+ * no text to split. It splits the text with no block around it too (a span beside its chapter).
+ * Mutating. */
 function $splitCarrierAtBreak(): void {
   const selection = $getSelection();
   if ($isRangeSelection(selection) && selection.isCollapsed())
-    $splitCarrierAtPoint(selection, true);
+    $splitCarrierAtPoint(selection, false);
 }
 
 /**

@@ -196,6 +196,20 @@ describe("a range with an end at a mark's edge beside a span", () => {
   );
 });
 
+describe("a line break pasted in a cut glyph with no block around it", () => {
+  it("splits the glyph's text as in the glyph no annotation cuts", async () => {
+    const view = "standard";
+    const row = "\\ca span beside its chapter";
+    const keystroke = named(
+      PLAIN_PASTE_KEYSTROKES,
+      'paste "p", a line break and "q" as plain text',
+    );
+    const plain = await gestureCase(view, row, "\\ca*", 2, keystroke);
+    expect(plain.applied, "the gesture applies in the document as loaded").not.toBe(false);
+    expect(await gestureCase(view, row, "\\ca*", 2, keystroke, 0)).toEqual(plain);
+  }, 120_000);
+});
+
 describe("a line break pasted between the pieces of a glyph", () => {
   it.each([
     // Enter in a glyph splits its text, as in any text: the bytes after the caret are content of
