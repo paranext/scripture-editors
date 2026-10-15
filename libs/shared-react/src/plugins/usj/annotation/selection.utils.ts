@@ -1886,9 +1886,11 @@ function $locationBeside(
  * its content when `index` is past its last item.
  *
  * USJ gives `offset` a meaning only on text, so a gap is never a container plus an index: every
- * USFM position has exactly one location, and a gap is the USFM position right after it. In front
- * of a marker object that is the marker's own location (at its backslash); in front of text, the
- * text's first character; at the end of a container, see {@link $contentEndLocation}.
+ * USFM position has exactly one canonical location, and a gap is the USFM position right after it.
+ * In front of a marker object that is the marker's own location (at its backslash); in front of
+ * text, the text's first character; at the end of a container, see {@link $contentEndLocation}.
+ * The one allowed alias is the end of a text run in front of a marker or closer, which a caret held
+ * there reports as the text's `offset: length` instead.
  *
  * @param container - The logical parent the index counts in (the root for the root's implied
  *   paragraph).
@@ -2206,7 +2208,9 @@ function $leafPropertyValue(node: LexicalNode, property: string): string | undef
 
 /**
  * The document-end point when `location` is the end of the document — one past the final newline,
- * spelled on the last token (see {@link $contentEndLocation}) — and `undefined` otherwise.
+ * spelled on the last token (see {@link $contentEndLocation}) — and `undefined` otherwise. The
+ * point is the end of the last block, where the editor places its own caret, so text typed there
+ * joins that block instead of falling outside every paragraph.
  */
 function $documentEndPoint(
   location: UsjDocumentLocation,
@@ -2214,7 +2218,14 @@ function $documentEndPoint(
 ): [LexicalNode, number] | undefined {
   const root = $getRoot();
   const end = $afterLastTokenLocation(root, [], 1, collapsesSpaceRuns);
-  return locationKey(end) === locationKey(location) ? [root, root.getChildrenSize()] : undefined;
+  if (locationKey(end) !== locationKey(location)) return undefined;
+  const lastBlock = root.getLastChild();
+  if (!$isElementNode(lastBlock)) return [root, root.getChildrenSize()];
+  const lastDescendant = lastBlock.getLastDescendant();
+  if ($isTextNode(lastDescendant)) return [lastDescendant, lastDescendant.getTextContentSize()];
+  if ($isElementNode(lastDescendant)) return [lastDescendant, lastDescendant.getChildrenSize()];
+  const container = lastDescendant?.getParent() ?? lastBlock;
+  return [container, container.getChildrenSize()];
 }
 
 /** A location's fields in a fixed order, so two spellings of one location compare equal. */

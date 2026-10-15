@@ -38,6 +38,7 @@ import {
   LexicalEditor,
   LexicalNode,
   $setSelection,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import {
@@ -989,6 +990,40 @@ describe("the end of the last text in a document", () => {
     expect(ref.current?.getSelection()).toEqual({ start: end });
   });
 
+  describe("a document ending in text", () => {
+    const textEndingUsj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "JHN", content: ["JHN"] },
+        { type: "chapter", marker: "c", number: "2" },
+        {
+          type: "para",
+          marker: "p",
+          content: [{ type: "verse", marker: "v", number: "25" }, "end"],
+        },
+      ],
+    };
+
+    it("text typed at the document end joins the last paragraph", async () => {
+      const { ref, lexical } = await mountStandardViewEditor(textEndingUsj);
+      const location = { jsonPath: contentPath([2, 1]), offset: "end".length + 1 };
+
+      await act(async () => {
+        ref.current?.setSelection({ start: location, end: location });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "abc");
+        await Promise.resolve();
+      });
+
+      const content = ref.current?.getUsj()?.content ?? [];
+      expect(content).toHaveLength(3);
+      expect(JSON.stringify(content[2])).toContain("abc");
+    });
+  });
+
   describe("a document ending in a verse marker", () => {
     const verseEndingUsj: Usj = {
       type: "USJ",
@@ -1039,7 +1074,8 @@ describe("the end of the last text in a document", () => {
 
     /** The two ends a location on the verse's number can name, each with the live point it is.
      * The paragraph's end is after the number, in front of the glyph's trailing separator; the
-     * document's end is one past the final newline, the root's own end. */
+     * document's end is one past the final newline, the end of the last block where the editor
+     * puts its own caret. */
     const ends: [string, number, () => { on: string; type: string; offset: number }][] = [
       [
         "the paragraph's end, after the number",
@@ -1053,7 +1089,11 @@ describe("the end of the last text in a document", () => {
       [
         "the document's end, one past the final newline",
         "26".length + 1,
-        () => ({ on: "root", type: "element", offset: $getRoot().getChildrenSize() }),
+        () => ({
+          on: "verse 26 glyph",
+          type: "text",
+          offset: $lastVerseGlyph().getTextContentSize(),
+        }),
       ],
     ];
 
@@ -1122,6 +1162,24 @@ describe("the end of the last text in a document", () => {
       });
 
       expect(ref.current?.getSelection()).toEqual({ start: location });
+    });
+
+    it.each(ends)("text typed at %s joins the last paragraph", async (_, propertyOffset) => {
+      const { ref, lexical } = await mountStandardViewEditor(verseEndingUsj);
+      const location = { jsonPath: propertyPath([2, 2], "number"), propertyOffset };
+
+      await act(async () => {
+        ref.current?.setSelection({ start: location, end: location });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "abc");
+        await Promise.resolve();
+      });
+
+      const content = ref.current?.getUsj()?.content ?? [];
+      expect(content).toHaveLength(3);
+      expect(JSON.stringify(content[2])).toContain("abc");
     });
   });
 });

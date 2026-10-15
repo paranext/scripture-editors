@@ -50,6 +50,7 @@ import {
   $getNodeByKey,
   $getRoot,
   $isElementNode,
+  $isTextNode,
   $setSelection,
   ElementNode,
   LexicalEditor,
@@ -463,17 +464,39 @@ describe.each(VIEWS)("reporting a caret with no text beside it (%s)", (_name, vi
   });
 });
 
+/** Whether a point is where the editor puts its own caret at the end of the document. */
+function $isAtEndOfLastBlock(node: LexicalNode, offset: number): boolean {
+  const root = $getRoot();
+  const lastBlock = root.getLastChild();
+  if (!$isElementNode(lastBlock)) return node.is(root) && offset === root.getChildrenSize();
+  const lastDescendant = lastBlock.getLastDescendant();
+  if ($isTextNode(lastDescendant))
+    return node.is(lastDescendant) && offset === lastDescendant.getTextContentSize();
+  const container = $isElementNode(lastDescendant)
+    ? lastDescendant
+    : (lastDescendant?.getParent() ?? lastBlock);
+  return node.is(container) && offset === container.getChildrenSize();
+}
+
 describe.each(VIEWS)("resolving a canonical location (%s)", (_name, view) => {
   it.each(ROWS)(
     "puts the caret for the location of a caret $caret where it reports that location again",
-    ({ usj, location }) => {
+    ({ caret, usj, location }) => {
       const editor = load(usj, view);
-      const reported = editor.getEditorState().read(() => {
+      const [reported, atEndOfLastBlock] = editor.getEditorState().read(() => {
         const range = $getRangeFromUsjSelection({ start: location }, view);
-        if (!range) return undefined;
-        return $getLocationFromNode(range.anchor.getNode(), range.anchor.offset, view);
+        if (!range) return [undefined, false] as const;
+        const { anchor } = range;
+        return [
+          $getLocationFromNode(anchor.getNode(), anchor.offset, view),
+          $isAtEndOfLastBlock(anchor.getNode(), anchor.offset),
+        ] as const;
       });
-      expect(reported).toEqual(location);
+      // The document end resolves to the end of the last block, where the editor puts its own
+      // caret. Reported back, that caret is the end of the last line (or, where a closer is not
+      // rendered, the end of its span's content) rather than one past the final newline.
+      if (caret.includes("the end of a document")) expect(atEndOfLastBlock).toBe(true);
+      else expect(reported).toEqual(location);
     },
   );
 });
@@ -796,7 +819,7 @@ describe.each(VIEWS)("resolving the shapes hosts wrote before (%s)", (_name, vie
     {
       shape: "the root and its item count",
       legacy: { jsonPath: "$", offset: 4 },
-      canonical: { jsonPath: "$.content[3]['marker']", propertyOffset: 2 },
+      canonical: { jsonPath: "$.content[3]['marker']", propertyOffset: 1 },
     },
   ])("still resolves $shape, and reports the caret canonically", ({ legacy, canonical }) => {
     const editor = load(probeUsj, view);
@@ -855,8 +878,9 @@ describe("the editor API", () => {
       await Promise.resolve();
     });
 
+    // The caret is at the end of the last block, which snaps left to the end of that line.
     const reported = lexical.getEditorState().read(() => $getUsjSelectionFromEditor(view));
-    expect(reported).toEqual({ start: { jsonPath: "$.content[3]['marker']", propertyOffset: 2 } });
+    expect(reported).toEqual({ start: { jsonPath: "$.content[3]['marker']", propertyOffset: 1 } });
   });
 });
 
@@ -924,19 +948,21 @@ describe("a caret with no text beside it while a paragraph is pending", () => {
   it("resolves the SETTLED document end to the live document end when the last paragraph is pending", async () => {
     const { lexical, context } = await lastParagraphPending();
 
-    const [point, rootKey, rootSize] = lexical.getEditorState().read(() => {
-      const root = $getRoot();
+    const [point, lastTextKey, lastTextSize] = lexical.getEditorState().read(() => {
+      const lastBlock = $getRoot().getLastChild();
+      const lastText = $isElementNode(lastBlock) ? lastBlock.getLastDescendant() : undefined;
+      if (!$isTextNode(lastText)) throw new Error("expected the live document to end in text");
       return [
         $livePointFromSettledLocation(context, $prepareSettleScopes(context), {
           jsonPath: "$.content[4].content[0]",
           offset: "here".length + 1,
         }),
-        root.getKey(),
-        root.getChildrenSize(),
+        lastText.getKey(),
+        lastText.getTextContentSize(),
       ] as const;
     });
 
-    expect(point).toEqual({ key: rootKey, offset: rootSize, type: "element" });
+    expect(point).toEqual({ key: lastTextKey, offset: lastTextSize, type: "text" });
   });
 
   it.each<[string, UsjDocumentLocation, UsjDocumentLocation]>([
@@ -946,7 +972,7 @@ describe("a caret with no text beside it while a paragraph is pending", () => {
     [
       "the document end",
       { jsonPath: "$", offset: 5 },
-      { jsonPath: "$.content[3].content[0]", offset: "depart here".length + 1 },
+      { jsonPath: "$.content[3].content[0]", offset: "depart here".length },
     ],
   ])(
     "translates the older root-and-index spelling of %s like any top-level index",
