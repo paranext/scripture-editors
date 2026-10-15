@@ -57,9 +57,10 @@ function useCharNode(editor: LexicalEditor) {
       // whenever a span is dirtied — heals remote collab updates (delta-apply only calls
       // setUnknownAttributes) and structure surgery. $syncDisplayRun (displayRunSync.utils.ts,
       // `shared`), driven here with the char descriptor from displayRunRegistry.ts (`shared`).
-      editor.registerNodeTransform(CharNode, (node) =>
-        $syncDisplayRun(displayRunDescriptor("char"), node),
-      ),
+      editor.registerNodeTransform(CharNode, (node) => {
+        if ($isTornSpan(node)) return;
+        $syncDisplayRun(displayRunDescriptor("char"), node);
+      }),
       editor.registerNodeTransform(TextNode, $charTextNodeTransform),
     );
   }, [editor]);
@@ -91,6 +92,21 @@ function useCharNode(editor: LexicalEditor) {
  */
 function $rendersOwnGlyphs(node: CharNode): boolean {
   return node.getChildren().some($isMarkerNode);
+}
+
+/**
+ * Whether `node` draws its glyphs but has lost its opening one: the half of a span a line break
+ * tore in two that kept the closer (Lexical's split builds that half with no attributes), or a
+ * span whose opener was just deleted. Its display run is not a picture of its attributes until
+ * the marker-edit engine settles it — re-tokenizing the torn span reads the run's bytes back, and
+ * unwrapping keeps them — so the run sync leaves it alone rather than strip the run the bare
+ * attributes do not spell.
+ */
+function $isTornSpan(node: CharNode): boolean {
+  const first = node.getFirstChild();
+  return (
+    $rendersOwnGlyphs(node) && !($isMarkerNode(first) && first.getMarkerSyntax() === "opening")
+  );
 }
 
 /**

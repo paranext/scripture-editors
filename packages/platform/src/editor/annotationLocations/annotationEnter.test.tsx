@@ -158,6 +158,9 @@ describe("Shift+Enter in a char span's content at an annotation mark's edge", ()
   it.each([
     ["standard", "closed char span", `${NBSP}grace`, 1],
     ["standard", "nested char span", `${NBSP}two`, 1],
+    // A span with an attribute run: the half that keeps the run has no attributes of its own.
+    ["standard", "char span with an attribute", `${NBSP}grace`, 1],
+    ["unformatted", "char span with an attribute", `${NBSP}grace`, 5],
   ] as const)(
     "%s view, %s: %j at %i",
     async (view, row, text, at) => {
