@@ -51,6 +51,7 @@ import {
   $logicalNextSibling,
   $logicalText,
   $pieces,
+  $previousSiblingThroughMarks,
   $removeRangeSplitByMarks,
   $setLogicalText,
 } from "shared";
@@ -702,21 +703,59 @@ export function $charNodeDeletionTransform(char: CharNode, context: MarkerEditCo
   const first = char.getFirstChild();
   const hasOpener = $isMarkerNode(first) && first.getMarkerSyntax() === "opening";
   if (!hasOpener) {
+    // A span Lexical split where it inserted nodes inside it is no deleted opener: its closer
+    // belongs to the opener of the half before it, and the tokenizer reads the two halves and what
+    // went in between back into spans. Which half's transform runs first is Lexical's dirty
+    // order, which an annotation mark among the span's children changes.
+    if ($isSecondHalfOfSplitSpan(char)) {
+      $requestTier2ForNode(char, context);
+      return;
+    }
     $unwrapCharNode(char); // opener deleted -> unwrap the span
     context.logger?.debug(`[MarkerEdit] unwrapped char span "${char.getMarker()}"`);
     return;
   }
-  // A span "needs" a closer iff it is not marked closed="false": that flag (which ParatextData
-  // emits on every genuinely-unclosed span, footnote/cross-ref content included) means the missing
-  // closer is the span's normal shape, not deletion damage. Closer-ness keys on this actual state,
-  // never on the marker family — an explicitly-closed \xt DOES need its closer, so deleting it must
-  // still re-route through Tier 2.
-  const needsCloser = char.getUnknownAttributes()?.closed !== "false";
-  const hasCloser = char
-    .getChildren()
-    .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing");
-  if (needsCloser && !hasCloser) {
+  if ($needsMissingCloser(char)) {
     // Closer deletion goes through Tier 2 (tokenizer decides the span extent).
     $requestTier2ForNode(char, context);
   }
+}
+
+/** Whether `char` holds a closing glyph among its children. */
+function $hasCloserGlyph(char: CharNode): boolean {
+  return char
+    .getChildren()
+    .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing");
+}
+
+/**
+ * Whether `char` lacks the closing glyph it needs. A span "needs" a closer iff it is not marked
+ * closed="false": that flag (which ParatextData emits on every genuinely-unclosed span,
+ * footnote/cross-ref content included) means the missing closer is the span's normal shape, not
+ * deletion damage. Closer-ness keys on this actual state, never on the marker family — an
+ * explicitly-closed \xt DOES need its closer, so deleting it must still re-route through Tier 2.
+ */
+function $needsMissingCloser(char: CharNode): boolean {
+  return char.getUnknownAttributes()?.closed !== "false" && !$hasCloserGlyph(char);
+}
+
+/**
+ * Whether `char`, a span with no opening glyph, is the second half of a span Lexical split to
+ * insert nodes inside it: it holds a closing glyph, and an earlier span of the same marker in its
+ * parent — read through annotation marks — holds an opener and lacks the closer it needs.
+ */
+function $isSecondHalfOfSplitSpan(char: CharNode): boolean {
+  if (!$hasCloserGlyph(char)) return false;
+  for (
+    let node = $previousSiblingThroughMarks(char);
+    node;
+    node = $previousSiblingThroughMarks(node)
+  )
+    if ($isCharNode(node) && node.getMarker() === char.getMarker()) {
+      const opener = node.getFirstChild();
+      return (
+        $isMarkerNode(opener) && opener.getMarkerSyntax() === "opening" && $needsMissingCloser(node)
+      );
+    }
+  return false;
 }

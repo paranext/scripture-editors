@@ -569,7 +569,7 @@ function composedChange(commits: readonly (readonly DeltaOp[])[]): string {
 }
 
 /** What the transparency comparison reads of a run, each as one string. */
-function observables(run: CaseRun): { [name: string]: string } {
+export function observables(run: CaseRun): { [name: string]: string } {
   return {
     pending: JSON.stringify(run.pending),
     settled: JSON.stringify(run.settled),
