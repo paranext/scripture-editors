@@ -456,18 +456,25 @@ export function $recordPieceChain(node: LexicalNode): void {
  * chain id of the pasted head's own, so the copy never continues the carrier it was copied from,
  * wherever it lands; a continuation pasted without its head is a carrier of its own, keeping its
  * class and state; a node pasted alone carries no chain id; and no piece keeps the token record of
- * the chain it came from. Where a pasted copy then joins a carrier is the piece transform's to
+ * the chain it came from. A `token` carrier is copied whole wherever a selection touches it, since
+ * a token's text is never cut, so the pieces of a cut token pasted without the rest of it are
+ * pasted as the whole token, which their record holds: the first takes its text and the others
+ * are left out of `nodes` (or removed from the element they were pasted in). Where a pasted copy then joins a carrier is the piece transform's to
  * decide, as Lexical decides it for text no annotation holds: beside a text Lexical would merge it
  * with, it is joined into that carrier (`$joinMergeableNeighbours`), and nowhere else. One sibling
  * list only, not the nodes' children; each node may have been built from the clipboard's JSON in
  * this update ({@link $parsePastedPieceStates}). Mutating: call inside `editor.update()`.
  */
-export function $restatePastedPieces(nodes: readonly LexicalNode[]): void {
+export function $restatePastedPieces(nodes: LexicalNode[]): void {
   nodes.forEach($parsePastedPieceStates);
   // The pasted chains, each a head and the continuations pasted right after it.
   const chains: LexicalNode[][] = [];
+  /** Each pasted token piece's record of its whole token. */
+  const tokenTexts = new Map<LexicalNode, string>();
   let previous: { node: LexicalNode; chain: string | undefined } | undefined;
-  for (const node of nodes) {
+  for (const node of [...nodes]) {
+    const tokenText = $getState(node, displayPieceTokenTextState);
+    if (tokenText !== undefined) tokenTexts.set(node, tokenText);
     const chain = $getState(node, displayPieceChainState);
     const continues =
       $isPieceContinuation(node) &&
@@ -482,6 +489,23 @@ export function $restatePastedPieces(nodes: readonly LexicalNode[]): void {
     if ($getState(node, displayPieceTokenTextState) !== undefined)
       $setState(node, displayPieceTokenTextState, undefined);
     previous = { node, chain };
+  }
+  for (const [index, pieces] of chains.entries()) {
+    const [head] = pieces;
+    const tokenText = tokenTexts.get(head);
+    if (
+      !$isTextNode(head) ||
+      tokenText === undefined ||
+      pieces.map((piece) => piece.getTextContent()).join("") === tokenText
+    )
+      continue;
+    head.setTextContent(tokenText);
+    for (const piece of pieces.slice(1)) {
+      const at = nodes.indexOf(piece);
+      if (at >= 0) nodes.splice(at, 1);
+      if (piece.getParent()) piece.remove();
+    }
+    chains[index] = [head];
   }
   // A chain of more than one piece takes its pasted head's key as its id; a node pasted alone is
   // no chain, and carries none (a stale id would keep Lexical from merging it with equal text).

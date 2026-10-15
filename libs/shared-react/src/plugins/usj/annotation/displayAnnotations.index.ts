@@ -143,9 +143,10 @@ function parseIndexKey(key: string): [string, string] {
 
 /** Remove `displayAnnotationsState` from pasted sibling `nodes` and their whole subtrees, and
  * make the pieces among them pieces of the paste alone (`$restatePastedPieces`): a carrier pasted
- * whole stays one carrier, which the piece transform joins once the holds are gone, and a piece
- * pasted without its head is a carrier of its own. Mutating. */
-function $stripDisplayAnnotations(nodes: readonly LexicalNode[]): void {
+ * whole stays one carrier, which the piece transform joins once the holds are gone, a piece
+ * pasted without its head is a carrier of its own, and a part of a cut token is the whole token,
+ * as a copy of the token takes it. Mutating (`nodes` too). */
+function $stripDisplayAnnotations(nodes: LexicalNode[]): void {
   $restatePastedPieces(nodes);
   for (const node of nodes) {
     $setState(node, displayAnnotationsState, undefined);

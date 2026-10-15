@@ -1536,6 +1536,24 @@ describe("the display-annotation index", () => {
         release();
       });
 
+      it("pastes a piece of a cut token whole, as a copy takes the token it touches whole", () => {
+        const { editor, run, release } = setup();
+        editor.update(() => run.getWritable().setMode("token"), { discrete: true });
+        wrap(editor, run, 1, 6, "external-spelling", "a");
+        const [, continuation] = editor.read(() =>
+          $pieces(run.getLatest()).map((piece) => piece.exportJSON()),
+        );
+        release();
+        const { editor: target, keys, release: releaseTarget } = pasteFresh([continuation]);
+        target.read(() => {
+          const node = $getNodeByKey(keys[0]);
+          if (!node) throw new Error("the pasted piece is gone");
+          expect(node.getTextContent()).toBe("|grace");
+          expect($getState(node, displayPieceTokenTextState)).toBeUndefined();
+        });
+        releaseTarget();
+      });
+
       it("makes a continuation pasted without its head a carrier of its own", () => {
         const [, continuation] = copiedPieces();
         const { editor, keys, release } = pasteFresh([continuation]);
