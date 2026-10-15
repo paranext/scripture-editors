@@ -7,6 +7,7 @@ import {
 import {
   acquireDisplayAnnotationIndex,
   DISPLAY_ANNOTATION_CLASS_NAME,
+  DISPLAY_PIECE_CONTINUATION_ATTRIBUTE,
 } from "./displayAnnotations.index";
 import {
   $addUpdateTag,
@@ -42,6 +43,7 @@ import {
   getDecoratorPaint,
   $createMarkerNode,
   $createNoteNode,
+  $createImmutableTableRowNode,
   $createParaNode,
   $createTypedMarkNode,
   $displayAnnotationsOf,
@@ -498,6 +500,83 @@ describe("the display-annotation index", () => {
     const after = paintedElement(editor, "grace");
     expect(after).not.toBe(before);
     expect(after.tagName).toBe("CODE");
+    release();
+  });
+
+  /** Each piece of the carrier `node` is a piece of, by its text, and whether its element is
+   * marked a continuation. */
+  function continuationMarks(editor: LexicalEditor, node: TextNode): [string, boolean][] {
+    return editor
+      .getEditorState()
+      .read(() =>
+        $pieces(node.getLatest()).map((piece) => [
+          piece.getTextContent(),
+          !!editor
+            .getElementByKey(piece.getKey())
+            ?.hasAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE),
+        ]),
+      );
+  }
+
+  it("marks the element of every piece of a cut carrier after its first, held or not", () => {
+    const { editor, run, release } = setup();
+    wrap(editor, run, 0, 1, "external-spelling", "a");
+    expect(continuationMarks(editor, run)).toEqual([
+      ["|", false],
+      ["grace", true],
+    ]);
+    wrap(editor, run, 3, 4, "external-spelling", "b");
+    expect(continuationMarks(editor, run)).toEqual([
+      ["|", false],
+      ["gr", true],
+      ["a", true],
+      ["ce", true],
+    ]);
+    editor.update(
+      () => {
+        $removeFromCarrier(run, "external-spelling", "a");
+        $removeFromCarrier(run, "external-spelling", "b");
+      },
+      { discrete: true },
+    );
+    expect(continuationMarks(editor, run)).toEqual([["|grace", false]]);
+    expect(
+      editor.getRootElement()?.querySelectorAll(`[${DISPLAY_PIECE_CONTINUATION_ATTRIBUTE}]`).length,
+    ).toBe(0);
+    release();
+  });
+
+  it("marks a continuation piece on an element Lexical re-creates, its own or its parent's", () => {
+    const { editor, release } = setup();
+    let glyph!: TextNode;
+    let row!: ReturnType<typeof $createImmutableTableRowNode>;
+    editor.update(
+      () => {
+        glyph = $createMarkerNode("tr");
+        row = $createImmutableTableRowNode("tr").append(glyph);
+        $getRoot().append(row);
+      },
+      { discrete: true },
+    );
+    wrap(editor, glyph, 0, 1, "external-spelling", "a");
+    expect(continuationMarks(editor, glyph)).toEqual([
+      ["\\", false],
+      ["tr", true],
+    ]);
+    // A row whose marker changes is re-created, and every element inside it with it.
+    const before = editor.getElementByKey(row.getKey());
+    editor.update(() => row.getLatest().setMarker("tr2"), { discrete: true });
+    expect(editor.getElementByKey(row.getKey())).not.toBe(before);
+    expect(continuationMarks(editor, glyph)).toEqual([
+      ["\\", false],
+      ["tr", true],
+    ]);
+    // "code" changes the piece's own tag, which re-creates its element.
+    editor.update(() => $pieces(glyph.getLatest())[1].setFormat("code"), { discrete: true });
+    expect(continuationMarks(editor, glyph)).toEqual([
+      ["\\", false],
+      ["tr", true],
+    ]);
     release();
   });
 

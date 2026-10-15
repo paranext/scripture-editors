@@ -44,6 +44,7 @@ import {
 import {
   $coveredDisplayText,
   $displayAnnotationsOf,
+  $isPieceContinuation,
   $isTypedMarkNode,
   clearDecoratorPaints,
   DECORATOR_PAINT_ATTRIBUTE,
@@ -83,6 +84,14 @@ import {
 
 /** The class every display-byte node holding an annotation is painted with. */
 export const DISPLAY_ANNOTATION_CLASS_NAME = "display-annotation";
+
+/**
+ * The attribute on the element of every piece of a cut carrier after its first (a continuation,
+ * `displayPieces.state.ts`): a style that boxes a carrier — padding, a border, a margin — applies
+ * to the carrier's head piece alone with `:not([data-piece-continuation])`, so a carrier an
+ * annotation cuts is drawn as the uncut one is.
+ */
+export const DISPLAY_PIECE_CONTINUATION_ATTRIBUTE = "data-piece-continuation";
 
 export interface DisplayAnnotationIndex {
   /** The keys of the display-byte nodes holding `type`/`id`. */
@@ -586,6 +595,12 @@ function createIndex(editor: LexicalEditor): Entry {
           }
           if (after.length > 0) annotationsByKey.set(key, after);
           else annotationsByKey.delete(key);
+          // Lexical reports every element it creates for a node as the node's mutation, a parent's
+          // re-creation included, so this sees every element a piece is drawn on.
+          const element = node && editor.getElementByKey(key);
+          if (element && $isPieceContinuation(node))
+            element.setAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE, "");
+          else element?.removeAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE);
           // A mark's own mutations miss an edit of the text inside it.
           for (let parent = node?.getParent(); parent; parent = parent.getParent())
             if ($isTypedMarkNode(parent)) $noteMarkText(parent);
