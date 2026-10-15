@@ -683,6 +683,7 @@ export declare interface EditorRef {
    *   user is still typing; take them again after the next edit.
    * @param type - Type of the annotation.
    * @param id - ID of the annotation.
+   * @experimental This member is unstable and may change shape or disappear without notice.
    */
   getAnnotationRanges(type: string, id: string): Range[];
   /**
