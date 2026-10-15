@@ -5,6 +5,7 @@ import {
   HiddenContentDeleteRequest,
 } from "./hidden-content-delete.model";
 import {
+  $canPlaceCaretPastHiddenRun,
   $hiddenContentItems,
   $hiddenNodesInSelection,
   $hiddenNodesToParaEdge,
@@ -16,10 +17,12 @@ import {
 import { $selectionReachesIntoOpaqueBlock, isEditingKey } from "./OpaqueBlockGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 import {
+  $selectionContainsVerseMarker,
   $shouldBlockSelectionReplacement,
   $shouldBlockStructuralEdit,
   keyDownToIntent,
 } from "./structureKeyboard.utils";
+import { isSelectionDeleteArmed } from "./StructureKeyboardPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
 import {
@@ -75,19 +78,24 @@ interface HeldEdit {
   text: string;
 }
 
-/** What to do once the user answers. Both run with the held selection restored. */
+/** What to do once the user answers. Each runs with the held selection restored. */
 interface Settlement {
   /**
    * Moves the caret past the hidden content, inside the update that restores the selection. Its
    * presence is what the request reports as `canSkip`; without it, "keep" cancels the edit.
    */
   $keep?: () => void;
-  /** Runs after that update, with the editor focused. Free to dispatch commands. */
-  delete: () => void;
+  /** Removes the hidden content on "delete", inside the update that restores the selection. */
+  $delete?: () => void;
+  /**
+   * Replays the edit on "delete", once that update has committed: a word or line delete measures
+   * its extent against the DOM, which must no longer hold the hidden content. Dispatches commands.
+   */
+  replay?: () => void;
 }
 
 /**
- * Asks before an edit removes content the current view does not show (PT-4703).
+ * Asks before an edit removes content the current view does not show.
  *
  * Figures, sidebars, `\periph` and every other construct the editor carries as an `UnknownNode` are
  * hidden in every marker mode but `"editable"`, so the user cannot see that a keystroke is about to
@@ -110,14 +118,16 @@ interface Settlement {
  * hidden content is refused outright: the move would remove it, and a drag cannot wait for an
  * answer.
  *
- * The edit is resumed only against the document and selection it was held against; if either
- * changed while the host was asking (an undo, a host update), it is dropped. While a question is
- * open, typing, deleting, pasting and cutting are refused so that it rarely does.
+ * The edit is resumed only against the document and selection it was held against, and only while
+ * the editor is still editable; if the document changed while the host was asking (an undo, a host
+ * update), the caret was moved, or the editor became read-only, it is dropped. While a question is
+ * open, typing, deleting, pasting and cutting are refused so that the document rarely changes.
  *
- * Its handlers run at CRITICAL so that they precede `StructureKeyboardPlugin`, whose guarded
- * two-step delete would otherwise arm and then remove a selection itself, and native handling.
+ * Its handlers run at CRITICAL so that they precede `StructureKeyboardPlugin` and native handling.
  * They step aside for the two refusals that already protect this content: a selection reaching
- * INTO a construct (`OpaqueBlockGuardPlugin`), and an edit protected mode blocks outright.
+ * INTO a construct (`OpaqueBlockGuardPlugin`), and an edit protected mode blocks outright. Guarded
+ * mode's two-step delete of a selection holding a verse marker keeps both its steps: the first
+ * press is left to arm it, and the question is asked on the second, the press that would delete.
  *
  * A cut is held after its copy half has run, since the clipboard cannot be written later. Under a
  * copy limit a cut over hidden content is refused instead: the limit shortens what a copy takes, so
@@ -205,29 +215,51 @@ export function HiddenContentDeleteGuardPlugin({
       isPending = true;
       void ask(request).then((decision) => {
         isPending = false;
-        if (isDisposed) return;
-        // The host's prompt took focus. Focus comes back first, and the edit resumes once focusing
-        // has settled the selection, so the held selection restored below is the one that stands.
-        editor.focus(() => {
-          let isCurrent = false;
-          editor.update(
-            () => {
-              isCurrent = $isStillCurrent(held);
-              if (!isCurrent) return;
-              $restoreSelection(held);
-              if (decision === "keep") settlement.$keep?.();
-            },
-            {
-              // Runs once the restored selection has committed: called from focus's own update,
-              // this update is deferred rather than applied on the spot.
-              onUpdate: () => {
-                if (isCurrent && decision === "delete") settlement.delete();
-              },
-            },
-          );
-        });
+        if (!isDisposed) resume(held, decision, settlement);
       });
       return true;
+    };
+
+    /** Resumes a held edit once the host has answered, unless the user has moved on since. */
+    const resume = (
+      held: HeldEdit,
+      decision: HiddenContentDeleteDecision,
+      settlement: Settlement,
+    ) => {
+      if (!editor.getEditorState().read(() => $isSelectionUnmoved(held))) return;
+      // The host's prompt took focus. Focus comes back first, so the held selection restored next
+      // is the one that stands. Focus's callback runs mid-commit, where an update would only be
+      // queued behind whatever runs next, so the edit settles from a fresh microtask instead.
+      editor.focus(() => queueMicrotask(() => settle(held, decision, settlement)));
+    };
+
+    /**
+     * Restores the held selection and applies the answer. Runs outside any update or listener, so
+     * each update below commits on the spot and in order: the replay measures and edits a document
+     * the hidden content has already left.
+     */
+    const settle = (
+      held: HeldEdit,
+      decision: HiddenContentDeleteDecision,
+      settlement: Settlement,
+    ) => {
+      if (isDisposed) return;
+      let isResumed = false;
+      editor.update(
+        () => {
+          if (!editor.isEditable() || !$isStillCurrent(held)) return;
+          $restoreSelection(held);
+          if (decision === "keep") {
+            settlement.$keep?.();
+            return;
+          }
+          settlement.$delete?.();
+          isResumed = true;
+        },
+        { discrete: true },
+      );
+      const { replay } = settlement;
+      if (isResumed && replay) runBypassed(replay);
     };
 
     const $removeHidden = (keys: NodeKey[]) => {
@@ -251,8 +283,12 @@ export function HiddenContentDeleteGuardPlugin({
         // paragraphs the user never asked to merge.
         const keys = run.nodes.map((node) => node.getKey());
         return $hold(selection, run.nodes, action, {
-          $keep: () => $placeCaretPastHiddenRun($freshRun(run, keys), direction),
-          delete: () => editor.update(() => $removeHidden(keys), { discrete: true }),
+          // With no paragraph on the far side (a chapter marker, the document's edge) there is
+          // nowhere to skip to, so "keep" cancels rather than leaving the caret to ask again.
+          $keep: $canPlaceCaretPastHiddenRun(run, direction)
+            ? () => $placeCaretPastHiddenRun($freshRun(run, keys), direction)
+            : undefined,
+          $delete: () => $removeHidden(keys),
         });
       }
       const extent =
@@ -271,11 +307,11 @@ export function HiddenContentDeleteGuardPlugin({
           run && isOnlyTheRun
             ? () => $placeCaretPastHiddenRun($freshRun(run, runKeys), direction)
             : undefined,
-        delete: () => {
-          editor.update(() => $removeHidden(keys), { discrete: true });
-          if (granularity !== "character")
-            runBypassed(() => editor.dispatchCommand(granularityCommand(granularity), isBackward));
-        },
+        $delete: () => $removeHidden(keys),
+        replay:
+          granularity === "character"
+            ? undefined
+            : () => editor.dispatchCommand(granularityCommand(granularity), isBackward),
       });
     };
 
@@ -283,9 +319,7 @@ export function HiddenContentDeleteGuardPlugin({
     const $holdSelectionEdit = (selection: RangeSelection, replay: () => void): boolean => {
       const hidden = $hiddenNodesInSelection(selection);
       if (hidden.length === 0) return false;
-      return $hold(selection, hidden, "replaceSelection", {
-        delete: () => runBypassed(replay),
-      });
+      return $hold(selection, hidden, "replaceSelection", { replay });
     };
 
     /** The live range selection when this plugin should judge the edit at all. */
@@ -316,11 +350,19 @@ export function HiddenContentDeleteGuardPlugin({
       )
         return false;
       const isBackward = intent === "deleteBackward";
+      if (
+        !selection.isCollapsed() &&
+        structureProtectionModeRef.current === "guarded" &&
+        $selectionContainsVerseMarker(selection) &&
+        !isSelectionDeleteArmed(editor)
+      )
+        // Guarded mode's first press only arms the delete (nothing is removed yet); leave it to
+        // StructureKeyboardPlugin, and ask on the press that would fire.
+        return false;
       const isHeld = selection.isCollapsed()
         ? $holdCaretDelete(selection, isBackward ? "backward" : "forward", granularityOf(event))
         : // Claimed here rather than left to DELETE_CHARACTER_COMMAND: in guarded mode
-          // StructureKeyboardPlugin removes a selection holding a verse marker itself, straight
-          // off the keystroke.
+          // StructureKeyboardPlugin removes an armed selection itself, straight off the keystroke.
           $holdSelectionEdit(selection, () =>
             editor.dispatchCommand(DELETE_CHARACTER_COMMAND, isBackward),
           );
@@ -510,6 +552,7 @@ function replayablePaste(event: PasteCommandType): PasteCommandType {
     if (type === "Files") continue;
     data.setData(type, event.clipboardData.getData(type));
   }
+  for (const file of Array.from(event.clipboardData.files)) data.items.add(file);
   return new ClipboardEvent("paste", { clipboardData: data, cancelable: true });
 }
 
@@ -574,6 +617,20 @@ function $isStillCurrent(held: HeldEdit): boolean {
     held.hiddenKeys.every((key) => $getNodeByKey(key)?.isAttached()) &&
     $getRoot().getTextContent() === held.text
   );
+}
+
+/**
+ * Whether the selection is still where the edit was held. A caret the user moved while the question
+ * was open is their newer intent; no range selection at all is not a move (the editor lost focus to
+ * the host's prompt). Read from the committed state: a fresh update takes its selection from the
+ * DOM, which the prompt may hold.
+ */
+function $isSelectionUnmoved(held: HeldEdit): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return true;
+  const isHeldPoint = (point: PointSnapshot, other: PointSnapshot) =>
+    point.key === other.key && point.offset === other.offset && point.type === other.type;
+  return isHeldPoint(selection.anchor, held.anchor) && isHeldPoint(selection.focus, held.focus);
 }
 
 function $restoreSelection(held: HeldEdit): void {

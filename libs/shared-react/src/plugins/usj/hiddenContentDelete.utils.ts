@@ -36,7 +36,8 @@ export interface HiddenRun {
 }
 
 /**
- * Read-only.
+ * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
+ * handler.
  *
  * The run of hidden constructs a delete in `direction` would reach first from a collapsed caret,
  * or `undefined` when the delete would reach visible content (or nothing) first.
@@ -106,7 +107,8 @@ export function $hiddenRunAtCaret(
 }
 
 /**
- * Read-only.
+ * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
+ * handler.
  *
  * The hidden constructs a non-collapsed range selection covers, outermost only (a figure inside a
  * hidden sidebar is reported as the sidebar), in document order. Empty for a collapsed caret or a
@@ -125,7 +127,8 @@ export function $hiddenNodesInSelection(selection: BaseSelection | null): Unknow
 }
 
 /**
- * Read-only.
+ * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
+ * handler.
  *
  * Every hidden construct between a collapsed caret and its paragraph's edge in `direction`. The
  * fallback for a line delete where the visual line's extent cannot be measured (no
@@ -185,7 +188,27 @@ export function $placeCaretPastHiddenRun(run: HiddenRun, direction: DeleteDirect
 }
 
 /**
- * Read-only.
+ * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
+ * handler.
+ *
+ * Whether {@link $placeCaretPastHiddenRun} has somewhere to put the caret: always for an inline
+ * run, and for a block run only when a paragraph lies on its far side.
+ *
+ * @param run - The run the caret would skip, as found by {@link $hiddenRunAtCaret}.
+ * @param direction - The direction of the delete that found it.
+ */
+export function $canPlaceCaretPastHiddenRun(run: HiddenRun, direction: DeleteDirection): boolean {
+  if (run.placement === "inline") return true;
+  const beyond =
+    direction === "backward"
+      ? run.nodes[0].getPreviousSibling()
+      : run.nodes[run.nodes.length - 1].getNextSibling();
+  return $isParaLikeNode(beyond);
+}
+
+/**
+ * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
+ * handler.
  *
  * Describes hidden constructs for the host's confirmation prompt.
  *

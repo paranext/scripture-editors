@@ -29,6 +29,7 @@ import {
   DRAGSTART_COMMAND,
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
+  LexicalEditor,
   PASTE_COMMAND,
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -59,6 +60,21 @@ import { StructureProtectionMode } from "./structure-protection.model";
  *   keystrokes and paste/drop of structural markers are blocked outright. Defaults to `"off"`.
  * @returns Always `null`; this plugin renders no UI, only editor behavior and DOM signals.
  */
+/**
+ * Whether {@link StructureKeyboardPlugin} has armed the two-step delete of a range selection (the
+ * next matching Backspace/Delete removes it), read from the signal it publishes on the editor root.
+ * For another plugin that must act on the press that fires the delete, not the one that arms it.
+ *
+ * @param editor - The editor to read; any context, it reads only the DOM.
+ */
+export function isSelectionDeleteArmed(editor: LexicalEditor): boolean {
+  const root = editor.getRootElement();
+  return (
+    !!root?.classList.contains("verse-delete-armed") &&
+    root.getAttribute("data-verse-delete-kind") === "selection"
+  );
+}
+
 export function StructureKeyboardPlugin({
   structureProtectionMode = "off",
 }: {
