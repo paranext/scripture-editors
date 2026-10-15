@@ -7,10 +7,8 @@ import { describe, expectTypeOf, it } from "vitest";
 // type relationship does not hold, so `not.toExtend` fails it if `ContentJsonPath` ever collapses
 // to `string` and silently accepts a ninth clause.
 //
-// Keep this file mirrored with paranext-core's copy
-// (`lib/platform-bible-utils/src/scripture/usj-reader-writer.model.test.ts`). Locations cross
-// between the two repos in both directions, so widening either declaration alone fails typecheck in
-// the other repo.
+// This is the only declaration of these types: paranext-core's platform-bible-utils re-exports
+// them, so widening the bound here widens it there too.
 type EightClauses =
   "$.content[0].content[1].content[2].content[3].content[4].content[5].content[6].content[7]";
 
