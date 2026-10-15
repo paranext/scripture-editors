@@ -729,10 +729,6 @@ export function MarkerEditPlugin({
       });
     };
     /**
-     * Apply a suspension change. Shared by the host's `SET_MARKER_SETTLE_SUSPENDED_COMMAND` and
-     * by the `FOCUS_COMMAND` safeguard that lifts a suspension the host never resumed.
-     */
-    /**
      * Whether the editor has actually lost focus since the current suspension began. The
      * `FOCUS_COMMAND` safeguard needs it: a host suspends synchronously in its trigger keydown,
      * BEFORE focus moves to the surface, so there is a window where the suspension is in force and
@@ -752,6 +748,10 @@ export function MarkerEditPlugin({
       if (pendingSuspensionLift !== undefined) clearTimeout(pendingSuspensionLift);
       pendingSuspensionLift = undefined;
     };
+    /**
+     * Apply a suspension change. Shared by the host's `SET_MARKER_SETTLE_SUSPENDED_COMMAND` and
+     * by the `FOCUS_COMMAND` safeguard that lifts a suspension the host never resumed.
+     */
     const applyMarkerSettleSuspended = (suspended: boolean) => {
       // Idempotent: a host driving this from an effect can redispatch the value already in
       // force, and the resume branch below RE-ARMS the idle clock. Without this, a redundant
