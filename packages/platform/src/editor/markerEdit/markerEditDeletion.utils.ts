@@ -738,11 +738,19 @@ function $isMissingNeededCloser(char: CharNode): boolean {
 }
 
 /** A span of `char`'s marker before it in its settle scope that is missing a closer it needs
- * ({@link $isMissingNeededCloser}): the opening half of a span `char` is the other half of. */
+ * ({@link $isMissingNeededCloser}): the opening half of a span `char` is the other half of. A
+ * chapter's scope also takes the `\ca`/`\cp` spans beside it at the root, so the root children
+ * from the scope up to `char`'s are read. */
 function $earlierSpanMissingCloser(char: CharNode): CharNode | undefined {
   const scope = $settleScopeForNode(char);
   if (!scope) return undefined;
-  for (const { node } of $dfs(scope)) {
+  const region: LexicalNode[] = [scope];
+  if (!scope.isParentOf(char))
+    for (let next = scope.getNextSibling(); next; next = next.getNextSibling()) {
+      region.push(next);
+      if (next.is(char) || next.isParentOf(char)) break;
+    }
+  for (const { node } of region.flatMap((root) => $dfs(root))) {
     if (node.is(char)) return undefined;
     if ($isCharNode(node) && node.getMarker() === char.getMarker() && $isMissingNeededCloser(node))
       return node;

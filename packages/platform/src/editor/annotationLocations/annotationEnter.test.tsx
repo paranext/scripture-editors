@@ -170,6 +170,20 @@ describe("Shift+Enter in a char span's content at an annotation mark's edge", ()
   );
 });
 
+describe("Enter in a chapter's `\\ca`/`\\cp` span at an annotation mark's edge", () => {
+  // The span beside the chapter tears in two as one in a paragraph does, and settles the same.
+  it.each([
+    ["\\ca span beside its chapter", `${NBSP}3`, 1],
+    ["\\cp span beside its chapter", `${NBSP}A`, 1],
+  ] as const)(
+    "standard view, %s: %j at %i",
+    async (row, text, at) => {
+      await expectTransparent("standard", row, text, at, false, [0, 1]);
+    },
+    120_000,
+  );
+});
+
 describe("Shift+Enter in a chapter's `\\ca`/`\\cp` span, where no paragraph holds the caret", () => {
   // A line break goes into a block; with none around the caret the key does nothing.
   it.each([
