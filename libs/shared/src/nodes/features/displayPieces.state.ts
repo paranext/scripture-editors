@@ -543,7 +543,10 @@ function $parsePastedPieceStates(node: LexicalNode): void {
   const json = node.exportJSON();
   const state = json[NODE_STATE_KEY];
   if (!state || !Object.keys(state).some((key) => PIECE_STATE_KEYS.has(key))) return;
-  for (const config of PIECE_STATES) $getState(node, config);
+  $getState(node, displayPieceContinuationState);
+  $getState(node, displayPieceChainState);
+  $getState(node, displayPieceTokenTextState);
+  $getState(node, displayAnnotationsState);
   node.updateFromJSON(json);
 }
 
