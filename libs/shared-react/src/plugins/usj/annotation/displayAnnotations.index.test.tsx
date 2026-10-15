@@ -1216,7 +1216,7 @@ describe("the display-annotation index", () => {
      * the paragraph's start (`"start"`). */
     function pasteInto(
       $carrier: (run: TextNode) => TextNode,
-      holds: [from: number, to: number, id: string][],
+      holds: readonly (readonly [from: number, to: number, id: string])[],
       $copy: (carrier: TextNode) => LexicalNode | LexicalNode[],
       at: number,
       spelling: 0 | 1,
@@ -1386,7 +1386,7 @@ describe("the display-annotation index", () => {
         // Lexical's insertion returns before it splits anything when there are no nodes.
         const plain = pasteInto($closer, [], nothing, 1, 0);
         expect(plain.carriers).toEqual(['text "In the "', 'marker "\\\\w*"']);
-        const annotated = pasteInto($closer, [...holds], nothing, 1, spelling);
+        const annotated = pasteInto($closer, holds, nothing, 1, spelling);
         expect(annotated.carriers).toEqual(plain.carriers);
         expect(annotated.holds.map(([text]) => text).join("")).toBe("\\w*");
       });

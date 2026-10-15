@@ -800,7 +800,7 @@ function $droppedHolds(ids: readonly string[], before: CarrierHolds): string[] {
  * `setAnnotation`'s `onRemove` contract — an annotation whose bytes are all gone reports once; one
  * still held reports nothing, unless a `<mark>` that held it once it was set has gone (that mark
  * reports its own removal, whatever else still holds the annotation). `before` is what the
- * carriers held before the keystroke.
+ * carriers held before the keystroke (none: not graded).
  */
 function annotatedFailures(
   mounted: MountedInView,
