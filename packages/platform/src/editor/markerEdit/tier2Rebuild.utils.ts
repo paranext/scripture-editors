@@ -709,6 +709,52 @@ function $flattenAttributeRuns(run: LexicalNode[]): LexicalNode[] {
 }
 
 /**
+ * A CharNode's own children with every `TypedMarkNode` (at any depth) replaced by its children,
+ * plus the set of nodes a mark boundary separates from the node before them. A mark splits the
+ * text node it starts or ends in, so the span's leading `NBSP` separator can become a node of its
+ * own (`NBSP` + `mark["name"]`) where a re-tokenization keeps it fused (`NBSPname`), and
+ * `charOwnChildSignatureText` reads those two shapes differently. `$appendSignature` rejoins text
+ * across these boundaries only, so a lone-NBSP spacer in front of a nested CharNode stays a node of
+ * its own.
+ */
+function $charChildrenThroughMarks(children: LexicalNode[]): {
+  nodes: LexicalNode[];
+  splitByMark: Set<LexicalNode>;
+} {
+  const nodes: LexicalNode[] = [];
+  const splitByMark = new Set<LexicalNode>();
+  let atMarkBoundary = false;
+  const visit = (node: LexicalNode): void => {
+    if ($isTypedMarkNode(node)) {
+      atMarkBoundary = true;
+      node.getChildren().forEach(visit);
+      atMarkBoundary = true;
+      return;
+    }
+    if (atMarkBoundary && nodes.length > 0) splitByMark.add(node);
+    atMarkBoundary = false;
+    nodes.push(node);
+  };
+  children.forEach(visit);
+  return { nodes, splitByMark };
+}
+
+/** Whether `node` is text `$appendSignature` signs as plain content (its generic text branch). */
+function $isPlainSignatureText(
+  node: LexicalNode | undefined,
+  getMarkerFn: MarkerLookup,
+): node is TextNode {
+  return (
+    $isTextNode(node) &&
+    !$isVerseNode(node) &&
+    !$isMarkerNode(node) &&
+    !$isImmutableUnmatchedNode(node) &&
+    !$isRebuildSentinel(node, getMarkerFn) &&
+    $getState(node, textTypeState) !== "attribute"
+  );
+}
+
+/**
  * Structure-aware, sentinel-normalized signature of a node list, used ONLY to detect
  * a `$rebuildParas` no-op (fixed point). Marker glyphs and text contribute their
  * fragment text; every structural element (paragraph, CharNode span, verse-as-text,
@@ -723,13 +769,16 @@ function $flattenAttributeRuns(run: LexicalNode[]): LexicalNode[] {
  * function's own CharNode branch below) — mirrors `editor-usj.adaptor.ts`'s `recurseNodes`'s
  * `isCharChild` parameter exactly, including how it resets for anything nested one level deeper
  * that is not itself another CharNode (which gets its own fresh `true` at its own branch). See
- * `charOwnChildSignatureText`'s doc comment (settleShared.utils.ts) for what it gates.
+ * `charOwnChildSignatureText`'s doc comment (settleShared.utils.ts) for what it gates. A CharNode's
+ * children arrive with their marks flattened away (`$charChildrenThroughMarks`), and `splitByMark`
+ * names the nodes a mark boundary split from the text before them.
  */
 function $appendSignature(
   children: LexicalNode[],
   out: string[],
   getMarkerFn: MarkerLookup,
   insideCharChildren = false,
+  splitByMark?: Set<LexicalNode>,
 ): void {
   for (let index = 0; index < children.length; index++) {
     const node = children[index];
@@ -867,13 +916,17 @@ function $appendSignature(
         SIGNATURE_CLOSE,
       );
     } else if ($isTextNode(node)) {
-      out.push(
-        toFragmentText(
-          insideCharChildren
-            ? charOwnChildSignatureText($textNodeFragmentText(node))
-            : $textNodeFragmentText(node),
-        ),
-      );
+      let text = $textNodeFragmentText(node);
+      if (insideCharChildren) {
+        let next = children[index + 1];
+        while (splitByMark?.has(next) && $isPlainSignatureText(next, getMarkerFn)) {
+          text += $textNodeFragmentText(next);
+          index += 1;
+          next = children[index + 1];
+        }
+        text = charOwnChildSignatureText(text);
+      }
+      out.push(toFragmentText(text));
     } else if ($isCharNode(node)) {
       // A known-marker span that reaches here is NOT a sentinel ($isRebuildSentinel already
       // filtered unknown markers) — fold its own stored `unknownAttributes` into the signature
@@ -882,7 +935,8 @@ function $appendSignature(
       // was deleted but the field is still stale — so comparing children text alone could
       // mistake a genuine attribute change for a fixed point.
       out.push(SIGNATURE_OPEN, "char", JSON.stringify(node.getUnknownAttributes() ?? null));
-      $appendSignature(node.getChildren(), out, getMarkerFn, true);
+      const { nodes, splitByMark: charSplitByMark } = $charChildrenThroughMarks(node.getChildren());
+      $appendSignature(nodes, out, getMarkerFn, true, charSplitByMark);
       out.push(SIGNATURE_CLOSE);
     } else if ($isTypedMarkNode(node)) {
       // Transparent, mirroring `$appendNodesFragment`'s own wrapper branch: an annotation is a
@@ -890,8 +944,8 @@ function $appendSignature(
       // carries only its children's bytes. Tagging the wrapper here would make every annotated
       // paragraph compare unequal to its own re-tokenization forever — a scope that can never
       // report a fixed point re-splices, and re-notifies the host, on every settle it is driven
-      // through. A mark's children sit in the SAME content positions the wrapper occupies, so
-      // `insideCharChildren` passes through with them.
+      // through. A mark inside a CharNode never reaches here: the CharNode branch flattens its
+      // children through their marks first, so text a mark split is signed joined.
       $appendSignature(node.getChildren(), out, getMarkerFn, insideCharChildren);
     } else if ($isElementNode(node)) {
       out.push(SIGNATURE_OPEN, node.getType());
@@ -1820,12 +1874,23 @@ function $pointAfterSentinelRun(span: FragmentSpan): FragmentPoint | undefined {
  * finished in; a position that names `\nd*`'s second byte, or the `\` a marker starts with, needs
  * exactly those two spellings back.
  *
+ * `endAfterSkippedConstruct` is for a position that ends a covered range rather than one a caret
+ * rests at. One satisfied exactly at the end of a span caret addressing skips — a closing glyph or
+ * a preserved node — and followed by another such span is the boundary right after the first
+ * construct ({@link $pointAfterClosingSpan}, {@link $pointAfterSentinelRun}). Searching on would
+ * carry the range's end past the second, such as a footnote right after `\nd*`. Followed by an
+ * addressable span, the start of that span is the same boundary, and is kept: it is the spelling a
+ * range over nothing but a preserved node resolves both its ends to.
+ *
  * Read-only: resolves span node keys, so call inside `editor.update()` or an editor-state read.
  */
 export function $resolveFragmentByteAnchor(
   fragment: { text: string; spans: FragmentSpan[] },
   anchor: CaretByteAnchor,
-  { addressDisplayBytes = false }: { addressDisplayBytes?: boolean } = {},
+  {
+    addressDisplayBytes = false,
+    endAfterSkippedConstruct = false,
+  }: { addressDisplayBytes?: boolean; endAfterSkippedConstruct?: boolean } = {},
 ): FragmentPoint | undefined {
   const { text, spans } = fragment;
   let best: { key: string; offset: number } | undefined;
@@ -1870,6 +1935,16 @@ export function $resolveFragmentByteAnchor(
       if (addressable && (!addressDisplayBytes || nextIsSentinel)) {
         best = { key: span.key, offset: spanLength };
         break;
+      }
+      const next = spans[index + 1];
+      if (
+        endAfterSkippedConstruct &&
+        !addressable &&
+        next &&
+        (next.isSentinel || $isClosingMarkerSpan(next))
+      ) {
+        const after = span.isSentinel ? $pointAfterSentinelRun(span) : $pointAfterClosingSpan(span);
+        if (after) return after;
       }
       // Past one preserved node and in front of the next: neither has a byte a position can rest
       // on, and the next addressable span is past the second node, so the position is the
@@ -2202,7 +2277,8 @@ interface ResolvedMarkEnd {
  * names, which has no counterpart there.
  *
  * `isStart` selects byte addressing, since a start names the first byte a mark covers (see
- * {@link $restoreMarkByteRanges}).
+ * {@link $restoreMarkByteRanges}). An end resolves as a caret does, except that one right after a
+ * closing glyph or a preserved node stays right after it (`endAfterSkippedConstruct`).
  *
  * Read-only: resolves node keys, so call inside `editor.update()` or an editor-state read.
  */
@@ -2213,7 +2289,7 @@ function $resolveMarkEnd(
   isStart: boolean,
 ): ResolvedMarkEnd | undefined {
   const runs = pairing.settledOnlyRuns;
-  const options = { addressDisplayBytes: isStart };
+  const options = { addressDisplayBytes: isStart, endAfterSkippedConstruct: !isStart };
   const inside = literalContaining(runs, anchor);
   if (inside) {
     if (!inside.within) return undefined;
@@ -2499,6 +2575,17 @@ export function $carryMarksIntoSerialized(
     carriedRuns,
   );
   if (captured.ranges.length === 0) return rebuilt;
+  // The scratch marks carry type and id only, since only `typedIDs` reach the serialized output. A
+  // host callback on one would fire when the resolver below merges an emptied mark away, telling
+  // the host a still-live annotation was destroyed, and the callback registry would keep an entry
+  // for a node nobody ever sees.
+  const idsOnly: CapturedMarks = {
+    ...captured,
+    ranges: captured.ranges.map((range) => ({
+      ...range,
+      annotations: range.annotations.map(({ type, id }) => ({ type, id })),
+    })),
+  };
   const scratch = createEditor({
     nodes: [TypedMarkNode, ...usjReactNodes],
     onError: (error) => {
@@ -2534,7 +2621,7 @@ export function $carryMarksIntoSerialized(
         $appendNodesFragment(nodes, out, getMarkerFn, viewOptions);
         return out;
       };
-      $restoreMarkByteRanges(captured, $fresh);
+      $restoreMarkByteRanges(idsOnly, $fresh);
     },
     { discrete: true },
   );
