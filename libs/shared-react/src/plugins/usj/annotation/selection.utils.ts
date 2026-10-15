@@ -20,6 +20,7 @@ import {
   isUsjTextContentLocation,
   usjJsonPathFromIndexes,
 } from "@eten-tech-foundation/scripture-utilities";
+import { deepEqual } from "fast-equals";
 import {
   $createPoint,
   $createRangeSelection,
@@ -144,8 +145,7 @@ export function $getRangeFromUsjSelection(
   let { start } = selection;
   let end = selection.end ?? start;
   // The block verse layout regroups paragraphs into verse blocks, so its tree's indexes are not the
-  // USJ's: restate both ends in block-tree coordinates first. `end === start` is kept as identity —
-  // the closing-marker adjustment below tells a caret from a range by it.
+  // USJ's: restate both ends in block-tree coordinates first.
   if ($hasVerseBlocks()) {
     const collapsesSpaceRuns = hasStandardViewWhitespace(viewOptions);
     const units = $getBlockUnits(collapsesSpaceRuns);
@@ -171,8 +171,9 @@ export function $getRangeFromUsjSelection(
   // can show presentation-only text between the two (the space before a note's `\f*` when its last
   // char span has no closer of its own), and a range reaching over that text would let typing over
   // the selection delete it — which the marker-edit engine settles by losing the text after the
-  // note. A caret there is left alone: it names the closer, and nothing is replaced.
-  if (end !== start && isUsjClosingMarkerLocation(end) && end.closingMarkerOffset === 0)
+  // note. A caret there is left alone: it names the closer, and nothing is replaced. Hosts often
+  // spell a caret as two equal objects, so a caret is told apart by value here.
+  if (isUsjClosingMarkerLocation(end) && end.closingMarkerOffset === 0 && !deepEqual(end, start))
     endEdge = $pointBeforePresentationText(
       endEdge[0],
       endEdge[1],
@@ -219,17 +220,12 @@ function $annotationEdges(
   const { inside: startInside } = start;
   const { inside: endInside } = end;
   if (!startInside && !endInside) return [start.edge, end.edge];
-  const sameDecorator =
-    !!startInside && !!endInside && startInside.decorator.is(endInside.decorator);
-  const reversed =
-    startInside && endInside && sameDecorator
-      ? endInside.before < startInside.before
-      : $isBeforeInDocument(end, start);
+  const { sameDecorator, reversed } = $rangeEndsOrder(start, end);
   const [first, last] = reversed ? [end, start] : [start, end];
   const firstEdge = first.inside
     ? $edgeBeside(first.inside, first.inside.before >= first.inside.total, first.edge)
     : first.edge;
-  if (sameDecorator && startInside.before === endInside.before) return [firstEdge, firstEdge];
+  if (sameDecorator && startInside?.before === endInside?.before) return [firstEdge, firstEdge];
   const lastEdge = last.inside
     ? $edgeBeside(last.inside, last.inside.before > 0, last.edge)
     : last.edge;
@@ -249,18 +245,29 @@ function $collectDecoratorHolds(
   const { inside: startInside } = start;
   const { inside: endInside } = end;
   if (!startInside && !endInside) return;
-  const sameDecorator =
-    !!startInside && !!endInside && startInside.decorator.is(endInside.decorator);
-  const reversed =
-    startInside && endInside && sameDecorator
-      ? endInside.before < startInside.before
-      : $isBeforeInDocument(end, start);
+  const { sameDecorator, reversed } = $rangeEndsOrder(start, end);
   const [first, last] = reversed ? [endInside, startInside] : [startInside, endInside];
   const hold = (inside: DecoratorBytePosition, from: number, to: number) => {
     if (to > from) holds.set(inside.decorator.getKey(), { start: from, end: to });
   };
   if (first) hold(first, first.before, sameDecorator && last ? last.before : first.total);
   if (last && !sameDecorator) hold(last, 0, last.before);
+}
+
+/**
+ * Whether both ends of a range fall inside the same read-only decorator, and whether its `end` comes
+ * before its `start` — by their bytes inside that decorator, or else by document order. The order
+ * both {@link $annotationEdges} and {@link $collectDecoratorHolds} go by.
+ */
+function $rangeEndsOrder(
+  start: RangeEnd,
+  end: RangeEnd,
+): { sameDecorator: boolean; reversed: boolean } {
+  const { inside: startInside } = start;
+  const { inside: endInside } = end;
+  if (startInside && endInside && startInside.decorator.is(endInside.decorator))
+    return { sameDecorator: true, reversed: endInside.before < startInside.before };
+  return { sameDecorator: false, reversed: $isBeforeInDocument(end, start) };
 }
 
 /** The element point in front of the decorator, or behind it when `after`; `fallback` when it has

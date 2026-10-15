@@ -10,6 +10,7 @@ import {
 import {
   $carrierHoldableRange,
   $displayAnnotationIdsAt,
+  $displayAnnotationsOf,
   $getMarkIDs,
   $removeDisplayAnnotation,
   $removeTypedMarkId,
@@ -62,12 +63,12 @@ export function $removeCommentAnnotation(
 }
 
 /**
- * Select the start of the first of `carrierKeys`, in document order: `node.select(start, start)`
- * for a text carrier (at its holdable range's start, past any edge separator), or an element point
- * in front of it for a decorator, which has no text point of its own. A no-op with no carrier.
- * Mutating.
+ * Select the start of comment `id` on the first of `carrierKeys`, in document order: a text point
+ * at the start of the comment's own hold on a text carrier (never in front of its holdable range,
+ * so past any edge separator), or an element point in front of a decorator, which has no text
+ * point of its own. A no-op with no carrier. Mutating.
  */
-export function $selectFirstCommentCarrier(carrierKeys: Iterable<NodeKey>): void {
+export function $selectFirstCommentCarrier(id: string, carrierKeys: Iterable<NodeKey>): void {
   const carriers = Array.from(carrierKeys, (key) => $getNodeByKey(key)).filter(
     (node): node is LexicalNode => node !== null,
   );
@@ -75,7 +76,10 @@ export function $selectFirstCommentCarrier(carrierKeys: Iterable<NodeKey>): void
   const first = carriers[0];
   if (!first) return;
   if ($isTextNode(first)) {
-    const [start] = $carrierHoldableRange(first);
+    const hold = $displayAnnotationsOf(first).find(
+      (annotation) => annotation.type === COMMENT_MARK_TYPE && annotation.id === id,
+    );
+    const start = Math.max($carrierHoldableRange(first)[0], hold?.start ?? 0);
     first.select(start, start);
     return;
   }

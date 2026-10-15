@@ -600,7 +600,7 @@ function CommentsPanelList({
             if (carrierKeys.size === 0) return;
             editor.update(
               () => {
-                $selectFirstCommentCarrier(carrierKeys);
+                $selectFirstCommentCarrier(id, carrierKeys);
               },
               {
                 onUpdate() {

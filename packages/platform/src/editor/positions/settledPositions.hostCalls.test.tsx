@@ -275,6 +275,25 @@ describe("typing over a selection that ends where a footnote's text ends", () =>
       ],
     });
   });
+
+  it("leaves a caret at the note's closer collapsed when its end is a copy of its start", async () => {
+    const ft = { type: "char", marker: "ft", content: ["note text."], closed: "false" };
+    const { ref, lexical } = await mountStandardViewEditor(
+      twoParaUsj(["text ", { type: "note", marker: "f", caller: "+", content: [ft] }, " after"]),
+    );
+    const closer = { jsonPath: contentPath([2, 1]), closingMarkerOffset: 0 };
+    await act(async () => {
+      ref.current?.setSelection({ start: closer, end: { ...closer } });
+      await Promise.resolve();
+    });
+
+    expect(
+      lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        return $isRangeSelection(selection) && selection.isCollapsed();
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("getUsj after an annotation over a pending paragraph", () => {

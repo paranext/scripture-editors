@@ -891,6 +891,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     const unregisterTagRelease = holdsFocus
       ? undefined
       : releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG);
+    let failed = false;
     editor.update(
       () => {
         // Either source's one announcement is the one in `onUpdate` below, with the caller's ops
@@ -909,7 +910,17 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
         if (!holdsFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
         if (extraTag) $addUpdateTag(extraTag);
-        $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
+        try {
+          $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
+        } catch (error) {
+          // Lexical discards a throwing update but keeps its `onUpdate` for the next commit that
+          // lands - the user's next edit - so end the signal here and make that callback a no-op,
+          // or the edit would be reported as this apply.
+          failed = true;
+          markApplyingUpdate(editor, undefined);
+          unregisterTagRelease?.();
+          throw error;
+        }
       },
       {
         discrete: true,
@@ -924,6 +935,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         // either way - and the signal and the unfocused tag release end only once the commit they
         // guard has actually happened, never before.
         onUpdate: () => {
+          if (failed) return;
           markApplyingUpdate(editor, undefined);
           unregisterTagRelease?.();
           if (!holdsFocus) clearStaleDomSelection(editor);
