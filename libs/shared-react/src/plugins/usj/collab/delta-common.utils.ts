@@ -22,6 +22,7 @@ import {
   $isCursorPlaceholderOnlyText,
   $isDescendantOf,
   $isImmutableUnmatchedNode,
+  $charSeparatorPrefixLength,
   $isMilestoneNode,
   $isNoteNode,
   $isParaLikeNode,
@@ -29,8 +30,12 @@ import {
   $isDisplayRunPiece,
   $isSomeChapterNode,
   $isSynthesizedMarkerNode,
+  $isPieceContinuation,
   $isUnknownNode,
+  $logicalText,
   $noteEditableCallerNode,
+  $pieceHead,
+  $pieces,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   ImmutableUnmatchedNode,
   MilestoneNode,
@@ -38,8 +43,9 @@ import {
   NoteNode,
   ParaLikeNode,
   SomeChapterNode,
+  NBSP,
   textTypeState,
-  typedCallerBytes,
+  typedCallerRange,
 } from "shared";
 
 /**
@@ -202,7 +208,10 @@ export function $getOTPositionOfNode(
   node: LexicalNode | null | undefined,
   coordinates: OTCoordinateSystem = "delta-doc",
 ): number | undefined {
-  if (!node) return undefined;
+  // A node of no editor state (or of another) has no position.
+  if (!node || !$getNodeByKey(node.getKey())) return undefined;
+  // A later piece of a verse or unmatched closer is part of the one embed its head counts as.
+  if ($isEmbedContinuation(node)) node = $pieceHead(node);
 
   // LAZY traversal, terminated by the early returns below: this runs per keystroke on
   // DeltaOnChangePlugin's fast path, and the eager `$dfs()` array materialized the ENTIRE
@@ -455,14 +464,26 @@ export function $isElementNodeClosing(
  * verse falls through to the embed branch. See {@link OTCoordinateSystem}.
  */
 export function $isOTTextNode(node: LexicalNode | null | undefined): node is TextNode {
-  return $isTextNode(node) && !$isEmbedNode(node);
+  return $isTextNode(node) && !$isEmbedNode(node) && !$isEmbedContinuation(node);
+}
+
+/**
+ * Whether `node` is a later piece of an embed that is a text carrier — a verse or an unmatched
+ * closer an annotation has cut into pieces (`displayPieces.state.ts`). The carrier is ONE embed,
+ * counted on its first piece, so a later piece is neither an embed nor OT text: it contributes
+ * nothing and is never addressed on its own.
+ */
+export function $isEmbedContinuation(node: LexicalNode | null | undefined): node is TextNode {
+  return $isPieceContinuation(node) && ($isSomeVerseNode(node) || $isImmutableUnmatchedNode(node));
 }
 
 /**
  * Type guard to check if a node is an embed. Embeds have an OT length of 1 and are self-contained
- * (no children to process).
+ * (no children to process). A carrier cut into pieces is one embed: its first piece
+ * ({@link $isEmbedContinuation}).
  */
 export function $isEmbedNode(node: LexicalNode | null | undefined): node is EmbedNode {
+  if ($isPieceContinuation(node)) return false;
   return (
     $isSomeChapterNode(node) ||
     $isSomeVerseNode(node) ||
@@ -549,7 +570,12 @@ function $isOpaqueContentNode(
  */
 export function $isOwnParaPrefixGlyph(node: LexicalNode): boolean {
   const parent = node.getParent();
-  return $isSynthesizedMarkerNode(node) && $isParaNode(parent) && parent.getFirstChild() === node;
+  // Every piece of the glyph is the prefix: the slot holds its first piece.
+  return (
+    $isSynthesizedMarkerNode(node) &&
+    $isParaNode(parent) &&
+    $pieceHead(node).is(parent.getFirstChild())
+  );
 }
 
 /**
@@ -566,6 +592,22 @@ export function $hasAttributeRunAncestor(node: LexicalNode): boolean {
   // The walk starts at the PARENT deliberately: an AttributeRunNode is not "inside" itself.
   const parent = node.getParent();
   return parent !== null && $findMatchingParent(parent, $isAttributeRunNode) !== null;
+}
+
+/**
+ * True when `node` is the untagged NBSP-`|` form of attribute text, which deployed peers and
+ * persisted collab documents still carry (see the `isNodeAttributeText` comment in
+ * editor-delta.adaptor.ts). Text right after a char span's opening glyph is never that: its NBSP
+ * is the span's separator, and a `|…` after it is content the attribute grammar left literal —
+ * the same exception the editor→USJ conversion makes (`precedesOpeningCharGlyph`). The glyph is
+ * found through annotation marks and pieces ({@link $charSeparatorPrefixLength}), so a mark that
+ * cuts the content changes nothing. The ONE definition, shared by the ops stream and the
+ * delta-doc length side.
+ */
+export function $isLegacyAttributeText(node: TextNode): boolean {
+  return (
+    $logicalText(node).startsWith(NODE_ATTRIBUTE_PREFIX) && $charSeparatorPrefixLength(node) === 0
+  );
 }
 
 /**
@@ -593,8 +635,23 @@ function $isEmptyCharPlaceholderText(node: TextNode): boolean {
  */
 export function $editableNoteCallerContent(node: TextNode): string | undefined {
   const note = $getLogicalParent(node);
-  if (!$isNoteNode(note) || !$noteEditableCallerNode(note)?.is(node)) return undefined;
-  return typedCallerBytes(node.getTextContent(), note.getCaller());
+  const head = $pieceHead(node);
+  if (!$isNoteNode(note) || !$noteEditableCallerNode(note)?.is(head)) return undefined;
+  // The typed bytes are found in the whole caller, then shared out to the piece holding each one,
+  // so a caller cut into pieces gives the same bytes, in the same order, as an uncut one.
+  const text = $logicalText(head);
+  const { start, end } = typedCallerRange(text, note.getCaller());
+  let pieceStart = 0;
+  for (const piece of $pieces(head)) {
+    const pieceEnd = pieceStart + piece.getTextContentSize();
+    if (piece.is(node)) {
+      const from = Math.max(start, pieceStart);
+      const to = Math.min(end, pieceEnd);
+      return to > from ? text.slice(from, to).replaceAll(NBSP, " ") : "";
+    }
+    pieceStart = pieceEnd;
+  }
+  return undefined;
 }
 
 /**
@@ -652,12 +709,13 @@ function $getNodeOTContribution(node: LexicalNode, coordinates: OTCoordinateSyst
   // opaque OT unit (its glyph text is engine-owned display, excluded from content ops), the same
   // as it counts in the doc delta and in `$applyUpdate`'s traversals. See {@link $isOTTextNode}.
   if ($isEmbedNode(node)) return 1;
+  if ($isEmbedContinuation(node)) return 0;
 
   if ($isTextNode(node)) {
     // Read before the guard chain below: its type guards narrow `node` in later `||` operands
     // (a false branch of a `node is TextNode` guard leaves `never`), so member access there
     // does not typecheck even though the value is unchanged.
-    const nodeText = node.getTextContent();
+    const isLegacyAttributeText = $isLegacyAttributeText(node);
     if (
       coordinates === "delta-doc" &&
       // A bare cursor host (EmptyVerseCaretGuardPlugin) is a transient, collab-invisible node:
@@ -684,7 +742,7 @@ function $getNodeOTContribution(node: LexicalNode, coordinates: OTCoordinateSyst
         // the legacy NBSP-`|` byte-prefixed attribute text the ops stream still honors for
         // pre-state-tag peers and persisted deltas, and the empty-char placeholder. The
         // editable-mode note caller counts only its content bytes, below.
-        nodeText.startsWith(NODE_ATTRIBUTE_PREFIX) ||
+        isLegacyAttributeText ||
         $isEmptyCharPlaceholderText(node))
     )
       return 0;

@@ -3,13 +3,24 @@
  */
 
 import { $getOTPositionOfNode, $isFastPathContentText, DeltaOp } from "./delta-common.utils";
-import { $getTextOp, getEditorDelta } from "./editor-delta.adaptor";
+import { $getParticularNodeOps, getEditorDelta } from "./editor-delta.adaptor";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import type { EditorState, LexicalEditor, UpdateListenerPayload } from "lexical";
+import type {
+  EditorState,
+  LexicalEditor,
+  LexicalNode,
+  TextNode,
+  UpdateListenerPayload,
+} from "lexical";
 import { $getNodeByKey, $isTextNode, HISTORY_MERGE_TAG } from "lexical";
 import Delta from "quill-delta";
 import { useLayoutEffect } from "react";
-import { $findFirstAncestorNoteNode, MARKER_SETTLE_TAG } from "shared";
+import {
+  $findFirstAncestorNoteNode,
+  $isParaLikeNode,
+  ANNOTATION_MARKS_TAG,
+  MARKER_SETTLE_TAG,
+} from "shared";
 
 /** Stable default for {@link DeltaOnChangePlugin}'s `ignoreTags` so the effect deps stay stable. */
 const EMPTY_TAGS: readonly string[] = [];
@@ -88,10 +99,14 @@ export function shouldSkipUpdateForOps(
     // A `MARKER_SETTLE_TAG` commit carries the merge tag only to stay out of the undo
     // stack — its bytes really did change, so it must reach `onChange` like any edit.
     // Without this exemption the cached USJ and the emitted delta both keep showing the
-    // pre-settle bytes, and the host saves a document the editor is no longer displaying.
+    // pre-settle bytes, and the host saves a document the editor is no longer displaying. A
+    // comment's `ANNOTATION_MARKS_TAG` update is a change to the USJ too (its mark writes `zmsc`
+    // milestones); it carries no merge tag of its own, but Lexical commits updates queued
+    // together under all their tags, so it can share a commit with one that does.
     (options.ignoreHistoryMergeTagChange &&
       tags.has(HISTORY_MERGE_TAG) &&
-      !tags.has(MARKER_SETTLE_TAG)) ||
+      !tags.has(MARKER_SETTLE_TAG) &&
+      !tags.has(ANNOTATION_MARKS_TAG)) ||
     options.ignoreTags.some((tag) => tags.has(tag)) ||
     prevEditorState.isEmpty()
   );
@@ -118,13 +133,10 @@ export function $getUpdateOps(
     // note's OUTER position and the emitted op would land the edit AFTER the note. The full-diff
     // fallback replaces the note embed wholesale instead.
     const isInsideNote = dirtyNode !== null && $findFirstAncestorNoteNode(dirtyNode) !== undefined;
-    // Presentation-carrying text must not take the fast path either: the fast path's insert is
-    // the node's RAW bytes while its retain is counted in delta-doc coordinates, and for a node
-    // the ops-stream exclusions treat specially (a `\q1` prefix glyph, a `\va 2\va*` run,
-    // attribute text) those are different currencies — a peer would receive display bytes as
-    // Scripture and every later offset would shift. $isFastPathContentText derives eligibility
-    // from the same delta-doc counting instead of re-listing the exclusions; anything ineligible
-    // falls to the full diff, whose $handleTextNodes applies the one authoritative list.
+    // Presentation-carrying text (a `\q1` prefix glyph, a `\va 2\va*` run, attribute text)
+    // takes the full diff, whose $handleTextNodes applies the one authoritative exclusion list.
+    // $isFastPathContentText derives eligibility from the same delta-doc counting instead of
+    // re-listing the exclusions.
     if (
       dirtyLeaves.size === 1 &&
       $isTextNode(dirtyNode) &&
@@ -139,15 +151,12 @@ export function $getUpdateOps(
       // embed op — the glyph text is engine-owned display, excluded from content ops), and a
       // preceding editable chapter as its glyph-length body text (matching the doc delta too).
       // See `OTCoordinateSystem` in delta-common.utils.ts.
-      const retain = $getOTPositionOfNode(dirtyNode);
-      if (retain !== undefined) {
-        const prevTextDoc = prevEditorState.read(() => {
-          const prevNode = $getNodeByKey(nodeKey);
-          return new Delta([$isTextNode(prevNode) ? $getTextOp(prevNode) : { insert: "" }]);
-        });
-        const textDoc = new Delta([$getTextOp(dirtyNode)]);
-        const nodePositionRetain = new Delta(retain > 0 ? [{ retain }] : []);
-        update = update.concat(nodePositionRetain).concat(prevTextDoc.diff(textDoc));
+      const blockOps = $blockUpdateOps(dirtyNode, prevEditorState);
+      if (blockOps) update = blockOps;
+      else {
+        const prevDoc = getEditorDelta(prevEditorState);
+        const currentDoc = getEditorDelta(editor.getEditorState());
+        update = prevDoc.diff(currentDoc);
       }
     } else {
       const prevDoc = getEditorDelta(prevEditorState);
@@ -156,4 +165,46 @@ export function $getUpdateOps(
     }
   });
   return update.ops;
+}
+
+/**
+ * The ops for an edit inside one text node, computed as the whole-document diff computes them but
+ * over the node's block alone: the block's ops before and after, diffed, behind a retain to the
+ * block's start. A diff of the node's text alone is not the same diff. It carries none of the
+ * attributes the node's ancestors give its bytes (a char span's `char`), and where an edit could
+ * sit among equal bytes it decides from the node's own edges, which an annotation mark over
+ * content moves, so one keystroke would be sent differently in a text a mark has cut.
+ *
+ * The block is preceded by the last op of the block before it: an edit inside one text node can
+ * slide across no line end or embed, so what the diff weighs around the edit is all inside this
+ * window, as it is in the whole document. `undefined` when the node is in no block (or the block
+ * has no position), for the caller's full diff to answer.
+ */
+function $blockUpdateOps(node: TextNode, prevEditorState: EditorState): Delta | undefined {
+  const block = node.getTopLevelElement();
+  if (!$isParaLikeNode(block)) return undefined;
+  const close = $getOTPositionOfNode(block);
+  if (close === undefined) return undefined;
+  const blockKey = block.getKey();
+  const current = $blockWindow(block);
+  const previous = prevEditorState.read(() => {
+    const previousBlock = $getNodeByKey(blockKey);
+    return previousBlock ? $blockWindow(previousBlock) : undefined;
+  });
+  if (!previous) return undefined;
+  const start = close + 1 - current.length();
+  if (start < 0) return undefined;
+  return new Delta(start > 0 ? [{ retain: start }] : []).concat(previous.diff(current));
+}
+
+/** `block`'s ops, behind the last op of the nearest block before it that has any. */
+function $blockWindow(block: LexicalNode): Delta {
+  let context: DeltaOp[] = [];
+  for (
+    let before = block.getPreviousSibling();
+    before && context.length === 0;
+    before = before.getPreviousSibling()
+  )
+    context = $getParticularNodeOps(before).slice(-1);
+  return new Delta([...context, ...$getParticularNodeOps(block)]);
 }

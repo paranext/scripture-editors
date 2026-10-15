@@ -33,11 +33,16 @@ import {
   $isSomeParaNode,
   $isTypedMarkNode,
   $liftOutOfCharStack,
+  CharStackLiftOptions,
+  $logicalOffset,
+  $logicalText,
+  $pieceAtLogicalOffset,
   $selectCharContentStart,
   NBSP,
   SomeParaNode,
   textTypeState,
   TypedMarkNode,
+  $nodeAfterBoundaryThroughMarks,
 } from "shared";
 
 /**
@@ -115,10 +120,16 @@ export function $removeCharFormattingFromSelection(): boolean {
       return true;
     }
     // Outside any character style there is nothing to strip, so the key is a plain space —
-    // reusing the next character when it is already one (the caret just moves past it).
-    if ($isTextNode(anchorNode) && anchorNode.getTextContent()[offset] === " ") {
-      anchorNode.select(offset + 1, offset + 1);
-      return true;
+    // reusing the next character when it is already one (the caret just moves past it). A
+    // display-byte carrier an annotation cuts into pieces is read whole, so the next character
+    // can be the first of the next piece.
+    if ($isTextNode(anchorNode)) {
+      const at = $logicalOffset(anchorNode, offset);
+      if ($logicalText(anchorNode)[at] === " ") {
+        const [piece, pieceOffset] = $pieceAtLogicalOffset(anchorNode, at + 1);
+        piece.select(pieceOffset, pieceOffset);
+        return true;
+      }
     }
     selection.insertText(" ");
     return true;
@@ -141,9 +152,12 @@ export function $removeCharFormattingFromSelection(): boolean {
     // reopened span until its own turn), leaving `target` stale — and `setTextContent` compares
     // the new text against the STALE instance's own, so the shed would silently no-op exactly
     // when the pre-prefix text equals the post-shed text, leaving the separator byte in the file.
+    // Only a text whose whole carrier starts with the separator carries one: a later piece of a
+    // display-byte carrier an annotation cuts (a note caller's closing no-break space) is not where
+    // a span's content starts.
     const latest = target.getLatest();
-    const text = latest.getTextContent();
-    if (text.startsWith(NBSP)) latest.setTextContent(text.slice(NBSP.length));
+    if ($logicalOffset(latest, 0) === 0 && $logicalText(latest).startsWith(NBSP))
+      latest.setTextContent(latest.getTextContent().slice(NBSP.length));
   }
   // Always handled, even with nothing to strip. PT9 inserts no space on a range, so declining is
   // not "nothing happened" — it hands the keystroke to the browser, which types a literal space
@@ -301,14 +315,30 @@ export function $breakAndLiftCharStack(point: PointType): CharStackBreak {
     else if (container) container.append(breakPoint);
     else return { parent: undefined, moving: [] };
   }
-  for (let parent = breakPoint.getParent(); ; parent = breakPoint.getParent()) {
-    if ($isCharNode(parent)) $liftOutOfCharStack(breakPoint, { renderGlyphs: true });
-    else if (!$isTypedMarkNode(parent) || !$liftOutOfTypedMark(breakPoint, parent)) break;
-  }
+  $liftOutOfCharStackThroughMarks(breakPoint, { renderGlyphs: true });
   const moving = breakPoint.getNextSiblings();
   const parent = breakPoint.getParent() ?? undefined;
   breakPoint.remove();
   return { parent, moving };
+}
+
+/**
+ * Lifts `node` out of every char span AND every annotation mark wrapper enclosing it, in any
+ * interleaving: each char level closes before it and reopens after it (`$liftOutOfCharStack`),
+ * and each mark splits around it ({@link $liftOutOfTypedMark}), so a mark between the stack and
+ * its container stops the lift no more than it would stop it with no mark there. `node` comes to
+ * rest in the nearest container that is neither.
+ *
+ * Mutating: call inside `editor.update()`, with a range selection (a mark split needs one).
+ */
+export function $liftOutOfCharStackThroughMarks(
+  node: LexicalNode,
+  options: CharStackLiftOptions,
+): void {
+  for (let parent = node.getParent(); ; parent = node.getParent()) {
+    if ($isCharNode(parent)) $liftOutOfCharStack(node, options);
+    else if (!$isTypedMarkNode(parent) || !$liftOutOfTypedMark(node, parent)) break;
+  }
 }
 
 /**
@@ -425,8 +455,8 @@ export function $splitParagraphAtCharStack(): boolean {
   const newPara = para.insertNewAfter(selection, false);
   newPara.append(...moving);
   // A reopened span may sit inside the continuation of an annotation mark wrapper the break split.
-  let reopened: LexicalNode | undefined = moving[0];
-  while ($isTypedMarkNode(reopened)) reopened = reopened.getFirstChild() ?? undefined;
+  const reopened =
+    moving[0] && $nodeAfterBoundaryThroughMarks(newPara, moving[0].getIndexWithinParent());
   if ($isCharNode(reopened)) {
     // Typing continues the reopened style: the caret goes to the start of its content, past the
     // separator, exactly where the user interrupted the run. `$injectMarkerPrefix` leaves a caret

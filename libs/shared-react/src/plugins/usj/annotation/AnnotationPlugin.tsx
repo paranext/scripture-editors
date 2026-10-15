@@ -4,7 +4,22 @@ import { AnnotationRange } from "./selection.model";
 import { $getRangeFromUsjSelection } from "./selection.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { mergeRegister, registerNestedElementResolver } from "@lexical/utils";
-import { $getNodeByKey, LexicalEditor, NodeKey } from "lexical";
+import {
+  $getNodeByKey,
+  $getSelection,
+  $isRangeSelection,
+  COMMAND_PRIORITY_CRITICAL,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  HISTORY_MERGE_TAG,
+  INSERT_LINE_BREAK_COMMAND,
+  INSERT_PARAGRAPH_COMMAND,
+  KEY_ENTER_COMMAND,
+  LexicalCommand,
+  LexicalEditor,
+  NodeKey,
+  PASTE_COMMAND,
+  SELECTION_CHANGE_COMMAND,
+} from "lexical";
 import { ForwardedRef, forwardRef, useEffect, useImperativeHandle, useMemo } from "react";
 import {
   $coveredDisplayText,
@@ -13,6 +28,7 @@ import {
   $isTypedMarkNode,
   $removeDisplayAnnotation,
   $removeTypedMarkId,
+  $restoreCaretAtMarkEnd,
   $wrapSelectionInTypedMarkNode,
   ANNOTATION_CHANGE_TAG,
   DecoratorHold,
@@ -26,6 +42,14 @@ import {
   TypedMarkOnMouseLeave,
   TypedMarkOnRemove,
 } from "shared";
+
+/** Put a caret Lexical read past a mark's end back at the mark's content end
+ * (`$restoreCaretAtMarkEnd`), and let the command carry on. */
+function $restoreCaretBeforeCommand(): false {
+  const selection = $getSelection();
+  if ($isRangeSelection(selection)) $restoreCaretAtMarkEnd(selection);
+  return false;
+}
 
 /** Forward reference for annotations. */
 export interface AnnotationRef {
@@ -137,6 +161,25 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
         },
         { skipInitialization: true },
       ),
+      // A caret at the end of a mark's content is read back from the screen onto the start of the
+      // node after the mark (a glyph, an attribute run); it is put back where it is, first, so
+      // every selection listener reads the content's end, as with no mark there. An update that
+      // inserts re-reads the caret from the screen as it starts, onto that node's start again, so
+      // each insertion puts it back too before anything inserts: the bytes go where they go with
+      // no mark there, not into the display bytes after it.
+      // Every command that acts at the caret Lexical has just read back from the screen: a
+      // selection change, an input's insertion (typed, pasted, or a paragraph or line break), and
+      // the Enter key, whose handlers act at the caret before any insertion command runs.
+      ...[
+        SELECTION_CHANGE_COMMAND,
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        PASTE_COMMAND,
+        KEY_ENTER_COMMAND,
+        INSERT_PARAGRAPH_COMMAND,
+        INSERT_LINE_BREAK_COMMAND,
+      ].map((command: LexicalCommand<unknown>) =>
+        editor.registerCommand(command, $restoreCaretBeforeCommand, COMMAND_PRIORITY_CRITICAL),
+      ),
     );
   }, [editor, markNodeMap]);
 }
@@ -247,7 +290,8 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
             { decoratorHolds },
           );
         },
-        { tag: ANNOTATION_CHANGE_TAG },
+        // A host's annotation is not a user's edit: it joins the current undo step.
+        { tag: [ANNOTATION_CHANGE_TAG, HISTORY_MERGE_TAG] },
       );
     },
 
@@ -266,7 +310,8 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
         () => {
           $removeAnnotationNodes(type, id, markNodeKeys);
         },
-        { tag: ANNOTATION_CHANGE_TAG },
+        // A host's annotation is not a user's edit: it joins the current undo step.
+        { tag: [ANNOTATION_CHANGE_TAG, HISTORY_MERGE_TAG] },
       );
     },
 

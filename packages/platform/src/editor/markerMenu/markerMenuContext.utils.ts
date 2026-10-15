@@ -28,6 +28,8 @@ import {
   $isPointInMarkerGlyphText,
   $isSomeChapterNode,
   $isSynthesizedMarkerNode,
+  $logicalNextSibling,
+  $pieceHead,
   ParaNode,
 } from "shared";
 
@@ -126,8 +128,9 @@ export function $isAtParagraphContentStart(
 
   let contentStart: LexicalNode | null = firstChild;
   if ($isSynthesizedMarkerNode(firstChild)) {
-    if (anchorNode.is(firstChild)) return true;
-    contentStart = firstChild.getNextSibling();
+    // Every piece of a glyph an annotation cuts is the glyph.
+    if ($pieceHead(anchorNode).is(firstChild)) return true;
+    contentStart = $logicalNextSibling(firstChild);
     if (contentStart && $isMarkerTrailingSeparator(contentStart)) {
       if (anchorNode.is(contentStart)) return true;
       contentStart = contentStart.getNextSibling();
@@ -157,8 +160,9 @@ function $isAtParagraphMarkerPrefix(
 ): boolean {
   const firstChild = para.getFirstChild();
   if (!firstChild || !$isSynthesizedMarkerNode(firstChild)) return false;
-  if (anchorNode.is(firstChild)) return true;
-  const separator = firstChild.getNextSibling();
+  // Every piece of a glyph an annotation cuts is the glyph.
+  if ($pieceHead(anchorNode).is(firstChild)) return true;
+  const separator = $logicalNextSibling(firstChild);
   return (
     separator !== null &&
     $isMarkerTrailingSeparator(separator) &&

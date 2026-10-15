@@ -33,8 +33,18 @@ import {
   ImmutableTypedTextNode,
   isSerializedImmutableTypedTextNode,
 } from "../features/ImmutableTypedTextNode.js";
+import {
+  $isPieceContinuation,
+  $lastPiece,
+  $logicalChildren,
+  $logicalNextSibling,
+  $logicalText,
+  $pieceHead,
+  $pieceStart,
+  $pieces,
+} from "../features/displayPieces.state.js";
 import { $isMarkerNode, isSerializedMarkerNode } from "../features/MarkerNode.js";
-import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
+import { $isTypedMarkNode, isSerializedTypedMarkNode } from "../features/TypedMarkNode.js";
 import { $isUnknownNode, UnknownNode } from "../features/UnknownNode.js";
 import { $isAttributeRunNode } from "./AttributeRunNode.js";
 import { $isBookNode, BookNode } from "./BookNode.js";
@@ -69,7 +79,7 @@ import {
   $isSplicedImpliedPara,
 } from "./logicalParent.utils.js";
 import { closingMarkerText, openingMarkerText, typedCallerRange } from "./markerText.utils.js";
-import { collapsedSpaceRunRanges } from "./spaceRuns.utils.js";
+import { collapsedSpaceRunRanges, endsInSpaceRun } from "./spaceRuns.utils.js";
 import {
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   IMMUTABLE_NOTE_CALLER_NODE_TYPE,
@@ -543,11 +553,49 @@ function extractTextFromNode(node: SerializedLexicalNode): string {
     // If it's an ElementNode, process its children recursively and join their text
     // We join with '' here because spacing is usually handled by spaces within TextNodes
     // or potentially by joining results from the top-level nodes with spaces later.
-    return node.children.map((child) => extractTextFromNode(child)).join("");
+    return withoutMarks(node.children)
+      .map((child) => extractTextFromNode(child))
+      .join("");
   }
 
   // Ignore other node types (e.g., LineBreakNode, custom nodes without text/children)
   return "";
+}
+
+/** Whether `node` is plain content text, the kind an annotation mark's wrap splits at its edges. */
+function isSerializedPlainText(
+  node: SerializedLexicalNode | undefined,
+): node is SerializedTextNode {
+  return isSerializedTextNode(node) && serializedTextType(node) === undefined;
+}
+
+/**
+ * `nodes` with every annotation mark replaced by its children, and a text the mark's edge split off
+ * joined back onto the plain text beside it. A mark is presentation: the preview reads the text as
+ * it reads the same text with no mark, which the wrap never split — so a mark's text is neither
+ * lost nor spaced apart from its neighbours, and a no-break space a mark holds alone stays content.
+ */
+function withoutMarks(nodes: SerializedLexicalNode[]): SerializedLexicalNode[] {
+  const out: SerializedLexicalNode[] = [];
+  let isAtMarkEdge = false;
+  const add = (node: SerializedLexicalNode): void => {
+    const last = out[out.length - 1];
+    if (isAtMarkEdge && isSerializedPlainText(last) && isSerializedPlainText(node)) {
+      const joined: SerializedTextNode = { ...last, text: last.text + node.text };
+      out[out.length - 1] = joined;
+    } else out.push(node);
+    isAtMarkEdge = false;
+  };
+  for (const node of nodes) {
+    if (!isSerializedTypedMarkNode(node)) {
+      add(node);
+      continue;
+    }
+    isAtMarkEdge = true;
+    withoutMarks(node.children).forEach(add);
+    isAtMarkEdge = true;
+  }
+  return out;
 }
 
 /**
@@ -557,7 +605,7 @@ function extractTextFromNode(node: SerializedLexicalNode): string {
  * @returns The preview text.
  */
 export function getPreviewTextFromSerializedNodes(childNodes: SerializedLexicalNode[]): string {
-  const previewText = childNodes
+  const previewText = withoutMarks(childNodes)
     .map((node) => extractTextFromNode(node))
     .filter((text) => text.length > 0)
     .join(" ")
@@ -575,7 +623,10 @@ export function getPreviewTextFromSerializedNodes(childNodes: SerializedLexicalN
 export function $getNoteCallerPreviewText(childNodes: LexicalNode[]): string {
   const parts: string[] = [];
 
-  for (const node of childNodes) {
+  // A span an annotation mark wraps whole is the note's span all the same.
+  const $throughMarks = (nodes: LexicalNode[]): LexicalNode[] =>
+    nodes.flatMap((node) => ($isTypedMarkNode(node) ? $throughMarks(node.getChildren()) : [node]));
+  for (const node of $throughMarks(childNodes)) {
     if (!$isCharNode(node)) continue;
 
     const textContent = $getTextContentExcludingMarkers(node);
@@ -659,7 +710,8 @@ export function $isSynthesizedMarkerNode(node: LexicalNode | null | undefined): 
 export function $isBookPrefixGlyph(node: LexicalNode | null | undefined): boolean {
   if (!node || !$isSynthesizedMarkerNode(node)) return false;
   const parent = node.getParent();
-  return $isBookNode(parent) && node.is(parent.getFirstChild());
+  // Every piece of a glyph an annotation cut is the glyph: its head is the book's first child.
+  return $isBookNode(parent) && $pieceHead(node).is(parent.getFirstChild());
 }
 
 /**
@@ -761,18 +813,19 @@ function $retargetSynthesizedMarkers(charNode: CharNode, toMarker: string): void
   // Note-content markers are written without a closing marker, so a closing child is removed rather
   // than retargeted to a form `addClosingMarker` would never emit.
   const dropsClosingMarker = CharNode.isNoteContentMarker(toMarker);
-  charNode.getChildren().forEach((child) => {
+  // One glyph at a time, read whole however an annotation has cut it into pieces.
+  $logicalChildren(charNode).forEach((child) => {
     // Gate on the node type first: only a synthesized marker child is ever a candidate for
     // rewriting or removal here, regardless of what its text happens to contain.
     if (!$isSynthesizedMarkerNode(child)) return;
 
-    const text = child.getTextContent();
+    const text = $logicalText(child);
     const isOpening = text === openingText || text === nestedOpeningText;
     const isClosing = !isOpening && (text === closingText || text === nestedClosingText);
     if (!isOpening && !isClosing) return;
 
     if (isClosing && dropsClosingMarker) {
-      child.remove();
+      $pieces(child).forEach((piece) => piece.remove());
       return;
     }
     // MarkerNode.setMarker recomputes the node's text for us, nesting included — it re-derives
@@ -996,9 +1049,15 @@ export function $typedNoteCallerRange(
   node: LexicalNode,
 ): { start: number; end: number } | undefined {
   if (!$isTextNode(node)) return undefined;
-  const note = $getLogicalParent(node);
-  if (!$isNoteNode(note) || !$noteEditableCallerNode(note)?.is(node)) return undefined;
-  const { start, end } = typedCallerRange(node.getTextContent(), note.getCaller());
+  // A caller an annotation cut into pieces is read whole, and each piece answers for its own
+  // share of the typed bytes.
+  const caller = $pieceHead(node);
+  const note = $getLogicalParent(caller);
+  if (!$isNoteNode(note) || !$noteEditableCallerNode(note)?.is(caller)) return undefined;
+  const typed = typedCallerRange($logicalText(caller), note.getCaller());
+  const offset = $pieceStart(node);
+  const start = Math.max(typed.start - offset, 0);
+  const end = Math.min(typed.end - offset, node.getTextContentSize());
   return start < end ? { start, end } : undefined;
 }
 
@@ -1049,7 +1108,7 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
   if (
     $isTextNode(node) &&
     $isNoteNode(logicalParent) &&
-    $noteEditableCallerNode(logicalParent)?.is(node)
+    $noteEditableCallerNode(logicalParent)?.is($pieceHead(node))
   )
     return !$typedNoteCallerRange(node);
   if ($isTextNode(node)) {
@@ -1171,12 +1230,13 @@ export function $isMarkerTrailingSeparator(node: LexicalNode | null | undefined)
 export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
   const glyph = element.getFirstChild();
   if (!$isSynthesizedMarkerNode(glyph) || glyph === null) return false;
-  if ($isMarkerTrailingSeparator(glyph.getNextSibling())) return false;
+  // The glyph is read whole however an annotation has cut it: its site is after its last piece.
+  const next = $logicalNextSibling(glyph);
+  if ($isMarkerTrailingSeparator(next)) return false;
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   const anchorNode = selection.anchor.getNode();
-  if (anchorNode.is(glyph) || anchorNode.is(element)) return true;
-  const next = glyph.getNextSibling();
+  if ($pieceHead(anchorNode).is(glyph) || anchorNode.is(element)) return true;
   return next !== null && anchorNode.is(next) && selection.anchor.offset === 0;
 }
 
@@ -1188,6 +1248,21 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
 type LogicalItemShape =
   | { type: "element"; node: LexicalNode }
   | { type: "text"; nodes: TextNode[] };
+
+/**
+ * Whether `node` is a later piece of a carrier that stands as its own content item (a verse, an
+ * unmatched closer) — a piece an annotation cut off (`displayPieces.state.ts`). The carrier is one
+ * item, which its head stands for. A plain text carrier's pieces are measured as text instead, so
+ * they stay in their run.
+ */
+function $isItemContinuation(node: LexicalNode): boolean {
+  return $isPieceContinuation(node) && node.getType() !== TextNode.getType();
+}
+
+/** The node standing for `node`'s content item: its carrier's head for an item continuation. */
+function $itemNode(node: LexicalNode): LexicalNode {
+  return $isItemContinuation(node) ? $pieceHead(node) : node;
+}
 
 /** The shape half of {@link $getLogicalContentItems}. */
 function $getLogicalItemShapes(parent: ElementNode): LogicalItemShape[] {
@@ -1207,6 +1282,7 @@ function $getLogicalItemShapes(parent: ElementNode): LogicalItemShape[] {
 
   const visit = (node: LexicalNode) => {
     if ($shouldIgnoreNodeForContentIndexes(node)) return;
+    if ($isItemContinuation(node)) return;
     if ($isContentTransparent(node)) {
       // For marks, recursion is defense-in-depth: nested marks only exist transiently before the
       // AnnotationPlugin's nested-element resolver flattens them into siblings.
@@ -1230,13 +1306,16 @@ function $getLogicalItemShapes(parent: ElementNode): LogicalItemShape[] {
 }
 
 /**
- * Measures a coalesced text run in the exporter's coordinates. Each node is measured on its own,
- * as the exporter converts each node's text before joining it to its neighbors, so a space run
- * split across an annotation's edge does not collapse.
+ * Measures a coalesced text run in the exporter's coordinates. Each node is converted on its own,
+ * as the exporter converts each node's text before joining it to its neighbors, and a space run
+ * that crosses from one node into the next (split by an annotation's edge) collapses as one run,
+ * as the exporter collapses it where it joins the two.
  */
 function $measureTextItem(nodes: TextNode[], collapsesSpaceRuns: boolean): LogicalTextItem {
   const segments: LogicalTextSegment[] = [];
   let length = 0;
+  // Whether the text kept so far ends in a display space, so a run this node starts continues it.
+  let continuesRun = false;
   for (const node of nodes) {
     // A char span's separator NBSP is a prefix of its first content text and the exporter strips
     // it before anything else, so it occupies no USJ offset and never belongs to a space run —
@@ -1246,11 +1325,17 @@ function $measureTextItem(nodes: TextNode[], collapsesSpaceRuns: boolean): Logic
     const typed = $typedNoteCallerRange(node);
     const lead = typed ? typed.start : $charSeparatorPrefixLength(node);
     const keptEnd = typed ? typed.end : node.getTextContentSize();
-    const collapsed: (readonly [number, number])[] = collapsesSpaceRuns
-      ? collapsedSpaceRunRanges(node.getTextContent().slice(lead, keptEnd)).map(
-          ([start, end]) => [start + lead, end + lead] as const,
-        )
-      : [];
+    const kept = node.getTextContent().slice(lead, keptEnd);
+    const runRanges = collapsesSpaceRuns ? collapsedSpaceRunRanges(kept, continuesRun) : [];
+    if (collapsesSpaceRuns) {
+      let keptText = kept;
+      for (const [start, end] of [...runRanges].reverse())
+        keptText = keptText.slice(0, start) + keptText.slice(end);
+      if (keptText) continuesRun = endsInSpaceRun(keptText);
+    }
+    const collapsed: (readonly [number, number])[] = runRanges.map(
+      ([start, end]) => [start + lead, end + lead] as const,
+    );
     if (keptEnd < node.getTextContentSize()) collapsed.push([keptEnd, node.getTextContentSize()]);
     const segmentLength =
       node.getTextContentSize() -
@@ -1321,8 +1406,9 @@ export function $getLogicalContentItems(
  * @returns the logical index, or -1 if the child is presentation-only or not found.
  */
 export function $getLogicalIndexOfChild(parent: ElementNode, child: LexicalNode): number {
+  const node = $itemNode(child);
   return $getLogicalItemShapes(parent).findIndex((shape) =>
-    shape.type === "element" ? shape.node.is(child) : shape.nodes.some((node) => node.is(child)),
+    shape.type === "element" ? shape.node.is(node) : shape.nodes.some((text) => text.is(node)),
   );
 }
 
@@ -1400,7 +1486,10 @@ export function $getLogicalPointFromElementPoint(
   elementOffset: number,
   collapsesSpaceRuns: boolean,
 ): LogicalPoint {
-  const child = parent.getChildAtIndex(elementOffset);
+  // A point between two pieces of a carrier is inside the carrier: the closest point to its left
+  // is in front of it.
+  const at = parent.getChildAtIndex(elementOffset);
+  const child = at && $itemNode(at);
   if ($isSplicedImpliedPara(parent)) {
     const root = parent.getParentOrThrow();
     // Past the implied paragraph's last child is the boundary in front of whatever follows it.
@@ -1449,9 +1538,12 @@ export function $getLogicalPointBeforeNode(
 ): { parent: ElementNode; point: LogicalPoint } | undefined {
   const parent = $getLogicalParent(node);
   if (!parent) return undefined;
-  if (!$logicalItemWithin($getLogicalContentItems(parent, collapsesSpaceRuns), node))
+  // In front of a later piece of a carrier is inside the carrier: the closest point to its left is
+  // in front of the carrier.
+  const before = $itemNode(node);
+  if (!$logicalItemWithin($getLogicalContentItems(parent, collapsesSpaceRuns), before))
     return undefined;
-  return { parent, point: $logicalPointBefore(parent, node, collapsesSpaceRuns) };
+  return { parent, point: $logicalPointBefore(parent, before, collapsesSpaceRuns) };
 }
 
 /** Whether any of `items` is `node` or lies inside it. */
@@ -1510,9 +1602,10 @@ export function $getElementPointFromLogicalIndex(
     return [parent, parent.getChildrenSize()];
 
   const previousShape = shapes[logicalIndex - 1];
+  // After an element item is after its carrier's last piece.
   const lastNode =
     previousShape.type === "element"
-      ? previousShape.node
+      ? $lastPiece(previousShape.node)
       : previousShape.nodes[previousShape.nodes.length - 1];
   const topLevelChild = lastNode ? $findChildOfParent(parent, lastNode) : undefined;
   if (!topLevelChild) return [parent, parent.getChildrenSize()];

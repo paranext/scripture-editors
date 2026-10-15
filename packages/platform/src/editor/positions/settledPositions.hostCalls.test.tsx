@@ -296,7 +296,7 @@ describe("typing over a selection that ends where a footnote's text ends", () =>
   });
 });
 
-describe("getUsj after an annotation settles a pending paragraph", () => {
+describe("getUsj after an annotation over a pending paragraph", () => {
   it("returns the settled paragraphs, not the literal the paragraph held before", async () => {
     const { ref, lexical } = await mountStandardViewEditor(twoParaUsj(["plain body"]));
     await typeOver(lexical, "plain body", "plain \\q1 body");
@@ -308,8 +308,9 @@ describe("getUsj after an annotation settles a pending paragraph", () => {
       { type: "para", marker: "p", content: ["depart here"] },
     ]);
 
-    // Wrapping the pending text splits it, and the marker-edit engine settles the paragraph inside
-    // the annotation's own update, which never reaches the editor's change handler.
+    // Wrapping the pending text splits it. An annotation is no edit and no caret move, so the
+    // literal stays pending exactly as it would with no annotation, and `getUsj()` still reads the
+    // document as it settles.
     await act(async () => {
       ref.current?.setAnnotation(
         {
@@ -321,7 +322,7 @@ describe("getUsj after an annotation settles a pending paragraph", () => {
       );
       await Promise.resolve();
     });
-    expect(getPendedDisplayOwners(lexical)?.size ?? 0).toBe(0);
+    expect(getPendedDisplayOwners(lexical)?.size).toBeGreaterThan(0);
 
     expect(ref.current?.getUsj()?.content?.slice(2)).toEqual(settled);
   });

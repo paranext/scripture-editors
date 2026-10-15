@@ -18,6 +18,7 @@ import {
   $caretHostAtBoundary,
   $createCursorPlaceholderNode,
   $isCursorPlaceholderOnlyText,
+  $lastPiece,
   $placeCaretAtBoundary,
   $removeCursorPlaceholder,
   CURSOR_CHANGE_TAG,
@@ -120,8 +121,10 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
       // named node, materializing a host there only when nothing already renders one. Reusing an
       // existing host is what keeps a second arrival at the same position — a click, once an
       // earlier arrival has already put a host there — from stacking hosts.
-      const parent = target.getParentOrThrow();
-      const boundary = target.getIndexWithinParent() + 1;
+      // Past every piece of a target an annotation cut into pieces.
+      const last = $lastPiece(target);
+      const parent = last.getParentOrThrow();
+      const boundary = last.getIndexWithinParent() + 1;
       // Only a bare host counts: any text node can carry a caret, but a rule names this boundary
       // because typing must land in a node of its own there, not in whatever text follows it.
       const atBoundary = $caretHostAtBoundary(parent, boundary);
@@ -135,7 +138,7 @@ export function useTransientCaretHost($caretHostAnchor: CaretHostAnchor): CaretH
         occupiedKey = existing.getKey();
       } else {
         const host = $createCursorPlaceholderNode();
-        target.insertAfter(host);
+        last.insertAfter(host);
         hostKeyRef.current = host.getKey();
         occupiedKey = host.getKey();
         mutated = true;

@@ -73,6 +73,7 @@ import {
   UNMATCHED_TAG_NAME,
   UNMERGEABLE_TEXT_DETAIL,
   isSerializedVerseBlockNode,
+  joinSerializedPieces,
   VerseBlockNode,
   VerseNode,
 } from "shared";
@@ -145,7 +146,9 @@ export function deserializeSerializedEditorState(
 ): Usj | undefined {
   if (!serializedEditorState.root || !serializedEditorState.root.children) return;
 
-  const rootChildren = serializedEditorState.root.children;
+  // A display-byte carrier an annotation holds in part is several sibling nodes (its pieces); the
+  // document has it once, so every reader below sees each carrier as the one node it is.
+  const rootChildren = [...joinSerializedPieces(serializedEditorState.root.children)];
   // check for default empty implied-para node
   if (
     rootChildren.length === 1 &&
@@ -381,14 +384,30 @@ function createUnmatchedMarker(node: SerializedImmutableUnmatchedNode): MarkerOb
 /**
  * If the last added content is text then combine the new text content to it, otherwise add the new
  * text content.
+ *
+ * In Standard view each text node's run of spaces was collapsed before it got here, but a run that
+ * crosses from one node into the next — an annotation mark cuts one text into several nodes, and
+ * the mark is presentation only — is still two runs. Joining them collapses the whole run as one,
+ * as `collapseSpaceRuns` collapses it in an uncut text: the new text's leading spaces drop when
+ * the text before it already ends in one. After the display→data inversion a plain space is
+ * always a display space (a data NBSP is still an NBSP), so the test is on plain spaces.
  * @param markers - Markers accumulated so far.
  * @param textContent - New text content.
+ * @param viewOptions - The view the text was displayed in.
  */
-function combineTextContentOrAdd(markers: MarkerContent[], textContent: string) {
+function combineTextContentOrAdd(
+  markers: MarkerContent[],
+  textContent: string,
+  viewOptions: ViewOptions | undefined,
+) {
   const lastContent: MarkerContent | undefined = markers[markers.length - 1];
-  if (lastContent && typeof lastContent === "string")
-    markers[markers.length - 1] = lastContent + textContent;
-  else markers.push(textContent);
+  if (lastContent && typeof lastContent === "string") {
+    const joined =
+      isStandardView(viewOptions) && lastContent.endsWith(" ")
+        ? textContent.replace(/^ +/, "")
+        : textContent;
+    markers[markers.length - 1] = lastContent + joined;
+  } else markers.push(textContent);
 }
 
 /**
@@ -750,7 +769,8 @@ function recurseNodes(
             // Strip the mark and insert its children.
             const firstChild = childMarkers.shift();
             if (firstChild) {
-              if (typeof firstChild === "string") combineTextContentOrAdd(markers, firstChild);
+              if (typeof firstChild === "string")
+                combineTextContentOrAdd(markers, firstChild, viewOptions);
               else markers.push(firstChild);
             }
             if (childMarkers.length > 0) markers.push(...childMarkers);
@@ -766,7 +786,7 @@ function recurseNodes(
           // are the content the departure moves them to (`noteCallerSlotNode`).
           let typed = typedCallerBytes(callerSlot.node.text, callerSlot.caller);
           if (isStandardView(viewOptions)) typed = displayTextToUsj(collapseSpaceRuns(typed));
-          if (typed) combineTextContentOrAdd(markers, typed);
+          if (typed) combineTextContentOrAdd(markers, typed, viewOptions);
           break;
         }
         if (
@@ -818,7 +838,7 @@ function recurseNodes(
             text = text.slice(1);
           // Standard view stores display text; collapse space runs and invert on serialization.
           if (isStandardView(viewOptions)) text = displayTextToUsj(collapseSpaceRuns(text));
-          combineTextContentOrAdd(markers, text);
+          combineTextContentOrAdd(markers, text, viewOptions);
         }
         break;
       case UnknownNode.getType():

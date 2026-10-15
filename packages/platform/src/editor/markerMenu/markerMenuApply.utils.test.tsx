@@ -41,6 +41,7 @@ import {
   UNDO_COMMAND,
 } from "lexical";
 import {
+  $addDisplayAnnotation,
   $createCharNode,
   $createImmutableUnmatchedNode,
   $createMarkerNode,
@@ -61,16 +62,21 @@ import {
   NBSP,
   NoteNode,
   ParaNode,
+  $pieces,
+  registerDisplayAnnotationBasis,
   StyleInfo,
   textTypeState,
 } from "shared";
-import { CharNodePlugin, TextSpacingPlugin } from "shared-react";
+import { CharNodePlugin, TextSpacingPlugin, usjReactNodes } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import {
   $createBookLine,
   baseTestEnvironment,
 } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
+// Reaching inside only for tests.
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import { createBasicTestEnvironment } from "../../../../../libs/shared/src/nodes/usj/test.utils";
 
 /**
  * Full markerEdit harness: the marker-edit engine plus the neighboring plugins the real
@@ -3762,4 +3768,49 @@ describe("marker apply at a glyph's caret positions", () => {
       expect((add.content?.[0] as MarkerObject).content).toEqual(["one two"]);
     });
   });
+});
+
+describe("$applyMarkerMenuSelection — a paragraph glyph an annotation cuts into pieces", () => {
+  // A retag that respells the glyph joins its pieces first, so the prefix is one node again
+  // when the caret is placed; a retag to the same marker keeps the pieces and places the caret
+  // past all of them.
+  it.each(["q2", "q1"])(
+    "retags to %s with the caret at the content start, as it does an uncut glyph",
+    (marker) => {
+      let para!: ParaNode;
+      let prefix!: MarkerNode;
+      let content!: TextNode;
+      const { editor } = createBasicTestEnvironment(usjReactNodes, () => {
+        para = $createParaNode("q1");
+        prefix = $createMarkerNode("q1");
+        content = $createTextNode("Blessed");
+        $getRoot().append(para.append(prefix, $createTrailingSpaceNode(), content));
+      });
+      registerDisplayAnnotationBasis(editor);
+      editor.update(() => $addDisplayAnnotation(prefix, "test", "a", 1, 3), { discrete: true });
+      editor.getEditorState().read(() => expect($pieces(prefix).length).toBe(2));
+      editor.update(() => content.select(0, 0), { discrete: true });
+
+      editor.update(
+        () =>
+          $applyMarkerMenuSelection(
+            { marker, kind: "paragraph", isBasic: true },
+            { trigger: "backslash", literalPrefixLanded: false },
+            reference,
+            makeDeps(),
+          ),
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        const paras = $getRoot().getChildren().filter($isParaNode);
+        expect(paras.map((node) => node.getKey())).toEqual([para.getKey()]);
+        expect(para.getMarker()).toBe(marker);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        expect(selection.anchor.getNode().is(content)).toBe(true);
+        expect(selection.anchor.offset).toBe(0);
+      });
+    },
+  );
 });

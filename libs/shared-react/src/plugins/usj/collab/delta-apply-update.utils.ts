@@ -4,6 +4,7 @@ import { $createWholeNote } from "../../../nodes/usj/note.utils";
 import { UsjNodeOptions } from "../../../nodes/usj/usj-node-options.model";
 import { showParaMarkerPrefix, ViewOptions } from "../../../views/view-options.utils";
 import {
+  $isEmbedContinuation,
   $isEmbedNode,
   $isOTTextNode,
   DeltaOp,
@@ -71,6 +72,10 @@ import {
   $isSomeChapterNode,
   $isSomeParaNode,
   $isUnknownNode,
+  $logicalChildren,
+  $pieceHead,
+  $pieces,
+  $setLogicalText,
   BOOK_MARKER,
   BookNode,
   charIdState,
@@ -344,7 +349,8 @@ function $applyAttributes(
         currentIndex < targetIndex + retain &&
         lengthToFormat > 0
       ) {
-        $applyEmbedAttributes(currentNode, attributes);
+        // Every piece of a carrier cut into pieces is the same node, so each takes the change.
+        for (const piece of $pieces(currentNode)) $applyEmbedAttributes(piece, attributes);
         lengthToFormat -= embedNodeOtLength;
       }
       currentIndex += embedNodeOtLength;
@@ -562,8 +568,8 @@ export function $syncParaMarkerGlyph(para: ParaNode, marker: string): void {
   para.setMarker(marker);
   const glyph = para.getFirstChild();
   if ($isMarkerNode(glyph)) {
-    glyph.setMarker(marker);
-    glyph.setTextContent(openingMarkerText(marker));
+    // The glyph's whole text is rewritten, however an annotation has cut it into pieces.
+    $setLogicalText(glyph.setMarker(marker), openingMarkerText(marker));
   } else if ($isImmutableTypedTextNode(glyph) && glyph.getTextType() === "marker") {
     // Keep in sync with the adaptor's visible/gutter para-prefix shape in `createPara`
     // (usj-editor.adaptor.ts): opening marker text + NBSP.
@@ -594,7 +600,8 @@ export function $syncCharMarkerGlyphs(char: CharNode, marker: string): void {
   const oldMarker = char.getMarker();
   char.setMarker(marker);
   if (marker === oldMarker) return;
-  char.getChildren().forEach((child) => {
+  // One glyph per carrier: the setter rewrites a glyph cut into pieces whole.
+  $logicalChildren(char).forEach((child) => {
     if ($isMarkerNode(child) && child.getMarker() === oldMarker) child.setMarker(marker);
   });
   // Visible-mode typed-text pair: the span's own opener/closer are its first/last children
@@ -733,8 +740,8 @@ function $delete(targetIndex: number, otLength: number, logger: LoggerBasic | un
     } else if ($isEmbedNode(currentNode)) {
       // Check if the deletion should remove this embed
       if (targetIndex <= currentIndex && currentIndex < targetIndex + remainingToDelete) {
-        // The deletion spans this embed - remove it
-        currentNode.remove();
+        // The deletion spans this embed - remove it (every piece of one cut into pieces)
+        $pieces(currentNode).forEach((piece) => piece.remove());
         logger?.debug(
           `Deleted embed node (key: ${currentNode.getKey()}) at currentIndex: ${currentIndex}. ` +
             `Original targetIndex: ${targetIndex}, remainingToDelete: ${remainingToDelete}.`,
@@ -1291,6 +1298,9 @@ function $insertNodeAtCharacterOffset(
 
     const children = currentNode.getChildren();
     for (const child of children) {
+      // A later piece of a verse or unmatched closer is inside that one embed: nothing is
+      // inserted before it, and it has no length of its own.
+      if ($isEmbedContinuation(child)) continue;
       // Case 1: Insert *before* the current child
       if (targetIndex === currentIndex && !wasInserted) {
         // Check if we're inserting an inline node directly into the root
@@ -2149,7 +2159,9 @@ function $createNestedChars(
  * @param nodes - The content to add at its end.
  */
 function $appendSpanContent(span: CharNode, nodes: LexicalNode[]): void {
-  const closer = span.getLastChild();
+  // A closer cut into pieces is one glyph: content goes before its first piece.
+  const last = span.getLastChild();
+  const closer = last && $pieceHead(last);
   const isCloser =
     ($isMarkerNode(closer) && closer.getMarkerSyntax() === "closing") ||
     ($isImmutableTypedTextNode(closer) &&

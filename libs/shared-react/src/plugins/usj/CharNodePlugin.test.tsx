@@ -1,5 +1,9 @@
 import { CharNodePlugin } from "./CharNodePlugin";
-import { baseTestEnvironment } from "./react-test.utils";
+import {
+  baseTestEnvironment,
+  countContinuationPieces,
+  cutEveryCarrierIntoPieces,
+} from "./react-test.utils";
 import { act } from "@testing-library/react";
 import { $getRoot, $createTextNode, $getState, $isTextNode, $setState, TextNode } from "lexical";
 import {
@@ -15,6 +19,7 @@ import {
   CharNode,
   displayRunDescriptor,
   NBSP,
+  ParaNode,
   textTypeState,
 } from "shared";
 
@@ -477,6 +482,41 @@ describe("CharNodePlugin", () => {
       const children = merged.getChildren();
       expect($isMarkerNode(children[children.length - 1])).toBe(true);
     });
+  });
+
+  it("merges a glyph-less span inside the glyphs of a span whose glyphs are cut into pieces", async () => {
+    for (const side of ["before", "after"] as const) {
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append(
+          $createParaNode().append(
+            $createCharNode("nd").append(
+              $createMarkerNode("nd"),
+              $createTextNode(`${NBSP}Lord`),
+              $createMarkerNode("nd", "closing"),
+            ),
+          ),
+        );
+      });
+      await cutEveryCarrierIntoPieces(editor);
+      expect(countContinuationPieces(editor)).toBeGreaterThan(1);
+      await act(async () => {
+        editor.update(() => {
+          const span = $getRoot().getFirstChildOrThrow<ParaNode>().getFirstChildOrThrow();
+          if (side === "before")
+            span.insertBefore($createCharNode("nd").append($createTextNode("and ")));
+          else span.insertAfter($createCharNode("nd").append($createTextNode(" God")));
+        });
+      });
+
+      editor.getEditorState().read(() => {
+        const p = $getRoot().getFirstChild();
+        if (!$isParaNode(p)) throw new Error("Expected a ParaNode");
+        expect(p.getChildrenSize()).toBe(1);
+        expect(p.getTextContent()).toBe(
+          side === "before" ? `\\nd${NBSP}and Lord\\nd*` : `\\nd${NBSP}Lord God\\nd*`,
+        );
+      });
+    }
   });
 
   it("should combine 3 adjacent CharNodes with same marker on update", async () => {

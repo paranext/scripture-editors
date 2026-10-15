@@ -4,7 +4,7 @@
  * its content into the previous paragraph (PT9 reformat outcome).
  */
 
-import { $requestTier2ForNode } from "./tier2Rebuild.utils";
+import { $requestTier2ForNode, $settleScopeNodesInOrder } from "./tier2Rebuild.utils";
 import { MarkerEditContext } from "./markerEditTier1.utils";
 import { isParaKindMarker } from "./markerKind.utils";
 import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
@@ -20,6 +20,7 @@ import {
   LexicalNode,
   PointType,
   RangeSelection,
+  TextNode,
 } from "lexical";
 import {
   $createMarkerNode,
@@ -45,6 +46,13 @@ import {
   MarkerLookup,
   ParaNode,
   textTypeState,
+  $lastPiece,
+  $logicalChildren,
+  $logicalNextSibling,
+  $logicalText,
+  $pieces,
+  $removeRangeSplitByMarks,
+  $setLogicalText,
 } from "shared";
 import { showParaMarkerPrefix } from "shared-react";
 
@@ -76,7 +84,9 @@ export function $createMarkerPrefix(marker: string) {
  * boundary by scanning when the shape is not known.
  */
 export function $selectParaContentStart(para: ParaNode): void {
-  $placeCaretAtBoundary(para, 2);
+  // Past the whole prefix glyph, however an annotation has cut it, and its separator.
+  const glyph = para.getFirstChild();
+  $placeCaretAtBoundary(para, glyph ? $lastPiece(glyph).getIndexWithinParent() + 2 : 2);
 }
 
 /**
@@ -160,7 +170,8 @@ export function $setParaMarkerWithPrefix(para: ParaNode, marker: string): void {
 function $healMarkerTrailingSeparator(para: ParaNode, context: MarkerEditContext): void {
   const glyph = para.getFirstChild();
   if (!glyph) return;
-  const second = glyph.getNextSibling();
+  // A glyph an annotation cuts into pieces ends at its last piece.
+  const second = $logicalNextSibling(glyph);
   if ($isMarkerTrailingSeparator(second)) return; // canonical separator present
   if (
     $isTextNode(second) &&
@@ -191,7 +202,7 @@ function $healMarkerTrailingSeparator(para: ParaNode, context: MarkerEditContext
     context.pendingKeys.add(para.getKey());
     return;
   }
-  glyph.insertAfter($createMarkerTrailingSeparator());
+  $lastPiece(glyph).insertAfter($createMarkerTrailingSeparator());
 }
 
 /**
@@ -309,6 +320,10 @@ export function $armCollapsedParaDeletion(context: MarkerEditContext): void {
  * that touches no glyph is left to the stock replacement, which is already delete-then-insert
  * for plain content; a PARTIALLY covered glyph keeps its surviving bytes and the typed text
  * joins them (`\` + typed `x` → the pending literal `\x`), exactly as delete-then-type implies.
+ * The one glyph-free range the stock replacement cannot take is one whose ends sit in different
+ * parents only because an annotation mark holds one of them (`$removeRangeSplitByMarks`): it
+ * climbs out of the span and pulls the paragraph's text after it in, so that range is removed
+ * here too.
  *
  * Mutating (arms context state and removes the selected text): call from a
  * CONTROLLED_TEXT_INSERTION_COMMAND handler registered above the default insertion and below
@@ -317,7 +332,10 @@ export function $armCollapsedParaDeletion(context: MarkerEditContext): void {
 export function $prepareReplaceSelection(context: MarkerEditContext): void {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return;
-  if (!selection.getNodes().some((node) => $isMarkerNode(node))) return;
+  if (!selection.getNodes().some((node) => $isMarkerNode(node))) {
+    $removeRangeSplitByMarks(selection);
+    return;
+  }
   $armWholeParaDeletion(context);
   selection.removeText();
 }
@@ -536,7 +554,8 @@ function $openerGlyphEmptiedByForwardDelete(point: PointType): MarkerNode | unde
   if (!$isMarkerNode(candidate) || candidate.getMarkerSyntax() !== "opening") return undefined;
   const char = candidate.getParent();
   if (!$isCharNode(char) || !candidate.is(char.getFirstChild())) return undefined;
-  return candidate.getTextContentSize() === 1 ? candidate : undefined;
+  // The glyph's LAST character: the whole glyph, however an annotation cuts it into pieces.
+  return $logicalText(candidate).length === 1 ? candidate : undefined;
 }
 
 /**
@@ -561,7 +580,7 @@ export function $deleteLastOpenerGlyphCharForward(): boolean {
   const glyph = $openerGlyphEmptiedByForwardDelete(selection.anchor);
   const char = glyph?.getParent();
   if (!glyph || !$isCharNode(char)) return false;
-  const content = glyph.getNextSibling();
+  const content = $logicalNextSibling(glyph);
   glyph.remove();
   if ($isSeparatorPrefixHostText(content) && content.getTextContent().startsWith(NBSP))
     content.setTextContent(` ${content.getTextContent().slice(NBSP.length)}`);
@@ -630,10 +649,13 @@ export function $noteDeletionTransform(note: NoteNode, context: MarkerEditContex
     // evidence at all (shapes built by non-editable creation paths) are left alone, as for
     // collapsed.
     const caller = note.getCaller();
-    const hasEditableCaller = children.some(
-      (c) =>
-        $isTextNode(c) && !$isMarkerNode(c) && c.getTextContent() === getEditableCallerText(caller),
-    );
+    // Each child is read whole, however an annotation cuts it into pieces.
+    const logicalChildren = $logicalChildren(note);
+    const isEditableCaller = (child: LexicalNode): child is TextNode =>
+      $isTextNode(child) &&
+      !$isMarkerNode(child) &&
+      $logicalText(child) === getEditableCallerText(caller);
+    const hasEditableCaller = logicalChildren.some(isEditableCaller);
     const hasAnyMarkerGlyph = $dfs(note).some(({ node: n }) => $isMarkerNode(n));
     if (!hasEditableCaller && !hasAnyMarkerGlyph) return; // glyph-less shape — not ours
     // UNWRAP, don't delete: an expanded note's content is visible inline (an unclosed note may
@@ -642,12 +664,14 @@ export function $noteDeletionTransform(note: NoteNode, context: MarkerEditContex
     // becomes a plain space so it can't leak into USJ as `~`), remaining glyphs go with the
     // note, and the content stays in the paragraph. Contrast: a COLLAPSED note is an atomic
     // object — glyph damage removes the whole note (below).
-    children.forEach((child) => {
+    logicalChildren.forEach((child) => {
       if ($isMarkerNode(child)) return; // closing glyph (if any) dissolves with the note
       // An empty caller's two separators stand for the one space between marker and content.
-      if ($isTextNode(child) && child.getTextContent() === getEditableCallerText(caller))
-        child.setTextContent(caller ? ` ${caller} ` : " ");
-      note.insertBefore(child);
+      if (isEditableCaller(child)) {
+        note.insertBefore($setLogicalText(child, caller ? ` ${caller} ` : " "));
+        return;
+      }
+      for (const piece of $pieces(child)) note.insertBefore(piece);
     });
     note.remove();
     context.logger?.debug(
@@ -678,21 +702,49 @@ export function $charNodeDeletionTransform(char: CharNode, context: MarkerEditCo
   const first = char.getFirstChild();
   const hasOpener = $isMarkerNode(first) && first.getMarkerSyntax() === "opening";
   if (!hasOpener) {
+    // A span torn in two (a line break typed inside it) is an opener-less half after a half
+    // missing its closer. The second half's closer is the first half's: the Tier-2 rebuild the
+    // first half routes to re-reads both halves' bytes and pairs them, while unwrapping the second
+    // half first drops that closer. Which half's transform runs first is not ours to choose, so
+    // the rebuild is made from here too.
+    const torn = $earlierSpanMissingCloser(char);
+    if (torn && $requestTier2ForNode(torn, context)) return;
     $unwrapCharNode(char); // opener deleted -> unwrap the span
     context.logger?.debug(`[MarkerEdit] unwrapped char span "${char.getMarker()}"`);
     return;
   }
-  // A span "needs" a closer iff it is not marked closed="false": that flag (which ParatextData
-  // emits on every genuinely-unclosed span, footnote/cross-ref content included) means the missing
-  // closer is the span's normal shape, not deletion damage. Closer-ness keys on this actual state,
-  // never on the marker family — an explicitly-closed \xt DOES need its closer, so deleting it must
-  // still re-route through Tier 2.
+  if ($isMissingNeededCloser(char)) {
+    // Closer deletion goes through Tier 2 (tokenizer decides the span extent).
+    $requestTier2ForNode(char, context);
+  }
+}
+
+/**
+ * Whether `char` has its opening glyph but not a closing glyph it needs. A span "needs" a closer
+ * iff it is not marked closed="false": that flag (which ParatextData emits on every
+ * genuinely-unclosed span, footnote/cross-ref content included) means the missing closer is the
+ * span's normal shape, not deletion damage. Closer-ness keys on this actual state, never on the
+ * marker family — an explicitly-closed \xt DOES need its closer, so deleting it must still
+ * re-route through Tier 2.
+ */
+function $isMissingNeededCloser(char: CharNode): boolean {
+  const first = char.getFirstChild();
+  if (!$isMarkerNode(first) || first.getMarkerSyntax() !== "opening") return false;
   const needsCloser = char.getUnknownAttributes()?.closed !== "false";
   const hasCloser = char
     .getChildren()
     .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing");
-  if (needsCloser && !hasCloser) {
-    // Closer deletion goes through Tier 2 (tokenizer decides the span extent).
-    $requestTier2ForNode(char, context);
+  return needsCloser && !hasCloser;
+}
+
+/** A span of `char`'s marker before it in its settle scope ({@link $settleScopeNodesInOrder})
+ * that is missing a closer it needs ({@link $isMissingNeededCloser}): the opening half of a span
+ * `char` is the other half of. */
+function $earlierSpanMissingCloser(char: CharNode): CharNode | undefined {
+  for (const node of $settleScopeNodesInOrder(char)) {
+    if (node.is(char)) return undefined;
+    if ($isCharNode(node) && node.getMarker() === char.getMarker() && $isMissingNeededCloser(node))
+      return node;
   }
+  return undefined;
 }

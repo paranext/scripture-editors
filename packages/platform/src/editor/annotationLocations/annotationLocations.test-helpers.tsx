@@ -14,6 +14,7 @@ import {
   UsjDocumentLocation,
 } from "@eten-tech-foundation/scripture-utilities";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
+import { DeltaOp } from "shared-react";
 import { act, render } from "@testing-library/react";
 import {
   $getRoot,
@@ -26,6 +27,7 @@ import {
 import { createRef, ReactElement, RefObject } from "react";
 import {
   $charSeparatorPrefixLength,
+  $decoratorRenderedText,
   $displayAnnotationsOf,
   $isDisplayAnnotationCarrier,
   $isMarkerNode,
@@ -33,12 +35,13 @@ import {
   $isTypedMarkNode,
   LoggerBasic,
   NBSP,
+  ZWSP,
 } from "shared";
 import {
   $getLocationFromNode,
-  annotationHighlightClassNames,
   getViewOptions,
   STANDARD_VIEW_MODE,
+  StructureProtectionMode,
   ViewOptions,
 } from "shared-react";
 
@@ -53,13 +56,21 @@ export interface MountedInView {
   unmount: () => void;
   /** Every `error` and `warn` the Editor's logger received, prefixed `E ` or `W `. */
   logs: string[];
+  /** Every `onUsjChange` call's ops, in order (empty ops as `[]`). */
+  ops: DeltaOp[][];
 }
 
-/** Mounts `usj` in the real `Editor` with `view`, collecting what its logger reports. */
-export async function mountInView(usj: Usj, view: ViewOptions): Promise<MountedInView> {
+/** Mounts `usj` in the real `Editor` with `view` (and `structureProtectionMode`, off when not
+ * given), collecting what its logger reports and every `onUsjChange` call's ops. */
+export async function mountInView(
+  usj: Usj,
+  view: ViewOptions,
+  structureProtectionMode?: StructureProtectionMode,
+): Promise<MountedInView> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
   const logs: string[] = [];
+  const ops: DeltaOp[][] = [];
   const logger: LoggerBasic = {
     error: (...params: unknown[]) => logs.push(`E ${params.map(String).join(" ")}`),
     warn: (...params: unknown[]) => logs.push(`W ${params.map(String).join(" ")}`),
@@ -67,7 +78,13 @@ export async function mountInView(usj: Usj, view: ViewOptions): Promise<MountedI
     debug: () => undefined,
   };
   const ui: ReactElement = (
-    <Editor ref={ref} defaultUsj={usj} options={{ view }} logger={logger}>
+    <Editor
+      ref={ref}
+      defaultUsj={usj}
+      options={{ view, structureProtectionMode }}
+      logger={logger}
+      onUsjChange={(_usj, changeOps) => ops.push(changeOps ?? [])}
+    >
       <EditorRefPlugin editorRef={lexicalRef} />
     </Editor>
   );
@@ -76,7 +93,7 @@ export async function mountInView(usj: Usj, view: ViewOptions): Promise<MountedI
     ({ unmount } = render(ui));
   });
   if (!lexicalRef.current || !unmount) throw new Error("mount failed");
-  return { ref, lexical: lexicalRef.current, unmount, logs };
+  return { ref, lexical: lexicalRef.current, unmount, logs, ops };
 }
 
 function requireViewOptions(mode: string): ViewOptions {
@@ -302,76 +319,81 @@ export function $heldIndexes(type: string, id: string): Map<number, "mark" | "ca
   return held;
 }
 
-/** What paints annotation `id` in the DOM: the elements carrying its class, and per text node the
- * characters its editor highlights cover. */
-interface PaintSnapshot {
-  elements: Element[];
-  chars: Map<Node, Set<number>>;
-}
-
-/** Reads, once, what paints `id`: elements by class, highlight ranges walked text node by text
- * node (a range's characters, never a per-character tree comparison). */
-function paintSnapshot(lexical: LexicalEditor, id: string): PaintSnapshot {
-  const className = `annotationId-${id}`;
+/** The elements painting annotation `id`: every element carrying its class — a `<mark>`, a display
+ * byte painted whole, a decorator's sub-span. */
+function paintedElements(lexical: LexicalEditor, id: string): Element[] {
   const root = lexical.getRootElement();
-  const elements = root ? [...root.getElementsByClassName(className)] : [];
-  const chars = new Map<Node, Set<number>>();
-  for (const [name, highlight] of CSS.highlights) {
-    if (!annotationHighlightClassNames(name)?.includes(className)) continue;
-    for (const range of highlight) {
-      if (!(range instanceof Range) || range.collapsed) continue;
-      const container = range.commonAncestorContainer;
-      const walker = container.ownerDocument?.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-      const texts: Node[] = container.nodeType === Node.TEXT_NODE ? [container] : [];
-      for (let text = walker?.nextNode(); text; text = walker?.nextNode()) texts.push(text);
-      for (const text of texts) {
-        if (!range.intersectsNode(text)) continue;
-        const length = text.textContent?.length ?? 0;
-        const from = text === range.startContainer ? range.startOffset : 0;
-        const to = text === range.endContainer ? range.endOffset : length;
-        const set = chars.get(text) ?? new Set<number>();
-        for (let i = from; i < to; i++) set.add(i);
-        chars.set(text, set);
-      }
-    }
-  }
-  return { elements, chars };
+  return root ? [...root.getElementsByClassName(`annotationId-${id}`)] : [];
 }
 
-function paintedWhole(snapshot: PaintSnapshot, element: Element): boolean {
-  return snapshot.elements.some((painted) => painted.contains(element));
+function paintedWhole(painted: Element[], element: Element): boolean {
+  return painted.some((candidate) => candidate.contains(element));
 }
 
 /**
  * What paints annotation `id` on screen now, by byte index (the indexing of {@link $byteNodes}):
- * an element whose classes name it — a `<mark>`, or a display byte painted whole — or an editor
- * highlight over the byte's character. A decorator counts when any of it is painted. Read from the
- * DOM, never from the model.
+ * an element whose classes name it — a `<mark>`, a display byte painted whole — or a decorator
+ * whose sub-spans painted with the class are exactly what its holds name. A decorator is one byte
+ * here, so its sub-spans are graded character by character against its `type` holds and the
+ * decorator counts as painted only when every character a hold names is painted and every other
+ * painted character is whitespace (an interior gap's fill, {@link GAP_FILL}); a decorator with no
+ * hold it displays counts as painted when anything of it is. The paint is read from the DOM, never
+ * from the model; only the holds a decorator's paint is graded against are read from the model.
  */
-export function $paintedIndexes(lexical: LexicalEditor, id: string): Set<number> {
-  const snapshot = paintSnapshot(lexical, id);
-  const painted = new Set<number>();
+export function $paintedIndexes(
+  lexical: LexicalEditor,
+  id: string,
+  type: string = HELD_TYPE,
+): Set<number> {
+  const painted = paintedElements(lexical, id);
+  const result = new Set<number>();
   $byteNodes().forEach(([node, offset], index) => {
     const element = lexical.getElementByKey(node.getKey());
     if (!element) return;
-    if (paintedWhole(snapshot, element)) {
-      painted.add(index);
+    if (paintedWhole(painted, element)) {
+      result.add(index);
       return;
     }
-    if (offset < 0) {
-      if ([...snapshot.chars.keys()].some((text) => element.contains(text))) painted.add(index);
-      return;
-    }
-    const text = [...element.childNodes].find((child) => child.nodeType === Node.TEXT_NODE);
-    if (text && snapshot.chars.get(text)?.has(offset)) painted.add(index);
+    if (offset < 0 && $isDecoratorPaintedAsHeld(lexical, node, type, id)) result.add(index);
   });
-  return painted;
+  return result;
+}
+
+/** A character an interior gap may paint though no hold names it. */
+const GAP_FILL = new RegExp(`^[\\s${NBSP}${ZWSP}]$`);
+
+/**
+ * Whether decorator `node` (not painted whole) paints annotation `type`/`id` on exactly the
+ * characters its holds name, through sub-spans ({@link $paintedIndexes}).
+ */
+function $isDecoratorPaintedAsHeld(
+  lexical: LexicalEditor,
+  node: LexicalNode,
+  type: string,
+  id: string,
+): boolean {
+  const { chars, any } = $paintedDecoratorChars(lexical, node, id);
+  if (!any) return false;
+  const rendered = $decoratorRenderedText(node);
+  const holds = $displayAnnotationsOf(node).filter(
+    (annotation) => annotation.type === type && annotation.id === id && !annotation.undisplayed,
+  );
+  if (holds.length === 0) return true;
+  const held = new Set<number>();
+  for (const { start, end } of holds) {
+    const [from, to] = start === end ? [0, rendered.length] : [start, end];
+    for (let char = from; char < Math.min(to, rendered.length); char++) held.add(char);
+  }
+  for (const char of held) if (!chars.has(char)) return false;
+  for (const char of chars)
+    if (!held.has(char) && !GAP_FILL.test(rendered[char] ?? "")) return false;
+  return true;
 }
 
 /**
  * Which characters of decorator `node`'s rendered text paint annotation `id`, read from the DOM:
- * `whole` when its element or an ancestor carries the annotation's class, else the characters an
- * editor highlight covers; `any` when any highlight touches the element at all.
+ * `whole` when its element or an ancestor carries the annotation's class, else the characters of
+ * its sub-spans painted with the class; `any` when any sub-span of it is painted at all.
  */
 export function $paintedDecoratorChars(
   lexical: LexicalEditor,
@@ -381,16 +403,18 @@ export function $paintedDecoratorChars(
   const element = lexical.getElementByKey(node.getKey());
   const chars = new Set<number>();
   if (!element) return { whole: false, chars, any: false };
-  const snapshot = paintSnapshot(lexical, id);
-  if (paintedWhole(snapshot, element)) return { whole: true, chars, any: true };
+  const painted = paintedElements(lexical, id);
+  if (paintedWhole(painted, element)) return { whole: true, chars, any: true };
   const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   let offset = 0;
   let any = false;
   for (let text = walker.nextNode(); text; text = walker.nextNode()) {
-    const covered = snapshot.chars.get(text);
-    if (covered) any = true;
-    for (const i of covered ?? []) chars.add(offset + i);
-    offset += text.textContent?.length ?? 0;
+    const length = text.textContent?.length ?? 0;
+    if (painted.some((candidate) => candidate.contains(text))) {
+      any = true;
+      for (let i = 0; i < length; i++) chars.add(offset + i);
+    }
+    offset += length;
   }
   return { whole: false, chars, any };
 }

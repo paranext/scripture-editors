@@ -51,11 +51,15 @@ import {
   $isImmutableUnmatchedNode,
   $isMarkerNode,
   $isNoteNode,
+  $isPieceContinuation,
   $isVisibleMarkerNode,
+  $logicalText,
   $moveSelectionToEnd,
   $normalizeSelectionOutOfGlyphText,
   $noteCategoryRunPieces,
   $noteEditableCallerNode,
+  $pieceAtLogicalOffset,
+  $pieceHead,
   $separatorPrefixLength,
   $shouldIgnoreNodeForContentIndexes,
   CharNode,
@@ -224,8 +228,14 @@ function $closingGlyphAfterCaret(selection: RangeSelection): MarkerNode | undefi
   const node = anchor.getNode();
   if (!$isTextNode(node) || !$isCharNode(node.getParent())) return undefined;
   // MarkerNode extends TextNode, so the caret may be parked in the closing glyph itself.
+  // Only the start of the glyph's first piece is in front of it: the start of a later piece (an
+  // annotation cut the glyph there) is inside it.
   if ($isMarkerNode(node))
-    return anchor.offset === 0 && node.getMarkerSyntax() === "closing" ? node : undefined;
+    return anchor.offset === 0 &&
+      !$isPieceContinuation(node) &&
+      node.getMarkerSyntax() === "closing"
+      ? node
+      : undefined;
   if (anchor.offset !== node.getTextContentSize()) return undefined;
   const next = node.getNextSibling();
   return $isMarkerNode(next) && next.getMarkerSyntax() === "closing" ? next : undefined;
@@ -536,13 +546,14 @@ export function $selectNote(noteNode: NoteNode, viewOptions: ViewOptions | undef
  *   markers hidden, or content after an inner closer).
  */
 function $closingGlyphIndex(element: NoteNode | CharNode): number {
-  const lastIndex = element.getChildrenSize() - 1;
-  const last = element.getLastChild();
+  const lastChild = element.getLastChild();
+  // A closer an annotation cut into pieces is one glyph, starting at its first piece.
+  const last = lastChild && $pieceHead(lastChild);
   const isCloser =
     ($isMarkerNode(last) && last.getMarkerSyntax() === "closing") ||
     ($isVisibleMarkerNode(last) &&
       last.getTextContent() === closingMarkerText(element.getMarker()));
-  return isCloser ? lastIndex : -1;
+  return isCloser && last ? last.getIndexWithinParent() : -1;
 }
 
 /**
@@ -745,6 +756,8 @@ function $noteTextStops(noteNode: NoteNode, caller: TextNode | undefined): NoteT
   const stops: NoteTextStop[] = [];
   for (const { node } of $dfs(noteNode)) {
     if (!$isTextNode(node) || $findMatchingParent(node, $isAttributeRunNode)) continue;
+    // A carrier an annotation cut into pieces is one stop, at its first piece.
+    if ($isPieceContinuation(node)) continue;
     if ($isNoteContentText(node, caller))
       stops.push({ node, isGlyph: false, dataStart: $separatorPrefixLength(node) });
     else if ($isNoteRunGlyph(node, noteNode)) stops.push({ node, isGlyph: true, dataStart: 0 });
@@ -778,7 +791,7 @@ function $isTypingTextBefore(
     const before = cursor.getPreviousSibling();
     const last = $isElementNode(before) ? before.getLastDescendant() : before;
     if (!$isTextNode(last)) return undefined;
-    if (caller?.is(last) || $isNoteContentText(last, caller)) return last;
+    if (caller?.is($pieceHead(last)) || $isNoteContentText(last, caller)) return last;
     return undefined;
   };
 }
@@ -797,7 +810,7 @@ function $selectGlyphStop(
   let glyphIndex = 0;
   for (const { node, isGlyph, dataStart } of stops) {
     if (!isGlyph) {
-      const dataLength = node.getTextContentSize() - dataStart;
+      const dataLength = $logicalText(node).length - dataStart;
       contentOffset += dataLength;
       if (dataLength > 0) glyphIndex = 0;
       if (contentOffset > utf16Offset) return false;
@@ -818,14 +831,18 @@ function $selectInGlyph(
   offset: number,
   typingTextBefore: (node: TextNode) => TextNode | undefined,
 ) {
-  const size = glyphNode.getTextContentSize();
+  // The offset is into the whole glyph, however an annotation has cut it into pieces.
+  const size = $logicalText(glyphNode).length;
   // An atomic glyph (an unmatched marker outside an editable marker mode) takes no caret inside.
   const at = glyphNode.isToken() ? size : Math.min(Math.max(offset, 0), size);
   const before = at === 0 ? typingTextBefore(glyphNode) : undefined;
   if (before) {
     const end = before.getTextContentSize();
     before.select(end, end);
-  } else glyphNode.select(at, at);
+  } else {
+    const [piece, local] = $pieceAtLogicalOffset(glyphNode, at);
+    piece.select(local, local);
+  }
 }
 
 /**
@@ -862,8 +879,10 @@ export function $selectNoteCategoryOffset(
     if ($selectGlyphStop(stops, utf16Offset, glyph, $isTypingTextBefore(noteNode, caller)))
       return true;
   }
-  const at = Math.min(start + Math.max(utf16Offset, 0), value.getTextContentSize());
-  value.select(at, at);
+  // The offset is into the whole value, however an annotation has cut it into pieces.
+  const at = Math.min(start + Math.max(utf16Offset, 0), $logicalText(value).length);
+  const [piece, local] = $pieceAtLogicalOffset(value, at);
+  piece.select(local, local);
   return true;
 }
 
@@ -883,8 +902,9 @@ function $isNoteContentText(node: LexicalNode, caller: TextNode | undefined): no
   if ($shouldIgnoreNodeForContentIndexes(node)) return false;
   // A glyph's bytes are a picture of its own state (an unmatched closer, say), never content.
   if ($isGlyphTextNode(node)) return false;
-  // An expanded editable note spells its caller out as plain text ahead of the content.
-  return !caller || !node.is(caller);
+  // An expanded editable note spells its caller out as plain text ahead of the content (every
+  // piece of it, when an annotation cut it into pieces).
+  return !caller || !$pieceHead(node).is(caller);
 }
 
 /**
@@ -964,6 +984,7 @@ export function $stripSelectionToQuotation(selection: RangeSelection): string {
   const [anchorOffset, focusOffset] = $getCharacterOffsets(selection);
 
   let result = "";
+  const quotedVerses = new Set<string>();
   for (const node of nodes) {
     if ($isNoteNode(node) || $isImmutableNoteCallerNode(node) || $isInsideNote(node)) continue;
     if ($isMarkerNode(node)) continue;
@@ -983,7 +1004,11 @@ export function $stripSelectionToQuotation(selection: RangeSelection): string {
     // DecoratorNode), which a bare $isVerseNode check misses entirely, silently dropping the
     // verse number from the quotation.
     if ($isSomeVerseNode(node)) {
-      result += `\\+fv ${node.getNumber()}\\+fv*`;
+      // A verse an annotation cut into pieces is quoted once, whichever of its pieces the
+      // selection starts in.
+      const verseKey = $pieceHead(node).getKey();
+      if (!quotedVerses.has(verseKey)) result += `\\+fv ${node.getNumber()}\\+fv*`;
+      quotedVerses.add(verseKey);
       continue;
     }
 

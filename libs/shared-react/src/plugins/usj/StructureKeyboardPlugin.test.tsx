@@ -12,13 +12,17 @@ import {
   updateSelection,
 } from "./react-test.utils";
 import { act } from "@testing-library/react";
+import { vi } from "vitest";
 import {
   $getRoot,
+  $createRangeSelection,
   $createTextNode,
   $getSelection,
   $isNodeSelection,
+  $isTextNode,
   $setSelection,
   LexicalNode,
+  RangeSelection,
   TextNode,
   COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
@@ -30,15 +34,22 @@ import {
   REDO_COMMAND,
 } from "lexical";
 import {
+  $addDisplayAnnotation,
   $createBookNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createParaNode,
+  $createVerseNode,
   $isBookNode,
   $isParaNode,
+  $logicalText,
+  $pieceAtLogicalOffset,
+  $pieces,
   BookNode,
   createEmptyHistoryState,
   ParaNode,
+  registerDisplayAnnotationBasis,
+  VerseNode,
 } from "shared";
 
 // NOTE: jsdom cannot drive collapsed mid-text deletes (domSelection.modify) or printable-char
@@ -572,6 +583,64 @@ describe("StructureKeyboardPlugin — two-step delete (unprotected)", () => {
       const sel = $getSelection();
       expect($isNodeSelection(sel)).toBe(false);
       expect(sel && !sel.isCollapsed()).toBe(false);
+    });
+  });
+
+  describe("in a verse an annotation cut into pieces", () => {
+    /**
+     * Delete with the caret three bytes into `\v 2 `, between `\v ` and `2` — the end of the verse's
+     * first piece when a hold on its number cuts it — then what the verse reads and whether the
+     * press armed a structural delete. jsdom has no `Selection.modify`, which Lexical's collapsed
+     * delete extends the selection with; the stub gives the outcome a browser does, the focus one
+     * character on, into the next text when the caret ends one.
+     */
+    async function deleteForwardInVerse(cut: boolean): Promise<{ verse: string; armed: boolean }> {
+      let verse!: VerseNode;
+      const { editor } = await guardedEnvironment(() => {
+        verse = $createVerseNode("2", "\\v 2 ");
+        $getRoot().append($createParaNode("p").append(verse, $createTextNode("text")));
+      });
+      if (cut) {
+        registerDisplayAnnotationBasis(editor);
+        editor.update(() => void $addDisplayAnnotation(verse, "check", "a", 3, 4), {
+          discrete: true,
+        });
+        expect(editor.read(() => $pieces(verse).length)).toBe(3);
+      }
+      editor.update(
+        () => {
+          const [piece, offset] = $pieceAtLogicalOffset(verse.getLatest(), 3);
+          piece.select(offset, offset);
+        },
+        { discrete: true },
+      );
+      const prototype = editor.read(() => Object.getPrototypeOf($createRangeSelection()));
+      const modify = vi.spyOn(prototype, "modify").mockImplementation(function (
+        this: RangeSelection,
+      ) {
+        const node = this.focus.getNode();
+        if ($isTextNode(node) && this.focus.offset < node.getTextContentSize())
+          this.focus.set(node.getKey(), this.focus.offset + 1, "text");
+        else {
+          const next = node.getNextSibling();
+          if ($isTextNode(next)) this.focus.set(next.getKey(), 1, "text");
+        }
+      });
+      try {
+        await pressKey(editor, "Delete", 0);
+      } finally {
+        modify.mockRestore();
+      }
+      return editor.read(() => ({
+        verse: $logicalText(verse.getLatest()),
+        armed: $isNodeSelection($getSelection()),
+      }));
+    }
+
+    it("Delete at a cut inside the verse deletes the byte after the caret, as in the uncut verse", async () => {
+      const uncut = await deleteForwardInVerse(false);
+      expect(uncut).toEqual({ verse: "\\v  ", armed: false });
+      expect(await deleteForwardInVerse(true)).toEqual(uncut);
     });
   });
 });

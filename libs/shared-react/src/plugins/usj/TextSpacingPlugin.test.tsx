@@ -7,7 +7,9 @@ import { $getRangeFromUsjSelection } from "./annotation/selection.utils";
 import { TextSpacingPlugin } from "./TextSpacingPlugin";
 import {
   baseTestEnvironment,
+  countContinuationPieces,
   createTextAtSelection,
+  cutEveryCarrierIntoPieces,
   deleteTextAtSelection,
   typeTextAfterNode,
   typeTextAtSelection,
@@ -37,10 +39,12 @@ import {
   $getLogicalContentItems,
   $isAttributeRunNode,
   $isCharNode,
+  $isMarkerNode,
   $isParaNode,
   $isTypedMarkNode,
   $isUnknownNode,
   $isVisibleMarkerNode,
+  $pieces,
   $verseAttributeRunPieces,
   $wrapSelectionInTypedMarkNode,
   displayRunDescriptor,
@@ -436,6 +440,48 @@ describe("TextSpacingPlugin", () => {
       // garbage-collected the emptied text node.
       expect($getLogicalContentItems(para, false)).toHaveLength(2);
       expect(para.getTextContent()).toBe("");
+    });
+  });
+
+  it("should remove an empty verse's space that an annotation holds", async () => {
+    // The mark is presentation only: the unmarked document has the verse, its space-only content,
+    // then the next verse, and that space goes as it does without the mark.
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createParaNode().append(
+          $createImmutableVerseNode("1"),
+          $createTypedMarkNode({ t: ["1"] }).append($createTextNode(" ")),
+          $createImmutableVerseNode("2"),
+        ),
+      );
+    });
+
+    await act(async () => editor.update(() => undefined));
+
+    editor.getEditorState().read(() => {
+      const para = $getRoot().getFirstChild();
+      if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+      expect($getLogicalContentItems(para, false)).toHaveLength(2);
+      expect(para.getTextContent()).toBe("");
+    });
+  });
+
+  it("should keep a space an annotation holds after an empty verse when text follows it", async () => {
+    // Unmarked, the space and the text after it are one text: not an empty verse's content.
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createParaNode().append(
+          $createImmutableVerseNode("1"),
+          $createTypedMarkNode({ t: ["1"] }).append($createTextNode(" ")),
+          $createTextNode("a"),
+        ),
+      );
+    });
+
+    await act(async () => editor.update(() => undefined));
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toBe(" a");
     });
   });
 
@@ -851,6 +897,30 @@ describe("TextSpacingPlugin", () => {
     });
   });
 
+  it.each([false, true])(
+    "spaces text before an editable verse alike whether an annotation holds it (held: %s)",
+    async (isHeld) => {
+      // An editable verse is a text node, and the text before it owns its spacing as the start of
+      // that verse's run, so no space is added there; a mark holding the text changes nothing.
+      const { editor } = await testEnvironment(() => {
+        const text = $createTextNode("a");
+        $getRoot().append(
+          $createParaNode().append(
+            isHeld ? $createTypedMarkNode({ t: ["1"] }).append(text) : text,
+            $createVerseNode("1", "\\v 1 "),
+          ),
+        );
+      });
+
+      // Trigger an update (transforms run).
+      await act(async () => editor.update(() => undefined));
+
+      editor.getEditorState().read(() => {
+        expect($getRoot().getTextContent()).toBe("a\\v 1 ");
+      });
+    },
+  );
+
   it("should insert the structural space when an annotation ending on a CharNode precedes a verse", async () => {
     // A space between a char and a following verse marker is structural, not content: USJ→USFM
     // conversion needs it and Paratext 9 re-inserts it when removed. Canonical USJ therefore has
@@ -1094,6 +1164,43 @@ describe("TextSpacingPlugin", () => {
 
       editor.getEditorState().read(() => {
         expect($attributeRun(verse, "va")?.value.getTextContent()).toBe(`${NBSP}3`);
+      });
+    });
+
+    it("keeps one \\va and one \\vp run when the verse is cut into pieces", async () => {
+      let verse: VerseNode;
+      const { editor } = await testEnvironment(() => {
+        verse = $createVerseNode("1", "\\v 1 ", undefined, "2", "1b");
+        $getRoot().append($createParaNode().append(verse, $createTextNode("text")));
+      });
+      await act(async () => {
+        editor.update(() => {
+          verse.getWritable();
+        });
+      });
+      const uncut = editor.getEditorState().read(() => $getRoot().getTextContent());
+
+      await cutEveryCarrierIntoPieces(editor);
+      expect(countContinuationPieces(editor)).toBeGreaterThan(0);
+      // Every piece of the verse is dirtied, as an edit or a hold change to one does.
+      await act(async () => {
+        editor.update(() => {
+          for (const piece of $pieces(verse)) piece.markDirty();
+        });
+      });
+
+      editor.getEditorState().read(() => {
+        expect($getRoot().getTextContent()).toBe(uncut);
+        const openers = $getRoot()
+          .getAllTextNodes()
+          .filter(
+            (node): node is ReturnType<typeof $createMarkerNode> =>
+              $isMarkerNode(node) &&
+              node.getMarkerSyntax() === "opening" &&
+              $pieces(node)[0].is(node),
+          )
+          .map((node) => node.getMarker());
+        expect(openers).toEqual(["va", "vp"]);
       });
     });
 

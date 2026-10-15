@@ -12,17 +12,20 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  getNearestEditorFromDOMNode,
+  LexicalEditor,
   LexicalNode,
   NodeKey,
 } from "lexical";
 import { createRef } from "react";
-import { $addDisplayAnnotation, $isMarkerNode, COMMENT_MARK_TYPE } from "shared";
 import {
-  $isImmutableNoteCallerNode,
-  annotationHighlightClassNames,
-  getViewOptions,
-  STANDARD_VIEW_MODE,
-} from "shared-react";
+  $addDisplayAnnotation,
+  $isMarkerNode,
+  $isTypedMarkNode,
+  $lastPiece,
+  COMMENT_MARK_TYPE,
+} from "shared";
+import { $isImmutableNoteCallerNode, getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
 import { MockInstance, vi } from "vitest";
 
 /** The first descendant of `root` (depth-first, root included) `predicate` accepts. */
@@ -316,12 +319,14 @@ describe("Marginal comments panel", () => {
     const lexical = getEmbeddedLexicalEditor(mountedContainer);
 
     let openerKey!: NodeKey;
+    let openerText = "";
     let charKey!: NodeKey;
     await act(async () => {
       lexical.update(() => {
         const opener = findDescendant($getRoot(), $isMarkerNode);
         if (!opener) throw new Error("expected an opening marker glyph in the seed content");
         openerKey = opener.getKey();
+        openerText = opener.getTextContent();
         const parent = opener.getParent();
         if (!parent) throw new Error("opener glyph has no parent");
         charKey = parent.getKey();
@@ -332,11 +337,18 @@ describe("Marginal comments panel", () => {
       await Promise.resolve();
     });
 
-    return { marginal: ref.current, lexical, container: mountedContainer, openerKey, charKey };
+    return {
+      marginal: ref.current,
+      lexical,
+      container: mountedContainer,
+      openerKey,
+      openerText,
+      charKey,
+    };
   }
 
   it("names a comment held on the tail of a text carrier from an element-point caret behind it", async () => {
-    const { lexical, openerKey, charKey } = await renderMarginalWithGlyphTailComment();
+    const { lexical, openerKey, openerText, charKey } = await renderMarginalWithGlyphTailComment();
 
     await act(async () => {
       lexical.update(() => {
@@ -344,22 +356,206 @@ describe("Marginal comments panel", () => {
         const charNode = $getNodeByKey(charKey);
         if (!opener || !charNode || !$isElementNode(charNode))
           throw new Error("expected the char span and its opener glyph");
-        const index = opener.getIndexWithinParent();
+        // Behind the whole glyph: the comment cuts it into pieces, and behind its first piece is
+        // inside it.
+        const index = $lastPiece(opener).getIndexWithinParent();
         charNode.select(index + 1, index + 1);
       });
       // The effect that marks an active carrier "selected" schedules its own commit on a 0ms timer.
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    // Only the glyph's last character holds the comment, so only it is painted selected.
+    // Only the glyph's last character holds the comment, so the glyph is cut there and only that
+    // piece is painted selected.
     const openerElement = lexical.getElementByKey(openerKey);
     if (!openerElement) throw new Error("expected the opener glyph to render");
     expect(openerElement.classList.contains("selected")).toBe(false);
-    const selected = [...CSS.highlights].flatMap(([name, highlight]) =>
-      annotationHighlightClassNames(name)?.includes("selected")
-        ? [...highlight].map((range) => (range instanceof Range ? range.toString() : ""))
-        : [],
+    const selected = [...(lexical.getRootElement()?.querySelectorAll(".selected") ?? [])].map(
+      (element) => element.textContent,
     );
-    expect(selected).toEqual([openerElement.textContent?.slice(-1)]);
+    expect(selected).toEqual([openerText.slice(-1)]);
+  });
+});
+
+describe("a comment added or deleted in the comment panel and the undo stack", () => {
+  let consoleWarnSpy: MockInstance;
+
+  beforeAll(() => {
+    // jsdom has no layout: the comment boxes place themselves from a Range's rects.
+    Range.prototype.getBoundingClientRect = () => new DOMRect();
+    Range.prototype.getClientRects = () => document.createElement("span").getClientRects();
+  });
+
+  beforeEach(() => {
+    consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleWarnSpy.mockRestore();
+  });
+
+  async function renderMarginalForUndo() {
+    const ref = createRef<MarginalRef>();
+    const onUsjChange = vi.fn();
+    let mountedContainer: HTMLElement | undefined;
+    await act(async () => {
+      const { container } = render(
+        <Marginal
+          ref={ref}
+          defaultUsj={sampleUsj}
+          scrRef={{ book: "GEN", chapterNum: 1, verseNum: 1 }}
+          options={{ view: getViewOptions(STANDARD_VIEW_MODE) }}
+          onUsjChange={onUsjChange}
+        />,
+      );
+      mountedContainer = container;
+    });
+    if (!ref.current) throw new Error("MarginalRef did not mount");
+    if (!mountedContainer) throw new Error("container did not mount");
+    const lexical = getEmbeddedLexicalEditor(mountedContainer);
+    return { marginal: ref.current, lexical, onUsjChange };
+  }
+
+  /** Let every queued commit, microtask, and 0ms timer run. */
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve();
+    });
+  }
+
+  function verseText(lexical: LexicalEditor): string {
+    return lexical.getEditorState().read(() => {
+      const text = $getRoot()
+        .getAllTextNodes()
+        .find((node) => node.getTextContent().includes("verse text"));
+      return text?.getTextContent() ?? "";
+    });
+  }
+
+  /** The comment ids every `<mark>` in the document holds. */
+  function markedCommentIds(lexical: LexicalEditor): string[] {
+    return lexical.getEditorState().read(() => {
+      const ids: string[] = [];
+      const visit = (node: LexicalNode): void => {
+        if ($isTypedMarkNode(node)) ids.push(...(node.getTypedIDs()[COMMENT_MARK_TYPE] ?? []));
+        if ($isElementNode(node)) node.getChildren().forEach(visit);
+      };
+      visit($getRoot());
+      return ids;
+    });
+  }
+
+  async function typeAtVerseEnd(lexical: LexicalEditor, text: string): Promise<void> {
+    await act(async () => {
+      lexical.update(() => {
+        const node = $getRoot()
+          .getAllTextNodes()
+          .find((candidate) => candidate.getTextContent().includes("verse text"));
+        if (!node) throw new Error("seed text node not found");
+        node.select(node.getTextContentSize(), node.getTextContentSize());
+        $getSelection()?.insertText(text);
+      });
+    });
+    await settle();
+  }
+
+  /** Select `"first"` in the verse text, then add a comment on it through the comment panel's
+   * own add-comment box and input box. */
+  async function addCommentOnFirst(lexical: LexicalEditor, content: string): Promise<void> {
+    await act(async () => {
+      lexical.update(() => {
+        const node = $getRoot()
+          .getAllTextNodes()
+          .find((candidate) => candidate.getTextContent().includes("verse text"));
+        if (!node) throw new Error("seed text node not found");
+        node.select(0, "first".length);
+      });
+    });
+    await settle();
+    const addButton = document.querySelector<HTMLButtonElement>(
+      ".CommentPlugin_AddCommentBox_button",
+    );
+    if (!addButton) throw new Error("expected the add-comment box for a range selection");
+    await act(async () => {
+      fireEvent.click(addButton);
+    });
+    await settle();
+    const inputRoot = document.querySelector<HTMLElement>(".CommentPlugin_CommentInputBox_Editor");
+    const input = getNearestEditorFromDOMNode(inputRoot);
+    if (!input) throw new Error("expected the comment input box's editor");
+    await act(async () => {
+      input.update(() => {
+        $getRoot().selectEnd();
+        $getSelection()?.insertText(content);
+      });
+    });
+    await settle();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Comment" }));
+    });
+    await settle();
+  }
+
+  it("undoes a comment the user added as its own step, before the typing that preceded it", async () => {
+    const { marginal, lexical, onUsjChange } = await renderMarginalForUndo();
+    await typeAtVerseEnd(lexical, " more");
+    expect(verseText(lexical)).toBe("first verse text more");
+
+    const changesBefore = onUsjChange.mock.calls.length;
+    await addCommentOnFirst(lexical, "check this");
+    const [threadId] = markedCommentIds(lexical);
+    expect(threadId).toBeDefined();
+    // The comment's mark is a change to the USJ (it writes `zmsc` milestones): reported once.
+    expect(onUsjChange.mock.calls.length - changesBefore).toBe(1);
+
+    await act(async () => marginal.undo());
+    await settle();
+    expect(markedCommentIds(lexical)).toEqual([]);
+    expect(verseText(lexical)).toBe("first verse text more");
+
+    await act(async () => marginal.undo());
+    await settle();
+    expect(verseText(lexical)).toBe("first verse text");
+
+    await act(async () => marginal.redo());
+    await settle();
+    await act(async () => marginal.redo());
+    await settle();
+    expect(verseText(lexical)).toContain("more");
+    expect(markedCommentIds(lexical)).toEqual([threadId]);
+  });
+  it("undoes a comment thread the user deleted as its own step, before the typing that preceded it", async () => {
+    const { marginal, lexical, onUsjChange } = await renderMarginalForUndo();
+    await addCommentOnFirst(lexical, "check this");
+    const [threadId] = markedCommentIds(lexical);
+    expect(threadId).toBeDefined();
+    await typeAtVerseEnd(lexical, " more");
+
+    // Adding the comment opened the panel (it opens when the caret names a comment).
+    const threadDelete = document.querySelector<HTMLButtonElement>(
+      ".CommentPlugin_CommentsPanel_List_Thread .CommentPlugin_CommentsPanel_List_DeleteButton",
+    );
+    if (!threadDelete) throw new Error("expected the thread's delete button in the panel");
+    await act(async () => {
+      fireEvent.click(threadDelete);
+    });
+    const changesBefore = onUsjChange.mock.calls.length;
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    });
+    await settle();
+    expect(markedCommentIds(lexical)).toEqual([]);
+    // Removing the comment's mark is a change to the USJ: reported once.
+    expect(onUsjChange.mock.calls.length - changesBefore).toBe(1);
+
+    await act(async () => marginal.undo());
+    await settle();
+    expect(markedCommentIds(lexical)).toEqual([threadId]);
+    expect(verseText(lexical)).toContain("verse text more");
+
+    await act(async () => marginal.undo());
+    await settle();
+    expect(verseText(lexical)).not.toContain("more");
   });
 });

@@ -47,8 +47,12 @@ import {
   TextNode,
 } from "lexical";
 import {
+  $addDisplayAnnotation,
   $isCharNode,
   $isMarkerNode,
+  $lastPiece,
+  $pieceHead,
+  $pieces,
   $isNoteNode,
   $isParaNode,
   getPendedDisplayOwners,
@@ -586,8 +590,9 @@ describe("a typed note literal in front of a char span's glyph", () => {
   });
 });
 
-/** A note whose CONTENT is pending: its reference span's glyphs are retyped. */
-async function noteContentPending() {
+/** A note whose CONTENT is pending: its reference span's glyphs are retyped. With `cutCaller`, an
+ * annotation then holds the caller's `+` alone, cutting the caller text into pieces. */
+async function noteContentPending(cutCaller = false) {
   const mounted = await mountExpandedNoteEditor(
     twoParaUsj([
       "before ",
@@ -611,6 +616,15 @@ async function noteContentPending() {
     await Promise.resolve();
     await Promise.resolve();
   });
+  if (cutCaller)
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const { caller } = $noteOwnNodes();
+        const plus = caller.getTextContent().indexOf("+");
+        $addDisplayAnnotation(caller, "test", "a", plus, plus + 1);
+      });
+      await Promise.resolve();
+    });
   const para = settledPara(mounted.ref.current?.getUsj(), PARA_TOP_INDEX);
   return {
     ...mounted,
@@ -631,10 +645,11 @@ function $noteOwnNodes(): { opener: TextNode; caller: TextNode; closer: TextNode
   const children = $liveNote().getChildren();
   const opener = children[0];
   const closer = children[children.length - 1];
-  const caller = children.find(
+  const callerPiece = children.find(
     (child): child is TextNode =>
       $isTextNode(child) && !$isMarkerNode(child) && child.getTextContent().includes("+"),
   );
+  const caller = callerPiece && $pieceHead(callerPiece);
   if (!$isMarkerNode(opener) || !$isMarkerNode(closer) || !caller)
     throw new Error("expected the note's opening glyph, caller and closing glyph");
   return { opener, caller, closer };
@@ -655,6 +670,39 @@ describe("a caret on the own glyphs of a note whose content is pending", () => {
     });
     expect(settledLocationOf(lexical, context, () => [$noteOwnNodes().opener, 0])).toEqual({
       jsonPath: contentPath(notePath),
+    });
+  });
+
+  it("reports the caller's end as it does uncut when an annotation cuts the caller", async () => {
+    const uncut = await noteContentPending();
+    const cut = await noteContentPending(true);
+    const $ends = (): [LexicalNode, number][] => {
+      const { caller } = $noteOwnNodes();
+      const last = $lastPiece(caller);
+      return [
+        [caller, caller.getTextContentSize()],
+        [last, last.getTextContentSize()],
+      ];
+    };
+    const reports = (mounted: typeof uncut) =>
+      mounted.lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(mounted.context);
+        return $ends().map(([node, offset]) =>
+          $settledLocationFromLivePoint(prepared, node, offset),
+        );
+      });
+    expect(
+      cut.lexical.getEditorState().read(() => $pieces($noteOwnNodes().caller).length),
+    ).toBeGreaterThan(1);
+    const [uncutEnd] = reports(uncut);
+    // The caller's end is the front of the content, which the settled note spells from the content.
+    expect(uncutEnd).toEqual({ jsonPath: contentPath([...uncut.notePath, 0]) });
+    const [headEnd, cutEnd] = reports(cut);
+    expect(cutEnd).toEqual(uncutEnd);
+    // The end of the caller's first piece is inside the caller: in front of its `+`.
+    expect(headEnd).toEqual({
+      jsonPath: propertyPath(cut.notePath, "caller"),
+      propertyOffset: 0,
     });
   });
 

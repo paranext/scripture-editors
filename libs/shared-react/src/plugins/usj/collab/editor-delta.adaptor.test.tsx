@@ -21,12 +21,18 @@ import {
 } from "../../../../../../packages/utilities/src/converters/usj/converter-test.data";
 import { $createImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { $createImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
-import { baseTestEnvironment } from "../react-test.utils";
+import {
+  baseTestEnvironment,
+  countContinuationPieces,
+  cutEveryCarrierIntoPieces,
+} from "../react-test.utils";
 import { DeltaOp, isInsertEmbedOpOfType, LF } from "./delta-common.utils";
 import { $getParticularNodeOps, getEditorDelta } from "./editor-delta.adaptor";
+import { act } from "@testing-library/react";
 import { $setState, $createTextNode, $getRoot, LexicalNode } from "lexical";
 import { $dfs } from "@lexical/utils";
 import {
+  $addDisplayAnnotation,
   $createAttributeRunNode,
   $createBookNode,
   $createCharNode,
@@ -37,6 +43,7 @@ import {
   $createMilestoneNode,
   $createNoteNode,
   $createParaNode,
+  $createTypedMarkNode,
   $createUnknownNode,
   $createCursorPlaceholderNode,
   $createVerseNode,
@@ -47,6 +54,7 @@ import {
   getEditableCallerText,
   getVisibleOpenMarkerText,
   NBSP,
+  registerDisplayAnnotationBasis,
   segmentState,
   textTypeState,
 } from "shared";
@@ -358,6 +366,35 @@ describe("getEditorDelta", () => {
     expect(joined).toBe(`hello${LF}`);
     expect(joined).not.toContain("\\p");
     expect(joined).not.toContain(NBSP);
+  });
+
+  it("keeps `|…` typed right after a char span's opening glyph as content, marked or not", async () => {
+    // `\bd |bold`: the NBSP is the span's separator, so the `|` after it is content the attribute
+    // grammar leaves literal (the editor→USJ conversion keeps it), not the legacy NBSP-`|`
+    // attribute text the ops stream drops.
+    const $span = (...content: LexicalNode[]) =>
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("a "),
+          $createCharNode("bd").append($createMarkerNode("bd"), ...content),
+        ),
+      );
+    const plain = await getOpsFor(() => $span($createTextNode(`${NBSP}|bold`)));
+    expect(
+      plain
+        .filter((op): op is { insert: string } => typeof op.insert === "string")
+        .map((op) => op.insert)
+        .join(""),
+    ).toContain("|bold");
+    // A mark over the `b` cuts the text in three; the ops are the same.
+    const marked = await getOpsFor(() =>
+      $span(
+        $createTextNode(`${NBSP}|`),
+        $createTypedMarkNode({ test: ["1"] }).append($createTextNode("b")),
+        $createTextNode("old"),
+      ),
+    );
+    expect(marked).toEqual(plain);
   });
 
   it("should return the correct ops for nested chars", async () => {
@@ -1606,6 +1643,114 @@ describe("getEditorDelta", () => {
     });
   });
 });
+
+describe("a carrier cut into pieces", () => {
+  // An annotation held over part of a display-byte carrier cuts it into pieces of its own class
+  // (`displayPieces.state.ts`). The pieces are one carrier: the delta must be the uncut one's.
+  it.each([
+    ["editable markers", editorStateGen1v1Editable],
+    ["standard view", editorStateGen1v1Standard],
+  ])("sends the same delta as the uncut document (%s)", async (_name, serialized) => {
+    const { editor } = await testEnvironment();
+    await act(async () => {
+      editor.setEditorState(editor.parseEditorState(serialized));
+    });
+    const uncut = getEditorDelta(editor.getEditorState()).ops;
+
+    expect(await cutEveryCarrierIntoPieces(editor)).toBeGreaterThan(0);
+    expect(countContinuationPieces(editor)).toBeGreaterThan(0);
+
+    expect(getEditorDelta(editor.getEditorState()).ops).toEqual(uncut);
+  });
+
+  it("sends the bytes typed into a note's caller once, wherever the caller is cut", async () => {
+    const { editor } = await testEnvironment(() => {
+      const caller = $createTextNode(` +xy${NBSP}`).toggleUnmergeable();
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("When"),
+          $createNoteNode("f", "+", false).append(
+            $createMarkerNode("f"),
+            caller,
+            $createCharNode("ft").append($createMarkerNode("ft"), $createTextNode(`${NBSP}text`)),
+            $createMarkerNode("f", "closing"),
+          ),
+        ),
+      );
+    });
+    const uncut = getEditorDelta(editor.getEditorState()).ops;
+    expect(JSON.stringify(uncut)).toContain('"insert":"xy"');
+
+    registerDisplayAnnotationBasis(editor);
+    await act(async () => {
+      editor.update(
+        () => {
+          const caller = $getRoot()
+            .getAllTextNodes()
+            .find((node) => node.getTextContent() === ` +xy${NBSP}`);
+          if (!caller) throw new Error("no caller");
+          // Cut between the two typed bytes, and between the caller's own `+` and the first.
+          $addDisplayAnnotation(caller, "check", "a", 2, 3);
+        },
+        { discrete: true },
+      );
+    });
+    expect(countContinuationPieces(editor)).toBe(2);
+
+    expect(getEditorDelta(editor.getEditorState()).ops).toEqual(uncut);
+  });
+});
+
+describe("a no-break space after a note span's separator", () => {
+  // `\f + \ft ~note\f*` in an editable view: the span's text is the separator NBSP, then the
+  // author's own `~`, then `note`.
+  const $note = (...content: LexicalNode[]) =>
+    $getRoot().append(
+      $createParaNode("p").append(
+        $createTextNode("a"),
+        $createNoteNode("f", "+", false).append(
+          $createMarkerNode("f"),
+          $createTextNode(getEditableCallerText("+")).toggleUnmergeable(),
+          $createCharNode("ft").append($createMarkerNode("ft"), ...content),
+          $createMarkerNode("f", "closing"),
+        ),
+      ),
+    );
+
+  it("is content, whatever a mark cuts after it", async () => {
+    const plain = noteContentsText(
+      await getOpsFor(() => $note($createTextNode(`${NBSP}${NBSP}note`))),
+    );
+    expect(plain).toBe(`${NBSP}note`);
+    // A mark over the `n` leaves the separator and the `~` a text of their own.
+    const marked = noteContentsText(
+      await getOpsFor(() =>
+        $note(
+          $createTextNode(`${NBSP}${NBSP}`),
+          $createTypedMarkNode({ test: ["1"] }).append($createTextNode("n")),
+          $createTextNode("ote"),
+        ),
+      ),
+    );
+    expect(marked).toBe(plain);
+  });
+
+  it("is content when it is the span's only content, as the editor→USJ conversion keeps it", async () => {
+    const contents = noteContentsText(
+      await getOpsFor(() => $note($createTextNode(`${NBSP}${NBSP}`))),
+    );
+    expect(contents).toBe(NBSP);
+  });
+});
+
+/** The text inserts of the first note's `contents` in `ops`, joined. */
+function noteContentsText(ops: DeltaOp[]): string {
+  const note = ops.find((op) => isInsertEmbedOpOfType("note", op));
+  if (!isInsertEmbedOpOfType("note", note)) throw new Error("no note op");
+  return (note.insert.note?.contents?.ops ?? [])
+    .map((op) => (typeof op.insert === "string" ? op.insert : ""))
+    .join("");
+}
 
 async function testEnvironment($initialEditorState?: () => void) {
   return baseTestEnvironment($initialEditorState);

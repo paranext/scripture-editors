@@ -6,7 +6,11 @@ import {
 import { $isSomeVerseNode } from "../../../nodes/usj/node-react.utils";
 import { getDefaultViewOptions, ViewOptions } from "../../../views/view-options.utils";
 import { CharNodePlugin } from "../CharNodePlugin";
-import { baseTestEnvironment } from "../react-test.utils";
+import {
+  baseTestEnvironment,
+  countContinuationPieces,
+  cutEveryCarrierIntoPieces,
+} from "../react-test.utils";
 import { $applyUpdate } from "./delta-apply-update.utils";
 import { getEditorDelta } from "./editor-delta.adaptor";
 import {
@@ -16,8 +20,22 @@ import {
   DeltaOp,
   getInsertedNodeKey,
 } from "./delta-common.utils";
+// Reaching inside only for tests.
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import {
+  editorStateGen1v1Editable,
+  editorStateGen1v1Standard,
+} from "../../../../../../packages/utilities/src/converters/usj/converter-test.data";
+import { $dfs } from "@lexical/utils";
 import { act } from "@testing-library/react";
-import { $createTextNode, $getRoot, $isTextNode, $setState, LexicalNode } from "lexical";
+import {
+  $createTextNode,
+  $getRoot,
+  $isTextNode,
+  $setState,
+  LexicalEditor,
+  LexicalNode,
+} from "lexical";
 import { ReactNode } from "react";
 import {
   $createAttributeRunNode,
@@ -44,6 +62,7 @@ import {
   getVisibleOpenMarkerText,
   NBSP,
   NoteNode,
+  $pieceHead,
   segmentState,
   textTypeState,
 } from "shared";
@@ -1701,6 +1720,61 @@ describe("editable verse counts as one OT unit (embed)", () => {
 
       // The reverse lookup in apply coordinates resolves the retain to the NEW note.
       expect(getInsertedNodeKey(ops, editor.getEditorState(), "apply")).toBe(notes[0].getKey());
+    });
+  });
+});
+
+describe("a carrier cut into pieces", () => {
+  const systems = ["delta-doc", "apply"] as const;
+
+  /** Every node's OT position, and the node each position resolves to (its carrier's first piece),
+   * in both coordinate systems. */
+  function readPositions(editor: LexicalEditor) {
+    return editor.getEditorState().read(() => {
+      const nodes = $dfs().map(({ node }) => node);
+      return systems.map((system) => {
+        const byKey = new Map<string, number | undefined>();
+        for (const node of nodes) byKey.set(node.getKey(), $getOTPositionOfNode(node, system));
+        const atPosition: (string | undefined)[] = [];
+        for (let position = 0; position < 200; position++) {
+          const node = $getNodeFromOTPosition(position, system);
+          atPosition.push(node && $pieceHead(node).getKey());
+        }
+        return { byKey, atPosition };
+      });
+    });
+  }
+
+  it.each([
+    ["editable markers", editorStateGen1v1Editable],
+    ["standard view", editorStateGen1v1Standard],
+  ])("counts every position as the uncut document does (%s)", async (_name, serialized) => {
+    const { editor } = await testEnvironment();
+    await act(async () => {
+      editor.setEditorState(editor.parseEditorState(serialized));
+    });
+    const uncut = readPositions(editor);
+
+    await cutEveryCarrierIntoPieces(editor);
+    expect(countContinuationPieces(editor)).toBeGreaterThan(0);
+
+    const cut = readPositions(editor);
+    systems.forEach((_system, index) => {
+      // Every node the uncut document had is still there (a carrier keeps its first piece), at the
+      // same position.
+      for (const [key, position] of uncut[index].byKey)
+        expect([key, cut[index].byKey.get(key)]).toEqual([key, position]);
+      expect(cut[index].atPosition).toEqual(uncut[index].atPosition);
+    });
+    // A later piece is at its carrier's place: an embed's at the embed, a text's inside its text.
+    editor.getEditorState().read(() => {
+      for (const { node } of $dfs()) {
+        const head = $pieceHead(node);
+        if (head.is(node)) continue;
+        expect($getOTPositionOfNode(node, "apply")).toBeGreaterThanOrEqual(
+          $getOTPositionOfNode(head, "apply") ?? Infinity,
+        );
+      }
     });
   });
 });
