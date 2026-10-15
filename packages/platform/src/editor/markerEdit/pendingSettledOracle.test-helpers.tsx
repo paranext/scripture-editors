@@ -73,6 +73,7 @@ import { act } from "@testing-library/react";
 import { drainNativeSelectionChange } from "../editor-test.utils";
 import { copyEvent, pasteEvent } from "./markerEdit.test-helpers";
 import {
+  $createRangeSelection,
   $getRoot,
   $getSelection,
   $getState,
@@ -82,6 +83,7 @@ import {
   CLICK_COMMAND,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   COPY_COMMAND,
+  CUT_COMMAND,
   DELETE_CHARACTER_COMMAND,
   HISTORY_PUSH_TAG,
   LexicalEditor,
@@ -91,6 +93,7 @@ import {
   REDO_COMMAND,
   SELECT_ALL_COMMAND,
   SELECTION_CHANGE_COMMAND,
+  $setSelection,
   TextNode,
   UNDO_COMMAND,
 } from "lexical";
@@ -452,15 +455,17 @@ const SHELL_KEYSTROKES: ShellKeystroke[] = [
 ];
 
 /**
- * A range made from a caret in a note's content the way the keyboard makes one — Shift with Left
- * or Right (one caret position), Home or End (the paragraph's edge), or select-all — announced as
- * a selection change, then typed over with `x` or removed (Backspace), as edits of their own. Run
- * in the popover's view, whose shell guard keeps such a range to the note's content.
+ * A range made from a caret the way the keyboard makes one — Shift with Left or Right (one caret
+ * position), Home or End (the paragraph's edge), or select-all — announced as a selection change,
+ * then typed over with `x` or removed (Backspace, or Delete), as edits of their own. The oracle runs
+ * them in the popover's view, from a caret in a note's content, whose shell guard keeps such a range
+ * to the note's content; the annotation-transparency oracle also runs some from a caret anywhere in
+ * every view ({@link TRANSPARENCY_RANGE_KEYSTROKES}).
  */
 interface RangeKeystroke {
   name: string;
   extend: "left" | "right" | "home" | "end" | "all";
-  edit: "x" | "";
+  edit: "x" | "" | "delete";
 }
 
 const RANGE_KEYSTROKES: RangeKeystroke[] = (
@@ -493,6 +498,115 @@ interface PasteKeystroke {
 export const PASTE_KEYSTROKES: PasteKeystroke[] = [
   { name: "copy the byte before the caret, then paste it there", copies: "before" },
   { name: "copy the byte after the caret, then paste it there", copies: "after" },
+];
+
+/**
+ * The range keystrokes the annotation-transparency oracle runs from a caret anywhere in every view:
+ * Shift with Left or Right, then `x`, Backspace or Delete. Not among the pending/settled oracle's
+ * own keystrokes.
+ */
+export const TRANSPARENCY_RANGE_KEYSTROKES: RangeKeystroke[] = (
+  [
+    ["Shift+Left", "left"],
+    ["Shift+Right", "right"],
+  ] as const
+).flatMap(([gesture, extend]) => [
+  { name: `${gesture}, then type "x"`, extend, edit: "x" as const },
+  { name: `${gesture}, then Backspace`, extend, edit: "" as const },
+  { name: `${gesture}, then Delete`, extend, edit: "delete" as const },
+]);
+
+/**
+ * One end of a range a clipboard gesture selects: the caret itself (`"site"`), or the place `n`
+ * document text positions away from it (negative: before it), at the caret there nearest the
+ * site — the start of the later of two texts meeting there for an end before the site, the end of
+ * the earlier one for an end after it. A place with no caret (inside a `token` glyph, in a
+ * collapsed note) moves on away from the site, to the edited block's edge at most.
+ */
+type RangeEnd = "site" | number;
+
+/** A range a clipboard gesture selects: from `anchor` to `focus`, or (`"block"`) the whole content
+ * of the edited block. */
+export type GestureRange = { anchor: RangeEnd; focus: RangeEnd } | "block";
+
+/** Whether `range` selects the same bytes whichever spelling of the caret it is made from: it
+ * does not end at the caret itself. */
+export function isSpellingFree(range: GestureRange | "site"): boolean {
+  return (
+    range !== "site" && (range === "block" || (range.anchor !== "site" && range.focus !== "site"))
+  );
+}
+
+/**
+ * A cut the way a user cuts: the range `cuts` selected (announced as a selection change), then the
+ * cut command with a clipboard event the editor's copy plugins fill in. What it wrote to the
+ * clipboard is read back ({@link CaseRun.clipboard}). Not one of the pending/settled oracle's
+ * keystrokes: the annotation-transparency oracle runs it.
+ */
+interface CutKeystroke {
+  name: string;
+  cuts: GestureRange;
+}
+
+/**
+ * A copy of the range `copiesRange`, pasted with every flavor it wrote over `pastesOver`: a caret
+ * at the site (`"site"`), or a range there that the paste replaces. What the copy wrote is read
+ * back ({@link CaseRun.clipboard}). Not one of the pending/settled oracle's keystrokes.
+ */
+interface CopyPasteKeystroke {
+  name: string;
+  copiesRange: GestureRange;
+  pastesOver: GestureRange | "site";
+}
+
+/** A paste of `pastesText` as the clipboard's only flavor (`text/plain`) at the caret: what
+ * pasting as plain text, or from a plain-text source, delivers. Not one of the pending/settled
+ * oracle's keystrokes. */
+interface PlainPasteKeystroke {
+  name: string;
+  pastesText: string;
+}
+
+/** The bytes either side of the caret, three each way: a range a caret inside a short glyph
+ * crosses the glyph's edges with, into the content beside it. */
+const AROUND: GestureRange = { anchor: -3, focus: 3 };
+
+/** The cuts the annotation-transparency oracle makes at a caret. */
+export const CUT_KEYSTROKES: CutKeystroke[] = [
+  { name: "cut the byte before the caret", cuts: { anchor: "site", focus: -1 } },
+  { name: "cut the byte after the caret", cuts: { anchor: "site", focus: 1 } },
+  { name: "cut three bytes either side of the caret", cuts: AROUND },
+];
+
+/** The cut of the edited block's whole content, which the annotation-transparency oracle makes
+ * once per document. */
+export const BLOCK_CUT_KEYSTROKE: CutKeystroke = { name: "cut the whole block", cuts: "block" };
+
+/** The copies the annotation-transparency oracle pastes at a caret: the bytes either side of it,
+ * pasted at the caret and over the byte either side of it, and the edited block's whole content,
+ * pasted at the caret. */
+export const COPY_PASTE_KEYSTROKES: CopyPasteKeystroke[] = [
+  {
+    name: "copy three bytes either side of the caret, then paste them at the caret",
+    copiesRange: AROUND,
+    pastesOver: "site",
+  },
+  {
+    name: "copy three bytes either side of the caret, then paste them over the byte either side of it",
+    copiesRange: AROUND,
+    pastesOver: { anchor: -1, focus: 1 },
+  },
+  {
+    name: "copy the whole block, then paste it at the caret",
+    copiesRange: "block",
+    pastesOver: "site",
+  },
+];
+
+/** The plain-text pastes the annotation-transparency oracle makes at a caret: one line, and two. */
+export const PLAIN_PASTE_KEYSTROKES: PlainPasteKeystroke[] = [
+  { name: 'paste "pq" as plain text', pastesText: "pq" },
+  { name: 'paste "p", a line break and "q" as plain text', pastesText: "p\nq" },
 ];
 
 /** The clipboard flavors a copy in this editor can write, every one a paste then reads. */
@@ -1448,7 +1562,14 @@ export interface CaseSite {
 }
 
 /** The oracle's keystroke kinds, as one union. */
-export type OracleKeystroke = KeystrokeCase | ShellKeystroke | RangeKeystroke | PasteKeystroke;
+export type OracleKeystroke =
+  | KeystrokeCase
+  | ShellKeystroke
+  | RangeKeystroke
+  | PasteKeystroke
+  | CutKeystroke
+  | CopyPasteKeystroke
+  | PlainPasteKeystroke;
 
 /** The keystrokes the oracle runs at a site of `view`. */
 export function keystrokesFor(view: string, shell: boolean): OracleKeystroke[] {
@@ -1486,6 +1607,9 @@ export interface CaseRun {
    * no other trace.
    */
   pasteErrors: string[];
+  /** What a cut, or the copy of a copy-and-paste, wrote to the clipboard, by flavor (a flavor it
+   * did not write left out). */
+  clipboard?: { [flavor: string]: string };
 }
 
 /** The corpus rows the oracle runs in `view`. */
@@ -1592,8 +1716,22 @@ export async function runKeystrokeCase(
         if (isAnnounced) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
         return;
       }
+      if ("cuts" in keystroke || "copiesRange" in keystroke) {
+        applied = $selectGestureRange(
+          site,
+          "cuts" in keystroke ? keystroke.cuts : keystroke.copiesRange,
+        );
+        if (applied && isAnnounced)
+          mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        return;
+      }
+      if ("pastesText" in keystroke) {
+        applied = true;
+        return;
+      }
       if ("extend" in keystroke) {
-        if (!isInNote) return;
+        // The popover edits only its note.
+        if (!isInNote && view === PROTECTED_NOTE_SHELL_VIEW) return;
         applied = true;
         node.select(offset, offset);
         const selection = $getSelection();
@@ -1641,12 +1779,42 @@ export async function runKeystrokeCase(
     await drainNativeSelectionChange();
   });
   let pasteErrors: string[] = [];
+  let clipboard: CaseRun["clipboard"];
   if (applied && "copies" in keystroke) {
     const pasted = await copyAndPasteAtSite(mounted, isAnnounced, $site);
     applied = pasted !== undefined;
     pasteErrors = pasted ?? [];
   }
-  // An empty `next` replaces a range with nothing: Backspace.
+  if (applied && "cuts" in keystroke) clipboard = await writeClipboard(mounted, CUT_COMMAND);
+  if (applied && "copiesRange" in keystroke) {
+    clipboard = await writeClipboard(mounted, COPY_COMMAND);
+    const { pastesOver } = keystroke;
+    const pasted = await pasteAt(
+      mounted,
+      isAnnounced,
+      () => {
+        const site = $site();
+        return !!site && $selectGestureRange(site, pastesOver);
+      },
+      clipboard,
+    );
+    applied = pasted !== undefined;
+    pasteErrors = pasted ?? [];
+  }
+  if (applied && "pastesText" in keystroke) {
+    const pasted = await pasteAt(
+      mounted,
+      isAnnounced,
+      () => {
+        const site = $site();
+        return !!site && $selectGestureRange(site, "site");
+      },
+      { "text/plain": keystroke.pastesText },
+    );
+    applied = pasted !== undefined;
+    pasteErrors = pasted ?? [];
+  }
+  // An empty `next` replaces a range with nothing: Backspace; `delete` is Delete.
   const next =
     "character" in keystroke
       ? keystroke.character
@@ -1661,6 +1829,8 @@ export async function runKeystrokeCase(
       mounted.lexical.update(
         () => {
           if (next === "") mounted.lexical.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+          else if (next === "delete")
+            mounted.lexical.dispatchCommand(DELETE_CHARACTER_COMMAND, false);
           else mounted.lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, next);
         },
         // Its own history entry, so an undo can stop between the two keystrokes.
@@ -1716,6 +1886,7 @@ export async function runKeystrokeCase(
     shownLines,
     after,
     pasteErrors,
+    clipboard,
   };
 }
 
@@ -1730,22 +1901,57 @@ async function copyAndPasteAtSite(
   isAnnounced: boolean,
   $site: () => CaseSite | undefined,
 ): Promise<string[] | undefined> {
+  const payload = await writeClipboard(mounted, COPY_COMMAND);
+  return pasteAt(
+    mounted,
+    isAnnounced,
+    () => {
+      const site = $site();
+      if (!site) return false;
+      site.node.select(site.offset, site.offset);
+      return true;
+    },
+    payload,
+  );
+}
+
+/** Copy or cut (`command`) the selection the way a user does — the command with a clipboard event
+ * the editor's copy plugins fill in — and return every flavor it wrote. */
+async function writeClipboard(
+  mounted: Mounted,
+  command: typeof COPY_COMMAND | typeof CUT_COMMAND,
+): Promise<{ [flavor: string]: string }> {
   const { event, getData } = copyEvent({ native: true });
   await act(async () => {
-    mounted.lexical.dispatchCommand(COPY_COMMAND, event);
+    mounted.lexical.dispatchCommand(command, event);
+    // Lexical's own cut removes the range only once its copy has resolved.
+    await Promise.resolve();
+    await Promise.resolve();
     await drainNativeSelectionChange();
   });
-  const payload = Object.fromEntries(
+  return Object.fromEntries(
     CLIPBOARD_FLAVORS.map((flavor) => [flavor, getData(flavor)]).filter(([, data]) => data !== ""),
   );
+}
+
+/**
+ * Select what `$place` selects (announced as a selection change in the popover's view), then paste
+ * `payload` there as the paste command a paste dispatches. Returns what the paste logged as an
+ * error ({@link CaseRun.pasteErrors}), recorded rather than printed; `undefined` when `$place`
+ * selected nothing.
+ */
+async function pasteAt(
+  mounted: Mounted,
+  isAnnounced: boolean,
+  $place: () => boolean,
+  payload: { [flavor: string]: string },
+): Promise<string[] | undefined> {
   let isPlaced = false;
   await act(async () => {
     mounted.lexical.update(() => {
-      const site = $site();
-      if (!site) return;
-      isPlaced = true;
-      site.node.select(site.offset, site.offset);
-      if (isAnnounced) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      isPlaced = $place();
+      if (isPlaced && isAnnounced)
+        mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
     });
     await drainNativeSelectionChange();
   });
@@ -1765,6 +1971,57 @@ async function copyAndPasteAtSite(
     consoleError.mockRestore();
   }
   return errors;
+}
+
+/** The carets a clipboard gesture's range may end at: every caret of the edited block's texts but
+ * one inside a `token` glyph (which a caret steps around) or in a collapsed note, in document
+ * order. */
+function $blockCarets(): CaretPosition[] {
+  const block = $getRoot().getChildren()[2];
+  if (!block) return [];
+  return $caretPositions().filter(
+    ({ node, offset }) =>
+      block.isParentOf(node) &&
+      !$isInCollapsedNote(node) &&
+      (node.getMode() === "normal" || offset === 0 || offset === node.getTextContentSize()),
+  );
+}
+
+/** The caret a {@link RangeEnd} names from `site`; `undefined` when the site is no caret. */
+function $rangeEndCaret(site: CaseSite, end: RangeEnd): CaretPosition | undefined {
+  const all = $caretPositions();
+  const here = all.find(({ node, offset }) => node.is(site.node) && offset === site.offset);
+  if (!here) return undefined;
+  if (end === "site") return here;
+  const carets = $blockCarets();
+  const target = here.position + end;
+  if (end < 0) return carets.filter(({ position }) => position <= target).at(-1) ?? carets[0];
+  return carets.find(({ position }) => position >= target) ?? carets.at(-1);
+}
+
+/**
+ * Select `range` from `site` ({@link GestureRange}; `"site"`: the caret itself). Returns whether it
+ * selected something: the caret, or a range over at least one document position.
+ */
+function $selectGestureRange(site: CaseSite, range: GestureRange | "site"): boolean {
+  if (range === "site") {
+    site.node.select(site.offset, site.offset);
+    return true;
+  }
+  if (range === "block") {
+    const block = $getRoot().getChildren()[2];
+    if (!$isElementNode(block)) return false;
+    block.select(0, block.getChildrenSize());
+    return true;
+  }
+  const anchor = $rangeEndCaret(site, range.anchor);
+  const focus = $rangeEndCaret(site, range.focus);
+  if (!anchor || !focus || anchor.position === focus.position) return false;
+  const selection = $createRangeSelection();
+  selection.anchor.set(anchor.node.getKey(), anchor.offset, "text");
+  selection.focus.set(focus.node.getKey(), focus.offset, "text");
+  $setSelection(selection);
+  return true;
 }
 
 /**
