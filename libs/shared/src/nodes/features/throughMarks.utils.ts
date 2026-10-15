@@ -294,18 +294,17 @@ export function $removeRangeSplitByMarks(selection: RangeSelection): boolean {
 }
 
 /**
- * The place a range's start at an edge of an annotation mark's text is at outside every mark it
- * starts or ends with: the element the outermost of them sits in, and the node that will stand to
- * the left of that place once the range is removed (`undefined`: the element's start). `undefined`
- * when `point` is at no mark's edge.
+ * Where a caret goes once a range starting at an edge of an annotation mark's text is removed: at
+ * that edge of the text when it is still there — where Lexical types beside the mark, outside it, as
+ * at any mark's edge — or else, the mark gone with its text, at the place the outermost mark it
+ * starts or ends stood. `undefined` when `point` is at no mark's edge.
  */
-function $placeOutsideMarks(
-  point: PointType,
-): { parent: ElementNode; $left: () => LexicalNode | null } | undefined {
+function $caretAfterRemoval(point: PointType): (() => void) | undefined {
   if (point.type !== "text") return undefined;
-  let node: LexicalNode = point.getNode();
+  const text = point.getNode();
   const isAtStart = point.offset === 0;
-  const isAtEnd = point.offset === node.getTextContentSize();
+  const isAtEnd = point.offset === text.getTextContentSize();
+  let node: LexicalNode = text;
   let parent = node.getParent();
   let outer: LexicalNode | undefined;
   while (
@@ -316,14 +315,20 @@ function $placeOutsideMarks(
     node = parent;
     parent = parent.getParent();
   }
-  if (!outer || !parent) return undefined;
+  const element = parent;
+  if (!outer || !element) return undefined;
   const mark = outer;
   const before = mark.getPreviousSibling();
-  return {
-    parent,
-    // At a mark's start the place follows what precedes the mark; at its end, the mark itself
-    // while the removal leaves it.
-    $left: () => (isAtStart || !mark.isAttached() ? before : mark),
+  return () => {
+    if ($isTextNode(text) && text.isAttached()) {
+      const offset = isAtStart ? 0 : text.getTextContentSize();
+      text.select(offset, offset);
+      return;
+    }
+    if (!element.isAttached()) return;
+    const left = isAtStart || !mark.isAttached() ? before : mark;
+    const offset = left?.isAttached() ? left.getIndexWithinParent() + 1 : 0;
+    element.select(offset, offset);
   };
 }
 
@@ -334,7 +339,8 @@ function $placeOutsideMarks(
  * range in a parent that takes no text before or after it (a mark) by clearing it and typing at
  * the place it then resolves, which is past the node before the mark (into a glyph's run) rather
  * than where the range was. So the range is removed here, and a caret that started at a mark's
- * edge is put where the range was, outside the mark, as the text typed there is with no mark.
+ * edge is put back at that edge ({@link $caretAfterRemoval}), where the text typed next goes
+ * beside the mark as with no mark.
  *
  * Mutating: call inside `editor.update()`, before the insertion that replaces the range.
  *
@@ -343,15 +349,10 @@ function $placeOutsideMarks(
 export function $removeRangeHeldByMarks(selection: RangeSelection): boolean {
   if (selection.isCollapsed()) return false;
   const start = selection.isBackward() ? selection.focus : selection.anchor;
-  const place = $placeOutsideMarks(start);
-  if (!place && !$isRangeSplitByMarks(selection)) return false;
+  const $placeCaret = $caretAfterRemoval(start);
+  if (!$placeCaret && !$isRangeSplitByMarks(selection)) return false;
   selection.removeText();
-  if (place?.parent.isAttached()) {
-    const left = place.$left();
-    const offset = left?.isAttached() ? left.getIndexWithinParent() + 1 : 0;
-    selection.anchor.set(place.parent.getKey(), offset, "element");
-    selection.focus.set(place.parent.getKey(), offset, "element");
-  }
+  $placeCaret?.();
   return true;
 }
 

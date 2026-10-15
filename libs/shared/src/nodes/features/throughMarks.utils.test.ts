@@ -451,3 +451,53 @@ describe("removing a range that starts at a mark's edge", () => {
     expect(out).toBe("true text:a ,marker:\\w,text:x");
   });
 });
+
+describe("removing part of a mark's text from the mark's edge", () => {
+  /**
+   * The caret left once `held`'s `[start, end)` is removed, and the paragraph's texts after typing
+   * "x" there, marks read through.
+   */
+  function typedOver(start: number, end: number, isMarked: boolean): string {
+    const { editor } = createBasicTestEnvironment(nodes);
+    let out = "";
+    editor.update(
+      () => {
+        const held = $createTextNode("bc");
+        const para = $createParaNode().append(
+          $createTextNode("a "),
+          $createMarkerNode("w"),
+          isMarked ? $createTypedMarkNode({ t: ["1"] }).append(held) : held,
+        );
+        $getRoot().append(para);
+        held.select(start, end);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        if (!isMarked || !$removeRangeHeldByMarks(selection)) selection.removeText();
+        const { anchor } = selection;
+        const caret = `${anchor.type} ${anchor.getNode().getTextContent()}@${anchor.offset}`;
+        selection.insertText("x");
+        const texts = para
+          .getChildren()
+          .flatMap((child) => (child instanceof TypedMarkNode ? child.getChildren() : [child]));
+        // Adjacent texts read as one run, as the mark's cut is not a boundary of the document.
+        const runs: string[] = [];
+        for (const text of texts) {
+          const last = runs.length - 1;
+          if (text.getType() === "text" && runs[last]?.startsWith("text:"))
+            runs[last] += text.getTextContent();
+          else runs.push(`${text.getType()}:${text.getTextContent()}`);
+        }
+        out = `${caret} ${runs.join(",")}`;
+      },
+      { discrete: true },
+    );
+    return out;
+  }
+
+  it.each([
+    [0, 1],
+    [1, 2],
+  ])("leaves the caret on the rest of the text, as with no mark, over [%i, %i)", (start, end) => {
+    expect(typedOver(start, end, true)).toBe(typedOver(start, end, false));
+  });
+});
