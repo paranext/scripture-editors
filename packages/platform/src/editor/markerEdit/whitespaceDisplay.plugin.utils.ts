@@ -36,6 +36,7 @@ import {
   $isChapterNode,
   $getLogicalParent,
   $isCharNode,
+  $isNbspContentAtMark,
   $isNoteNode,
   $isPlainTextNode,
   $isUnknownNode,
@@ -708,10 +709,14 @@ export function $handlePasteForStandardView(
  * after the caller, which is the mandatory space between a note's caller and its first content
  * marker (`\f + \fr …`). Every other placement (between content children, before the note's own
  * closing marker) has nothing in the source USFM to reproduce and must contribute nothing.
+ *
+ * A lone NBSP that is content an annotation mark's edge split off (a space of a run the user typed
+ * in the note's content, `$isNbspContentAtMark`) is not a separator: it copies as the space it is,
+ * as the same run with no mark does.
  */
 function $isNoteInternalDisplaySeparator(node: TextNode): boolean {
   // Read whole: a lone NBSP piece an annotation cut off a note's caller is part of the caller.
-  if ($logicalText(node) !== NBSP) return false;
+  if ($logicalText(node) !== NBSP || $isNbspContentAtMark(node)) return false;
   const parent = node.getParent();
   if (!$isNoteNode(parent)) return false;
   return !$isImmutableNoteCallerNode(node.getPreviousSibling());

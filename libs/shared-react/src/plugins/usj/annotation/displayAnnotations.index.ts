@@ -29,6 +29,9 @@ import {
   $isRangeSelection,
   $isTextNode,
   COMMAND_PRIORITY_CRITICAL,
+  INSERT_LINE_BREAK_COMMAND,
+  INSERT_PARAGRAPH_COMMAND,
+  LexicalCommand,
   EditorState,
   HISTORIC_TAG,
   Klass,
@@ -44,6 +47,7 @@ import {
 import {
   $coveredDisplayText,
   $displayAnnotationsOf,
+  $isPieceContinuation,
   $isTypedMarkNode,
   clearDecoratorPaints,
   DECORATOR_PAINT_ATTRIBUTE,
@@ -83,6 +87,14 @@ import {
 
 /** The class every display-byte node holding an annotation is painted with. */
 export const DISPLAY_ANNOTATION_CLASS_NAME = "display-annotation";
+
+/**
+ * The attribute on the element of every piece of a cut carrier after its first (a continuation,
+ * `displayPieces.state.ts`): a style that boxes a carrier — padding, a border, a margin — applies
+ * to the carrier's head piece alone with `:not([data-piece-continuation])`, so a carrier an
+ * annotation cuts is drawn as the uncut one is.
+ */
+export const DISPLAY_PIECE_CONTINUATION_ATTRIBUTE = "data-piece-continuation";
 
 export interface DisplayAnnotationIndex {
   /** The keys of the display-byte nodes holding `type`/`id`. */
@@ -191,6 +203,31 @@ function $splitCarrierAtInsertion(
   // reads is restated on the split: the end of the part before the caret.
   const points = isCollapsed ? [at.anchor, at.focus] : [at.anchor];
   for (const point of points) point.set(before.getKey(), before.getTextContentSize(), "text");
+}
+
+/**
+ * Before a paragraph or line break goes in at a collapsed caret, split the carrier the caret is
+ * inside where the break splits a text (`$splitCarrierAt`), as {@link $splitCarrierAtInsertion}
+ * does for pasted nodes: the break splits the text node at the caret, but in a carrier cut into
+ * pieces the caret may sit between two of them, where the break would leave the pieces after it
+ * the same carrier as those before (a verse whose number went to the next paragraph still a
+ * verse), and in one holding an annotation each part would re-measure the holds it copied rather
+ * than keep its own. Never handles the command. Mutating.
+ */
+function $splitCarrierAtBreak(): false {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const { anchor } = selection;
+  const node = anchor.getNode();
+  if (anchor.type !== "text" || !$isTextNode(node)) return false;
+  if (!$isSplitCarrier(node) && $displayAnnotationsOf(node).length === 0) return false;
+  // A break goes into the block the caret is in; with no block there it splits nothing.
+  if (!$isElementNode($findMatchingParent(node, INTERNAL_$isBlock))) return false;
+  const before = $splitCarrierAt(node, $logicalOffset(node, anchor.offset));
+  if (!before) return false;
+  for (const point of [selection.anchor, selection.focus])
+    point.set(before.getKey(), before.getTextContentSize(), "text");
+  return false;
 }
 
 interface Entry {
@@ -586,6 +623,12 @@ function createIndex(editor: LexicalEditor): Entry {
           }
           if (after.length > 0) annotationsByKey.set(key, after);
           else annotationsByKey.delete(key);
+          // Lexical reports every element it creates for a node as the node's mutation, a parent's
+          // re-creation included, so this sees every element a piece is drawn on.
+          const element = node && editor.getElementByKey(key);
+          if (element && $isPieceContinuation(node))
+            element.setAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE, "");
+          else element?.removeAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE);
           // A mark's own mutations miss an edit of the text inside it.
           for (let parent = node?.getParent(); parent; parent = parent.getParent())
             if ($isTypedMarkNode(parent)) $noteMarkText(parent);
@@ -789,6 +832,10 @@ function createIndex(editor: LexicalEditor): Entry {
       // Critical, and never handling the command, so a handler that does handle it cannot skip the
       // strip.
       COMMAND_PRIORITY_CRITICAL,
+    ),
+    ...[INSERT_PARAGRAPH_COMMAND, INSERT_LINE_BREAK_COMMAND].map(
+      (command: LexicalCommand<unknown>) =>
+        editor.registerCommand(command, $splitCarrierAtBreak, COMMAND_PRIORITY_CRITICAL),
     ),
   );
 

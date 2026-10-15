@@ -4,7 +4,7 @@
  * its content into the previous paragraph (PT9 reformat outcome).
  */
 
-import { $requestTier2ForNode } from "./tier2Rebuild.utils";
+import { $requestTier2ForNode, $settleScopeNodesInOrder } from "./tier2Rebuild.utils";
 import { MarkerEditContext } from "./markerEditTier1.utils";
 import { isParaKindMarker } from "./markerKind.utils";
 import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
@@ -702,21 +702,49 @@ export function $charNodeDeletionTransform(char: CharNode, context: MarkerEditCo
   const first = char.getFirstChild();
   const hasOpener = $isMarkerNode(first) && first.getMarkerSyntax() === "opening";
   if (!hasOpener) {
+    // A span torn in two (a line break typed inside it) is an opener-less half after a half
+    // missing its closer. The second half's closer is the first half's: the Tier-2 rebuild the
+    // first half routes to re-reads both halves' bytes and pairs them, while unwrapping the second
+    // half first drops that closer. Which half's transform runs first is not ours to choose, so
+    // the rebuild is made from here too.
+    const torn = $earlierSpanMissingCloser(char);
+    if (torn && $requestTier2ForNode(torn, context)) return;
     $unwrapCharNode(char); // opener deleted -> unwrap the span
     context.logger?.debug(`[MarkerEdit] unwrapped char span "${char.getMarker()}"`);
     return;
   }
-  // A span "needs" a closer iff it is not marked closed="false": that flag (which ParatextData
-  // emits on every genuinely-unclosed span, footnote/cross-ref content included) means the missing
-  // closer is the span's normal shape, not deletion damage. Closer-ness keys on this actual state,
-  // never on the marker family — an explicitly-closed \xt DOES need its closer, so deleting it must
-  // still re-route through Tier 2.
+  if ($isMissingNeededCloser(char)) {
+    // Closer deletion goes through Tier 2 (tokenizer decides the span extent).
+    $requestTier2ForNode(char, context);
+  }
+}
+
+/**
+ * Whether `char` has its opening glyph but not a closing glyph it needs. A span "needs" a closer
+ * iff it is not marked closed="false": that flag (which ParatextData emits on every
+ * genuinely-unclosed span, footnote/cross-ref content included) means the missing closer is the
+ * span's normal shape, not deletion damage. Closer-ness keys on this actual state, never on the
+ * marker family — an explicitly-closed \xt DOES need its closer, so deleting it must still
+ * re-route through Tier 2.
+ */
+function $isMissingNeededCloser(char: CharNode): boolean {
+  const first = char.getFirstChild();
+  if (!$isMarkerNode(first) || first.getMarkerSyntax() !== "opening") return false;
   const needsCloser = char.getUnknownAttributes()?.closed !== "false";
   const hasCloser = char
     .getChildren()
     .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing");
-  if (needsCloser && !hasCloser) {
-    // Closer deletion goes through Tier 2 (tokenizer decides the span extent).
-    $requestTier2ForNode(char, context);
+  return needsCloser && !hasCloser;
+}
+
+/** A span of `char`'s marker before it in its settle scope ({@link $settleScopeNodesInOrder})
+ * that is missing a closer it needs ({@link $isMissingNeededCloser}): the opening half of a span
+ * `char` is the other half of. */
+function $earlierSpanMissingCloser(char: CharNode): CharNode | undefined {
+  for (const node of $settleScopeNodesInOrder(char)) {
+    if (node.is(char)) return undefined;
+    if ($isCharNode(node) && node.getMarker() === char.getMarker() && $isMissingNeededCloser(node))
+      return node;
   }
+  return undefined;
 }

@@ -45,7 +45,7 @@ import {
   USJ_TYPE,
   USJ_VERSION,
 } from "@eten-tech-foundation/scripture-utilities";
-import { registerNestedElementResolver } from "@lexical/utils";
+import { $dfs, registerNestedElementResolver } from "@lexical/utils";
 import {
   $createRangeSelection,
   $getEditor,
@@ -642,7 +642,11 @@ export function $charNeedsSentinelAs(
   marker: string,
   getMarkerFn: MarkerLookup,
 ): boolean {
-  if ($hasUnrecoverableAttributes(char)) return true;
+  // The first half of a span a line break tore in two keeps the attributes while its run and
+  // closer went to the second half, which the fragment reads like any other span: there they
+  // re-tokenize onto the span the halves pair back into. Kept whole instead, the first half would
+  // spell its attributes a second time.
+  if ($hasUnrecoverableAttributes(char) && !$tornSecondHalfOf(char)) return true;
   if (isAttributeMarker(marker) || getMarkerFn(marker) !== undefined) return false;
   if ($isInsideNote(char) && !$hasAttributesBesidesClosed(char)) return false;
   // An undeclared marker is kept whole only while its own glyphs still spell it. Once the user has
@@ -4131,6 +4135,49 @@ export function $settleScopeForNode(
   // child itself can be a chapter's attribute marker.
   if (scope && !scope.is(rootChild)) return scope;
   return (rootChild ? $chapterOfAdjacentAttributeNode(rootChild) : undefined) ?? scope;
+}
+
+/**
+ * Every node a rebuild of `node`'s settle scope ({@link $settleScopeForNode}) reads, in document
+ * order: the scope's subtree, and the root children after it that settle with it (a chapter's
+ * `\ca`/`\cp` spans beside it at the root). Empty when `node` has no scope. Read-only.
+ */
+export function $settleScopeNodesInOrder(node: LexicalNode): LexicalNode[] {
+  const scope = $settleScopeForNode(node);
+  if (!scope) return [];
+  const region: LexicalNode[] = [scope];
+  for (let next = scope.getNextSibling(); next; next = next.getNextSibling()) {
+    if (!$settleScopeForNode(next)?.is(scope)) break;
+    region.push(next);
+  }
+  return region.flatMap((root) => $dfs(root).map((entry) => entry.node));
+}
+
+/** Whether `char` lost its opening glyph but keeps a closing glyph of its marker: the half of a
+ * span a line break tore in two that holds the closer. */
+export function $isTornSecondHalf(char: CharNode): boolean {
+  const first = char.getFirstChild();
+  if ($isMarkerNode(first) && first.getMarkerSyntax() === "opening") return false;
+  return char
+    .getChildren()
+    .some(
+      (child) =>
+        $isMarkerNode(child) &&
+        child.getMarkerSyntax() === "closing" &&
+        child.getMarker() === char.getMarker(),
+    );
+}
+
+/** The first span of `char`'s marker after it in its settle scope, when that span is the torn
+ * second half of the span `char` opens ({@link $isTornSecondHalf}). Read-only. */
+function $tornSecondHalfOf(char: CharNode): CharNode | undefined {
+  const nodes = $settleScopeNodesInOrder(char);
+  const after = nodes.slice(nodes.findIndex((node) => node.is(char)) + 1);
+  const next = after.find(
+    (node): node is CharNode =>
+      $isCharNode(node) && !char.isParentOf(node) && node.getMarker() === char.getMarker(),
+  );
+  return next && $isTornSecondHalf(next) ? next : undefined;
 }
 
 /** Route a Tier-1-unexpressible edit to Tier 2 via its scope ({@link $settleScopeForNode}).

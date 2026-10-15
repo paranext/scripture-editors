@@ -84,6 +84,7 @@ import {
   COPY_COMMAND,
   DELETE_CHARACTER_COMMAND,
   HISTORY_PUSH_TAG,
+  KEY_ENTER_COMMAND,
   LexicalEditor,
   LexicalNode,
   NodeKey,
@@ -493,6 +494,23 @@ interface PasteKeystroke {
 export const PASTE_KEYSTROKES: PasteKeystroke[] = [
   { name: "copy the byte before the caret, then paste it there", copies: "before" },
   { name: "copy the byte after the caret, then paste it there", copies: "after" },
+];
+
+/**
+ * Enter or Shift+Enter pressed at the caret: the caret placed in one update, then the key's command
+ * dispatched in the next, as a key press dispatches it — so the editor's Enter handling (a note's
+ * `\fp` break, a split through a char stack, a line break) acts at the caret the editor reads back
+ * from the screen. Not one of the pending/settled oracle's keystrokes: the annotation-transparency
+ * oracle runs it, where a caret at an annotation mark's end is read back past the mark.
+ */
+interface EnterKeystroke {
+  name: string;
+  isShift: boolean;
+}
+
+export const ENTER_KEYSTROKES: EnterKeystroke[] = [
+  { name: "place the caret, then press Enter", isShift: false },
+  { name: "place the caret, then press Shift+Enter", isShift: true },
 ];
 
 /** The clipboard flavors a copy in this editor can write, every one a paste then reads. */
@@ -1448,7 +1466,12 @@ export interface CaseSite {
 }
 
 /** The oracle's keystroke kinds, as one union. */
-export type OracleKeystroke = KeystrokeCase | ShellKeystroke | RangeKeystroke | PasteKeystroke;
+export type OracleKeystroke =
+  | KeystrokeCase
+  | ShellKeystroke
+  | RangeKeystroke
+  | PasteKeystroke
+  | EnterKeystroke;
 
 /** The keystrokes the oracle runs at a site of `view`. */
 export function keystrokesFor(view: string, shell: boolean): OracleKeystroke[] {
@@ -1620,6 +1643,12 @@ export async function runKeystrokeCase(
         mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
         return;
       }
+      if ("isShift" in keystroke) {
+        applied = true;
+        node.select(offset, offset);
+        if (isAnnounced) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        return;
+      }
       const typed = "character" in keystroke ? keystroke.character : keystroke.typed;
       const caret = $caretPositions().find((c) => c.node.is(node) && c.offset === offset);
       if (typed !== undefined && caret) place = `${JSON.stringify(typed)}@${caret.position}`;
@@ -1646,6 +1675,18 @@ export async function runKeystrokeCase(
     applied = pasted !== undefined;
     pasteErrors = pasted ?? [];
   }
+  if (applied && "isShift" in keystroke)
+    await act(async () => {
+      mounted.lexical.update(() => {
+        mounted.lexical.dispatchCommand(
+          KEY_ENTER_COMMAND,
+          new KeyboardEvent("keydown", { key: "Enter", shiftKey: keystroke.isShift }),
+        );
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await drainNativeSelectionChange();
+    });
   // An empty `next` replaces a range with nothing: Backspace.
   const next =
     "character" in keystroke

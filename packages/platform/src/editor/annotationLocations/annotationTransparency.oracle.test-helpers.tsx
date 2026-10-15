@@ -50,6 +50,7 @@ import {
   CaseRun,
   CaseSite,
   caseMismatches,
+  ENTER_KEYSTROKES,
   expectMismatchesListed,
   ExpectedFailures,
   keystrokesFor,
@@ -593,8 +594,9 @@ function composedDelta(editor: LexicalEditor): string {
 
 /**
  * The pending/settled oracle's own checks of `run`, as the mismatch each produced by the check's
- * key with the case label taken off (both runs' labels spell the same site). The same-place
- * check needs the whole row's history and is not read here.
+ * key, the case label taken off both the key and the detail (both runs' labels spell the same
+ * site, the annotated one by the piece or mark text its caret is on). The same-place check needs
+ * the whole row's history and is not read here.
  */
 function invariantResults(
   run: CaseRun,
@@ -604,7 +606,10 @@ function invariantResults(
   const out = new Map<string, string>();
   for (const [key, detail] of caseMismatches(run, view, loadedOutsideNotes, new Map()))
     if (!key.includes("[same place]"))
-      out.set(key.startsWith(run.label) ? key.slice(run.label.length).trim() : key, detail);
+      out.set(
+        key.startsWith(run.label) ? key.slice(run.label.length).trim() : key,
+        detail.replaceAll(run.label, ""),
+      );
   return out;
 }
 
@@ -931,6 +936,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
         } of sites)
           for (const keystroke of [
             ...keystrokesFor(view, site.shell),
+            ...ENTER_KEYSTROKES,
             ...(isInsideCarrier ? PASTE_KEYSTROKES : []),
           ]) {
             const casePlan = "copies" in keystroke ? piecePlan : plan;

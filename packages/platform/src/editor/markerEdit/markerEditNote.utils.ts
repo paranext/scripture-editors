@@ -17,19 +17,20 @@ import {
   RangeSelection,
   TextNode,
 } from "lexical";
+import { $liftOutOfCharStackThroughMarks } from "./charFormatting.utils";
 import { LINE_LEADING_MARKER_REGEX } from "./markerName.pattern";
 import {
   $createCharNode,
   $createMarkerNode,
   $findFirstAncestorNoteNode,
   $isMarkerNode,
-  $liftOutOfCharStack,
   $separatorPrefixLength,
   $withCharContentNbspPrefix,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   MarkerLookup,
   MarkerType,
   NoteNode,
+  $lastPiece,
   $pieces,
 } from "shared";
 
@@ -291,8 +292,9 @@ function $startFpAtCaret(): boolean {
       tail.insertBefore(fp);
     }
     // No `closeImplicitSpans`: the `\fp` is itself what ends an implicitly-closed note-content
-    // span, so no closing marker is emitted for it.
-    $liftOutOfCharStack(fp, { renderGlyphs: true });
+    // span, so no closing marker is emitted for it. An annotation mark holding the caret's text
+    // splits around the break like a span, so the break lands where it does with no mark there.
+    $liftOutOfCharStackThroughMarks(fp, { renderGlyphs: true });
   } else {
     // The caret is on the note's OWN text (a spacer) or not on text at all, so there is no stack
     // to lift out of: splice the break in at the note's own level and take the anchor's tail with
@@ -307,7 +309,9 @@ function $startFpAtCaret(): boolean {
         ? [offset === 0 ? textAnchor : textAnchor.splitText(offset)[1]]
         : [];
     afterCaret.push(...laterPieces);
-    noteChild.insertAfter(fp);
+    // A glyph the caret is on is one glyph however an annotation cuts it: the break goes after it
+    // whole. A text's pieces after the caret move into the break, so it goes after the caret's.
+    (textAnchor ? noteChild : $lastPiece(noteChild)).insertAfter(fp);
     const [firstMoved] = afterCaret;
     if (firstMoved) {
       $withCharContentNbspPrefix(firstMoved);

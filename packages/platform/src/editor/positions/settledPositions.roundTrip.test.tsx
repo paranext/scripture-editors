@@ -34,6 +34,8 @@ import { $getNodeByKey, $getRoot, $isElementNode, LexicalNode, TextNode } from "
 import {
   $addDisplayAnnotation,
   $isCharNode,
+  $isNoteNode,
+  $noteEditableCallerNode,
   $pieceHead,
   $pieces,
   getPendedDisplayOwners,
@@ -905,6 +907,55 @@ describe.each(VIEWS)("a closer typed into an unclosed note (%s view)", (view) =>
     expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThanOrEqual(edits.length);
     return mounted;
   }
+
+  /** Every caret position's report, as one sorted set per document position (a carrier cut into
+   * pieces spells a boundary twice), and the document read while the edit waits. */
+  function reportsWhilePending(mounted: Mounted): { reports: string[]; pending: unknown } {
+    const context = positionContext(mounted.lexical, oracleView(view));
+    const reports = mounted.lexical.getEditorState().read(() => {
+      const prepared = $prepareSettleScopes(context);
+      const byPosition = new Map<number, Set<string>>();
+      for (const { node, offset, position } of $caretPositions()) {
+        const location = $settledLocationFromLivePoint(prepared, node, offset);
+        let set = byPosition.get(position);
+        if (!set) byPosition.set(position, (set = new Set()));
+        set.add(JSON.stringify(location ?? null));
+      }
+      return [...byPosition].map(([at, set]) => `${at}: ${[...set].sort().join(" | ")}`);
+    });
+    return { reports, pending: mounted.ref.current?.getUsj() };
+  }
+
+  it("reports every position as it does when an annotation cuts the note's caller", async () => {
+    const plain = await pendingEdit(unclosedNote("+"), view, "\\ft", "\\f*t", 3);
+    const cut = await pendingEdit(unclosedNote("+"), view, "\\ft", "\\f*t", 3);
+    // The caller's `+` held, cutting the caller into three pieces.
+    await act(async () => {
+      cut.mounted.lexical.update(() => {
+        const note = $getRoot()
+          .getAllTextNodes()
+          .map((text) => text.getParent())
+          .find($isNoteNode);
+        const caller = note && $noteEditableCallerNode(note);
+        if (!caller) throw new Error("no editable caller");
+        $addDisplayAnnotation(caller, "test", "a", 1, 2);
+      });
+      await Promise.resolve();
+    });
+    const callerPieces = cut.mounted.lexical.getEditorState().read(() => {
+      const note = $getRoot()
+        .getAllTextNodes()
+        .map((text) => text.getParent())
+        .find($isNoteNode);
+      const caller = note && $noteEditableCallerNode(note);
+      return caller ? $pieces(caller).length : 0;
+    });
+    expect(callerPieces).toBe(3);
+    expect(getPendedDisplayOwners(cut.mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    expect(reportsWhilePending(cut.mounted)).toEqual(reportsWhilePending(plain.mounted));
+    plain.mounted.unmount();
+    cut.mounted.unmount();
+  });
 
   it("reports the text past the typed closer when the note's paragraph settles too", async () => {
     // The paragraph's own marker is pending as well, so the paragraph's settle carries the note's.

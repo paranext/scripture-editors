@@ -31,7 +31,11 @@ import {
   NBSP,
   TypedMarkOnRemove,
 } from "shared";
-import { $isImmutableVerseNode, AnnotationRange } from "shared-react";
+import {
+  $isImmutableVerseNode,
+  AnnotationRange,
+  DISPLAY_PIECE_CONTINUATION_ATTRIBUTE,
+} from "shared-react";
 
 /** A marker object with attributes `MarkerObject` does not name. */
 const attributed = (marker: MarkerObject & { [attribute: string]: unknown }): MarkerObject =>
@@ -625,5 +629,56 @@ describe("annotation painting on read-only decorators", () => {
       expect(paintedText(mounted, "both")).toBe("2");
       mounted.unmount();
     });
+  });
+});
+
+describe("a table row's glyph an annotation cuts into pieces", () => {
+  it("marks every piece's element after the first, so a style can box the head alone", async () => {
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        {
+          type: "table",
+          content: [
+            {
+              type: "table:row",
+              marker: "tr",
+              content: [{ type: "table:cell", marker: "tc1", align: "start", content: ["a"] }],
+            },
+          ],
+        },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const mounted = await mountInView(usj, oracleView("standard"));
+    const marker = "$.content[2].content[0]['marker']";
+    // The `t` of `\tr`.
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: marker, propertyOffset: 0 },
+          end: { jsonPath: marker, propertyOffset: 1 },
+        },
+        ORACLE_TYPE,
+        "t",
+      );
+      await Promise.resolve();
+    });
+    const row = mounted.lexical.getRootElement()?.querySelector("tr.table-row");
+    const glyph = [...(row?.children ?? [])]
+      .filter((element) => element.classList.contains("opening"))
+      .map((element) => [
+        element.textContent,
+        element.hasAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE),
+      ]);
+    expect(glyph).toEqual([
+      ["\\", false],
+      ["t", true],
+      ["r", true],
+    ]);
+    mounted.unmount();
   });
 });

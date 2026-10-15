@@ -12,6 +12,8 @@ import { drainNativeSelectionChange } from "../editor-test.utils";
 import {
   $caretPositions,
   $editSites,
+  $screenBytes,
+  depart,
   oracleRows,
   pendingOracleView,
   positionContext,
@@ -19,7 +21,7 @@ import {
 import { $prepareSettleScopes } from "../positions/settledScopes.utils";
 import { $settledLocationFromLivePoint } from "../positions/settledPositions.utils";
 import { pasteEvent } from "../markerEdit/markerEdit.test-helpers";
-import { mountInView, ORACLE_TYPE } from "./annotationLocations.test-helpers";
+import { MountedInView, mountInView, ORACLE_TYPE } from "./annotationLocations.test-helpers";
 import {
   $globalSite,
   $planAnnotations,
@@ -32,10 +34,14 @@ import {
   $isTextNode,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   DELETE_CHARACTER_COMMAND,
+  INSERT_LINE_BREAK_COMMAND,
+  INSERT_PARAGRAPH_COMMAND,
+  KEY_ENTER_COMMAND,
   PASTE_COMMAND,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { $getLogicalTextLocation, $logicalText, getPendedDisplayOwners, NBSP } from "shared";
+import { ViewOptions } from "shared-react";
 
 const VIEW = "standard+protectedNoteShell";
 
@@ -262,6 +268,145 @@ describe("a caret at the end of a char span's content whose last byte a mark hol
       expect(annotated.caret).toBe(plain.caret);
       expect(annotated.isPending).toBe(plain.isPending);
       expect(annotated.reports).toEqual(plain.reports);
+    },
+  );
+});
+
+/**
+ * How an Enter key reaches the editor: as the `keydown` a browser fires (Lexical answers it at the
+ * caret it last settled on, and its rich-text handler dispatches the paragraph or line-break
+ * command), as the key command or as the `insertParagraph`/`insertLineBreak` input's command
+ * dispatched from an update of their own — which read the caret back from the screen first, as
+ * the `beforeinput` path does, and so start at the start of the node after a mark whose end the
+ * caret is at.
+ */
+type EnterPath = "keydown" | "key command" | "input command";
+
+/** The settled location every caret position of `mounted` reports, as one sorted set per document
+ * position (a carrier cut into pieces spells a boundary twice). */
+function settledReports(mounted: MountedInView, viewOptions: ViewOptions): string[] {
+  const context = positionContext(mounted.lexical, viewOptions);
+  return mounted.lexical.getEditorState().read(() => {
+    const prepared = $prepareSettleScopes(context);
+    const byPosition = new Map<number, Set<string>>();
+    for (const { node, offset, position } of $caretPositions()) {
+      const location = $settledLocationFromLivePoint(prepared, node, offset);
+      let set = byPosition.get(position);
+      if (!set) byPosition.set(position, (set = new Set()));
+      set.add(JSON.stringify(location ?? null));
+    }
+    return [...byPosition].map(([position, set]) => `${position}: ${[...set].sort().join(" | ")}`);
+  });
+}
+
+/**
+ * Put the caret at the end of the editable text `content` — content right before a display carrier
+ * in the `row` document of `view` — let the browser report it back, and press Enter (or
+ * Shift+Enter) there by `path`, with or without the oracle's annotations (a crossing mark holds the
+ * content's last byte): the documents before and after the caret departs, the screens, and every
+ * caret position's report then.
+ */
+async function enterAtContentEnd(
+  view: string,
+  row: string,
+  content: string,
+  isAnnotated: boolean,
+  isShift: boolean,
+  path: EnterPath,
+): Promise<{ [observable: string]: unknown }> {
+  const found = oracleRows(view).find(([name]) => name.startsWith(`${row} (`));
+  if (!found) throw new Error(`no row ${row}`);
+  const viewOptions = pendingOracleView(view);
+  const mounted = await mountInView(found[1], viewOptions);
+  const { site, plan } = mounted.lexical.getEditorState().read(() => ({
+    plan: $planAnnotations(viewOptions),
+    site: $editSites()
+      .map(({ index, offset, shell }) => $globalSite(index, offset, !!shell))
+      .find((candidate) => {
+        const [spelling] = $spellings(candidate);
+        return (
+          !candidate.shell &&
+          spelling !== undefined &&
+          $logicalText(spelling.node) === content &&
+          spelling.offset === spelling.node.getTextContentSize()
+        );
+      }),
+  }));
+  if (!site) throw new Error(`no site at the end of ${JSON.stringify(content)}`);
+  if (isAnnotated)
+    for (const { id, range } of plan)
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, id);
+        await Promise.resolve();
+      });
+  await act(async () => {
+    mounted.lexical.update(() => {
+      // The spelling at the content's end: the end of the mark's text when a mark holds it.
+      const [end] = $spellings(site);
+      end.node.select(end.offset, end.offset);
+    });
+    await drainNativeSelectionChange();
+  });
+  await act(async () => {
+    if (path === "keydown")
+      mounted.lexical
+        .getRootElement()
+        ?.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", shiftKey: isShift, bubbles: true }),
+        );
+    else
+      mounted.lexical.update(() => {
+        if (path === "key command")
+          mounted.lexical.dispatchCommand(
+            KEY_ENTER_COMMAND,
+            new KeyboardEvent("keydown", { key: "Enter", shiftKey: isShift }),
+          );
+        else if (isShift) mounted.lexical.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
+        else mounted.lexical.dispatchCommand(INSERT_PARAGRAPH_COMMAND, undefined);
+      });
+    await Promise.resolve();
+    await drainNativeSelectionChange();
+  });
+  const pending = mounted.ref.current?.getUsj();
+  const pendingScreen = mounted.lexical.getEditorState().read(() => $screenBytes());
+  const pendingReports = settledReports(mounted, viewOptions);
+  await depart(mounted);
+  const settled = mounted.ref.current?.getUsj();
+  const settledScreen = mounted.lexical.getEditorState().read(() => $screenBytes());
+  const reports = settledReports(mounted, viewOptions);
+  mounted.unmount();
+  return { pending, pendingScreen, pendingReports, settled, settledScreen, reports };
+}
+
+describe("Enter at the end of content whose last byte a mark holds, right before a display carrier", () => {
+  it.each([
+    // A span's closing glyph.
+    ["standard", "closed char span", `${NBSP}grace`],
+    // A nested span's closing glyph.
+    ["standard", "nested char span", `${NBSP}two`],
+    // A span's attribute run.
+    ["standard", "char span with an attribute", `${NBSP}grace`],
+    // A milestone's glyph.
+    ["standard", "milestone", "a "],
+    // A collapsed note, whose caller is its first thing shown.
+    ["standard", "note", "a"],
+    // An expanded note's opening glyph.
+    ["standard+expandedNotes", "note", "a"],
+    // A note content span's closing glyph.
+    ["standard+expandedNotes", "note", `${NBSP}note text`],
+    // A verse.
+    ["unformatted", "text touching a following verse", "a"],
+    ["unformatted", "closed char span", `${NBSP}grace`],
+    ["unformatted", "char span with an attribute", `${NBSP}grace`],
+  ] as const)(
+    "in %s view, %s, after %j: does what it does with no mark",
+    async (view, row, content) => {
+      for (const isShift of [false, true])
+        for (const path of ["keydown", "key command", "input command"] as const) {
+          const plain = await enterAtContentEnd(view, row, content, false, isShift, path);
+          const annotated = await enterAtContentEnd(view, row, content, true, isShift, path);
+          expect(annotated, `${isShift ? "Shift+Enter" : "Enter"} by ${path}`).toEqual(plain);
+        }
     },
   );
 });

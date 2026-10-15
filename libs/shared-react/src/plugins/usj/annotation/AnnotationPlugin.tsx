@@ -11,6 +11,9 @@ import {
   COMMAND_PRIORITY_CRITICAL,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   HISTORY_MERGE_TAG,
+  INSERT_LINE_BREAK_COMMAND,
+  INSERT_PARAGRAPH_COMMAND,
+  KEY_ENTER_COMMAND,
   LexicalCommand,
   LexicalEditor,
   NodeKey,
@@ -164,9 +167,18 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
       // inserts re-reads the caret from the screen as it starts, onto that node's start again, so
       // each insertion puts it back too before anything inserts: the bytes go where they go with
       // no mark there, not into the display bytes after it.
-      ...[SELECTION_CHANGE_COMMAND, CONTROLLED_TEXT_INSERTION_COMMAND, PASTE_COMMAND].map(
-        (command: LexicalCommand<unknown>) =>
-          editor.registerCommand(command, $restoreCaretBeforeCommand, COMMAND_PRIORITY_CRITICAL),
+      // Every command that acts at the caret Lexical has just read back from the screen: a
+      // selection change, an input's insertion (typed, pasted, or a paragraph or line break), and
+      // the Enter key, whose handlers act at the caret before any insertion command runs.
+      ...[
+        SELECTION_CHANGE_COMMAND,
+        CONTROLLED_TEXT_INSERTION_COMMAND,
+        PASTE_COMMAND,
+        KEY_ENTER_COMMAND,
+        INSERT_PARAGRAPH_COMMAND,
+        INSERT_LINE_BREAK_COMMAND,
+      ].map((command: LexicalCommand<unknown>) =>
+        editor.registerCommand(command, $restoreCaretBeforeCommand, COMMAND_PRIORITY_CRITICAL),
       ),
     );
   }, [editor, markNodeMap]);
