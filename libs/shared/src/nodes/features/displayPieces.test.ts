@@ -43,6 +43,7 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  $getState,
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
@@ -617,6 +618,102 @@ describe("a carrier beside a text Lexical would merge it with", () => {
       expect($logicalText(run)).toBe('|lemma="grace" strong="G5485"');
       expect($logicalNextSibling(run)?.getTextContent()).toBe("content");
     });
+  });
+});
+
+describe("which neighbouring texts a carrier joins", () => {
+  /** A text's node state, by name: none ever set; a state set and then cleared, which leaves
+   * Lexical a node state holding only defaults; an attribute run's text type. */
+  type BaseState = "none" | "cleared" | "attribute";
+  const BASE_STATES: BaseState[] = ["none", "cleared", "attribute"];
+
+  function $text(text: string, state: BaseState): TextNode {
+    const node = $createTextNode(text);
+    if (state === "attribute") return $setState(node, textTypeState, "attribute");
+    if (state === "cleared")
+      $setState($setState(node, textTypeState, "attribute"), textTypeState, undefined);
+    return node;
+  }
+
+  /** The paragraph's children once `a` + `b` (with `before`'s and `after`'s base states) are
+   * committed side by side, each carrier read whole, with its text type: in an editor with no
+   * transform of ours (`"lexical"`, Lexical's own normalization alone), or with the piece transform
+   * and a hold on neither text, or on one of them. */
+  function joined(
+    before: BaseState,
+    after: BaseState,
+    held: "lexical" | "neither" | "before" | "after",
+  ): string[] {
+    const editor =
+      held === "lexical"
+        ? createBasicTestEnvironment([...usjBaseNodes, TypedMarkNode]).editor
+        : mount();
+    editor.update(
+      () => {
+        const a = $text("a", before);
+        const b = $text("b", after);
+        $getRoot().append($createParaNode().append(a, b));
+        if (held === "before" || held === "after")
+          $addDisplayAnnotation(held === "before" ? a : b, "check", "x", 0, 1);
+      },
+      { discrete: true },
+    );
+    return editor.read(() => {
+      const para = $getRoot().getFirstChild();
+      if (!$isElementNode(para)) throw new Error("no paragraph");
+      return $logicalChildren(para).map(
+        (node) => `${$logicalText(node)} ${$getState(node, textTypeState) ?? ""}`,
+      );
+    });
+  }
+
+  // Lexical's own normalization decides, in either order; neither the piece transform nor a hold
+  // on either text may change what is joined.
+  it.each(BASE_STATES.flatMap((before) => BASE_STATES.map((after) => [before, after] as const)))(
+    "joins a %s text and a %s text after it as Lexical merges them, whichever one is held",
+    (before, after) => {
+      const lexical = joined(before, after, "lexical");
+      expect(joined(before, after, "neither")).toEqual(lexical);
+      expect(joined(before, after, "before")).toEqual(lexical);
+      expect(joined(before, after, "after")).toEqual(lexical);
+    },
+  );
+
+  it("keeps a pasted attribute byte apart from a held chapter glyph where it stays apart unheld", () => {
+    /** The chapter's children after a copy of an attribute run's byte goes in at byte 3 of its
+     * `\c 1` glyph text, as an insertion splits the glyph there, the glyph held over `held`. */
+    function pasted(held?: [number, number]): string[] {
+      const editor = mount();
+      let glyph!: TextNode;
+      editor.update(
+        () => {
+          glyph = $createTextNode(`\\c${NBSP}1 `);
+          $getRoot().append($createChapterNode("1").append(glyph));
+          if (held) $addDisplayAnnotation(glyph, "check", "a", ...held);
+        },
+        { discrete: true },
+      );
+      editor.update(
+        () => {
+          const copy = $setState($createTextNode("2"), textTypeState, "attribute");
+          const before = held ? $splitCarrierAt(glyph, 3) : glyph.getLatest().splitText(3)[0];
+          before?.insertAfter(copy);
+        },
+        { discrete: true },
+      );
+      return editor.read(() => {
+        const chapter = $getRoot().getFirstChild();
+        if (!$isElementNode(chapter)) throw new Error("no chapter");
+        return $logicalChildren(chapter).map(
+          (node) => `${$logicalText(node)} ${$getState(node, textTypeState) ?? ""}`,
+        );
+      });
+    }
+    const plain = pasted();
+    expect(plain).toEqual([`\\c${NBSP} `, "2 attribute", "1  "]);
+    expect(pasted([0, 3])).toEqual(plain);
+    expect(pasted([3, 4])).toEqual(plain);
+    expect(pasted([2, 4])).toEqual(plain);
   });
 });
 

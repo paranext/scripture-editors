@@ -41,6 +41,7 @@ import {
   $getLocationFromNode,
   getViewOptions,
   STANDARD_VIEW_MODE,
+  StructureProtectionMode,
   ViewOptions,
 } from "shared-react";
 
@@ -59,9 +60,13 @@ export interface MountedInView {
   ops: DeltaOp[][];
 }
 
-/** Mounts `usj` in the real `Editor` with `view`, collecting what its logger reports and every
- * `onUsjChange` call's ops. */
-export async function mountInView(usj: Usj, view: ViewOptions): Promise<MountedInView> {
+/** Mounts `usj` in the real `Editor` with `view` (and `structureProtectionMode`, off when not
+ * given), collecting what its logger reports and every `onUsjChange` call's ops. */
+export async function mountInView(
+  usj: Usj,
+  view: ViewOptions,
+  structureProtectionMode?: StructureProtectionMode,
+): Promise<MountedInView> {
   const ref = createRef<EditorRef>();
   const lexicalRef = createRef<LexicalEditor>();
   const logs: string[] = [];
@@ -76,7 +81,7 @@ export async function mountInView(usj: Usj, view: ViewOptions): Promise<MountedI
     <Editor
       ref={ref}
       defaultUsj={usj}
-      options={{ view }}
+      options={{ view, structureProtectionMode }}
       logger={logger}
       onUsjChange={(_usj, changeOps) => ops.push(changeOps ?? [])}
     >

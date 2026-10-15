@@ -19,6 +19,7 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   $setState,
   COMMAND_PRIORITY_HIGH,
   createEditor,
@@ -1096,23 +1097,40 @@ describe("the display-annotation index", () => {
 
     it("keeps a carrier pasted whole one carrier, apart from the one it was copied from", () => {
       const { editor, run, release } = setup();
-      wrap(editor, run, 1, 6, "external-spelling", "a");
+      let closer!: TextNode;
+      editor.update(() => (closer = run.replace($createMarkerNode("w", "closing"))), {
+        discrete: true,
+      });
+      wrap(editor, closer, 0, 1, "external-spelling", "a");
       let pasted!: TextNode[];
       editor.update(
         () => {
-          pasted = $pieces(run.getLatest()).map((piece) => $copyNode(piece));
-          $paste(editor, run, pasted);
+          const pieces = $pieces(closer.getLatest());
+          pasted = pieces.map((piece) => $copyNode(piece));
+          editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+            nodes: pasted,
+            selection: $getSelection() ?? $createRangeSelection(),
+          });
           expect(pasted.map($isPieceContinuation)).toEqual([false, true]);
+          // Right after its source, where a copy of a glyph no annotation cuts stays a glyph of its
+          // own: Lexical merges only simple text.
+          let after: LexicalNode = pieces[pieces.length - 1];
+          for (const node of pasted) {
+            after.insertAfter(node);
+            after = node;
+          }
         },
         { discrete: true },
       );
       editor.read(() => {
-        expect($logicalText(run)).toBe("|grace");
-        expect($pieces(run).map((piece) => piece.getTextContent())).toEqual(["|", "grace"]);
+        expect($carriers()).toEqual(['text "In the "', 'marker "\\\\w*"', 'marker "\\\\w*"']);
+        expect($holdsByPiece(closer)).toEqual([
+          ["\\", ["a"]],
+          ["w*", []],
+        ]);
         // Held by nothing, the pasted pieces are joined into one carrier.
         const [copy] = pasted;
-        expect(copy.getTextContent()).toBe("|grace");
-        expect($pieces(copy)).toEqual([copy.getLatest()]);
+        expect($holdsByPiece(copy)).toEqual([["\\w*", []]]);
       });
       release();
     });
@@ -1160,11 +1178,14 @@ describe("the display-annotation index", () => {
       release();
     });
 
-    /** Insert `nodes` at the caret the way a paste does (`@lexical/clipboard`'s
-     * `$insertGeneratedNodes`): the command, then, unless a handler took it, the selection's own
-     * insertion. */
-    function $insertPasted(editor: LexicalEditor, nodes: LexicalNode[]): void {
-      const selection = $getSelection();
+    /** Insert `nodes` at `selection` (by default the caret) the way a paste does
+     * (`@lexical/clipboard`'s `$insertGeneratedNodes`): the command, then, unless a handler took
+     * it, the selection's own insertion. */
+    function $insertPasted(
+      editor: LexicalEditor,
+      nodes: LexicalNode[],
+      selection = $getSelection(),
+    ): void {
       if (!$isRangeSelection(selection)) throw new Error("no caret to paste at");
       if (!editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, { nodes, selection }))
         selection.insertNodes(nodes);
@@ -1189,13 +1210,17 @@ describe("the display-annotation index", () => {
     }
 
     /** What pasting `$copy()` at byte `at` of the carrier `$carrier()` reads, with the carrier cut
-     * by the holds `holds` (none: unsplit) and the caret at its `spelling`-th spelling there. */
+     * by the holds `holds` (none: unsplit) and the caret at its `spelling`-th spelling there. With
+     * `editorSelection`, the paste goes in at a selection of its own there, as an insertion at a
+     * drop point or a stored caret does, while the editor has no selection (`"none"`) or a caret at
+     * the paragraph's start (`"start"`). */
     function pasteInto(
       $carrier: (run: TextNode) => TextNode,
-      holds: [from: number, to: number, id: string][],
-      $copy: (carrier: TextNode) => LexicalNode,
+      holds: readonly (readonly [from: number, to: number, id: string])[],
+      $copy: (carrier: TextNode) => LexicalNode | LexicalNode[],
       at: number,
       spelling: 0 | 1,
+      editorSelection?: "none" | "start",
     ): { carriers: string[]; holds: [string, string[]][] } {
       const { editor, run, release } = setup();
       let carrier!: TextNode;
@@ -1203,16 +1228,27 @@ describe("the display-annotation index", () => {
       for (const [from, to, id] of holds) wrap(editor, carrier, from, to, "external-spelling", id);
       editor.update(
         () => {
-          const pasted = $copy(carrier.getLatest());
+          const pasted = [$copy(carrier.getLatest())].flat();
           // A caret at a cut is the end of the piece before it, or the start of the piece after.
           const [key, offset] = $pointInCarrier(carrier, at);
           const piece = $pieces(carrier.getLatest()).find((each) => each.getKey() === key);
           if (!piece) throw new Error("no piece at the caret");
           const next = piece.getNextSibling();
-          if (spelling === 1 && offset === piece.getTextContentSize() && $isTextNode(next))
-            next.select(0, 0);
-          else piece.select(offset, offset);
-          $insertPasted(editor, [pasted]);
+          const caret: [TextNode, number] =
+            spelling === 1 && offset === piece.getTextContentSize() && $isTextNode(next)
+              ? [next, 0]
+              : [piece, offset];
+          if (!editorSelection) {
+            caret[0].select(caret[1], caret[1]);
+            $insertPasted(editor, pasted);
+            return;
+          }
+          const insertion = $createRangeSelection();
+          insertion.anchor.set(caret[0].getKey(), caret[1], "text");
+          insertion.focus.set(caret[0].getKey(), caret[1], "text");
+          if (editorSelection === "start") $getRoot().selectStart();
+          else $setSelection(null);
+          $insertPasted(editor, pasted, insertion);
         },
         { discrete: true },
       );
@@ -1292,6 +1328,100 @@ describe("the display-annotation index", () => {
           expect(annotated.carriers).toEqual(plain.carriers);
         },
       );
+
+      it.each([
+        // Lexical's insertion splits the text at the editor's caret when there is one, wherever
+        // the selection it was handed is; the pasted bytes go there.
+        ["start", 0, ['marker "\\\\"', 'text "In the "', 'marker "\\\\w*"']],
+        ["start", 1, ['marker "\\\\"', 'text "In the "', 'marker "\\\\w*"']],
+        // With none, it splits the text where the selection it was handed is.
+        ["none", 0, ['text "In the "', 'marker "\\\\"', 'marker "\\\\"', 'text "w*"']],
+        ["none", 1, ['text "In the "', 'marker "\\\\"', 'marker "\\\\"', 'text "w*"']],
+      ] as const)(
+        "a copy of a glyph's byte pasted at a selection of its own at a cut, the editor's selection %s (spelling %i)",
+        (editorSelection, spelling, carriers) => {
+          const $copyOfBackslash = (carrier: TextNode) =>
+            $copyNode($pieceHead(carrier)).setTextContent("\\");
+          const plain = pasteInto($closer, [], $copyOfBackslash, 1, spelling, editorSelection);
+          expect(plain.carriers).toEqual(carriers);
+          const annotated = pasteInto(
+            $closer,
+            [
+              [0, 1, "a"],
+              [1, 2, "b"],
+            ],
+            (carrier) => $copyNode($pieces(carrier)[0]),
+            1,
+            spelling,
+            editorSelection,
+          );
+          expect(annotated.carriers).toEqual(plain.carriers);
+        },
+      );
+    });
+
+    describe("leaves the carrier as it is where a paste has nothing to insert", () => {
+      const $closer = (run: TextNode) => run.replace($createMarkerNode("w", "closing"));
+      const nothing = () => [];
+
+      it.each([
+        [
+          "cut at the caret, spelling 0",
+          [
+            [0, 1, "a"],
+            [1, 3, "b"],
+          ],
+          0,
+        ],
+        [
+          "cut at the caret, spelling 1",
+          [
+            [0, 1, "a"],
+            [1, 3, "b"],
+          ],
+          1,
+        ],
+        ["held whole", [[0, 3, "a"]], 0],
+      ] as const)("a caret inside a held closer, %s", (_, holds, spelling) => {
+        // Lexical's insertion returns before it splits anything when there are no nodes.
+        const plain = pasteInto($closer, [], nothing, 1, 0);
+        expect(plain.carriers).toEqual(['text "In the "', 'marker "\\\\w*"']);
+        const annotated = pasteInto($closer, holds, nothing, 1, spelling);
+        expect(annotated.carriers).toEqual(plain.carriers);
+        expect(annotated.holds.map(([text]) => text).join("")).toBe("\\w*");
+      });
+
+      it.each([
+        ["held in part", true],
+        ["held by nothing", false],
+      ] as const)("a range over an attribute run's bytes, %s", (_, isHeld) => {
+        const { editor, run, release } = setup();
+        if (isHeld) wrap(editor, run, 1, 6, "external-spelling", "a");
+        editor.update(
+          () => {
+            const pieces = $pieces(run.getLatest());
+            const last = pieces[pieces.length - 1];
+            const selection = $createRangeSelection();
+            selection.anchor.set(pieces[0].getKey(), 0, "text");
+            selection.focus.set(last.getKey(), last.getTextContentSize() - 2, "text");
+            $setSelection(selection);
+            $insertPasted(editor, []);
+          },
+          { discrete: true },
+        );
+        editor.read(() => {
+          expect($getRoot().getTextContent()).toBe("In the |grace");
+          expect($holdsByPiece(run)).toEqual(
+            isHeld
+              ? [
+                  ["|", []],
+                  ["grace", ["a"]],
+                ]
+              : [["|grace", []]],
+          );
+        });
+        release();
+      });
     });
 
     it("keeps no token record of the chain it was copied from", () => {

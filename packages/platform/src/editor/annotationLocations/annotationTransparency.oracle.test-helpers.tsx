@@ -13,8 +13,8 @@
  * alone, so a paste between two pieces must join the carrier as a paste into the unsplit one does.
  *
  * The annotated run is also graded on its own: every annotation paints exactly the bytes it holds
- * (plus whitespace), nothing is painted in part, and an annotation is reported removed exactly
- * when its bytes are gone. Before any case runs, every planned annotation must hold the bytes it
+ * (plus whitespace), nothing is painted in part, a byte the edit left in place in the same carrier
+ * keeps its holds, and an annotation is reported removed exactly when its bytes are gone. Before any case runs, every planned annotation must hold the bytes it
  * was planned to hold.
  *
  * Every site × keystroke a row attempts is accounted for: compared, or skipped for a stated reason
@@ -68,6 +68,7 @@ import { drainNativeSelectionChange } from "../editor-test.utils";
 import { UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $isElementNode,
@@ -86,6 +87,7 @@ import {
   $isMarkerTrailingSeparator,
   $isTypedMarkNode,
   $logicalText,
+  $pieceHead,
   $pieceStart,
   NBSP,
   TypedMarkOnRemove,
@@ -638,21 +640,178 @@ async function copiedBytes(mounted: MountedInView, view: string): Promise<string
   return getData("text/plain");
 }
 
+/** A byte of a carrier: the key of the carrier's head piece, and the byte's offset in the whole
+ * carrier's text (0 for a decorator, which is one byte). */
+interface CarrierByte {
+  carrier: NodeKey;
+  offset: number;
+}
+
+/** Each carrier byte of the current tree ({@link $byteNodes}' indexing): where it is in its
+ * carrier, or `undefined` for a byte of no carrier. Read-only. */
+function $carrierBytes(): (CarrierByte | undefined)[] {
+  return $byteNodes().map(([node, offset]) =>
+    $isDisplayAnnotationCarrier(node)
+      ? { carrier: $pieceHead(node).getKey(), offset: offset < 0 ? 0 : $pieceStart(node) + offset }
+      : undefined,
+  );
+}
+
+/** The text of the carrier whose head is `key` now, a decorator spelled `[type]`; `undefined` when
+ * it is gone or no carrier. Read-only. */
+function $carrierText(key: NodeKey): string | undefined {
+  const head = $getNodeByKey(key);
+  if (!head || !head.isAttached() || !$isDisplayAnnotationCarrier(head)) return undefined;
+  return $isTextNode(head) ? $logicalText(head) : `[${head.getType()}]`;
+}
+
+/** What a run's carriers held before its keystroke ({@link $carrierHolds}). */
+interface CarrierHolds {
+  /** Each carrier's text, by its head's key. */
+  texts: Map<NodeKey, string>;
+  /**
+   * The carrier bytes each annotation holds — but for the bytes of the carrier the keystroke is
+   * made in from the caret on (from the byte before it, for a keystroke that may delete it), which
+   * the keystroke may delete or split off the carrier as content (a paste), and which the engine
+   * may then spell anew (a glyph's canonical text restored): what became of them is not known
+   * from the bytes alone.
+   */
+  held: Map<string, CarrierByte[]>;
+}
+
+/** The carrier bytes each of `ids` holds now ({@link CarrierHolds.held}), with every carrier's
+ * text, the caret of the keystroke about to be made at `site`; `keepsByteBeforeCaret` for a
+ * keystroke that leaves the byte before the caret in its carrier (a paste). Read-only. */
+function $carrierHolds(
+  ids: readonly string[],
+  site: CaseSite,
+  keepsByteBeforeCaret: boolean,
+): CarrierHolds {
+  const carrierBytes = $carrierBytes();
+  const texts = new Map<NodeKey, string>();
+  for (const byte of carrierBytes)
+    if (byte && !texts.has(byte.carrier)) {
+      const text = $carrierText(byte.carrier);
+      if (text !== undefined) texts.set(byte.carrier, text);
+    }
+  const edited = $pieceHead(site.node).getKey();
+  const caret = $pieceStart(site.node) + site.offset;
+  const firstUnknown = keepsByteBeforeCaret ? caret : caret - 1;
+  const held = new Map(
+    ids.map((id) => [
+      id,
+      [...$heldIndexes(HELD_TYPE, id).keys()].flatMap((index) => {
+        const byte = carrierBytes[index];
+        if (!byte || (byte.carrier === edited && byte.offset >= firstUnknown)) return [];
+        return [byte];
+      }),
+    ]),
+  );
+  return { texts, held };
+}
+
+/**
+ * Where each character of `before` is in `after` when an edit between them left it in place: a
+ * character of their common prefix or common suffix. Measured both ways (the prefix first, and the
+ * suffix first), and a character the two place differently maps nowhere: the edit could have been
+ * made on either side of it (a byte typed beside an identical one), so which of the two is the old
+ * one is not known from the text alone.
+ */
+function offsetsLeftInPlace(before: string, after: string): Map<number, number> {
+  const prefix = (limit: number): number => {
+    let length = 0;
+    while (length < limit && before[length] === after[length]) length += 1;
+    return length;
+  };
+  const suffix = (limit: number): number => {
+    let length = 0;
+    while (
+      length < limit &&
+      before[before.length - 1 - length] === after[after.length - 1 - length]
+    )
+      length += 1;
+    return length;
+  };
+  const shortest = Math.min(before.length, after.length);
+  const prefixFirst = prefix(shortest);
+  const suffixAfterPrefix = suffix(shortest - prefixFirst);
+  const suffixFirst = suffix(shortest);
+  const prefixAfterSuffix = prefix(shortest - suffixFirst);
+  const shift = after.length - before.length;
+  const place = (offset: number, start: number, end: number): number | undefined => {
+    if (offset < start) return offset;
+    if (offset >= before.length - end) return offset + shift;
+    return undefined;
+  };
+  const out = new Map<number, number>();
+  for (let offset = 0; offset < before.length; offset += 1) {
+    const one = place(offset, prefixFirst, suffixAfterPrefix);
+    if (one !== undefined && one === place(offset, prefixAfterSuffix, suffixFirst))
+      out.set(offset, one);
+  }
+  return out;
+}
+
+/**
+ * A hold goes only with its bytes, or when they stop being a carrier's: every byte `before` lists
+ * as held that is still a byte of the same carrier (the same head node) and that the edit left in
+ * place in that carrier's text ({@link offsetsLeftInPlace}) still holds each annotation of `ids` it
+ * held. This is what reads a hold dropped while its carrier was briefly no carrier, which the
+ * removal checks accept as "its bytes are gone" once nothing holds the annotation. Read-only.
+ */
+function $droppedHolds(ids: readonly string[], before: CarrierHolds): string[] {
+  const bytes = $byteNodes();
+  const indexOf = new Map(
+    $carrierBytes().flatMap((byte, index) =>
+      byte ? [[`${byte.carrier}:${byte.offset}`, index] as const] : [],
+    ),
+  );
+  const inPlace = new Map<NodeKey, Map<number, number>>();
+  const offsetsOf = (carrier: NodeKey): Map<number, number> => {
+    let offsets = inPlace.get(carrier);
+    if (!offsets) {
+      const was = before.texts.get(carrier);
+      const now = $carrierText(carrier);
+      offsets = was === undefined || now === undefined ? new Map() : offsetsLeftInPlace(was, now);
+      inPlace.set(carrier, offsets);
+    }
+    return offsets;
+  };
+  const failures: string[] = [];
+  for (const id of ids) {
+    const heldNow = $heldIndexes(HELD_TYPE, id);
+    const dropped = (before.held.get(id) ?? []).flatMap(({ carrier, offset }) => {
+      const now = offsetsOf(carrier).get(offset);
+      const index = now === undefined ? undefined : indexOf.get(`${carrier}:${now}`);
+      return index !== undefined && !heldNow.has(index) ? [index] : [];
+    });
+    if (dropped.length > 0)
+      failures.push(
+        `${id}: dropped its hold on ${JSON.stringify(heldText(bytes, dropped))} (bytes ${dropped.join(",")}), left in place in the same carrier`,
+      );
+  }
+  return failures;
+}
+
 /**
  * The annotated run's own failures after `mounted` settled: a held byte nothing paints, a
- * non-whitespace byte painted but not held, a leaf painted in part, and a removal report that
- * disagrees with `setAnnotation`'s `onRemove` contract — an annotation whose bytes are all gone
- * reports once; one still held reports nothing, unless a `<mark>` that held it once it was set
- * has gone (that mark reports its own removal, whatever else still holds the annotation).
+ * non-whitespace byte painted but not held, a leaf painted in part, a hold dropped from a byte the
+ * edit left in place in a carrier that is still there, and a removal report that disagrees with
+ * `setAnnotation`'s `onRemove` contract — an annotation whose bytes are all gone reports once; one
+ * still held reports nothing, unless a `<mark>` that held it once it was set has gone (that mark
+ * reports its own removal, whatever else still holds the annotation). `before` is what the
+ * carriers held before the keystroke (none: not graded).
  */
 function annotatedFailures(
   mounted: MountedInView,
   applied: AppliedAnnotations,
   history: boolean,
+  before: CarrierHolds | undefined,
 ): string[] {
   const failures: string[] = [];
   mounted.lexical.getEditorState().read(() => {
     const bytes = $byteNodes();
+    if (before) failures.push(...$droppedHolds(applied.ids, before));
     for (const id of applied.ids) {
       const held = $heldIndexes(HELD_TYPE, id);
       const painted = $paintedIndexes(mounted.lexical, id);
@@ -811,6 +970,10 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
             for (let which = 0; spellingCount === undefined || which < spellingCount; which += 1) {
               const mounted = await mountInView(usj, viewOptions);
               const applied = await applyAnnotations(mounted, casePlan);
+              const holdsBefore = mounted.lexical.getEditorState().read(() => {
+                const found = $spellings(site)[which];
+                return found && $carrierHolds(applied.ids, found, "copies" in keystroke);
+              });
               // Setting an annotation emits no change, so the ops streams start equal here.
               const opsBefore = mounted.ops.length;
               const { spelling, count, isCutNode, isSpliceable } = mounted.lexical
@@ -889,7 +1052,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
                     `${label} [${name}]`,
                     `${label} [${name}]\n    plain     ${value}\n    annotated ${actual[name]}`,
                   );
-              const paint = annotatedFailures(mounted, applied, annotated.history);
+              const paint = annotatedFailures(mounted, applied, annotated.history, holdsBefore);
               if (paint.length > 0)
                 mismatches.set(`${label} [paint]`, `${label} [paint]\n    ${paint.join("\n    ")}`);
               // The annotated run keeps the pending/settled oracle's own invariants exactly as

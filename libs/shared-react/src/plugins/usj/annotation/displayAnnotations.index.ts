@@ -155,16 +155,19 @@ function $stripDisplayAnnotations(nodes: readonly LexicalNode[]): void {
  * splits a text (`$splitCarrierAt`): `RangeSelection.insertNodes` splits the text node at the
  * caret, but in a carrier cut into pieces the caret may sit between two of them, where no text is
  * left to split, and in one holding an annotation each part would re-measure the holds it copied
- * rather than keep its own. A range is removed first, as the insertion removes it. Mutating. */
+ * rather than keep its own. Only what the insertion itself does first is done here: nothing for no
+ * nodes (it returns before touching the document), else a range removed. Mutating. */
 function $splitCarrierAtInsertion(
   nodes: readonly LexicalNode[],
   insertion: BaseSelection | null,
 ): void {
-  if (!$isRangeSelection(insertion)) return;
+  if (nodes.length === 0 || !$isRangeSelection(insertion)) return;
   if (!insertion.isCollapsed()) insertion.removeText();
-  // The removal may have set a selection of its own, which the insertion then reads.
+  // The insertion splits the text at the editor's own range selection when there is one (Lexical's
+  // `$removeTextAndSplitBlock`), else at its own anchor.
   const current = $getSelection();
-  const { anchor } = $isRangeSelection(current) ? current : insertion;
+  const at = $isRangeSelection(current) ? current : insertion;
+  const { anchor } = at;
   // A caret on the parent between two pieces is the end of the piece before it.
   const node =
     anchor.type === "text"
@@ -181,7 +184,13 @@ function $splitCarrierAtInsertion(
   if (nodes.every(isInline) && !$isElementNode($findMatchingParent(node, INTERNAL_$isBlock)))
     return;
   const offset = anchor.type === "text" ? anchor.offset : node.getTextContentSize();
-  $splitCarrierAt(node, $logicalOffset(node, offset));
+  const isCollapsed = at.isCollapsed();
+  const before = $splitCarrierAt(node, $logicalOffset(node, offset));
+  if (!before) return;
+  // The split moves the editor's selection with its bytes and no other, so the point the insertion
+  // reads is restated on the split: the end of the part before the caret.
+  const points = isCollapsed ? [at.anchor, at.focus] : [at.anchor];
+  for (const point of points) point.set(before.getKey(), before.getTextContentSize(), "text");
 }
 
 interface Entry {

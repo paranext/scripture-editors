@@ -30,6 +30,7 @@ import {
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
   PASTE_COMMAND,
+  SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { $isSomeVerseNode } from "../../nodes/usj";
@@ -198,7 +199,18 @@ export function StructureKeyboardPlugin({
       const sanitized = $sanitizeNodesForProtectedStructure($generateNodesFromDOM(editor, dom));
       // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
       const selection = $getSelection();
-      if ($isRangeSelection(selection)) selection.insertNodes(sanitized);
+      // Inserted the way Lexical's own paste inserts (`$insertGeneratedNodes`): the clipboard-nodes
+      // command first, so its handlers — the display-annotation index splits a carrier an
+      // annotation cut into pieces at the caret, as the insertion splits an uncut one — see this
+      // insertion too, then the selection's own insertion unless one of them took it.
+      if (
+        $isRangeSelection(selection) &&
+        !editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+          nodes: sanitized,
+          selection,
+        })
+      )
+        selection.insertNodes(sanitized);
       event.preventDefault();
       return true;
     };
