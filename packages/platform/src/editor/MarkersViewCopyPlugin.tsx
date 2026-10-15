@@ -50,13 +50,13 @@ export function $selectionToUsfmViaStandardView(
   editor: LexicalEditor,
   viewOptions: ViewOptions,
 ): string | undefined {
-  const range = $getUsjSelectionFromEditor();
+  const range = $getUsjSelectionFromEditor(viewOptions);
   if (!range?.end) return undefined;
   const standardView = standardViewOf(editor, viewOptions);
   if (!standardView) return undefined;
   return standardView.state.read(
     () => {
-      const selection = $getRangeFromUsjSelection(range);
+      const selection = $getRangeFromUsjSelection(range, standardView.standardViewOptions);
       return selection ? $selectionToUsfmText(selection) : undefined;
     },
     { editor: standardView.editor },
@@ -66,6 +66,7 @@ export function $selectionToUsfmViaStandardView(
 /** A document rebuilt as Standard view, and the view options it was read under. */
 interface StandardViewRebuild {
   viewOptions: ViewOptions;
+  standardViewOptions: ViewOptions;
   editor: LexicalEditor;
   state: EditorState;
 }
@@ -110,7 +111,7 @@ function rebuildAsStandardView(
   const state = standardEditor.parseEditorState(
     usjEditorAdaptor.serializeEditorState(usj, standardViewOptions),
   );
-  return { viewOptions, editor: standardEditor, state };
+  return { viewOptions, standardViewOptions, editor: standardEditor, state };
 }
 
 /**

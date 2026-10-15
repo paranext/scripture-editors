@@ -1,0 +1,851 @@
+/**
+ * A position a host reads while an edit is pending (`getSelection()`'s translation) and hands
+ * straight back (`setSelection()`'s and `setAnnotation()`'s translation, resolved as `setSelection`
+ * resolves it) lands where it was — or, where the settled document has no position for it, at the
+ * closest one to its left, or on a position reporting the same location — never on a different
+ * place to its right. The rows cover live bytes the settled document spells differently.
+ *
+ * Positions are translated in a read, as the editor translates them, rather than by moving the
+ * caret: moving the caret off the edited node would settle it.
+ */
+import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { $pendGlyphEdit } from "../markerEdit/markerEdit.test-helpers";
+import {
+  $caretPositions,
+  depart,
+  positionContext,
+} from "../markerEdit/pendingSettledOracle.test-helpers";
+import { $prepareSettleScopes } from "./settledScopes.utils";
+import { $liveSelectionFromSettled, $settledLocationFromLivePoint } from "./settledPositions.utils";
+import { twoParaUsj } from "./positions.test-helpers";
+import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { act } from "@testing-library/react";
+import { $getNodeByKey, $getRoot, $isElementNode, TextNode } from "lexical";
+import { getPendedDisplayOwners, NBSP } from "shared";
+import { $getRangeFromUsjSelection } from "shared-react";
+import { describe, expect, it } from "vitest";
+
+type Mounted = Awaited<ReturnType<typeof mountInView>>;
+
+/** Mount `content` in `view`, rewrite the first text node whose bytes are `bytes` to `edited`, and
+ * leave the caret at `caret` in it — the shape a keystroke leaves pending. `content` is the first
+ * paragraph's content, or a whole document. */
+async function pendingEdit(
+  content: MarkerContent[] | Usj,
+  view: string,
+  bytes: string,
+  edited: string,
+  caret: number,
+): Promise<{ mounted: Mounted; $node: () => TextNode }> {
+  const usj = Array.isArray(content) ? twoParaUsj(content) : content;
+  const mounted = await mountInView(usj, oracleView(view));
+  let key = "";
+  await act(async () => {
+    mounted.lexical.update(() => {
+      const node = $getRoot()
+        .getAllTextNodes()
+        .find((text) => text.getTextContent() === bytes);
+      if (!node) throw new Error(`no text node spelling ${JSON.stringify(bytes)}`);
+      node.setTextContent(edited);
+      node.select(caret, caret);
+      key = node.getKey();
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+  const $node = () => {
+    const node = $getRoot()
+      .getAllTextNodes()
+      .find((text) => text.getKey() === key);
+    if (!node) throw new Error("the edited node is gone");
+    return node;
+  };
+  return { mounted, $node };
+}
+
+/** The live point `offset` into `$node()` read as a host reads it and handed back as a host hands
+ * it back: where it was, what it reported, where it landed, and what the landing reports. */
+function roundTrip(mounted: Mounted, view: string, $node: () => TextNode, offset: number) {
+  const viewOptions = oracleView(view);
+  const context = positionContext(mounted.lexical, viewOptions);
+  return mounted.lexical.getEditorState().read(() => {
+    const prepared = $prepareSettleScopes(context);
+    const positions = $caretPositions();
+    const positionOf = (key: string, at: number) =>
+      positions.find((point) => point.node.getKey() === key && point.offset === at)?.position;
+    const node = $node();
+    const reported = $settledLocationFromLivePoint(prepared, node, offset);
+    const live = reported && $liveSelectionFromSettled(context, prepared, { start: reported });
+    const anchor = live && $getRangeFromUsjSelection(live, viewOptions)?.anchor;
+    const landed = anchor && $getNodeByKey(anchor.key);
+    return {
+      from: positionOf(node.getKey(), offset),
+      to: anchor && positionOf(anchor.key, anchor.offset),
+      reported,
+      again: landed && anchor && $settledLocationFromLivePoint(prepared, landed, anchor.offset),
+    };
+  });
+}
+
+/** It came back where it was or to its left — or to a place reporting the same location, which a
+ * host cannot tell apart. */
+function expectBackInPlace(trip: ReturnType<typeof roundTrip>): void {
+  expect(trip.from).toBeDefined();
+  expect(trip.to).toBeDefined();
+  if ((trip.to ?? 0) > (trip.from ?? 0)) expect(trip.again).toEqual(trip.reported);
+}
+
+const VIEWS = ["standard", "standard+expandedNotes", "unformatted"];
+
+describe.each(VIEWS)("getSelection() handed back to setSelection() (%s view)", (view) => {
+  it("keeps a position in a milestone glyph the user is still typing in", async () => {
+    const { mounted, $node } = await pendingEdit(
+      ["a ", { type: "ms", marker: "qt-s" }, "b"],
+      view,
+      "\\qt-s",
+      "\\qtx-s",
+      4,
+    );
+    for (let offset = 0; offset <= "\\qtx-s".length; offset += 1)
+      expectBackInPlace(roundTrip(mounted, view, $node, offset));
+  });
+
+  it("keeps a position in a milestone glyph a byte was typed in front of inside the glyph", async () => {
+    // The live document has no location inside `x\qt-s`; a position there is handed back at the
+    // closest one to its left it does have — in front of the glyph — not at the paragraph's own
+    // marker.
+    const { mounted, $node } = await pendingEdit(
+      ["a ", { type: "ms", marker: "qt-s" }, "b"],
+      view,
+      "\\qt-s",
+      "x\\qt-s",
+      1,
+    );
+    const glyphStart = roundTrip(mounted, view, $node, 0).from ?? 0;
+    for (let offset = 1; offset <= "x\\qt-s".length; offset += 1) {
+      const trip = roundTrip(mounted, view, $node, offset);
+      expect(trip.to).toBeGreaterThanOrEqual(glyphStart);
+      expect(trip.to).toBeLessThanOrEqual(trip.from ?? 0);
+    }
+  });
+
+  it("keeps a position inside a closer the user damaged", async () => {
+    const { mounted, $node } = await pendingEdit(
+      ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      view,
+      "\\w*",
+      "\\ w*",
+      2,
+    );
+    for (let offset = 1; offset < "\\ w*".length; offset += 1) {
+      const trip = roundTrip(mounted, view, $node, offset);
+      expect(trip.to).toBe(trip.from);
+    }
+  });
+
+  it("keeps a position inside the closer of a span a pending opener rename renames", async () => {
+    const { mounted, $node: $opener } = await pendingEdit(
+      [
+        "a ",
+        {
+          type: "char",
+          marker: "nd",
+          content: ["one ", { type: "char", marker: "wj", content: ["two"] }, " three"],
+        },
+        " b",
+      ],
+      view,
+      "\\+wj",
+      "\\+j",
+      2,
+    );
+    // `\+wj*` settles as `\+j*`: in front of its `*` is closer offset 3 in the settled document.
+    const $closer = () => {
+      const closer = $opener().getParentOrThrow().getLastChild();
+      if (!(closer instanceof TextNode)) throw new Error("expected the span's closer");
+      return closer;
+    };
+    const trip = roundTrip(mounted, view, $closer, "\\+wj".length);
+    expect(trip.reported).toMatchObject({ closingMarkerOffset: "\\+j".length });
+    expect(trip.to).toBe(trip.from);
+  });
+
+  it("keeps the end of the closer of a span a pending opener rename lengthens", async () => {
+    const { mounted, $node: $opener } = await pendingEdit(
+      ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      view,
+      "\\w",
+      "\\wx",
+      3,
+    );
+    // `\w*` settles as `\wx*`: its end is closer offset 4 in the settled document.
+    const $closer = () => {
+      const closer = $opener().getParentOrThrow().getLastChild();
+      if (!(closer instanceof TextNode)) throw new Error("expected the span's closer");
+      return closer;
+    };
+    const trip = roundTrip(mounted, view, $closer, "\\w*".length);
+    expect(trip.reported).toMatchObject({ closingMarkerOffset: "\\wx*".length });
+    expect(trip.to).toBe(trip.from);
+  });
+
+  it("keeps a paragraph's own marker when a space typed in front of it starts a paragraph", async () => {
+    // ` \p` settles as a paragraph of its own holding the space, with a `\p` the tokenizer
+    // supplies, in front of the edited paragraph; the typed glyph's `\p` is still that paragraph's.
+    const { mounted, $node } = await pendingEdit(
+      ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      view,
+      "\\p",
+      " \\p",
+      1,
+    );
+    const inName = roundTrip(mounted, view, $node, 2);
+    expect(inName.reported).toEqual({ jsonPath: "$.content[3]['marker']", propertyOffset: 0 });
+    expect(inName.to).toBe(inName.from);
+    // Behind the typed space is in front of the paragraph the glyph opens — not among the supplied
+    // paragraph's own bytes.
+    const afterSpace = roundTrip(mounted, view, $node, 1);
+    expect(afterSpace.reported).toEqual({ jsonPath: "$.content[3]" });
+    expect(afterSpace.to).toBe(afterSpace.from);
+  });
+
+  it("keeps a position at a paragraph's content start when its marker glyph is damaged", async () => {
+    // `x\p` settles as a paragraph `\p x` before this one; the start of `In the` is behind the
+    // separator, not in front of it at the end of the glyph.
+    const { mounted } = await pendingEdit(
+      ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      view,
+      "\\p",
+      "x\\p",
+      1,
+    );
+    const $content = () => {
+      const content = $getRoot()
+        .getAllTextNodes()
+        .find((text) => text.getTextContent() === "In the ");
+      if (!content) throw new Error("no paragraph content");
+      return content;
+    };
+    const trip = roundTrip(mounted, view, $content, 0);
+    expect(trip.to).toBe(trip.from);
+    expect(trip.again).toEqual(trip.reported);
+  });
+
+  it("keeps a position in a nested span the settle un-nests", async () => {
+    // Deleting the `\` of `\nd` leaves the inner span on its own: `\+wj two\+wj*` settles as
+    // `\wj two\wj*`, and every byte but the `+` is still where it was.
+    const { mounted } = await pendingEdit(
+      [
+        "a ",
+        {
+          type: "char",
+          marker: "nd",
+          content: ["one ", { type: "char", marker: "wj", content: ["two"] }, " three"],
+        },
+        " b",
+      ],
+      view,
+      "\\nd",
+      "nd",
+      0,
+    );
+    const $text = (bytes: string) => () => {
+      const found = $getRoot()
+        .getAllTextNodes()
+        .find((text) => text.getTextContent() === bytes);
+      if (!found) throw new Error(`no text node spelling ${JSON.stringify(bytes)}`);
+      return found;
+    };
+    const twoEnd = roundTrip(mounted, view, $text(`${NBSP}two`), `${NBSP}two`.length);
+    expect(twoEnd.reported).toMatchObject({ offset: "two".length });
+    expect(twoEnd.to).toBe(twoEnd.from);
+    // Behind the `\`, in front of the `+` the settled `\wj` does not have: the same settled
+    // position as in front of `w`, handed back there — across only the dropped `+`.
+    const behindBackslash = roundTrip(mounted, view, $text("\\+wj"), 1);
+    expect(behindBackslash.reported).toMatchObject({ propertyOffset: 0 });
+    expect(behindBackslash.to).toBe((behindBackslash.from ?? 0) + 1);
+    // In front of `w`, of `j`, and past the name: the settled glyph's own name offsets.
+    for (const offset of [2, 3, 4]) {
+      const trip = roundTrip(mounted, view, $text("\\+wj"), offset);
+      expect(trip.reported).toMatchObject({ propertyOffset: offset - 2 });
+      expect(trip.to).toBe(trip.from);
+    }
+  });
+
+  it("keeps a position in front of a nesting `+` the settle drops", async () => {
+    // The `+` deleted from the opener `\+wj`: the span settles un-nested, and its closer `\+wj*`
+    // as `\wj*`. Behind the closer's `\` is settled offset 1 — in front of the `+`, not past it.
+    const { mounted, $node: $opener } = await pendingEdit(
+      [
+        "a ",
+        {
+          type: "char",
+          marker: "nd",
+          content: ["one ", { type: "char", marker: "wj", content: ["two"] }, " three"],
+        },
+        " b",
+      ],
+      view,
+      "\\+wj",
+      "\\wj",
+      1,
+    );
+    const $closer = () => {
+      const closer = $opener().getParentOrThrow().getLastChild();
+      if (!(closer instanceof TextNode)) throw new Error("expected the span's closer");
+      return closer;
+    };
+    const trip = roundTrip(mounted, view, $closer, 1);
+    expect(trip.reported).toMatchObject({ closingMarkerOffset: 1 });
+    expect(trip.to).toBe(trip.from);
+  });
+
+  // Notes are collapsed in the standard view, where their glyphs are not typed into.
+  it.runIf(view !== "standard")(
+    "keeps a position in a note's content when a byte typed into its opener makes it a literal",
+    async () => {
+      // `\f\` settles with the typed `\` moved behind the caller, into the note's content; the
+      // `\ft` span after it is the same bytes in both documents.
+      const { mounted } = await pendingEdit(
+        [
+          "a",
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note text"] }],
+          },
+          " b",
+        ],
+        view,
+        "\\f",
+        "\\f\\",
+        3,
+      );
+      const $ft = () => {
+        const found = $getRoot()
+          .getAllTextNodes()
+          .find((text) => text.getTextContent() === "\\ft");
+        if (!found) throw new Error("no \\ft glyph");
+        return found;
+      };
+      for (const offset of [1, 2, 3]) {
+        const trip = roundTrip(mounted, view, $ft, offset);
+        expect(trip.reported).toMatchObject({ propertyOffset: offset - 1 });
+        expect(trip.reported?.jsonPath).toMatch(/\['marker'\]$/);
+        expect(trip.to).toBe(trip.from);
+      }
+    },
+  );
+
+  it.runIf(view !== "standard")(
+    "keeps a position in bytes typed into a note's closer, which settle as its content",
+    async () => {
+      // `x\f*` settles with `x` the note's last content; in front of it, and inside the closer
+      // after it, are places in the closer the live note still shows.
+      const { mounted, $node } = await pendingEdit(
+        [
+          "a",
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note text"] }],
+          },
+          " b",
+        ],
+        view,
+        "\\f*",
+        "x\\f*",
+        1,
+      );
+      for (let offset = 0; offset <= "x\\f*".length; offset += 1) {
+        const trip = roundTrip(mounted, view, $node, offset);
+        expect(trip.to).toBe(trip.from);
+      }
+    },
+  );
+
+  it.runIf(view !== "standard")(
+    "reports the end of a note's caller as the front of its content, as the settled note does",
+    async () => {
+      // `x` typed in front of `\ft` settles as text starting the note's content; the end of the
+      // caller text is in front of it.
+      const { mounted } = await pendingEdit(
+        [
+          "a",
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note text"] }],
+          },
+          " b",
+        ],
+        view,
+        "\\ft",
+        "x\\ft",
+        1,
+      );
+      const caller = ` +${NBSP}`;
+      const $caller = () => {
+        const found = $getRoot()
+          .getAllTextNodes()
+          .find((text) => text.getTextContent() === caller);
+        if (!found) throw new Error("no caller text");
+        return found;
+      };
+      const trip = roundTrip(mounted, view, $caller, caller.length);
+      expect(trip.reported).toEqual({ jsonPath: "$.content[2].content[1].content[0]", offset: 0 });
+      expect(trip.to).toBe(trip.from);
+    },
+  );
+
+  it("keeps a position in front of a note that a typed marker now opens a paragraph before", async () => {
+    // `\a` typed in front of the note settles as a paragraph marker, with the note as the new
+    // paragraph's first content; the end of its name is in front of the note.
+    const { mounted, $node } = await pendingEdit(
+      [
+        "a",
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ type: "char", marker: "ft", content: ["note text"] }],
+        },
+        " b",
+      ],
+      view,
+      "a",
+      "\\a",
+      1,
+    );
+    for (let offset = 0; offset <= "\\a".length; offset += 1)
+      expectBackInPlace(roundTrip(mounted, view, $node, offset));
+  });
+
+  it("keeps a position in a `\\ca` span beside its chapter that settles as a paragraph", async () => {
+    // Deleting the separator of `\ca 3\ca*` spells `\ca3\ca*`: no longer a span the chapter
+    // folds, it settles as a `\ca3` paragraph with an unmatched `\ca*`, beside the chapter.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { mounted, $node } = await pendingEdit(usj, view, `${NBSP}3`, "3", 0);
+    for (let offset = 0; offset <= 1; offset += 1)
+      expectBackInPlace(roundTrip(mounted, view, $node, offset));
+    // In front of the `3` is in the settled `\ca3` paragraph, not on the chapter.
+    expect(roundTrip(mounted, view, $node, 0).reported?.jsonPath).toMatch(/^\$\.content\[2\]/);
+  });
+
+  it("keeps the end of a `\\ca` span's closer when the span ends its settle scope", async () => {
+    // `x` typed in front of `\ca` settles beside the chapter as text, with the span after it; the
+    // span's closer ends the chapter's scope, and its end is closer offset 4, not one past it.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { mounted } = await pendingEdit(usj, view, "\\ca", "x\\ca", 1);
+    const $closer = () => {
+      const closer = $getRoot()
+        .getAllTextNodes()
+        .find((text) => text.getTextContent() === "\\ca*");
+      if (!closer) throw new Error("no \\ca closer");
+      return closer;
+    };
+    const trip = roundTrip(mounted, view, $closer, "\\ca*".length);
+    expect(trip.reported).toMatchObject({ closingMarkerOffset: "\\ca*".length });
+    expect(trip.to).toBe(trip.from);
+  });
+
+  it("keeps the end of a `\\ca` closer that folds onto its chapter", async () => {
+    // `\ca 3x\ca*` folds onto the chapter as altnumber `3x`; the end of the typed closer is the
+    // end of the chapter's `\ca` run closer, not the end of the value in front of it.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { mounted, $node } = await pendingEdit(usj, view, "\\ca*", "x\\ca*", 1);
+    const trip = roundTrip(mounted, view, $node, "x\\ca*".length);
+    expect(trip.reported).toMatchObject({
+      keyName: "altnumber",
+      keyClosingMarkerOffset: "\\ca*".length,
+    });
+    expect(trip.to).toBe(trip.from);
+  });
+
+  it("keeps a position behind a space typed after a `\\ca` closer that folds onto its chapter", async () => {
+    // The settle drops the space; behind it is the end of the chapter's `\ca` run closer, not the
+    // end of the value in front of the closer.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { mounted, $node } = await pendingEdit(usj, view, "\\ca*", "\\ca* ", 5);
+    const trip = roundTrip(mounted, view, $node, "\\ca* ".length);
+    expect(trip.reported).toMatchObject({
+      keyName: "altnumber",
+      keyClosingMarkerOffset: "\\ca*".length,
+    });
+  });
+
+  it("keeps a position at the end of a `\\ca` value when a space is typed in front of its closer", async () => {
+    // `\ca 3 \ca*` folds onto the chapter as altnumber `3`: the end of the value is in front of
+    // the typed space, where it was read from, not behind it.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { mounted } = await pendingEdit(usj, view, "\\ca*", " \\ca*", 1);
+    const $value = () => {
+      const value = $getRoot()
+        .getAllTextNodes()
+        .find((text) => text.getTextContent() === `${NBSP}3`);
+      if (!value) throw new Error("no \\ca value text");
+      return value;
+    };
+    const trip = roundTrip(mounted, view, $value, `${NBSP}3`.length);
+    expect(trip.to).toBe(trip.from);
+  });
+});
+
+describe.each(["standard+expandedNotes", "unformatted"])(
+  "a note's caller waiting with bytes typed into it (%s view)",
+  (view) => {
+    // The caller's separator deleted and `x` typed: ` +x` waits as typed while the caret is there,
+    // and the departure puts the caller back and moves `x` to the note's content — which the
+    // document already reads. A position in or after the typed bytes is a content position.
+    const content: MarkerContent[] = [
+      "a",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "ft", content: ["note text"] }],
+      },
+      " b",
+    ];
+
+    it("reports a position after the typed byte where the byte is in the content", async () => {
+      const { mounted, $node } = await pendingEdit(content, view, ` +${NBSP}`, " +x", 3);
+      const trip = roundTrip(mounted, view, $node, 3);
+      expect(trip.reported).toEqual({ jsonPath: "$.content[2].content[1].content[0]", offset: 1 });
+      expectBackInPlace(trip);
+      mounted.unmount();
+    });
+
+    it("keeps the caller's own bytes the caller's", async () => {
+      const { mounted, $node } = await pendingEdit(content, view, ` +${NBSP}`, " +x", 3);
+      const trip = roundTrip(mounted, view, $node, 1);
+      expect(trip.reported).toEqual({
+        jsonPath: "$.content[2].content[1]['caller']",
+        propertyOffset: 0,
+      });
+      expectBackInPlace(trip);
+      mounted.unmount();
+    });
+  },
+);
+
+describe.each(VIEWS)("a paragraph's marker retyped as a note's (%s view)", (view) => {
+  it("reports a position in the paragraph's text where the settled note holds it", async () => {
+    // `\p` retyped `\x`: `\x In the …` settles as a cross-reference note, `In` its caller, in a
+    // paragraph the tokenizer supplies. A position in that text is in the note, not on the
+    // paragraph's marker.
+    const { mounted, $node } = await pendingEdit(
+      ["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"],
+      view,
+      "\\p",
+      "\\x",
+      2,
+    );
+    const $text = () => {
+      const text = $getRoot()
+        .getAllTextNodes()
+        .find((node) => node.getTextContent().includes("In the"));
+      if (!text) throw new Error("no paragraph text");
+      return text;
+    };
+    expect(roundTrip(mounted, view, $text, 1).reported).toEqual({
+      jsonPath: "$.content[2].content[0]['caller']",
+      propertyOffset: 1,
+    });
+    expectBackInPlace(roundTrip(mounted, view, $text, 4));
+    expect(mounted.lexical.getEditorState().read(() => $node().getTextContent())).toBe("\\x");
+    mounted.unmount();
+  });
+});
+
+describe.each(VIEWS)("a closer typed into an unclosed note (%s view)", (view) => {
+  // `\ft` retyped `\f*t`: the settle closes the note at the typed `\f*`, and `t note text` moves
+  // after the note into the paragraph. A position on the typed closer is on the settled note's
+  // closer, and one past it is in the paragraph's text after the note.
+  const unclosedNote = (caller: string, after: MarkerContent[] = []): MarkerContent[] => [
+    "a",
+    {
+      type: "note",
+      marker: "f",
+      caller,
+      closed: "false",
+      content: [{ type: "char", marker: "ft", closed: "false", content: ["note text"] }],
+    },
+    ...after,
+  ];
+  const note = "$.content[2].content[1]";
+  const movedText = "$.content[2].content[2]";
+  const $textAfterCloser = () => {
+    const text = $getRoot()
+      .getAllTextNodes()
+      .find((node) => node.getTextContent().endsWith("note text"));
+    if (!text) throw new Error("no note text");
+    return text;
+  };
+
+  it.each([
+    ["a normal caller", "+"],
+    ["an empty caller", ""],
+  ])("reports the typed closer as the settled note's closer, with %s", async (_name, caller) => {
+    const { mounted, $node } = await pendingEdit(unclosedNote(caller), view, "\\ft", "\\f*t", 3);
+    for (const offset of [1, 2]) {
+      const trip = roundTrip(mounted, view, $node, offset);
+      expect(trip.reported).toEqual({ jsonPath: note, closingMarkerOffset: offset });
+      expect(trip.to).toBe(trip.from);
+    }
+    const front = roundTrip(mounted, view, $node, 0);
+    expect(front.reported).toEqual({ jsonPath: note, closingMarkerOffset: 0 });
+    expectBackInPlace(front);
+    const end = roundTrip(mounted, view, $node, 3);
+    expect([
+      { jsonPath: note, closingMarkerOffset: 3 },
+      { jsonPath: movedText, offset: 0 },
+    ]).toContainEqual(end.reported);
+    expectBackInPlace(end);
+    mounted.unmount();
+  });
+
+  it.each([
+    ["a normal caller", "+"],
+    ["an empty caller", ""],
+  ])(
+    "reports the text past the typed closer in the paragraph after the note, with %s",
+    async (_name, caller) => {
+      const { mounted, $node } = await pendingEdit(unclosedNote(caller), view, "\\ft", "\\f*t", 3);
+      const paragraph = mounted.ref.current?.getUsj()?.content[2];
+      expect(typeof paragraph === "object" && paragraph.content?.[2]).toBe("t note text");
+      expect(roundTrip(mounted, view, $node, 4).reported).toEqual({
+        jsonPath: movedText,
+        offset: 1,
+      });
+      const text = mounted.lexical.getEditorState().read(() => $textAfterCloser().getTextContent());
+      // The settled text starts at the typed `t`, in front of this node's bytes.
+      for (let offset = 1; offset <= text.length; offset += 1) {
+        const trip = roundTrip(mounted, view, $textAfterCloser, offset);
+        expect(trip.reported).toEqual({ jsonPath: movedText, offset: offset + 1 });
+        expect(trip.to).toBe(trip.from);
+      }
+      mounted.unmount();
+    },
+  );
+
+  /** The text node spelling exactly `bytes`. */
+  const $textSpelling = (bytes: string) => {
+    const text = $getRoot()
+      .getAllTextNodes()
+      .find((node) => node.getTextContent() === bytes);
+    if (!text) throw new Error(`no text node spelling ${JSON.stringify(bytes)}`);
+    return text;
+  };
+
+  /** Mount `usj` and hold every edit in `edits` pending at once, each on the text node spelling
+   * its `bytes`, as an abandoned or restored edit is held. */
+  async function pendTogether(usj: Usj, edits: { bytes: string; edited: string }[]) {
+    const mounted = await mountInView(usj, oracleView(view));
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const nodes = edits.map(({ bytes }) => $textSpelling(bytes));
+        nodes.forEach((node, index) => $pendGlyphEdit(node, edits[index].edited));
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThanOrEqual(edits.length);
+    return mounted;
+  }
+
+  it("reports the text past the typed closer when the note's paragraph settles too", async () => {
+    // The paragraph's own marker is pending as well, so the paragraph's settle carries the note's.
+    const mounted = await mountInView(twoParaUsj(unclosedNote("+")), oracleView(view));
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const glyph = $getRoot().getChildren()[2];
+        const marker = $isElementNode(glyph) ? glyph.getFirstChild() : undefined;
+        if (!(marker instanceof TextNode)) throw new Error("no paragraph marker glyph");
+        $pendGlyphEdit(marker, marker.getTextContent().replace("\\p", "\\q1"));
+        $pendGlyphEdit($textSpelling("\\ft"), "\\f*t");
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const paragraph = mounted.ref.current?.getUsj()?.content[2];
+    expect(typeof paragraph === "object" && paragraph.marker).toBe("q1");
+    expect(typeof paragraph === "object" && paragraph.content?.[2]).toBe("t note text");
+    const $closer = () => $textSpelling("\\f*t");
+    for (const offset of [1, 2]) {
+      const trip = roundTrip(mounted, view, $closer, offset);
+      expect(trip.reported).toEqual({ jsonPath: note, closingMarkerOffset: offset });
+      expect(trip.to).toBe(trip.from);
+    }
+    expect(roundTrip(mounted, view, $closer, 4).reported).toEqual({
+      jsonPath: movedText,
+      offset: 1,
+    });
+    const text = mounted.lexical.getEditorState().read(() => $textAfterCloser().getTextContent());
+    for (let offset = 1; offset <= text.length; offset += 1) {
+      const trip = roundTrip(mounted, view, $textAfterCloser, offset);
+      expect(trip.reported).toEqual({ jsonPath: movedText, offset: offset + 1 });
+      expect(trip.to).toBe(trip.from);
+    }
+    // The document read while both edits wait is the one they settle to.
+    const pending = mounted.ref.current?.getUsj();
+    await depart(mounted);
+    expect(mounted.ref.current?.getUsj()).toEqual(pending);
+    mounted.unmount();
+  });
+
+  it("reports a settling note after the closed note at its settled index", async () => {
+    // A second note, settling too, follows the unclosed one; the moved text lands between them.
+    const mounted = await pendTogether(
+      twoParaUsj(
+        unclosedNote("+", [
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "fr", content: ["1.1"] }, "note body"],
+          },
+        ]),
+      ),
+      [
+        { bytes: "\\ft", edited: "\\f*t" },
+        { bytes: "\\fr", edited: "\\fq" },
+        { bytes: "\\fr*", edited: "\\fq*" },
+      ],
+    );
+    const paragraph = mounted.ref.current?.getUsj()?.content[2];
+    const second = typeof paragraph === "object" ? paragraph.content?.[3] : undefined;
+    if (typeof second !== "object")
+      throw new Error("expected the second note after the moved text");
+    expect(second.content?.[0]).toMatchObject({ marker: "fq" });
+    const bodyIndex = second.content?.indexOf("note body") ?? -1;
+    expect(bodyIndex).toBeGreaterThan(0);
+    const $body = () => {
+      const text = $getRoot()
+        .getAllTextNodes()
+        .find((node) => node.getTextContent().endsWith("note body"));
+      if (!text) throw new Error("no note body");
+      return text;
+    };
+    const lead = mounted.lexical
+      .getEditorState()
+      .read(() => $body().getTextContent().length - "note body".length);
+    const trip = roundTrip(mounted, view, $body, lead + 2);
+    expect(trip.reported).toEqual({
+      jsonPath: `$.content[2].content[3].content[${bodyIndex}]`,
+      offset: 2,
+    });
+    expect(trip.to).toBe(trip.from);
+    mounted.unmount();
+  });
+
+  it("shifts what follows a note in the root's implied paragraph by the text the close moves", async () => {
+    // Text straight after the chapter sits in the root's implied paragraph, whose items are the
+    // document's own: the moved text is a root item, and every block after it moves down one.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        ...unclosedNote("+"),
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { mounted, $node } = await pendingEdit(usj, view, "\\ft", "\\f*t", 3);
+    const content = mounted.ref.current?.getUsj()?.content ?? [];
+    expect(content[4]).toBe("t note text");
+    const departIndex = content.findIndex(
+      (item) => typeof item === "object" && JSON.stringify(item).includes("depart here"),
+    );
+    expect(departIndex).toBe(5);
+    expect(roundTrip(mounted, view, $node, 1).reported).toEqual({
+      jsonPath: "$.content[3]",
+      closingMarkerOffset: 1,
+    });
+    expect(roundTrip(mounted, view, $node, 4).reported).toEqual({
+      jsonPath: "$.content[4]",
+      offset: 1,
+    });
+    const $depart = () => $textSpelling("depart here");
+    const trip = roundTrip(mounted, view, $depart, 1);
+    expect(trip.reported).toEqual({ jsonPath: "$.content[5].content[0]", offset: 1 });
+    expect(trip.to).toBe(trip.from);
+    mounted.unmount();
+  });
+
+  it("reports text after the note in its paragraph past the text the close moves there", async () => {
+    // What follows the note in its paragraph follows the moved text once the note closes.
+    const { mounted, $node } = await pendingEdit(
+      unclosedNote("+", [{ type: "verse", marker: "v", number: "2" }, "bc"]),
+      view,
+      "\\ft",
+      "\\f*t",
+      3,
+    );
+    expect(roundTrip(mounted, view, $node, 4).reported).toEqual({ jsonPath: movedText, offset: 1 });
+    const $after = () => {
+      const text = $getRoot()
+        .getAllTextNodes()
+        .find((node) => node.getTextContent() === "bc");
+      if (!text) throw new Error("no text after the verse");
+      return text;
+    };
+    // The document a host reads holds the text there.
+    const paragraph = mounted.ref.current?.getUsj()?.content[2];
+    expect(typeof paragraph === "object" && paragraph.content?.[4]).toBe("bc");
+    const trip = roundTrip(mounted, view, $after, 1);
+    expect(trip.reported).toEqual({ jsonPath: "$.content[2].content[4]", offset: 1 });
+    expect(trip.to).toBe(trip.from);
+    mounted.unmount();
+  });
+});

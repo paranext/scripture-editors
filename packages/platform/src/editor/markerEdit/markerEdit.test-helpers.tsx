@@ -19,6 +19,7 @@ import {
 } from "@eten-tech-foundation/scripture-utilities";
 import {
   $createTextNode,
+  $getEditor,
   $getRoot,
   $isElementNode,
   $isTextNode,
@@ -29,6 +30,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  APP_PLACED_CARET_COMMAND,
   $createAttributeRunNode,
   $createCharNode,
   $createMarkerNode,
@@ -64,6 +66,7 @@ import {
   getViewOptions,
   STANDARD_VIEW_MODE,
   TextSpacingPlugin,
+  ViewOptions,
 } from "shared-react";
 
 /** Narrow away `T | undefined` without a banned non-null assertion. */
@@ -435,20 +438,27 @@ export function $appendMilestoneRun(
 export function noteUsx(
   noteAttrs: string,
   noteContent = `<char style="ft" closed="false">A note</char>`,
+  caller = "+",
 ) {
   return usxStringToUsj(
     `<usx version="3.0"><book code="RUT" style="id">T</book><chapter number="1" style="c" />` +
       `<para style="p"><verse number="1" style="v" />text` +
-      `<note caller="+" style="f" ${noteAttrs}>${noteContent}</note> after</para></usx>`,
+      `<note caller="${caller}" style="f" ${noteAttrs}>${noteContent}</note> after</para></usx>`,
   );
 }
 
-/** Serialize `usj` to a standard-view editor state string (root wrapper). */
-export function serializedState(usj: ReturnType<typeof usxStringToUsj>): string {
+/**
+ * Serialize `usj` to an editor state string (root wrapper) — standard view unless `options` says
+ * otherwise, so a suite that needs another marker mode does not re-derive the adaptor handshake.
+ */
+export function serializedState(
+  usj: ReturnType<typeof usxStringToUsj>,
+  options: ViewOptions = viewOptions,
+): string {
   initializeSerialize(undefined, undefined);
   initializeDeserialize(undefined);
   reset();
-  const state = serializeEditorState(usj, viewOptions);
+  const state = serializeEditorState(usj, options);
   return JSON.stringify({ root: state.root });
 }
 
@@ -537,6 +547,12 @@ export function usjNoteOf(editor: LexicalEditor): MarkerObject {
  */
 export function usjNoteFromUsfm(usfm: string): MarkerObject {
   return findUsjNote(usfmFragmentToUsjContent(usfm));
+}
+
+/** Announce the current update's caret move as the editor's own, the way ScriptureReferencePlugin's
+ * verse navigation does. Call inside `editor.update()`, after moving the caret. */
+export function $announceAppPlacedCaret(): void {
+  $getEditor().dispatchCommand(APP_PLACED_CARET_COMMAND, undefined);
 }
 
 /**

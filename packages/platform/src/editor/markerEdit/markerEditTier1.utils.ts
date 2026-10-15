@@ -8,6 +8,7 @@ import { isCharKindMarker, isParaKindMarker } from "./markerKind.utils";
 import { $isNoteCallerSlot } from "./noteCallerSlot.utils";
 import {
   BARE_OPENER_REGEX,
+  BYTES_READ_WITH_MARKER_REGEX,
   CLOSER_FORM_REGEX,
   OPENER_NAME_REGEX,
   OPENER_NAME_SPAN_REGEX,
@@ -26,6 +27,7 @@ import {
   $getSelection,
   $getState,
   $isRangeSelection,
+  $isRootOrShadowRoot,
   $isTextNode,
   LexicalNode,
   NodeKey,
@@ -33,6 +35,8 @@ import {
 } from "lexical";
 import {
   $caretHoldsRunSite,
+  $createMarkerNode,
+  $hasRenamingSeparatorGap,
   $isAttributeRunNode,
   $isBookNode,
   $isCanonicalMarkerNode,
@@ -52,6 +56,7 @@ import {
   $openerSeparatorGapFollowingBytes,
   $ownerOfRunPiece,
   $paraPrefixSeparatorCaretHeld,
+  $moveGlyphTailBehindSeparator,
   $restoreCanonicalMarkerText,
   $runDiverges,
   $selectCharContentStart,
@@ -63,18 +68,22 @@ import {
   AttributeRunNode,
   BookNode,
   ChapterNode,
+  CharNode,
   closingMarkerText,
   displayRunDescriptors,
   getEditableCallerText,
+  typedCallerBytes,
+  typedCallerRange,
   getVisibleOpenMarkerText,
   ImmutableUnmatchedNode,
   leadingAttributeNames,
   MarkerLookup,
   MarkerNode,
   MarkerType,
+  NBSP,
   NoteNode,
+  openingMarkerText,
   ParaNode,
-  separatorRemovalTokenizesIdentically,
   textTypeState,
   VerseNode,
 } from "shared";
@@ -441,6 +450,12 @@ export function $applyOpenerRename(
     if (!isValidKind) {
       return $requestTier2ForNode(node, context);
     }
+    // With the span's separator gone and the bytes after it running into the new name
+    // (`\wx` + `grace`), the screen spells another marker than the rename would: the bytes settle
+    // as they read, by re-tokenizing.
+    if ($isCharNode(parent) && $hasRenamingSeparatorGap(parent)) {
+      return $requestTier2ForNode(node, context);
+    }
     const oldMarker = node.getMarker();
     if (parent.getMarker() !== oldMarker) {
       // Tree shape doesn't match the simple opener-owns-parent assumption: e.g. the collab
@@ -468,6 +483,66 @@ export function $applyOpenerRename(
     return true;
   }
   return $requestTier2ForNode(node, context);
+}
+
+/**
+ * A pending rename of a char span's opener that Tier 1 applies in place, renaming the closer with
+ * it ({@link $applyOpenerRename}'s char branch): the opening glyph's bytes spell a new name.
+ * Name bytes typed at the very start of the content, in front of the separator, are moved into the
+ * glyph as they are typed (`$movePushedNameIntoGlyph`, markerEditTier2Trigger.utils.ts), so they
+ * reach this rename too.
+ */
+export interface CharOpenerRename {
+  readonly char: CharNode;
+  readonly glyph: MarkerNode;
+  /** The span's closer the rename rewrites with the opener, when the span has one. */
+  readonly closer: MarkerNode | undefined;
+  /** The marker name the span takes, without the nesting `+`. */
+  readonly newMarker: string;
+}
+
+/**
+ * The char opener rename `node`'s pend stands for, or `undefined` when `node` is not a char span's
+ * opening glyph, its bytes are not a bare opener, or Tier 1 would not apply the rename in place.
+ * The in-place conditions are {@link $applyOpenerRename}'s own: the glyph and the tree agree about
+ * nesting, the new name is char-kind (or unknown), the glyph's marker is its span's, and the span
+ * has no separator gap whose bytes run into the name. Anything else re-tokenizes, on both settle
+ * paths.
+ *
+ * Shared by the mutating settle ({@link $resolvePendingMarkers}) and the read-only one
+ * (`$collectSettleScopes`, virtualSettle.utils.ts), so `getUsj()` while the edit is pending and the
+ * document after it settles are one decision.
+ *
+ * Read-only: call inside a read or an update.
+ */
+export function $pendingCharOpenerRename(
+  node: LexicalNode,
+  getMarkerFn: MarkerLookup,
+): CharOpenerRename | undefined {
+  if (!$isMarkerNode(node) || node.getMarkerSyntax() !== "opening") return undefined;
+  const char = node.getParent();
+  if (!$isCharNode(char) || !char.getFirstChild()?.is(node)) return undefined;
+  const bare = BARE_OPENER_REGEX.exec(node.getTextContent());
+  if (!bare) return undefined;
+  const typedMarker = bare[1];
+  if (typedMarker.startsWith("+") !== node.getNested()) return undefined;
+  if (!isCharKindMarker(typedMarker, getMarkerFn)) return undefined;
+  const oldMarker = node.getMarker();
+  if (char.getMarker() !== oldMarker) return undefined;
+  const newMarker = typedMarker.replace(/^\+/, "");
+  if (!$renamesTheMarkerName(oldMarker, newMarker)) return undefined;
+  if ($hasRenamingSeparatorGap(char)) return undefined;
+  return { char, glyph: node, closer: $charCloserOf(char, oldMarker), newMarker };
+}
+
+/** The LAST closing glyph among `char`'s children named `marker` — the closer an opener rename
+ * rewrites. */
+function $charCloserOf(char: CharNode, marker: string): MarkerNode | undefined {
+  return char
+    .getChildren()
+    .filter($isMarkerNode)
+    .filter((child) => child.getMarkerSyntax() === "closing" && child.getMarker() === marker)
+    .at(-1);
 }
 
 /**
@@ -506,6 +581,83 @@ function $markerGlyphCaretHeld(glyph: MarkerNode): boolean {
   if (!selection.isCollapsed() && selection.getNodes().some((selected) => selected.is(glyph)))
     return true;
   return false;
+}
+
+/**
+ * Move whitespace typed on a glyph's OUTER side — in front of an opener or a milestone, or behind
+ * a note's closer — onto the text beside it, when the glyph is otherwise intact. The caret
+ * there and the one at that text's edge are one place on screen, and the bytes do not read with
+ * the marker: they are the text's own. Left in the glyph, they would settle with its divergence,
+ * and the re-tokenization collapses the whitespace run they make with that text, dropping a typed
+ * space the screen keeps everywhere else (docs/standard-view-invariants.md §4).
+ *
+ * Never into a text of its own: with another glyph beside it — a verse, a note's caller, another
+ * span's glyph — the whitespace goes to that glyph's edge instead, to settle exactly as typing
+ * there does, since that is the same place on screen. A text of its own between two markers would
+ * save a byte the reader skips (ParatextData's `GetNextWord` after a verse number or a caller),
+ * which a reload drops, and the same place on screen would save two different files. With no text
+ * beside the glyph at all, the whitespace stays where it was typed.
+ *
+ * A paragraph's own marker is left alone: nothing stands in front of it in its paragraph. An
+ * opener that starts the node it opens (a char span, a note, a milestone) has the whitespace go
+ * in front of that node; one at the document root (a `\ca` span beside its chapter) is left
+ * alone too, since the root holds no text.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the whitespace moved.
+ */
+function $moveOuterGlyphSpaceOut(glyph: MarkerNode): boolean {
+  const text = glyph.getTextContent();
+  const isCloser = glyph.getMarkerSyntax() === "closing";
+  const space = (isCloser ? /[ \u00A0]+$/ : /^[ \u00A0]+/).exec(text)?.[0];
+  if (!space || space.length === text.length) return false;
+  const parent = glyph.getParent();
+  // The node the whitespace goes beside: a span or note the glyph opens or closes, or the glyph.
+  let beside: LexicalNode = glyph;
+  if (isCloser) {
+    if (!$isNoteNode(parent) || !parent.getLastChild()?.is(glyph)) return false;
+    beside = parent;
+  } else if ($isAttributeRunNode(parent)) {
+    // A milestone's glyphs ride in a run wrapper right after the milestone itself, which the
+    // whitespace must not come between.
+    const owner = $ownerOfRunPiece(glyph)?.owner;
+    if (!$isMilestoneNode(owner) || !parent.getFirstChild()?.is(glyph)) return false;
+    beside = owner;
+  } else if (parent?.getFirstChild()?.is(glyph)) {
+    if ($isParaNode(parent)) return false;
+    beside = parent;
+  }
+  const holder = isCloser ? beside.getNextSibling() : beside.getPreviousSibling();
+  if (!$isTextNode(holder)) return false;
+  const kept = isCloser ? text.slice(0, text.length - space.length) : text.slice(space.length);
+  glyph.setTextContent(kept);
+  if (!$isCanonicalMarkerNode(glyph)) {
+    glyph.setTextContent(text);
+    return false;
+  }
+  const selection = $getSelection();
+  const caret =
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === glyph.getKey()
+      ? selection.anchor.offset
+      : undefined;
+  if (isCloser) {
+    holder.setTextContent(space + holder.getTextContent());
+    if (caret !== undefined && caret > kept.length) {
+      const offset = caret - kept.length;
+      holder.select(offset, offset);
+    }
+    return true;
+  }
+  const spaceStart = holder.getTextContentSize();
+  holder.setTextContent(holder.getTextContent() + space);
+  if (caret !== undefined) {
+    if (caret <= space.length) holder.select(spaceStart + caret, spaceStart + caret);
+    else glyph.select(caret - space.length, caret - space.length);
+  }
+  return true;
 }
 
 /**
@@ -555,7 +707,17 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
     );
     return;
   }
+  if ($moveOuterGlyphSpaceOut(node)) {
+    context.pendingKeys.delete(node.getKey());
+    return;
+  }
   if (node.getMarkerSyntax() === "opening") {
+    // A `|` or space typed at the glyph's end belongs behind the separator, where the same
+    // keystroke lands with the caret at the content's front.
+    if ($moveGlyphTailBehindSeparator(node) || $moveNoteGlyphTailToCaller(node)) {
+      context.pendingKeys.delete(node.getKey());
+      return;
+    }
     const terminated = TERMINATED_OPENER_REGEX.exec(text);
     if (terminated) {
       context.pendingKeys.delete(node.getKey());
@@ -579,12 +741,15 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
   // rest split. A note's closer is reached this way whenever the browser reads back a caret at the
   // end of a line the note ends: Lexical resolves that point into the line's last text, which is
   // the note's closer (hidden, when the note is collapsed). Scoped to the span's or note's OWN
-  // last-child closer; every other closer divergence (damage, retype, run closers) pends below.
+  // last-child closer; every other closer divergence (damage, retype, run closers) pends below. A
+  // span at the document root (a `\ca`/`\cp` beside its chapter) has no block to hold the split-off
+  // text, so its bytes pend instead and the chapter's settle re-tokenizes them.
   if (node.getMarkerSyntax() === "closing") {
     const parent = node.getParent();
     const canonical = closingMarkerText(node.getMarker(), node.getNested());
     if (
       ($isCharNode(parent) || $isNoteNode(parent)) &&
+      !$isRootOrShadowRoot(parent.getParent()) &&
       node.getMarker() === parent.getMarker() &&
       parent.getLastChild()?.is(node) &&
       text.startsWith(canonical) &&
@@ -606,6 +771,10 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
       return;
     }
   }
+  if ($splitTextTypedAfterMilestone(node)) {
+    context.pendingKeys.delete(node.getKey());
+    return;
+  }
   // Closer / selfClosing: one-way authority — closer edits never rename the span. Damage or
   // retype ALWAYS pends and settles through Tier 2 on caret departure/Enter/blur
   // ($resolvePendingMarkers), never in the editing commit. An opener has a genuine completion
@@ -620,6 +789,45 @@ export function $markerNodeTransform(node: MarkerNode, context: MarkerEditContex
   // explicit closer — see paranext-core's footnote-util test USJ), and the adaptor skips the
   // closing glyph for such spans, exactly as it does for auto-closed notes.
   context.pendingKeys.add(node.getKey());
+}
+
+/**
+ * Split text typed at the very END of an intact milestone's `\*` (`\qt-s\*x`) off to follow the
+ * milestone, as the closer arm of {@link $markerNodeTransform} does for a char span's closer: the
+ * name scan ends at the `*`, so the bytes re-tokenize as plain text after the milestone, and the
+ * split is that re-tokenization applied now. Left in the glyph until a departure settled it, the
+ * typed byte had no place in the document's model while it waited — a host handing back its
+ * position could not land on it. Only the run's last piece qualifies, in a block that can hold the
+ * text.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the text was split off.
+ */
+function $splitTextTypedAfterMilestone(glyph: MarkerNode): boolean {
+  if (glyph.getMarkerSyntax() !== "selfClosing") return false;
+  if (!$isMilestoneNode($ownerOfRunPiece(glyph)?.owner)) return false;
+  const canonical = closingMarkerText("");
+  const text = glyph.getTextContent();
+  if (!text.startsWith(canonical) || text.length === canonical.length) return false;
+  const wrapper = glyph.getParent();
+  const runEnd = $isAttributeRunNode(wrapper) ? wrapper : glyph;
+  if ($isAttributeRunNode(wrapper) && !wrapper.getLastChild()?.is(glyph)) return false;
+  const block = runEnd.getParent();
+  if (!block || $isRootOrShadowRoot(block)) return false;
+  const selection = $getSelection();
+  const caretOffset =
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === glyph.getKey() &&
+    selection.anchor.offset > canonical.length
+      ? selection.anchor.offset - canonical.length
+      : undefined;
+  const rest = $createTextNode(text.slice(canonical.length));
+  glyph.setTextContent(canonical);
+  runEnd.insertAfter(rest);
+  if (caretOffset !== undefined) rest.select(caretOffset, caretOffset);
+  return true;
 }
 
 /**
@@ -701,8 +909,8 @@ const CHAPTER_GLYPH_REGEXES = leadingAttributeGlyphRegexes("c");
 const SEPARATOR_RUN_ONLY_REGEX = /^[ \u00A0]*$/;
 
 /**
- * Insert `rest` — bytes extracted out of a glyph's own text (a verse's number, a note's caller) —
- * as plain content directly after it, merging into an existing following plain content node
+ * Insert `rest` — bytes extracted out of a glyph's own text (a verse's number) — as plain
+ * content directly after it, merging into an existing following plain content node
  * rather than always inserting a fresh one. A fresh node fragments a literal the user is
  * mid-typing across siblings — the live failure: `\` typed at the verse's end split out alone,
  * the next keystroke landed in yet another node, and the resolve's caret shield (which covers the
@@ -710,19 +918,16 @@ const SEPARATOR_RUN_ONLY_REGEX = /^[ \u00A0]*$/;
  * rebuild fragment and settled as a terminated unknown marker mid-word. Only an ordinary content
  * node qualifies: never a glyph (exact-type check), a token (the para-prefix separator), or an
  * attribute-run value riding beside the owner. Shared by both extraction arms of
- * {@link $verseNodeTransform} and by {@link $noteCallerTextTransform} so the merge behavior
- * cannot drift between them.
+ * {@link $verseNodeTransform} so the merge behavior cannot drift between them.
  *
  * `caretOffsetInRest` places the collapsed caret at that offset within the inserted rest
  * (clamped to the rest by the callers); `undefined` leaves the selection untouched (a
  * programmatic edit with no caret in the glyph).
  *
  * @returns The node that now holds `rest` — either the merged-into sibling or the freshly
- *   created one — so a caller that needs the result byte-exact (never re-merged by Lexical's own
- *   simple-text normalization) can act on it; see {@link $noteCallerTextTransform}.
+ *   created one.
  *
- * Mutating: call inside `editor.update()` (runs from {@link $verseNodeTransform} and
- * {@link $noteCallerTextTransform}).
+ * Mutating: call inside `editor.update()` (runs from {@link $verseNodeTransform}).
  */
 function $insertRestAfterGlyph(
   node: LexicalNode,
@@ -867,9 +1072,7 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
 // An expanded note's editable caller text: whitespace run, caller word, ONE trailing separator,
 // then whatever REST a keystroke past it lands there (canonical when REST is empty: one space,
 // the caller, one NBSP — getEditableCallerText). The tokenization of "word" beside the map's
-// caller declaration, exactly as the verse regexes tokenize the number — except the caller node
-// carries no marker prefix of its own (the note's opening glyph is a separate sibling MarkerNode),
-// so unlike leadingAttributeGlyphRegexes's valueAndRest this needs no marker name baked in.
+// caller declaration, exactly as the verse regexes tokenize the number.
 //
 // The word may be EMPTY: deleting the caller leaves just the two separators, which Paratext 9
 // keeps on screen (`\f  \fr …`) and reads back from its file (`\f \fr …`) as a note with no
@@ -879,78 +1082,462 @@ const NOTE_CALLER_TEXT_REGEX = /^[ \u00A0]+([^ \u00A0\\]*)[ \u00A0]([\s\S]*)$/;
 /**
  * Tier-1 arm for an expanded note's editable caller text — the note-marker family's leading
  * attribute (the markers map declares `caller` on `f`/`fe`/`ef`/`efe`/`x`/`ex`;
- * `leadingAttributeNames`, `shared`) — giving the caller the same one-rule treatment as a
- * verse's number: whitespace between the marker and the value is structural and collapses, so
- * an extra typed space cannot demote the caller (`\f  +` is still caller `+`), and the caller
- * RETAGS to the typed word (PT9 GetNextWord: whole word, valid or not) exactly as `\v 1a`
- * retags the number. Without this arm the edited bytes were unreachable by any settle: nothing
- * pended them, the note-scoped rebuild refuses a non-canonical caller shape outright
- * (`$buildNoteFragment`), and serialization leaked the whole diverged caller text into note
- * content (the reverse adaptor only drops a byte-exact caller).
+ * `leadingAttributeNames`, `shared`). Whatever the user does to it, the screen ends showing the
+ * note's caller and the file gets the same bytes:
  *
- * Bytes typed PAST the caller's trailing separator are the note's own content, not more of the
- * caller — the same "displayed bytes are the document" rule a verse glyph's trailing rest follows
- * ($verseNodeTransform, `$insertRestAfterGlyph`). This transform runs immediately on every commit
- * that dirties the caller node (it is not deferred to a settle), so splitting the rest out here,
- * in the same tick, keeps every USJ reported between keystrokes free of the caller leaking into
- * content — there is no window where an intermediate `onUsjChange` sees the un-split shape.
+ * - A word between the leading whitespace and a separator (`\f  x `) is the caller, RETAGGED to
+ *   the typed word (PT9 GetNextWord: whole word, valid or not), exactly as `\v 1a` retags the
+ *   number; the whitespace in front of it is structural and collapses.
+ * - No word at all, just the two separators (`\f  `): the caller was deleted, and the note has an
+ *   empty caller (""), which is how Paratext 9 keeps it on screen and how ParatextData reads
+ *   `\f \fr …` back. An empty caller's text is the same two separators
+ *   (`getEditableCallerText("")`), so the slot keeps its shape and a word typed into it later is
+ *   the caller again.
+ * - Either way, bytes typed PAST the separator after the caller's place are the note's own
+ *   content, not more of the caller — the same "displayed bytes are the document" rule a verse
+ *   glyph's trailing rest follows — and move to the start of the content, where the screen shows
+ *   them: a space typed there stays on screen, and words pasted after it start the content.
+ * - Anything else is damage to the caller's own bytes: the note keeps its caller, and its text is
+ *   put back, with the bytes the user typed into it moved to the start of the note's content (see
+ *   `$settleNoteCallerText`). While the collapsed caret is at a caller some of whose own bytes are
+ *   gone (deleted or typed over), the text waits as typed instead, pended for the departure to put
+ *   back: the next keystroke may make it a caller word again — Paratext 9 retags a caller deleted
+ *   and retyped — and meanwhile the document reads as the departure will leave it (the editor→USJ
+ *   conversion moves the same typed bytes to the content).
  *
- * Scope-guarded to shapes with BOTH flanking whitespace runs still present: a deleted flanking
- * separator is separator-deletion territory (the tokenize-identity rule), not whitespace
- * collapse, and falls through to the existing machinery untouched. Collapsed notes never reach
- * this arm — their caller is an atomic `ImmutableNoteCallerNode`, not editable text. A host note
- * editor with `isNoteShellEditable: false` renders the caller in `token` mode instead, where
- * `NoteShellCaretGuardPlugin` keeps the caret from ever resting inside it to type — so this arm
- * never needs to special-case that mode; its scope guard already excludes it.
+ * This transform runs on every commit that dirties the caller node (it is not deferred to a
+ * settle), so every USJ reported between keystrokes is already free of the caller leaking into
+ * content.
+ *
+ * Only the caller TEXT is handled — the unmergeable text child the note builders make (a text
+ * spelling the caller exactly counts too, for a shape built without the flag). Content text that
+ * happens to sit in the caller's slot because the caller was removed is never taken for it
+ * ({@link $restoreRemovedNoteCaller} puts the caller back in front of it). Collapsed notes never
+ * reach this arm — their caller is an atomic `ImmutableNoteCallerNode`, not editable text. A host
+ * note editor with `isNoteShellEditable: false` renders the caller in `token` mode instead, where
+ * `NoteShellCaretGuardPlugin` keeps the caret from ever resting inside it to type.
  *
  * Mutating: call inside `editor.update()` (runs from the TextNode catch-all transform,
  * `$textNodeTier2Transform`).
  *
- * @returns Whether `node` is an expanded note's caller-slot text and this arm consumed the
- *   edit (including the nothing-to-do canonical case).
+ * @returns Whether `node` is an expanded note's caller text and this arm consumed the edit
+ *   (including the nothing-to-do canonical case).
  */
 export function $noteCallerTextTransform(node: TextNode, context: MarkerEditContext): boolean {
   // The same slot scan $buildNoteFragment uses to find the caller.
   if (!$isNoteCallerSlot(node)) return false;
   const note = node.getParent();
   if (!$isNoteNode(note)) return false;
+  const caller = note.getCaller();
   const text = node.getTextContent();
-  if (text === getEditableCallerText(note.getCaller())) {
+  if (text === getEditableCallerText(caller)) {
     context.pendingKeys.delete(node.getKey());
     return true;
   }
-  const match = NOTE_CALLER_TEXT_REGEX.exec(text);
-  if (!match) return false; // other damage keeps today's behavior (literal machinery)
-  const [, caller, rest] = match;
-  // A caret inside the rest maps to its same character in the extracted node; a caret elsewhere
-  // (or none — a programmatic edit) is left untouched. Read BEFORE the mutations below move it.
+  if (!node.isUnmergeable()) return false;
+  context.pendingKeys.delete(node.getKey());
+  const retagged = NOTE_CALLER_TEXT_REGEX.exec(text);
+  if (retagged) {
+    $retagNoteCaller(node, note, retagged[1], retagged[2]);
+    return true;
+  }
+  if ($movePushedNameIntoNoteGlyph(node, caller)) return true;
+  // A caller whose own bytes are gone waits as typed while the caret is at it: the next keystroke
+  // may make it a caller word again (Paratext 9's delete-then-type retag). The departure puts it
+  // back, as below, and the document reads that way meanwhile. Only a text that still starts with
+  // the separator after the note's marker can become a caller word again, and a typed `\` starts
+  // none: without the one, or with the other, there is nothing to wait for, and the bytes go to
+  // the content now, where they settle as whatever they spell.
+  if (
+    typedCallerRange(text, caller).missing &&
+    /^[ \u00A0]/.test(text) &&
+    !text.includes("\\") &&
+    $isCaretAtNoteCaller(node)
+  ) {
+    context.pendingKeys.add(node.getKey());
+    return true;
+  }
+  $settleNoteCallerText(node, note);
+  return true;
+}
+
+/**
+ * Move whitespace the user just typed at the start of a plain text that follows a verse glyph onto
+ * the glyph — the separator run after the verse number, where typing at the glyph's end puts it.
+ * The caret at the text's start and the one at the glyph's end are one place on screen, and a
+ * reader skips this whitespace (ParatextData's `GetNextWord` after a verse number), so left in the
+ * text it saves a byte a reload drops, and the same place saves two different files. On the glyph
+ * the run stays on screen and the file is unaffected (docs/standard-view-invariants.md §4).
+ *
+ * The same holds after a note's caller, which `GetNextWord` reads too. Where the host governs the
+ * caller (`token` mode, `ViewOptions.isNoteShellEditable: false`), the caret guard puts the caret
+ * for the start of the note's content at the caller's end, so a space typed there is such a text;
+ * the caller takes no typing, so the whitespace is dropped, as an editable caller folds away
+ * whitespace typed at its end.
+ *
+ * Only while the caret is in that leading whitespace: text loaded that way is left alone.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the whitespace moved.
+ */
+export function $moveLeadingSpaceOntoLeadingAttribute(node: TextNode): boolean {
+  if (!$isPlainNoteText(node)) return false;
+  const text = node.getTextContent();
+  const space = /^[ \u00A0]+/.exec(text)?.[0];
+  if (!space) return false;
+  const previous = node.getPreviousSibling();
+  const isProtectedCaller =
+    $isTextNode(previous) && previous.getMode() === "token" && !!$noteOfCallerText(previous);
+  if (!$isTextNode(previous) || !($isVerseNode(previous) || isProtectedCaller)) return false;
   const selection = $getSelection();
-  const caretOffset =
+  if (
+    !$isRangeSelection(selection) ||
+    !selection.isCollapsed() ||
+    selection.anchor.key !== node.getKey() ||
+    selection.anchor.offset > space.length
+  )
+    return false;
+  const caret = selection.anchor.offset;
+  const rest = text.slice(space.length);
+  const end = previous.getTextContentSize();
+  if (previous.getMode() === "token") previous.select(end, end);
+  else {
+    previous.setTextContent(previous.getTextContent() + space);
+    previous.select(end + caret, end + caret);
+  }
+  if (rest) node.setTextContent(rest);
+  else node.remove();
+  return true;
+}
+
+/**
+ * Retag an expanded note's caller text `node` to `word` (PT9 GetNextWord; empty when the slot holds
+ * no word), and move `rest`, the bytes after the separator that ends the word, to the start of the
+ * note's content, spelled as content reads them (a no-break space as the space it stands for). A
+ * caret in `rest` (or right behind the separator) moves with it; a caret anywhere else in the text
+ * stays on the same byte of the caller word, or at its nearer end — between the two separators, for
+ * an empty caller, so the next keystroke types a caller there.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $retagNoteCaller(node: TextNode, note: NoteNode, word: string, rest: string): void {
+  const text = node.getTextContent();
+  const restStart = text.length - rest.length;
+  const leadingRun = /^[ \u00A0]*/.exec(text)?.[0].length ?? 0;
+  const selection = $getSelection();
+  const caret =
     $isRangeSelection(selection) &&
     selection.isCollapsed() &&
     selection.anchor.key === node.getKey()
       ? selection.anchor.offset
       : undefined;
-  context.pendingKeys.delete(node.getKey());
-  if (caller !== note.getCaller()) note.setCaller(caller); // PT9 GetNextWord: whole word, valid or not
-  node.setTextContent(getEditableCallerText(caller));
-  if (rest) {
-    const prefixLength = text.length - rest.length;
-    const target =
-      caretOffset !== undefined && caretOffset >= prefixLength
-        ? caretOffset - prefixLength
-        : undefined;
-    // Both sides of this new seam are plain, normal-mode TextNodes — exactly what Lexical's own
-    // simple-text normalization (`$normalizeTextNode`) coalesces back into one on the very next
-    // commit, which re-triggers this arm on the re-merged text forever ("One or more transforms
-    // are endlessly triggering additional transforms"). `toggleUnmergeable` is Lexical's own
-    // opt-out for this ("prefer this method over setDetail"); a verse's glyph never needed it
-    // because a VerseNode is not itself simple text, so this arm is the first to hit it.
-    if (!node.isUnmergeable()) node.toggleUnmergeable();
-    const restNode = $insertRestAfterGlyph(node, rest, target);
-    if (!restNode.isUnmergeable()) restNode.toggleUnmergeable();
+  if (note.getCaller() !== word) note.setCaller(word); // PT9 GetNextWord: whole word, valid or not
+  node.setTextContent(getEditableCallerText(word));
+  const content = rest ? $prependNoteContent(note, node, rest.replaceAll(NBSP, " ")) : undefined;
+  if (caret === undefined) return;
+  if (caret >= restStart) {
+    // Past the separator: in the moved bytes, or right behind the separator when there are none.
+    const offset = caret - restStart;
+    if (content) content.select(offset, offset);
+    else node.select(node.getTextContentSize(), node.getTextContentSize());
+    return;
   }
+  // The caller text's leading separator is one byte, whatever run the user left in front of it.
+  const offset = 1 + Math.min(Math.max(caret - leadingRun, 0), word.length);
+  node.select(offset, offset);
+}
+
+/**
+ * Move the name bytes or `*` the user just typed at the very front of an expanded note's caller
+ * text — in front of the separator after the note's marker — into the note's opening glyph. That
+ * caret and the one at the glyph's end are one place on screen, and the bytes read `\fx` or `\f*`
+ * there: a marker edit, which the glyph settles. A `\` is left to the caller text's own arm, which
+ * moves it to the content, as it does a `\` typed at the glyph's end
+ * ({@link $moveNoteGlyphTailToCaller}): read with the marker it would leave the note no caller and
+ * the caller's bytes as content.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the bytes moved.
+ */
+function $movePushedNameIntoNoteGlyph(callerNode: TextNode, caller: string): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const { anchor } = selection;
+  if (anchor.key !== callerNode.getKey() || anchor.type !== "text") return false;
+  const text = callerNode.getTextContent();
+  const pushed = text.slice(0, anchor.offset);
+  if (text.slice(anchor.offset) !== getEditableCallerText(caller)) return false;
+  if (!BYTES_READ_WITH_MARKER_REGEX.test(pushed) || pushed.includes("\\")) return false;
+  const glyph = callerNode.getPreviousSibling();
+  if (!$isMarkerNode(glyph) || glyph.getMarkerSyntax() !== "opening") return false;
+  if (!BARE_OPENER_REGEX.test(glyph.getTextContent())) return false;
+  const glyphText = glyph.getTextContent() + pushed;
+  callerNode.setTextContent(getEditableCallerText(caller));
+  glyph.setTextContent(glyphText);
+  glyph.select(glyphText.length, glyphText.length);
   return true;
+}
+
+/**
+ * Move a `|`, `\` or whitespace the user just typed at the end of an expanded note's opening glyph
+ * to the front of its caller text: that caret and the one at the caller text's front are one place
+ * on screen, and these bytes do not read with the marker (`\f` before them is still `\f`). The
+ * caller text's own arm then settles them as typed there — a space into the separator, the others
+ * to the start of the note's content, the caller keeping its own bytes.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the bytes moved.
+ */
+function $moveNoteGlyphTailToCaller(glyph: MarkerNode): boolean {
+  const note = glyph.getParent();
+  if (!$isNoteNode(note) || note.getIsCollapsed() !== false) return false;
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const text = glyph.getTextContent();
+  const { anchor } = selection;
+  if (anchor.key !== glyph.getKey() || anchor.offset !== text.length) return false;
+  const spelled = openingMarkerText(glyph.getMarker());
+  const tail = text.slice(spelled.length);
+  if (!text.startsWith(spelled) || !/^[|\\\s]+$/.test(tail)) return false;
+  const callerNode = glyph.getNextSibling();
+  if (!$isTextNode(callerNode) || $isMarkerNode(callerNode) || !callerNode.isUnmergeable())
+    return false;
+  glyph.setTextContent(spelled);
+  callerNode.setTextContent(tail + callerNode.getTextContent());
+  callerNode.select(tail.length, tail.length);
+  return true;
+}
+
+/**
+ * Whether the collapsed caret is at an expanded note's caller text `callerNode`: in it, or at the
+ * start of what follows it — where the caret rests after deleting the caller's last byte.
+ */
+function $isCaretAtNoteCaller(callerNode: TextNode): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const { anchor } = selection;
+  if (anchor.key === callerNode.getKey()) return true;
+  const next = callerNode.getNextSibling();
+  return anchor.offset === 0 && next !== null && anchor.key === next.getKey();
+}
+
+/**
+ * Put an expanded note's caller text `node` back to its caller, moving the bytes typed into it —
+ * after its separator, onto its word, in front of it, or over all of it — to the start of the
+ * note's content, where the screen shows them; the caller's own bytes never move. A caret in
+ * those bytes moves with them; a caret anywhere else past the caller lands at the content's start,
+ * so the next keystroke is content too.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+function $settleNoteCallerText(node: TextNode, note: NoteNode): void {
+  const caller = note.getCaller();
+  const text = node.getTextContent();
+  const { start: movedStart } = typedCallerRange(text, caller);
+  const moved = typedCallerBytes(text, caller);
+  const selection = $getSelection();
+  const caret =
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === node.getKey()
+      ? selection.anchor.offset
+      : undefined;
+  node.setTextContent(getEditableCallerText(caller));
+  const content = moved ? $prependNoteContent(note, node, moved) : undefined;
+  if (caret === undefined) return;
+  if (content && caret >= movedStart) {
+    const offset = Math.min(caret - movedStart, moved.length);
+    content.select(offset, offset);
+  } else $selectNoteContentStart(note, node);
+}
+
+/**
+ * The expanded note whose editable caller text `node` is — the unmergeable text in the note's
+ * caller slot, right after its opening glyph(s) — or `undefined`.
+ *
+ * Read-only: safe inside `editor.update()` or either read form.
+ */
+export function $noteOfCallerText(node: LexicalNode): NoteNode | undefined {
+  if (!$isTextNode(node) || $isMarkerNode(node) || !node.isUnmergeable()) return undefined;
+  const note = node.getParent();
+  if (!$isNoteNode(note) || note.getIsCollapsed() !== false) return undefined;
+  let slot: LexicalNode | null = note.getFirstChild();
+  while ($isMarkerNode(slot) && slot.getMarkerSyntax() === "opening") slot = slot.getNextSibling();
+  return node.is(slot) ? note : undefined;
+}
+
+/**
+ * Settle a pended expanded-note caller text — one that waited as typed while the caret was at it
+ * ({@link $noteCallerTextTransform}): put back as its caller, the bytes typed into it moved to the
+ * note's content. The idle tick leaves it waiting while the caret is still at it, so a pause
+ * between deleting the caller and typing the next one does not put the old one back.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns `undefined` when `node` is no such caller text; otherwise whether anything changed.
+ */
+function $settlePendedNoteCaller(
+  node: LexicalNode,
+  context: MarkerEditContext,
+  settleReason: SettleReason,
+): boolean | undefined {
+  const note = $noteOfCallerText(node);
+  if (!note || !$isTextNode(node)) return undefined;
+  if (node.getTextContent() === getEditableCallerText(note.getCaller())) return false;
+  if (settleReason === "idle" && $isCaretAtNoteCaller(node)) {
+    context.pendingKeys.add(node.getKey());
+    return false;
+  }
+  $settleNoteCallerText(node, note);
+  return true;
+}
+
+/** The node the note's content starts at: the first child after its caller text and the caller's
+ * `\cat` display run, or `null` when the note has no content. */
+function $noteContentStart(note: NoteNode, callerNode: TextNode): LexicalNode | null {
+  const { wrapper, closer } = $noteCategoryRunPieces(note);
+  return (wrapper ?? closer ?? callerNode).getNextSibling();
+}
+
+/** Whether `node` is plain content text a typed byte can join. */
+function $isPlainNoteText(node: LexicalNode | null): node is TextNode {
+  return (
+    $isTextNode(node) &&
+    node.getType() === TextNode.getType() &&
+    node.getMode() === "normal" &&
+    !node.isUnmergeable() &&
+    $getState(node, textTypeState) !== "attribute"
+  );
+}
+
+/** Put `bytes` at the start of the note's content — joining a plain text that starts it, or as
+ * a text of their own — and return the text holding them (they start at its offset 0). */
+function $prependNoteContent(note: NoteNode, callerNode: TextNode, bytes: string): TextNode {
+  const start = $noteContentStart(note, callerNode);
+  if ($isPlainNoteText(start)) {
+    start.setTextContent(bytes + start.getTextContent());
+    return start;
+  }
+  const text = $createTextNode(bytes);
+  if (start) start.insertBefore(text);
+  else note.append(text);
+  return text;
+}
+
+/** Put the caret at the start of the note's content: offset 0 of a text that starts it, or the
+ * boundary in front of whatever else does. */
+function $selectNoteContentStart(note: NoteNode, callerNode: TextNode): void {
+  const start = $noteContentStart(note, callerNode);
+  if ($isPlainNoteText(start)) start.select(0, 0);
+  else if (start) note.select(start.getIndexWithinParent(), start.getIndexWithinParent());
+  else note.select(note.getChildrenSize(), note.getChildrenSize());
+}
+
+/**
+ * Put back an expanded note's editable caller text when the node holding it was removed (a range
+ * deletion over the caller, or Backspace across it): a note keeps its caller, and without its
+ * text the screen shows `\fnote text\f*` while the file gets `\f + note text\f*`. The caller
+ * text is the note's one unmergeable text child (`toggleUnmergeable`, given it by both note
+ * builders), so a slot holding any other node — content text included — has lost it, unless that
+ * node spells the caller exactly (a shape built without the flag). Only a
+ * note whose opening glyph is intact: deleting the glyph unwraps the note
+ * (`$noteDeletionTransform`).
+ *
+ * Mutating: call inside `editor.update()` (runs from MarkerEditPlugin's NoteNode transform).
+ */
+export function $restoreRemovedNoteCaller(note: NoteNode, context: MarkerEditContext): void {
+  if (!note.isAttached() || note.getIsCollapsed() !== false) return;
+  const caller = note.getCaller();
+  if (!leadingAttributeNames(note.getMarker())?.includes("caller")) return;
+  const children = note.getChildren();
+  let slot = 0;
+  while (slot < children.length) {
+    const child = children[slot];
+    if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
+    slot++;
+  }
+  if (slot === 0) return;
+  const occupant = children[slot];
+  if (
+    $isTextNode(occupant) &&
+    !$isMarkerNode(occupant) &&
+    (occupant.isUnmergeable() || occupant.getTextContent() === getEditableCallerText(caller))
+  )
+    return;
+  const callerNode = $createTextNode(getEditableCallerText(caller)).toggleUnmergeable();
+  if (context.viewOptions?.isNoteShellEditable === false) callerNode.setMode("token");
+  children[slot - 1].insertAfter(callerNode);
+  // A caret left at the glyph's end or the note's boundary there lands at the content's start, so
+  // the next keystroke is content rather than caller.
+  const selection = $getSelection();
+  if (
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    (selection.anchor.key === children[slot - 1].getKey() ||
+      (selection.anchor.key === note.getKey() && selection.anchor.offset === slot))
+  )
+    $selectNoteContentStart(note, callerNode);
+}
+
+/**
+ * Keep a protected note shell's closing glyph where the screen needs it: last in the note, and
+ * there at all. The shell is protected when the host governs it (`ViewOptions.isNoteShellEditable:
+ * false`), which builds its glyphs in `token` mode — read off the opener's mode, as the caret guard
+ * reads it. Such a closer is not text the user edits, so nothing the keyboard does may leave the
+ * screen disagreeing with the closed note the file keeps:
+ *
+ * - Backspace after it, or Delete in front of it, removes a `token` node whole. The note stays
+ *   closed (its `closed` attribute says so, not the glyph), so the glyph is put back.
+ * - Text inserted at its end lands inside the note, behind it — Lexical puts an insertion at a
+ *   `token` node's trailing boundary in a new sibling of that node. The caret guard never leaves a
+ *   caret there, but text that still arrives (typed in the update that placed the caret) moves in
+ *   front of the closer, to the end of the note's content, which is where the screen then shows
+ *   it. After the note is no place for it: the host that protects the shell edits the note alone
+ *   (the footnote popover saves only the note), so it would be lost.
+ * - Text inserted at its front lands as a note child in front of it. When the content span before
+ *   it shows no closer of its own (`\ft`, whose bytes run on to the note's closer), the screen
+ *   shows the text as that span's and a reload reads it so; it joins the span.
+ *
+ * An unclosed note (`closed="false"`) has no closer by construction and is left alone.
+ *
+ * Mutating: call inside `editor.update()` (runs from MarkerEditPlugin's NoteNode transform).
+ */
+export function $keepProtectedNoteCloser(note: NoteNode): void {
+  if (!note.isAttached() || note.getIsCollapsed() !== false) return;
+  const children = note.getChildren();
+  const opener = children.find(
+    (child) => $isMarkerNode(child) && child.getMarkerSyntax() === "opening",
+  );
+  if (!$isMarkerNode(opener) || opener.getMode() !== "token") return;
+  if (note.getUnknownAttributes()?.closed === "false") return;
+
+  let closer = children.find(
+    (child): child is MarkerNode => $isMarkerNode(child) && child.getMarkerSyntax() === "closing",
+  );
+  if (!closer) {
+    closer = $createMarkerNode(note.getMarker(), "closing");
+    closer.setMode("token");
+    note.append(closer);
+  }
+
+  // Behind the closer: in front of it, in order — the end of the note's content.
+  for (let behind = closer.getNextSibling(); behind; behind = closer.getNextSibling())
+    closer.insertBefore(behind);
+
+  // In front of it, as a note child: into the closer-less span the screen shows it in.
+  const front = closer.getPreviousSibling();
+  const span = front?.getPreviousSibling();
+  if (
+    $isPlainNoteText(front) &&
+    $isCharNode(span) &&
+    !span
+      .getChildren()
+      .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing")
+  )
+    span.append(front);
 }
 
 /**
@@ -1141,12 +1728,14 @@ export function $settlePendedDisplayOwner(
   // more whitespace), the deletion cannot mean anything and the O(1) in-place heal settles it —
   // no paragraph rebuild. When they do not (`\ndthings` renames the marker; `\nd*` is a closing
   // marker the user is entitled to), the gap is left for the re-tokenize fallback below, where
-  // the displayed bytes win. The predicate lives beside the tokenizer's own name scan
-  // (usfmFragmentToUsj.ts) so the two can never drift.
+  // the displayed bytes win — except in a block no settle scope re-tokenizes (a table cell), where
+  // the heal is the only settle there is. `$hasRenamingSeparatorGap` is the separator sync's own
+  // rule, so the settle and the sync never disagree about a gap; its predicate lives beside the
+  // tokenizer's name scan (usfmFragmentToUsj.ts) so the two can never drift.
   let separatorHealed = false;
   if ($isCharNode(node)) {
     const gapBytes = $openerSeparatorGapFollowingBytes(node);
-    if (gapBytes !== undefined && separatorRemovalTokenizesIdentically(gapBytes)) {
+    if (gapBytes !== undefined && !$hasRenamingSeparatorGap(node)) {
       $syncOpenerSeparators(node);
       separatorHealed = true;
       mutated = true;
@@ -1288,7 +1877,20 @@ export function $resolvePendingMarkers(
   let mutated = false;
   if (context.pendingKeys.size === 0) return mutated;
   const exceptKeys = $exceptKeysAround(exceptKey);
-  const keys = [...context.pendingKeys].filter((key) => !exceptKeys.has(key));
+  // In-place char opener renames settle first, so a re-tokenize of the same scope later in the
+  // pass reads the renamed span rather than its old closer — whichever key was pended first. The
+  // read-only settle applies them the same way (`$fragmentWithCharOpenerRenames`).
+  const pended = [...context.pendingKeys].filter((key) => !exceptKeys.has(key));
+  const renameKeys = new Set(
+    pended.filter((key) => {
+      const node = $getNodeByKey(key);
+      return !!node?.isAttached() && !!$pendingCharOpenerRename(node, context.getMarker);
+    }),
+  );
+  const keys = [
+    ...pended.filter((key) => renameKeys.has(key)),
+    ...pended.filter((key) => !renameKeys.has(key)),
+  ];
   // Owners already routed through their settle in THIS pass. Several pended PIECES can map to one
   // owner (a verse's `\va` and `\vp` values are two runs sharing one owner identity, and every
   // attribute value pends under its own key — $textNodeTier2Transform), and the settle is not
@@ -1299,6 +1901,11 @@ export function $resolvePendingMarkers(
     const node: LexicalNode | null = $getNodeByKey(key);
     if (!node?.isAttached()) {
       context.pendingKeys.delete(key);
+      continue;
+    }
+    if ($noteOfCallerText(node)) {
+      context.pendingKeys.delete(key);
+      mutated = $settlePendedNoteCaller(node, context, settleReason) || mutated;
       continue;
     }
     if ($isMarkerNode(node)) {

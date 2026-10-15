@@ -599,7 +599,9 @@ describe("typing into a note with no content (`\\f + \\f*`)", () => {
               .find((node) => node.getTextContent() === "after"),
             "text after the note",
           );
-          after.select(0, 0);
+          // Past the text's first character: its start is the protected closer's end on screen,
+          // which the note shell guard keeps inside the note.
+          after.select(1, 1);
         },
         { discrete: true },
       );

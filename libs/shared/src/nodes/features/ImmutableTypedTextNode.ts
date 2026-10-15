@@ -122,6 +122,11 @@ export class ImmutableTypedTextNode extends DecoratorNode<null> {
     return self.__text;
   }
 
+  /** The text this glyph shows on screen, which {@link createDOM} writes into its element. */
+  getRenderedText(): string {
+    return this.getTextContent();
+  }
+
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
     dom.setAttribute("data-text-type", this.__textType);

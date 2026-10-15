@@ -44,8 +44,8 @@
  * attribute list that does not parse — degrades to the plain char/para output
  * the marker classification produces on its own.
  *
- * Input is USFM text: `~` means NBSP; U+FFFC sentinels (atomic-node placeholders
- * from the Tier 2 fragment builder) ride through as ordinary text characters.
+ * Input is USFM text: `~` means NBSP; each {@link PRESERVED_NODE_PLACEHOLDER} stands for one node
+ * the caller keeps out of the bytes (see {@link UsfmFragmentOptions.placeholders}).
  */
 
 import { NBSP, PARA_MARKER_DEFAULT, ZWSP } from "../../nodes/usj/node-constants.js";
@@ -56,6 +56,24 @@ import { MarkerLookup } from "../../utils/usfm/styleInfo.js";
 import { MarkerType } from "../../utils/usfm/usfmTypes.js";
 import { MarkerContent, MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 
+/**
+ * The character a caller puts in a fragment in place of one node it keeps out of the bytes (a
+ * collapsed note, a milestone the tokenizer cannot re-derive, …) and puts back over the parsed
+ * output afterwards. The placeholder itself lands in the output as one text character.
+ *
+ * The node's own bytes start with a marker, so the placeholder parses the way that marker's `\`
+ * does: it ends any word being read in front of it — a marker name, a note caller, a verse or
+ * chapter number — exactly as ParatextData's `UsfmToken.Tokenize` ends one at a `\`.
+ */
+export const PRESERVED_NODE_PLACEHOLDER = "\uFFFC";
+
+/**
+ * What a {@link PRESERVED_NODE_PLACEHOLDER} stands for, as far as parsing around it depends on it.
+ * A note or a verse ends the note open in front of it (ParatextData `UsfmParser` closes the note at
+ * either marker); anything else is content wherever it lands.
+ */
+export type PreservedNodeKind = "note" | "verse" | "other";
+
 export interface UsfmFragmentOptions {
   /** Marker classification lookup; defaults to the bundled usfm.sty-derived `getMarker`. */
   getMarker?: MarkerLookup;
@@ -65,6 +83,17 @@ export interface UsfmFragmentOptions {
    * CHARACTER inside a note, PARAGRAPH in body text.
    */
   isNoteContext?: boolean;
+  /**
+   * What each {@link PRESERVED_NODE_PLACEHOLDER} in the fragment stands for, in fragment order. A
+   * placeholder with no entry stands for something other than a note or a verse.
+   */
+  placeholders?: readonly PreservedNodeKind[];
+  /**
+   * True when the fragment opens with the glyph of a paragraph whose marker is the empty name
+   * (shown as a bare `\`), so a bare `\` opening the fragment reads as that nameless marker
+   * rather than as text. Ignored in note content.
+   */
+  opensNamelessParagraph?: boolean;
 }
 
 const VERSE_MARKER = "v";
@@ -121,7 +150,9 @@ type Token =
   | { kind: "chapter"; number: string }
   | { kind: "note"; marker: string; caller: string }
   | { kind: "milestone"; marker: string; attributes?: { [attributeName: string]: string } }
-  | { kind: "optbreak" }; // USFM discretionary line break `//`
+  | { kind: "optbreak" } // USFM discretionary line break `//`
+  // A placeholder for a note or a verse: it ends an open note the way the node's own marker does.
+  | { kind: "noteEndingPlaceholder" };
 
 /**
  * PT9 `UsfmToken.IsNonSemanticWhiteSpace`: everything .NET counts as whitespace EXCEPT IDEOGRAPHIC
@@ -257,7 +288,7 @@ function scanMarkerName(fragment: string, start: number): { name: string; next: 
   let index = start;
   while (index < fragment.length) {
     const ch = fragment[index];
-    if (ch === "\\" || ch === "|") break;
+    if (ch === "\\" || ch === "|" || ch === PRESERVED_NODE_PLACEHOLDER) break;
     if (ch === "*") {
       index++;
       break;
@@ -266,6 +297,34 @@ function scanMarkerName(fragment: string, start: number): { name: string; next: 
     index++;
   }
   return { name: fragment.slice(start, index), next: index };
+}
+
+/**
+ * Whether the bare `\` at `start` is the marker of a nameless paragraph — the empty name
+ * ParatextData 9.6 reads in `\ df` (`<para style="">df</para>`): its tokenizer reads a marker at a
+ * token start even when the name is empty, and resolves that unknown token as a paragraph in body
+ * text (UsfmParser.DetermineUnknownTokenType). A `\` after text stays text there, because its text
+ * scan only stops at a `\` followed by a name character.
+ *
+ * Read so only where the caller says the fragment opens with a nameless paragraph's glyph
+ * ({@link UsfmFragmentOptions.opensNamelessParagraph}), and only for the first `\` of the
+ * fragment, with nothing but whitespace in front of it — where a `\p` would still open a paragraph
+ * of its own. Everywhere else a bare `\` stays literal, ParatextData's token starts included: a
+ * `\` typed right after another marker, or left by deleting a marker's name, is text the user has
+ * not named yet, not a paragraph break.
+ *
+ * The name ends where it would after a named marker: at whitespace, at the end, or at another
+ * `\`. A `\` directly before `|` or a preserved-node placeholder stays literal.
+ */
+function readsAsNamelessMarker(
+  fragment: string,
+  start: number,
+  opensNamelessParagraph: boolean,
+): boolean {
+  if (!opensNamelessParagraph) return false;
+  if (!/^[\s\u00A0\u200B]*$/.test(fragment.slice(0, start))) return false;
+  const following = fragment[start + 1];
+  return following === undefined || following === "\\" || /[\s\u00A0\u200B]/.test(following);
 }
 
 /** Milestone names the Paratext stylesheet family declares: `\qt-s/-e`, `\qt1-s`…`\qt5-e`,
@@ -289,20 +348,50 @@ export function isMilestoneHeuristicName(name: string): boolean {
   return STYLESHEET_MILESTONE_NAME_REGEX.test(name) || isMilestoneCommentMarker(name);
 }
 
-/** PT9 `GetNextWord`: skip leading whitespace, take up to whitespace or `\`. */
+/** PT9 `GetNextWord`: skip leading whitespace, take up to whitespace or `\` — or a placeholder,
+ * which stands for bytes that start with `\`. */
 function getNextWord(fragment: string, start: number): { word: string; next: number } {
   let index = start;
   while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
   const wordStart = index;
-  while (index < fragment.length && !/[\s\u00A0\u200B\\]/.test(fragment[index])) index++;
+  while (
+    index < fragment.length &&
+    fragment[index] !== PRESERVED_NODE_PLACEHOLDER &&
+    !/[\s\u00A0\u200B\\]/.test(fragment[index])
+  )
+    index++;
   const word = fragment.slice(wordStart, index);
   while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
   return { word, next: index };
 }
 
-function tokenize(fragment: string, getMarkerFn: MarkerLookup, isNoteContext: boolean): Token[] {
+/** The fragment offsets of the placeholders that stand for a note or a verse, in order. */
+function noteEndingPlaceholderOffsets(
+  fragment: string,
+  placeholders: readonly PreservedNodeKind[],
+): number[] {
+  const offsets: number[] = [];
+  let ordinal = 0;
+  for (let offset = 0; offset < fragment.length; offset++) {
+    if (fragment[offset] !== PRESERVED_NODE_PLACEHOLDER) continue;
+    const kind = placeholders[ordinal];
+    ordinal++;
+    if (kind === "note" || kind === "verse") offsets.push(offset);
+  }
+  return offsets;
+}
+
+function tokenize(
+  fragment: string,
+  getMarkerFn: MarkerLookup,
+  isNoteContext: boolean,
+  placeholders: readonly PreservedNodeKind[],
+  opensNamelessParagraph: boolean,
+): Token[] {
   const tokens: Token[] = [];
   let index = 0;
+  const noteEnding = noteEndingPlaceholderOffsets(fragment, placeholders);
+  let nextNoteEnding = 0;
   // PT9 resolves an unknown marker against the OPEN ELEMENT STACK, not against the fragment it
   // started in (`State.Stack.Exists(e => e.Type == Note)`, UsfmParser.cs). A note opened inside
   // this fragment puts one on that stack just as surely as being handed note content does, so
@@ -327,8 +416,17 @@ function tokenize(fragment: string, getMarkerFn: MarkerLookup, isNoteContext: bo
 
   while (index < fragment.length) {
     if (fragment[index] !== "\\") {
+      while (nextNoteEnding < noteEnding.length && noteEnding[nextNoteEnding] < index)
+        nextNoteEnding++;
+      if (noteEnding[nextNoteEnding] === index) {
+        openNoteMarker = undefined;
+        tokens.push({ kind: "noteEndingPlaceholder" });
+        index++;
+        continue;
+      }
       const nextMarker = fragment.indexOf("\\", index);
-      const end = nextMarker === -1 ? fragment.length : nextMarker;
+      let end = nextMarker === -1 ? fragment.length : nextMarker;
+      if (nextNoteEnding < noteEnding.length) end = Math.min(end, noteEnding[nextNoteEnding]);
       pushTextWithOptbreaks(regularizeSpaces(fragment.slice(index, end)));
       index = end;
       continue;
@@ -338,8 +436,19 @@ function tokenize(fragment: string, getMarkerFn: MarkerLookup, isNoteContext: bo
     const { name, next } = scanMarkerName(fragment, index + 1);
     index = next;
 
+    // Consume the separator whitespace after an opening marker (PT9 skips it) — all leading
+    // whitespace, not just a single space.
+    const consumeSeparator = () => {
+      while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
+    };
+
     if (name === "") {
-      // Bare `\` — literal (degradation property).
+      if (readsAsNamelessMarker(fragment, rawStart, opensNamelessParagraph)) {
+        consumeSeparator();
+        tokens.push({ kind: "para", marker: "" });
+        continue;
+      }
+      // Bare `\` anywhere else — literal (degradation property).
       pushText(fragment.slice(rawStart, index));
       continue;
     }
@@ -356,12 +465,6 @@ function tokenize(fragment: string, getMarkerFn: MarkerLookup, isNoteContext: bo
       tokens.push({ kind: "end", marker: name.slice(0, -1) });
       continue;
     }
-
-    // Consume the separator whitespace after an opening marker (PT9 skips it) — all leading
-    // whitespace, not just a single space.
-    const consumeSeparator = () => {
-      while (index < fragment.length && /[\s\u00A0\u200B]/.test(fragment[index])) index++;
-    };
 
     if (name === VERSE_MARKER) {
       const { word, next: afterWord } = getNextWord(fragment, index);
@@ -387,7 +490,9 @@ function tokenize(fragment: string, getMarkerFn: MarkerLookup, isNoteContext: bo
       const { word, next: afterWord } = getNextWord(fragment, index);
       index = afterWord;
       openNoteMarker = name;
-      tokens.push({ kind: "note", marker: name, caller: word || "+" });
+      // ParatextData's reading: the next word, stopping at a `\`, and an empty caller when there is
+      // none (UsxUsfmParserSink.StartNote writes `caller=""`).
+      tokens.push({ kind: "note", marker: name, caller: word });
       continue;
     }
     if (kind === MarkerType.Milestone || (kind === undefined && isMilestoneHeuristicName(name))) {
@@ -464,6 +569,21 @@ export const ATTRIBUTE_MARKERS: {
   va: { attrName: "altnumber", targetTypes: ["verse"], shape: "char" },
   vp: { attrName: "pubnumber", targetTypes: ["verse"], shape: "char" },
   cat: { attrName: "category", targetTypes: ["note", "sidebar"], shape: "char" },
+};
+
+/**
+ * The order a target's attribute markers fold in, by USJ node type. ParatextData folds each one
+ * ONCE, in this order, from the tokens directly after the target: the Chapter case asks for one
+ * `\ca` and then one `\cp` (UsfmParser.cs:320-321), the Verse case one `\va` and then one `\vp`
+ * (:338-339), a note or sidebar one `\cat` (:378-386, :473-481). A second `\ca`, or a `\ca` after
+ * the `\cp`, is left for the parser to process as an ordinary marker, so its bytes stay in the
+ * document rather than overwriting the attribute an earlier span set.
+ */
+const ATTRIBUTE_FOLD_ORDER: { readonly [targetType: string]: readonly string[] } = {
+  chapter: ["ca", "cp"],
+  verse: ["va", "vp"],
+  note: ["cat"],
+  sidebar: ["cat"],
 };
 
 /**
@@ -939,6 +1059,14 @@ export function usfmFragmentToUsjContent(
   // The most recent chapter/verse/note object, still "receptive": an adjacent attribute
   // marker folds onto it as an attribute. Any real content clears it.
   let attrTarget: MarkerObject | undefined;
+  // How far through its target's fold order (`ATTRIBUTE_FOLD_ORDER`) the receptive window has
+  // folded: each attribute marker folds once, and only after the ones before it.
+  let attrFoldedThrough = -1;
+  /** Open the receptive window on `target`, which has folded nothing yet. */
+  const receiveAttributes = (target: MarkerObject) => {
+    attrTarget = target;
+    attrFoldedThrough = -1;
+  };
   // Whitespace-only text held while attrTarget is receptive: structural (dropped) if an
   // attribute marker follows; ordinary content (flushed) otherwise.
   let heldWhitespace = "";
@@ -1086,7 +1214,13 @@ export function usfmFragmentToUsjContent(
     figCapture = undefined;
   };
 
-  const tokens = tokenize(fragment, options?.getMarker ?? getMarker, isNoteContext);
+  const tokens = tokenize(
+    fragment,
+    options?.getMarker ?? getMarker,
+    isNoteContext,
+    options?.placeholders ?? [],
+    !isNoteContext && options?.opensNamelessParagraph === true,
+  );
   for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
     const token = tokens[tokenIndex];
 
@@ -1169,8 +1303,8 @@ export function usfmFragmentToUsjContent(
           //
           // What DOES re-enter the window is a foldable PARA token, and `cp` is the only
           // `shape: "para"` attribute marker \u2014 so that means a degenerate duplicate `\cp` on one
-          // chapter, which does still fold across the materialized empty para (probed). Closing
-          // the window here would add a branch for a shape no document has.
+          // chapter. It does not fold: the empty span was the chapter's one `\cp`
+          // (`ATTRIBUTE_FOLD_ORDER`), and ParatextData folds neither of the two.
           startParagraph(attrCapture.marker);
           attrCapture = undefined;
         } else {
@@ -1279,7 +1413,13 @@ export function usfmFragmentToUsjContent(
       } else if (token.kind === "charOpen" || token.kind === "para") {
         const foldable =
           token.kind === "para" || !token.isNested ? attributeMarker(token.marker) : undefined;
-        if (foldable && foldable.targetTypes.includes(attrTarget.type)) {
+        const foldIndex = ATTRIBUTE_FOLD_ORDER[attrTarget.type]?.indexOf(token.marker) ?? -1;
+        if (
+          foldable &&
+          foldable.targetTypes.includes(attrTarget.type) &&
+          foldIndex > attrFoldedThrough
+        ) {
+          attrFoldedThrough = foldIndex;
           // Whitespace between the target and its attribute marker is structural — dropped.
           heldWhitespace = "";
           attrCapture = {
@@ -1384,7 +1524,7 @@ export function usfmFragmentToUsjContent(
           blockTarget().push(opened);
           sidebar = opened;
           para = undefined;
-          attrTarget = sidebar; // receptive to \cat (directly after \esb only)
+          receiveAttributes(sidebar); // receptive to \cat (directly after \esb only)
           atChapterRootScope = false;
           break;
         }
@@ -1423,7 +1563,7 @@ export function usfmFragmentToUsjContent(
         closeNote(false);
         const verse: MarkerObject = { type: "verse", marker: VERSE_MARKER, number: token.number };
         pushContent(verse);
-        attrTarget = verse; // receptive to \va/\vp
+        receiveAttributes(verse); // receptive to \va/\vp
         break;
       }
       case "chapter": {
@@ -1442,7 +1582,7 @@ export function usfmFragmentToUsjContent(
           number: token.number,
         };
         result.push(chapter);
-        attrTarget = chapter; // receptive to \ca/\cp
+        receiveAttributes(chapter); // receptive to \ca/\cp
         atChapterRootScope = true;
         break;
       }
@@ -1455,7 +1595,7 @@ export function usfmFragmentToUsjContent(
         note = { type: "note", marker: token.marker, caller: token.caller, content: [] };
         noteBaseDepth = charStack.length;
         target.push(note);
-        attrTarget = note; // receptive to \cat (right after the caller only)
+        receiveAttributes(note); // receptive to \cat (right after the caller only)
         break;
       }
       case "charOpen": {
@@ -1523,6 +1663,10 @@ export function usfmFragmentToUsjContent(
         break;
       case "optbreak":
         pushContent({ type: "optbreak" });
+        break;
+      case "noteEndingPlaceholder":
+        closeNote(false);
+        pushContent(PRESERVED_NODE_PLACEHOLDER);
         break;
     }
   }

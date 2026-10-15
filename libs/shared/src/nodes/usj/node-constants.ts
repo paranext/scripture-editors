@@ -1,5 +1,7 @@
 /** This file avoids a circular dependency between `CharNode.ts` and `node.utils.ts`. */
 
+import { createCommand, LexicalCommand } from "lexical";
+
 export interface UnknownAttributes {
   [name: string]: string | undefined;
 }
@@ -26,6 +28,22 @@ export const GENERATOR_NOTE_CALLER = "+";
  */
 export const HIDDEN_NOTE_CALLER = "-";
 
+/**
+ * Registered type name of the decorator node a collapsed note renders its caller with
+ * (shared-react's `ImmutableNoteCallerNode`). Declared here because this layer must recognize the
+ * node — the editor→USJ conversion emits nothing for it, so it holds no USJ content position —
+ * while being unable to import a react-layer class. The class itself returns this constant from
+ * `getType()`, so the name lives in exactly one place.
+ */
+export const IMMUTABLE_NOTE_CALLER_NODE_TYPE = "immutable-note-caller";
+
+/**
+ * Registered type name of the decorator node a verse renders as outside editable marker mode
+ * (shared-react's `ImmutableVerseNode`), declared here for the same reason as
+ * {@link IMMUTABLE_NOTE_CALLER_NODE_TYPE}. The class returns this constant from `getType()`.
+ */
+export const IMMUTABLE_VERSE_NODE_TYPE = "immutable-verse";
+
 export const CHAPTER_CLASS_NAME = "chapter";
 export const VERSE_CLASS_NAME = "verse";
 export const INVALID_CLASS_NAME = "invalid";
@@ -35,8 +53,29 @@ export const MARKER_MODE_CLASS_NAME_PREFIX = "marker-";
 
 export const EXTERNAL_USJ_MUTATION_TAG = "external-usj-mutation";
 export const SELECTION_CHANGE_TAG = "selection-change";
+/**
+ * Tags a commit that moves the caret AND changes a node on the editor's own initiative (a transient
+ * caret host created or dropped), keeping it out of the host's USJ-change handling. Never put it on
+ * an update that only moves the caret: Lexical clears an update's tags only when its commit changes
+ * a node, so the tag would ride along on the user's next edit and hide that edit from the host. Use
+ * {@link APP_PLACED_CARET_COMMAND} for a caret-only move.
+ */
 export const CURSOR_CHANGE_TAG = "cursor-change";
+/**
+ * Dispatched inside an update that moves ONLY the caret on the editor's own initiative — following
+ * a scripture-reference navigation, or steering the caret off something it cannot rest on — so a
+ * listener can tell that move from the user's own. A command rather than {@link CURSOR_CHANGE_TAG}
+ * because a tag on a caret-only update outlives it (see the tag's own comment).
+ */
+export const APP_PLACED_CARET_COMMAND: LexicalCommand<void> = createCommand(
+  "APP_PLACED_CARET_COMMAND",
+);
 export const ANNOTATION_CHANGE_TAG = "annotation-change";
+/**
+ * The tag every update that wraps a selection in a `TypedMarkNode` carries. The wrap splits
+ * text nodes, and the pieces it creates are the same content in new nodes — never typed text.
+ */
+export const TYPED_MARK_WRAP_TAG = "typed-mark-wrap";
 export const DELTA_CHANGE_TAG = "delta-change";
 /**
  * Marks a commit that carries Lexical's `HISTORY_MERGE_TAG` yet still CHANGES the document — a
@@ -54,3 +93,10 @@ export const blackListedChangeTags = [
   ANNOTATION_CHANGE_TAG,
   DELTA_CHANGE_TAG,
 ];
+
+/**
+ * The `detail` flag of a text node Lexical's normalization never merges with an adjacent text node
+ * (`TextNode.toggleUnmergeable`) — what an expanded note's editable caller text carries, read off
+ * its serialized form. Lexical keeps its detail flags internal, so the value is spelled here.
+ */
+export const UNMERGEABLE_TEXT_DETAIL = 2;

@@ -36,11 +36,27 @@ import {
   LastKnownCaret,
 } from "./markerEdit/virtualSettle.utils";
 import { ParaMarkerPrefixGuardPlugin } from "./ParaMarkerPrefixGuardPlugin";
+import {
+  isLiveSettledIdentical,
+  SettledPositionContext,
+  SettledScopeCache,
+} from "./positions/settledPositions.model";
+import {
+  $liveSelectionFromSettled,
+  $settledSelectionFromLive,
+} from "./positions/settledPositions.utils";
+import { $prepareSettleScopes } from "./positions/settledScopes.utils";
 import { ScriptureReferencePlugin } from "./ScriptureReferencePlugin";
 import TreeViewPlugin from "./TreeViewPlugin";
 import { ToolbarPlugin } from "./toolbar/ToolbarPlugin";
-import { Usj } from "@eten-tech-foundation/scripture-utilities";
+import {
+  ContentJsonPath,
+  MarkerContent,
+  Usj,
+  usjJsonPathFromIndexes,
+} from "@eten-tech-foundation/scripture-utilities";
 import { InitialConfigType, LexicalComposer } from "@lexical/react/LexicalComposer";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
@@ -52,6 +68,7 @@ import { deepEqual } from "fast-equals";
 import {
   $addUpdateTag,
   $createRangeSelection,
+  $getEditor,
   $getNodeByKey,
   $getSelection,
   $isElementNode,
@@ -60,15 +77,17 @@ import {
   $setSelection,
   EditorState,
   LexicalEditor,
-  LexicalNode,
-  HISTORIC_TAG,
   HISTORY_MERGE_TAG,
+  LexicalNode,
+  PointType,
   RangeSelection,
   REDO_COMMAND,
   SELECTION_CHANGE_COMMAND,
   SKIP_DOM_SELECTION_TAG,
   UNDO_COMMAND,
+  UpdateListenerPayload,
 } from "lexical";
+import Delta from "quill-delta";
 import {
   ForwardedRef,
   forwardRef,
@@ -77,6 +96,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -84,17 +104,22 @@ import {
 import {
   $createParaNode,
   $isBookNode,
+  $isNoteNode,
   $isParaNode,
   blackListedChangeTags,
   createMarkerLookup,
   defaultStyleInfo,
   DELTA_CHANGE_TAG,
+  ensurePendedDisplayOwnersCurrent,
+  EXTERNAL_USJ_MUTATION_TAG,
   externalTypedMarkType,
+  getApplyingUpdateSource,
   getPendedDisplayOwners,
   LoggerBasic,
+  markApplyingUpdate,
+  MarkerLookup,
   NoteNode,
   ParaNode,
-  SELECTION_CHANGE_TAG,
   TypedMarkNode,
   TypedMarkOnClick,
   TypedMarkOnMouseEnter,
@@ -103,13 +128,15 @@ import {
 } from "shared";
 import {
   $applyUpdate,
+  $getNodeFromLocation,
   $getNoteByKeyOrIndex,
   $getNoteIndex,
   $getOTPositionOfNode,
   $getParticularNodeOps,
-  $getUsjSelectionFromEditor,
   $getRangeFromUsjSelection,
   $getReplaceEmbedOps,
+  $getUpdateOps,
+  $getUsjSelectionFromEditor,
   $insertNote,
   $selectAfterNote,
   $selectNote,
@@ -127,7 +154,6 @@ import {
   copySelection,
   cutSelection,
   DecoratorBoundarySelectionPlugin,
-  DeltaOnChangePlugin,
   DeltaOp,
   DeltaSource,
   DisableHistoryShortcutsPlugin,
@@ -153,25 +179,115 @@ import {
   pasteSelectionAsPlainText,
   readLatest,
   releaseTagsAfterNextCommit,
+  SelectionRange,
+  shouldSkipUpdateForOps,
   StateChangePlugin,
   StateChangeSnapshot,
   StructureKeyboardPlugin,
   TextDirectionPlugin,
   TextSpacingPlugin,
   TrailingNoteCaretGuardPlugin,
+  usjBlockVerseNodes,
   UsjNodeOptions,
   UsjNodesMenuPlugin,
-  ViewOptions,
-  usjBlockVerseNodes,
   usjReactNodes,
+  ViewOptions,
 } from "shared-react";
 
 const defaultViewOptions = getDefaultViewOptions();
 const defaultNodeOptions: UsjNodeOptions = {};
 const defaultOptions: EditorOptions = {};
+/**
+ * The change listener's blacklist: every tag that keeps a commit out of the host's USJ-change
+ * handling except `DELTA_CHANGE_TAG`. The listener recognizes an apply by `getApplyingUpdateSource`,
+ * not by that tag, because the tag outlives an apply whose commit dirties nothing and would
+ * otherwise hide the user's next edit.
+ */
+const commitIgnoredTags = blackListedChangeTags.filter((tag) => tag !== DELTA_CHANGE_TAG);
 
 function Placeholder(): ReactElement {
   return <div className="editor-placeholder">Enter some Scripture...</div>;
+}
+
+/**
+ * Whether a selection point sits strictly inside a text run — neither at its start nor its end.
+ * Lexical's own DOM `selectionchange` listener drops the resulting `SELECTION_CHANGE_COMMAND`
+ * dispatch when both the anchor and the focus resolve to such a point (`shouldSkipSelectionChange`
+ * in Lexical's core selection handling), on the reasoning that a caret move confined to a text
+ * node's interior needs no further reconciliation. An element-type point, or one at a text node's
+ * boundary, is never skipped.
+ */
+function $isInteriorTextPoint(point: PointType): boolean {
+  return (
+    point.type === "text" &&
+    point.offset !== 0 &&
+    point.offset !== point.getNode().getTextContentSize()
+  );
+}
+
+/** The collapsed text caret of the state being read, or `undefined` when it holds anything else. */
+function $collapsedTextCaret(): LastKnownCaret | undefined {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+  const node = selection.focus.getNode();
+  return $isTextNode(node) ? { key: node.getKey(), offset: selection.focus.offset } : undefined;
+}
+
+/** The jsonPath of every note in `usj`, in document order — what `selectNote`'s index counts
+ * against, so a note still pending as a typed literal counts too. */
+function settledNotePaths(usj: Usj | undefined): ContentJsonPath[] {
+  const out: ContentJsonPath[] = [];
+  const walk = (content: MarkerContent[] | undefined, indexes: number[]) =>
+    content?.forEach((item, index) => {
+      if (typeof item !== "object") return;
+      const here = [...indexes, index];
+      if (item.type === "note") out.push(usjJsonPathFromIndexes(here));
+      walk(item.content, here);
+    });
+  walk(usj?.content, []);
+  return out;
+}
+
+/** Everything `readSettledUsj`'s settle depends on, compared by identity or value. */
+interface SettledUsjMemoKey {
+  editorState: EditorState;
+  /** The pended owner keys, sorted and joined: the engine mutates one Set in place. */
+  pendedKeys: string;
+  transientInput: AnchoredTransientInput | undefined;
+  caretKey: string | undefined;
+  caretOffset: number | undefined;
+  viewOptions: ViewOptions;
+  getMarker: MarkerLookup;
+}
+
+function isSameSettledUsjMemoKey(a: SettledUsjMemoKey, b: SettledUsjMemoKey): boolean {
+  return (
+    a.editorState === b.editorState &&
+    a.pendedKeys === b.pendedKeys &&
+    a.transientInput === b.transientInput &&
+    a.caretKey === b.caretKey &&
+    a.caretOffset === b.caretOffset &&
+    a.viewOptions === b.viewOptions &&
+    a.getMarker === b.getMarker
+  );
+}
+
+/**
+ * Registers `listener` for every commit of the composer's editor. A layout effect, so it is in
+ * place before any plugin's passive effect can commit. Pass a stable `listener`: a new one is
+ * re-registered at the END of Lexical's listener set.
+ */
+function UpdateListenerPlugin({
+  listener,
+}: {
+  listener: (payload: UpdateListenerPayload, editor: LexicalEditor) => void;
+}): null {
+  const [editor] = useLexicalComposerContext();
+  useLayoutEffect(
+    () => editor.registerUpdateListener((payload) => listener(payload, editor)),
+    [editor, listener],
+  );
+  return null;
 }
 
 /**
@@ -257,6 +373,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   const noteCallerHighlightRef = useRef<NoteCallerHighlightHandle | null>(null);
   const toolbarEndRef = useRef<HTMLDivElement>(null);
   const editedUsjRef = useRef(defaultUsj);
+  // Set when a commit may have moved the tree without the change listener refreshing
+  // `editedUsjRef` (see `handleCommit`); the next settled read re-serializes instead of trusting it.
+  const isEditedUsjStaleRef = useRef(false);
   const expandedNoteKeyRef = useRef<string>(undefined);
   // In-progress input an in-editor command surface has claimed (see `EditorRef.setTransientInput`),
   // anchored to the text node the caret sat in when it was declared (see AnchoredTransientInput).
@@ -272,14 +391,29 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // Lexical's live selection before a getUsj() read that races it. Consumed only as
   // `$verifiedTransientLiteral`'s fallback (virtualSettle.utils.ts) — see its own doc comment.
   const lastKnownCaretRef = useRef<LastKnownCaret | undefined>(undefined);
-  // The document most recently ANNOUNCED to the host via `onUsjChange` — the yardstick the
-  // historic-commit notifier below measures against, so undo/redo only re-announce a document the
-  // host has not already been told about. Written on every emission (typed, applied, historic)
-  // because a miss here is a lost save: if this held only historic emissions, an ordinary edit
-  // followed by an undo back to an earlier state would compare equal to that earlier state and
-  // suppress the one notification that matters.
+  // Settle scopes memoized on their content, so the position APIs reuse one basis across a run of
+  // calls against an unchanged pending state instead of re-settling per call. Per-instance for the
+  // same reason `transientInputRef` is.
+  const settledScopeCacheRef = useRef<SettledScopeCache>({ entries: new Map() });
+  // The last settle `readSettledUsj` computed, with everything it was computed from. The change
+  // listener settles once per content commit and a host typically calls `getUsj()` from inside the
+  // `onUsjChange` that commit fires, so the second read of one commit is a comparison, not a settle.
+  const settledUsjMemoRef = useRef<{ key: SettledUsjMemoKey; usj: Usj } | undefined>(undefined);
+  // Which deferred selection report is still the current one. Every dispatch takes the next
+  // ticket, so when several arrive in one tick only the last one's deferred report is delivered.
+  const selectionReportTicketRef = useRef(0);
+  // Whether this instance is still mounted. `editorRef` cannot answer that: `EditorRefPlugin`
+  // assigns it in an effect with NO cleanup, so it still names this editor after the tree is gone,
+  // and a deferred report that trusted it would force-commit a detached editor and call back into
+  // a torn-down view.
+  const isMountedRef = useRef(true);
+  // The document the host most recently KNOWS — announced via `onUsjChange`, or handed in by a
+  // load. The yardstick a commit with no delta ops (a display-byte edit, or its undo) measures
+  // against, so it announces only a document the host has not already been told about. Written on
+  // every emission (typed, applied, historic) because a miss here is a lost save: if this held only
+  // some emissions, an ordinary edit followed by an undo back to an earlier state would compare
+  // equal to that earlier state and suppress the one notification that matters.
   const lastNotifiedUsjRef = useRef<Usj | undefined>(undefined);
-  const hasReportedUsjLocationsUnavailableRef = useRef(false);
   const [usj, setUsj] = useState(defaultUsj);
   const [loadTrigger, setLoadTrigger] = useState(0);
   const [contextMarker, setContextMarker] = useState<string>();
@@ -466,22 +600,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
    * are split across verse blocks, so an edit has no correct USJ to go back to; refusing is what
    * keeps the rendered document and `getUsj()` from silently diverging.
    */
-  /**
-   * Reports, once per editor, that a USJ-addressed selection API has nothing to answer with.
-   *
-   * Per editor rather than per module: a multi-pane webview mounts several of these, and a
-   * module-level flag would leave every pane after the first failing silently. Through the injected
-   * logger for the same reason - the host that mounted this editor is the one that needs to know.
-   */
-  const reportUsjLocationsUnavailable = (operation: string) => {
-    if (hasReportedUsjLocationsUnavailableRef.current) return;
-    hasReportedUsjLocationsUnavailableRef.current = true;
-    loggerRef.current?.warn(
-      `Editor: cannot ${operation} in the block verse layout; its paragraphs are split across ` +
-        "verse blocks, so editor content indexes do not match the source USJ.",
-    );
-  };
-
   const assertNotBlockVerse = (operation: string) => {
     if (isBlockVerse)
       throw new Error(
@@ -503,6 +621,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     if (effectiveIsReadonly) throw new Error(`Cannot ${operation} in readonly mode`);
   };
 
+  // Registered per layout so an editor that isn't using block verse never holds its node. Named
+  // rather than inlined into `initialConfig` because a settled-position scratch editor has to
+  // register the SAME nodes to parse a settled rebuild at all.
+  const editorNodes = useMemo(
+    () => [TypedMarkNode, ...(isBlockVerse ? usjBlockVerseNodes : usjReactNodes)],
+    [isBlockVerse],
+  );
   /** See {@link editorHoldsDomFocus}. */
   const holdsDomFocus = () => !!editorRef.current && editorHoldsDomFocus(editorRef.current);
 
@@ -516,10 +641,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       onError(error) {
         throw error;
       },
-      // Registered per layout so an editor that isn't using block verse never holds its node.
-      nodes: [TypedMarkNode, ...(isBlockVerse ? usjBlockVerseNodes : usjReactNodes)],
+      nodes: editorNodes,
     }),
-    [effectiveIsReadonly, isBlockVerse, viewOptions.showCharMarkerTitles],
+    [effectiveIsReadonly, editorNodes, viewOptions.showCharMarkerTitles],
   );
   editorUsjAdaptor.initialize(stableLogger);
 
@@ -534,33 +658,211 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
 
   /**
    * The settled document — what a host actually writes to the file. Backs BOTH `EditorRef.getUsj()`
-   * and the historic-commit notification below, so the document a host is TOLD about and the
-   * document it then SAVES are one computation (Invariant IV: all settle paths run the same one).
+   * and every `onUsjChange` payload, so the document a host is TOLD about and the document it then
+   * SAVES are one computation (Invariant IV: all settle paths run the same one).
    */
   const readSettledUsj = useCallback((): Usj | undefined => {
     const editor = editorRef.current;
     if (!editor) return editedUsjRef.current;
+    /**
+     * Re-serialize the cache when a commit carrying a blacklisted tag moved the tree without the
+     * change listener refreshing it. Every path that can HAND BACK the cache calls this first.
+     * The flag is cleared only on success: a tree the adaptor cannot express (the block-verse
+     * layout) would otherwise leave the stale document in place with nothing left to mark it, so
+     * no later read would ever try again.
+     */
+    const refreshEditedUsjIfStale = () => {
+      if (!isEditedUsjStaleRef.current) return;
+      const fresh = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions);
+      if (!fresh) return;
+      editedUsjRef.current = fresh;
+      isEditedUsjStaleRef.current = false;
+    };
     // Nothing pending and nothing declared: the cached serialization IS the settled document, and
     // skipping the recompute keeps the common read as cheap as it has always been.
     const pendedKeys = getPendedDisplayOwners(editor);
     const transientInput = transientInputRef.current;
-    if ((!pendedKeys || pendedKeys.size === 0) && !transientInput) return editedUsjRef.current;
+    if ((!pendedKeys || pendedKeys.size === 0) && !transientInput) {
+      refreshEditedUsjIfStale();
+      return editedUsjRef.current;
+    }
     // `getEditorState().read`, NOT `editor.read` - the latter force-flushes any in-flight update
     // mid-dispatch, and this is called from host save paths that can run during one.
     const editorState = editor.getEditorState();
+    const lastKnownCaret = lastKnownCaretRef.current;
+    // Caret by VALUE: the ref is handed a fresh object on every commit, including those that leave
+    // the caret where it was.
+    const key: SettledUsjMemoKey = {
+      editorState,
+      pendedKeys: pendedKeys ? [...pendedKeys].sort().join(",") : "",
+      transientInput,
+      caretKey: lastKnownCaret?.key,
+      caretOffset: lastKnownCaret?.offset,
+      viewOptions,
+      getMarker: markerLookup,
+    };
+    const memo = settledUsjMemoRef.current;
+    if (memo && isSameSettledUsjMemoKey(memo.key, key)) return memo.usj;
     const serializedState = editorState.toJSON();
-    return (
-      editorState.read(() =>
-        $settledUsj(
-          serializedState,
-          pendedKeys ?? new Set<string>(),
-          { viewOptions, getMarker: markerLookup, logger: stableLogger },
-          transientInput,
-          lastKnownCaretRef.current,
-        ),
-      ) ?? editedUsjRef.current
+    const settled = editorState.read(() =>
+      $settledUsj(
+        serializedState,
+        pendedKeys ?? new Set<string>(),
+        { viewOptions, getMarker: markerLookup, logger: stableLogger },
+        transientInput,
+        lastKnownCaret,
+      ),
     );
+    if (settled) {
+      settledUsjMemoRef.current = { key, usj: settled };
+      return settled;
+    }
+    // The settle rebuilt nothing — every pended key names a node that is no longer attached — so
+    // the cache stands in for it, and it has to be a current one.
+    refreshEditedUsjIfStale();
+    return editedUsjRef.current;
   }, [viewOptions, markerLookup, stableLogger]);
+
+  /**
+   * Everything a settled↔live position translation needs about the editor's pending state
+   * (positions/settledPositions.model.ts). Built the same way `readSettledUsj` builds its settle
+   * arguments, so the document a host is told about and the coordinates it is told in are one
+   * pending state. Does not need to be inside a read — `getPendedDisplayOwners` consults the
+   * marker-edit engine's ledger, not the tree — so a caller that already holds one
+   * (`readSettledSelection`) and a caller with none are equally free to call it.
+   */
+  const buildSettledPositionContext = useCallback((): SettledPositionContext | undefined => {
+    const editor = editorRef.current;
+    if (!editor) return undefined;
+    const context: SettledPositionContext = {
+      pendedKeys: getPendedDisplayOwners(editor) ?? new Set<string>(),
+      transientInput: transientInputRef.current,
+      lastKnownCaret: lastKnownCaretRef.current,
+      tier2: { viewOptions, getMarker: markerLookup, logger: stableLogger },
+      nodes: editorNodes,
+      cache: settledScopeCacheRef.current,
+    };
+    // Nothing pending and nothing declared means no cached plan can still be valid, and each one
+    // holds a scratch editor plus references to live nodes the tree may have since replaced. Every
+    // caller skips the read on that path, so this is the only place the sweep can run.
+    if (isLiveSettledIdentical(context)) context.cache.entries.clear();
+    return context;
+  }, [viewOptions, markerLookup, stableLogger, editorNodes]);
+
+  /**
+   * A host's position restated in LIVE coordinates. Every `jsonPath` a host holds came from
+   * `getUsj()`, which is the SETTLED document, and the resolvers below all walk the live tree — so
+   * while anything is pending those are two different documents and the position has to be carried
+   * across before it is resolved (positions/settledPositions.utils.ts).
+   *
+   * `undefined` means the position could not be carried across, which callers must treat as a
+   * refusal: resolving it against the live tree anyway is exactly the silent mis-anchor this
+   * exists to prevent.
+   *
+   * `getEditorState().read`, NOT `editor.read` — the latter force-flushes an in-flight update
+   * mid-dispatch, and a host can call these from anywhere.
+   */
+  const liveSelectionFromSettled = useCallback(
+    <T extends SelectionRange | AnnotationRange>(settled: T): T | undefined => {
+      const editor = editorRef.current;
+      const context = buildSettledPositionContext();
+      if (!editor || !context) return undefined;
+      // The two documents are the same one, so skipping the read keeps the common call as cheap
+      // as it has always been.
+      if (isLiveSettledIdentical(context)) return settled;
+      return editor.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        return $liveSelectionFromSettled(context, prepared, settled);
+      });
+    },
+    [buildSettledPositionContext],
+  );
+
+  // Clears the mount flag above. Declared beside its only consumers rather than with the other
+  // effects, since the flag is meaningless apart from them.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  /**
+   * The editor's selection in the coordinates the host reads — the SETTLED ones — flushing any
+   * in-flight update first, so what is reported is the committed document rather than a half-built
+   * one.
+   *
+   * The pending state is read INSIDE the flush rather than before it, because the commit this
+   * forces can settle the very pend that made a translation necessary in the first place.
+   *
+   * `undefined` means there is nothing to report: no range selection. A position whose own bytes
+   * have no settled counterpart reports the nearest one before it instead — including one whose
+   * basis the tree has moved on from under it, which rebuilds from what the tree still has rather
+   * than refusing (logged).
+   */
+  const readSettledSelection = useCallback(
+    (editor: LexicalEditor, caller: string): SelectionRange | undefined =>
+      editor.read(() => {
+        const context = buildSettledPositionContext();
+        const settled = context && $settledSelectionFromLive($prepareSettleScopes(context));
+        if (!settled && $isRangeSelection($getSelection()))
+          stableLogger?.warn(
+            `${caller} refused: the selection could not be expressed against the document the ` +
+              "host is reading",
+          );
+        return settled;
+      }),
+    [buildSettledPositionContext, stableLogger],
+  );
+
+  /**
+   * The host-facing selection report, deferred past the commit whenever a translation is needed.
+   *
+   * `OnSelectionChangePlugin` fires inside the ACTIVE, UNCOMMITTED update that moved the
+   * selection — deliberately, so an ordinary caret move is not reported one interaction late.
+   * Preparing a settle scope creates nodes (in a scratch editor), which must not happen there, and
+   * the committed state a scope would be prepared against is still the PRE-move one. So a report
+   * that needs translating waits for the commit and is coalesced to one per tick; a report that
+   * needs none keeps the plugin's own timing exactly.
+   *
+   * Which of the two it is, is decided against the marker-edit engine's ledger as it stands DURING
+   * the dispatch, while the synchronous report carries the plugin's in-flight coordinates. Those
+   * two agree except in one shape: an update that creates the document's FIRST pend and dispatches
+   * a selection change within itself is still identity at dispatch time, so that one report goes
+   * out in live coordinates. It is a single report, immediately followed by a settle whose own
+   * dispatch reports settled coordinates — deliberately preferred over deferring every report on
+   * the chance that a pend appears later in the same update.
+   */
+  const handleSelectionChange = useCallback(
+    (liveSelection: SelectionRange | undefined) => {
+      if (!onSelectionChange) return;
+      const editor = editorRef.current;
+      const context = buildSettledPositionContext();
+      // Take a ticket on BOTH paths. A synchronous report is still the newest report, so it has to
+      // supersede a deferred one already queued from an earlier dispatch in the same tick —
+      // otherwise that microtask still matches the current ticket and reports a second time.
+      selectionReportTicketRef.current += 1;
+      const ticket = selectionReportTicketRef.current;
+      if (!editor || !context || isLiveSettledIdentical(context)) {
+        onSelectionChange(liveSelection);
+        return;
+      }
+      queueMicrotask(() => {
+        if (!isMountedRef.current) return;
+        if (ticket !== selectionReportTicketRef.current || editorRef.current !== editor) return;
+        // `editor.read`, NOT `getEditorState().read`: the commit this is waiting for may still be
+        // Lexical's own pending microtask, and only `read` flushes it first. The force-flush that
+        // is a hazard inside a command listener is exactly what is wanted here, where the update
+        // it would flush is no longer in flight.
+        const settled = readSettledSelection(editor, "onSelectionChange");
+        // That flush can dispatch a further selection change of its own, whose report supersedes
+        // this one.
+        if (ticket !== selectionReportTicketRef.current) return;
+        onSelectionChange(settled);
+      });
+    },
+    [onSelectionChange, buildSettledPositionContext, readSettledSelection],
+  );
 
   /**
    * `EditorRef.applyUpdate`, with `extraTag` (when given) riding on the update as well - how
@@ -583,17 +885,42 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     // would tear down the host's op loop for the same reason the remote branch above reports and
     // drops instead of throwing.
     assertNotBlockVerse("apply an update");
+    const editor = editorRef.current;
+    if (!editor) return;
     const holdsFocus = holdsDomFocus();
-    const unregisterTagRelease =
-      !holdsFocus && editorRef.current
-        ? releaseTagsAfterNextCommit(editorRef.current, SKIP_DOM_SELECTION_TAG)
-        : undefined;
-    editorRef.current?.update(
+    const unregisterTagRelease = holdsFocus
+      ? undefined
+      : releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG);
+    let failed = false;
+    editor.update(
       () => {
+        // Either source's one announcement is the one in `onUpdate` below, with the caller's ops
+        // and "apply" coordinates, so the change listener and the display-run syncs recognize the
+        // apply's commit by a signal set for it (`markApplyingUpdate`), never by a tag. Lexical
+        // clears an update's tags only when its commit dirties a node, so a tag on an apply whose
+        // ops the tree already reflects (a retain-only op, a replayed attribute-only retain) stays
+        // on the editor when the commit carries only a caret the DOM moved, and rides onto the
+        // user's next edit. Set here, inside the update, rather than around the call: a call made
+        // from inside another commit's update listener is queued until that commit finishes, and
+        // the signal must cover the apply's own commit whenever it runs.
+        //
+        // A remote apply is still tagged `DELTA_CHANGE_TAG` for listeners outside this package. A
+        // local apply is the user's own edit, so it is not.
+        markApplyingUpdate(editor, source);
         if (source === "remote") $addUpdateTag(DELTA_CHANGE_TAG);
         if (!holdsFocus) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
         if (extraTag) $addUpdateTag(extraTag);
-        $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
+        try {
+          $applyUpdate(ops, viewOptions, nodeOptions, stableLogger);
+        } catch (error) {
+          // Lexical discards a throwing update but keeps its `onUpdate` for the next commit that
+          // lands - the user's next edit - so end the signal here and make that callback a no-op,
+          // or the edit would be reported as this apply.
+          failed = true;
+          markApplyingUpdate(editor, undefined);
+          unregisterTagRelease?.();
+          throw error;
+        }
       },
       {
         discrete: true,
@@ -602,28 +929,29 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         // reached from inside another commit's own update listener (a host's `onUsjChange`
         // calling back into `takeOpsAfterNote`, say) finds the editor already mid-commit, so
         // Lexical queues this discrete update and applies it only once that outer commit's
-        // listeners finish. `onUpdate` fires exactly when THIS update's own commit lands, whether
-        // that is synchronously (the ordinary case, before `editor.update()` even returns) or
-        // after such a deferral, so the report is correct either way - and the unfocused tag
-        // release is disarmed only once the commit it guards has actually happened, never before.
+        // listeners finish. `onUpdate` fires exactly when THIS update's own commit lands, after
+        // its update listeners, whether that is synchronously (the ordinary case, before
+        // `editor.update()` even returns) or after such a deferral, so the report is correct
+        // either way - and the signal and the unfocused tag release end only once the commit they
+        // guard has actually happened, never before.
         onUpdate: () => {
+          if (failed) return;
+          markApplyingUpdate(editor, undefined);
           unregisterTagRelease?.();
-          if (!holdsFocus && editorRef.current) clearStaleDomSelection(editorRef.current);
-          const editorState = editorRef.current?.getEditorState();
-          if (!editorState) return;
-
+          if (!holdsFocus) clearStaleDomSelection(editor);
+          const editorState = editor.getEditorState();
           const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
-          if (newUsj) {
-            const isEdited = !deepEqual(editedUsjRef.current, newUsj);
-            if (isEdited) editedUsjRef.current = newUsj;
-            if (isEdited || !deepEqual(usj, newUsj)) {
-              // "apply" coordinates: `$applyUpdate` placed the inserted node by interpreting the
-              // retain with its own traversals (every embed opaque), so the reverse lookup must
-              // count the same way to find the node that was actually inserted.
-              const insertedNodeKey = getInsertedNodeKey(ops, editorState, "apply");
-              lastNotifiedUsjRef.current = newUsj;
-              onUsjChange?.(newUsj, ops, source, insertedNodeKey);
-            }
+          if (!newUsj) return;
+          const isEdited = !deepEqual(editedUsjRef.current, newUsj);
+          if (isEdited) editedUsjRef.current = newUsj;
+          const settled = readSettledUsj();
+          if (settled && (isEdited || !deepEqual(usj, newUsj))) {
+            // "apply" coordinates: `$applyUpdate` placed the inserted node by interpreting the
+            // retain with its own traversals (every embed opaque), so the reverse lookup must
+            // count the same way to find the node that was actually inserted.
+            const insertedNodeKey = getInsertedNodeKey(ops, editorState, "apply");
+            lastNotifiedUsjRef.current = settled;
+            onUsjChange?.(settled, ops, source, insertedNodeKey);
           }
         },
       },
@@ -685,7 +1013,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       const unregisterTagRelease = skipDomSelection
         ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
         : undefined;
-      // Discrete so the settle commits synchronously: `DeltaOnChangePlugin` then refreshes
+      // Discrete so the settle commits synchronously: the change listener then refreshes
       // `editedUsjRef` before this method returns, letting callers read fresh USJ via
       // `getUsj()` immediately (the host save path depends on this ordering).
       editor.update(
@@ -724,6 +1052,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     setUsj(incomingUsj) {
       if (!deepEqual(editedUsjRef.current, incomingUsj)) {
         editedUsjRef.current = incomingUsj;
+        // The loaded tree is the outgoing document until the reload commits, so neither a stale
+        // flag nor a memoized read of that tree may overwrite or outrank the incoming document.
+        isEditedUsjStaleRef.current = false;
+        settledUsjMemoRef.current = undefined;
         // A replaced document invalidates any in-progress declaration: its anchor node key
         // belongs to the outgoing tree, and the surface that declared it is now stale too.
         transientInputRef.current = undefined;
@@ -748,22 +1080,61 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         );
     },
     getSelection() {
-      if (isBlockVerse) {
-        reportUsjLocationsUnavailable("get the selection");
-        return undefined;
-      }
-      return editorRef.current?.read($getUsjSelectionFromEditor);
+      const editor = editorRef.current;
+      if (!editor) return undefined;
+      // The host resolves what this returns against `getUsj()`, which is the SETTLED document, so
+      // a live position has to be carried across before it is reported
+      // (positions/settledPositions.utils.ts).
+      //
+      // `editor.read` here, where the inbound entry points below use `getEditorState().read`: this
+      // is a host QUESTION, asked from outside any dispatch, and the answer has to describe the
+      // document the host would get from `getUsj()` — so flushing an update that is merely queued
+      // is the point, not a hazard. The inbound methods are called from anywhere, including from
+      // inside an in-flight update, where the same flush is the frozen-commit crash. Flush before
+      // reading the pending state below, too: a commit can itself change it (the historic re-pend
+      // on undo, owner pends from mutation listeners).
+      editor.read(() => undefined);
+      const context = buildSettledPositionContext();
+      if (!context || isLiveSettledIdentical(context))
+        return editor.read(() => $getUsjSelectionFromEditor(viewOptions));
+      return readSettledSelection(editor, "getSelection");
     },
     setSelection(selection) {
-      if (isBlockVerse) {
-        reportUsjLocationsUnavailable("set the selection");
+      const live = liveSelectionFromSettled(selection);
+      if (!live) {
+        stableLogger?.warn(
+          "setSelection refused: the position could not be resolved against the document " +
+            "currently being edited",
+        );
         return;
       }
       editorRef.current?.update(() => {
-        const editorSelection = $getRangeFromUsjSelection(selection);
+        const editorSelection = $getRangeFromUsjSelection(live, viewOptions);
         if (editorSelection !== undefined) {
+          // No update tag here, deliberately: Lexical clears an update's tags only when its commit
+          // dirties a node, so a tag on this selection-only update would ride along on the user's
+          // next edit — and `SELECTION_CHANGE_TAG` is in `blackListedChangeTags`, so that edit
+          // would never reach `onUsjChange`. A selection-only update emits no change anyway.
           $setSelection(editorSelection);
-          $addUpdateTag(SELECTION_CHANGE_TAG);
+          // A placement whose anchor and focus both land inside a text run's interior is exactly
+          // the shape Lexical's own selectionchange listener drops (see `$isInteriorTextPoint`),
+          // so the host would otherwise never hear the caret moved. Dispatching here instead of
+          // there is safe: `OnSelectionChangePlugin` registers `SELECTION_CHANGE_COMMAND` as a
+          // bare `$` listener, and Lexical runs command listeners for the currently active editor
+          // inline (`triggerCommandListeners` -> `updateEditorSync`), so this still executes inside
+          // THIS update, against the pending selection just set above, exactly once. A boundary or
+          // element-type endpoint is left alone in an editable editor: Lexical's own listener
+          // already reports those, and dispatching again here would report the same placement
+          // twice. A read-only editor gets no such report at all — Lexical never writes the DOM
+          // selection of a non-editable editor, so no selectionchange follows — so it is always
+          // dispatched here.
+          if (
+            !$getEditor().isEditable() ||
+            ($isInteriorTextPoint(editorSelection.anchor) &&
+              $isInteriorTextPoint(editorSelection.focus))
+          ) {
+            editorRef.current?.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+          }
         }
       });
     },
@@ -781,11 +1152,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           },
       fifth?: TypedMarkOnRemove,
     ) {
-      if (isBlockVerse) {
-        reportUsjLocationsUnavailable("set an annotation");
-        return;
-      }
-
       let onClick: TypedMarkOnClick | undefined;
       let onRemove: TypedMarkOnRemove | undefined;
       let onMouseEnter: TypedMarkOnMouseEnter | undefined;
@@ -803,8 +1169,17 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         onMouseLeave = fourth.onMouseLeave;
       }
 
+      const live = liveSelectionFromSettled(selection);
+      if (!live) {
+        stableLogger?.warn(
+          `setAnnotation refused for ${type} "${id}": the range could not be resolved against ` +
+            "the document currently being edited",
+        );
+        return;
+      }
+
       annotationRef.current?.setAnnotation(
-        selection,
+        live,
         externalTypedMarkType(type),
         id,
         onClick,
@@ -815,6 +1190,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     removeAnnotation(type, id) {
       annotationRef.current?.removeAnnotation(externalTypedMarkType(type), id);
+    },
+    getAnnotationRanges(type, id) {
+      return annotationRef.current?.getAnnotationRanges(externalTypedMarkType(type), id) ?? [];
     },
     formatPara(blockMarker) {
       assertEditable("format a paragraph");
@@ -1014,7 +1392,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // Read the note branch's captured key right after `action(...)` returns - Lexical's
       // `editor.update()` callback runs synchronously, so this is already populated. Gives the
       // host the note's TRUE key directly instead of re-deriving it from "delta-doc" OT
-      // coordinates (`getInsertedNodeKey`, used by `handleChange`'s `onUsjChange` below): the key
+      // coordinates (`getInsertedNodeKey`, used by `handleCommit`'s `onUsjChange` below): the key
       // is known exactly here, so it cannot drift with the coordinate systems.
       return markerAction.getInsertedNoteKey?.();
     },
@@ -1098,13 +1476,21 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     },
     insertNote(marker, caller, selection) {
       assertEditable("insert a note");
+      const live = selection && liveSelectionFromSettled(selection);
+      if (selection && !live) {
+        stableLogger?.warn(
+          `insertNote refused for \\${marker}: the position could not be resolved against the ` +
+            "document currently being edited",
+        );
+        return;
+      }
       // `discrete` for the same reason `formatPara` above uses it.
       editorRef.current?.update(
         () => {
           const noteNode = $insertNote(
             marker,
             caller,
-            selection,
+            live,
             scrRef,
             viewOptions,
             nodeOptions,
@@ -1116,12 +1502,34 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       );
     },
     selectNote(noteKeyOrIndex) {
-      editorRef.current?.update(() => {
-        const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
-        if (noteNode) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const context = buildSettledPositionContext();
+      // A key already names a live node directly, and with nothing pending the settled and live
+      // documents count notes the same way either side — both share the live lookup below.
+      if (typeof noteKeyOrIndex === "string" || !context || isLiveSettledIdentical(context)) {
+        editor.update(() => {
+          const noteNode = $getNoteByKeyOrIndex(noteKeyOrIndex);
+          if (!noteNode) return;
           $selectNote(noteNode, viewOptions);
           $rememberExpandedNote(noteNode, expandedNoteKeyRef);
-        }
+        });
+        return;
+      }
+      // Otherwise the index counts the SETTLED document's notes: find the index-th one there, and
+      // carry its location to the live tree — where it lands inside an actual NoteNode when that
+      // note is settled already, or on the literal's own `\` when it is still pending as typed text.
+      const jsonPath = settledNotePaths(readSettledUsj())[noteKeyOrIndex];
+      const live = jsonPath ? liveSelectionFromSettled({ start: { jsonPath } }) : undefined;
+      if (!live) return;
+      editor.update(() => {
+        const [node, offset] = $getNodeFromLocation(live.start, viewOptions);
+        if (!node || offset === undefined) return;
+        const note = $isNoteNode(node) ? node : $findMatchingParent(node, $isNoteNode);
+        if ($isNoteNode(note)) {
+          $selectNote(note, viewOptions);
+          $rememberExpandedNote(note, expandedNoteKeyRef);
+        } else if ($isTextNode(node)) node.select(offset, offset);
       });
     },
     selectAfterNote(noteKeyOrIndex) {
@@ -1252,124 +1660,144 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   editorApiRef.current = editorApi;
   useImperativeHandle(ref, () => editorApi);
 
-  // Populates `lastKnownCaretRef` (see its own doc comment above). Runs after `EditorRefPlugin`'s
-  // own mount effect (a child's effect commits before its parent's in the same pass), so
-  // `editorRef.current` is already set the first time this fires.
+  // Populates `lastKnownCaretRef` (see its own doc comment above) on every commit, selection-only
+  // ones included. Runs after `EditorRefPlugin`'s own mount effect (a child's effect commits before
+  // its parent's in the same pass), so `editorRef.current` is already set the first time this fires.
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return undefined;
     return editor.registerUpdateListener(({ editorState }) => {
-      editorState.read(() => {
-        const selection = $getSelection();
-        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
-        const node = selection.focus.getNode();
-        if ($isTextNode(node))
-          lastKnownCaretRef.current = { key: node.getKey(), offset: selection.focus.offset };
-      });
+      const caret = editorState.read($collapsedTextCaret);
+      if (caret) lastKnownCaretRef.current = caret;
     });
   }, []);
 
-  const handleChange = useCallback(
-    (
-      editorState: EditorState,
-      _editor: LexicalEditor,
-      _tags: Set<string>,
-      ops: DeltaOp[],
-      prevEditorState: EditorState,
-    ) => {
-      // No blacklisted-tag guard is needed here: `DeltaOnChangePlugin` is given
-      // `ignoreTags={blackListedChangeTags}` and short-circuits before calling this handler, so
-      // only local user edits (which carry no blacklisted tag) ever reach this point.
+  // What `handleCommit` reads that can change between renders. Through a ref, so the listener is
+  // registered once per editor and never moves in Lexical's listener order.
+  const commitInputsRef = useRef({ onUsjChange, viewOptions, isBlockVerse, readSettledUsj });
+  commitInputsRef.current = { onUsjChange, viewOptions, isBlockVerse, readSettledUsj };
 
-      // Nothing to report in the block verse layout: its paragraphs are split across verse blocks,
-      // so there is no USJ this tree corresponds to. Unreachable through the public API - the
-      // editor is not editable and every mutating entry point refuses (see `assertEditable`) - and
-      // even if it were reached, `deserializeEditorState` reports and returns `undefined` for such
-      // a tree, so no change could be emitted. This just keeps that error out of the log.
-      if (isBlockVerse) return;
+  // The editor's one change listener: it keeps `editedUsjRef` (the tree-leg cache) current and
+  // announces each content commit to the host, exactly once, through `onUsjChange`.
+  //
+  // The document it announces is the SETTLED one, `getUsj()`'s, because that is what the host
+  // saves. The delta ops stay in LIVE coordinates, and they alone cannot drive the announcement:
+  // display bytes — marker glyphs, attribute runs, separators — are excluded from delta coordinates
+  // by design (Invariant II), yet the settle re-tokenizes exactly those bytes. So a commit with no
+  // ops is announced when its settled document differs from the last one announced
+  // (`lastNotifiedUsjRef`). That covers two edit families that move no delta at all:
+  //
+  // - UNDO/REDO of a display-byte edit: a marker edit occupies two history entries — the typed
+  //   glyph bytes and the Tier-2 settle that moves them into node state — and undoing walks them
+  //   back in the opposite order, so the press that restores the displayed bytes can be
+  //   delta-invisible.
+  // - LIVE display-byte edits: typing into a glyph, editing or deleting an attribute run's bytes.
+  //   The edit pends until the caret departs, and the file must not lag the screen for as long as
+  //   the caret stays at the edit.
+  //
+  // ONE listener, so ordering holds by construction. Lexical calls update listeners in
+  // registration order, and a listener that re-registers (a changed effect dependency, a reload
+  // re-rendering its plugin) moves to the end of it. Two listeners that could each announce would
+  // double-announce once a reload reordered them, and a listener that reads the pend set could run
+  // before the marker-edit engine re-derives it for an undo. So this one brings the pend set current
+  // itself (`ensurePendedDisplayOwnersCurrent`), takes the caret the settle falls back on from THIS
+  // commit, and never re-registers.
+  //
+  // SYNCHRONOUS, in the commit's own listener pass, because the ops must pair with the document
+  // they produced: a host that applies them, or calls `getUsj()` from the callback, must see this
+  // commit's document and not one a later commit moved on. Settling here is safe: `readSettledUsj`
+  // reads the committed state without flushing, and the scratch editor a settle may create saves
+  // and restores Lexical's active state. A host that calls `getUsj()` from the callback gets the
+  // memoized document, not a second settle.
+  const handleCommit = useCallback((payload: UpdateListenerPayload, editor: LexicalEditor) => {
+    const { editorState, dirtyElements, dirtyLeaves, tags } = payload;
+    // A selection-only commit moves no bytes.
+    if (dirtyElements.size === 0 && dirtyLeaves.size === 0) return;
+    // A load (`setUsj`) and any apply (`applyUpdate`) set the cache themselves, and `applyUpdate`
+    // announces its own change, with the caller's ops. A loaded document came FROM the host, so it
+    // becomes the yardstick: a later commit that moves no bytes (a note toggling open) must not
+    // announce it back as a change. The yardstick is the tree's own export, not the host's USJ,
+    // because every later comparison is against an export and the round trip can be lossy (a run
+    // of spaces collapses). The cache takes the same export, so `getUsj()` reports the tree's
+    // document from the load on rather than switching to it, unannounced, at the next commit. The
+    // block verse layout has no export, so its cache keeps the host's USJ.
+    if (tags.has(EXTERNAL_USJ_MUTATION_TAG)) {
+      const inputs = commitInputsRef.current;
+      const loaded =
+        !inputs.isBlockVerse &&
+        editorUsjAdaptor.deserializeEditorState(editorState, inputs.viewOptions);
+      if (loaded) editedUsjRef.current = loaded;
+      lastNotifiedUsjRef.current = editedUsjRef.current;
+      return;
+    }
+    if (getApplyingUpdateSource(editor)) return;
+    // Any other blacklisted commit is not the user's edit and is not announced, but it can still
+    // move the tree: an annotation over a pending paragraph settles it inside the annotation's own
+    // update, and once nothing is pending `readSettledUsj` hands out the cache as the settled
+    // document — the typed literal, not the paragraph it settled into. Mark the cache stale so the
+    // next read re-serializes.
+    if (commitIgnoredTags.some((tag) => tags.has(tag))) {
+      isEditedUsjStaleRef.current = true;
+      return;
+    }
+    const inputs = commitInputsRef.current;
+    // Nothing to report in the block verse layout: its paragraphs are split across verse blocks,
+    // so there is no USJ this tree corresponds to. Unreachable through the public API - the editor
+    // is not editable and every mutating entry point refuses (see `assertEditable`) - and even if
+    // it were reached, `deserializeEditorState` reports and returns `undefined` for such a tree, so
+    // no change could be emitted. This just keeps that error out of the log.
+    if (inputs.isBlockVerse) return;
 
-      const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
-      if (newUsj) {
-        const isEdited = !deepEqual(editedUsjRef.current, newUsj);
-        if (isEdited) editedUsjRef.current = newUsj;
-        if (isEdited || !deepEqual(usj, newUsj)) {
-          // `handleChange` only runs for local edits: `DeltaOnChangePlugin` ignores
-          // `blackListedChangeTags` (which includes `DELTA_CHANGE_TAG`), so updates from
-          // `applyUpdate` never reach here - they emit `onUsjChange` with source "remote" directly.
-          // Default "delta-doc" coordinates: these ops come from `DeltaOnChangePlugin`, whose
-          // retains are doc-delta diff positions, so the reverse lookup must count the same way.
-          // An edit inside an existing note diffs as that note replaced by its new self, so the
-          // ops alone read as an insertion of it. Only a node the previous state did not have is
-          // one: reporting an edited note as inserted is how a host comes to open a new-note editor
-          // on the note the user is typing in.
-          const opsNodeKey = getInsertedNodeKey(ops, editorState);
-          const insertedNodeKey =
-            opsNodeKey && !prevEditorState.read(() => $getNodeByKey(opsNodeKey))
-              ? opsNodeKey
-              : undefined;
-          lastNotifiedUsjRef.current = newUsj;
-          onUsjChange?.(newUsj, ops, "local", insertedNodeKey);
-        }
-      }
-    },
-    [usj, onUsjChange, viewOptions, isBlockVerse],
-  );
+    ensurePendedDisplayOwnersCurrent(editor, editorState, tags);
+    const caret = editorState.read($collapsedTextCaret);
+    if (caret) lastKnownCaretRef.current = caret;
 
-  // Display-byte edits must reach the file the same way typing does.
-  //
-  // A host schedules a save only in response to `onUsjChange`, and that callback is driven by
-  // `DeltaOnChangePlugin`'s delta diff over the TREE leg (`deserializeEditorState`). Display bytes
-  // — marker glyphs, attribute runs, separators — are excluded from delta coordinates by design
-  // (Invariant II) and contribute nothing to the tree leg, which reads node state. But the host
-  // SAVES `getUsj()`, the settled leg, which re-tokenizes exactly those bytes.
-  //
-  // Two edit families change the settled document while producing zero delta ops and an
-  // unchanged tree USJ, so `handleChange` stays silent for both:
-  //
-  // - UNDO/REDO: a marker edit occupies two history entries — the typed glyph bytes and the
-  //   Tier-2 settle that moves them into node state — and undoing walks them back in the
-  //   opposite order, so the press that restores the displayed bytes is delta-invisible.
-  // - LIVE display-byte edits: typing into a glyph, editing or deleting an attribute run's
-  //   bytes. The edit pends (mid-edit grace) and only the DEPARTURE settle moves it into node
-  //   state — so without a settled-leg notification the file lagged the screen for as long as
-  //   the caret stayed at the edit, and closing the app in that window lost the edit.
-  //
-  // Both need a notification keyed off the SETTLED document rather than off the delta. Gated so
-  // ordinary typing never pays for a settle recompute: outside historic commits, the settled leg
-  // can only have moved when the engine holds PENDING keys — no pends means the tree leg is the
-  // whole story and `handleChange` already told it.
-  //
-  // Deferred to a microtask for two reasons. First, ordering: `MarkerEditPlugin` re-derives the
-  // pend set from restored bytes on a historic commit (`$rependPendShapedNodes`), and
-  // `readSettledUsj` reads that set — a synchronous notification here would race it, since
-  // `DeltaOnChangePlugin` registers its listener in a layout effect and so runs first. Deferring
-  // past the commit makes the read correct regardless of plugin registration order. Second, it
-  // keeps host work (which calls back into `getUsj()`) out of `$commitPendingUpdates`, the same
-  // frozen-state hazard the marker-edit engine defers for.
-  useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor || !onUsjChange) return undefined;
-    return editor.registerUpdateListener(({ tags, dirtyElements, dirtyLeaves }) => {
-      if (!tags.has(HISTORIC_TAG)) {
-        // Selection-only commits move no bytes; remote applies announce themselves through
-        // `applyUpdate`'s own onUsjChange emission.
-        if (dirtyElements.size === 0 && dirtyLeaves.size === 0) return;
-        if (tags.has(DELTA_CHANGE_TAG)) return;
-        if (!getPendedDisplayOwners(editor)?.size) return;
-      }
-      queueMicrotask(() => {
-        const settled = readSettledUsj();
-        if (!settled || deepEqual(lastNotifiedUsjRef.current, settled)) return;
-        lastNotifiedUsjRef.current = settled;
-        // No ops and no inserted-node key: neither a history restore nor a display-byte edit is
-        // an incremental content edit, so there is no delta to hand a collaborator and no newly
-        // inserted node to open an editor on. Consumers treat both as absent (the host's
-        // note-popover branches are keyed on `insertedNodeKey && ops`), and the payload is the
-        // settled document the host would save.
-        onUsjChange(settled, undefined, "local", undefined);
-      });
+    // The same filter `DeltaOnChangePlugin` applies: a history-merge commit that is not a settle
+    // carries no ops, and neither does the first load into an empty editor. Chopped, because a
+    // text node marked dirty without changing yields a lone trailing retain, which edits nothing
+    // and must not count as a change.
+    const isSkippedForOps = shouldSkipUpdateForOps(payload, {
+      ignoreSelectionChange: true,
+      ignoreHistoryMergeTagChange: true,
+      ignoreTags: commitIgnoredTags,
     });
-  }, [onUsjChange, readSettledUsj]);
+    const ops = isSkippedForOps
+      ? []
+      : new Delta(editorState.read(() => $getUpdateOps(editor, payload))).chop().ops;
+    // Refreshed whether or not any ops survived: the ops only see TEXT, and a commit can change
+    // the document without changing any text. Retagging a one-text paragraph moves its only child
+    // into a new paragraph node, so the one dirty leaf reads the same, the delta is a lone retain
+    // (or nothing, at the document's start), and only a fresh serialization shows the new marker.
+    if (!isSkippedForOps) {
+      const treeUsj = editorUsjAdaptor.deserializeEditorState(editorState, inputs.viewOptions);
+      if (treeUsj) editedUsjRef.current = treeUsj;
+    }
+
+    if (!inputs.onUsjChange) return;
+    const settled = inputs.readSettledUsj();
+    if (!settled) return;
+    if (ops.length === 0 && deepEqual(lastNotifiedUsjRef.current, settled)) return;
+    lastNotifiedUsjRef.current = settled;
+    // No ops means no inserted-node key either: a display-byte edit or its undo is not an
+    // incremental content edit, so there is no delta to hand a collaborator and no newly inserted
+    // node to open an editor on. Consumers treat both as absent (the host's note-popover branches
+    // are keyed on `insertedNodeKey && ops`). With ops, "delta-doc" coordinates: these ops are
+    // doc-delta diff positions, so the reverse lookup must count the same way.
+    if (ops.length === 0) {
+      inputs.onUsjChange(settled, undefined, "local", undefined);
+      return;
+    }
+    // An edit inside an existing note diffs as that note replaced by its new self, so the ops
+    // alone read as an insertion of it. Only a node the previous state did not have is one:
+    // reporting an edited note as inserted is how a host comes to open a new-note editor on the
+    // note the user is typing in.
+    const opsNodeKey = getInsertedNodeKey(ops, editorState);
+    const insertedNodeKey =
+      opsNodeKey && !payload.prevEditorState.read(() => $getNodeByKey(opsNodeKey))
+        ? opsNodeKey
+        : undefined;
+    inputs.onUsjChange(settled, ops, "local", insertedNodeKey);
+  }, []);
 
   const handleStateChange = useCallback(
     (snapshot: StateChangeSnapshot) => {
@@ -1446,15 +1874,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
             viewOptions={viewOptions}
             logger={stableLogger}
           />
-          <OnSelectionChangePlugin onChange={onSelectionChange} />
-          <DeltaOnChangePlugin
-            onChange={handleChange}
-            ignoreSelectionChange
-            ignoreHistoryMergeTagChange
-            ignoreTags={blackListedChangeTags}
-          />
+          <OnSelectionChangePlugin onChange={handleSelectionChange} viewOptions={viewOptions} />
+          <UpdateListenerPlugin listener={handleCommit} />
           <ActiveTextPlugin viewOptions={viewOptions} />
-          <AnnotationPlugin ref={annotationRef} logger={stableLogger} />
+          <AnnotationPlugin ref={annotationRef} logger={stableLogger} viewOptions={viewOptions} />
           <ArrowNavigationPlugin viewOptions={viewOptions} />
           <CharNodePlugin />
           <ClipboardPlugin />

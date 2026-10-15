@@ -51,13 +51,14 @@
  */
 
 import { $isCanonicalMarkerNode, $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
+import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { $isAttributeRunNode, AttributeRunNode } from "./AttributeRunNode.js";
 import { ChapterNode } from "./ChapterNode.js";
 import { $isCharNode, CharNode } from "./CharNode.js";
 import { MilestoneNode, MS_NON_ATTRIBUTE_PROPS } from "./MilestoneNode.js";
 import { UnknownAttributes } from "./node-constants.js";
-import { getEditableCallerText, openingMarkerText } from "./node.utils.js";
+import { getEditableCallerText, openingMarkerText } from "./markerText.utils.js";
 import { NoteNode } from "./NoteNode.js";
 import { $isVerseNode, VerseNode } from "./VerseNode.js";
 import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
@@ -370,13 +371,33 @@ function $attributeMarkerRunPieces(
 }
 
 /**
+ * The node an annotation mark wraps, unwrapped — marks are transparent to every USJ-facing view
+ * of the tree (the exporter splices them, the logical content model splices them), so a slot that
+ * identifies a node by its position among its parent's children has to see through one or the
+ * construct dissolves the moment a comment is placed on it. Nested marks only exist transiently
+ * before the AnnotationPlugin flattens them, hence the loop.
+ */
+function $throughMarks(node: LexicalNode | undefined): LexicalNode | undefined {
+  let current = node;
+  while ($isTypedMarkNode(current)) current = current.getChildren()[0];
+  return current;
+}
+
+/**
  * The TextNode carrying a note's EDITABLE caller (` + ` with an NBSP tail —
- * `getEditableCallerText`), skipping any leading opening glyph(s) — the anchor a note's `\cat`
- * run scans from and is inserted after. `undefined` outside the expanded editable shape: a
- * collapsed note renders its caller as a DecoratorNode and deliberately shows no category run,
- * and visible/hidden modes build no editable caller at all. Deriving the anchor from tree shape
- * (rather than viewOptions) keeps the cat sync a structural no-op in every mode that never
- * builds the run, the same rule {@link $charClosingGlyph} applies for a char span's run.
+ * `getEditableCallerText`), skipping any leading opening glyph(s) and looking through any
+ * annotation mark wrapping it — the anchor a note's `\cat` run scans from and is inserted after.
+ * `undefined` outside the expanded editable shape: a collapsed note renders its caller as a
+ * DecoratorNode and deliberately shows no category run, and visible/hidden modes build no
+ * editable caller at all. Deriving the anchor from tree shape (rather than viewOptions) keeps the
+ * cat sync a structural no-op in every mode that never builds the run, the same rule
+ * {@link $charClosingGlyph} applies for a char span's run.
+ *
+ * The text is the caller's while its bytes are damaged too: the unmergeable text the note builders
+ * make for the caller and nothing else (`toggleUnmergeable`), which waits as the user left it
+ * while the caret is at it (the marker-edit engine's caller transform). Any other text in the slot
+ * — content left there once the caller text was removed — is content, unless it spells the caller
+ * exactly (a shape built without the flag).
  */
 export function $noteEditableCallerNode(note: NoteNode): TextNode | undefined {
   const children = note.getChildren();
@@ -386,10 +407,10 @@ export function $noteEditableCallerNode(note: NoteNode): TextNode | undefined {
     if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
     index++;
   }
-  const caller = children[index];
-  if ($isTextNode(caller) && caller.getTextContent() === getEditableCallerText(note.getCaller()))
-    return caller;
-  return undefined;
+  const caller = $throughMarks(children[index]);
+  if (!$isTextNode(caller) || caller.getType() !== TextNode.getType()) return undefined;
+  if (caller.getTextContent() === getEditableCallerText(note.getCaller())) return caller;
+  return caller.isUnmergeable() ? caller : undefined;
 }
 
 /**

@@ -16,14 +16,14 @@
  * to gate. If either job ever returns behind a provenance check, these pins are the first thing
  * that should go red.
  *
- * The remote legs SIMULATE the apply — a DELTA_CHANGE_TAG-tagged discrete update mutating nodes
- * directly — rather than routing ops through `$applyUpdate`: in Standard view, `getEditorDelta`
+ * The remote legs SIMULATE the apply — a DELTA_CHANGE_TAG-tagged discrete update, marked as a
+ * remote apply (`markApplyingUpdate`), mutating nodes directly — rather than routing ops through `$applyUpdate`: in Standard view, `getEditorDelta`
  * emits document-space coordinates (display bytes excluded) while `$applyUpdate`'s retain
  * traversal walks display space (para-marker prefixes, editable verse nodes, and char-span glyph
  * bytes all count differently), so a retain computed from the document's own delta lands offset
  * from its target. That divergence is Invariant II's exact complaint and belongs to the
  * coordinates track; these pins are about what the TRANSFORMS do to remote content once it lands,
- * which the tag plus a direct mutation reproduces faithfully.
+ * which the mark and tag plus a direct mutation reproduce faithfully.
  */
 
 import { serializedState, viewOptions } from "./markerEdit.test-helpers";
@@ -50,6 +50,7 @@ import {
   $isParaNode,
   DELTA_CHANGE_TAG,
   getMarker as bundledGetMarker,
+  markApplyingUpdate,
   ParaNode,
 } from "shared";
 import { CharNodePlugin, TextSpacingPlugin } from "shared-react";
@@ -126,17 +127,22 @@ function pasteEvent(plain: string): ClipboardEvent {
   } as unknown as ClipboardEvent;
 }
 
-/** Run `$mutate` the way a remote collab apply runs: one discrete update carrying
- * DELTA_CHANGE_TAG. */
+/** Run `$mutate` the way `Editor.applyUpdate` runs a remote apply: one discrete update carrying
+ * DELTA_CHANGE_TAG, committed while the editor is marked as applying a remote update. */
 async function applyRemote(editor: LexicalEditor, $mutate: () => void) {
   await act(async () => {
-    editor.update(
-      () => {
-        $addUpdateTag(DELTA_CHANGE_TAG);
-        $mutate();
-      },
-      { discrete: true },
-    );
+    markApplyingUpdate(editor, "remote");
+    try {
+      editor.update(
+        () => {
+          $addUpdateTag(DELTA_CHANGE_TAG);
+          $mutate();
+        },
+        { discrete: true },
+      );
+    } finally {
+      markApplyingUpdate(editor, undefined);
+    }
   });
 }
 

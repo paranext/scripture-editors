@@ -73,22 +73,37 @@ import {
   $createMilestoneNode,
   $createNoteNode,
   $createParaNode,
+  $createTypedMarkNode,
   $createVerseNode,
   $isParaNode,
   CHAPTER_MARKER,
+  CharNode,
   CURSOR_PLACEHOLDER_CHAR,
+  getEditableCallerText,
   getVisibleOpenMarkerText,
+  isSerializedCharNode,
   isSerializedImmutableTypedTextNode,
   isSerializedTextNode,
   isSerializedUnknownNode,
+  MarkerNode,
+  MILESTONE_VERSION,
+  MilestoneNode,
   NBSP,
+  NoteNode,
+  ParaNode,
+  SerializedCharNode,
   SerializedChapterNode,
+  SerializedMarkerNode,
+  SerializedMilestoneNode,
+  SerializedNoteNode,
   SerializedParaNode,
+  SerializedTypedMarkNode,
   SerializedVerseNode,
   ImmutableTableCellMarker,
   textTypeState,
   TypedMarkNode,
   VERSE_MARKER,
+  COMMENT_MARK_TYPE,
 } from "shared";
 
 const nodes = [TypedMarkNode, ...usjReactNodes];
@@ -464,6 +479,383 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
     expect(JSON.stringify(roundTripped)).toContain(`in~the${NBSP}${NBSP}days`);
   });
 
+  /**
+   * A standard-view state for `\nd LORD\+wj x\+wj*Y\nd*`: an outer char span carrying its own
+   * glyph-adjacent separator (`LORD`), a nested char span, and plain text after the nested
+   * span's closer (`Y`) — the shape `precedesOpeningCharGlyph` (editor-usj.adaptor.ts) has to
+   * read correctly.
+   */
+  function buildNestedCharState() {
+    const usx = `<usx version="3.0"><book code="RUT" style="id" /><chapter number="1" style="c" /><para style="p"><verse number="1" style="v" /><char style="nd">LORD<char style="wj">x</char>Y</char></para></usx>`;
+    const usj = usxStringToUsj(usx);
+    initializeSerialize(undefined, undefined);
+    reset();
+    return serializeEditorState(usj, getViewOptions(STANDARD_VIEW_MODE));
+  }
+
+  /** The outer `nd` char span within a state built by {@link buildNestedCharState}. */
+  function findOuterChar(state: SerializedEditorState) {
+    const para = state.root.children[2] as SerializedParaNode;
+    const char = para.children.find(
+      (child) => isSerializedCharNode(child) && child.marker === "nd",
+    );
+    if (!char || !isSerializedCharNode(char)) throw new Error("Expected the outer nd char span");
+    return char;
+  }
+
+  it("standard view: round-trips an authored NBSP right after a nested char closer", () => {
+    // `\nd LORD\+wj x\+wj*~y\nd*` — the byte after the nested span's closer is an authored data
+    // NBSP (USFM `~`), not the glyph-adjacent display separator: only text directly after an
+    // OPENING glyph carries that separator, and this text sits after a CLOSING glyph.
+    // `usjTextToDisplay` (the forward adaptor's load-time whitespace map) already turns an
+    // authored data NBSP into a display `~` before this text ever reaches the strip check, so it
+    // never starts with NBSP here — pinning that this round-trips untouched.
+    const usx = `<usx version="3.0"><book code="RUT" style="id" /><chapter number="1" style="c" /><para style="p"><verse number="1" style="v" /><char style="nd">LORD<char style="wj">x</char>${NBSP}y</char></para></usx>`;
+    const usj = usxStringToUsj(usx);
+    initializeSerialize(undefined, undefined);
+    reset();
+    const state = serializeEditorState(usj, getViewOptions(STANDARD_VIEW_MODE));
+    initializeDeserialize(undefined);
+    const roundTripped = deserializeSerializedEditorState(
+      state,
+      getViewOptions(STANDARD_VIEW_MODE),
+    );
+    // Exact equality, not just a substring: the outer span's own glyph-adjacent separator
+    // ("LORD", right after the opening glyph) is still stripped, and the byte after the nested
+    // closer survives untouched — a full byte-for-byte round trip, not merely "somewhere in the
+    // output".
+    expect(roundTripped).toEqual(usj);
+  });
+
+  it("standard view: does not strip a char-child text node's own leading NBSP unless it follows an opening glyph", () => {
+    // Exercises the position check directly: a text node whose OWN leading byte is a real NBSP
+    // — not the load-time-converted display `~` of the test above — but that sits right after a
+    // CLOSING glyph rather than an opening one. Only the glyph-adjacent separator prefix may be
+    // stripped; this byte is content and must survive (as a real space once inverted — the
+    // reverse adaptor's unconditional NBSP-to-space mapping is unaffected by this fix), not be
+    // silently dropped.
+    const state = buildNestedCharState();
+    const outerChar = findOuterChar(state);
+    const trailingText = outerChar.children.find(
+      (child) => isSerializedTextNode(child) && child.text === "Y",
+    ) as SerializedTextNode | undefined;
+    if (!trailingText) throw new Error("Expected the trailing text node");
+    trailingText.text = `${NBSP}Y`;
+    initializeDeserialize(undefined);
+    const roundTripped = deserializeSerializedEditorState(
+      state,
+      getViewOptions(STANDARD_VIEW_MODE),
+    );
+    if (!roundTripped) throw new Error("Expected a round-tripped USJ");
+    const outerContent = (roundTripped.content[2] as MarkerObject).content?.find(
+      (item): item is MarkerObject => typeof item === "object" && item.marker === "nd",
+    )?.content;
+    expect(outerContent?.at(-1)).toBe(" Y");
+  });
+
+  it("standard view: still strips the separator when the first char-child text sits inside a TypedMarkNode", () => {
+    // A comment/annotation mark wrapping the span's first text right after the opening glyph
+    // must not hide the structural separator from the strip — TypedMarkNode is transparent on
+    // both sides of the adjacency check, exactly as the live predicate treats it.
+    const state = buildNestedCharState();
+    const outerChar = findOuterChar(state);
+    const firstTextIndex = outerChar.children.findIndex(
+      (child) => isSerializedTextNode(child) && child.text.endsWith("LORD"),
+    );
+    const firstText = outerChar.children[firstTextIndex] as SerializedTextNode;
+    expect(firstText.text.startsWith(NBSP)).toBe(true);
+    const mark = {
+      type: TypedMarkNode.getType(),
+      typedIDs: { "external-test": ["1"] },
+      direction: null,
+      format: "",
+      indent: 0,
+      version: 1,
+      children: [firstText],
+    } as unknown as SerializedTypedMarkNode;
+    outerChar.children.splice(firstTextIndex, 1, mark);
+    initializeDeserialize(undefined);
+    const roundTripped = deserializeSerializedEditorState(
+      state,
+      getViewOptions(STANDARD_VIEW_MODE),
+    );
+    if (!roundTripped) throw new Error("Expected a round-tripped USJ");
+    const outerContent = (roundTripped.content[2] as MarkerObject).content?.find(
+      (item): item is MarkerObject => typeof item === "object" && item.marker === "nd",
+    )?.content;
+    expect(outerContent?.[0]).toBe("LORD");
+  });
+
+  it("standard view: does not strip text that follows a char span's first-child milestone", () => {
+    // Element-first content (here, a milestone) takes a STANDALONE NBSP spacer before it, never a
+    // prefix on later text — so text after the milestone must be untouched by the strip, exactly
+    // like text after a nested closer.
+    const nd: SerializedCharNode = {
+      type: CharNode.getType(),
+      marker: "nd",
+      direction: null,
+      format: "",
+      indent: 0,
+      version: 1,
+      children: [
+        {
+          type: MarkerNode.getType(),
+          marker: "nd",
+          markerSyntax: "opening",
+          text: "",
+          detail: 0,
+          format: 0,
+          mode: "normal",
+          style: "",
+          version: 1,
+        } as SerializedMarkerNode,
+        {
+          type: "text",
+          text: NBSP,
+          detail: 0,
+          format: 0,
+          mode: "normal",
+          style: "",
+          version: 1,
+        } as SerializedTextNode,
+        {
+          type: MilestoneNode.getType(),
+          marker: "qt-s",
+          sid: "1",
+          version: MILESTONE_VERSION,
+        } as SerializedMilestoneNode,
+        {
+          type: "text",
+          text: `${NBSP}y`,
+          detail: 0,
+          format: 0,
+          mode: "normal",
+          style: "",
+          version: 1,
+        } as SerializedTextNode,
+        {
+          type: MarkerNode.getType(),
+          marker: "nd",
+          markerSyntax: "closing",
+          text: "",
+          detail: 0,
+          format: 0,
+          mode: "normal",
+          style: "",
+          version: 1,
+        } as SerializedMarkerNode,
+      ],
+    };
+    const state: SerializedEditorState = {
+      root: {
+        type: "root",
+        direction: null,
+        format: "",
+        indent: 0,
+        version: 1,
+        children: [
+          {
+            type: ParaNode.getType(),
+            marker: "p",
+            direction: null,
+            format: "",
+            indent: 0,
+            textFormat: 0,
+            textStyle: "",
+            version: 1,
+            children: [nd],
+          } as SerializedParaNode,
+        ],
+      },
+    };
+    initializeDeserialize(undefined);
+    const roundTripped = deserializeSerializedEditorState(
+      state,
+      getViewOptions(STANDARD_VIEW_MODE),
+    );
+    if (!roundTripped) throw new Error("Expected a round-tripped USJ");
+    const outerContent = (roundTripped.content[0] as MarkerObject).content?.find(
+      (item): item is MarkerObject => typeof item === "object" && item.marker === "nd",
+    )?.content;
+    // The standalone spacer is dropped entirely (presentation-only), and the milestone survives.
+    // The trailing text's leading NBSP is content, not a separator, so it is NOT stripped — it
+    // inverts to a real space (the reverse adaptor's unconditional NBSP-to-space mapping applies
+    // regardless), not silently dropped the way an incorrectly-stripped byte would be.
+    expect(outerContent).toEqual([{ type: "ms", marker: "qt-s", sid: "1" }, " y"]);
+  });
+
+  describe("note export: drops only the caller slot, not look-alike content elsewhere", () => {
+    /**
+     * `\f +` renders its EDITABLE caller as a plain text node holding exactly
+     * `getEditableCallerText("+")` (a leading space, the caller, a trailing NBSP —
+     * {@link $noteEditableCallerNode} in attributeDisplay.utils.ts). This footnote's own body
+     * repeats those exact bytes twice — once as loose text riding directly in the note (no `\ft`
+     * wrapper, a shape real USFM footnotes can take) and once inside an `\ft` span — so both
+     * occurrences coincide byte-for-byte with the caller slot without being it.
+     */
+    const callerLookalike = getEditableCallerText("+");
+
+    function buildNoteState(viewOptions: ReturnType<typeof getViewOptions>) {
+      const usx = `<usx version="3.0"><book code="RUT" style="id" /><chapter number="1" style="c" /><para style="p"><verse number="1" style="v" />text<note caller="+" style="f">${callerLookalike}<char style="ft">${callerLookalike}</char></note></para></usx>`;
+      const usj = usxStringToUsj(usx);
+      initializeSerialize(undefined, undefined);
+      reset();
+      return serializeEditorState(usj, viewOptions);
+    }
+
+    function findNote(usj: Usj): (MarkerObject & { category?: string }) | undefined {
+      const para = usj.content[2] as MarkerObject;
+      return para.content?.find(
+        (item): item is MarkerObject => typeof item === "object" && item.marker === "f",
+      );
+    }
+
+    /** The `SerializedNoteNode` a state built by {@link buildNoteState} carries. */
+    function findSerializedNote(state: SerializedEditorState): SerializedNoteNode {
+      const para = state.root.children[2] as SerializedParaNode;
+      const note = para.children.find((child) => child.type === NoteNode.getType());
+      if (!note) throw new Error("Expected the note built by buildNoteState");
+      return note as SerializedNoteNode;
+    }
+
+    it("editable expanded caller: drops the true slot, keeps both look-alike occurrences", () => {
+      const viewOptions = getViewOptions(UNFORMATTED_VIEW_MODE); // editable markerMode, expanded noteMode
+      const state = buildNoteState(viewOptions);
+      initializeDeserialize(undefined);
+      const roundTripped = deserializeSerializedEditorState(state, viewOptions);
+      if (!roundTripped) throw new Error("Expected a round-tripped USJ");
+
+      const note = findNote(roundTripped);
+      // The caller slot itself contributes nothing; the loose look-alike text and the `\ft`
+      // look-alike text — both real data, neither of them the caller — both survive.
+      expect(note?.content).toEqual([
+        callerLookalike,
+        { type: "char", marker: "ft", content: [callerLookalike] },
+      ]);
+    });
+
+    it("collapsed caller (no editable caller shape): nothing is anchored, so nothing is dropped", () => {
+      // The default `STANDARD_VIEW_MODE` noteMode ("collapsed") renders the caller as an
+      // `ImmutableNoteCallerNode` (a decorator, not a plain text node), so the note's children
+      // never present a text node matching `getEditableCallerText` at all — no caller slot is
+      // ever identified here, structurally, regardless of what the body text happens to read.
+      const viewOptions = getViewOptions(STANDARD_VIEW_MODE);
+      const state = buildNoteState(viewOptions);
+      initializeDeserialize(undefined);
+      const roundTripped = deserializeSerializedEditorState(state, viewOptions);
+      if (!roundTripped) throw new Error("Expected a round-tripped USJ");
+
+      const note = findNote(roundTripped);
+      // Both occurrences survive. The loose one loses only its leading space: Standard view
+      // collapses the space run it makes with the separator the writer puts after the caller.
+      expect(note?.content).toEqual([
+        callerLookalike.trimStart(),
+        { type: "char", marker: "ft", content: [callerLookalike] },
+      ]);
+    });
+
+    it("keeps a note's \\cat category value even when it equals the caller-slot text", () => {
+      // `category` is read directly off the note's own field by `createNoteMarker` — it never
+      // passes through the content recursion the caller-slot check guards, so byte-for-byte
+      // equality with the caller slot here cannot reach the drop check at all.
+      const viewOptions = getViewOptions(UNFORMATTED_VIEW_MODE);
+      const usj: Usj = {
+        ...EMPTY_USJ,
+        content: [
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              {
+                type: "note",
+                marker: "f",
+                caller: "+",
+                category: callerLookalike,
+                content: [{ type: "char", marker: "ft", content: ["body"] }],
+              } as MarkerObject,
+            ],
+          } as MarkerObject,
+        ],
+      };
+      initializeSerialize(undefined, undefined);
+      reset();
+      const state = serializeEditorState(usj, viewOptions);
+      initializeDeserialize(undefined);
+      const roundTripped = deserializeSerializedEditorState(state, viewOptions);
+      if (!roundTripped) throw new Error("Expected a round-tripped USJ");
+
+      const note = (roundTripped.content[0] as MarkerObject).content?.[0] as MarkerObject & {
+        category?: string;
+      };
+      expect(note.category).toBe(callerLookalike);
+      expect(note.content).toEqual([{ type: "char", marker: "ft", content: ["body"] }]);
+    });
+
+    it("a drifted caller-slot text gives its note's content only the bytes typed into it", () => {
+      // Simulates the tree mid-edit, after a keystroke has changed the caller-slot node's bytes
+      // before the marker-edit engine has resettled it (or while the engine leaves it waiting,
+      // the caret at it). The slot is still the caller's — the unmergeable text the note builder
+      // made for it — so the note keeps its caller, and the bytes typed into the slot read as the
+      // content the engine moves them to; the caller's own bytes are never content.
+      const viewOptions = getViewOptions(UNFORMATTED_VIEW_MODE);
+      const state = buildNoteState(viewOptions);
+      const note = findSerializedNote(state);
+      const callerNode = note.children[1] as SerializedTextNode;
+      if (callerNode.text !== callerLookalike)
+        throw new Error("Expected the note's caller-slot node at index 1");
+      callerNode.text = `${callerLookalike}X`; // drift the caller slot's own bytes
+
+      initializeDeserialize(undefined);
+      const roundTripped = deserializeSerializedEditorState(state, viewOptions);
+      if (!roundTripped) throw new Error("Expected a round-tripped USJ");
+
+      const note2 = findNote(roundTripped);
+      expect(note2?.caller).toBe("+");
+      // The typed byte and the loose look-alike text after the slot are adjacent content, so they
+      // coalesce into one string exactly as any other adjacent text run would.
+      expect(note2?.content).toEqual([
+        `X${callerLookalike}`,
+        { type: "char", marker: "ft", content: [callerLookalike] },
+      ]);
+    });
+
+    it("still drops the caller slot when an annotation mark wraps it", () => {
+      // An annotation mark is presentation both the exporter and the logical content model splice
+      // away, so the caller slot has to be recognized THROUGH one: a comment placed on the caller
+      // must not turn the caller's display bytes (` + ` with an NBSP tail) into note content. It
+      // would come back as a second, fabricated caller on the next load, and compound on every
+      // save/load cycle after that.
+      const viewOptions = getViewOptions(UNFORMATTED_VIEW_MODE);
+      const state = buildNoteState(viewOptions);
+      const note = findSerializedNote(state);
+      const callerNode = note.children[1] as SerializedTextNode;
+      if (callerNode.text !== callerLookalike)
+        throw new Error("Expected the note's caller-slot node at index 1");
+      const mark = {
+        type: TypedMarkNode.getType(),
+        typedIDs: { "external-test": ["1"] },
+        direction: null,
+        format: "",
+        indent: 0,
+        version: 1,
+        children: [callerNode],
+      } as unknown as SerializedTypedMarkNode;
+      note.children.splice(1, 1, mark);
+
+      initializeDeserialize(undefined);
+      const roundTripped = deserializeSerializedEditorState(state, viewOptions);
+      if (!roundTripped) throw new Error("Expected a round-tripped USJ");
+
+      const note2 = findNote(roundTripped);
+      // Identical to the unmarked case: the caller slot contributes nothing, and the look-alike
+      // body text — which is data, not a caller — still round-trips.
+      expect(note2?.content).toEqual([
+        callerLookalike,
+        { type: "char", marker: "ft", content: [callerLookalike] },
+      ]);
+    });
+  });
+
   it("uses per-call viewOptions, not a latched module singleton (task zero)", () => {
     // Build a standard-view state with a stored NBSP (renders as display `~`).
     const usj = usxStringToUsj(
@@ -665,6 +1057,69 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
 
     const para = result?.content?.[0] as MarkerObject;
     expect(para.content).toEqual(["before ", { type: "ms", marker: "qt-s", sid: "q1" }, " after"]);
+  });
+
+  // A milestone's display run normally rides inside its own `AttributeRunNode` wrapper (excluded
+  // above) with its attribute text tagged `textType: "attribute"`. Both protections can be missing
+  // at once — a loose glyph pair and an untagged attribute text, direct children of a char span —
+  // and the span's own opener/closer glyphs must not be confused with the milestone's.
+  it("drops an untagged milestone display run loose inside a char span, not kept as literal content", () => {
+    const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
+    initializeDeserialize(undefined);
+    const { editor: localEditor } = createBasicTestEnvironment(nodes);
+    localEditor.update(
+      () => {
+        const ms = $createMilestoneNode("qt-s", "q1");
+        const char = $createCharNode("w");
+        char.append(
+          $createMarkerNode("w", "opening"),
+          $createTextNode("grace"),
+          ms,
+          $createMarkerNode("qt-s", "opening"),
+          $createTextNode(`${NBSP}|sid="q1"`),
+          $createMarkerNode("", "selfClosing"),
+          $createMarkerNode("w", "closing"),
+        );
+        $getRoot().append($createParaNode("p").append(char));
+      },
+      { discrete: true },
+    );
+
+    const result = editorUsjAdaptor.deserializeEditorState(
+      localEditor.getEditorState(),
+      standardViewOptions,
+    );
+
+    const para = result?.content?.[0] as MarkerObject;
+    const charMarker = para.content?.[0] as MarkerObject;
+    expect(charMarker.content).toEqual(["grace", { type: "ms", marker: "qt-s", sid: "q1" }]);
+  });
+
+  it("does not duplicate a char span's own attribute when it also carries the attribute's untagged display text", () => {
+    const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
+    initializeDeserialize(undefined);
+    const { editor: localEditor } = createBasicTestEnvironment(nodes);
+    localEditor.update(
+      () => {
+        const char = $createCharNode("w", { lemma: "x" });
+        char.append(
+          $createMarkerNode("w", "opening"),
+          $createTextNode(`${NBSP}|x`),
+          $createMarkerNode("w", "closing"),
+        );
+        $getRoot().append($createParaNode("p").append(char));
+      },
+      { discrete: true },
+    );
+
+    const result = editorUsjAdaptor.deserializeEditorState(
+      localEditor.getEditorState(),
+      standardViewOptions,
+    );
+
+    const para = result?.content?.[0] as MarkerObject;
+    const charMarker = para.content?.[0] as MarkerObject;
+    expect(charMarker).toEqual({ type: "char", marker: "w", lemma: "x", content: ["|x"] });
   });
 
   it("excludes an unknown node's display marker/attribute runs from saved USJ content", () => {
@@ -1093,6 +1548,80 @@ describe("Note caller index vs the USJ note walk", () => {
         { type: "verse", marker: "v", number: "1" },
         "in the days",
       ]);
+    });
+  });
+});
+
+describe("Editor USJ Adaptor — comment milestones", () => {
+  it("ends each of two separate comments once", () => {
+    const { editor: markEditor } = createBasicTestEnvironment(nodes, () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] }).append($createTextNode("alpha")),
+          $createTextNode(" bravo "),
+          $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c2"] }).append($createTextNode("charlie")),
+        ),
+      );
+    });
+
+    const usj = editorUsjAdaptor.deserializeEditorState(markEditor.getEditorState());
+
+    expect(usj?.content).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "ms", marker: "zmsc-s", sid: "c1" },
+          "alpha",
+          { type: "ms", marker: "zmsc-e", eid: "c1" },
+          " bravo ",
+          { type: "ms", marker: "zmsc-s", sid: "c2" },
+          "charlie",
+          { type: "ms", marker: "zmsc-e", eid: "c2" },
+        ],
+      },
+    ]);
+  });
+
+  describe("beside an annotation that is not a comment", () => {
+    it.each([
+      [
+        "an adjacent one",
+        () => [
+          $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] }).append($createTextNode("alpha")),
+          $createTypedMarkNode({ "external-find": ["f1"] }).append($createTextNode("bravo")),
+        ],
+        ["alpha", "bravo"],
+      ],
+      [
+        "an overlapping one",
+        () => [
+          $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"] }).append($createTextNode("alpha")),
+          $createTypedMarkNode({ [COMMENT_MARK_TYPE]: ["c1"], "external-find": ["f1"] }).append(
+            $createTextNode("bravo"),
+          ),
+          $createTypedMarkNode({ "external-find": ["f1"] }).append($createTextNode("charlie")),
+        ],
+        ["alpha", "bravo", "charlie"],
+      ],
+    ])("ends the comment and keeps every text on reload (%s)", (_label, $marks, words) => {
+      const { editor: markEditor } = createBasicTestEnvironment(nodes, () => {
+        $getRoot().append($createParaNode("p").append(...$marks()));
+      });
+
+      const usj = editorUsjAdaptor.deserializeEditorState(markEditor.getEditorState());
+
+      if (!usj) throw new Error("expected the editor state to export");
+      const milestones = JSON.stringify(usj).match(/"marker":"zmsc-[se]"/g);
+      expect(milestones).toEqual(['"marker":"zmsc-s"', '"marker":"zmsc-e"']);
+      const view = getViewOptions(FORMATTED_VIEW_MODE);
+      initializeSerialize(undefined, undefined);
+      reset();
+      const state = serializeEditorState(usj, view);
+      const { editor: reloaded } = createBasicTestEnvironment(nodes);
+      reloaded.setEditorState(reloaded.parseEditorState(JSON.stringify({ root: state.root })));
+      const text = reloaded.getEditorState().read(() => $getRoot().getTextContent());
+      expect(text).toBe(words.join(""));
     });
   });
 });

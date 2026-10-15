@@ -1,0 +1,321 @@
+/**
+ * The position contract, checked exhaustively: every caret in a pending paragraph reports the
+ * settled location the same bytes have in the document `getUsj()` returns, and every settled
+ * location in that paragraph resolves back to the live bytes it names — or, for bytes with no
+ * counterpart on the other side, to the nearest one at or before them.
+ *
+ * The settled side is never computed by hand: a REFERENCE editor is mounted from `getUsj()`'s own
+ * document, where nothing is pending, so its locations are canonical by construction. A scenario
+ * only says how the two paragraphs' bytes line up ({@link AlignmentSpec}); the harness counts
+ * positions in non-whitespace bytes, because the settle is free to move whitespace.
+ *
+ * A settled byte no location can name — the second `/` of an optbreak, whose every offset is the
+ * optbreak's own location — is not a position of the settled document at all: a settled location
+ * counts where the reference resolves it, and a live byte whose counterpart is such a byte expects
+ * the nearest position in front of it the settled document can name.
+ */
+import {
+  mountExpandedNoteEditor,
+  mountStandardViewEditor,
+  requireStandardViewOptions,
+} from "../settledGetUsj.test-helpers";
+import { $liveSelectionFromSettled, $settledLocationFromLivePoint } from "./settledPositions.utils";
+import { $prepareSettleScopes } from "./settledScopes.utils";
+import { settledPositionContext } from "./positions.test-helpers";
+import { Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
+import {
+  $getRoot,
+  $isDecoratorNode,
+  $isElementNode,
+  $isTextNode,
+  LexicalEditor,
+  LexicalNode,
+  NodeKey,
+  TextNode,
+} from "lexical";
+import { $isNoteNode, getPendedDisplayOwners } from "shared";
+import {
+  $getLocationFromNode,
+  $getNodeFromLocation,
+  $isImmutableNoteCallerNode,
+  ViewOptions,
+} from "shared-react";
+import { expect } from "vitest";
+
+export interface AlignmentSpec {
+  /** `[live, settled]` stretches, in live order, whose concatenations are the two paragraphs'
+   * texts (whitespace is ignored) — the settled sides in {@link AlignmentSpec.settledOrder}. A
+   * count names the byte in front of which it sits and maps through the stretch whose side holds
+   * that byte: one for one where the sides are equal, and to the other side's start where they
+   * differ (snap left). A stretch with no bytes on the counting side holds none, so it is never the
+   * one; the count past the last byte maps to the other side's length. */
+  segments: readonly (readonly [live: string, settled: string])[];
+  /** The stretches' indexes in the order their settled sides run, for a paragraph whose settle
+   * reorders attributes; in live order when omitted. A stretch with no settled bytes still has a
+   * place: it is where a count in front of its live bytes snaps to. */
+  settledOrder?: readonly number[];
+}
+
+/** `spec`'s settled sides, in {@link AlignmentSpec.settledOrder}. */
+export function specSettledText(spec: AlignmentSpec): string {
+  return settledOrderOf(spec)
+    .map((index) => spec.segments[index][1])
+    .join("");
+}
+
+function settledOrderOf(spec: AlignmentSpec): readonly number[] {
+  const indexes = spec.segments.map((_, index) => index);
+  const order = spec.settledOrder ?? indexes;
+  if ([...order].sort((a, b) => a - b).join() !== indexes.join())
+    throw new Error(`settledOrder ${JSON.stringify(order)} is not an order of every stretch`);
+  return order;
+}
+
+export interface PositionScenario {
+  name: string;
+  usj: Usj;
+  /** Mount options: "standard" (default) or "expandedNotes". Both editors use the same. */
+  mount?: "standard" | "expandedNotes";
+  /** Put the mounted editor into the pending state. Must leave at least one pend. */
+  pend(lexical: LexicalEditor): Promise<void>;
+  /** Text that identifies the live paragraph under test (a substring of its text content). */
+  liveNeedle: string;
+  /** Text that identifies the same paragraph in the reference editor — for a paragraph that
+   * settles into several top-level items, the first of them. */
+  settledNeedle: string;
+  /** How many consecutive top-level items of the reference editor, starting at the one
+   * `settledNeedle` identifies, the live paragraph settles into; their texts concatenated are the
+   * settled side. Default 1. */
+  settledItems?: number;
+  alignment: AlignmentSpec;
+}
+
+export interface ContractReport {
+  outbound: { liveNonWs: number; expected: number; actual: number | "undefined" | "elsewhere" }[];
+  inbound: { settledNonWs: number; expected: number; actual: number | "refused" | "elsewhere" }[];
+  /** The two paragraphs' texts, for a failure message. */
+  liveText: string;
+  settledText: string;
+}
+
+/** JavaScript's `\s` includes the NBSP the display separates markers with. */
+const stripWs = (text: string): string => text.replace(/\s/g, "");
+
+/** How many non-whitespace characters of `text` precede `offset`. */
+function nonWs(text: string, offset: number): number {
+  return stripWs(text.slice(0, offset)).length;
+}
+
+/** `count` on one side of `spec` restated on the other — an implementation independent of the one
+ * under test, so the harness cannot agree with a bug in it. */
+export function specMapSnapped(
+  spec: AlignmentSpec,
+  count: number,
+  direction: "live→settled" | "settled→live",
+): number {
+  // Where each stretch starts on each side: live in list order, settled in `settledOrder`.
+  const liveStarts: number[] = [];
+  let liveLength = 0;
+  spec.segments.forEach(([live], index) => {
+    liveStarts[index] = liveLength;
+    liveLength += stripWs(live).length;
+  });
+  const settledStarts: number[] = [];
+  let settledLength = 0;
+  settledOrderOf(spec).forEach((index) => {
+    settledStarts[index] = settledLength;
+    settledLength += stripWs(spec.segments[index][1]).length;
+  });
+  const toSettled = direction === "live→settled";
+  for (let index = 0; index < spec.segments.length; index += 1) {
+    const [live, settled] = spec.segments[index].map(stripWs);
+    const [fromText, toText] = toSettled ? [live, settled] : [settled, live];
+    const [from, to] = toSettled
+      ? [liveStarts[index], settledStarts[index]]
+      : [settledStarts[index], liveStarts[index]];
+    if (count >= from && count < from + fromText.length)
+      return fromText === toText ? to + (count - from) : to;
+  }
+  return toSettled ? settledLength : liveLength;
+}
+
+/** A paragraph's USFM bytes, spelled leaf by leaf, with where each node starts in them: text nodes
+ * and decorators' display bytes as they render, and a collapsed note's caller — a decorator that
+ * renders no text — as the caller it stands for. */
+interface ParagraphText {
+  text: string;
+  starts: Map<NodeKey, number>;
+  ends: Map<NodeKey, number>;
+  /** Every text node, in order: the carets the contract ranges over. */
+  textNodes: TextNode[];
+  /** Every leaf that spells bytes (text nodes and decorators), in order, with its byte count:
+   * the settled locations the inbound direction ranges over. */
+  leaves: { node: LexicalNode; size: number }[];
+}
+
+function $paragraphText(paragraphs: readonly LexicalNode[]): ParagraphText {
+  let text = "";
+  const starts = new Map<NodeKey, number>();
+  const ends = new Map<NodeKey, number>();
+  const textNodes: TextNode[] = [];
+  const leaves: { node: LexicalNode; size: number }[] = [];
+  const visit = (node: LexicalNode): void => {
+    starts.set(node.getKey(), text.length);
+    let spelled: string | undefined;
+    if ($isTextNode(node)) {
+      textNodes.push(node);
+      spelled = node.getTextContent();
+    } else if ($isImmutableNoteCallerNode(node)) {
+      const note = node.getParent();
+      spelled = $isNoteNode(note) ? note.getCaller() : "";
+    } else if ($isDecoratorNode(node)) spelled = node.getTextContent();
+    else if ($isElementNode(node)) node.getChildren().forEach(visit);
+    if (spelled !== undefined) {
+      leaves.push({ node, size: spelled.length });
+      text += spelled;
+    }
+    ends.set(node.getKey(), text.length);
+  };
+  paragraphs.forEach(visit);
+  return { text, starts, ends, textNodes, leaves };
+}
+
+/** Where a resolved point sits in `paragraph`'s text, or `undefined` when it is outside it. */
+function $offsetInParagraph(
+  paragraph: ParagraphText,
+  node: LexicalNode | undefined,
+  offset: number | undefined,
+): number | undefined {
+  if (!node || offset === undefined) return undefined;
+  const start = paragraph.starts.get(node.getKey());
+  if (start === undefined) return undefined;
+  if (!$isElementNode(node)) return start + offset;
+  const child = node.getChildAtIndex(offset);
+  return child ? paragraph.starts.get(child.getKey()) : paragraph.ends.get(node.getKey());
+}
+
+/** The top-level element containing `needle` and the `count - 1` top-level elements after it. */
+function $paragraphsFrom(needle: string, count = 1): LexicalNode[] {
+  const children = $getRoot().getChildren();
+  const index = children.findIndex((child) => child.getTextContent().includes(needle));
+  if (index < 0) throw new Error(`no top-level element containing ${JSON.stringify(needle)}`);
+  const paragraphs = children.slice(index, index + count);
+  if (paragraphs.length < count)
+    throw new Error(`fewer than ${count} top-level elements from ${JSON.stringify(needle)}`);
+  return paragraphs;
+}
+
+function viewOptionsFor(mount: PositionScenario["mount"]): ViewOptions {
+  const standard = requireStandardViewOptions();
+  return mount === "expandedNotes" ? { ...standard, noteMode: "expanded" } : standard;
+}
+
+export async function checkContract(scenario: PositionScenario): Promise<ContractReport> {
+  const mountFn =
+    scenario.mount === "expandedNotes" ? mountExpandedNoteEditor : mountStandardViewEditor;
+  const viewOptions = viewOptionsFor(scenario.mount);
+
+  const pending = await mountFn(scenario.usj);
+  await scenario.pend(pending.lexical);
+  expect(
+    getPendedDisplayOwners(pending.lexical)?.size ?? 0,
+    "the scenario left nothing pending",
+  ).toBeGreaterThan(0);
+  const settled = pending.ref.current?.getUsj();
+  if (!settled) throw new Error("getUsj() returned nothing");
+  const reference = await mountFn(settled);
+
+  // The context must translate in the pending editor's own view, or an expanded note's scope is
+  // rebuilt as a collapsed one.
+  const baseContext = settledPositionContext(pending.lexical);
+  const context = { ...baseContext, tier2: { ...baseContext.tier2, viewOptions } };
+
+  const live = pending.lexical
+    .getEditorState()
+    .read(() => $paragraphText($paragraphsFrom(scenario.liveNeedle)));
+  const ref = reference.lexical
+    .getEditorState()
+    .read(() => $paragraphText($paragraphsFrom(scenario.settledNeedle, scenario.settledItems)));
+
+  expect(
+    stripWs(scenario.alignment.segments.map(([l]) => l).join("")),
+    "live side of the spec",
+  ).toBe(stripWs(live.text));
+  expect(stripWs(specSettledText(scenario.alignment)), "settled side of the spec").toBe(
+    stripWs(ref.text),
+  );
+
+  // Every reference caret's own (canonical) location, counted where the reference resolves it.
+  const inboundLocations: { settledNonWs: number; location: UsjDocumentLocation }[] =
+    reference.lexical.getEditorState().read(() =>
+      ref.leaves.flatMap(({ node, size }) =>
+        Array.from({ length: size + 1 }, (_, offset) => {
+          const location = $getLocationFromNode(node, offset, viewOptions);
+          const [at, atOffset] = $getNodeFromLocation(location, viewOptions);
+          const resolved =
+            $offsetInParagraph(ref, at, atOffset) ?? (ref.starts.get(node.getKey()) ?? 0) + offset;
+          return { settledNonWs: nonWs(ref.text, resolved), location };
+        }),
+      ),
+    );
+  /** The nearest count at or before `count` that some settled location names. */
+  const nameable = [...new Set(inboundLocations.map(({ settledNonWs }) => settledNonWs))].sort(
+    (a, b) => a - b,
+  );
+  const nameableAtOrBefore = (count: number): number =>
+    nameable.filter((candidate) => candidate <= count).pop() ?? count;
+
+  // Outbound: every live caret, in ONE read, without moving the selection (moving it can be a
+  // caret departure that settles the very pend under test).
+  const outboundLocations = pending.lexical.getEditorState().read(() => {
+    const prepared = $prepareSettleScopes(context);
+    return live.textNodes.flatMap((node) =>
+      Array.from({ length: node.getTextContentSize() + 1 }, (_, offset) => ({
+        liveNonWs: nonWs(live.text, (live.starts.get(node.getKey()) ?? 0) + offset),
+        location: $settledLocationFromLivePoint(prepared, node, offset),
+      })),
+    );
+  });
+  const outbound = reference.lexical.getEditorState().read(() =>
+    outboundLocations.map(({ liveNonWs, location }) => {
+      const expected = nameableAtOrBefore(
+        specMapSnapped(scenario.alignment, liveNonWs, "live→settled"),
+      );
+      if (!location) return { liveNonWs, expected, actual: "undefined" as const };
+      const [node, offset] = $getNodeFromLocation(location, viewOptions);
+      const at = $offsetInParagraph(ref, node, offset);
+      return {
+        liveNonWs,
+        expected,
+        actual: at === undefined ? ("elsewhere" as const) : nonWs(ref.text, at),
+      };
+    }),
+  );
+
+  // Inbound: every reference caret's own location, carried into the pending editor.
+  const inbound = pending.lexical.getEditorState().read(() => {
+    const prepared = $prepareSettleScopes(context);
+    return inboundLocations.map(({ settledNonWs, location }) => {
+      const expected = specMapSnapped(scenario.alignment, settledNonWs, "settled→live");
+      const selection = $liveSelectionFromSettled(context, prepared, { start: location });
+      if (!selection) return { settledNonWs, expected, actual: "refused" as const };
+      const [node, offset] = $getNodeFromLocation(selection.start, viewOptions);
+      const at = $offsetInParagraph(live, node, offset);
+      return {
+        settledNonWs,
+        expected,
+        actual: at === undefined ? ("elsewhere" as const) : nonWs(live.text, at),
+      };
+    });
+  });
+
+  return { outbound, inbound, liveText: live.text, settledText: ref.text };
+}
+
+/** The rows of `report` that break the contract, first ten, for `expect(...).toEqual([])`. */
+export function contractMismatches(report: ContractReport) {
+  return [
+    ...report.outbound.filter((r) => r.actual !== r.expected).map((r) => ({ dir: "out", ...r })),
+    ...report.inbound.filter((r) => r.actual !== r.expected).map((r) => ({ dir: "in", ...r })),
+  ].slice(0, 10);
+}
