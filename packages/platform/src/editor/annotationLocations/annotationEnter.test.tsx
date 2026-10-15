@@ -14,16 +14,20 @@ import {
 import { mountInView, ORACLE_TYPE } from "./annotationLocations.test-helpers";
 import {
   $editableTexts,
+  $screenBytes,
   CaseRun,
+  depart,
   ENTER_KEYSTROKES,
   oracleRows,
   pendingOracleView,
   PositionReport,
   runKeystrokeCase,
+  savedBytes,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
 import { drainNativeSelectionChange } from "../editor-test.utils";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
+import { KEY_ENTER_COMMAND } from "lexical";
 import { $logicalText, NBSP } from "shared";
 
 /** Each document position's reported locations, as one sorted set per position: a cut spells a
@@ -196,4 +200,60 @@ describe("Shift+Enter in a chapter's `\\ca`/`\\cp` span, where no paragraph hold
     },
     120_000,
   );
+});
+
+/**
+ * In `view`'s `\\w grace|g\\w*` paragraph, with no annotation, Shift+Enter with the caret at byte
+ * `at` of the span's content: the bytes the screen shows and the document saves, while the edit
+ * waits and once the caret has left.
+ */
+async function shiftEnterInAttributeSpan(
+  view: string,
+  at: number,
+): Promise<{ pendingScreen?: string; pending: string; settledScreen?: string; settled: string }> {
+  const usj = oracleRows(view).find(([name]) => name.startsWith("char span with an attribute ("));
+  if (!usj) throw new Error("no attribute row");
+  const mounted = await mountInView(usj[1], pendingOracleView(view));
+  await act(async () => {
+    mounted.lexical.update(() => {
+      $editableTexts()
+        .find((node) => $logicalText(node) === `${NBSP}grace`)
+        ?.select(at, at);
+    });
+    await drainNativeSelectionChange();
+  });
+  await act(async () => {
+    mounted.lexical.update(() => {
+      mounted.lexical.dispatchCommand(
+        KEY_ENTER_COMMAND,
+        new KeyboardEvent("keydown", { key: "Enter", shiftKey: true }),
+      );
+    });
+    await drainNativeSelectionChange();
+  });
+  const pendingScreen = mounted.lexical.getEditorState().read(() => $screenBytes());
+  const pending = savedBytes(mounted.ref.current?.getUsj());
+  await depart(mounted);
+  const settledScreen = mounted.lexical.getEditorState().read(() => $screenBytes());
+  const settled = savedBytes(mounted.ref.current?.getUsj());
+  mounted.unmount();
+  return { pendingScreen, pending, settledScreen, settled };
+}
+
+describe("Shift+Enter inside a char span's content before its attribute run", () => {
+  // The line break tears the span in two, the run and the closer in the second half; settled, the
+  // span is whole again, its attribute spelled once, and the screen shows what the file saves.
+  it.each([
+    ["standard", 1],
+    ["standard", 5],
+    ["standard", 6],
+    ["unformatted", 6],
+  ] as const)("%s view, at %i: saves the attribute once, as shown", async (view, at) => {
+    const bytes = await shiftEnterInAttributeSpan(view, at);
+    expect(bytes.pending.split("|g").length - 1).toBe(1);
+    expect(bytes.settled.split("|g").length - 1).toBe(1);
+    expect(bytes.pending).toContain("\\w*");
+    expect(bytes.pendingScreen).toBe(bytes.pending);
+    expect(bytes.settledScreen).toBe(bytes.settled);
+  });
 });

@@ -4,7 +4,7 @@
  * its content into the previous paragraph (PT9 reformat outcome).
  */
 
-import { $requestTier2ForNode, $settleScopeForNode } from "./tier2Rebuild.utils";
+import { $requestTier2ForNode, $settleScopeNodesInOrder } from "./tier2Rebuild.utils";
 import { MarkerEditContext } from "./markerEditTier1.utils";
 import { isParaKindMarker } from "./markerKind.utils";
 import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
@@ -737,20 +737,11 @@ function $isMissingNeededCloser(char: CharNode): boolean {
   return needsCloser && !hasCloser;
 }
 
-/** A span of `char`'s marker before it in its settle scope that is missing a closer it needs
- * ({@link $isMissingNeededCloser}): the opening half of a span `char` is the other half of. A
- * chapter's scope also takes the `\ca`/`\cp` spans beside it at the root, so the root children
- * from the scope up to `char`'s are read. */
+/** A span of `char`'s marker before it in its settle scope ({@link $settleScopeNodesInOrder})
+ * that is missing a closer it needs ({@link $isMissingNeededCloser}): the opening half of a span
+ * `char` is the other half of. */
 function $earlierSpanMissingCloser(char: CharNode): CharNode | undefined {
-  const scope = $settleScopeForNode(char);
-  if (!scope) return undefined;
-  const region: LexicalNode[] = [scope];
-  if (!scope.isParentOf(char))
-    for (let next = scope.getNextSibling(); next; next = next.getNextSibling()) {
-      region.push(next);
-      if (next.is(char) || next.isParentOf(char)) break;
-    }
-  for (const { node } of region.flatMap((root) => $dfs(root))) {
+  for (const node of $settleScopeNodesInOrder(char)) {
     if (node.is(char)) return undefined;
     if ($isCharNode(node) && node.getMarker() === char.getMarker() && $isMissingNeededCloser(node))
       return node;
