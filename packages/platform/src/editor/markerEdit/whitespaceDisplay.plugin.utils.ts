@@ -12,7 +12,12 @@
  * (`MarkerEditPlugin.tsx`) — they must not run in other view modes.
  */
 
-import { $getLexicalContent, copyToClipboard, LexicalClipboardData } from "@lexical/clipboard";
+import {
+  $getClipboardDataFromSelection,
+  $getLexicalContent,
+  copyToClipboard,
+  LexicalClipboardData,
+} from "@lexical/clipboard";
 import {
   $getCharacterOffsets,
   $getEditor,
@@ -44,7 +49,9 @@ import {
   MARKER_TRAILING_SPACE_TEXT_TYPE,
   NBSP,
   textTypeState,
+  $isSplitCarrier,
   $logicalText,
+  $mergePieces,
   $removeRangeSplitByMarks,
 } from "shared";
 import {
@@ -1060,6 +1067,41 @@ export function $writeCopyPayload(
     editor,
     data,
     isCut && editor.isEditable() ? () => selection.removeText() : undefined,
+  );
+}
+
+/**
+ * A copy or cut of a selection touching a carrier an annotation cut into pieces, for a view whose
+ * copy is Lexical's own (no view handler claimed it above): the carriers are joined back into one
+ * node each (`$mergePieces`, the selection moving with its bytes) and the clipboard written from
+ * them, as from the same document with no annotation. Lexical's HTML writes each node as an
+ * element of its own, so a verse in four pieces would paste back as four verses. Joined and copied
+ * in this one listener, since Lexical runs every listener of a command in an update of its own and
+ * the piece transform cuts the carriers again at the end of each; a copy changes no byte, so that
+ * update joins the current undo step. Declines a selection touching no cut carrier.
+ *
+ * Mutating: call inside `editor.update()` — in practice, from a `COPY_COMMAND` or `CUT_COMMAND`
+ * handler.
+ */
+export function $copyCarriersWhole(
+  event: ClipboardEvent | null,
+  editor: LexicalEditor,
+  isCut: boolean,
+): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+  const carriers = selection
+    .getNodes()
+    .filter((node): node is TextNode => $isTextNode(node) && $isSplitCarrier(node));
+  if (carriers.length === 0) return false;
+  for (const carrier of carriers) if (carrier.isAttached()) $mergePieces(carrier);
+  const joined = $getSelection();
+  if (!$isRangeSelection(joined)) return false;
+  return $writeClipboardData(
+    event,
+    editor,
+    $getClipboardDataFromSelection(joined),
+    isCut && editor.isEditable() ? () => joined.removeText() : undefined,
   );
 }
 

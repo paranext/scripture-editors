@@ -129,6 +129,14 @@ function nodesShape(lexical: string | undefined): string | undefined {
   return shape(parsed.nodes);
 }
 
+/** A copy of the three bytes either side of the caret, pasted at the caret: a copy holding part
+ * of a glyph. */
+const AROUND_PASTED: OracleKeystroke = {
+  name: "copy three bytes either side of the caret, then paste them at the caret",
+  copiesRange: { anchor: -3, focus: 3 },
+  pastesOver: "site",
+};
+
 /** The keystroke of `keystrokes` called `name`. */
 function named<T extends OracleKeystroke>(keystrokes: readonly T[], name: string): T {
   const found = keystrokes.find((keystroke) => keystroke.name === name);
@@ -189,7 +197,7 @@ describe("a copy pasted where an annotation mark starts", () => {
   ] as const)(
     "%s view, %s: %j at %i, %s",
     async (view, row, text, at, name) => {
-      const keystroke = named(COPY_PASTE_KEYSTROKES, name);
+      const keystroke = named([...COPY_PASTE_KEYSTROKES, AROUND_PASTED], name);
       const plain = await gestureCase(view, row, text, at, keystroke);
       expect(plain.applied, "the gesture applies in the document as loaded").not.toBe(false);
       for (const spelling of [0, 1])
@@ -387,6 +395,59 @@ describe("a pasted copy of annotated bytes", () => {
       ).toBe(0);
       expect(commentMilestones(mounted.ref.current?.getUsj(), "c1")).toEqual(["zmsc-s", "zmsc-e"]);
       mounted.unmount();
+    },
+    120_000,
+  );
+});
+
+describe("a copy of carriers an annotation cut into pieces", () => {
+  /** What a copy of the whole edited paragraph of `row` in `view` writes, with or without the
+   * oracle's annotation set: its HTML's marker elements, each with the text it opens with (the
+   * text between them is cut where a mark cut it, which pastes back as one text), its nodes
+   * ({@link nodesShape}), and its text. */
+  async function paragraphCopy(view: string, row: string, isAnnotated: boolean) {
+    const usj = oracleRows(view).find(([name]) => name.startsWith(`${row} (`))?.[1];
+    if (!usj) throw new Error(`no row ${row}`);
+    const viewOptions = pendingOracleView(view);
+    const mounted = await mountInView(usj, viewOptions);
+    if (isAnnotated) {
+      const plan = mounted.lexical.getEditorState().read(() => $planAnnotations(viewOptions));
+      for (const { id, range } of plan)
+        await act(async () => {
+          mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, id);
+          await Promise.resolve();
+        });
+    }
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const para = $getRoot().getChildren()[2];
+        if ($isElementNode(para)) para.select(0, para.getChildrenSize());
+      });
+      await drainNativeSelectionChange();
+    });
+    const { event, getData } = copyEvent({ native: true });
+    await act(async () => {
+      mounted.lexical.dispatchCommand(COPY_COMMAND, event);
+      await drainNativeSelectionChange();
+    });
+    mounted.unmount();
+    return {
+      html: getData("text/html")
+        .match(/<[^>]*data-marker="[^"]*"[^>]*>[^<]*/g)
+        ?.map((element) => element.replace(/ class="[^"]*"/, "")),
+      nodes: nodesShape(getData("application/x-lexical-editor")),
+      text: getData("text/plain"),
+    };
+  }
+
+  it.each([
+    ["unformatted", "verse"],
+    ["unformatted", "closed char span"],
+    ["standard", "closed char span"],
+  ] as const)(
+    "writes each carrier as one node (%s view, %s)",
+    async (view, row) => {
+      expect(await paragraphCopy(view, row, true)).toEqual(await paragraphCopy(view, row, false));
     },
     120_000,
   );
