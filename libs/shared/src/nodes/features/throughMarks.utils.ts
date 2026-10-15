@@ -167,14 +167,15 @@ export function $restCaretThroughMarks(): void {
 /**
  * Restate the ends of a range Lexical read from the screen beside an annotation mark as Lexical
  * reads them in the tree without marks. Lexical moves a range's start at the end of a text into an
- * inline element the text is followed by, and its end at the start of a text into one the text
- * follows, so a range from the end of a word up to the middle of a char span's opener selects
- * from inside the span. A mark ending at the word, or starting at the text after a span, hides that
- * neighbour from the rule: the start stays outside the span, and a cut or copy of the range then
- * takes the span's element along. Read through marks ({@link $nextSiblingThroughMarks},
- * {@link $previousSiblingThroughMarks}), the start moves into the span as without the mark, and so
- * does the end; a display-byte carrier cut into pieces is one node. A collapsed caret is left alone
- * ({@link $restoreCaretAtMarkEnd} restates that). Mutating (the selection only).
+ * inline element the text is followed by, and its end at the start of a text into an inline element
+ * the text follows or onto the end of a text it follows: a range from the end of a word up into a
+ * char span's opener starts inside the span, and one from a paragraph marker's separator up to the
+ * start of the content ends in the separator. A mark at that edge hides the neighbour from the
+ * rule, so the end stays where it was read: a cut or copy of the first range takes the span's
+ * element along, and typing over the second replaces the separator. Read through marks
+ * ({@link $nextSiblingThroughMarks}, {@link $previousSiblingThroughMarks}), each end moves as it
+ * does with no mark; a display-byte carrier cut into pieces is one node. A collapsed caret is left
+ * alone ({@link $restoreCaretAtMarkEnd} restates that). Mutating (the selection only).
  *
  * @returns Whether an end moved.
  */
@@ -205,6 +206,10 @@ export function $resolveRangeEndsThroughMarks(selection: RangeSelection): boolea
       const previous = $previousSiblingThroughMarks(node);
       if (isHiddenInlineElement(previous, node.getPreviousSibling())) {
         end.set(previous.getKey(), previous.getChildrenSize(), "element");
+        moved = true;
+      } else if ($isTextNode(previous) && !$lastPiece(previous).is(node.getPreviousSibling())) {
+        const last = $lastPiece(previous);
+        end.set(last.getKey(), last.getTextContentSize(), "text");
         moved = true;
       }
     }

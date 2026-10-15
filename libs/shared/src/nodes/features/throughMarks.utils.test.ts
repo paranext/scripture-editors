@@ -329,20 +329,31 @@ describe("restating a range's ends Lexical read beside a mark", () => {
   /**
    * Where `$resolveRangeEndsThroughMarks` puts the ends of a range from `anchor` to `focus`, each a
    * text spelled `[text, offset]`, in `In th` + a mark holding `e ` + `\w grace\w*` + a mark holding
-   * ` o` + `f God`, or (with `isUnmarked`) the same paragraph with no mark: each end's node (an
-   * element by its type) and offset, and whether either moved.
+   * ` o` + `f God`, or (with `isUnmarked`) the same paragraph with no mark, or (with `lead`) `lead`
+   * in place of `In th`: each end's node (an element by its type) and offset, and whether either
+   * moved.
    */
-  function resolved(anchor: [string, number], focus: [string, number], isUnmarked = false): string {
+  function resolved(
+    anchor: [string, number],
+    focus: [string, number],
+    isUnmarked = false,
+    lead?: string,
+  ): string {
     const { editor } = createBasicTestEnvironment(nodes);
     let out = "";
     editor.update(
       () => {
-        const texts = isUnmarked
-          ? [$createTextNode("In the ")]
-          : [
-              $createTextNode("In th"),
+        const texts = lead
+          ? [
+              $createTextNode(lead),
               $createTypedMarkNode({ t: ["1"] }).append($createTextNode("e ")),
-            ];
+            ]
+          : isUnmarked
+            ? [$createTextNode("In the ")]
+            : [
+                $createTextNode("In th"),
+                $createTypedMarkNode({ t: ["1"] }).append($createTextNode("e ")),
+              ];
         const after = isUnmarked
           ? [$createTextNode(" of God")]
           : [
@@ -390,6 +401,11 @@ describe("restating a range's ends Lexical read beside a mark", () => {
     // Lexical moves the end at the start of ` of God` into the span it follows.
     expect(resolved(["\\w*", 2], [" o", 0])).toBe("true \\w*@2 char@3");
     expect(resolved([" o", 0], ["\\w*", 2])).toBe("true char@3 \\w*@2");
+  });
+
+  it("moves a range's end at a mark's start onto the end of the text before the mark", () => {
+    // Lexical moves the end at the start of `In the ` onto the end of the text before it.
+    expect(resolved(["P ", 0], ["e ", 0], false, "P ")).toBe("true P @0 P @2");
   });
 
   it("leaves ends alone that no mark keeps from Lexical's own reading", () => {
