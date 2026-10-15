@@ -16,10 +16,12 @@ import { mountInView, ORACLE_TYPE } from "./annotationLocations.test-helpers";
 import {
   $editableTexts,
   COPY_PASTE_KEYSTROKES,
+  CUT_KEYSTROKES,
   OracleKeystroke,
   oracleRows,
   pendingOracleView,
   runKeystrokeCase,
+  TRANSPARENCY_RANGE_KEYSTROKES,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
 import { drainNativeSelectionChange } from "../editor-test.utils";
 import { act } from "@testing-library/react";
@@ -68,7 +70,30 @@ async function gestureCase(
   );
   mounted.unmount();
   if (!run) return { applied: false };
-  return { ...observables(run), clipboard: run.clipboard?.["text/plain"] };
+  return {
+    ...observables(run),
+    clipboard: run.clipboard?.["text/plain"],
+    clipboardNodes: nodesShape(run.clipboard?.["application/x-lexical-editor"]),
+  };
+}
+
+/** A serialized clipboard node: its text, or its children. */
+interface ClipboardNode {
+  type: string;
+  text?: string;
+  children?: ClipboardNode[];
+}
+
+/** The nodes of a clipboard's `application/x-lexical-editor` flavor as their elements and text:
+ * an element as `type(…)`, a text by its text, however a copy split the text into nodes. */
+function nodesShape(lexical: string | undefined): string | undefined {
+  if (lexical === undefined) return undefined;
+  const parsed: { nodes: ClipboardNode[] } = JSON.parse(lexical);
+  const shape = (nodes: ClipboardNode[]): string =>
+    nodes
+      .map((node) => (node.children ? `${node.type}(${shape(node.children)})` : (node.text ?? "")))
+      .join("");
+  return shape(parsed.nodes);
 }
 
 /** The keystroke of `keystrokes` called `name`. */
@@ -109,6 +134,27 @@ describe("a copy pasted where an annotation mark starts", () => {
           await gestureCase(view, row, text, at, keystroke, spelling),
           `spelling ${spelling}`,
         ).toEqual(plain);
+    },
+    120_000,
+  );
+});
+
+describe("a range with an end at a mark's edge beside a span", () => {
+  it.each([
+    // The range's start at the end of a mark, before a span: with no mark it starts inside the
+    // span, and the cut takes the opener's byte only.
+    ["standard", "closed char span", "In the ", 7, "cut the byte after the caret"],
+    ["standard", "closed char span", "In the ", 7, 'Shift+Right, then type "x"'],
+    ["standard", "closed char span", "In the ", 7, "Shift+Right, then Delete"],
+    // The range's end at the start of a mark, after a span: with no mark it ends inside the span.
+    ["standard", "closed char span", " of God", 0, "cut the byte before the caret"],
+  ] as const)(
+    "%s view, %s: %j at %i, %s",
+    async (view, row, text, at, name) => {
+      const keystroke = named([...CUT_KEYSTROKES, ...TRANSPARENCY_RANGE_KEYSTROKES], name);
+      const plain = await gestureCase(view, row, text, at, keystroke);
+      expect(plain.applied, "the gesture applies in the document as loaded").not.toBe(false);
+      expect(await gestureCase(view, row, text, at, keystroke, 0)).toEqual(plain);
     },
     120_000,
   );

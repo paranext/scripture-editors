@@ -164,6 +164,54 @@ export function $restCaretThroughMarks(): void {
   selection.focus.set(node.getKey(), offset, "text");
 }
 
+/**
+ * Restate the ends of a range Lexical read from the screen beside an annotation mark as Lexical
+ * reads them in the tree without marks. Lexical moves a range's start at the end of a text into an
+ * inline element the text is followed by, and its end at the start of a text into one the text
+ * follows, so a range from the end of a word up to the middle of a char span's opener selects
+ * from inside the span. A mark ending at the word, or starting at the text after a span, hides that
+ * neighbour from the rule: the start stays outside the span, and a cut or copy of the range then
+ * takes the span's element along. Read through marks ({@link $nextSiblingThroughMarks},
+ * {@link $previousSiblingThroughMarks}), the start moves into the span as without the mark, and so
+ * does the end; a display-byte carrier cut into pieces is one node. A collapsed caret is left alone
+ * ({@link $restoreCaretAtMarkEnd} restates that). Mutating (the selection only).
+ *
+ * @returns Whether an end moved.
+ */
+export function $resolveRangeEndsThroughMarks(selection: RangeSelection): boolean {
+  if (selection.isCollapsed()) return false;
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  let moved = false;
+  const isHiddenInlineElement = (
+    node: LexicalNode | null,
+    rawNeighbour: LexicalNode | null,
+  ): node is ElementNode =>
+    $isElementNode(node) && !$isTypedMarkNode(node) && node.isInline() && !node.is(rawNeighbour);
+  if (start.type === "text") {
+    const node = start.getNode();
+    if (start.offset === node.getTextContentSize() && $lastPiece(node).is(node)) {
+      const next = $nextSiblingThroughMarks(node);
+      if (isHiddenInlineElement(next, node.getNextSibling())) {
+        start.set(next.getKey(), 0, "element");
+        moved = true;
+      }
+    }
+  }
+  if (end.type === "text") {
+    const node = end.getNode();
+    if (end.offset === 0 && $pieceHead(node).is(node)) {
+      const previous = $previousSiblingThroughMarks(node);
+      if (isHiddenInlineElement(previous, node.getPreviousSibling())) {
+        end.set(previous.getKey(), previous.getChildrenSize(), "element");
+        moved = true;
+      }
+    }
+  }
+  return moved;
+}
+
 /** Whether `node` is a plain content `TextNode` (not a subclass such as a marker glyph or a
  * verse), the kind of node a mark cuts content text into. */
 export function $isPlainTextNode(node: LexicalNode | null | undefined): node is TextNode {

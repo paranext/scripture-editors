@@ -25,6 +25,7 @@ import {
   $isTypedMarkNode,
   $removeDisplayAnnotation,
   $removeTypedMarkId,
+  $resolveRangeEndsThroughMarks,
   $restoreCaretAtMarkEnd,
   $wrapSelectionInTypedMarkNode,
   ANNOTATION_CHANGE_TAG,
@@ -167,6 +168,18 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
       ...[SELECTION_CHANGE_COMMAND, CONTROLLED_TEXT_INSERTION_COMMAND, PASTE_COMMAND].map(
         (command: LexicalCommand<unknown>) =>
           editor.registerCommand(command, $restoreCaretBeforeCommand, COMMAND_PRIORITY_CRITICAL),
+      ),
+      // A range read back from the screen with an end beside a mark is resolved as with no mark
+      // there (`$resolveRangeEndsThroughMarks`), so what a cut, copy or edit of it takes is what it
+      // takes with no mark.
+      editor.registerCommand(
+        SELECTION_CHANGE_COMMAND,
+        () => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) $resolveRangeEndsThroughMarks(selection);
+          return false;
+        },
+        COMMAND_PRIORITY_CRITICAL,
       ),
     );
   }, [editor, markNodeMap]);
