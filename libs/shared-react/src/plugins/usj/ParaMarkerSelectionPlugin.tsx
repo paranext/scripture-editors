@@ -11,7 +11,7 @@ import {
   $placeCaretAfterParaChild,
 } from "./structureKeyboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { IS_APPLE, mergeRegister } from "@lexical/utils";
+import { $findMatchingParent, IS_APPLE, mergeRegister } from "@lexical/utils";
 import {
   $createRangeSelection,
   $createRangeSelectionFromDom,
@@ -208,10 +208,15 @@ export function ParaMarkerSelectionPlugin({
       const para = glyph?.getParent();
       if (!glyph || !$isSomeParaNode(para) || !target) return false;
       if ($adoptDomSelectionElsewhere(glyph.getKey()) || !$isDecoratorNode(target)) return false;
-      // Just past a verse number in its paragraph; a chapter number has no paragraph to hold the
-      // caret, so the selection collapses as it would for any other edit.
-      const parent = target.getParent();
-      if ($isSomeParaNode(parent)) $placeCaretAtBoundary(parent, target.getIndexWithinParent() + 1);
+      // Just past what was clicked in its paragraph: a verse number, or the note a caller belongs
+      // to. A decorator with no paragraph around it (a chapter number) has none to hold the caret,
+      // so the selection collapses as it would for any other edit.
+      const clickedPara = $findMatchingParent(target, $isSomeParaNode);
+      const clickedChild = clickedPara
+        ? $findMatchingParent(target, (node) => node.getParent()?.is(clickedPara) ?? false)
+        : undefined;
+      if ($isSomeParaNode(clickedPara) && clickedChild)
+        $placeCaretAtBoundary(clickedPara, clickedChild.getIndexWithinParent() + 1);
       else $placeCaretAtParaContentStart(para);
       return false;
     };

@@ -585,17 +585,18 @@ export function $guardCursorAtGutterMarker(target: EventTarget | null): boolean 
  * the rest of the editor treats a marker selection as. Call before running an edit written for a
  * caret, so it acts on the paragraph's text rather than on the glyph.
  *
- * Mutating: call inside `editor.update()`.
- *
  * A marker selection a remote edit orphaned (its paragraph removed) is repaired the same way the
- * next key would repair it, through {@link REPAIR_PARA_MARKER_SELECTION_COMMAND}.
+ * next key would repair it, through {@link REPAIR_PARA_MARKER_SELECTION_COMMAND}. With the
+ * paragraph and both its neighbours gone the repair leaves no selection at all, which reports
+ * `false`.
  *
  * Mutating: call inside `editor.update()`.
  *
- * @returns `true` if a marker was selected and is now collapsed, `false` if nothing changed.
+ * @returns `true` if a marker was selected and is now a caret, `false` otherwise.
  */
 export function $collapseParaMarkerSelection(): boolean {
-  if ($getEditor().dispatchCommand(REPAIR_PARA_MARKER_SELECTION_COMMAND, undefined)) return true;
+  if ($getEditor().dispatchCommand(REPAIR_PARA_MARKER_SELECTION_COMMAND, undefined))
+    return $isRangeSelection($getSelection());
   const para = $getSelectedParaMarkerPara($getSelection());
   if (!para) return false;
   $placeCaretAtParaContentStart(para);

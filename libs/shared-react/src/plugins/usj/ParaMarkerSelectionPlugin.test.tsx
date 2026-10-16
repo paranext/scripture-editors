@@ -1,7 +1,11 @@
 // Should only be used on nodes that are initialized in the test environment.
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
-import { $createImmutableVerseNode } from "../../nodes/usj";
+import {
+  $createImmutableNoteCallerNode,
+  $createImmutableVerseNode,
+  ImmutableNoteCallerNode,
+} from "../../nodes/usj";
 import { HistoryPlugin } from "../History/HistoryPlugin";
 import {
   PARA_MARKER_SELECTED_CLASS_NAME,
@@ -51,6 +55,7 @@ import {
   $createGutterMarkerNode,
   $createImmutableChapterNode,
   $createImmutableTypedTextNode,
+  $createNoteNode,
   $createParaNode,
   $createUnknownNode,
   $getSelectedParaMarker,
@@ -1056,6 +1061,46 @@ describe("ParaMarkerSelectionPlugin — clicks", () => {
     });
   });
 
+  // A note caller's parent is its note, not a paragraph; the caret goes to the paragraph the note
+  // is in, past the note, never back to the paragraph whose marker was selected.
+  it("a click on a note caller in another paragraph puts the caret past that note", async () => {
+    let p!: ParaNode;
+    let q1!: ParaNode;
+    let caller!: ImmutableNoteCallerNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        p = $createParaNode("p");
+        q1 = $createParaNode("q1");
+        caller = $createImmutableNoteCallerNode("+", "preview");
+        $getRoot().append(
+          p.append($createGutterGlyphNode("p"), $createTextNode("first")),
+          q1.append(
+            $createGutterGlyphNode("q1"),
+            $createTextNode("third"),
+            $createNoteNode("f", "+").append(caller, $createTextNode("note body")),
+            $createTextNode(" after"),
+          ),
+        );
+      },
+      <ParaMarkerSelectionPlugin />,
+    );
+    await selectMarkerOf(editor, p);
+
+    await act(async () => {
+      editor
+        .getElementByKey(caller.getKey())
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect(selection.anchor.getNode().getTopLevelElement()?.is(q1)).toBe(true);
+      expect(selection.anchor.getNode().getTextContent()).toBe(" after");
+      expect(selection.anchor.offset).toBe(0);
+    });
+  });
+
   // A chapter number sits in the root, where no caret can rest.
   it("a click on a chapter number collapses to the selected paragraph's text", async () => {
     const { editor, li2, secondText } = await deletionEnvironment("off", { afterChapter: true });
@@ -1241,6 +1286,27 @@ describe("ParaMarkerSelectionPlugin — a selection whose marker goes away", () 
     editor.getEditorState().read(() => {
       $expectSelectionToBe(firstText, "first".length);
     });
+  });
+
+  // With the paragraph and both its neighbours gone, the repair has nowhere to put a caret: the
+  // edit that asked must be told there is no selection, not that the collapse succeeded.
+  it("reports no collapse when the repair finds nowhere to put the caret", async () => {
+    const { editor, p, li2, q1 } = await environment();
+    await selectMarkerOf(editor, li2);
+    await sutUpdate(editor, () => {
+      // A paragraph unrelated to the selected one stays, so the document is not left empty.
+      q1.insertAfter($createParaNode("p").append($createTextNode("unrelated")));
+      p.remove();
+      li2.remove();
+      q1.remove();
+    });
+
+    let isCollapsed = true;
+    await sutUpdate(editor, () => {
+      isCollapsed = $collapseParaMarkerSelection();
+    });
+
+    expect(isCollapsed).toBe(false);
   });
 });
 
