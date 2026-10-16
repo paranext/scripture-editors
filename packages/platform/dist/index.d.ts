@@ -267,6 +267,23 @@ export declare interface EditorOptions {
    * Defaults to "off".
    */
   structureProtectionMode?: StructureProtectionMode;
+  /**
+   * Asks the user before an edit removes content the view does not show.
+   *
+   * Constructs the editor carries without modeling them - figures, sidebars, `\periph`, and the
+   * like - are hidden in every view whose `view.markerMode` is not `"editable"` (all but Standard
+   * and Unformatted). A Backspace or Delete that would reach one, a word or line delete that would
+   * cover one, and any delete, typing, Enter, paste or cut over a selection holding one is held, and
+   * this is called to ask. On `"delete"` the edit goes ahead, removing the hidden content; a
+   * character delete removes exactly the hidden content and nothing else, so no paragraph is merged
+   * or dissolved around it. On `"keep"` nothing is removed: the caret moves past the hidden content
+   * when the request's `canSkip` says so, and otherwise the edit is cancelled. Dragging a selection
+   * that holds hidden content is refused, and so is cutting one while
+   * {@link EditorOptions.copyLimit} is set.
+   *
+   * Without this option editing is native, and such edits remove hidden content without asking.
+   */
+  onHiddenContentDelete?: HiddenContentDeleteHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */
   hasExternalUI?: boolean;
   /** Is the editor enabled for spell checking. */
@@ -1168,6 +1185,65 @@ export declare function getViewOptions(viewMode?: string | undefined): ViewOptio
  * @public
  */
 export declare const HIDDEN_NOTE_CALLER = "-";
+
+/**
+ * What the user did that would remove hidden content.
+ * - `"deleteBackward"` / `"deleteForward"`: Backspace / Delete (or a word or line chord of either)
+ *   with a collapsed caret.
+ * - `"replaceSelection"`: deleting, typing over, pressing Enter over, pasting over, or cutting a
+ *   selection.
+ *
+ * More actions may be added; a host that branches on this should handle values it does not know.
+ */
+export declare type HiddenContentDeleteAction =
+  | "deleteBackward"
+  | "deleteForward"
+  | "replaceSelection";
+
+/**
+ * The user's answer.
+ * - `"delete"`: go ahead and remove the hidden content along with the edit.
+ * - `"keep"`: keep it. The caret moves past it when the request's `canSkip` is `true`; otherwise
+ *   the edit is cancelled.
+ */
+export declare type HiddenContentDeleteDecision = "delete" | "keep";
+
+/**
+ * Asks the user whether an edit may remove content the current view does not show (a figure, a
+ * sidebar, ...).
+ *
+ * The editor holds the edit until this settles and refuses typing, deleting, pasting and cutting
+ * meanwhile, so it must settle: a modal dialog whose every way out answers is the intended shape.
+ * Until it does, editing stays held. A rejected promise, a thrown error, and any answer other than
+ * `"delete"` count as `"keep"`.
+ */
+export declare type HiddenContentDeleteHandler = (
+  request: HiddenContentDeleteRequest,
+) => HiddenContentDeleteDecision | Promise<HiddenContentDeleteDecision>;
+
+/** Passed to {@link HiddenContentDeleteHandler} when an edit would remove hidden content. */
+export declare interface HiddenContentDeleteRequest {
+  /** Each hidden construct the edit would remove, in document order. Never empty. */
+  readonly items: readonly HiddenContentItem[];
+  /** What the user did. */
+  readonly action: HiddenContentDeleteAction;
+  /**
+   * Whether `"keep"` moves the caret past the hidden content, leaving the user free to keep going.
+   * When `false`, `"keep"` cancels the edit and the caret stays where it was. `true` only for a
+   * caret delete whose only hidden content is the run right at the caret, with visible content
+   * beyond it to move to; a word or line delete reaching hidden content further along, a run with
+   * nothing beyond it, and any selection edit cannot skip.
+   */
+  readonly canSkip: boolean;
+}
+
+/** One construct the current view cannot show, which an edit is about to remove. */
+export declare interface HiddenContentItem {
+  /** The construct's USJ type, e.g. `"figure"`, `"sidebar"`, `"periph"`. */
+  readonly tag: string;
+  /** The construct's USFM marker without the backslash, e.g. `"fig"`, `"esb"`, when it has one. */
+  readonly marker?: string;
+}
 
 /**
  * Whether the view options select the block verse layout.

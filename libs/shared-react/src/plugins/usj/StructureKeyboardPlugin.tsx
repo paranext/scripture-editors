@@ -29,6 +29,7 @@ import {
   DRAGSTART_COMMAND,
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
+  LexicalEditor,
   PASTE_COMMAND,
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -36,6 +37,27 @@ import { $isSomeVerseNode } from "../../nodes/usj";
 import { $isSomeParaNode } from "shared";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
+
+/**
+ * The direction of the two-step selection delete {@link StructureKeyboardPlugin} has armed, read
+ * from the signal it publishes on the editor root, or `undefined` when none is armed. A press in
+ * that direction fires the delete; a press the other way cancels it. For another plugin that must
+ * act on the press that fires the delete, not on the one that arms or cancels it.
+ *
+ * @param editor - The editor to read; any context, it reads only the DOM.
+ */
+export function armedSelectionDeleteIntent(
+  editor: LexicalEditor,
+): "deleteBackward" | "deleteForward" | undefined {
+  const root = editor.getRootElement();
+  if (
+    !root?.classList.contains("verse-delete-armed") ||
+    root.getAttribute("data-verse-delete-kind") !== "selection"
+  )
+    return undefined;
+  const intent = root.getAttribute("data-verse-delete-intent");
+  return intent === "deleteBackward" || intent === "deleteForward" ? intent : undefined;
+}
 
 /**
  * Governs structural keystrokes (Backspace/Delete/Enter/typing) at verse- and paragraph-marker
