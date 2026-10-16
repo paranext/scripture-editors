@@ -218,9 +218,9 @@ export function StructureKeyboardPlugin({
         event.preventDefault();
         return true;
       }
-      // A drop that starts from no range (a selected paragraph marker, say) says nothing about
-      // where it lands: leave it to the default handler, which resolves it from the drop target.
-      if (!$isRangeSelection(selection)) return false;
+      // With no range to land at, `$sanitizeAndInsert` inserts nothing but still claims the drop:
+      // the default handler would let the browser insert the payload itself, structure and all.
+      // (A selected paragraph marker has already moved the selection to the drop point.)
       return $sanitizeAndInsert(event.dataTransfer?.getData("text/html"), event);
     };
 
