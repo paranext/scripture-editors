@@ -38,6 +38,7 @@ import {
   isDOMNode,
   KEY_DOWN_COMMAND,
   KEY_ESCAPE_COMMAND,
+  LexicalCommand,
   LexicalEditor,
   NodeKey,
   PASTE_COMMAND,
@@ -302,15 +303,22 @@ export function ParaMarkerSelectionPlugin({
       return false;
     };
 
-    // `unknown` because one guard serves commands with different payloads: a `ClipboardEvent` for
-    // cut and copy, a `DragEvent` for drag-start.
-    const $refuseUnlessElsewhere = (payload: unknown): boolean => {
-      const glyph = $getSelectedParaMarker($getSelection());
-      if (!glyph || !editor.isEditable()) return false;
-      if ($adoptDomSelectionElsewhere(glyph.getKey())) return false;
-      if (isPreventable(payload)) payload.preventDefault();
-      return true;
-    };
+    // Cut, copy and drag-start act on the range the browser moved to, if it moved; otherwise they
+    // are refused. An adopted range is sent through the command again, so every handler sees it —
+    // including one registered ahead of this one at the same priority, such as a copy limit, which
+    // would otherwise have measured the one-glyph marker selection instead.
+    const $refuseUnlessElsewhere =
+      <T,>(command: LexicalCommand<T>) =>
+      (payload: T): boolean => {
+        const glyph = $getSelectedParaMarker($getSelection());
+        if (!glyph || !editor.isEditable()) return false;
+        if ($adoptDomSelectionElsewhere(glyph.getKey())) {
+          editor.dispatchCommand(command, payload);
+          return true;
+        }
+        if (isPreventable(payload)) payload.preventDefault();
+        return true;
+      };
 
     // DROP is judged by the drop TARGET, not the live selection, mirroring
     // `OpaqueBlockGuardPlugin`'s DROP_COMMAND handler: Lexical dispatches DROP_COMMAND straight
@@ -454,9 +462,21 @@ export function ParaMarkerSelectionPlugin({
         COMMAND_PRIORITY_CRITICAL,
       ),
       editor.registerCommand(PASTE_COMMAND, $handlePaste, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(CUT_COMMAND, $refuseUnlessElsewhere, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(COPY_COMMAND, $refuseUnlessElsewhere, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(DRAGSTART_COMMAND, $refuseUnlessElsewhere, COMMAND_PRIORITY_CRITICAL),
+      editor.registerCommand(
+        CUT_COMMAND,
+        $refuseUnlessElsewhere(CUT_COMMAND),
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
+        COPY_COMMAND,
+        $refuseUnlessElsewhere(COPY_COMMAND),
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      editor.registerCommand(
+        DRAGSTART_COMMAND,
+        $refuseUnlessElsewhere(DRAGSTART_COMMAND),
+        COMMAND_PRIORITY_CRITICAL,
+      ),
       editor.registerCommand(DROP_COMMAND, $handleDrop, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(FOCUS_COMMAND, handleFocus, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(
