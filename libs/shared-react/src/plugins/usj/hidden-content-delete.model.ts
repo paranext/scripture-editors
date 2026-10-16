@@ -1,32 +1,36 @@
 /** One construct the current view cannot show, which an edit is about to remove. */
 export interface HiddenContentItem {
   /** The construct's USJ type, e.g. `"figure"`, `"sidebar"`, `"periph"`. */
-  tag: string;
+  readonly tag: string;
   /** The construct's USFM marker without the backslash, e.g. `"fig"`, `"esb"`, when it has one. */
-  marker?: string;
+  readonly marker?: string;
 }
 
 /**
  * What the user did that would remove hidden content.
  * - `"deleteBackward"` / `"deleteForward"`: Backspace / Delete (or a word or line chord of either)
  *   with a collapsed caret.
- * - `"replaceSelection"`: deleting, typing over, pasting over, or cutting a selection.
+ * - `"replaceSelection"`: deleting, typing over, pressing Enter over, pasting over, or cutting a
+ *   selection.
+ *
+ * More actions may be added; a host that branches on this should handle values it does not know.
  */
 export type HiddenContentDeleteAction = "deleteBackward" | "deleteForward" | "replaceSelection";
 
 /** Passed to {@link HiddenContentDeleteHandler} when an edit would remove hidden content. */
 export interface HiddenContentDeleteRequest {
   /** Each hidden construct the edit would remove, in document order. Never empty. */
-  items: HiddenContentItem[];
+  readonly items: readonly HiddenContentItem[];
   /** What the user did. */
-  action: HiddenContentDeleteAction;
+  readonly action: HiddenContentDeleteAction;
   /**
    * Whether `"keep"` moves the caret past the hidden content, leaving the user free to keep going.
-   * When `false`, `"keep"` cancels the edit and the caret stays where it was. Only a caret delete
-   * whose whole extent is the hidden content right at the caret can skip; a word or line delete
-   * reaching hidden content further along, and any selection edit, cannot.
+   * When `false`, `"keep"` cancels the edit and the caret stays where it was. `true` only for a
+   * caret delete whose only hidden content is the run right at the caret, with visible content
+   * beyond it to move to; a word or line delete reaching hidden content further along, a run with
+   * nothing beyond it, and any selection edit cannot skip.
    */
-  canSkip: boolean;
+  readonly canSkip: boolean;
 }
 
 /**
@@ -39,9 +43,12 @@ export type HiddenContentDeleteDecision = "delete" | "keep";
 
 /**
  * Asks the user whether an edit may remove content the current view does not show (a figure, a
- * sidebar, ...). The editor holds the edit until this settles, refusing other edits meanwhile, so
- * the promise must settle: a modal dialog whose every way out answers is the intended shape. A
- * rejected promise counts as `"keep"`.
+ * sidebar, ...).
+ *
+ * The editor holds the edit until this settles and refuses typing, deleting, pasting and cutting
+ * meanwhile, so it must settle: a modal dialog whose every way out answers is the intended shape.
+ * Until it does, editing stays held. A rejected promise, a thrown error, and any answer other than
+ * `"delete"` count as `"keep"`.
  */
 export type HiddenContentDeleteHandler = (
   request: HiddenContentDeleteRequest,

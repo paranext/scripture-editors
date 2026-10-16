@@ -13,17 +13,20 @@ import { StructureProtectionMode } from "./structure-protection.model";
 import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { act } from "@testing-library/react";
 import {
+  $createNodeSelection,
   $createTextNode,
   $getRoot,
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $setSelection,
   COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   CUT_COMMAND,
   DELETE_LINE_COMMAND,
   DELETE_WORD_COMMAND,
   DRAGSTART_COMMAND,
+  INSERT_PARAGRAPH_COMMAND,
   KEY_DOWN_COMMAND,
   PASTE_COMMAND,
   REMOVE_TEXT_COMMAND,
@@ -35,6 +38,7 @@ import {
   $createParaNode,
   $createUnknownNode,
   $isUnknownNode,
+  LoggerBasic,
   UnknownNode,
 } from "shared";
 
@@ -79,9 +83,10 @@ async function guardedEnvironment(
     isEnabled?: boolean;
     structureProtectionMode?: StructureProtectionMode;
     copyLimit?: number;
+    logger?: LoggerBasic;
   } = {},
 ) {
-  const { isEnabled = true, structureProtectionMode, copyLimit } = options;
+  const { isEnabled = true, structureProtectionMode, copyLimit, logger } = options;
   return baseTestEnvironment(
     $init,
     <>
@@ -90,6 +95,7 @@ async function guardedEnvironment(
         structureProtectionMode={structureProtectionMode}
         copyLimit={copyLimit}
         onHiddenContentDelete={handler}
+        logger={logger}
       />
       {structureProtectionMode && (
         <StructureKeyboardPlugin structureProtectionMode={structureProtectionMode} />
@@ -130,6 +136,10 @@ function clipboardEvent(type: "paste" | "cut", text = "") {
   };
   Object.defineProperty(event, "clipboardData", { value: clipboardData });
   return event;
+}
+
+function spyLogger() {
+  return { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
 }
 
 function readTree(editor: LexicalEditor): string[] {
@@ -395,6 +405,128 @@ describe("HiddenContentDeleteGuardPlugin", () => {
 
       expect(readTree(editor)).toEqual(["changed elsewhere[figure: caption]after"]);
     });
+
+    it("asks again once a question is answered, so editing never stays held", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler);
+
+      updateSelection(editor, after!, 0);
+      await pressKey(editor, "Backspace");
+      await settle();
+      updateSelection(editor, after!, 0);
+      const again = await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(again.defaultPrevented).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    it("lets editing go on after an answer is dropped", async () => {
+      const { handler, answer } = answeringLater();
+      const { editor } = await guardedEnvironment($init, handler);
+      claimUnhandledKeys(editor);
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      updateSelection(editor, after!, 3);
+      await act(async () => answer("delete"));
+      await settle();
+      const typed = await pressKey(editor, "x");
+
+      expect(typed.defaultPrevented).toBe(false);
+    });
+
+    it("logs a failing handler and keeps the figure", async () => {
+      const logger = spyLogger();
+      const failure = new Error("dialog failed");
+      const { editor } = await guardedEnvironment(
+        $init,
+        vi.fn<HiddenContentDeleteHandler>(() => Promise.reject(failure)),
+        { logger },
+      );
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(logger.error).toHaveBeenCalledWith(expect.any(String), failure);
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("warns about an answer that is neither 'delete' nor 'keep', and keeps the figure", async () => {
+      const logger = spyLogger();
+      const { editor } = await guardedEnvironment(
+        $init,
+        // A host answering outside the contract, as a misspelled string from JavaScript would.
+        vi.fn(() => "Delete") as unknown as HiddenContentDeleteHandler,
+        { logger },
+      );
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("logs an answer it drops", async () => {
+      const logger = spyLogger();
+      const { handler, answer } = answeringLater();
+      const { editor } = await guardedEnvironment($init, handler, { logger });
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      updateSelection(editor, before!, 2);
+      await act(async () => answer("delete"));
+      await settle();
+
+      expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("selection moved"));
+    });
+
+    it("counts a node selected while asking as a move, and drops the edit", async () => {
+      const { handler, answer } = answeringLater();
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      await sutUpdate(editor, () => {
+        const nodeSelection = $createNodeSelection();
+        nodeSelection.add($getRoot().getFirstChildOrThrow().getKey());
+        $setSelection(nodeSelection);
+      });
+      await act(async () => answer("delete"));
+      await settle();
+
+      expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
+    });
+
+    it("does not count focus leaving for the host's prompt (no selection) as a move", async () => {
+      const { handler, answer } = answeringLater();
+      const { editor } = await guardedEnvironment($init, handler);
+      updateSelection(editor, after!, 0);
+
+      await pressKey(editor, "Backspace");
+      await sutUpdate(editor, () => $setSelection(null));
+      await act(async () => answer("delete"));
+      await settle();
+
+      expect(readTree(editor)).toEqual(["beforeafter"]);
+    });
+
+    it("still asks next to a figure under protected structure, where nothing structural is at stake", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler, {
+        structureProtectionMode: "protected",
+      });
+      updateSelection(editor, after!, 0);
+
+      const event = await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("a sidebar between paragraphs", () => {
@@ -464,6 +596,30 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(handler).not.toHaveBeenCalled();
       expect(event.defaultPrevented).toBe(true); // blocked by StructureKeyboardPlugin
       expect(readTree(editor)).toEqual(["first", "[sidebar: sidebar text]", "second"]);
+    });
+
+    it("removes only the sidebar for a line delete at the paragraph's start, never replaying it", async () => {
+      const { editor } = await guardedEnvironment($init, answering("delete"));
+      // Stands in for Lexical's native line delete, which jsdom cannot perform: a replay here would
+      // merge the paragraphs.
+      let isReplayed = false;
+      editor.registerCommand(
+        DELETE_LINE_COMMAND,
+        () => {
+          isReplayed = true;
+          return true;
+        },
+        COMMAND_PRIORITY_LOW,
+      );
+      updateSelection(editor, second!, 0);
+
+      await act(async () => {
+        editor.dispatchCommand(DELETE_LINE_COMMAND, true);
+      });
+      await settle();
+
+      expect(isReplayed).toBe(false);
+      expect(readTree(editor)).toEqual(["first", "second"]);
     });
 
     it("asks ahead of the guarded two-step delete", async () => {
@@ -712,6 +868,122 @@ describe("HiddenContentDeleteGuardPlugin", () => {
 
       expect(handler).toHaveBeenCalledTimes(1);
       expect(readTree(editor)).toEqual(["befXter"]);
+    });
+
+    it("writes the clipboard for a cut over it, whatever the answer", async () => {
+      for (const decision of ["delete", "keep"] as const) {
+        const { editor } = await guardedEnvironment($init, answering(decision));
+        updateSelection(editor, before!, 3, after!, 2);
+
+        const cut = clipboardEvent("cut");
+        await act(async () => {
+          editor.dispatchCommand(CUT_COMMAND, cut);
+        });
+        await settle();
+
+        expect(cut.clipboardData?.setData).toHaveBeenCalledWith("text/plain", expect.any(String));
+      }
+    });
+
+    it("leaves a cut of visible text alone under a copy limit", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler, { copyLimit: 1000 });
+      // Stands in for the handlers that perform a cut, to see that this one reaches them.
+      let isCutPerformed = false;
+      editor.registerCommand(
+        CUT_COMMAND,
+        () => {
+          isCutPerformed = true;
+          return true;
+        },
+        COMMAND_PRIORITY_LOW,
+      );
+      updateSelection(editor, before!, 1, before!, 4);
+
+      const cut = clipboardEvent("cut");
+      await act(async () => {
+        editor.dispatchCommand(CUT_COMMAND, cut);
+      });
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(cut.defaultPrevented).toBe(false);
+      expect(isCutPerformed).toBe(true);
+    });
+
+    it("asks before Enter over it, cancels on 'keep', and splits on 'delete'", async () => {
+      const keeping = answering("keep");
+      const kept = await guardedEnvironment($init, keeping);
+      updateSelection(kept.editor, before!, 3, after!, 2);
+      await act(async () => {
+        kept.editor.dispatchCommand(INSERT_PARAGRAPH_COMMAND, undefined);
+      });
+      await settle();
+
+      expect(keeping).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "replaceSelection", canSkip: false }),
+      );
+      expect(readTree(kept.editor)).toEqual(["before[figure: caption]after"]);
+
+      const deleted = await guardedEnvironment($init, answering("delete"));
+      updateSelection(deleted.editor, before!, 3, after!, 2);
+      await act(async () => {
+        deleted.editor.dispatchCommand(INSERT_PARAGRAPH_COMMAND, undefined);
+      });
+      await settle();
+
+      expect(readTree(deleted.editor)).toEqual(["bef", "ter"]);
+    });
+
+    it("removes the selection, inserting nothing, for an IME composition's opening placeholder", async () => {
+      const { editor } = await guardedEnvironment($init, answering("delete"));
+      updateSelection(editor, before!, 3, after!, 2);
+      const isComposing = vi.spyOn(editor, "isComposing").mockReturnValue(true);
+
+      await act(async () => {
+        // Lexical's composition placeholder outside Firefox and WebKit: a zero-width space.
+        editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "\u200b");
+      });
+      isComposing.mockRestore();
+      await settle();
+
+      expect(readTree(editor)).toEqual(["befter"]);
+    });
+
+    it("asks on the first press under guarded structure when the selection holds no verse marker", async () => {
+      const handler = answering("keep");
+      const { editor } = await guardedEnvironment($init, handler, {
+        structureProtectionMode: "guarded",
+      });
+      updateSelection(editor, before!, 3, after!, 2);
+
+      await pressKey(editor, "Backspace");
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves a guarded selection delete armed one way and pressed the other way to cancel", async () => {
+      let verseText: TextNode;
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment(
+        () => {
+          verseText = $createTextNode("text");
+          $init();
+          $getRoot().append($createParaNode("p").append($createImmutableVerseNode("2"), verseText));
+        },
+        handler,
+        { structureProtectionMode: "guarded" },
+      );
+      updateSelection(editor, before!, 3, verseText!, 2);
+
+      await pressKey(editor, "Backspace", 0);
+      await settle();
+      const cancelling = await pressKey(editor, "Delete", 0);
+      await settle();
+
+      expect(cancelling.defaultPrevented).toBe(true); // cancelled by StructureKeyboardPlugin
+      expect(handler).not.toHaveBeenCalled();
+      expect(readTree(editor)).toEqual(["before[figure: caption]after", "text"]);
     });
 
     it("lets the guarded two-step delete of a selection holding a verse arm, and asks on the press that fires", async () => {

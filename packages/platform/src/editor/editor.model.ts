@@ -765,14 +765,15 @@ export interface EditorOptions {
    * Asks the user before an edit removes content the view does not show.
    *
    * Constructs the editor carries without modeling them - figures, sidebars, `\periph`, and the
-   * like - are hidden in every view but Standard (`view.markerMode` `"editable"`). A Backspace or
-   * Delete that would reach one, a word or line delete that would cover one, and any delete,
-   * typing, paste or cut over a selection holding one is held, and this is called to ask. On
-   * `"delete"` the edit goes ahead, removing the hidden content; a character delete removes exactly
-   * the hidden content and nothing else, so no paragraph is merged or dissolved around it. On
-   * `"keep"` nothing is removed: a caret stopped right at the hidden content moves past it, and
-   * anything else is cancelled. Dragging a selection that holds hidden content is refused, and so is
-   * cutting one while {@link EditorOptions.copyLimit} is set.
+   * like - are hidden in every view whose `view.markerMode` is not `"editable"` (all but Standard
+   * and Unformatted). A Backspace or Delete that would reach one, a word or line delete that would
+   * cover one, and any delete, typing, Enter, paste or cut over a selection holding one is held, and
+   * this is called to ask. On `"delete"` the edit goes ahead, removing the hidden content; a
+   * character delete removes exactly the hidden content and nothing else, so no paragraph is merged
+   * or dissolved around it. On `"keep"` nothing is removed: the caret moves past the hidden content
+   * when the request's `canSkip` says so, and otherwise the edit is cancelled. Dragging a selection
+   * that holds hidden content is refused, and so is cutting one while
+   * {@link EditorOptions.copyLimit} is set.
    *
    * Without this option editing is native, and such edits remove hidden content without asking.
    */

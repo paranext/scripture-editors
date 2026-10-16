@@ -22,7 +22,7 @@ import {
   $shouldBlockStructuralEdit,
   keyDownToIntent,
 } from "./structureKeyboard.utils";
-import { isSelectionDeleteArmed } from "./StructureKeyboardPlugin";
+import { armedSelectionDeleteIntent } from "./StructureKeyboardPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
 import {
@@ -54,15 +54,18 @@ import {
   REMOVE_TEXT_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $isUnknownNode, UnknownNode } from "shared";
+import { $isUnknownNode, LoggerBasic, UnknownNode } from "shared";
 
 type DeleteGranularity = "character" | "word" | "line";
 
 /**
  * What Lexical inserts to open an IME composition over a selection (`COMPOSITION_START_CHAR`: a
- * word joiner, or a no-break space in Firefox).
+ * zero-width space, or a no-break space in Firefox and WebKit).
  */
-const COMPOSITION_PLACEHOLDERS = new Set(["\u2060", "\u00a0"]);
+const COMPOSITION_PLACEHOLDERS = new Set(["\u200b", "\u00a0"]);
+
+/** How long a question may stay open before the plugin logs that editing is still held. */
+const LONG_PENDING_MS = 60_000;
 
 interface PointSnapshot {
   key: NodeKey;
@@ -109,25 +112,35 @@ interface Settlement {
  * - A word or line delete, and any edit over a selection, removes whatever hidden content it covers.
  *
  * This plugin catches each of those before it happens, consumes it, and asks the host through
- * `onHiddenContentDelete` (see {@link HiddenContentDeleteHandler}). On `"delete"` the edit goes
- * ahead deliberately: a character delete removes exactly the hidden run (never a paragraph merge
- * and never a dissolve), a word or line delete removes the hidden content it covers and then
- * carries on, and an edit over a selection is replayed. On `"keep"` nothing is removed: a character
- * or word delete stopped by hidden content right at the caret moves the caret past it, so the next
- * press reaches visible content, and anything else is cancelled. Dragging a selection that holds
- * hidden content is refused outright: the move would remove it, and a drag cannot wait for an
- * answer.
+ * `onHiddenContentDelete` (see {@link HiddenContentDeleteHandler}).
+ *
+ * - On `"delete"` the edit goes ahead deliberately. A character delete, and any delete that stops
+ *   at a paragraph's edge, removes exactly the hidden run: never a paragraph merge, never a
+ *   dissolve. A word or line delete inside a paragraph removes the hidden content it covers, then
+ *   carries on. An edit over a selection (delete, typing, Enter, paste, cut) is replayed.
+ * - On `"keep"` nothing is removed. When the only hidden content the delete would reach is the run
+ *   right at the caret, and there is somewhere past it to go, the caret moves past it so the next
+ *   press reaches visible content; otherwise the edit is cancelled. The request's `canSkip` says
+ *   which.
+ *
+ * Dragging a selection that holds hidden content is refused outright, and so is the removal half of
+ * a drag-move or composition: neither can wait for an answer.
  *
  * The edit is resumed only against the document and selection it was held against, and only while
- * the editor is still editable; if the document changed while the host was asking (an undo, a host
- * update), the caret was moved, or the editor became read-only, it is dropped. While a question is
- * open, typing, deleting, pasting and cutting are refused so that the document rarely changes.
+ * the editor is still editable. It is dropped, and the drop logged, if the document's text changed
+ * or the held nodes were removed while the host was asking (an undo, a host update), if the
+ * selection was moved, or if the editor became read-only. While a question is open, typing,
+ * deleting, pasting and cutting are refused so that the document rarely changes; the host's prompt
+ * should be modal, and must settle (see {@link HiddenContentDeleteHandler}).
  *
- * Its handlers run at CRITICAL so that they precede `StructureKeyboardPlugin` and native handling.
- * They step aside for the two refusals that already protect this content: a selection reaching
- * INTO a construct (`OpaqueBlockGuardPlugin`), and an edit protected mode blocks outright. Guarded
- * mode's two-step delete of a selection holding a verse marker keeps both its steps: the first
- * press is left to arm it, and the question is asked on the second, the press that would delete.
+ * Its handlers run at CRITICAL so that they precede `StructureKeyboardPlugin`'s KEY_DOWN handler and
+ * native handling. For CUT and PASTE, which `OpaqueBlockGuardPlugin` and `StructureKeyboardPlugin`
+ * also register at CRITICAL, it runs first by being mounted first, and it also steps aside
+ * explicitly for the two refusals that already protect this content: a selection reaching INTO a
+ * construct (`OpaqueBlockGuardPlugin`), and an edit protected mode blocks outright. Guarded mode's
+ * two-step delete of a selection holding a verse marker keeps both its steps: the press that arms
+ * it, and a press in the other direction that cancels it, are left to `StructureKeyboardPlugin`, and
+ * the question is asked on the press that would delete.
  *
  * A cut is held after its copy half has run, since the clipboard cannot be written later. Under a
  * copy limit a cut over hidden content is refused instead: the limit shortens what a copy takes, so
@@ -144,17 +157,20 @@ interface Settlement {
  * @param copyLimit - The editor's `copyLimit`; see above.
  * @param onHiddenContentDelete - Asks the user; see {@link HiddenContentDeleteHandler}. Without it
  *   this plugin does nothing and editing is native.
+ * @param logger - Where handler failures, dropped answers, and long-open questions are reported.
  */
 export function HiddenContentDeleteGuardPlugin({
   isEnabled,
   structureProtectionMode = "off",
   copyLimit,
   onHiddenContentDelete,
+  logger,
 }: {
   isEnabled: boolean;
   structureProtectionMode?: StructureProtectionMode;
   copyLimit?: number;
   onHiddenContentDelete?: HiddenContentDeleteHandler;
+  logger?: LoggerBasic;
 }): null {
   const [editor] = useLexicalComposerContext();
   // A ref, so a host handing a fresh handler each render does not re-register every command (which
@@ -163,11 +179,13 @@ export function HiddenContentDeleteGuardPlugin({
   // Refs for the same reason: handlers registered once keep their place among their peers.
   const structureProtectionModeRef = useRef(structureProtectionMode);
   const copyLimitRef = useRef(copyLimit);
+  const loggerRef = useRef(logger);
   useEffect(() => {
     handlerRef.current = onHiddenContentDelete;
     structureProtectionModeRef.current = structureProtectionMode;
     copyLimitRef.current = copyLimit;
-  }, [onHiddenContentDelete, structureProtectionMode, copyLimit]);
+    loggerRef.current = logger;
+  }, [onHiddenContentDelete, structureProtectionMode, copyLimit, logger]);
 
   const hasHandler = !!onHiddenContentDelete;
 
@@ -193,11 +211,26 @@ export function HiddenContentDeleteGuardPlugin({
       const handler = handlerRef.current;
       if (!handler) return "keep";
       try {
-        return (await handler(request)) === "delete" ? "delete" : "keep";
-      } catch {
+        const decision = await handler(request);
+        if (decision !== "delete" && decision !== "keep")
+          loggerRef.current?.warn(
+            `[HiddenContentDeleteGuard] onHiddenContentDelete answered ${JSON.stringify(decision)}, which is neither "delete" nor "keep"; keeping the hidden content.`,
+          );
+        return decision === "delete" ? "delete" : "keep";
+      } catch (error) {
+        loggerRef.current?.error(
+          "[HiddenContentDeleteGuard] onHiddenContentDelete failed; keeping the hidden content.",
+          error,
+        );
         return "keep";
       }
     };
+
+    /** Logs why an answered question changed nothing. */
+    const logDrop = (decision: HiddenContentDeleteDecision, reason: string) =>
+      loggerRef.current?.info(
+        `[HiddenContentDeleteGuard] Dropped the "${decision}" answer: ${reason}. Nothing was changed.`,
+      );
 
     /** Consumes an edit that would remove `hidden`, asks, and settles it once answered. */
     const $hold = (
@@ -213,9 +246,18 @@ export function HiddenContentDeleteGuardPlugin({
         canSkip: !!settlement.$keep,
       };
       isPending = true;
+      const longPendingTimer = setTimeout(
+        () =>
+          loggerRef.current?.warn(
+            `[HiddenContentDeleteGuard] onHiddenContentDelete has not answered after ${LONG_PENDING_MS / 1000}s; editing stays held until it does.`,
+          ),
+        LONG_PENDING_MS,
+      );
       void ask(request).then((decision) => {
+        clearTimeout(longPendingTimer);
         isPending = false;
-        if (!isDisposed) resume(held, decision, settlement);
+        if (isDisposed) logDrop(decision, "the editor's guard was torn down while asking");
+        else resume(held, decision, settlement);
       });
       return true;
     };
@@ -226,7 +268,10 @@ export function HiddenContentDeleteGuardPlugin({
       decision: HiddenContentDeleteDecision,
       settlement: Settlement,
     ) => {
-      if (!editor.getEditorState().read(() => $isSelectionUnmoved(held))) return;
+      if (!editor.getEditorState().read(() => $isSelectionUnmoved(held))) {
+        logDrop(decision, "the selection moved while asking");
+        return;
+      }
       // The host's prompt took focus. Focus comes back first, so the held selection restored next
       // is the one that stands. Focus's callback runs mid-commit, where an update would only be
       // queued behind whatever runs next, so the edit settles from a fresh microtask instead.
@@ -243,11 +288,21 @@ export function HiddenContentDeleteGuardPlugin({
       decision: HiddenContentDeleteDecision,
       settlement: Settlement,
     ) => {
-      if (isDisposed) return;
+      if (isDisposed) {
+        logDrop(decision, "the editor's guard was torn down while asking");
+        return;
+      }
       let isResumed = false;
       editor.update(
         () => {
-          if (!editor.isEditable() || !$isStillCurrent(held)) return;
+          if (!editor.isEditable()) {
+            logDrop(decision, "the editor became read-only while asking");
+            return;
+          }
+          if (!$isStillCurrent(held)) {
+            logDrop(decision, "the document changed while asking");
+            return;
+          }
           $restoreSelection(held);
           if (decision === "keep") {
             settlement.$keep?.();
@@ -354,10 +409,11 @@ export function HiddenContentDeleteGuardPlugin({
         !selection.isCollapsed() &&
         structureProtectionModeRef.current === "guarded" &&
         $selectionContainsVerseMarker(selection) &&
-        !isSelectionDeleteArmed(editor)
+        armedSelectionDeleteIntent(editor) !== intent
       )
-        // Guarded mode's first press only arms the delete (nothing is removed yet); leave it to
-        // StructureKeyboardPlugin, and ask on the press that would fire.
+        // In guarded mode a press that arms the delete, or a press in the other direction that
+        // cancels it, removes nothing; leave both to StructureKeyboardPlugin and ask only on the
+        // press that fires.
         return false;
       const isHeld = selection.isCollapsed()
         ? $holdCaretDelete(selection, isBackward ? "backward" : "forward", granularityOf(event))
@@ -621,13 +677,15 @@ function $isStillCurrent(held: HeldEdit): boolean {
 
 /**
  * Whether the selection is still where the edit was held. A caret the user moved while the question
- * was open is their newer intent; no range selection at all is not a move (the editor lost focus to
- * the host's prompt). Read from the committed state: a fresh update takes its selection from the
- * DOM, which the prompt may hold.
+ * was open is their newer intent, and so is a click that selected a node (a verse marker, a note
+ * caller); no selection at all is not a move (the editor lost focus to the host's prompt). Read
+ * from the committed state: a fresh update takes its selection from the DOM, which the prompt may
+ * hold.
  */
 function $isSelectionUnmoved(held: HeldEdit): boolean {
   const selection = $getSelection();
-  if (!$isRangeSelection(selection)) return true;
+  if (!selection) return true;
+  if (!$isRangeSelection(selection)) return false;
   const isHeldPoint = (point: PointSnapshot, other: PointSnapshot) =>
     point.key === other.key && point.offset === other.offset && point.type === other.type;
   return isHeldPoint(selection.anchor, held.anchor) && isHeldPoint(selection.focus, held.focus);
@@ -640,7 +698,10 @@ function $restoreSelection(held: HeldEdit): void {
   $setSelection(selection);
 }
 
-/** `run` with its nodes re-read by key, for use in a later update. */
+/**
+ * `run` with its nodes re-read by key, for use in a later update. Only call once
+ * {@link $isStillCurrent} has confirmed every held key is still attached: a run must not be empty.
+ */
 function $freshRun(run: HiddenRun, keys: NodeKey[]): HiddenRun {
   const nodes = keys.map((key) => $getNodeByKey(key)).filter($isUnknownNode);
   return { nodes, placement: run.placement };

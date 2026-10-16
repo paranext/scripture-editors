@@ -25,7 +25,7 @@ export type DeleteDirection = "backward" | "forward";
 /**
  * Hidden constructs lying directly against a collapsed caret, which the next delete would reach.
  *
- * - `"inline"`: inside the caret's paragraph (a figure in running text).
+ * - `"inline"`: inside the caret's paragraph or note (a figure in running text).
  * - `"block"`: the paragraph's own sibling blocks (a root-level sidebar or `\periph`), reached when
  *   the caret sits at the paragraph's visible edge.
  */
@@ -55,8 +55,8 @@ export interface HiddenRun {
  * leading marker label lies between the caret and the paragraph's edge, the hidden blocks right
  * beside the paragraph are the run.
  *
- * Word deletes are covered by the same check: the browser ends a word at a hidden construct, so a
- * word delete only reaches one that is directly against the caret.
+ * Word and line deletes can reach hidden content further along; their callers measure that extent
+ * separately.
  *
  * @param selection - The current selection. Only a collapsed range selection can have a run.
  * @param direction - `"backward"` for Backspace, `"forward"` for Delete.
