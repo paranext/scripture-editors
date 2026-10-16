@@ -84,23 +84,28 @@ export function $resetMarkerIfPrefixDeleted(para: ParaNode, logger?: LoggerBasic
 }
 
 /**
- * Gives `para` its gutter marker glyph if its first child is not one — see
- * {@link ParaMarkerPrefixGuardPlugin}. When content has landed in front of the paragraph's own glyph
- * (text typed at the paragraph's very start, say), that glyph is moved back to the front rather than
- * a second one created. Otherwise a new glyph is shaped as the adaptor builds it (`createPara`,
+ * Keeps `para`'s gutter marker glyph in place — see {@link ParaMarkerPrefixGuardPlugin}: exactly one,
+ * first, and naming the paragraph's own marker. A leading glyph whose label disagrees (another
+ * paragraph's nodes pasted in, say) is relabelled. When content has landed in front of the glyph
+ * (text typed at the paragraph's very start), that glyph is moved back to the front and relabelled
+ * rather than a second one created, and any further gutter glyph is removed: there is one marker per
+ * paragraph. Otherwise a new glyph is shaped as the adaptor builds it (`createPara`,
  * usj-editor.adaptor.ts): the opening marker text plus NBSP, flagged as a gutter glyph.
  *
  * Mutating: call inside `editor.update()` (a node transform already runs inside one).
  */
 export function $restoreGutterMarkerIfMissing(para: ParaNode): void {
   const first = para.getFirstChild();
-  if ($isSynthesizedMarkerNode(first)) return;
+  // Another marker flavor at the front (an editable or inline marker) is not this view's to keep.
+  if ($isSynthesizedMarkerNode(first) && !$isGutterMarkerNode(first)) return;
   const text = openingMarkerText(para.getMarker()) + NBSP;
-  const glyph =
-    para
-      .getChildren()
-      .find((child) => $isGutterMarkerNode(child) && child.getTextContent() === text) ??
-    $createGutterMarkerNode(text);
+  const [glyph = $createGutterMarkerNode(text), ...strays] = para
+    .getChildren()
+    .filter($isGutterMarkerNode)
+    .sort((a, b) => Number(b.is(first)) - Number(a.is(first)));
+  for (const stray of strays) stray.remove();
+  if (glyph.getTextContent() !== text) glyph.setTextContent(text);
+  if (glyph.is(first)) return;
   if (first) first.insertBefore(glyph);
   else para.append(glyph);
   // A caret that was at the paragraph's start is now inside its prefix (inserting the glyph shifts

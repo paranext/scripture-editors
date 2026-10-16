@@ -259,4 +259,49 @@ describe("ParaMarkerPrefixGuardPlugin enablement", () => {
       expect(para.getTextContent()).toBe(`\\q2${NBSP}Za poetry line`);
     });
   });
+
+  // The gutter shows the paragraph's own marker, whatever put a different label in front of it (a
+  // paste of another paragraph's nodes, say).
+  it("rewrites a leading glyph that names a different marker than its paragraph", async () => {
+    let para: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("q1");
+        $getRoot().append(
+          para.append($createGutterMarkerNode(`\\q1${NBSP}`), $createTextNode("a poetry line")),
+        );
+      },
+      <ParaMarkerPrefixGuardPlugin viewOptions={getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE)} />,
+    );
+
+    await act(async () => editor.update(() => para.setMarker("p")));
+
+    editor.getEditorState().read(() => {
+      const glyphs = para.getChildren().filter($isGutterMarkerNode);
+      expect(glyphs.map((glyph) => glyph.getTextContent())).toEqual([`\\p${NBSP}`]);
+      expect(para.getFirstChild()?.is(glyphs[0])).toBe(true);
+    });
+  });
+
+  it("moves a displaced glyph of an older marker back to the front, relabelled, rather than adding a second", async () => {
+    let para: ParaNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("q1");
+        $getRoot().append(
+          para.append($createTextNode("a poetry line"), $createGutterMarkerNode(`\\q1${NBSP}`)),
+        );
+      },
+      <ParaMarkerPrefixGuardPlugin viewOptions={getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE)} />,
+    );
+
+    await act(async () => editor.update(() => para.setMarker("q2")));
+
+    editor.getEditorState().read(() => {
+      const glyphs = para.getChildren().filter($isGutterMarkerNode);
+      expect(glyphs.map((glyph) => glyph.getTextContent())).toEqual([`\\q2${NBSP}`]);
+      expect(para.getFirstChild()?.is(glyphs[0])).toBe(true);
+      expect(para.getTextContent()).toBe(`\\q2${NBSP}a poetry line`);
+    });
+  });
 });
