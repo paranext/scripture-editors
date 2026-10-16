@@ -26,6 +26,7 @@ import {
   COMMAND_PRIORITY_HIGH,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   CUT_COMMAND,
+  DELETE_CHARACTER_COMMAND,
   DRAGSTART_COMMAND,
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
@@ -94,7 +95,7 @@ export function StructureKeyboardPlugin({
 
     const $handleTwoStepDelete = (
       intent: "deleteBackward" | "deleteForward",
-      event: KeyboardEvent,
+      event: KeyboardEvent | undefined,
     ): boolean => {
       const selection = $getSelection();
       const armed = armedRef.current;
@@ -102,7 +103,7 @@ export function StructureKeyboardPlugin({
       // FIRE / cancel: a target is armed.
       if (armed && selection && $isArmedSelection(selection, armed)) {
         setArmedState(undefined);
-        event.preventDefault();
+        event?.preventDefault();
         if (intent !== armed.intent) return true; // mismatched direction: cancel, no delete
         const node = $getNodeByKey(armed.key) ?? undefined;
         if (armed.kind === "verse") {
@@ -144,7 +145,7 @@ export function StructureKeyboardPlugin({
           $setSelection(range);
         }
         setArmedState({ key: target.node.getKey(), kind: target.kind, intent });
-        event.preventDefault();
+        event?.preventDefault();
         return true;
       }
       // Range/text selection that includes a verse marker: arm without altering the selection.
@@ -165,7 +166,7 @@ export function StructureKeyboardPlugin({
           anchor: { key: anchor.key, offset: anchor.offset, type: anchor.type },
           focus: { key: focus.key, offset: focus.offset, type: focus.type },
         });
-        event.preventDefault();
+        event?.preventDefault();
         return true;
       }
       return false;
@@ -224,6 +225,20 @@ export function StructureKeyboardPlugin({
       return $sanitizeAndInsert(event.dataTransfer?.getData("text/html"), event);
     };
 
+    // A delete that arrives with no Backspace/Delete keydown (macOS Ctrl+H / Ctrl+D map to none,
+    // and a programmatic dispatch has none) gets the answer that keydown would have: refused under
+    // "protected", armed and then fired under "guarded". After a keydown this plugin claimed, no
+    // delete command follows; after one it let through, this finds nothing to arm either.
+    const $handleDeleteCharacter = (isBackward: boolean): boolean => {
+      if (!editor.isEditable()) return false;
+      const intent = isBackward ? "deleteBackward" : "deleteForward";
+      if (structureProtectionMode === "protected") {
+        const selection = $getSelection();
+        return !!selection && $shouldBlockStructuralEdit(selection, intent);
+      }
+      return $handleTwoStepDelete(intent, undefined);
+    };
+
     // Drop the latch as soon as the live selection no longer encodes the armed target
     // (arrow key, click, typing, etc.). Reads only; never mutates the editor.
     const clearStaleLatch = () => {
@@ -236,6 +251,11 @@ export function StructureKeyboardPlugin({
 
     return mergeRegister(
       editor.registerCommand(KEY_DOWN_COMMAND, $handleKeyDown, COMMAND_PRIORITY_HIGH),
+      editor.registerCommand(
+        DELETE_CHARACTER_COMMAND,
+        $handleDeleteCharacter,
+        COMMAND_PRIORITY_HIGH,
+      ),
       // CUT at CRITICAL, unlike KEY_DOWN above: a refusal has to outrank the actor it refuses,
       // not tie with it. The handlers that PERFORM a cut (the Standard-view and Markers-view
       // clipboard claims) register at HIGH, and at equal rank the winner is mount order — an

@@ -52,6 +52,7 @@ import {
   $createImmutableChapterNode,
   $createImmutableTypedTextNode,
   $createParaNode,
+  $createUnknownNode,
   $getSelectedParaMarker,
   $isGutterMarkerNode,
   $isParaNode,
@@ -61,6 +62,7 @@ import {
   ImmutableTypedTextNode,
   NBSP,
   ParaNode,
+  UnknownNode,
 } from "shared";
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { $expectSelectionToBe } from "../../../../shared/src/nodes/usj/test.utils";
@@ -669,6 +671,83 @@ describe("ParaMarkerSelectionPlugin — deletion without a Backspace/Delete keyd
       expect(paragraphsOf(editor)).toEqual(merged);
     },
   );
+
+  // A backward delete from the start of a paragraph's text, arriving with no Backspace keydown:
+  // it gets the same answer a Backspace there gets from each protection mode.
+  const deleteBackwardFromTextStartOf = async (editor: LexicalEditor, text: TextNode) => {
+    await sutUpdate(editor, () => text.select(0, 0));
+    await act(async () => {
+      editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+    });
+  };
+
+  it("under guarded, arms on the first DELETE_CHARACTER_COMMAND and merges on the second", async () => {
+    const { editor, secondText } = await deletionEnvironment("guarded");
+    const before = documentJson(editor);
+
+    await deleteBackwardFromTextStartOf(editor, secondText);
+
+    expect(documentJson(editor)).toBe(before);
+    expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(true);
+
+    await act(async () => {
+      editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+    });
+
+    expect(paragraphsOf(editor)).toEqual(merged);
+  });
+
+  it("under protected, refuses a DELETE_CHARACTER_COMMAND from the start of the text", async () => {
+    const { editor, secondText } = await deletionEnvironment("protected");
+    const before = documentJson(editor);
+
+    await deleteBackwardFromTextStartOf(editor, secondText);
+
+    expect(documentJson(editor)).toBe(before);
+  });
+
+  // Rich-text's own handler still runs a dispatched delete in a read-only editor, as it does for
+  // any text; what must not happen is this plugin's structural merge.
+  it("in a read-only editor, a DELETE_CHARACTER_COMMAND from the start of the text merges nothing", async () => {
+    const { editor, secondText } = await deletionEnvironment("off");
+    await act(async () => editor.setEditable(false));
+
+    await deleteBackwardFromTextStartOf(editor, secondText);
+
+    expect(paragraphsOf(editor).map(({ marker, text }) => [marker, text])).toEqual([
+      ["p", "first"],
+      ["li2", "second"],
+      ["q1", "third"],
+    ]);
+  });
+
+  it("does not merge a paragraph inside a hidden construct (a sidebar)", async () => {
+    let sidebar!: UnknownNode;
+    let bText!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        sidebar = $createUnknownNode("sidebar", "esb");
+        bText = $createTextNode("b");
+        $getRoot().append(
+          $createParaNode("p").append($createGutterGlyphNode("p"), $createTextNode("first")),
+          sidebar.append(
+            $createParaNode("p").append($createGutterGlyphNode("p"), $createTextNode("a")),
+            $createParaNode("q1").append($createGutterGlyphNode("q1"), bText),
+          ),
+        );
+      },
+      <ParaMarkerSelectionPlugin structureProtectionMode="off" />,
+    );
+
+    await deleteBackwardFromTextStartOf(editor, bText);
+
+    editor.getEditorState().read(() => {
+      expect(sidebar.getChildren().map((para) => para.getTextContent().slice(-1))).toEqual([
+        "a",
+        "b",
+      ]);
+    });
+  });
 
   it("a virtual keyboard's deleteContentBackward input merges the paragraph", async () => {
     const { editor, li2 } = await deletionEnvironment("off");

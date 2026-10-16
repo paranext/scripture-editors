@@ -249,15 +249,22 @@ export function ParaMarkerSelectionPlugin({
     };
 
     // Deletion that arrives without a Backspace/Delete keydown (a mapped shortcut such as macOS
-    // Ctrl+H / Ctrl+D, or a programmatic dispatch) removes a selected marker. So does a backward
-    // delete from the start of the text of a paragraph with no leading verse (a `\q2` line, say),
-    // which would otherwise delete the gutter glyph before the caret.
+    // Ctrl+H / Ctrl+D, or a programmatic dispatch) removes a selected marker. With no structure
+    // protection, so does a backward delete from the start of the text of a paragraph with no
+    // leading verse (a `\q2` line, say), which would otherwise delete the gutter glyph before the
+    // caret. Under "guarded" and "protected" that caret gets `StructureKeyboardPlugin`'s answer —
+    // arm, or refuse — the one a Backspace keydown there gets.
     const $handleDeleteCharacter = (isBackward: boolean): boolean => {
-      const para =
-        $getActivePara() ??
-        (isBackward ? $getGutterParaWithCaretAtStart($getSelection()) : undefined);
+      if (!editor.isEditable()) return false;
+      const markerPara = $getActivePara();
+      if (markerPara) {
+        $removeMarker(markerPara);
+        return true;
+      }
+      if (!isBackward || structureProtectionModeRef.current !== "off") return false;
+      const para = $getGutterParaWithCaretAtStart($getSelection());
       if (!para) return false;
-      $removeMarker(para);
+      $mergeParaIntoPrevious(para);
       return true;
     };
 

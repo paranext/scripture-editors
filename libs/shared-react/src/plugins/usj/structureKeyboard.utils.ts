@@ -12,9 +12,11 @@ import {
   NodeKey,
 } from "lexical";
 import {
+  $getSelectableParaMarker,
   $isGutterMarkerNode,
   $isMarkerTrailingSeparator,
   $isParaLikeNode,
+  $isParaNode,
   $isSomeChapterNode,
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
@@ -137,9 +139,10 @@ export function $caretAtParaStart(selection: BaseSelection): boolean {
 }
 
 /**
- * The paragraph a Backspace from `selection` would remove the gutter marker of: one led by a gutter
- * glyph, with a collapsed caret at its start (see {@link $caretAtParaStart}) — past the glyph, or
- * before it.
+ * The paragraph a Backspace from `selection` would remove the gutter marker of: one led by a
+ * selectable gutter glyph (see `$getSelectableParaMarker` — so never a paragraph inside a hidden
+ * construct such as a sidebar), with a collapsed caret at its start (see {@link $caretAtParaStart})
+ * — past the glyph, or before it.
  *
  * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
  * command handler.
@@ -149,7 +152,7 @@ export function $getGutterParaWithCaretAtStart(
 ): SomeParaNode | undefined {
   if (!selection || !$caretAtParaStart(selection) || !$isRangeSelection(selection)) return;
   const para = $getParaAncestor(selection.anchor.getNode());
-  return $isSomeParaNode(para) && $isGutterMarkerNode(para.getFirstChild()) ? para : undefined;
+  return $isParaNode(para) && $getSelectableParaMarker(para) ? para : undefined;
 }
 
 /** True when a collapsed caret sits at the very end of its paragraph. */
