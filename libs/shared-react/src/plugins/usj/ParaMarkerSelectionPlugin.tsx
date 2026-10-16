@@ -92,8 +92,9 @@ const TARGETED_INPUT_TYPES = new Set([
  * - Highlight: {@link PARA_MARKER_SELECTED_CLASS_NAME} on the selected marker's paragraph,
  *   recomputed every update, plus the root's `aria-activedescendant` naming the glyph, which
  *   carries `role="option"` and `aria-selected` while selected. Hidden while read-only.
- * - Keys (CRITICAL): Enter and Alt+↓ call `onParaMarkerMenuRequest` when it is set; without it,
- *   Enter splits at the content start and Alt+↓ acts like any other arrow. Every arrow, Escape,
+ * - Keys (CRITICAL): Enter with no modifier (or a virtual keyboard's) and Alt+↓ call
+ *   `onParaMarkerMenuRequest` when it is set; without it, or with a modifier, Enter acts at the
+ *   content start and Alt+↓ acts like any other arrow. Every arrow, Escape,
  *   typing and text input collapse to the content start; an input aimed at a range of its own (a
  *   spellcheck replacement, a drop) acts there instead.
  * - Removing the marker (Backspace/Delete, by key, command or input event, or a Backspace from the
@@ -151,7 +152,8 @@ export function ParaMarkerSelectionPlugin({
 
     // Removing the marker merges its paragraph into the previous one — the paragraph is the
     // operand, never the glyph. Refused under "protected", as `StructureKeyboardPlugin` refuses
-    // the same merge from a caret.
+    // the same merge from a caret, and a no-op with no paragraph before it. Callers claim the key
+    // either way: let through, rich-text would delete the selected glyph itself.
     const $removeMarker = (para: SomeParaNode) => {
       if (structureProtectionModeRef.current !== "protected") $mergeParaIntoPrevious(para);
     };
@@ -222,7 +224,9 @@ export function ParaMarkerSelectionPlugin({
       const hasMenu = onMenuRequestRef.current !== undefined;
       switch (event.key) {
         case "Enter":
-          if (!hasMenu) break;
+          // Only a bare Enter asks for the menu. A modified one (a line break, a host's shortcut)
+          // acts from the paragraph's text, as Enter does with no menu.
+          if (!hasMenu || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) break;
           event.preventDefault();
           requestMenu();
           return true;
@@ -284,6 +288,12 @@ export function ParaMarkerSelectionPlugin({
       if (inputType.startsWith("delete")) {
         event.preventDefault();
         $removeMarker(para);
+        return true;
+      }
+      // A virtual keyboard's Enter, which names no key: the same request a hardware Enter makes.
+      if (inputType === "insertParagraph" && onMenuRequestRef.current) {
+        event.preventDefault();
+        requestMenu();
         return true;
       }
       if (!inputType.startsWith("insert")) return false;

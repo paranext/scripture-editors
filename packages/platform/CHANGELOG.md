@@ -81,8 +81,9 @@ refused. The public surface grew substantially; nothing was removed.
   - Any arrow key returns the caret to that position without moving further. Typing, dictation,
     pasting and the emoji picker insert there. A spellcheck replacement or a drop acts where it
     was aimed.
-  - Enter and Alt+↓ call `onParaMarkerMenuRequest` when it is set. Without it, Enter splits at that
-    position and Alt+↓ acts like any other arrow.
+  - Enter with no modifier (a virtual keyboard's too) and Alt+↓ call `onParaMarkerMenuRequest`
+    when it is set. Without it, or with a modifier (Shift+Enter, a host's Ctrl+Enter), Enter acts
+    at that position, and Alt+↓ acts like any other arrow.
   - Backspace or Delete, or any other deletion such as macOS ⌃H/⌃D or a virtual keyboard's, merges
     the paragraph into the one before it in a single undo step, as removing a paragraph marker
     does. Nothing happens on the first paragraph of a book or chapter, and `"protected"`
@@ -91,7 +92,7 @@ refused. The public surface grew substantially; nothing was removed.
   - Cut, copy and drag are refused, since the marker is not content, unless the browser's selection
     has moved to other text (a right-click, say), which they then use.
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
-- `EditorProps.onParaMarkerMenuRequest` — fired on Enter or Alt+↓ while a paragraph marker is
+- `EditorProps.onParaMarkerMenuRequest` — fired on unmodified Enter or Alt+↓ while a paragraph marker is
   selected, so the host can open its paragraph dropdown.
 
 ### Changed

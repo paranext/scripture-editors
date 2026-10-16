@@ -403,6 +403,40 @@ describe("ParaMarkerSelectionPlugin — asking to change the marker", () => {
       expect(selectedMarkerOf(editor)).toBe("li2");
     },
   );
+
+  // A modified Enter is a line break or a host's shortcut, not a request for the menu.
+  it.each(["shiftKey", "ctrlKey", "metaKey", "altKey"] as const)(
+    "Enter with %s does not request the marker menu, and acts from the paragraph's text",
+    async (modifier) => {
+      const onMenuRequest = vi.fn();
+      const { editor, li2 } = await environment("ltr", onMenuRequest);
+      await selectMarkerOf(editor, li2);
+
+      await pressKeyWith(editor, { key: "Enter", [modifier]: true });
+      await flushTimers();
+
+      expect(onMenuRequest).not.toHaveBeenCalled();
+      expect(selectedMarkerOf(editor)).toBeUndefined();
+    },
+  );
+
+  // A virtual keyboard's Enter names no key; its insertParagraph input must ask for the menu the
+  // way a hardware Enter does, not split the paragraph.
+  it("a virtual keyboard's insertParagraph input requests the marker menu", async () => {
+    const onMenuRequest = vi.fn();
+    const { editor, li2 } = await environment("ltr", onMenuRequest);
+    await selectMarkerOf(editor, li2);
+    const event = new InputEvent("beforeinput", { inputType: "insertParagraph", cancelable: true });
+
+    await act(async () => {
+      editor.dispatchCommand(BEFORE_INPUT_COMMAND, event);
+    });
+    await flushTimers();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onMenuRequest).toHaveBeenCalledTimes(1);
+    expect(selectedMarkerOf(editor)).toBe("li2");
+  });
 });
 
 describe("ParaMarkerSelectionPlugin — without a marker menu", () => {

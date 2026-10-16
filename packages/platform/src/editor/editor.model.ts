@@ -754,7 +754,7 @@ export interface EditorProps<TLogger extends LoggerBasic> {
   onStateChange?: ({ canUndo, canRedo, blockMarker, contextMarker }: StateChangeSnapshot) => void;
   /**
    * Callback function when the user asks, by keyboard, to change the selected paragraph marker
-   * (Enter or Alt+ArrowDown while a paragraph marker is selected — see
+   * (an unmodified Enter, or Alt+ArrowDown, while a paragraph marker is selected — see
    * {@link EditorRef.getSelectedParaMarker}). The marker stays selected; apply the choice with
    * {@link EditorRef.formatPara}. Not called in a read-only editor.
    */
