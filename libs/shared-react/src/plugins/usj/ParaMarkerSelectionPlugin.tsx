@@ -140,6 +140,8 @@ export function ParaMarkerSelectionPlugin({
     let lastSelected: SelectedMarkerKeys | undefined;
     // Set while a pointer is pressed on the root: the focus that press brings places its own caret.
     let isPointerPressed = false;
+    // The focus handler's deferred pass, cleared when the plugin unmounts.
+    let focusTimer: number | undefined;
 
     /** Hands the request to the host outside this update, so its work never runs mid-commit. */
     const requestMenu = () => {
@@ -386,18 +388,38 @@ export function ParaMarkerSelectionPlugin({
       const root = editor.getRootElement();
       removeDomRangesInside(root);
       // The browser can place its caret after the focus event has been dispatched; by then the
-      // marker may no longer be selected.
-      root?.ownerDocument.defaultView?.setTimeout(() => {
-        if (!isPointerPressed && isMarkerSelected()) removeDomRangesInside(root);
+      // marker may no longer be selected, or the editor no longer editable.
+      const view = root?.ownerDocument.defaultView;
+      if (focusTimer !== undefined) view?.clearTimeout(focusTimer);
+      focusTimer = view?.setTimeout(() => {
+        focusTimer = undefined;
+        if (!isPointerPressed && editor.isEditable() && isMarkerSelected())
+          removeDomRangesInside(root);
       });
       return false;
     };
 
-    const handlePointerDown = () => {
+    // As `DecoratorBoundarySelectionPlugin` and `NoteShellCaretGuardPlugin` track theirs: only a
+    // primary-button press counts (a secondary one can open a native context menu that swallows the
+    // release), it is heard on the document (a press just outside the root still places a caret
+    // inside), and `pointercancel` ends it as `pointerup` does (a drag, or a touch that turns into a
+    // scroll, never sends `pointerup`).
+    const handlePointerDown = (event: Event) => {
+      if ("button" in event && event.button !== 0) return;
       isPointerPressed = true;
     };
     const handlePointerUp = () => {
       isPointerPressed = false;
+    };
+    const addPointerListeners = (document: Document) => {
+      document.addEventListener("pointerdown", handlePointerDown, true);
+      document.addEventListener("pointerup", handlePointerUp, true);
+      document.addEventListener("pointercancel", handlePointerUp, true);
+    };
+    const removePointerListeners = (document: Document) => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("pointerup", handlePointerUp, true);
+      document.removeEventListener("pointercancel", handlePointerUp, true);
     };
 
     /**
@@ -453,16 +475,13 @@ export function ParaMarkerSelectionPlugin({
       registerParaMarkerSelectionOwner(editor),
       editor.registerEditableListener(() => syncHighlight(readSelectedKeys())),
       editor.registerRootListener((root, previousRoot) => {
-        previousRoot?.removeEventListener("pointerdown", handlePointerDown, true);
-        root?.addEventListener("pointerdown", handlePointerDown, true);
-        // On the document, so a release outside the editor still ends the press.
-        previousRoot?.ownerDocument.removeEventListener("pointerup", handlePointerUp, true);
-        root?.ownerDocument.addEventListener("pointerup", handlePointerUp, true);
+        if (previousRoot) removePointerListeners(previousRoot.ownerDocument);
+        if (root) addPointerListeners(root.ownerDocument);
       }),
       () => {
-        const root = editor.getRootElement();
-        root?.removeEventListener("pointerdown", handlePointerDown, true);
-        root?.ownerDocument.removeEventListener("pointerup", handlePointerUp, true);
+        const document = editor.getRootElement()?.ownerDocument;
+        if (document) removePointerListeners(document);
+        if (focusTimer !== undefined) document?.defaultView?.clearTimeout(focusTimer);
       },
       editor.registerCommand(CLICK_COMMAND, $handleClick, COMMAND_PRIORITY_CRITICAL),
       editor.registerCommand(KEY_DOWN_COMMAND, $handleKeyDown, COMMAND_PRIORITY_CRITICAL),

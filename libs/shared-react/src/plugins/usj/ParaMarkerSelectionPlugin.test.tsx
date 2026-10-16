@@ -1118,6 +1118,69 @@ describe("ParaMarkerSelectionPlugin — focus a pointer press brings", () => {
   });
 });
 
+// The press is tracked as the sibling plugins track theirs: on the document, primary button only,
+// and ended by `pointercancel` as well as `pointerup`.
+describe("ParaMarkerSelectionPlugin — tracking the pointer press", () => {
+  /** A pointer event as jsdom can build one: a mouse event carrying the button. */
+  const pointer = (type: string, button = 0) =>
+    new MouseEvent(type, { bubbles: true, cancelable: true, button });
+
+  /** Focus arrives without a click while the marker is selected, the browser drawing a caret. */
+  async function focusWithBrowserCaret(editor: LexicalEditor, text: TextNode): Promise<void> {
+    placeDomCaretAtStartOf(editor, text);
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, new FocusEvent("focus"));
+    });
+    await flushTimers();
+  }
+
+  it("a pointercancel ends the press (a drag, or a touch that turns into a scroll)", async () => {
+    const { editor, li2, firstText } = await environment();
+    await selectMarkerOf(editor, li2);
+    editor.getRootElement()!.dispatchEvent(pointer("pointerdown"));
+    document.dispatchEvent(pointer("pointercancel"));
+
+    await focusWithBrowserCaret(editor, firstText);
+
+    expect(document.getSelection()?.rangeCount).toBe(0);
+  });
+
+  it("a secondary-button press, whose release the page may never see, is not a press", async () => {
+    const { editor, li2, firstText } = await environment();
+    await selectMarkerOf(editor, li2);
+    editor.getRootElement()!.dispatchEvent(pointer("pointerdown", 2));
+
+    await focusWithBrowserCaret(editor, firstText);
+
+    expect(document.getSelection()?.rangeCount).toBe(0);
+  });
+
+  it("a press just outside the editor's root, which still places a caret inside, is a press", async () => {
+    const { editor, li2, thirdText } = await environment();
+    await selectMarkerOf(editor, li2);
+    document.body.dispatchEvent(pointer("pointerdown"));
+
+    await focusWithBrowserCaret(editor, thirdText);
+    document.dispatchEvent(pointer("pointerup"));
+
+    expect(document.getSelection()?.rangeCount).toBe(1);
+  });
+
+  it("the deferred pass leaves the browser's caret alone once the editor is read-only", async () => {
+    const { editor, li2, thirdText } = await environment();
+    await selectMarkerOf(editor, li2);
+    await act(async () => {
+      editor.dispatchCommand(FOCUS_COMMAND, new FocusEvent("focus"));
+    });
+    act(() => editor.setEditable(false));
+    placeDomCaretAtStartOf(editor, thirdText);
+
+    await flushTimers();
+
+    expect(document.getSelection()?.rangeCount).toBe(1);
+  });
+});
+
 describe("ParaMarkerSelectionPlugin — focus returning without a click", () => {
   it("removes the caret the browser draws, keeping the marker selected", async () => {
     const { editor, li2, firstText } = await environment();
