@@ -874,6 +874,33 @@ describe("ParaMarkerSelectionPlugin — input aimed at a range of its own", () =
 
     expect(landing.at).toEqual([thirdText.getKey(), 2, 2]);
   });
+
+  // Lexical resolves no point inside a decorator, so there is no range to adopt; the selection
+  // must not fall back to the document's start, before the `\id` line.
+  it("a drop on a verse number, which names no text position, does not land at the document start", async () => {
+    const { editor, li2 } = await environment();
+    await selectMarkerOf(editor, li2);
+    const { landing, unregister } = captureSelectionAt(editor, DROP_COMMAND);
+    const verseKey = editor.getEditorState().read(() => li2.getChildAtIndex(1)!.getKey());
+    const verseElement = editor.getElementByKey(verseKey)!;
+    const dropPoint = document.createRange();
+    dropPoint.setStart(verseElement, 0);
+    Object.defineProperty(document, "caretRangeFromPoint", {
+      value: () => dropPoint,
+      configurable: true,
+    });
+
+    try {
+      await act(async () => {
+        editor.dispatchCommand(DROP_COMMAND, dropEventOn(verseElement));
+      });
+    } finally {
+      unregister();
+      Reflect.deleteProperty(document, "caretRangeFromPoint");
+    }
+
+    expect(landing.at?.[0]).not.toBe("root");
+  });
 });
 
 describe("ParaMarkerSelectionPlugin — Backspace/Delete in protected structure", () => {

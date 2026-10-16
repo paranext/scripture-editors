@@ -185,6 +185,11 @@ export function ParaMarkerSelectionPlugin({
       if (editor.getElementByKey(glyphKey)?.contains(container)) return false;
       const range = $createRangeSelection();
       range.applyDOMRange(domRange);
+      // `applyDOMRange` sets no point when Lexical resolves none (a range inside a decorator, such
+      // as a verse number), leaving the new selection at its default: the root's start, before the
+      // `\id` line. That is no range to adopt.
+      const { anchor } = range;
+      if (anchor.key === "root" && anchor.offset === 0 && anchor.type === "element") return false;
       $setSelection(range);
       return true;
     };
