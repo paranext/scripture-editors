@@ -14,11 +14,19 @@
  */
 
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
-import { MarkerContent, USJ_TYPE, USJ_VERSION } from "@eten-tech-foundation/scripture-utilities";
+import {
+  MarkerContent,
+  MarkerObject,
+  USJ_TYPE,
+  USJ_VERSION,
+} from "@eten-tech-foundation/scripture-utilities";
 import { SerializedLexicalNode } from "lexical";
 import {
   getEditableCallerText,
+  isSerializedBookNode,
   isSerializedMarkerNode,
+  isSerializedSynthesizedMarkerNode,
+  BookNode,
   MarkerSyntax,
   NBSP,
   NoteNode,
@@ -191,4 +199,150 @@ export function $serializeExpandedNoteContent(
   const children = wrapperChildren.slice(contentStart, contentEnd);
   if (children.length === 0) return { failure: "empty" };
   return { children };
+}
+
+/**
+ * Where an UNCLOSED note's own closer (`\f*` for `\f`) sits among its freshly tokenized content, as
+ * the content before it and the content after it — or `undefined` when the note is closed or holds
+ * no such closer.
+ *
+ * An unclosed note (`closed: "false"`, written with no closer) tokenizes its content in note
+ * context without its own opener, so a closer the user types into it comes back as an `unmatched`
+ * item rather than as the end of the note. It is the end of the note: USFM closes the note there,
+ * and whatever follows it belongs to the paragraph after the note. A CLOSED note already ends at its
+ * own closing glyph, so a second closer typed inside it stays unmatched.
+ */
+export function splitUnclosedNoteAtOwnCloser(
+  note: NoteNode,
+  noteContent: MarkerContent[],
+): { before: MarkerContent[]; after: MarkerContent[] } | undefined {
+  if (note.getUnknownAttributes()?.closed !== "false") return undefined;
+  const ownCloser = `${note.getMarker()}*`;
+  const index = noteContent.findIndex(
+    (item) => typeof item === "object" && item.type === "unmatched" && item.marker === ownCloser,
+  );
+  if (index < 0) return undefined;
+  return { before: noteContent.slice(0, index), after: noteContent.slice(index + 1) };
+}
+
+/**
+ * `note` closed at its own closer (see {@link splitUnclosedNoteAtOwnCloser}), serialized in the
+ * view's own note mode — so a view that collapses its closed notes shows this one as its caller —
+ * followed by the content that came after the closer, serialized as the paragraph content it now
+ * is. `undefined` when the serialization does not come out in that shape.
+ *
+ * Read-only: reads the note's own marker, caller, and unknown attributes, so call inside
+ * `editor.update()` or an editor-state read.
+ */
+export function $serializeNoteClosedAtOwnCloser(
+  note: NoteNode,
+  before: MarkerContent[],
+  after: MarkerContent[],
+  foldedCategory: string | undefined,
+  viewOptions: ViewOptions,
+): SerializedLexicalNode[] | undefined {
+  const attributes = Object.fromEntries(
+    Object.entries(note.getUnknownAttributes() ?? {}).filter(([key]) => key !== "closed"),
+  );
+  const topLevel = usjEditorAdaptor.serializeEditorState(
+    {
+      type: USJ_TYPE,
+      version: USJ_VERSION,
+      content: [
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            {
+              ...attributes,
+              type: "note",
+              marker: note.getMarker(),
+              caller: note.getCaller(),
+              ...(foldedCategory !== undefined && { category: foldedCategory }),
+              content: before,
+            },
+            ...after,
+          ],
+        },
+      ],
+    },
+    viewOptions,
+  ).root.children;
+  const para = topLevel.length === 1 ? (topLevel[0] as { children?: unknown }) : undefined;
+  const children = Array.isArray(para?.children)
+    ? (para.children as SerializedLexicalNode[])
+    : undefined;
+  // Anything ahead of the note is the wrapper paragraph's own marker display, not content.
+  const noteIndex = children?.findIndex((child) => child.type === NoteNode.getType()) ?? -1;
+  if (!children || noteIndex < 0) return undefined;
+  return children.slice(noteIndex);
+}
+
+/**
+ * Why {@link $serializeBookLine} has nothing to hand back:
+ *
+ * - `"shape"` — the serialization did not open with a book element carrying children.
+ * - `"empty"` — the unwrap left no content after the `\id GEN ` prefix, and no block follows.
+ *
+ * Returned rather than logged, so each settle reports the guard in its own wording, exactly as
+ * {@link ExpandedNoteContentFailure} is.
+ */
+export type BookLineFailure = "shape" | "empty";
+
+/** {@link $serializeBookLine}'s result: the line's content children plus the blocks that follow the
+ * line, or why there are none. */
+export type BookLineResult =
+  | {
+      children: SerializedLexicalNode[];
+      followingBlocks: SerializedLexicalNode[];
+      failure?: undefined;
+    }
+  | { children?: undefined; followingBlocks?: undefined; failure: BookLineFailure };
+
+/**
+ * The serialized `\id` line rebuilt from freshly tokenized bytes: the CONTENT children of `book`
+ * built from `lineContent`, and the top-level nodes built from `followingBlocks` — the blocks a
+ * typed `\p`, `\ip` or `\c` starts after the line. Serializes the WHOLE region — the book element
+ * plus its rebuilt content, then every following block — and unwraps the leading `\id GEN ` prefix
+ * glyph.
+ *
+ * Serializing through the adaptor's own `createBook` rather than hand-building the children is
+ * what keeps a rebuild's display scaffolding identical to a freshly loaded document's: the same
+ * text display-encoding, the same char-span separators, the same glyph shapes. The prefix itself
+ * is never re-derived from bytes — it is dropped here and the LIVE one is preserved — so a
+ * markerMode that builds no prefix simply has none to drop.
+ *
+ * Shared unchanged by both settles because the whole of it lives in the SERIALIZED domain, the
+ * same contract {@link $serializeExpandedNoteContent} has.
+ *
+ * Read-only: reads the book's own code and unknown attributes, so call inside `editor.update()` or
+ * an editor-state read.
+ */
+export function $serializeBookLine(
+  book: BookNode,
+  lineContent: MarkerContent[],
+  followingBlocks: MarkerContent[],
+  viewOptions: ViewOptions | undefined,
+): BookLineResult {
+  // A book whose code is the empty-string placeholder carries no `code` at all in USJ, the same
+  // omission `createBookMarker` (editor-usj.adaptor.ts) makes converting the other way.
+  const code = book.getCode();
+  const bookMarker: MarkerObject = {
+    ...book.getUnknownAttributes(),
+    type: "book",
+    marker: book.getMarker(),
+    ...(code !== "" && { code }),
+    content: lineContent,
+  };
+  const [wrapper, ...following] = usjEditorAdaptor.serializeEditorState(
+    { type: USJ_TYPE, version: USJ_VERSION, content: [bookMarker, ...followingBlocks] },
+    viewOptions,
+  ).root.children;
+  if (!isSerializedBookNode(wrapper)) return { failure: "shape" };
+
+  const children = isSerializedSynthesizedMarkerNode(wrapper.children[0])
+    ? wrapper.children.slice(1)
+    : wrapper.children;
+  if (children.length === 0 && following.length === 0) return { failure: "empty" };
+  return { children, followingBlocks: following };
 }

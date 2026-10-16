@@ -39,7 +39,7 @@
 
 import { $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
 import { textTypeState } from "../collab/delta.state.js";
-import { CharNode } from "./CharNode.js";
+import { $isCharNode, CharNode } from "./CharNode.js";
 import { $charGlyphNestedValue } from "./nestedGlyphs.utils.js";
 import { NBSP } from "./node-constants.js";
 import {
@@ -73,6 +73,44 @@ export function $isSeparatorPrefixHostText(node: LexicalNode | null | undefined)
 }
 
 /**
+ * How many leading UTF-16 code units of `node` are an opening glyph's display separator rather
+ * than content: `NBSP.length` when `node` is {@link $isSeparatorPrefixHostText} text directly
+ * after a char-span opening glyph and starts with the NBSP, otherwise 0. That is exactly the slot
+ * {@link $openerSeparatorGap} fills — a prefix of the following text, or a standalone spacer,
+ * which is separator in its entirety — so a position counted over a span's CONTENT skips the byte
+ * the builders and the sync put there and nothing else. An NBSP anywhere else is the author's own
+ * `~` and stays content: after a nested closer (`\ft A\+nd x\+nd*~B`), after a milestone's display
+ * glyph, or in a span rendered without glyphs.
+ *
+ * THE one reading of the convention for sites that turn a text node's bytes into content, such as
+ * caret placement inside a span or a note. The collab emit path (editor-delta.adaptor.ts) narrows
+ * this: it calls this function only for a span's OWN opener (its first child), matching the
+ * reverse adaptor's `content[0]` strip, so a nested opener's separator is left in the emitted text
+ * and reaches peers as ordinary content, like any other byte the collab-flattened shape exposes.
+ *
+ * Read-only: safe inside `editor.update()` or either read form.
+ */
+export function $separatorPrefixLength(node: TextNode): number {
+  const opener = node.getPreviousSibling();
+  const char = node.getParent();
+  if (!$isMarkerNode(opener) || !$isCharNode(char) || !$ownsOpenerSeparator(opener, char)) return 0;
+  if (!$isSeparatorPrefixHostText(node)) return 0;
+  return node.getTextContent().startsWith(NBSP) ? NBSP.length : 0;
+}
+
+/**
+ * Whether `opener` (a direct child of `char`) is an opening glyph that takes a display separator
+ * at all — a char-span glyph (not a milestone's display run). Shared by
+ * {@link $separatorPrefixLength} and {@link $openerSeparatorGap}, the two sites that otherwise
+ * repeat this same test.
+ */
+function $ownsOpenerSeparator(opener: MarkerNode, char: CharNode): boolean {
+  return (
+    opener.getMarkerSyntax() === "opening" && $charGlyphNestedValue(opener, char) !== undefined
+  );
+}
+
+/**
  * Where a separator is missing after `opener` (a direct child of `char`):
  *
  * - `"prefix"` — the glyph is followed by plain text that lacks the NBSP prefix;
@@ -82,9 +120,7 @@ export function $isSeparatorPrefixHostText(node: LexicalNode | null | undefined)
  *   run), has nothing after it, sits directly before a non-nested glyph, or its separator exists.
  */
 function $openerSeparatorGap(opener: MarkerNode, char: CharNode): "prefix" | "spacer" | undefined {
-  if (opener.getMarkerSyntax() !== "opening") return undefined;
-  // Only char-span glyphs take a separator (not a milestone's display run).
-  if ($charGlyphNestedValue(opener, char) === undefined) return undefined;
+  if (!$ownsOpenerSeparator(opener, char)) return undefined;
   const next = opener.getNextSibling();
   if (next === null) return undefined;
   if ($isMarkerNode(next)) {

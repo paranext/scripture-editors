@@ -17,6 +17,7 @@ import {
   $getSelectedParaMarker,
   $selectParaMarker,
   getPreviewTextFromSerializedNodes,
+  isSerializedSynthesizedMarkerNode,
   registerParaMarkerSelectionOwner,
 } from "./node.utils.js";
 import { $createParaNode, ParaNode } from "./ParaNode.js";
@@ -267,5 +268,37 @@ describe("$getSelectableParaMarker", () => {
       expect($getSelectableParaMarker(book)).toBeUndefined();
       expect($getSelectableParaMarker(undefined)).toBeUndefined();
     });
+  });
+});
+
+describe("isSerializedSynthesizedMarkerNode", () => {
+  it("recognizes a serialized MarkerNode", () => {
+    const { editor } = createBasicTestEnvironment(undefined, () => {
+      $getRoot().append($createParaNode("p").append($createMarkerNode("p")));
+    });
+    const serialized = editor.getEditorState().toJSON();
+    const para = serialized.root.children[0] as SerializedElementNode;
+
+    expect(isSerializedSynthesizedMarkerNode(para.children[0])).toBe(true);
+  });
+
+  it("recognizes a marker-typed serialized ImmutableTypedTextNode", () => {
+    const { editor } = createBasicTestEnvironment(undefined, () => {
+      $getRoot().append($createParaNode("p").append($createGutterMarkerNode("\\p ")));
+    });
+    const serialized = editor.getEditorState().toJSON();
+    const para = serialized.root.children[0] as SerializedElementNode;
+
+    expect(isSerializedSynthesizedMarkerNode(para.children[0])).toBe(true);
+  });
+
+  it("does not flag plain text", () => {
+    const { editor } = createBasicTestEnvironment(undefined, () => {
+      $getRoot().append($createParaNode("p").append($createTextNode("word")));
+    });
+    const serialized = editor.getEditorState().toJSON();
+    const para = serialized.root.children[0] as SerializedElementNode;
+
+    expect(isSerializedSynthesizedMarkerNode(para.children[0])).toBe(false);
   });
 });

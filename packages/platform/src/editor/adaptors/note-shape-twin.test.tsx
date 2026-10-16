@@ -13,9 +13,11 @@
  * "expandInline" builds exactly what "collapsed" builds. Rows for it would re-run the collapsed
  * ones; if either path ever reads the mode directly, it needs its own.
  *
- * The one shape deliberately OUT of the matrix is `caller: ""`: `$createWholeNote` then renders no
- * caller node at all — a layout that exists only for the delta-driven embedded note editor, while
- * the forward adaptor always renders a caller. The two paths never meet on that input.
+ * The one shape deliberately OUT of the matrix is `caller: ""`. In the atomic-caller layouts
+ * (collapsed, or markers not editable) `$createWholeNote` then renders no caller node at all — a
+ * layout that exists only for the delta-driven embedded note editor, while the forward adaptor
+ * always renders a caller; the two paths never meet on that input. An editable EXPANDED note keeps
+ * an empty caller's slot on both paths, which noteCallerDeletion.test.tsx pins.
  */
 import {
   buildInsertedSerializedNote,

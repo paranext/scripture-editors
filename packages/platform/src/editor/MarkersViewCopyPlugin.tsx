@@ -14,6 +14,7 @@ import {
   COPY_COMMAND,
   createEditor,
   CUT_COMMAND,
+  EditorState,
   LexicalEditor,
 } from "lexical";
 import { useEffect } from "react";
@@ -36,7 +37,8 @@ import {
  * (verse and chapter numbers in decorators, no separator after a char marker, a note caller with
  * no text, layout spacers in notes, no glyphs at all for a figure). So the selection is mapped to
  * USJ locations, the document is rebuilt as Standard view in a throwaway editor, and the walker
- * runs over the same USJ range there.
+ * runs over the same USJ range there. The rebuild is kept for the editor state it was built from,
+ * so measuring several selections of one document during one copy rebuilds it once.
  *
  * `undefined` when there is no range to copy or the range cannot be mapped (the block verse layout
  * has no USJ locations).
@@ -48,10 +50,55 @@ export function $selectionToUsfmViaStandardView(
   editor: LexicalEditor,
   viewOptions: ViewOptions,
 ): string | undefined {
-  const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
   const range = $getUsjSelectionFromEditor();
-  if (!standardViewOptions || !range?.end) return undefined;
-  const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions);
+  if (!range?.end) return undefined;
+  const standardView = standardViewOf(editor, viewOptions);
+  if (!standardView) return undefined;
+  return standardView.state.read(
+    () => {
+      const selection = $getRangeFromUsjSelection(range);
+      return selection ? $selectionToUsfmText(selection) : undefined;
+    },
+    { editor: standardView.editor },
+  );
+}
+
+/** A document rebuilt as Standard view, and the view options it was read under. */
+interface StandardViewRebuild {
+  viewOptions: ViewOptions;
+  editor: LexicalEditor;
+  state: EditorState;
+}
+
+/**
+ * Standard-view rebuilds, keyed by the editor state each was built from. An editor state is
+ * immutable, so a rebuild stays valid for as long as its key is the editor's state; a commit makes
+ * a new key and leaves the old entry to be collected.
+ */
+const standardViewRebuilds = new WeakMap<EditorState, StandardViewRebuild | undefined>();
+
+/** `editor`'s document rebuilt as Standard view, reusing the rebuild of its current state. */
+function standardViewOf(
+  editor: LexicalEditor,
+  viewOptions: ViewOptions,
+): StandardViewRebuild | undefined {
+  const source = editor.getEditorState();
+  if (standardViewRebuilds.has(source)) {
+    const cached = standardViewRebuilds.get(source);
+    if (!cached || cached.viewOptions === viewOptions) return cached;
+  }
+  const rebuild = rebuildAsStandardView(source, viewOptions);
+  standardViewRebuilds.set(source, rebuild);
+  return rebuild;
+}
+
+function rebuildAsStandardView(
+  source: EditorState,
+  viewOptions: ViewOptions,
+): StandardViewRebuild | undefined {
+  const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
+  if (!standardViewOptions) return undefined;
+  const usj = editorUsjAdaptor.deserializeEditorState(source, viewOptions);
   if (!usj) return undefined;
   const standardEditor = createEditor({
     namespace: "markers-view-copy",
@@ -60,16 +107,10 @@ export function $selectionToUsfmViaStandardView(
       throw error;
     },
   });
-  const standardState = standardEditor.parseEditorState(
+  const state = standardEditor.parseEditorState(
     usjEditorAdaptor.serializeEditorState(usj, standardViewOptions),
   );
-  return standardState.read(
-    () => {
-      const selection = $getRangeFromUsjSelection(range);
-      return selection ? $selectionToUsfmText(selection) : undefined;
-    },
-    { editor: standardEditor },
-  );
+  return { viewOptions, editor: standardEditor, state };
 }
 
 /**
@@ -84,10 +125,19 @@ export function $selectionToUsfmViaStandardView(
  * A cut in a read-only editor copies and removes nothing ({@link $writeCopyPayload} owns that
  * rule); Ctrl+X reaches the command there too.
  *
+ * `copyLimit` is `EditorOptions.copyLimit`; `CopyLimitPlugin` has already fitted the selection to
+ * it.
+ *
  * Registered at `COMMAND_PRIORITY_HIGH`, above the empty-copy guard and Lexical's own copy. Mount it
- * only for `markerMode: "visible"`. A range it cannot map is left to Lexical's own copy.
+ * only for `markerMode: "visible"`. A range it cannot map is left to the handlers below it.
  */
-export function MarkersViewCopyPlugin({ viewOptions }: { viewOptions: ViewOptions }): null {
+export function MarkersViewCopyPlugin({
+  viewOptions,
+  copyLimit,
+}: {
+  viewOptions: ViewOptions;
+  copyLimit?: number;
+}): null {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
@@ -106,13 +156,14 @@ export function MarkersViewCopyPlugin({ viewOptions }: { viewOptions: ViewOption
         selection,
         { "text/plain": usfm, "text/html": usfmToClipboardHtml(usfm) },
         isCut,
+        copyLimit,
       );
     };
     return mergeRegister(
       editor.registerCommand(COPY_COMMAND, (event) => $copy(event, false), COMMAND_PRIORITY_HIGH),
       editor.registerCommand(CUT_COMMAND, (event) => $copy(event, true), COMMAND_PRIORITY_HIGH),
     );
-  }, [editor, viewOptions]);
+  }, [editor, viewOptions, copyLimit]);
 
   return null;
 }

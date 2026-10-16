@@ -13,9 +13,13 @@ import {
 } from "lexical";
 import {
   $isGutterMarkerNode,
+  $isMarkerTrailingSeparator,
+  $isParaLikeNode,
   $isSomeChapterNode,
   $isSomeParaNode,
+  $isSynthesizedMarkerNode,
   $placeCaretAtBoundary,
+  ParaLikeNode,
   SomeParaNode,
 } from "shared";
 
@@ -59,11 +63,16 @@ export function keyDownToIntent(event: KeyboardEvent): EditIntent | undefined {
   return undefined;
 }
 
-/** Returns the paragraph (ParaNode or ImpliedParaNode) that contains `node`, if any. */
+/**
+ * Returns the block (ParaNode, ImpliedParaNode, or the `\id` line's BookNode) that contains
+ * `node`, if any. `ParaLike`, not `SomePara`: the `\id` line is content like any paragraph's —
+ * protected mode must recognize it as a block boundary too, or a Delete at the line's own end,
+ * or a selection spanning from it into the next real paragraph, merges right through it.
+ */
 function $getParaAncestor(node: LexicalNode | null | undefined): LexicalNode | undefined {
   if (!node) return undefined;
-  if ($isSomeParaNode(node)) return node;
-  const para = $findMatchingParent(node, (n: LexicalNode) => $isSomeParaNode(n));
+  if ($isParaLikeNode(node)) return node;
+  const para = $findMatchingParent(node, (n: LexicalNode) => $isParaLikeNode(n));
   return para ?? undefined;
 }
 
@@ -335,23 +344,37 @@ export function $placeCaretAtEnd(node: LexicalNode): void {
 
 /**
  * Merge-into-previous semantics for a paragraph delete: move `para`'s children into its
- * previous paragraph sibling (which keeps ITS marker), remove `para` (dropping its marker),
- * and place the caret at the junction. Text is never lost. A gutter marker glyph leading `para`
- * names the marker being dropped, so it is removed with the paragraph rather than moved into the
- * middle of the previous one. Only paragraphs merge into paragraphs (ParaNode/ImpliedParaNode
- * either way); with any other previous sibling, or none, it does nothing.
+ * previous sibling (which keeps ITS marker), remove `para` (dropping its marker), and place the
+ * caret at the junction. Text is never lost. A paragraph merges into a paragraph
+ * (ParaNode/ImpliedParaNode either way) or into the `\id` line's BookNode — mirroring
+ * markerEditDeletion.utils.ts's marker-deletion merge, which already treats the two the same
+ * way, since the line is content like any paragraph's; any other previous sibling is a no-op.
+ * Caller guarantees a previous element sibling exists (checked via `$hasNeighborBlock`).
  *
- * Mutating: call inside `editor.update()` (a command handler already runs inside one).
+ * Mutating: call inside `editor.update()` (dispatched from StructureKeyboardPlugin.tsx).
  *
  * @param para - The paragraph whose marker is being removed by merging it into its predecessor.
  */
 export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   const prev = para.getPreviousSibling();
-  if (!$isSomeParaNode(prev)) return;
+  if (!$isParaLikeNode(prev)) return;
   const junction = prev.getLastChild();
-  const ownGlyph = para.getFirstChild();
-  if ($isGutterMarkerNode(ownGlyph)) ownGlyph.remove();
-  const moved = para.getChildren();
+  const leadingPrefix = para.getFirstChild();
+  const dropsLeadingPrefix = $isSynthesizedMarkerNode(leadingPrefix);
+  // A trailing marker separator has no meaning once it is no longer the last thing before a
+  // dissolving paragraph's own (now-removed) marker — markerEditDeletion.utils.ts drops the same
+  // orphaned separator for the identical reason. Unlike that transform, this merge runs directly
+  // off the keystroke with no prior pass to remove the marker text first, so `para`'s own leading
+  // prefix glyph (markerMode "editable"'s MarkerNode, or the "visible" mode's marker-typed
+  // ImmutableTypedTextNode) is still its first child here; moving it into `prev` would fuse it
+  // onto `prev`'s trailing text as a literal marker byte (e.g. `first\qsecond`), so it is dropped
+  // along with the separator instead of moved.
+  const moved = para
+    .getChildren()
+    .filter(
+      (child) =>
+        !$isMarkerTrailingSeparator(child) && !(dropsLeadingPrefix && child.is(leadingPrefix)),
+    );
   prev.append(...moved);
   para.remove();
   // The caret lands where the two paragraphs joined, not at the end.
@@ -369,7 +392,7 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
  * @param para - The paragraph to place the caret in.
  * @param child - The child of `para` the caret follows.
  */
-export function $placeCaretAfterParaChild(para: SomeParaNode, child: LexicalNode | null): void {
+export function $placeCaretAfterParaChild(para: ParaLikeNode, child: LexicalNode | null): void {
   if (!child || $isGutterMarkerNode(child)) $placeCaretAtParaContentStart(para);
   else if ($isTextNode(child)) $placeCaretAtEnd(child);
   else $placeCaretAtBoundary(para, child.getIndexWithinParent() + 1);

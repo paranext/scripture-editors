@@ -27,6 +27,7 @@ import {
 } from "./markerMenuApply.utils";
 import { $getMarkerMenuContext } from "./markerMenuContext.utils";
 import {
+  $buildBookLine,
   $noteContentText,
   findOnlyNote,
   noteUsx,
@@ -60,6 +61,7 @@ import {
   $createCharNode,
   $createMarkerNode,
   $createParaNode,
+  $isBookNode,
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
@@ -366,6 +368,52 @@ describe("editable-mode marker menu harness", () => {
     });
   });
 
+  describe("the `\\id` line", () => {
+    it("offers the INLINE palette (footnotes included), not the paragraph list", async () => {
+      // PT9's own behavior in the `\id` line: character styles valid under `id` plus every note
+      // style. `\id` names the book and its glyph is immutable, so there is no paragraph there to
+      // retag and nothing the paragraph palette could do.
+      let text: TextNode | undefined;
+      const { editor } = await harnessTestEnvironment(() => {
+        text = $buildBookLine("Genesis description");
+      });
+      await act(async () => editor.update(() => requireDefined(text, "text").select(7, 7)));
+
+      await dispatchKeyDown(editor, "\\");
+      const labels = (await waitForMenu()).map(menuItemLabel);
+
+      expect(labels).toContain("f");
+      expect(labels).toContain("fe");
+      // A paragraph marker in the list would mean the paragraph source was chosen.
+      expect(labels).not.toContain("p");
+      expect(labels).not.toContain("q1");
+    });
+
+    it("Enter opens the paragraph menu, and the pick lands the paragraph after the line", async () => {
+      let text: TextNode | undefined;
+      const { editor } = await harnessTestEnvironment(() => {
+        text = $buildBookLine("Genesis description");
+      });
+      await act(async () => editor.update(() => requireDefined(text, "text").select(7, 7)));
+
+      await pressEnterCommand(editor);
+      const menuItems = await waitForMenu();
+      expect(menuItemLabel(menuItems[0])).toBe("ip"); // SmartEnter's introduction choice
+
+      await dispatchKeyDown(editor, "Enter"); // selects the active (first) item
+
+      editor.getEditorState().read(() => {
+        const children = $getRoot().getChildren();
+        expect(children).toHaveLength(2);
+        expect($isBookNode(children[0])).toBe(true);
+        const para = children[1];
+        if (!$isParaNode(para)) throw new Error("expected a ParaNode after the book");
+        expect(para.getMarker()).toBe("ip");
+        expect(para.getTextContent()).toContain(" description");
+      });
+    });
+  });
+
   describe("Space over a non-collapsed selection", () => {
     it("wraps the selection in the typed marker's closed span and closes the menu", async () => {
       let text: TextNode | undefined;
@@ -630,15 +678,21 @@ describe("editable-mode marker menu harness", () => {
       await dispatchKeyDown(editor, " ");
 
       expect(document.querySelector(".autocomplete-menu-container")).toBeNull();
-      editor.getEditorState().read(() => {
-        const para = requireDefined($getRoot().getChildren().filter($isParaNode)[0], "para");
-        const markers = para
-          .getChildren()
-          .filter($isCharNode)
-          .map((char) => char.getMarker());
-        expect(markers).toContain("nd");
-        expect(markers).toContain("wj");
-      });
+      // The bytes land immediately, but with no terminating separator they settle on the engine's
+      // DEFERRED clock rather than inside the commit update (invariant IV - settle has two
+      // clocks), so the end state is awaited rather than read synchronously, exactly as the
+      // first-session assertion above does.
+      await waitFor(() =>
+        editor.getEditorState().read(() => {
+          const para = requireDefined($getRoot().getChildren().filter($isParaNode)[0], "para");
+          const markers = para
+            .getChildren()
+            .filter($isCharNode)
+            .map((char) => char.getMarker());
+          expect(markers).toContain("nd");
+          expect(markers).toContain("wj");
+        }),
+      );
     });
 
     it("with an EMPTY filter, `\\` lands a literal backslash and does NOT reopen", async () => {
