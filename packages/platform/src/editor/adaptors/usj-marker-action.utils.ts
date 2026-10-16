@@ -500,10 +500,15 @@ export function getUsjMarkerAction(
             else nodeToInsert.selectStart();
           }
         }
+      } else {
+        // Nothing is inserted at any non-range selection: `NodeSelection.insertNodes` REMOVES the
+        // selected node, so a selected verse number or paragraph marker would be deleted.
+        // `EditorRef.insertMarker` collapses a selected paragraph marker to its paragraph's text
+        // before getting here; anything else is refused, and said so.
+        logger?.warn(
+          `Marker action "${marker}" needs a range selection to act at; it inserted nothing.`,
+        );
       }
-      // Nothing is inserted at a non-range selection: `NodeSelection.insertNodes` REMOVES the
-      // selected node, so a selected paragraph marker would be deleted. `EditorRef.insertMarker`
-      // collapses one to its paragraph's text before getting here.
     }, editorUpdateOptions);
   };
   return { action, label: markerAction?.label };
