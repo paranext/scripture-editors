@@ -26,12 +26,16 @@ import {
   $isRangeSelection,
   $isTextNode,
   $setSelection,
+  LexicalEditor,
+  RangeSelection,
   TextNode,
 } from "lexical";
 import {
   $createChapterNode,
   $createCharNode,
   $createGutterMarkerNode,
+  $createMarkerNode,
+  $createMarkerTrailingSeparator,
   $createNoteNode,
   $createParaNode,
   $createImpliedParaNode,
@@ -39,6 +43,8 @@ import {
   $isCharNode,
   $isNoteNode,
   $isGutterMarkerNode,
+  $isMarkerNode,
+  $isMarkerTrailingSeparator,
   $isSomeParaNode,
   NBSP,
   ParaNode,
@@ -529,6 +535,15 @@ describe("$isArmedSelection", () => {
   });
 });
 
+/** The committed caret, as the text it sits in and its offset there. */
+function caretOf(editor: LexicalEditor): { text: string; offset: number } | undefined {
+  return editor.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+    return { text: selection.anchor.getNode().getTextContent(), offset: selection.anchor.offset };
+  });
+}
+
 describe("$mergeParaIntoPrevious", () => {
   it("moves children into the previous block, drops the merged para and its marker, preserves text", async () => {
     let p: ParaNode;
@@ -551,6 +566,7 @@ describe("$mergeParaIntoPrevious", () => {
       expect(merged.getMarker()).toBe("p"); // previous block's marker kept; "q" gone
       expect(merged.getTextContent()).toBe("firstsecond");
     });
+    expect(caretOf(editor)).toEqual({ text: "firstsecond", offset: 5 });
   });
 
   // In the paragraph-structure view each paragraph leads with its marker glyph in the gutter. The
@@ -585,6 +601,7 @@ describe("$mergeParaIntoPrevious", () => {
       expect(merged.some($isSomeVerseNode)).toBe(true);
       expect(li1!.getTextContent()).toContain("second");
     });
+    expect(caretOf(editor)).toEqual({ text: "first", offset: 5 });
   });
 
   it("merges an empty para by simply removing it", async () => {
@@ -603,6 +620,65 @@ describe("$mergeParaIntoPrevious", () => {
     editor.getEditorState().read(() => {
       expect($getRoot().getChildrenSize()).toBe(1);
       expect(($getRoot().getChildren()[0] as ParaNode).getTextContent()).toBe("text");
+    });
+    expect(caretOf(editor)).toEqual({ text: "text", offset: 4 });
+  });
+
+  // Standard view: each paragraph opens with its marker as editable text. The caret must never
+  // land in a marker or its separator, where the next keystroke would rename the marker.
+  it("lands past a note that ends the previous paragraph, not in the merged marker", async () => {
+    let p: ParaNode;
+    let q1: ParaNode;
+    let two: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      p = $createParaNode("p");
+      q1 = $createParaNode("q1");
+      two = $createTextNode("two");
+      $getRoot().append(
+        p.append(
+          $createMarkerNode("p"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("one"),
+          $createNoteNode("f", "+").append($createTextNode("note")),
+        ),
+        q1.append($createMarkerNode("q1"), $createMarkerTrailingSeparator(), two),
+      );
+    });
+
+    await sutUpdate(editor, () => {
+      $mergeParaIntoPrevious(q1!);
+    });
+
+    expect(caretOf(editor)).toEqual({ text: "two", offset: 0 });
+    editor.getEditorState().read(() => {
+      expect(p!.getChildren().filter($isMarkerNode)).toHaveLength(1);
+    });
+  });
+
+  it("lands at the merged text when the previous paragraph holds only its marker", async () => {
+    let p: ParaNode;
+    let q1: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      p = $createParaNode("p");
+      q1 = $createParaNode("q1");
+      $getRoot().append(
+        p.append($createMarkerNode("p"), $createMarkerTrailingSeparator()),
+        q1.append(
+          $createMarkerNode("q1"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("two"),
+        ),
+      );
+    });
+
+    await sutUpdate(editor, () => {
+      $mergeParaIntoPrevious(q1!);
+    });
+
+    expect(caretOf(editor)).toEqual({ text: "two", offset: 0 });
+    editor.getEditorState().read(() => {
+      const anchor = ($getSelection() as RangeSelection).anchor.getNode();
+      expect($isMarkerNode(anchor) || $isMarkerTrailingSeparator(anchor)).toBe(false);
     });
   });
 });

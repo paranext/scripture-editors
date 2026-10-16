@@ -384,8 +384,9 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
 /**
  * Collapses the caret just past `child` of `para`: the end of its text when it is a text node, or
  * the boundary after it otherwise — never inside it, so never inside a collapsed note's hidden
- * body. With no `child`, or only the paragraph's gutter glyph, the paragraph has no content before
- * that point, and the caret goes to its content start.
+ * body. With no `child`, or only the paragraph's marker (a gutter glyph, or Standard view's editable
+ * marker and its separator), the paragraph has no content before that point, and the caret goes to
+ * its content start: never into the marker, where the next keystroke would rename it.
  *
  * Mutating: call inside `editor.update()`.
  *
@@ -393,7 +394,8 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
  * @param child - The child of `para` the caret follows.
  */
 export function $placeCaretAfterParaChild(para: ParaLikeNode, child: LexicalNode | null): void {
-  if (!child || $isGutterMarkerNode(child)) $placeCaretAtParaContentStart(para);
+  if (!child || $isSynthesizedMarkerNode(child) || $isMarkerTrailingSeparator(child))
+    $placeCaretAtParaContentStart(para);
   else if ($isTextNode(child)) $placeCaretAtEnd(child);
   else $placeCaretAtBoundary(para, child.getIndexWithinParent() + 1);
 }
