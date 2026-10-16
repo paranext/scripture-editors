@@ -20115,7 +20115,7 @@ function IM({ isEnabled: e, structureProtectionMode: t = "off", copyLimit: r, on
         canSkip: !!ge.$keep
       };
       f = !0;
-      const N = setTimeout(() => l.current?.warn(`[HiddenContentDeleteGuard] onHiddenContentDelete has not answered after ${Kf / 1e3}s; editing stays held until it does.`), Kf);
+      const N = setTimeout(() => !p && l.current?.warn(`[HiddenContentDeleteGuard] onHiddenContentDelete has not answered after ${Kf / 1e3}s; editing stays held until it does.`), Kf);
       return g(Y).then((ee) => {
         clearTimeout(N), f = !1, p ? y(ee, "the editor's guard was torn down while asking") : b(ht, ee, ge);
       }), !0;

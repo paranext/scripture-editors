@@ -134,13 +134,12 @@ interface Settlement {
  * should be modal, and must settle (see {@link HiddenContentDeleteHandler}).
  *
  * Its handlers run at CRITICAL so that they precede `StructureKeyboardPlugin`'s KEY_DOWN handler and
- * native handling. For CUT and PASTE, which `OpaqueBlockGuardPlugin` and `StructureKeyboardPlugin`
- * also register at CRITICAL, it runs first by being mounted first, and it also steps aside
- * explicitly for the two refusals that already protect this content: a selection reaching INTO a
- * construct (`OpaqueBlockGuardPlugin`), and an edit protected mode blocks outright. Guarded mode's
- * two-step delete of a selection holding a verse marker keeps both its steps: the press that arms
- * it, and a press in the other direction that cancels it, are left to `StructureKeyboardPlugin`, and
- * the question is asked on the press that would delete.
+ * native handling. It steps aside explicitly for the two refusals that already protect this
+ * content - a selection reaching INTO a construct (`OpaqueBlockGuardPlugin`), and an edit protected
+ * mode blocks outright - so its order among the other CRITICAL CUT and PASTE handlers does not
+ * matter. Guarded mode's two-step delete of a selection holding a verse marker keeps both its
+ * steps: the press that arms it, and a press in the other direction that cancels it, are left to
+ * `StructureKeyboardPlugin`, and the question is asked on the press that would delete.
  *
  * A cut is held after its copy half has run, since the clipboard cannot be written later. Under a
  * copy limit a cut over hidden content is refused instead: the limit shortens what a copy takes, so
@@ -248,6 +247,7 @@ export function HiddenContentDeleteGuardPlugin({
       isPending = true;
       const longPendingTimer = setTimeout(
         () =>
+          !isDisposed &&
           loggerRef.current?.warn(
             `[HiddenContentDeleteGuard] onHiddenContentDelete has not answered after ${LONG_PENDING_MS / 1000}s; editing stays held until it does.`,
           ),

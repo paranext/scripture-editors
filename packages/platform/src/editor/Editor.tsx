@@ -1478,8 +1478,6 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <EmptyNoteCaretGuardPlugin />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
-          {/* Must stay mounted ahead of OpaqueBlockGuardPlugin and StructureKeyboardPlugin: all
-              three register CUT and PASTE at CRITICAL, where mount order decides who runs first. */}
           <HiddenContentDeleteGuardPlugin
             isEnabled={viewOptions?.markerMode !== "editable"}
             structureProtectionMode={structureProtectionMode}
