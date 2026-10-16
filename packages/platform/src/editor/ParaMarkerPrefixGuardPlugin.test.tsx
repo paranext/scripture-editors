@@ -3,8 +3,10 @@ import { act } from "@testing-library/react";
 import {
   $createTextNode,
   $getRoot,
+  $createRangeSelection,
   $getSelection,
   $isRangeSelection,
+  $setSelection,
   LexicalNode,
   TextNode,
 } from "lexical";
@@ -23,6 +25,7 @@ import {
   VerseNode,
 } from "shared";
 import {
+  $createImmutableVerseNode,
   getViewOptions,
   ImmutableVerseNode,
   PARAGRAPH_STRUCTURE_VIEW_MODE,
@@ -198,6 +201,39 @@ describe("ParaMarkerPrefixGuardPlugin enablement", () => {
       expect(paras.map((p) => p.getMarker())).toEqual(["li2", "li2"]);
       expect(paras.map((p) => $isGutterMarkerNode(p.getFirstChild()))).toEqual([true, true]);
       expect(paras[1].getTextContent()).toBe(`\\li2${NBSP} two`);
+    });
+  });
+
+  // The paragraph's first content position is past its leading verse number, not between the glyph
+  // and the verse, which is no caret position.
+  it("moves a caret left at the paragraph's start past its whole prefix, leading verse included", async () => {
+    let para: ParaNode;
+    let glyph: ImmutableTypedTextNode;
+    let line: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        para = $createParaNode("q2");
+        glyph = $createGutterMarkerNode(`\\q2${NBSP}`);
+        line = $createTextNode("a poetry line");
+        $getRoot().append(para.append(glyph, $createImmutableVerseNode("2"), line));
+      },
+      <ParaMarkerPrefixGuardPlugin viewOptions={getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE)} />,
+    );
+
+    await act(async () =>
+      editor.update(() => {
+        glyph.remove();
+        const selection = $createRangeSelection();
+        selection.anchor.set(para.getKey(), 0, "element");
+        selection.focus.set(para.getKey(), 0, "element");
+        $setSelection(selection);
+      }),
+    );
+
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      expect([selection.anchor.key, selection.anchor.offset]).toEqual([line.getKey(), 0]);
     });
   });
 

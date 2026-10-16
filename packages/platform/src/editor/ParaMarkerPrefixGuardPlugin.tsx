@@ -2,6 +2,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { $getSelection, $isRangeSelection } from "lexical";
 import { useEffect } from "react";
 import {
+  $caretHostAtBoundary,
   $createGutterMarkerNode,
   $isGutterMarkerNode,
   $isSynthesizedMarkerNode,
@@ -11,7 +12,7 @@ import {
   ParaNode,
   PARA_MARKER_DEFAULT,
 } from "shared";
-import { showParaMarkerPrefix, ViewOptions } from "shared-react";
+import { $paraContentStartIndex, showParaMarkerPrefix, ViewOptions } from "shared-react";
 
 /**
  * Keeps a paragraph's visible USFM-marker label (e.g. `\s2`, `\q1`) in agreement with its marker.
@@ -102,10 +103,18 @@ export function $restoreGutterMarkerIfMissing(para: ParaNode): void {
     $createGutterMarkerNode(text);
   if (first) first.insertBefore(glyph);
   else para.append(glyph);
-  // A caret at the paragraph's start would now sit before the glyph, which is no caret position.
+  // A caret that was at the paragraph's start is now inside its prefix (inserting the glyph shifts
+  // an element point past it), which is no caret position: it goes to the first content position,
+  // past any leading verse number too.
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return;
+  const contentStart = $paraContentStartIndex(para);
+  // Hosted by the text there when there is some (the convention `$placeCaretAtBoundary` follows),
+  // so the point survives the browser's reading of it back.
+  const host = $caretHostAtBoundary(para, contentStart);
   for (const point of [selection.anchor, selection.focus])
-    if (point.type === "element" && point.key === para.getKey() && point.offset === 0)
-      point.set(para.getKey(), 1, "element");
+    if (point.type === "element" && point.key === para.getKey() && point.offset < contentStart) {
+      if (host) point.set(host.getKey(), 0, "text");
+      else point.set(para.getKey(), contentStart, "element");
+    }
 }
