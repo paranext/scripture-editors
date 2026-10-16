@@ -398,6 +398,18 @@ describe("EditorRef edits with a selected paragraph marker", () => {
     });
   });
 
+  // The browser holds no range while a marker is selected, so a palette opened from it anchors at
+  // the glyph the user selected.
+  it("getMarkerMenuContext anchors at the selected glyph", async () => {
+    const { ref, lexical } = await mountParagraphStructure({ scrRef });
+    await selectMarker(lexical, "li2");
+    const glyphRect = { x: 4, y: 40, width: 24, height: 16 };
+    const glyphElement = glyphElementOf(lexical, "li2");
+    glyphElement.getBoundingClientRect = () => DOMRect.fromRect(glyphRect);
+
+    expect(ref.current?.getMarkerMenuContext()?.anchorRect).toEqual(glyphRect);
+  });
+
   it("insertNote acts at the paragraph's text, never on the marker", async () => {
     const { ref, lexical } = await mountParagraphStructure({ scrRef });
     await selectMarker(lexical, "li2");

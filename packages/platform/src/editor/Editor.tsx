@@ -1060,7 +1060,8 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // `getEditorState().read`, NOT `editor.read` - the latter force-flushes any in-flight
       // update mid-dispatch (the same hazard as reading during an `OnSelectionChangePlugin`
       // callback).
-      return editorRef.current?.getEditorState().read(() => $getMarkerMenuContext());
+      const editor = editorRef.current;
+      return editor?.getEditorState().read(() => $getMarkerMenuContext(editor));
     },
     applyMarkerMenuSelection(item, opts) {
       if (isReadonly) throw new Error("Cannot apply marker menu selection in readonly mode");

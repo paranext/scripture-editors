@@ -24,10 +24,12 @@ import {
   $isElementNode,
   $isRangeSelection,
   BaseSelection,
+  LexicalEditor,
   LexicalNode,
 } from "lexical";
 import {
   $findFirstAncestorNoteNode,
+  $getSelectedParaMarker,
   $isBookNode,
   $isCharNode,
   $isMarkerTrailingSeparator,
@@ -216,9 +218,15 @@ function $getMenuFocus(
  * frozen-state crashes, fixed for `OnSelectionChangePlugin`). A selected paragraph marker reads as
  * a caret at its paragraph's content start, where `applyMarkerMenuSelection` acts. Returns
  * `undefined` for any other non-range selection (another `NodeSelection`, or none at all).
+ *
+ * @param editor - The editor being read, to anchor at a selected paragraph marker's glyph; without
+ *   it, a marker selection reports no `anchorRect`.
  */
-export function $getMarkerMenuContext(): MarkerMenuContextSnapshot | undefined {
-  const focus = $getMenuFocus($getSelection());
+export function $getMarkerMenuContext(
+  editor?: LexicalEditor,
+): MarkerMenuContextSnapshot | undefined {
+  const selection = $getSelection();
+  const focus = $getMenuFocus(selection);
   if (!focus) return undefined;
   const { node: focusNode, offset, hasTextSelection } = focus;
 
@@ -256,6 +264,20 @@ export function $getMarkerMenuContext(): MarkerMenuContextSnapshot | undefined {
     // (see $isPointInMarkerGlyphText) — Enter there opens the paragraph menu exactly as at the
     // end of a plain-text paragraph.
     inMarkerText: $isPointInMarkerGlyphText(focusNode, offset),
-    anchorRect: getAnchorRect(),
+    anchorRect: getGlyphRect(editor, $getSelectedParaMarker(selection)) ?? getAnchorRect(),
   };
+}
+
+/**
+ * Where a selected paragraph marker's glyph is on screen. The browser holds no range while one is
+ * selected (`ParaMarkerSelectionPlugin` removes it), so a palette anchors at the glyph instead.
+ */
+function getGlyphRect(
+  editor: LexicalEditor | undefined,
+  glyph: LexicalNode | undefined,
+): MarkerMenuContextSnapshot["anchorRect"] {
+  const element = glyph && editor?.getElementByKey(glyph.getKey());
+  if (!element) return undefined;
+  const { x, y, width, height } = element.getBoundingClientRect();
+  return { x, y, width, height };
 }
