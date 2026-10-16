@@ -613,8 +613,9 @@ export const REPAIR_PARA_MARKER_SELECTION_COMMAND: LexicalCommand<void> = create
 
 /**
  * The node a selected paragraph marker counts as selecting for location purposes (which verse,
- * which chapter): the first child of its paragraph's content, or the paragraph's last prefix child
- * (a leading verse, or the glyph) when it has no content yet.
+ * which chapter): the first child of its paragraph's content, or its leading verse when it has no
+ * content yet, or the paragraph itself when it holds only its glyph. Never the glyph: it is no
+ * position.
  *
  * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
  * command handler.
@@ -628,7 +629,12 @@ export function $getParaMarkerSelectionLocationNode(
   const para = $getSelectedParaMarkerPara(selection);
   if (!para) return undefined;
   const index = $paraContentStartIndex(para);
-  return para.getChildAtIndex(index) ?? para.getChildAtIndex(index - 1) ?? para;
+  const lastPrefix = para.getChildAtIndex(index - 1);
+  return (
+    para.getChildAtIndex(index) ??
+    ($isGutterMarkerNode(lastPrefix) ? undefined : lastPrefix) ??
+    para
+  );
 }
 
 /**

@@ -23,7 +23,7 @@ import {
   LexicalNode,
 } from "lexical";
 import { createRef } from "react";
-import { $isGutterMarkerNode, $isImmutableTypedTextNode, $isParaNode } from "shared";
+import { $isGutterMarkerNode, $isImmutableTypedTextNode, $isParaNode, ParaNode } from "shared";
 import { getViewOptions, PARAGRAPH_STRUCTURE_VIEW_MODE } from "shared-react";
 
 const glyphHelperCalls = vi.hoisted(() => [] as unknown[][]);
@@ -61,6 +61,12 @@ const usj: Usj = {
   ],
 };
 
+/** A paragraph with no content, only its glyph: the location fallback's case. */
+const emptyParaUsj: Usj = {
+  ...usj,
+  content: [...usj.content, { type: "para", marker: "p", content: [] }],
+};
+
 async function press(lexical: LexicalEditor, key: string): Promise<void> {
   await act(async () => {
     lexical.dispatchCommand(
@@ -70,73 +76,82 @@ async function press(lexical: LexicalEditor, key: string): Promise<void> {
   });
 }
 
-it("selecting and leaving a marker changes no USJ, emits no ops, and never passes the glyph to the position helpers", async () => {
-  const onUsjChange = vi.fn();
-  const ref = createRef<EditorRef>();
-  const lexicalRef = createRef<LexicalEditor>();
-  await act(async () => {
-    render(
-      <Editor
-        ref={ref}
-        defaultUsj={usj}
-        onUsjChange={onUsjChange}
-        options={{ view: getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE) }}
-      >
-        <EditorRefPlugin editorRef={lexicalRef} />
-      </Editor>,
-    );
-  });
-  await flushQueuedEvents();
-  const lexical = lexicalRef.current;
-  if (!lexical) throw new Error("editor did not mount");
-  const before = ref.current?.getUsj();
-  onUsjChange.mockClear();
-  glyphHelperCalls.length = 0;
-  const glyphKey = lexical.getEditorState().read(() => {
-    const glyph = $getRoot().getChildren().find($isParaNode)?.getFirstChild();
-    if (!$isGutterMarkerNode(glyph)) throw new Error("no gutter glyph");
-    return glyph.getKey();
-  });
+it.each([
+  ["a paragraph with content", usj, "li2"],
+  ["a paragraph with no content", emptyParaUsj, "p"],
+])(
+  "selecting and leaving the marker of %s changes no USJ, emits no ops, and never passes the glyph to the position helpers",
+  async (_name, document, marker) => {
+    const onUsjChange = vi.fn();
+    const ref = createRef<EditorRef>();
+    const lexicalRef = createRef<LexicalEditor>();
+    await act(async () => {
+      render(
+        <Editor
+          ref={ref}
+          defaultUsj={document}
+          onUsjChange={onUsjChange}
+          options={{ view: getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE) }}
+        >
+          <EditorRefPlugin editorRef={lexicalRef} />
+        </Editor>,
+      );
+    });
+    await flushQueuedEvents();
+    const lexical = lexicalRef.current;
+    if (!lexical) throw new Error("editor did not mount");
+    const before = ref.current?.getUsj();
+    onUsjChange.mockClear();
+    glyphHelperCalls.length = 0;
+    const glyphKey = lexical.getEditorState().read(() => {
+      const glyph = $getRoot()
+        .getChildren()
+        .find((node): node is ParaNode => $isParaNode(node) && node.getMarker() === marker)
+        ?.getFirstChild();
+      if (!$isGutterMarkerNode(glyph)) throw new Error("no gutter glyph");
+      return glyph.getKey();
+    });
 
-  // By click, then out by keyboard.
-  const glyphElement = lexical.getElementByKey(glyphKey);
-  if (!glyphElement) throw new Error("glyph not rendered");
-  await act(async () => {
-    glyphElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
-  expect(ref.current?.getSelectedParaMarker()).toBe("li2");
-  await press(lexical, "ArrowRight");
-  // A marker is not a keyboard stop: arrowing back from the content leaves it unselected.
-  await press(lexical, "ArrowLeft");
-  expect(ref.current?.getSelectedParaMarker()).toBeUndefined();
-  await flushQueuedEvents();
+    // By click, then out by keyboard.
+    const glyphElement = lexical.getElementByKey(glyphKey);
+    if (!glyphElement) throw new Error("glyph not rendered");
+    await act(async () => {
+      glyphElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(ref.current?.getSelectedParaMarker()).toBe(marker);
+    await press(lexical, "ArrowRight");
+    // A marker is not a keyboard stop: arrowing back from the content leaves it unselected.
+    await press(lexical, "ArrowLeft");
+    expect(ref.current?.getSelectedParaMarker()).toBeUndefined();
+    await flushQueuedEvents();
 
-  expect(ref.current?.getUsj()).toEqual(before);
-  expect(onUsjChange).not.toHaveBeenCalled();
+    expect(ref.current?.getUsj()).toEqual(before);
+    expect(onUsjChange).not.toHaveBeenCalled();
 
-  // Positive control, so the "never named the glyph" check below cannot pass vacuously: the public
-  // `getMarkerMenuContext()` reads a marker selection through the spied helpers, as the caret at
-  // its paragraph's content start. Checkpointed, not cleared, so the earlier calls stay covered.
-  await act(async () => {
-    glyphElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
-  expect(ref.current?.getSelectedParaMarker()).toBe("li2");
-  const callsBeforeMenuContext = glyphHelperCalls.length;
-  expect(ref.current?.getMarkerMenuContext()).toMatchObject({ paraMarker: "li2" });
-  expect(glyphHelperCalls.length).toBeGreaterThan(callsBeforeMenuContext);
+    // Positive control, so the "never named the glyph" check below cannot pass vacuously: the public
+    // `getMarkerMenuContext()` reads a marker selection through the spied helpers, as the caret at
+    // its paragraph's content start. Checkpointed, not cleared, so the earlier calls stay covered.
+    await act(async () => {
+      glyphElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(ref.current?.getSelectedParaMarker()).toBe(marker);
+    const callsBeforeMenuContext = glyphHelperCalls.length;
+    expect(ref.current?.getMarkerMenuContext()).toMatchObject({ paraMarker: marker });
+    expect(glyphHelperCalls.length).toBeGreaterThan(callsBeforeMenuContext);
 
-  lexical.getEditorState().read(() => {
-    for (const rawArg of glyphHelperCalls.flat()) {
-      // `rawArg` is `unknown` (the recorded call args cover every helper's own param type);
-      // narrow to a local before each guard, since a guard over an inline cast expression
-      // doesn't narrow the loop variable itself.
-      const node = rawArg as LexicalNode | null | undefined;
-      if ($isImmutableTypedTextNode(node)) expect(node.getKey()).not.toBe(glyphKey);
-      const selection = rawArg as BaseSelection | null | undefined;
-      if ($isRangeSelection(selection)) {
-        expect(selection.anchor.key).not.toBe(glyphKey);
-        expect(selection.focus.key).not.toBe(glyphKey);
+    lexical.getEditorState().read(() => {
+      for (const rawArg of glyphHelperCalls.flat()) {
+        // `rawArg` is `unknown` (the recorded call args cover every helper's own param type);
+        // narrow to a local before each guard, since a guard over an inline cast expression
+        // doesn't narrow the loop variable itself.
+        const node = rawArg as LexicalNode | null | undefined;
+        if ($isImmutableTypedTextNode(node)) expect(node.getKey()).not.toBe(glyphKey);
+        const selection = rawArg as BaseSelection | null | undefined;
+        if ($isRangeSelection(selection)) {
+          expect(selection.anchor.key).not.toBe(glyphKey);
+          expect(selection.focus.key).not.toBe(glyphKey);
+        }
       }
-    }
-  });
-});
+    });
+  },
+);
