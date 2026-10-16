@@ -42,6 +42,7 @@ import {
   ParaNode,
 } from "shared";
 import { act } from "@testing-library/react";
+import { editorHoldsDomFocus } from "shared-react";
 import {
   $createTextNode,
   $getRoot,
@@ -551,10 +552,86 @@ describe("setMarkerSettleSuspended", () => {
     }
   });
 
+  /**
+   * Captures the tags of the commit that actually SETTLES the heading — identified by the marker
+   * having become `s2` in that commit's own state, so an unrelated commit cannot stand in for it.
+   * Asserting on "the first commit after resume" instead lets a test pass when the settle never
+   * ran at all, which matters most for the assertions below that check an ABSENCE.
+   *
+   * Unregisters itself from inside the callback: a teardown called afterwards, or left armed for
+   * the environment's own unmount commit, throws inside Lexical.
+   */
+  function watchForSettleCommit(
+    editor: LexicalEditor,
+    para: ParaNode,
+  ): { tags: Set<string> | undefined } {
+    const captured: { tags: Set<string> | undefined } = { tags: undefined };
+    const stopWatching = editor.registerUpdateListener(({ tags, editorState }) => {
+      if (editorState.read(() => para.getMarker()) !== "s2") return;
+      captured.tags = new Set(tags);
+      stopWatching();
+    });
+    return captured;
+  }
+
   it("tags the RESUME settle to skip the DOM selection when the editor is blurred", async () => {
     // The resume usually arrives as the host's surface closes, with focus not yet back in the
     // editor. Without the tag Lexical re-asserts the DOM selection for this commit and drags the
     // caret — and focus with it — back into an editor the user has left.
+    let para!: ParaNode;
+    let marker!: MarkerNode;
+    const { editor } = await testEnvironment(() => ({ para, marker } = $appendHeadingPara()));
+    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+
+    await setSuspended(editor, true);
+    await act(async () => {
+      editor.dispatchCommand(BLUR_COMMAND, undefined as never);
+    });
+
+    const settleCommit = watchForSettleCommit(editor, para);
+    await setSuspended(editor, false);
+    await flush();
+
+    expect(settleCommit.tags?.has(SKIP_DOM_SELECTION_TAG)).toBe(true);
+  });
+
+  it("does NOT tag the resume settle when the editor still holds DOM focus", async () => {
+    // Focused, the DOM selection is the user's own and Lexical should keep it in step as usual.
+    //
+    // This asserts an ABSENCE, so it is pinned to the branch it describes by asserting the
+    // precondition too: the editor really does hold DOM focus at resume, which is what sends the
+    // settle down the untagged path. What it deliberately does NOT assert is that the settle
+    // mutated anything — with focus on the root and no caret moved, the pending marker IS the
+    // caret's own node, which every settle trigger excepts. Arranging otherwise means moving the
+    // caret, and the departure that causes settles the pend before there is anything to suspend.
+    let marker!: MarkerNode;
+    const { editor } = await testEnvironment(() => ({ marker } = $appendHeadingPara()));
+    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
+    focusEditorRoot(editor);
+
+    await setSuspended(editor, true);
+    expect(editorHoldsDomFocus(editor)).toBe(true);
+
+    const commitTags: Set<string>[] = [];
+    const stopWatching = editor.registerUpdateListener(({ tags }) =>
+      commitTags.push(new Set(tags)),
+    );
+    await setSuspended(editor, false);
+    await flush();
+    await flush();
+    stopWatching();
+
+    expect(commitTags.some((tags) => tags.has(SKIP_DOM_SELECTION_TAG))).toBe(false);
+  });
+
+  it("releases SKIP_DOM_SELECTION_TAG once the settle has committed", async () => {
+    // `releaseTagsAfterNextCommit` strips the tag from the commit's own tag set when that commit
+    // happens. Disarming it before the commit — which is what happens if the tagged update is not
+    // `discrete`, because Lexical then schedules the commit on a microtask — leaves the tag in
+    // place, free to ride onto a later commit where it stops a `focus()` from focusing the editor.
+    //
+    // The live Set is kept, deliberately NOT copied: the release deletes from it in place, so a
+    // snapshot taken during the commit would look identical either way.
     let marker!: MarkerNode;
     const { editor } = await testEnvironment(() => ({ marker } = $appendHeadingPara()));
     await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
@@ -564,38 +641,19 @@ describe("setMarkerSettleSuspended", () => {
       editor.dispatchCommand(BLUR_COMMAND, undefined as never);
     });
 
-    const settleTags: Set<string>[] = [];
-    // Unregisters itself from inside the callback: a teardown called afterwards, or left to fire
-    // during the environment's own unmount commit, throws inside Lexical.
+    let taggedCommit: Set<string> | undefined;
     const stopWatching = editor.registerUpdateListener(({ tags }) => {
-      settleTags.push(new Set(tags));
-      stopWatching();
+      if (!taggedCommit && tags.has(SKIP_DOM_SELECTION_TAG)) taggedCommit = tags;
     });
     await setSuspended(editor, false);
     await flush();
-
-    expect(settleTags.some((tags) => tags.has(SKIP_DOM_SELECTION_TAG))).toBe(true);
-  });
-
-  it("does NOT tag the resume settle when the editor still holds DOM focus", async () => {
-    // Focused, the DOM selection is the user's own and Lexical should keep it in step as usual.
-    let marker!: MarkerNode;
-    const { editor } = await testEnvironment(() => ({ marker } = $appendHeadingPara()));
-    await act(async () => editor.update(() => $pendGlyphEdit(marker, "\\s2")));
-    focusEditorRoot(editor);
-
-    await setSuspended(editor, true);
-    const settleTags: Set<string>[] = [];
-    // Unregisters itself from inside the callback: a teardown called afterwards, or left to fire
-    // during the environment's own unmount commit, throws inside Lexical.
-    const stopWatching = editor.registerUpdateListener(({ tags }) => {
-      settleTags.push(new Set(tags));
-      stopWatching();
-    });
-    await setSuspended(editor, false);
     await flush();
+    stopWatching();
 
-    expect(settleTags.some((tags) => tags.has(SKIP_DOM_SELECTION_TAG))).toBe(false);
+    // The tagged settle commit happened at all...
+    expect(taggedCommit).toBeDefined();
+    // ...and its tag was released rather than left pending.
+    expect(taggedCommit?.has(SKIP_DOM_SELECTION_TAG)).toBe(false);
   });
 
   it("does not lift the suspension on a focus that arrives before the surface took it", async () => {

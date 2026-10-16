@@ -732,17 +732,25 @@ export function MarkerEditPlugin({
       const releaseTag = skipDomSelection
         ? releaseTagsAfterNextCommit(editor, SKIP_DOM_SELECTION_TAG)
         : undefined;
-      editor.update(() => {
-        if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
-        const mutated = $settleWithoutOwnUndoEntry(() =>
-          $resolvePendingMarkers(context, exceptKey, settleReason),
-        );
-        settleCascadeDepth = mutated ? settleCascadeDepth + 1 : 0;
-      });
-      // Disarmed straight away: this update is always called from a fresh macrotask/microtask,
-      // never from inside another commit, so it has already committed — or committed nothing,
-      // having found no pending marker to settle, in which case the listener would otherwise stay
-      // armed and strip the tag off an unrelated commit later.
+      editor.update(
+        () => {
+          if (skipDomSelection) $addUpdateTag(SKIP_DOM_SELECTION_TAG);
+          const mutated = $settleWithoutOwnUndoEntry(() =>
+            $resolvePendingMarkers(context, exceptKey, settleReason),
+          );
+          settleCascadeDepth = mutated ? settleCascadeDepth + 1 : 0;
+        },
+        // DISCRETE whenever the tag is in play, the way `commitPendingMarkerEdits` does it:
+        // Lexical commits inside the call only for a discrete update (`_flushSync`) and otherwise
+        // schedules the commit on a microtask, so the release below would disarm before the commit
+        // it exists to catch. A settle that only moves the selection — which an update running
+        // outside an event can produce on its own, by re-reading the DOM selection — would then
+        // leave the tag pending to ride onto the next commit, where it stops a later `focus()`
+        // from focusing the editor.
+        skipDomSelection ? { discrete: true } : undefined,
+      );
+      // Safe here because the update above was discrete: the commit has really happened, so this
+      // either strips a spent listener or disarms one whose update committed nothing.
       releaseTag?.();
     };
     /**
