@@ -9,10 +9,11 @@
  * but its children kept apart — so the copy of an annotated range carries the cuts: a verse in four
  * pieces pastes back from the HTML as four verses, and content a mark cut is several spans that a
  * paste reads apart. So the copy is written from the tree without the annotations instead: the
- * document is serialized with every mark's children in its place, each carrier's pieces written as
- * the one node they are, the texts a mark cut written as the one text they are, and no piece or
- * hold state; that tree is read into a scratch editor, the selection restated on it, and the copy
- * written there. The live editor is only read.
+ * blocks the selection touches are serialized with every mark's children in its place, each
+ * carrier's pieces written as the one node they are, the texts a mark cut written as the one text
+ * they are, and no piece or hold state; that tree is read into a scratch editor, the selection
+ * restated on it, and the copy written there. The live editor is only read. A selection touching
+ * nothing an annotation puts in the tree is copied by Lexical as it stands.
  */
 
 import { $getClipboardDataFromSelection, LexicalClipboardData } from "@lexical/clipboard";
@@ -146,12 +147,27 @@ function $appendUncut(
   }
 }
 
-/** The document as it is with no annotation, serialized, and where each live node went. */
-function $serializeUncut(): UncutTree {
+/**
+ * The root's children `from` to `to` (inclusive) as they are with no annotation, serialized as the
+ * whole document, and where each live node went. A block is written alone, so only the blocks a
+ * selection touches are written for its copy.
+ */
+function $serializeUncut(from: number, to: number): UncutTree {
   const children: SerializedNode[] = [];
   const places = new Map<NodeKey, Place>();
-  $appendUncut($getRoot().getChildren(), children, [], places, { isPastMark: false });
+  const blocks = $getRoot()
+    .getChildren()
+    .slice(from, to + 1);
+  $appendUncut(blocks, children, [], places, { isPastMark: false });
   return { children, places };
+}
+
+/** The index among the root's children of the block `point` is in (the last for a root point at
+ * the end). */
+function $blockIndex(point: PointType): number {
+  const node = point.getNode();
+  if ($isRootNode(node)) return Math.max(0, Math.min(point.offset, node.getChildrenSize() - 1));
+  return (node.getTopLevelElement() ?? node).getIndexWithinParent();
 }
 
 /** A point of the uncut tree: a node's path, an offset, and the point's type. */
@@ -288,7 +304,12 @@ export function $uncutClipboardData(
   selection: RangeSelection,
 ): LexicalClipboardData | undefined {
   if (!$touchesAnnotations(selection)) return undefined;
-  const { children, places } = $serializeUncut();
+  const anchorBlock = $blockIndex(selection.anchor);
+  const focusBlock = $blockIndex(selection.focus);
+  const { children, places } = $serializeUncut(
+    Math.min(anchorBlock, focusBlock),
+    Math.max(anchorBlock, focusBlock),
+  );
   const anchor = $uncutPoint(selection.anchor, places);
   const focus = $uncutPoint(selection.focus, places);
   if (!anchor || !focus) return undefined;

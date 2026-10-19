@@ -27,6 +27,7 @@ import {
   TRANSPARENCY_RANGE_KEYSTROKES,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
 import { drainNativeSelectionChange } from "../editor-test.utils";
+import { $copyWithoutAnnotations } from "../markerEdit/whitespaceDisplay.plugin.utils";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -50,6 +51,7 @@ import {
   COMMENT_MARK_TYPE,
   MarkerNode,
   NBSP,
+  ParaNode,
 } from "shared";
 import { $getRangeFromUsjSelection } from "shared-react";
 import { describe, expect, it, vi } from "vitest";
@@ -507,6 +509,63 @@ describe("a copy of annotated text", () => {
         expect(mounted.lexical.getEditorState(), `annotated: ${isAnnotated}`).toBe(before);
         expect(dirty).toEqual([]);
         expect(mounted.ops.length).toBe(opsBefore);
+        mounted.unmount();
+      }
+    },
+    120_000,
+  );
+
+  it.each(["unformatted", "standard"] as const)(
+    "is written from the blocks it touches only, and a plain copy is Lexical's own (%s view)",
+    async (view) => {
+      const row = oracleRows(view).find(([name]) => name.startsWith("closed char span ("))?.[1];
+      if (!row) throw new Error("no row closed char span");
+      const usj: Usj = {
+        ...row,
+        content: [...row.content, { type: "para", marker: "p", content: ["after"] }],
+      };
+      for (const isAnnotated of [false, true]) {
+        const viewOptions = pendingOracleView(view);
+        const mounted = await mountInView(usj, viewOptions);
+        if (isAnnotated) {
+          const plan = mounted.lexical.getEditorState().read(() => $planAnnotations(viewOptions));
+          for (const { id, range } of plan)
+            await act(async () => {
+              mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, id);
+              await Promise.resolve();
+            });
+        }
+        const afterKey = mounted.lexical
+          .getEditorState()
+          .read(() => $getRoot().getLastChildOrThrow().getKey());
+        const exported: NodeKey[] = [];
+        const original = ParaNode.prototype.exportJSON;
+        const spy = vi.spyOn(ParaNode.prototype, "exportJSON").mockImplementation(function (
+          this: ParaNode,
+        ) {
+          exported.push(this.getKey());
+          return original.call(this);
+        });
+        let isClaimed: boolean | undefined;
+        try {
+          mounted.lexical.update(
+            () => {
+              const para = $getRoot().getChildren()[2];
+              if (!$isElementNode(para)) throw new Error("no edited block");
+              para.select(0, para.getChildrenSize());
+              isClaimed = $copyWithoutAnnotations(
+                copyEvent({ native: true }).event,
+                mounted.lexical,
+                false,
+              );
+            },
+            { discrete: true },
+          );
+        } finally {
+          spy.mockRestore();
+        }
+        expect(isClaimed, `annotated: ${isAnnotated}`).toBe(isAnnotated);
+        expect(exported, `annotated: ${isAnnotated}`).not.toContain(afterKey);
         mounted.unmount();
       }
     },
