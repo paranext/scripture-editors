@@ -166,21 +166,27 @@ export function $restCaretThroughMarks(): void {
 
 /**
  * Put a range's start Lexical read onto the start of the text right after an annotation mark back
- * at the end of the mark's content, where it is in the document, as a caret there is
- * ({@link $restoreCaretAtMarkEnd}). Lexical reads a range's start from the screen this way at every
- * read, including the one an update that inserts makes as it starts. A no-op for a collapsed
- * selection. Mutating (the selection only).
+ * at the end of the mark's content, where it is in the document. Lexical reads a range's start at
+ * the end of a mark's text onto the start of the node after the mark, at every read from the
+ * screen, including the one an update that inserts makes as it starts; with no mark there the
+ * start stays at the end of the content. A start the screen has at the start of that node is
+ * where it is, so `$isReadFromEnd` says whether the screen has the start at the end of a given
+ * text; without it, every such start is put back. A no-op for a collapsed selection
+ * ({@link $restoreCaretAtMarkEnd} restates a caret). Mutating (the selection only).
  *
  * @returns Whether the start moved.
  */
-export function $restoreRangeStartAtMarkEnd(selection: RangeSelection): boolean {
+export function $restoreRangeStartAtMarkEnd(
+  selection: RangeSelection,
+  $isReadFromEnd?: (text: LexicalNode) => boolean,
+): boolean {
   if (selection.isCollapsed()) return false;
   const start = selection.isBackward() ? selection.focus : selection.anchor;
   if (start.type !== "text" || start.offset !== 0) return false;
   const node = start.getNode();
   if (!$isTypedMarkNode(node.getPreviousSibling())) return false;
   const { node: place, offset } = $caretPlaceThroughMarks(start);
-  if (place.is(node)) return false;
+  if (place.is(node) || ($isReadFromEnd && !$isReadFromEnd(place))) return false;
   start.set(place.getKey(), offset, "text");
   return true;
 }
@@ -197,17 +203,20 @@ export function $restoreRangeStartAtMarkEnd(selection: RangeSelection): boolean 
  * ({@link $nextSiblingThroughMarks}, {@link $previousSiblingThroughMarks}), each end moves as it
  * does with no mark; a display-byte carrier cut into pieces is one node. A collapsed caret is left
  * alone ({@link $restoreCaretAtMarkEnd} restates that); a range's start Lexical read onto the
- * start of the text after a mark is put back at the end of the mark's content first, as that
- * caret is. Mutating (the selection only).
+ * start of the text after a mark from the end of the mark's content is put back there first
+ * ({@link $restoreRangeStartAtMarkEnd}, with `$isReadFromEnd`). Mutating (the selection only).
  *
  * @returns Whether an end moved.
  */
-export function $resolveRangeEndsThroughMarks(selection: RangeSelection): boolean {
+export function $resolveRangeEndsThroughMarks(
+  selection: RangeSelection,
+  $isReadFromEnd?: (text: LexicalNode) => boolean,
+): boolean {
   if (selection.isCollapsed()) return false;
   const [start, end] = selection.isBackward()
     ? [selection.focus, selection.anchor]
     : [selection.anchor, selection.focus];
-  let moved = $restoreRangeStartAtMarkEnd(selection);
+  let moved = $restoreRangeStartAtMarkEnd(selection, $isReadFromEnd);
   const isHiddenInlineElement = (
     node: LexicalNode | null,
     rawNeighbour: LexicalNode | null,

@@ -10,6 +10,7 @@ import { isParaKindMarker } from "./markerKind.utils";
 import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
 import { $dfs } from "@lexical/utils";
 import {
+  $addUpdateTag,
   $createTextNode,
   $findMatchingParent,
   $getSelection,
@@ -54,6 +55,8 @@ import {
   $pieces,
   $removeRangeHeldByMarks,
   $setLogicalText,
+  $joinCarriersAtSelection,
+  CARET_IN_GLYPH_TAG,
 } from "shared";
 import { showParaMarkerPrefix } from "shared-react";
 
@@ -338,7 +341,15 @@ export function $prepareReplaceSelection(context: MarkerEditContext): void {
     return;
   }
   $armWholeParaDeletion(context);
+  // A glyph an annotation cut is removed from as one text, as the uncut glyph is: removing a
+  // whole piece would take its node, and the caret with it, out of the glyph.
+  $joinCarriersAtSelection();
   selection.removeText();
+  // The caret this removal leaves at a glyph's start is in the glyph, as with no mark before it.
+  const { anchor } = selection;
+  if (selection.isCollapsed() && anchor.type === "text" && anchor.offset === 0) {
+    if ($isMarkerNode(anchor.getNode())) $addUpdateTag(CARET_IN_GLYPH_TAG);
+  }
 }
 
 /**

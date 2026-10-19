@@ -10,9 +10,12 @@ import {
   $isRangeSelection,
   COMMAND_PRIORITY_CRITICAL,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  getDOMSelection,
   HISTORY_MERGE_TAG,
+  isDOMTextNode,
   LexicalCommand,
   LexicalEditor,
+  LexicalNode,
   NodeKey,
   PASTE_COMMAND,
   SELECTION_CHANGE_COMMAND,
@@ -42,13 +45,36 @@ import {
   TypedMarkOnRemove,
 } from "shared";
 
+/**
+ * Whether the screen's selection in `editor` has an end at the end of `text`: where Lexical read a
+ * range's start from, when it put that start on the start of the node after a mark.
+ */
+function isScreenEndAtTextEnd(editor: LexicalEditor): (text: LexicalNode) => boolean {
+  const domSelection = getDOMSelection(editor._window);
+  return (text) => {
+    const element = editor.getElementByKey(text.getKey());
+    if (!domSelection || !element) return false;
+    const ends = [
+      [domSelection.anchorNode, domSelection.anchorOffset],
+      [domSelection.focusNode, domSelection.focusOffset],
+    ] as const;
+    return ends.some(
+      ([node, offset]) =>
+        !!node &&
+        element.contains(node) &&
+        offset === (isDOMTextNode(node) ? node.length : node.childNodes.length),
+    );
+  };
+}
+
 /** Put a caret Lexical read past a mark's end back at the mark's content end
- * (`$restoreCaretAtMarkEnd`), and let the command carry on. */
-function $restoreCaretBeforeCommand(): false {
+ * (`$restoreCaretAtMarkEnd`), and a range's start Lexical read there from the screen
+ * (`$restoreRangeStartAtMarkEnd`), and let the command carry on. */
+function $restoreCaretBeforeCommand(editor: LexicalEditor): false {
   const selection = $getSelection();
   if ($isRangeSelection(selection)) {
     $restoreCaretAtMarkEnd(selection);
-    $restoreRangeStartAtMarkEnd(selection);
+    $restoreRangeStartAtMarkEnd(selection, isScreenEndAtTextEnd(editor));
   }
   return false;
 }
@@ -172,7 +198,11 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
       // bytes after it.
       ...[SELECTION_CHANGE_COMMAND, CONTROLLED_TEXT_INSERTION_COMMAND, PASTE_COMMAND].map(
         (command: LexicalCommand<unknown>) =>
-          editor.registerCommand(command, $restoreCaretBeforeCommand, COMMAND_PRIORITY_CRITICAL),
+          editor.registerCommand(
+            command,
+            () => $restoreCaretBeforeCommand(editor),
+            COMMAND_PRIORITY_CRITICAL,
+          ),
       ),
       // A range read back from the screen with an end beside a mark is resolved as with no mark
       // there (`$resolveRangeEndsThroughMarks`), so what a cut, copy or edit of it takes is what it
@@ -185,7 +215,7 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
           // answered, and resolves its ends then; a selection set by code it leaves as set.
           const isReadFromScreen = (editor._window ?? window).event?.type === "selectionchange";
           if (isReadFromScreen && $isRangeSelection(selection))
-            $resolveRangeEndsThroughMarks(selection);
+            $resolveRangeEndsThroughMarks(selection, isScreenEndAtTextEnd(editor));
           return false;
         },
         COMMAND_PRIORITY_CRITICAL,
