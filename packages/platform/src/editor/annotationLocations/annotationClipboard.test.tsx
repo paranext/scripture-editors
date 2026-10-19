@@ -241,6 +241,9 @@ describe("a range with an end at a mark's edge beside a span", () => {
     ["standard", "milestone", "b", 1, 'Shift+Left, then type "x"'],
     // The range's end at the start of a mark, after a span: with no mark it ends inside the span.
     ["standard", "closed char span", " of God", 0, "cut the byte before the caret"],
+    // Typing over a range from a mark's end into an attribute run's separator: with no mark the
+    // typed text ends the span's content, and the run's value joins it.
+    ["standard", "char span with an attribute", `${NBSP}grace`, 6, 'Shift+Right, then type "x"'],
   ] as const)(
     "%s view, %s: %j at %i, %s",
     async (view, row, text, at, name) => {

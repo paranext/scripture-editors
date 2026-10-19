@@ -165,6 +165,27 @@ export function $restCaretThroughMarks(): void {
 }
 
 /**
+ * Put a range's start Lexical read onto the start of the text right after an annotation mark back
+ * at the end of the mark's content, where it is in the document, as a caret there is
+ * ({@link $restoreCaretAtMarkEnd}). Lexical reads a range's start from the screen this way at every
+ * read, including the one an update that inserts makes as it starts. A no-op for a collapsed
+ * selection. Mutating (the selection only).
+ *
+ * @returns Whether the start moved.
+ */
+export function $restoreRangeStartAtMarkEnd(selection: RangeSelection): boolean {
+  if (selection.isCollapsed()) return false;
+  const start = selection.isBackward() ? selection.focus : selection.anchor;
+  if (start.type !== "text" || start.offset !== 0) return false;
+  const node = start.getNode();
+  if (!$isTypedMarkNode(node.getPreviousSibling())) return false;
+  const { node: place, offset } = $caretPlaceThroughMarks(start);
+  if (place.is(node)) return false;
+  start.set(place.getKey(), offset, "text");
+  return true;
+}
+
+/**
  * Restate the ends of a range Lexical read from the screen beside an annotation mark as Lexical
  * reads them in the tree without marks. Lexical moves a range's start at the end of a text into an
  * inline element the text is followed by, and its end at the start of a text into an inline element
@@ -186,25 +207,12 @@ export function $resolveRangeEndsThroughMarks(selection: RangeSelection): boolea
   const [start, end] = selection.isBackward()
     ? [selection.focus, selection.anchor]
     : [selection.anchor, selection.focus];
-  let moved = false;
+  let moved = $restoreRangeStartAtMarkEnd(selection);
   const isHiddenInlineElement = (
     node: LexicalNode | null,
     rawNeighbour: LexicalNode | null,
   ): node is ElementNode =>
     $isElementNode(node) && !$isTypedMarkNode(node) && node.isInline() && !node.is(rawNeighbour);
-  if (start.type === "text" && start.offset === 0) {
-    // Lexical reads a range's start at the end of a mark's content onto the start of the text
-    // after the mark; the start is put back at the content's end, as a caret there is
-    // ({@link $restoreCaretAtMarkEnd}).
-    const node = start.getNode();
-    if ($isTypedMarkNode(node.getPreviousSibling())) {
-      const { node: place, offset } = $caretPlaceThroughMarks(start);
-      if (!place.is(node)) {
-        start.set(place.getKey(), offset, "text");
-        moved = true;
-      }
-    }
-  }
   if (start.type === "text") {
     const node = start.getNode();
     if (start.offset === node.getTextContentSize() && $lastPiece(node).is(node)) {

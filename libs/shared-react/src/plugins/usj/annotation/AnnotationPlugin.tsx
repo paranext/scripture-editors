@@ -26,6 +26,7 @@ import {
   $removeDisplayAnnotation,
   $removeTypedMarkId,
   $resolveRangeEndsThroughMarks,
+  $restoreRangeStartAtMarkEnd,
   $restoreCaretAtMarkEnd,
   $wrapSelectionInTypedMarkNode,
   ANNOTATION_CHANGE_TAG,
@@ -45,7 +46,10 @@ import {
  * (`$restoreCaretAtMarkEnd`), and let the command carry on. */
 function $restoreCaretBeforeCommand(): false {
   const selection = $getSelection();
-  if ($isRangeSelection(selection)) $restoreCaretAtMarkEnd(selection);
+  if ($isRangeSelection(selection)) {
+    $restoreCaretAtMarkEnd(selection);
+    $restoreRangeStartAtMarkEnd(selection);
+  }
   return false;
 }
 
@@ -163,8 +167,9 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
       // node after the mark (a glyph, an attribute run); it is put back where it is, first, so
       // every selection listener reads the content's end, as with no mark there. An update that
       // inserts re-reads the caret from the screen as it starts, onto that node's start again, so
-      // each insertion puts it back too before anything inserts: the bytes go where they go with
-      // no mark there, not into the display bytes after it.
+      // each insertion puts it back too before anything inserts, and a range's start Lexical read
+      // the same way with it: the bytes go where they go with no mark there, not into the display
+      // bytes after it.
       ...[SELECTION_CHANGE_COMMAND, CONTROLLED_TEXT_INSERTION_COMMAND, PASTE_COMMAND].map(
         (command: LexicalCommand<unknown>) =>
           editor.registerCommand(command, $restoreCaretBeforeCommand, COMMAND_PRIORITY_CRITICAL),
