@@ -40,8 +40,10 @@ import {
 import {
   $chapterGlyphTextNode,
   $createTypedMarkNode,
+  $isBookNode,
   $isChapterNode,
   $isCharNode,
+  $isMarkerNode,
   $isNoteNode,
   $isParaNode,
   $isTypedMarkNode,
@@ -932,6 +934,138 @@ function $isMarkHoldingNote(node: LexicalNode): boolean {
   return $isTypedMarkNode(node) && node.getChildren().some($isNoteNode);
 }
 
+describe("an annotation over nothing but a footnote that ends a char span", () => {
+  // `\p start \w word\f + \ft note body\f*\w* end words`: the note is the span's last child,
+  // right before `\w*`.
+  const wordWithNote: MarkerObject = {
+    type: "char",
+    marker: "w",
+    content: [
+      "word",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "ft", content: ["note body"] }],
+      },
+    ],
+  };
+
+  /** Wrap the `\w` span's note, and nothing else, in a mark carrying `type`/`id`. */
+  async function markTheNote(
+    mounted: Mounted,
+    type: string,
+    id: string,
+    onRemove: TypedMarkOnRemove,
+  ): Promise<void> {
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const span = $getRoot()
+          .getChildren()
+          .filter($isParaNode)[0]
+          .getChildren()
+          .find($isCharNode);
+        const note = span?.getChildren().find($isNoteNode);
+        if (!note) throw new Error("expected a note inside the char span");
+        const mark = $createTypedMarkNode();
+        mark.addID(type, id, undefined, onRemove);
+        note.insertBefore(mark);
+        mark.append(note);
+      });
+      await Promise.resolve();
+    });
+  }
+
+  /** The type/ids of the mark the note sits in directly, inside the char span, if any. */
+  function idsOnTheNote(lexical: LexicalEditor): TypedIDs | undefined {
+    return lexical.getEditorState().read(() => {
+      let ids: TypedIDs | undefined;
+      const walk = (node: LexicalNode): void => {
+        if ($isNoteNode(node)) {
+          const parent = node.getParent();
+          if ($isTypedMarkNode(parent) && $isCharNode(parent.getParent()))
+            ids = parent.getTypedIDs();
+        }
+        if ($isElementNode(node)) node.getChildren().forEach(walk);
+      };
+      walk($getRoot());
+      return ids;
+    });
+  }
+
+  it.each<[string, string]>([
+    ["a host annotation", markType("test")],
+    ["a comment", COMMENT_MARK_TYPE],
+  ])("still holds exactly the note when %s's paragraph settles elsewhere", async (_label, type) => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(
+      twoParaUsj(["start ", wordWithNote, " end words"]),
+    );
+    await markTheNote(mounted, type, "1", onRemove);
+    const before = annotatedText(mounted.lexical);
+    expect(before).toHaveLength(1);
+    expect(before[0]).toContain("note body");
+    expect(before[0]).not.toContain("word");
+    expect(idsOnTheNote(mounted.lexical)).toEqual({ [type]: ["1"] });
+
+    await typeOver(mounted.lexical, " end words", " end words \\qt x\\qt*");
+    // The settled read while pending carries marks through the same restore as the settle.
+    const pending = mounted.ref.current?.getUsj();
+    settleByBlurAndCommit(mounted);
+
+    expect(treeHas(mounted.lexical, (node) => $isCharNode(node) && node.getMarker() === "qt")).toBe(
+      true,
+    );
+    expect(annotatedText(mounted.lexical)).toEqual(before);
+    expect(idsOnTheNote(mounted.lexical)).toEqual({ [type]: ["1"] });
+    expect(displayAnnotated(mounted.lexical)).toEqual({});
+    expect(onRemove).not.toHaveBeenCalled();
+    const settled = mounted.ref.current?.getUsj();
+    expect(JSON.stringify(settled).includes('"sid":"1"')).toBe(type === COMMENT_MARK_TYPE);
+    expect(pending).toEqual(settled);
+  });
+
+  it("still holds the note once the word annotated with it is deleted and the paragraph settles", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(
+      twoParaUsj(["start ", wordWithNote, " end words"]),
+    );
+    // `word` and its footnote, up to `\w*`.
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: contentPath([2, 1, 0]), offset: 0 },
+        end: { jsonPath: contentPath([2, 2]), offset: 0 },
+      },
+      "1",
+      onRemove,
+    );
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const word = $textContaining("word");
+        const selection = $createRangeSelection();
+        selection.anchor.set(word.getKey(), 0, "text");
+        selection.focus.set(word.getKey(), "word".length, "text");
+        selection.removeText();
+      });
+      await Promise.resolve();
+    });
+    expect(idsOnTheNote(mounted.lexical)).toEqual({ [markType("test")]: ["1"] });
+    const before = annotatedText(mounted.lexical);
+    expect(before[0]).not.toContain("word");
+
+    await typeOver(mounted.lexical, " end words", " end words \\qt x\\qt*");
+    settleByBlurAndCommit(mounted);
+
+    expect(treeHas(mounted.lexical, (node) => $isCharNode(node) && node.getMarker() === "qt")).toBe(
+      true,
+    );
+    expect(annotatedText(mounted.lexical)).toEqual(before);
+    expect(idsOnTheNote(mounted.lexical)).toEqual({ [markType("test")]: ["1"] });
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+});
+
 describe("an annotation over a char span's text from its first letter", () => {
   // Wrapping `name` alone splits the span's `NBSP name` into a lone-NBSP text node and the mark.
   const usj = twoParaUsj([
@@ -1109,6 +1243,200 @@ describe("a comment mark in a chapter's settle region", () => {
       ],
     });
     expect(pending).toEqual(settled);
+  });
+});
+
+/**
+ * The `\id` line's text is content a settle re-tokenizes like a paragraph's, with the book node
+ * and its `\id GEN ` prefix preserved — so a mark on that text is carried across the line's
+ * settle the same way.
+ */
+describe("an annotation on the `\\id` line's text", () => {
+  const bookLineUsj = (lineContent: MarkerContent[], following: MarkerObject[] = []): Usj => ({
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: lineContent },
+      ...following,
+      { type: "chapter", marker: "c", number: "1" },
+      { type: "para", marker: "p", content: ["depart here"] },
+    ],
+  });
+  /** `Genesis` alone, as an annotation range over the line's only text item. */
+  const genesisRange: AnnotationRange = {
+    start: { jsonPath: contentPath([0, 0]), offset: 0 },
+    end: { jsonPath: contentPath([0, 0]), offset: "Genesis".length },
+  };
+
+  /** Wrap `text` in a comment mark carrying `id`, as the comment thread does. */
+  async function commentOn(mounted: Mounted, text: string, id: string): Promise<void> {
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const node = $textContaining(text);
+        const start = node.getTextContent().indexOf(text);
+        const selection = $createRangeSelection();
+        selection.anchor.set(node.getKey(), start, "text");
+        selection.focus.set(node.getKey(), start + text.length, "text");
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, id);
+      });
+      await Promise.resolve();
+    });
+  }
+
+  /** The `\id` line's settled content, from `getUsj()`. */
+  function settledLine(usj: Usj | undefined): MarkerContent[] | undefined {
+    const book = usj?.content[0];
+    return typeof book === "object" ? book.content : undefined;
+  }
+
+  /** Whether a char span sits in the `\id` line — the line's settle really ran. */
+  function lineHasCharSpan(lexical: LexicalEditor): boolean {
+    return treeHas(lexical, (node) => $isCharNode(node) && node.getParents().some($isBookNode));
+  }
+
+  it("still wraps exactly its text after a marker typed elsewhere on the line settles", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(bookLineUsj(["Genesis book"]));
+    await annotate(mounted, genesisRange, "1", onRemove);
+    expect(annotatedText(mounted.lexical)).toEqual(["Genesis"]);
+
+    await typeOver(mounted.lexical, " book", " book \\nd x\\nd*");
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    const pending = mounted.ref.current?.getUsj();
+    settleByBlurAndCommit(mounted);
+
+    expect(lineHasCharSpan(mounted.lexical)).toBe(true);
+    expect(annotatedText(mounted.lexical)).toEqual(["Genesis"]);
+    expect(annotatedIDs(mounted.lexical)).toEqual([{ [markType("test")]: ["1"] }]);
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(pending).toEqual(mounted.ref.current?.getUsj());
+  });
+
+  it("carries a comment on the line's text, and getUsj() while pending agrees", async () => {
+    const mounted = await mountStandardViewEditor(bookLineUsj(["Genesis book"]));
+    await commentOn(mounted, "Genesis", "c1");
+
+    await typeOver(mounted.lexical, " book", " book \\nd x\\nd*");
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    const pending = mounted.ref.current?.getUsj();
+    settleByBlurAndCommit(mounted);
+    const settled = mounted.ref.current?.getUsj();
+
+    expect(annotatedText(mounted.lexical)).toEqual(["Genesis"]);
+    expect(annotatedIDs(mounted.lexical)).toEqual([{ [COMMENT_MARK_TYPE]: ["c1"] }]);
+    expect(settledLine(settled)).toEqual([
+      { type: "ms", marker: "zmsc-s", sid: "c1" },
+      "Genesis",
+      { type: "ms", marker: "zmsc-e", eid: "c1" },
+      " book ",
+      { type: "char", marker: "nd", content: ["x"] },
+    ]);
+    expect(pending).toEqual(settled);
+  });
+
+  it("carries marks on the line and on the paragraph the unknown-split rejoin folds into it", async () => {
+    // A loaded unknown paragraph right after the book: once its marker is corrected to an inline
+    // one, its bytes continue the `\id` line, and the line's settle takes the paragraph in.
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(
+      bookLineUsj(["Genesis book"], [{ type: "para", marker: "ndd", content: ["more text"] }]),
+    );
+    await annotate(mounted, genesisRange, "1", onRemove);
+    await commentOn(mounted, "text", "c2");
+    expect(annotatedText(mounted.lexical)).toEqual(["Genesis", "text"]);
+
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const glyph = $getRoot()
+          .getAllTextNodes()
+          .find((node) => $isMarkerNode(node) && node.getTextContent().startsWith("\\ndd"));
+        if (!glyph) throw new Error("expected the unknown paragraph's glyph");
+        $pendGlyphEdit(glyph, "\\nd");
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const pending = mounted.ref.current?.getUsj();
+    settleByBlurAndCommit(mounted);
+    const settled = mounted.ref.current?.getUsj();
+
+    // Positive control: the rejoin happened — the unknown paragraph is gone, its text in the line.
+    expect(
+      settled?.content.map((block) => (typeof block === "object" ? block.marker : block)),
+    ).toEqual(["id", "c", "p"]);
+    expect(annotatedText(mounted.lexical)).toEqual(["Genesis", "text"]);
+    expect(annotatedIDs(mounted.lexical)).toEqual([
+      { [markType("test")]: ["1"] },
+      { [COMMENT_MARK_TYPE]: ["c2"] },
+    ]);
+    expect(settledLine(settled)).toEqual([
+      "Genesis book ",
+      {
+        type: "char",
+        marker: "nd",
+        closed: "false",
+        content: [
+          "more ",
+          { type: "ms", marker: "zmsc-s", sid: "c2" },
+          "text",
+          { type: "ms", marker: "zmsc-e", eid: "c2" },
+        ],
+      },
+    ]);
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(pending).toEqual(settled);
+  });
+
+  it("carries a comment into the paragraph a block marker typed on the line starts", async () => {
+    const mounted = await mountStandardViewEditor(bookLineUsj(["Genesis book"]));
+    await commentOn(mounted, "book", "c1");
+
+    await typeOver(mounted.lexical, "Genesis ", "Genesis \\p ");
+    expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    const pending = mounted.ref.current?.getUsj();
+    settleByBlurAndCommit(mounted);
+    const settled = mounted.ref.current?.getUsj();
+
+    expect(annotatedText(mounted.lexical)).toEqual(["book"]);
+    expect(annotatedIDs(mounted.lexical)).toEqual([{ [COMMENT_MARK_TYPE]: ["c1"] }]);
+    expect(settled?.content.slice(0, 2)).toEqual([
+      { type: "book", marker: "id", code: "GEN", content: ["Genesis "] },
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "ms", marker: "zmsc-s", sid: "c1" },
+          "book",
+          { type: "ms", marker: "zmsc-e", eid: "c1" },
+        ],
+      },
+    ]);
+    expect(pending).toEqual(settled);
+  });
+
+  it("is still reported destroyed when the user deletes its text, and the settle adds nothing", async () => {
+    const onRemove: Mock<TypedMarkOnRemove> = vi.fn();
+    const mounted = await mountStandardViewEditor(bookLineUsj(["Genesis book"]));
+    await annotate(mounted, genesisRange, "1", onRemove);
+
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const genesis = $textContaining("Genesis");
+        const selection = $createRangeSelection();
+        selection.anchor.set(genesis.getKey(), 0, "text");
+        selection.focus.set(genesis.getKey(), "Genesis".length, "text");
+        selection.removeText();
+      });
+      await Promise.resolve();
+    });
+    expect(onRemove.mock.calls).toEqual([[markType("test"), "1", "destroyed", "Genesis"]]);
+
+    await typeOver(mounted.lexical, " book", " book \\nd x\\nd*");
+    settleByBlurAndCommit(mounted);
+
+    expect(lineHasCharSpan(mounted.lexical)).toBe(true);
+    expect(annotatedText(mounted.lexical)).toEqual([]);
+    expect(onRemove).toHaveBeenCalledTimes(1);
   });
 });
 
