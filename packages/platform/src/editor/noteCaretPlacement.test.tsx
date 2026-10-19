@@ -589,34 +589,50 @@ describe("typing into a note with no content (`\\f + \\f*`)", () => {
   it("leaves nothing behind when the caret moves on without typing", async () => {
     const { editorRef, lexical } = await renderEditor(usjEmptyNote, noteEditorOptions);
     await act(async () => editorRef.selectNote(0));
+    await restCaret(lexical);
+    // Every `selectionchange` the arrival queued is delivered first: Lexical skips the next one it
+    // sees after a selection write of its own, so an undelivered one would swallow the move below.
+    await flushQueuedEvents();
+    await flushQueuedEvents();
+    expect(emptyNoteText(lexical)).toContain("\u200b");
 
+    // Moved the way a click or an arrow key moves it: the DOM selection, then the `selectionchange`
+    // jsdom fires from it. The host's departure is detected from that event alone; a caret moved
+    // from code dispatches no SELECTION_CHANGE_COMMAND. Past the text's first character, because
+    // its start is the protected closer's end on screen, which the note shell guard keeps inside
+    // the note.
+    const afterText = lexical.getEditorState().read(() =>
+      requireDefined(
+        $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === "after"),
+        "text after the note",
+      ).getKey(),
+    );
+    const afterDom = requireDefined(
+      lexical.getElementByKey(afterText)?.firstChild ?? undefined,
+      "the DOM text after the note",
+    );
     await act(async () => {
-      lexical.update(
-        () => {
-          const after = requireDefined(
-            $getRoot()
-              .getAllTextNodes()
-              .find((node) => node.getTextContent() === "after"),
-            "text after the note",
-          );
-          // Past the text's first character: its start is the protected closer's end on screen,
-          // which the note shell guard keeps inside the note.
-          after.select(1, 1);
-        },
-        { discrete: true },
-      );
+      document.getSelection()?.collapse(afterDom, 1);
     });
+    await flushQueuedEvents();
+    await flushQueuedEvents();
 
     expect(savedNoteContent(editorRef)).toEqual([]);
-    const noteText = lexical.getEditorState().read(() =>
-      $dfs($getRoot())
-        .map(({ node }) => node)
-        .find($isNoteNode)
-        ?.getTextContent(),
-    );
-    expect(noteText).not.toContain("\u200b");
+    expect(emptyNoteText(lexical)).not.toContain("\u200b");
   });
 });
+
+/** The text of the document's first note, caret host included. */
+function emptyNoteText(lexical: LexicalEditor): string | undefined {
+  return lexical.getEditorState().read(() =>
+    $dfs($getRoot())
+      .map(({ node }) => node)
+      .find($isNoteNode)
+      ?.getTextContent(),
+  );
+}
 
 /** A document holding `noteObject` in verse 1's paragraph. */
 function usjWithNote(noteObject: MarkerObject): Usj {
