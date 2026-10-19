@@ -64,6 +64,7 @@ import {
   NoteNode,
 } from "shared";
 import { $isLiteralNoteShell } from "./tier2Rebuild.utils";
+import { flushQueuedEvents } from "../editor-test.utils";
 import { NoteShellCaretGuardPlugin, ViewOptions } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
@@ -210,11 +211,16 @@ function expectShellIntact(editor: LexicalEditor) {
  * test rather than no-op. A trap registered just below the guard's `COMMAND_PRIORITY_CRITICAL`
  * (but above the default handler's `COMMAND_PRIORITY_EDITOR`) catches an unrefused command there
  * instead and reports it undone — real text is never actually touched either way.
+ *
+ * `$placeCaret`, when given, puts the caret in the same update the command is dispatched in, so
+ * the delete arrives before anything — the `selectionchange` jsdom queues for the caret's DOM
+ * selection, and the caret guard that runs from it — can move the caret again.
  */
 async function dispatchGuardedDelete(
   editor: LexicalEditor,
   command: LexicalCommand<boolean>,
   isBackward: boolean,
+  $placeCaret?: () => void,
 ): Promise<boolean> {
   let reachedDefaultHandler = false;
   const unregister = editor.registerCommand(
@@ -228,6 +234,7 @@ async function dispatchGuardedDelete(
   try {
     await act(async () => {
       editor.update(() => {
+        $placeCaret?.();
         editor.dispatchCommand(command, isBackward);
       });
     });
@@ -637,41 +644,38 @@ describe("expanded note shell", () => {
     }
 
     /** Caret as a TEXT point at the end of the text immediately before the note. */
-    async function caretAtTextEndBeforeNote(editor: LexicalEditor) {
-      await act(async () => {
-        editor.update(() => {
-          const { note } = $noteAndIndex();
-          const before = note.getPreviousSibling();
-          const text = requireDefined(
-            $isTextNode(before) ? before : undefined,
-            "text before the note",
-          );
-          text.select(text.getTextContentSize(), text.getTextContentSize());
-        });
-      });
+    function $caretAtTextEndBeforeNote() {
+      const { note } = $noteAndIndex();
+      const before = note.getPreviousSibling();
+      const text = requireDefined($isTextNode(before) ? before : undefined, "text before the note");
+      text.select(text.getTextContentSize(), text.getTextContentSize());
     }
 
     /**
      * Caret as an ELEMENT point on the paragraph, right before the note — what a leftward arrow
      * out of the note's own content leaves it at (`$placeCaretAtBoundary`).
      */
-    async function caretAtParagraphBoundaryBeforeNote(editor: LexicalEditor) {
-      await act(async () => {
-        editor.update(() => {
-          const { parent, index } = $noteAndIndex();
-          parent.select(index, index);
-        });
-      });
+    function $caretAtParagraphBoundaryBeforeNote() {
+      const { parent, index } = $noteAndIndex();
+      parent.select(index, index);
     }
 
     it.each([
-      ["a text point", caretAtTextEndBeforeNote],
-      ["an element point", caretAtParagraphBoundaryBeforeNote],
-    ] as const)("keeps the note whole with the caret as %s", async (_label, placeCaret) => {
+      ["a text point", $caretAtTextEndBeforeNote],
+      ["an element point", $caretAtParagraphBoundaryBeforeNote],
+    ] as const)("keeps the note whole with the caret as %s", async (_label, $placeCaret) => {
       const { editor } = await mount(protectedShell);
-      await placeCaret(editor);
 
-      const handled = await dispatchGuardedDelete(editor, DELETE_CHARACTER_COMMAND, false);
+      // The caret guard moves a caret resting here to the start of the note's content as soon as a
+      // selection change announces it, so the Delete this refusal is for is one that arrives before
+      // that announcement does. Placing the caret in the Delete's own update is that order, with
+      // no queued `selectionchange` able to run in between.
+      const handled = await dispatchGuardedDelete(
+        editor,
+        DELETE_CHARACTER_COMMAND,
+        false,
+        $placeCaret,
+      );
 
       // Refused: a forward delete from here would otherwise eat the `\f` opener and unwrap the
       // whole note into plain paragraph text.
@@ -1096,6 +1100,11 @@ describe("a closed note's closing glyph, with the shell protected", () => {
     const { editor } = await mount(protectedShell, "");
 
     await deleteCloserCharacter(editor, anchor, focusOffset);
+    // The caret is read where it settles: the `selectionchange` events the edit's DOM selection
+    // writes queued are delivered first, and with them the caret guard, which rests a caret at the
+    // end of a protected note's content on the closer's front.
+    await flushQueuedEvents();
+    await flushQueuedEvents();
 
     editor.getEditorState().read(() => {
       const note = findOnlyNote($getRoot());
@@ -1107,11 +1116,13 @@ describe("a closed note's closing glyph, with the shell protected", () => {
       if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
       const { anchor } = selection;
       const closer = $closer(note);
-      expect(
-        anchor.getNode().is(note)
-          ? anchor.offset <= closer.getIndexWithinParent()
-          : note.isParentOf(anchor.getNode()) && anchor.getNode().isBefore(closer),
-      ).toBe(true);
+      let isInFrontOfCloser: boolean;
+      if (anchor.getNode().is(note))
+        isInFrontOfCloser = anchor.offset <= closer.getIndexWithinParent();
+      else if (anchor.getNode().is(closer)) isInFrontOfCloser = anchor.offset === 0;
+      else
+        isInFrontOfCloser = note.isParentOf(anchor.getNode()) && anchor.getNode().isBefore(closer);
+      expect(isInFrontOfCloser).toBe(true);
     });
     const { note, tail } = savedNoteAndTail(editor);
     expect(note).not.toHaveProperty("closed");
