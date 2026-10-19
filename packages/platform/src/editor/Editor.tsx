@@ -1052,6 +1052,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     setUsj(incomingUsj) {
       if (!deepEqual(editedUsjRef.current, incomingUsj)) {
         editedUsjRef.current = incomingUsj;
+        // The loaded tree is the outgoing document until the reload commits, so neither a stale
+        // flag nor a memoized read of that tree may overwrite or outrank the incoming document.
+        isEditedUsjStaleRef.current = false;
+        settledUsjMemoRef.current = undefined;
         // A replaced document invalidates any in-progress declaration: its anchor node key
         // belongs to the outgoing tree, and the surface that declared it is now stale too.
         transientInputRef.current = undefined;

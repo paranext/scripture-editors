@@ -9,7 +9,18 @@ import {
 import editorUsjAdaptor, {
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
-import { MarkerObject } from "@eten-tech-foundation/scripture-utilities";
+import {
+  initialize as initializeSerialize,
+  reset as resetSerialize,
+  serializeEditorState,
+} from "../adaptors/usj-editor.adaptor";
+import { contentPath } from "../positions/positions.test-helpers";
+import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import {
+  MarkerObject,
+  Usj,
+  UsjPropertyValueLocation,
+} from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createTextNode,
@@ -25,6 +36,7 @@ import {
   $createMarkerNode,
   $createParaNode,
   $createVerseNode,
+  $isChapterNode,
   $isCharNode,
   $isMarkerNode,
   $isNoteNode,
@@ -33,8 +45,19 @@ import {
   getVisibleOpenMarkerText,
   NBSP,
   NoteNode,
+  TypedMarkNode,
 } from "shared";
-import { $insertNote, $isImmutableNoteCallerNode } from "shared-react";
+import {
+  $insertNote,
+  $isImmutableNoteCallerNode,
+  FORMATTED_VIEW_MODE,
+  getViewOptions,
+  usjReactNodes,
+  ViewOptions,
+} from "shared-react";
+// Reaching inside only for tests.
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import { createBasicTestEnvironment } from "../../../../../libs/shared/src/nodes/usj/test.utils";
 
 /**
  * Regression: inserting a note in STANDARD view (markerMode "editable", noteMode "collapsed")
@@ -521,4 +544,152 @@ describe("footnote insertion INSIDE a verse glyph keeps the glyph whole", () => 
       });
     },
   );
+});
+
+describe("note insertion where a note cannot live", () => {
+  const lineUsj: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      {
+        type: "para",
+        marker: "p",
+        content: [{ type: "verse", marker: "v", number: "1" }, "first"],
+      },
+      { type: "para", marker: "q1", content: ["second line"] },
+      {
+        type: "para",
+        marker: "q1",
+        content: [{ type: "verse", marker: "v", number: "2" }, "third line"],
+      },
+    ],
+  };
+
+  function countNotes(json: unknown): number {
+    return (JSON.stringify(json).match(/"type":"note"/g) ?? []).length;
+  }
+
+  function paraMarkers(usj: Usj | undefined): (string | undefined)[] {
+    return (usj?.content ?? []).slice(2).map((item) => (item as MarkerObject).marker);
+  }
+
+  /** Puts the live caret `offset` characters into the chapter line's `\c 1 ` text. */
+  async function placeCaretInChapterLine(lexical: LexicalEditor, offset: number) {
+    await act(async () => {
+      lexical.update(() => {
+        const chapter = $getRoot().getChildren().find($isChapterNode);
+        const text = chapter?.getChildren().find($isTextNode);
+        if (!text) throw new Error("expected the chapter line's text");
+        text.select(offset, offset);
+      });
+      await Promise.resolve();
+    });
+  }
+
+  describe("in a chapter line (Standard view)", () => {
+    it.each([0, 1])(
+      "refuses a note at the chapter's number location (propertyOffset %i)",
+      async (propertyOffset) => {
+        const { ref, lexical } = await mountStandardViewEditor(lineUsj);
+        const location: UsjPropertyValueLocation = {
+          jsonPath: "$.content[1]['number']",
+          propertyOffset,
+        };
+
+        await act(async () => {
+          ref.current?.insertNote("f", "+", { start: location, end: location });
+          await Promise.resolve();
+        });
+
+        expect(countNotes(lexical.getEditorState().toJSON())).toBe(0);
+        expect(countNotes(ref.current?.getUsj())).toBe(0);
+      },
+    );
+
+    it.each([1, 2, 3])("refuses a note at a live caret %i characters in", async (offset) => {
+      const { ref, lexical } = await mountStandardViewEditor(lineUsj);
+      await placeCaretInChapterLine(lexical, offset);
+
+      await act(async () => {
+        ref.current?.insertNote("f", "+");
+        await Promise.resolve();
+      });
+
+      expect(countNotes(lexical.getEditorState().toJSON())).toBe(0);
+      expect(countNotes(ref.current?.getUsj())).toBe(0);
+    });
+
+    it("refuses a footnote inserted through insertMarker", async () => {
+      const { ref, lexical } = await mountStandardViewEditor(lineUsj, {
+        scrRef: { book: "GEN", chapterNum: 1, verseNum: 1 },
+      });
+      await placeCaretInChapterLine(lexical, 3);
+
+      await act(async () => {
+        ref.current?.insertMarker("f");
+        await Promise.resolve();
+      });
+
+      expect(countNotes(lexical.getEditorState().toJSON())).toBe(0);
+      expect(countNotes(ref.current?.getUsj())).toBe(0);
+    });
+  });
+
+  describe("at a paragraph's marker location", () => {
+    const paragraphs = [
+      ["a plain-text-first paragraph", 3],
+      ["a verse-initial paragraph", 4],
+    ] as const;
+
+    it.each(paragraphs)(
+      "keeps the paragraph whole and inside its own bounds in Standard view (%s)",
+      async (_label, index) => {
+        const { ref } = await mountStandardViewEditor(lineUsj);
+        const location = { jsonPath: contentPath([index]) };
+
+        await act(async () => {
+          ref.current?.insertNote("f", "+", { start: location, end: location });
+          await Promise.resolve();
+        });
+
+        const usj = ref.current?.getUsj();
+        expect(paraMarkers(usj)).toEqual(["p", "q1", "q1"]);
+        expect(countNotes((usj?.content[index] as MarkerObject).content)).toBe(1);
+      },
+    );
+
+    it.each(paragraphs)(
+      "keeps the paragraph whole and inside its own bounds in Formatted view (%s)",
+      (_label, index) => {
+        const view = getViewOptions(FORMATTED_VIEW_MODE) as ViewOptions;
+        initializeSerialize(undefined, undefined);
+        resetSerialize();
+        const state = serializeEditorState(lineUsj, view);
+        const { editor } = createBasicTestEnvironment([TypedMarkNode, ...usjReactNodes]);
+        editor.setEditorState(editor.parseEditorState(JSON.stringify({ root: state.root })));
+        const location = { jsonPath: contentPath([index]) };
+
+        editor.update(
+          () => {
+            $insertNote(
+              "f",
+              "+",
+              { start: location, end: location },
+              undefined,
+              view,
+              {},
+              undefined,
+            );
+          },
+          { discrete: true },
+        );
+
+        const usj = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), view);
+        expect(paraMarkers(usj)).toEqual(["p", "q1", "q1"]);
+        expect(countNotes((usj?.content[index] as MarkerObject).content)).toBe(1);
+      },
+    );
+  });
 });

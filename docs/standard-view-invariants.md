@@ -371,11 +371,11 @@ implementation:
 
 ### A position has one spelling
 
-Every USFM position has exactly ONE `UsjDocumentLocation`, and the editor emits only that one —
-`getSelection`, `onSelectionChange`, and anything else built on `$getLocationFromNode`. USJ gives
-`offset` a meaning only on text, so a caret with no text beside it is never a container plus a
-content index (`{ jsonPath: "$.content[2]", offset: 0 }`) and never the root plus one
-(`{ jsonPath: "$", offset: 3 }`). The host's `UsjReaderWriter`
+Every USFM position has exactly ONE canonical `UsjDocumentLocation`, and the editor emits that one —
+`getSelection`, `onSelectionChange`, and anything else built on `$getLocationFromNode` — with one
+allowed alias (below). USJ gives `offset` a meaning only on text, so a caret with no text beside it
+is never a container plus a content index (`{ jsonPath: "$.content[2]", offset: 0 }`) and never the
+root plus one (`{ jsonPath: "$", offset: 3 }`). The host's `UsjReaderWriter`
 (`usfmVerseLocationToUsjDocumentLocation`) is the oracle:
 
 1. A gap in front of a marker object is that marker's location, `{ jsonPath: <item> }` — at its
@@ -390,10 +390,15 @@ content index (`{ jsonPath: "$.content[2]", offset: 0 }`) and never the root plu
    (`['marker']` `propertyOffset: 2` after a final empty `\b`; text `offset: length + 1`).
 4. A root point between two blocks is the start of the next block.
 
-The end of a span's content is where its closer starts (`closingMarkerOffset: 0`); a span with no
-closer (`closed="false"` note content, a table cell) ends where whatever follows it starts. One
-shape has no distinct answer: an `optbreak` ending a line, where `UsjReaderWriter` gives every byte
+The end of a span's content is where its closer starts (`closingMarkerOffset: 0`), or, as the
+allowed alias, the end of its last text run (`offset: length`); a span with no closer
+(`closed="false"` note content, a table cell) ends where whatever follows it starts. One shape has no distinct answer: an `optbreak` ending a line, where `UsjReaderWriter` gives every byte
 after it — the newline and the document end included — the optbreak's own marker location.
+
+**The one alias.** A caret held at the end of a text run in front of a marker or a closer is reported
+as that text's `offset: length`, not as the marker's location or the closer's `closingMarkerOffset:
+0` (the same USFM position). Both spellings are accepted back. Compare positions through
+`usjDocumentLocationToUsfmVerseRefVerseLocation`, never by the shape of the location.
 
 The editor keeps ACCEPTING the older spellings a host may still hand it: a container and an index is
 resolved as the location of that gap, and the settled-position layer restates a root index like any

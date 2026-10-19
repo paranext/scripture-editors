@@ -265,11 +265,11 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
 
       editor.update(
         () => {
-          // Apply the annotation to the selected range.
-          const decoratorHolds = new Map<NodeKey, DecoratorHold>();
+          // Apply the annotation to the selected range. This first resolution only decides whether
+          // there is a range to annotate; nothing is touched when there is not.
           const editorSelection = $getRangeFromUsjSelection(selection, viewOptions, {
             forAnnotation: true,
-            decoratorHolds,
+            decoratorHolds: new Map<NodeKey, DecoratorHold>(),
           });
           if (editorSelection === undefined) {
             logger?.error("Failed to find start or end node of the annotation.");
@@ -279,15 +279,27 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
           $removeAnnotationNodes(type, id);
           displayIndex.noteSet(type, id);
 
+          // Removing the id's old marks re-indexes the tree, so the range resolved above can no
+          // longer be trusted: resolve it again against the tree as it now stands.
+          const freshDecoratorHolds = new Map<NodeKey, DecoratorHold>();
+          const freshSelection = $getRangeFromUsjSelection(selection, viewOptions, {
+            forAnnotation: true,
+            decoratorHolds: freshDecoratorHolds,
+          });
+          if (freshSelection === undefined) {
+            logger?.error("Failed to find start or end node of the annotation.");
+            return;
+          }
+
           $wrapSelectionInTypedMarkNode(
-            editorSelection,
+            freshSelection,
             type,
             id,
             onClick,
             onRemove,
             onMouseEnter,
             onMouseLeave,
-            { decoratorHolds },
+            { decoratorHolds: freshDecoratorHolds },
           );
         },
         // A host's annotation is not a user's edit: it joins the current undo step.

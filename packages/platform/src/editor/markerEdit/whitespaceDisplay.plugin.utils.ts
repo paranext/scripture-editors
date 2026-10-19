@@ -36,10 +36,13 @@ import {
   $isChapterNode,
   $getLogicalParent,
   $isCharNode,
+  $isMarkerNode,
   $isNbspContentAtMark,
   $isNoteNode,
   $isPlainTextNode,
   $isUnknownNode,
+  $parentOutsideMarks,
+  $previousSiblingThroughMarks,
   $textRunThroughMarks,
   GENERATOR_NOTE_CALLER,
   MARKER_TRAILING_SPACE_TEXT_TYPE,
@@ -89,7 +92,8 @@ function $isSpaceRunText(node: LexicalNode): node is TextNode {
 }
 
 /**
- * Spaces in runs display as NBSP so they are visible while typing.
+ * Spaces in runs display as NBSP so they are visible while typing, and a lone display NBSP left
+ * standing on its own goes back to a plain space ({@link $isLeftoverDisplaySpace}).
  *
  * A run is read across the text nodes an annotation mark cuts one text into
  * (`$textRunThroughMarks`): a mark is presentation, so a space typed beside a marked space makes
@@ -100,8 +104,13 @@ export function $displayWhitespaceTransform(node: TextNode): void {
   if (!$isSpaceRunText(node)) return;
   const run = $textRunThroughMarks(node, $isSpaceRunText);
   const texts = run.map((member) => member.getTextContent());
-  if (!texts.some((text) => text.includes(" "))) return;
   const text = texts.join("");
+  if (text === NBSP) {
+    const lone = run.find((member) => member.getTextContent() === NBSP);
+    if (lone && $isLeftoverDisplaySpace(lone)) lone.setTextContent(" ");
+    return;
+  }
+  if (!texts.some((memberText) => memberText.includes(" "))) return;
   // A char span's text right after its opening glyph carries a STRUCTURAL leading NBSP (the glyph
   // separator the adaptor/materializer glues onto content). It is not a display space-run member,
   // so it must not act as left context for the mapping: a genuine content-leading single space
@@ -124,6 +133,44 @@ export function $displayWhitespaceTransform(node: TextNode): void {
     if (memberText !== texts[index]) member.setTextContent(memberText);
     start = end;
   });
+}
+
+/**
+ * Whether `node`, an untagged text that is exactly one NBSP, is what is left of a displayed space
+ * run — two spaces between two elements (char spans, notes, milestones) display as two NBSPs, and a
+ * backspace leaves one — rather than one of the engine's structural lone-NBSP nodes. Content NBSP
+ * displays as `~`, so in content a lone NBSP is one or the other, and the editor→USJ conversion
+ * drops every lone NBSP as structural: left as it is, the space would be lost from the file while
+ * the screen still shows it. A plain space is the shape the same single space loads as. This holds
+ * at every depth — in a paragraph, inside a char span, and directly inside an expanded note.
+ *
+ * Every structural lone NBSP sits where this says no:
+ *
+ * - right after a marker glyph: an empty span's placeholder (`EMPTY_CHAR_PLACEHOLDER_TEXT`), the
+ *   spacer in front of a span's leading nested element, a separator a split stranded, and a
+ *   paragraph's or note's separator that lost its tag;
+ * - directly under a note with a collapsed caller (`ImmutableNoteCallerNode`): its display
+ *   separators, and the bare separator `NoteNodePlugin` turns into its tagged one after the caller
+ *   or a top-level span;
+ * - inside an attribute display run.
+ *
+ * Nor is a token-mode or tagged node one; a note's caller slot, and chapter and unknown-block text,
+ * are ruled out before this is asked.
+ *
+ * Read as the unmarked document has it: the caller asks only when the space's whole run through
+ * annotation marks is the one NBSP (a mark that splits a run leaves a lone-NBSP node that is not a
+ * lone space), and the parent and the node before it are read through marks
+ * ({@link $parentOutsideMarks}, {@link $previousSiblingThroughMarks}), so a held space is spelled
+ * exactly as the same space with no annotation.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ */
+function $isLeftoverDisplaySpace(node: TextNode): boolean {
+  if (node.getMode() !== "normal" || $getState(node, textTypeState) !== undefined) return false;
+  const parent = $parentOutsideMarks(node);
+  if ($isAttributeRunNode(parent)) return false;
+  if ($isNoteNode(parent) && parent.getChildren().some($isImmutableNoteCallerNode)) return false;
+  return !$isMarkerNode($previousSiblingThroughMarks(node));
 }
 
 /**

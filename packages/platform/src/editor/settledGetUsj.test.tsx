@@ -4,6 +4,7 @@
  * the caret sits inside it. Without side effects means the editor still shows the pending edit
  * afterwards — reading the document must never settle it under the user.
  */
+import { contentPath } from "./positions/positions.test-helpers";
 import {
   expectTier2FixedPoint,
   mountExpandedNoteEditor,
@@ -252,6 +253,34 @@ describe("settled getUsj — uniform settling", () => {
       (item): item is MarkerObject => typeof item === "object" && item.type === "verse",
     );
     expect(verse?.sid).toBe("GEN 1:1");
+  });
+
+  it("reports the incoming document after an annotation commit, and loads it", async () => {
+    const next = twoParaUsj(["replacement text"]);
+    const { ref, lexical } = await mountStandardViewEditor(twoParaUsj(["original text"]));
+    await act(async () => {
+      ref.current?.setAnnotation(
+        {
+          start: { jsonPath: contentPath([2, 0]), offset: 0 },
+          end: { jsonPath: contentPath([2, 0]), offset: 4 },
+        },
+        "test",
+        "a1",
+      );
+      await Promise.resolve();
+    });
+
+    let immediate: Usj | undefined;
+    await act(async () => {
+      ref.current?.setUsj(next);
+      immediate = ref.current?.getUsj();
+    });
+
+    expect(JSON.stringify(immediate)).toContain("replacement text");
+    expect(JSON.stringify(ref.current?.getUsj())).toContain("replacement text");
+    expect(lexical.getEditorState().read(() => $getRoot().getTextContent())).toContain(
+      "replacement text",
+    );
   });
 });
 

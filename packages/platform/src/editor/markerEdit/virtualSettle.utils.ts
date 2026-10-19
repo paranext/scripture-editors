@@ -52,7 +52,6 @@ import {
   $buildNoteFragment,
   $buildParaScopeFragment,
   $carryMarksIntoSerialized,
-  $carryMarksIntoSerializedBookLine,
   $chapterAdjacentAttributeNodes,
   $charNeedsSentinelAs,
   $isRebuildSentinel,
@@ -113,6 +112,7 @@ import {
   isSerializedVerseNode,
   NoteNode,
   ParaNode,
+  SerializedBookNode,
   SerializedVerseNode,
   UnknownNode,
   $isPieceContinuation,
@@ -1195,8 +1195,8 @@ function $settledBookLine(
   if (contentNodes.length === 0 && trailingParas.length === 0) return undefined;
   if (!$appendParaFragments(built.out, trailingParas, getMarkerFn, viewOptions)) return undefined;
   const out = $fragmentWithCharOpenerRenames(built.out, charRenames, context);
-  const tokenizedFragment = $fragmentWithoutTransient(out, transient);
-  const tokenized = tokenizedBookLine(tokenizedFragment, getMarkerFn);
+  const fragment = $fragmentWithoutTransient(out, transient);
+  const tokenized = tokenizedBookLine(fragment, getMarkerFn);
   if (countSentinels(tokenized.content) !== out.sentinels.length) {
     logger?.warn("[MarkerEdit] Settled book USJ skipped: sentinel/preserved-node count mismatch");
     return undefined;
@@ -1243,8 +1243,7 @@ function $settledBookLine(
   }
   // Two calls sharing ONE run queue, in document order: the line's content comes first, so its
   // placeholders consume the preserved runs ahead of the following blocks' own. Each call mutates
-  // its OWN array in place — `rebuilt` and `followingBlocks` keep their identity, which is what the
-  // annotation carry below reads.
+  // its OWN array in place, so `rebuilt` and `followingBlocks` keep their identity.
   const queueIndexAfterContent = replaceSerializedSentinels(rebuilt, runs.serialized);
   replaceSerializedSentinels(followingBlocks, runs.serialized, queueIndexAfterContent);
   // Sid carry-over, mirroring `$rebuildBook`/`$settledParaScope` — see the latter's own comment
@@ -1256,19 +1255,21 @@ function $settledBookLine(
     if (oldVerseSids[i].sid !== undefined && newVerses[i].number === oldVerseSids[i].number)
       newVerses[i].sid = oldVerseSids[i].sid;
   }
-  // Annotation marks, mirroring `$rebuildBook`'s carry.
-  return {
-    ...$carryMarksIntoSerializedBookLine(
-      [...contentNodes, ...trailingParas],
-      tokenizedFragment,
-      runs.live,
-      rebuilt,
-      followingBlocks,
-      getMarkerFn,
-      viewOptions,
-    ),
-    contentNodes,
-  };
+  // Annotation marks, mirroring `$rebuildBook`'s carry: the line's content is carried inside a
+  // copy of the book, with the following blocks after it, so its bytes read back as the line's.
+  const lineHolder: SerializedBookNode = { ...book.exportJSON(), children: rebuilt };
+  const [line, ...carriedBlocks] = $carryMarksIntoSerialized(
+    [...contentNodes, ...trailingParas],
+    fragment,
+    runs.live,
+    [lineHolder, ...followingBlocks],
+    "bookLine",
+    getMarkerFn,
+    viewOptions,
+  );
+  const carriedLine = line && serializedChildren(line);
+  if (!carriedLine) return undefined;
+  return { rebuilt: carriedLine, contentNodes, followingBlocks: carriedBlocks };
 }
 
 /**

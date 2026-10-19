@@ -411,6 +411,14 @@ function combineTextContentOrAdd(
 }
 
 /**
+ * Whether `node` is a mark that carries comment IDs, so a comment ending in front of it continues
+ * into it. A mark of any other annotation type (a Find highlight) says nothing about comments.
+ */
+function isSerializedCommentMarkNode(node: SerializedLexicalNode | null | undefined): boolean {
+  return isSerializedTypedMarkNode(node) && node.typedIDs[COMMENT_MARK_TYPE] !== undefined;
+}
+
+/**
  * Strip the mark and insert its children enclosed in milestone mark markers.
  * @param childMarkers - Children of the mark.
  * @param ids - Comment IDs from the current mark.
@@ -466,7 +474,7 @@ function replaceMarkWithMilestones(
     });
     markers.push(milestone);
   }
-  const isLastEnd = !nextNode || !isSerializedTypedMarkNode(nextNode);
+  const isLastEnd = !isSerializedCommentMarkNode(nextNode);
   if (isLastEnd) {
     ids.forEach((eid) => {
       const milestone = createMilestoneMarker({
@@ -764,7 +772,7 @@ function recurseNodes(
             replaceMarkWithMilestones(childMarkers, commentIDs, pids, nextNode, markers);
             // A mark with no mark after it has already ended every comment it carries, so none of
             // them is open for the next comment mark to end.
-            pids = nextNode && isSerializedTypedMarkNode(nextNode) ? commentIDs : [];
+            pids = isSerializedCommentMarkNode(nextNode) ? commentIDs : [];
           } else {
             // Strip the mark and insert its children.
             const firstChild = childMarkers.shift();

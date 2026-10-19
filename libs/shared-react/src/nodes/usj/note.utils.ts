@@ -7,6 +7,7 @@
  */
 import { SelectionRange } from "../../plugins/usj/annotation/selection.model";
 import { $getRangeFromUsjSelection } from "../../plugins/usj/annotation/selection.utils";
+import { $advancePastParaPrefixes } from "../../plugins/usj/ParaMarkerPrefixCursorGuardPlugin";
 import { NoteMode, ViewOptions } from "../../views/view-options.utils";
 import {
   $createImmutableNoteCallerNode,
@@ -28,6 +29,7 @@ import {
   $getState,
   $isElementNode,
   $isRangeSelection,
+  $isRootNode,
   $isTextNode,
   $setSelection,
   $setState,
@@ -45,6 +47,7 @@ import {
   $createNoteNode,
   $getNoteCallerPreviewText,
   $isAttributeRunNode,
+  $isChapterNode,
   $isCharNode,
   $isGlyphTextNode,
   $isImmutableTypedTextNode,
@@ -52,6 +55,7 @@ import {
   $isMarkerNode,
   $isNoteNode,
   $isPieceContinuation,
+  $isSomeParaNode,
   $isVisibleMarkerNode,
   $logicalText,
   $moveSelectionToEnd,
@@ -72,6 +76,7 @@ import {
   NBSP,
   NoteNode,
   openingMarkerText,
+  SomeParaNode,
   ScriptureReference,
   segmentState,
   textTypeState,
@@ -140,8 +145,12 @@ function $defaultCallerForMarker(marker: string, nodeOptions: UsjNodeOptions): s
  * @param viewOptions - The current editor view options.
  * @param nodeOptions - The current editor node options.
  * @param logger - Logger instance.
- * @returns The inserted note node, or `undefined` if insertion failed.
+ * @returns The inserted note node, or `undefined` if insertion failed. A selection inside a
+ *   chapter's `\c N` line is refused (and logged): a chapter line has no content to hold a note,
+ *   so the note would be dropped from the saved document.
  * @throws Will throw an error if the marker is not a valid note marker.
+ *
+ * Mutating: call inside `editor.update()`.
  */
 export function $insertNote(
   marker: string,
@@ -159,6 +168,10 @@ export function $insertNote(
     ? $getRangeFromUsjSelection(selectionRange, viewOptions)
     : $getSelection();
   if (!$isRangeSelection(selection)) return undefined;
+  if ($isSelectionInChapterLine(selection)) {
+    logger?.warn("$insertNote: a note cannot be inserted in a chapter line");
+    return undefined;
+  }
 
   const children = $createNoteChildren(
     selection,
@@ -241,12 +254,45 @@ function $closingGlyphAfterCaret(selection: RangeSelection): MarkerNode | undefi
   return $isMarkerNode(next) && next.getMarkerSyntax() === "closing" ? next : undefined;
 }
 
+/** Whether either end of `selection` sits in a chapter's `\c N` line. Read-only. */
+function $isSelectionInChapterLine(selection: RangeSelection): boolean {
+  return [selection.anchor, selection.focus].some((point) => {
+    const node = point.getNode();
+    return $isChapterNode(node) || $isChapterNode(node.getParent());
+  });
+}
+
+/**
+ * The paragraph a collapsed `selection` names the very start of, if any: offset 0 of the
+ * paragraph's own opening marker glyph (Standard view), or an element point on the root in front of
+ * the paragraph (Formatted view). Read-only.
+ */
+function $paragraphStartedByCaret(selection: RangeSelection): SomeParaNode | undefined {
+  if (!selection.isCollapsed()) return undefined;
+  const { anchor } = selection;
+  const node = anchor.getNode();
+  if (anchor.type === "text") {
+    if (anchor.offset !== 0 || !$isMarkerNode(node)) return undefined;
+    const para = node.getParent();
+    return $isSomeParaNode(para) && para.getFirstChild()?.is(node) ? para : undefined;
+  }
+  if (!$isRootNode(node)) return undefined;
+  const child = node.getChildAtIndex(anchor.offset);
+  return $isSomeParaNode(child) ? child : undefined;
+}
+
 /**
  * Insert note node at the given selection, and select the note content if expanded.
  *
  * Whether the note lands collapsed is `isCollapsedNoteMode` — the same predicate that governs
  * both the child structure and the collapsed flag when notes are built at document load — so a
  * freshly inserted note matches a loaded one.
+ *
+ * A caret at the very start of a paragraph moves to the paragraph's content start first, so the note
+ * lands inside that paragraph rather than joining it to the previous one. A selection in a chapter
+ * line inserts nothing.
+ *
+ * Mutating: call inside `editor.update()`.
  *
  * @param noteNode - The note node to insert.
  * @param selection - The selection where to insert the note.
@@ -257,6 +303,8 @@ export function $insertNoteWithSelect(
   selection: RangeSelection,
   viewOptions: ViewOptions | undefined,
 ) {
+  if ($isSelectionInChapterLine(selection)) return;
+
   const isCollapsed = isCollapsedNoteMode(viewOptions?.noteMode);
   noteNode.setIsCollapsed(isCollapsed);
 
@@ -268,6 +316,12 @@ export function $insertNoteWithSelect(
   // (the reported verse number arriving in the file twice). One place decides where such a point
   // really is; here it resolves to the glyph's trailing end, the ordinary position just past it.
   $normalizeSelectionOutOfGlyphText(selection);
+
+  const startedPara = $paragraphStartedByCaret(selection);
+  if (startedPara && $advancePastParaPrefixes(startedPara)) {
+    const advanced = $getSelection();
+    if ($isRangeSelection(advanced)) selection = advanced;
+  }
 
   // `selection` may be a detached range built from a caller-supplied location rather than the
   // editor's own live selection (`$getRangeFromUsjSelection`). Lexical's `insertNodes` reaches for

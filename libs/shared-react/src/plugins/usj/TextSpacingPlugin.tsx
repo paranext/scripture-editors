@@ -258,7 +258,8 @@ function $verseNodeTransform(node: SomeVerseNode): void {
   //   `$addTrailingSpace` applies to bare text — or a comment ending beside the verse writes a
   //   second space into the document — and only where bare text would get one: never where the
   //   text owns its spacing, read as the unmarked document has it (`$ownsItsSpacing`; an
-  //   editable verse is a text, so the text before it gets none).
+  //   editable verse is a text, so the text before it gets none). Anywhere else, setting an
+  //   annotation would write a space into the document.
   if (
     $isCharNode(previousSibling) ||
     ($isTextNode(previousSibling) &&
