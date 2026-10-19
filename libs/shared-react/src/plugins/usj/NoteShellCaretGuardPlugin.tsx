@@ -429,6 +429,9 @@ function $nodeAfter(point: PointType): LexicalNode | undefined {
  * the start of an ordinary delete into the note's content, handled below like any other caret past
  * the shell.
  *
+ * A caret at the closer's front, where a caret past the content rests, backward-deletes from the
+ * end of the content; any other caret at or past the closer deletes nothing and moves to that end.
+ *
  * A word delete that would run on past the content into the shell or the closing glyph (nothing
  * but separators and punctuation between the caret and it) deletes back to that edge instead. A
  * line delete does the same UNLESS the two ends are measurably on different visual lines, in which
@@ -444,7 +447,13 @@ function $guardCollapsedDeletion(
   const caret = selection.anchor;
   const ended = $noteEndAt(caret);
   if (ended) {
-    $setCollapsed(selection, $contentEndPoint(ended));
+    // The closer's front is where a caret past the content rests (`$contentEndCaret`), so a
+    // backward delete from there is a backward delete at the end of the content.
+    const atCloserFront = caret.type === "text" && caret.offset === 0;
+    const contentEnd = $contentEndPoint(ended);
+    $setCollapsed(selection, contentEnd);
+    if (isBackward && atCloserFront && !$noteEndAt(contentEnd))
+      return $guardCollapsedDeletion(editor, selection, isBackward, granularity);
     return true;
   }
   const note = $protectedNoteOf(caret.getNode());
