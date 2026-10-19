@@ -1767,6 +1767,26 @@ describe("a note whose content a mark cuts", () => {
     );
     expect(marked).toEqual(plain);
   });
+
+  it("keeps the texts of two spans apart, as two ops", async () => {
+    const ops = await getOpsFor(() =>
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("a"),
+          $createNoteNode("f", "+", false).append(
+            $createMarkerNode("f"),
+            $createTextNode(getEditableCallerText("+")).toggleUnmergeable(),
+            $createCharNode("fp").append($createTextNode("one")),
+            $createCharNode("fp").append($createTextNode("two")),
+            $createMarkerNode("f", "closing"),
+          ),
+        ),
+      ),
+    );
+    const note = ops.find((op) => isInsertEmbedOpOfType("note", op));
+    if (!isInsertEmbedOpOfType("note", note)) throw new Error("no note op");
+    expect(note.insert.note?.contents?.ops?.map((op) => op.insert)).toEqual(["one", "two"]);
+  });
 });
 
 /** The text inserts of the first note's `contents` in `ops`, joined. */
