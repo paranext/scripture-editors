@@ -393,7 +393,10 @@ function $handleTextNodes(
     // separator is stripped: a separator followed by an `~` the author wrote is content.
     const isSpacer = nodeText === NBSP && !$isNbspContentAtMark(currentNode);
     if (!text || isSpacer || isNodeAttributeText) return;
-    activeEmbed.contentsOps?.push(textOp);
+    // Pushed as a Delta pushes, joining a text to the one before it with the same attributes: the
+    // embed is compared whole, so the texts an annotation mark cut apart must make the ops the
+    // uncut text makes.
+    if (activeEmbed.contentsOps) new Delta(activeEmbed.contentsOps).push(textOp);
   } else {
     // Attribute display text is presentation-only regardless of WHERE it rides — inside a char
     // span (the original, narrower rule) or, like a milestone's or a verse's \va/\vp value, as a

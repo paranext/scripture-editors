@@ -1743,6 +1743,32 @@ describe("a no-break space after a note span's separator", () => {
   });
 });
 
+describe("a note whose content a mark cuts", () => {
+  it("is the same embed as the note no mark cuts", async () => {
+    const $note = (...content: LexicalNode[]) =>
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("a"),
+          $createNoteNode("f", "+", false).append(
+            $createMarkerNode("f"),
+            $createTextNode(getEditableCallerText("+")).toggleUnmergeable(),
+            $createCharNode("ft").append($createMarkerNode("ft"), ...content),
+            $createMarkerNode("f", "closing"),
+          ),
+        ),
+      );
+    const plain = await getOpsFor(() => $note($createTextNode(`${NBSP}note text`)));
+    const marked = await getOpsFor(() =>
+      $note(
+        $createTextNode(`${NBSP}n`),
+        $createTypedMarkNode({ test: ["1"] }).append($createTextNode("ote tex")),
+        $createTextNode("t"),
+      ),
+    );
+    expect(marked).toEqual(plain);
+  });
+});
+
 /** The text inserts of the first note's `contents` in `ops`, joined. */
 function noteContentsText(ops: DeltaOp[]): string {
   const note = ops.find((op) => isInsertEmbedOpOfType("note", op));
