@@ -211,6 +211,7 @@ export interface EditorRef {
     }): void;
     // @deprecated
     setAnnotation(selection: AnnotationRange, type: string, id: string, onClick?: TypedMarkOnClick, onRemove?: TypedMarkOnRemove): void;
+    setMarkerSettleSuspended(suspended: boolean): void;
     setSelection(selection: SelectionRange): void;
     setTransientInput(input: TransientInput | undefined): void;
     setUsj(usj: Usj, options?: SetUsjOptions): void;
