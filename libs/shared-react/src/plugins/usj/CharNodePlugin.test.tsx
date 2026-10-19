@@ -1,7 +1,15 @@
 import { CharNodePlugin } from "./CharNodePlugin";
 import { baseTestEnvironment } from "./react-test.utils";
 import { act } from "@testing-library/react";
-import { $getRoot, $createTextNode, $getState, $isTextNode, $setState, TextNode } from "lexical";
+import {
+  $createRangeSelection,
+  $createTextNode,
+  $getRoot,
+  $getState,
+  $isTextNode,
+  $setState,
+  TextNode,
+} from "lexical";
 import {
   $caretHoldsRunSite,
   $createCharNode,
@@ -15,6 +23,7 @@ import {
   CharNode,
   displayRunDescriptor,
   NBSP,
+  ParaNode,
   textTypeState,
 } from "shared";
 
@@ -476,6 +485,36 @@ describe("CharNodePlugin", () => {
       expect(merged.getTextContent()).toBe(`\\nd${NBSP}Lord God\\nd*`);
       const children = merged.getChildren();
       expect($isMarkerNode(children[children.length - 1])).toBe(true);
+    });
+  });
+
+  it("keeps the leading no-break space of span text a split moves into a new span", async () => {
+    // Lexical splits a span by moving the children after the split point into a new span
+    // (`insertNewAfter`). That text is not new to the document, so its leading NBSP — the author's
+    // `~b` here, the opener's separator in the editable views — is never a placeholder.
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createParaNode().append(
+          $createCharNode("w").append(
+            $createTextNode("x").toggleFormat("bold"),
+            $createTextNode(`${NBSP}b`),
+          ),
+        ),
+      );
+    });
+
+    await act(async () => {
+      editor.update(() => {
+        const span = $getRoot().getFirstChildOrThrow<ParaNode>().getFirstChildOrThrow<CharNode>();
+        const moved = span.getLastChildOrThrow();
+        span.insertNewAfter($createRangeSelection(), false).append(moved);
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      const p = $getRoot().getFirstChildOrThrow<ParaNode>();
+      expect(p.getChildrenSize()).toBe(1);
+      expect(p.getTextContent()).toBe(`x${NBSP}b`);
     });
   });
 
