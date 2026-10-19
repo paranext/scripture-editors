@@ -22,9 +22,11 @@
  * Delete; and a one-line and a two-line `text/plain` paste. What a cut or a copy wrote
  * is compared by its `text/plain` and by what it pastes as — each flavor alone and all together,
  * pasted in a fresh editor of the view with no annotations ({@link pastedAs}) — since its HTML may
- * carry the classes its source was painted with. The whole paragraph's copy, compared by its text
- * after every case, is compared by what it pastes as after a cut or a copy pasted back, and once
- * for the document as loaded.
+ * carry the classes its source was painted with; a paste of the plain run's clipboard that pastes
+ * other than that clipboard's own `text/plain` is a fault of the editor with no annotation, and is
+ * left out of the comparison on both sides ({@link consistentPastes}). The whole paragraph's copy,
+ * compared by its text after every case, is compared by what it pastes as after a cut or a copy
+ * pasted back, and once for the document as loaded.
  *
  * The annotated run is also graded on its own: every annotation paints exactly the bytes it holds
  * (plus whitespace), nothing is painted in part, a byte the edit left in place in the same carrier
@@ -789,15 +791,40 @@ const PASTE_TARGET_USJ: Usj = {
  * view pastes the same. */
 const pastedAsCache = new Map<string, string>();
 
+/** Whether USJ block `block`'s first content is text starting with `word`. */
+function startsWithWord(block: unknown, word: string): boolean {
+  if (typeof block !== "object" || block === null || !("content" in block)) return false;
+  const { content } = block;
+  return Array.isArray(content) && typeof content[0] === "string" && content[0].startsWith(word);
+}
+
+/** A paste {@link pastedAs} reports. */
+interface PastedAs {
+  flavors: string[];
+  blocks: string;
+}
+
+/** Whether `value` is {@link pastedAs}'s report of each paste. */
+function isPastedAsList(value: unknown): value is PastedAs[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (paste: unknown) =>
+        typeof paste === "object" && paste !== null && "flavors" in paste && "blocks" in paste,
+    )
+  );
+}
+
 /**
  * What `payload` pastes as: each of its flavors alone, then all of them together (as a real paste
  * delivers them), pasted in a fresh editor of `view` with no annotations, each between the word and
  * ` target` of a block of its own ({@link PASTE_TARGET_USJ}), as the paste command a paste
- * dispatches; then that editor's `getUsj()` and what the pastes logged as errors. A copy's HTML may
- * carry the classes its source was painted with, so a clipboard is compared by what it pastes as,
- * not by its bytes. Each paste goes in right after its caret is placed, with no wait for the native
- * selection change between them: the blocks hold plain text no selection listener moves a caret
- * in, and each paste places its own caret.
+ * dispatches; for each paste, the blocks it left from its own block up to the next paste's (its
+ * word read as `*`, so pastes compare) and what it logged as errors. A copy's HTML may carry the
+ * classes its source was painted with, so a clipboard is compared by what it pastes as, not by its
+ * bytes. Each paste goes in right after its caret is placed, with no wait for the native selection
+ * change between them: the blocks hold plain text no selection listener moves a caret in, and each
+ * paste places its own caret.
  */
 async function pastedAs(payload: { [flavor: string]: string }, view: string): Promise<string> {
   const flavors = Object.keys(payload);
@@ -816,13 +843,15 @@ async function pastedAs(payload: { [flavor: string]: string }, view: string): Pr
       .filter((node) => node.getTextContent().endsWith(" target"))
       .map((node) => node.getKey()),
   );
-  const errors: string[] = [];
+  const errors: string[][] = pastes.map(() => []);
+  let pasting = 0;
   const consoleError = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-    errors.push(String(args[0]).split("\n")[0]);
+    errors[pasting].push(String(args[0]).split("\n")[0]);
   });
   try {
     await act(async () => {
       for (const [index, paste] of pastes.entries()) {
+        pasting = index;
         mounted.lexical.update(
           () => {
             const target = $getNodeByKey(targets[index]);
@@ -835,7 +864,7 @@ async function pastedAs(payload: { [flavor: string]: string }, view: string): Pr
         try {
           mounted.lexical.dispatchCommand(PASTE_COMMAND, pasteEvent(paste).event);
         } catch (error) {
-          errors.push(`paste ${index + 1} threw ${firstLine(error)}`);
+          errors[index].push(`threw ${firstLine(error)}`);
         }
         await Promise.resolve();
         await Promise.resolve();
@@ -843,20 +872,68 @@ async function pastedAs(payload: { [flavor: string]: string }, view: string): Pr
       await drainNativeSelectionChange();
     });
   } catch (error) {
-    errors.push(`pasting threw ${firstLine(error)}`);
+    errors[pasting].push(`pasting threw ${firstLine(error)}`);
   } finally {
     consoleError.mockRestore();
   }
-  let usj: unknown;
+  let blocks: unknown[] = [];
   try {
-    usj = mounted.ref.current?.getUsj()?.content.slice(2);
+    blocks = mounted.ref.current?.getUsj()?.content.slice(2) ?? [];
   } catch (error) {
-    errors.push(`getUsj threw ${firstLine(error)}`);
+    errors[pasting].push(`getUsj threw ${firstLine(error)}`);
   }
-  const pasted = JSON.stringify({ flavors, usj, errors });
+  // Each paste's blocks: from the block its word starts (the first such block after the previous
+  // paste's) to the next paste's.
+  const starts: number[] = [];
+  for (const word of PASTE_TARGET_WORDS.slice(0, pastes.length)) {
+    const from = (starts.at(-1) ?? -1) + 1;
+    const found = blocks.findIndex((block, index) => index >= from && startsWithWord(block, word));
+    starts.push(found < 0 ? blocks.length : found);
+  }
+  const pasted = pastes.map((paste, index) => ({
+    flavors: Object.keys(paste),
+    blocks: JSON.stringify(
+      blocks.slice(starts[index], index + 1 < starts.length ? starts[index + 1] : undefined),
+    ).replaceAll(`"${PASTE_TARGET_WORDS[index]}`, '"*'),
+    errors: errors[index],
+  }));
+  const result = JSON.stringify(pasted);
   unmountQuietly(mounted);
-  pastedAsCache.set(key, pasted);
-  return pasted;
+  pastedAsCache.set(key, result);
+  return result;
+}
+
+/**
+ * What a plain run's clipboard and an annotated run's paste as ({@link pastedAs}), each reduced to
+ * the pastes the plain clipboard pastes consistently: a paste of the plain clipboard that pastes
+ * other than its own `text/plain` alone is a fault of the editor with no annotation at all (the
+ * internal flavor of a whole paragraph pastes inline where the text splits it; a copy starting at
+ * a `token`'s end carries the token whole in the internal flavor), and is not compared.
+ */
+function consistentPastes(
+  plain: string,
+  annotated: string | undefined,
+): [string, string | undefined] {
+  const parse = (value: string | undefined): PastedAs[] | undefined => {
+    try {
+      const parsed: unknown = value === undefined ? undefined : JSON.parse(value);
+      return isPastedAsList(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const plainPastes = parse(plain);
+  const annotatedPastes = parse(annotated);
+  if (!plainPastes || !annotatedPastes) return [plain, annotated];
+  const text = plainPastes.find(
+    ({ flavors }) => flavors.length === 1 && flavors[0] === "text/plain",
+  );
+  if (!text) return [plain, annotated];
+  const kept = plainPastes.flatMap((paste, index) => (paste.blocks === text.blocks ? [index] : []));
+  return [
+    JSON.stringify(kept.map((index) => plainPastes[index])),
+    JSON.stringify(kept.map((index) => annotatedPastes[index])),
+  ];
 }
 
 /** The comparable reads of a clipboard `payload` named `name`: its `text/plain`, and, with
@@ -1172,10 +1249,14 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
           const plainLoaded = await mountInView(usj, viewOptions);
           const plainLoadedCopy = await pastedAs(await copiedPayload(plainLoaded, view), view);
           plainLoaded.unmount();
-          if (annotatedLoadedCopy !== plainLoadedCopy)
+          const [plainPastes, annotatedPastes] = consistentPastes(
+            plainLoadedCopy,
+            annotatedLoadedCopy,
+          );
+          if (annotatedPastes !== plainPastes)
             mismatches.set(
               "loaded [copy pastes as]",
-              `loaded [copy pastes as]\n    plain     ${plainLoadedCopy}\n    annotated ${annotatedLoadedCopy}`,
+              `loaded [copy pastes as]\n    plain     ${plainPastes}\n    annotated ${annotatedPastes}`,
             );
         }
         probe.unmount();
@@ -1413,12 +1494,16 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
                   actual,
                   await clipboardObservables("clipboard", annotated.clipboard, view, true),
                 );
-              for (const [name, value] of Object.entries(expected))
-                if (actual[name] !== value)
+              for (const [name, expectedValue] of Object.entries(expected)) {
+                const [value, actualValue] = name.endsWith(" pastes as")
+                  ? consistentPastes(expectedValue, actual[name])
+                  : [expectedValue, actual[name]];
+                if (actualValue !== value)
                   mismatches.set(
                     `${label} [${name}]`,
-                    `${label} [${name}]\n    plain     ${value}\n    annotated ${actual[name]}`,
+                    `${label} [${name}]\n    plain     ${value}\n    annotated ${actualValue}`,
                   );
+              }
               for (const key of new Set([
                 ...plainInvariants.keys(),
                 ...annotatedInvariants.keys(),
