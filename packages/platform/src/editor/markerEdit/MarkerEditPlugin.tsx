@@ -111,6 +111,7 @@ import {
   textTypeState,
   VerseNode,
   $deferToPieceHead,
+  $joinCarriersAtSelection,
   $isPieceContinuation,
   $pieceHead,
   $caretPlaceThroughMarks,
@@ -548,6 +549,8 @@ function registerPasteNormalization(
           : payload.text;
         if (noteText.includes("\n")) {
           const lines = noteText.split("\n");
+          // A carrier an annotation cut is met as one text, as the line replay meets it uncut.
+          $joinCarriersAtSelection();
           let outcome = $handlePasteLinesInNote(lines, context.getMarker);
           if (outcome === "declined" && $adoptDomCaretInExpandedNote(editor)) {
             // The editor-state caret had strayed from the user-visible one (a live paste is

@@ -23,6 +23,7 @@ import {
 } from "./displayAnnotations.state.js";
 import {
   $addUpdateTag,
+  $createTextNode,
   $getEditor,
   $getNodeByKey,
   $getSelection,
@@ -205,11 +206,14 @@ export function $logicalPointOffset(
 /**
  * For a node transform (or any per-node pass) over a carrier class: when `node` is a continuation
  * piece, mark its carrier's head dirty, so the head's own pass reads and writes the whole carrier,
- * and return `true` — the caller then leaves `node` alone. A continuation whose head is gone is a
- * carrier of its own and returns `false`. Mutating: call inside `editor.update()`.
+ * and return `true` — the caller then leaves `node` alone. A continuation an element split moved
+ * off its head ({@link $isSplitOffPiece}) also returns `true`: the piece transform makes it a text,
+ * and nothing reads it as the carrier it was. A continuation whose head is gone is a carrier of its
+ * own and returns `false`. Mutating: call inside `editor.update()`.
  */
 export function $deferToPieceHead(node: LexicalNode): boolean {
   if (!$isPieceContinuation(node)) return false;
+  if ($isSplitOffPiece(node)) return true;
   const head = $pieceHead(node);
   if (head.is(node)) return false;
   head.markDirty();
@@ -666,11 +670,74 @@ export function $splitCarrierAt(node: LexicalNode, offset: number): TextNode | u
 }
 
 /**
+ * Whether `node` is the first of the pieces an element split moved off their carrier's head: a
+ * continuation with no piece of its chain before it, whose chain's head was not removed but is
+ * under another parent ({@link $replaceSplitOffPieces}). That parent may since have been rebuilt
+ * out of the tree in the same update; a removed head has no parent at all.
+ */
+export function $isSplitOffPiece(node: LexicalNode): boolean {
+  if (!$isPieceContinuation(node) || !$pieceHead(node).is(node)) return false;
+  const chain = $getState(node, displayPieceChainState);
+  const head = chain === undefined ? null : $getNodeByKey(chain);
+  const headParent = head && !head.is(node) ? head.getParent() : null;
+  return !!headParent && !headParent.is(node.getParent());
+}
+
+/**
+ * When `node` is the first of the pieces an element split moved off their head
+ * ({@link $isSplitOffPiece}), replace it and the pieces of its chain after it with one `TextNode`
+ * of their text, as `TextNode.splitText` makes the bytes after the point it splits an unsplit
+ * carrier at: the same
+ * format, style, detail and node state (but no piece or hold state), whatever the carrier's class.
+ * An element split at a cut between two pieces (Lexical's own `insertParagraph`, which a paste of
+ * several lines makes with no command) moves the pieces after the cut into the new block, where
+ * the carrier no annotation cuts is split by `splitText` instead. Returns the new text, or
+ * `undefined` when `node` is no such piece. Mutating.
+ */
+export function $replaceSplitOffPieces(node: LexicalNode): TextNode | undefined {
+  if (!$isTextNode(node) || !$isSplitOffPiece(node)) return undefined;
+  const pieces = $pieces(node);
+  const json = node.exportJSON();
+  const state = Object.fromEntries(
+    Object.entries(json[NODE_STATE_KEY] ?? {}).filter(([key]) => !PIECE_STATE_KEYS.has(key)),
+  );
+  const text = $createTextNode(pieces.map((piece) => piece.getTextContent()).join(""))
+    .setFormat(node.getFormat())
+    .setStyle(node.getStyle())
+    .setDetail(node.getDetail());
+  if (Object.keys(state).length > 0)
+    text.updateFromJSON({ ...text.exportJSON(), [NODE_STATE_KEY]: state });
+  node.insertBefore(text);
+  let offset = 0;
+  for (const piece of pieces) {
+    $movePoints(piece, text, offset);
+    offset += piece.getTextContentSize();
+    piece.remove();
+  }
+  return text;
+}
+
+/**
  * Join `node`'s whole carrier back into one node ({@link $joinPieces}). Returns the head; a
  * carrier in one piece is returned untouched. Mutating.
  */
 export function $mergePieces<T extends LexicalNode>(node: T): T {
   return $joinPieces($pieces(node));
+}
+
+/**
+ * Join the carrier each end of the selection is in back into one node ({@link $mergePieces}), the
+ * ends moving with their bytes, so an edit made at them in this update meets the carrier as one
+ * text, as it does where no annotation cuts it. The piece transform cuts the carrier again where a
+ * hold ends inside it once the update is done. A no-op for any other selection. Mutating.
+ */
+export function $joinCarriersAtSelection(): void {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return;
+  for (const point of [selection.anchor, selection.focus]) {
+    const node = point.getNode();
+    if (point.type === "text" && $isSplitCarrier(node)) $mergePieces(node);
+  }
 }
 
 /**

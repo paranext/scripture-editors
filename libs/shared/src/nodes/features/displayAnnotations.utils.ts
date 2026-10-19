@@ -29,6 +29,7 @@ import {
   $hasPieceState,
   $isPieceContinuation,
   $joinMergeableNeighbours,
+  $replaceSplitOffPieces,
   $joinPieces,
   $keepParentPoints,
   $logicalText,
@@ -539,6 +540,8 @@ export function $normalizeCarrierPieces(node: LexicalNode): void {
   if (!$isTextNode(node) || !node.isAttached()) return;
   // A token carrier that lost a piece goes whole, as the unsplit token would have.
   if ($removeBrokenTokenPieces(node)) return;
+  // Pieces an element split moved off their head are bytes split off the carrier: a text.
+  if ($replaceSplitOffPieces(node)) return;
   // A continuation whose head is gone (deleted, or the piece was moved) is a carrier of its own.
   if ($isPieceContinuation(node) && $pieceHead(node).is(node))
     $setState(node, displayPieceContinuationState, undefined);

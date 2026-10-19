@@ -275,6 +275,11 @@ describe("a line break pasted between the pieces of a glyph", () => {
     ["standard", "closed char span", "\\w*", 1],
     ["standard", "closed char span", "\\w", 1],
     ["standard", "closed char span", "\\p", 1],
+    // The same in a view whose paste is Lexical's own line insertion, which splits the text with
+    // no Enter command.
+    ["unformatted", "verse", `\\v${NBSP}1 `, 1],
+    ["unformatted", "note", "\\f", 1],
+    ["standard", "unclosed note", "\\f", 1],
   ] as const)(
     "%s view, %s: %j at %i",
     async (view, row, text, at) => {
