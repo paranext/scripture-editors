@@ -216,6 +216,20 @@ describe("a copy pasted where an annotation mark starts", () => {
   );
 });
 
+describe("a copy pasted over a range from a mark's text into an attribute run", () => {
+  it("replaces the range in place, and the content after the span stays after it", async () => {
+    // The range is not at the caret, so it selects the same bytes from every spelling of it.
+    const keystroke = named(
+      COPY_PASTE_KEYSTROKES,
+      "copy the text at the caret and the text after it, then paste them over the byte either side of the caret",
+    );
+    const args = ["standard", "char span with an attribute", `${NBSP}grace`, 6, keystroke] as const;
+    const plain = await gestureCase(...args);
+    expect(plain.applied, "the gesture applies in the document as loaded").not.toBe(false);
+    expect(await gestureCase(...args, 0)).toEqual(plain);
+  }, 120_000);
+});
+
 describe("a range with an end at a mark's edge beside a span", () => {
   it.each([
     // The range's start at the end of a mark, before a span: with no mark it starts inside the

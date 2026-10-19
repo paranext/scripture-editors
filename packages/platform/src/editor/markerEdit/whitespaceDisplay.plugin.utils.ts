@@ -537,7 +537,12 @@ function $insertPastedTextIntoAttributeContext(selection: RangeSelection, text: 
   const resolved = valueBytes ? text : normalizePastedNbsp(stripPastedChapterAndBookId(text));
   // Nothing survived the strip, so there is nothing to replace the selection with — see
   // `$handlePasteForStandardView`.
-  if (resolved) selection.insertText(resolved.replace(/\n/g, " "));
+  if (!resolved) return;
+  // A range an annotation mark holds an end of is removed first, as for any paste
+  // (`$removeRangeHeldByMarks`): Lexical's replacement of a range whose ends a mark puts in
+  // different parents moves what follows the range's end into the start's parent.
+  $removeRangeHeldByMarks(selection);
+  selection.insertText(resolved.replace(/\n/g, " "));
 }
 
 /**
