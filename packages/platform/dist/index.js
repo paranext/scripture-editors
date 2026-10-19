@@ -25403,7 +25403,9 @@ function cR(e) {
   if (e.getMode() !== "normal" || de(e, be) !== void 0) return !1;
   const t = e.getParent();
   if (se(t) || Be(t) || L(t) && t.getChildren().some(At)) return !1;
-  const n = e.getPreviousSibling(), r = e.getNextSibling();
+  const n = e.getPreviousSibling();
+  if ((K(t) || L(t)) && !n) return !1;
+  const r = e.getNextSibling();
   return !N(n) && !se(n) && !se(r);
 }
 function lR(e) {
