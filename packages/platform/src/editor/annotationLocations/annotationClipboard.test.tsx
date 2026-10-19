@@ -320,6 +320,53 @@ describe("a line break pasted between the pieces of a glyph", () => {
   );
 });
 
+describe("a line break pasted in a cut glyph outside a note", () => {
+  it("reports the paste's ops as in the glyph no annotation cuts", async () => {
+    // A paste that only meets a cut carrier may not join it unless it edits the carrier in the
+    // same update: a join the piece transform undoes marks the whole commit as no change.
+    const keystroke = named(
+      PLAIN_PASTE_KEYSTROKES,
+      'paste "p", a line break and "q" as plain text',
+    );
+    const opsOf = async (isAnnotated: boolean) => {
+      const usj = oracleRows("standard").find(([name]) =>
+        name.startsWith("closed char span ("),
+      )?.[1];
+      if (!usj) throw new Error("no row");
+      const viewOptions = pendingOracleView("standard");
+      const mounted = await mountInView(usj, viewOptions);
+      const site = mounted.lexical.getEditorState().read(() => {
+        const index = $editableTexts().findIndex((node) => $logicalText(node) === "\\w");
+        return $globalSite(index, 1, false);
+      });
+      if (isAnnotated) {
+        const plan = mounted.lexical.getEditorState().read(() => $planAnnotations(viewOptions));
+        for (const { id, range } of plan)
+          await act(async () => {
+            mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, id);
+            await Promise.resolve();
+          });
+        await act(async () => {
+          await drainNativeSelectionChange();
+        });
+      }
+      const before = mounted.ops.length;
+      await runKeystrokeCase(
+        mounted,
+        "standard",
+        () => $spellings(site)[isAnnotated ? 1 : 0],
+        keystroke,
+      );
+      const ops = JSON.stringify(mounted.ops.slice(before));
+      mounted.unmount();
+      return ops;
+    };
+    const plain = await opsOf(false);
+    expect(plain).not.toBe("[[]]");
+    expect(await opsOf(true)).toBe(plain);
+  }, 120_000);
+});
+
 describe("a pasted copy of annotated bytes", () => {
   /** The comment milestones of `id` in `usj`, `zmsc-s` and `zmsc-e`, in document order. */
   function commentMilestones(usj: Usj | undefined, id: string): string[] {

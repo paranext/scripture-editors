@@ -31,6 +31,7 @@ import {
   MarkerType,
   NoteNode,
   $pieces,
+  $joinCarriersAtSelection,
 } from "shared";
 
 /**
@@ -122,6 +123,9 @@ export function $handlePasteLinesInNote(
     if (removal !== "removed") return removal;
   } else if (!$findExpandedNoteContentAtCaret()) {
     return "declined";
+  } else {
+    // A carrier an annotation cut is met as one text, as the line replay meets it uncut.
+    $joinCarriersAtSelection();
   }
   const [firstLine, ...breakLines] = lines.map((line) =>
     stripLeadingParagraphMarker(line, getMarker),
@@ -185,6 +189,8 @@ function $removeSelectionTouchingExpandedNote(
   const anchorInExpandedNote = anchorNote?.getIsCollapsed() === false;
   const focusInExpandedNote = focusNote?.getIsCollapsed() === false;
   if (!anchorInExpandedNote && !focusInExpandedNote) return "declined";
+  // A carrier an annotation cut is removed from as one text, as the uncut carrier is.
+  $joinCarriersAtSelection();
   // Same removal semantics as pressing Delete over the selection; the deletion transforms
   // (`$noteDeletionTransform` and the char-span transform) repair glyph damage at commit.
   selection.removeText();
