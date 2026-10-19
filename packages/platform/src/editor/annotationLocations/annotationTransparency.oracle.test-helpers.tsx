@@ -131,9 +131,8 @@ const WRITE = process.env.ANNOTATION_TRANSPARENCY_WRITE === "1";
 const ACCOUNTING = process.env.ANNOTATION_TRANSPARENCY_ACCOUNTING === "1";
 /**
  * Run the clipboard and range gestures ({@link clipboardKeystrokes}) and compare what the whole
- * paragraph as loaded pastes as. Off by default: those comparisons still find the annotated
- * document apart from the plain one in several shapes (open work), and running them more than
- * doubles the oracle's time.
+ * paragraph as loaded pastes as (`ANNOTATION_TRANSPARENCY_CLIPBOARD=1`). Off by default because
+ * running them more than doubles the oracle's time; the SE gates run every view with it on.
  */
 const CLIPBOARD = process.env.ANNOTATION_TRANSPARENCY_CLIPBOARD === "1";
 
