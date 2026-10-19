@@ -64,6 +64,7 @@ import {
   $isAttributeRunNode,
   $isMarkerNode,
   $isNoteNode,
+  $isPieceContinuation,
   $isVisibleMarkerNode,
   $noteEditableCallerNode,
   getPendedDisplayOwners,
@@ -942,6 +943,71 @@ describe("the editor API", () => {
       ]);
     },
   );
+
+  // An annotation on the verse number cuts the verse's glyph into pieces; the caret behind the
+  // glyph is behind its last piece, and comes back there.
+  it("text typed at a restored caret behind a line-ending verse cut by an annotation is the verse's text", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(
+      doc(endsInVerse, { type: "para", marker: "p", content: ["more"] }),
+    );
+    await act(async () => {
+      ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[2].content[2]['number']", propertyOffset: 0 },
+          end: { jsonPath: "$.content[2].content[2]['number']", propertyOffset: 1 },
+        },
+        "spelling",
+        "s1",
+      );
+      await Promise.resolve();
+    });
+    lexical
+      .getEditorState()
+      .read(() =>
+        expect(
+          $getRoot()
+            .getChildren()
+            .filter($isElementNode)[2]
+            .getChildren()
+            .filter($isPieceContinuation).length,
+        ).toBeGreaterThan(0),
+      );
+    await act(async () => {
+      lexical.update(
+        () => {
+          const glyph = $getRoot().getChildren().filter($isElementNode)[2].getLastDescendant();
+          if (!$isTextNode(glyph)) throw new Error("expected the verse glyph's last piece");
+          glyph.select(glyph.getTextContentSize(), glyph.getTextContentSize());
+        },
+        { discrete: true },
+      );
+      await Promise.resolve();
+    });
+    const reported = ref.current?.getSelection();
+    if (!reported) throw new Error("expected a reported caret");
+
+    await act(async () => {
+      ref.current?.setSelection(reported);
+      await Promise.resolve();
+    });
+    expect(ref.current?.getSelection()).toEqual(reported);
+    await act(async () => {
+      lexical.update(
+        () => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) selection.insertText("abc");
+        },
+        { discrete: true },
+      );
+      await Promise.resolve();
+    });
+
+    const para = ref.current?.getUsj()?.content[2];
+    expect(typeof para === "object" && para.content?.slice(-2)).toEqual([
+      { type: "verse", marker: "v", number: "2" },
+      "abc",
+    ]);
+  });
 });
 
 describe("a caret with no text beside it while a paragraph is pending", () => {
