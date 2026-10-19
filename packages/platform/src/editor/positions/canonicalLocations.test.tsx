@@ -49,7 +49,9 @@ import {
   $createRangeSelection,
   $getNodeByKey,
   $getRoot,
+  $getSelection,
   $isElementNode,
+  $isRangeSelection,
   $isTextNode,
   $setSelection,
   ElementNode,
@@ -882,6 +884,64 @@ describe("the editor API", () => {
     const reported = lexical.getEditorState().read(() => $getUsjSelectionFromEditor(view));
     expect(reported).toEqual({ start: { jsonPath: "$.content[3]['marker']", propertyOffset: 1 } });
   });
+
+  const endsInVerse: MarkerObject = {
+    type: "para",
+    marker: "p",
+    content: [
+      { type: "verse", marker: "v", number: "1" },
+      "In the beginning ",
+      { type: "verse", marker: "v", number: "2" },
+    ],
+  };
+
+  // A caret behind the glyph of a verse that ends its line is where that verse's text is typed. A
+  // host hands a reported caret back to restore it (paranext-core does when focus returns), so the
+  // caret must come back there, not in front of the glyph's separator, inside the verse number.
+  it.each<[string, Usj]>([
+    ["a paragraph", doc(endsInVerse, { type: "para", marker: "p", content: ["more"] })],
+    ["the document", doc(endsInVerse)],
+  ])(
+    "text typed at a restored caret behind the verse that ends %s is the verse's text",
+    async (_name, usj) => {
+      const { ref, lexical } = await mountStandardViewEditor(usj);
+      await act(async () => {
+        lexical.update(
+          () => {
+            const glyph = $getRoot().getChildren().filter($isElementNode)[2].getLastDescendant();
+            if (!$isTextNode(glyph)) throw new Error("expected the verse glyph's text");
+            glyph.select(glyph.getTextContentSize(), glyph.getTextContentSize());
+          },
+          { discrete: true },
+        );
+        await Promise.resolve();
+      });
+      const reported = ref.current?.getSelection();
+      if (!reported) throw new Error("expected a reported caret");
+
+      await act(async () => {
+        ref.current?.setSelection(reported);
+        await Promise.resolve();
+      });
+      expect(ref.current?.getSelection()).toEqual(reported);
+      await act(async () => {
+        lexical.update(
+          () => {
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) selection.insertText("abc");
+          },
+          { discrete: true },
+        );
+        await Promise.resolve();
+      });
+
+      const para = ref.current?.getUsj()?.content[2];
+      expect(typeof para === "object" && para.content?.slice(-2)).toEqual([
+        { type: "verse", marker: "v", number: "2" },
+        "abc",
+      ]);
+    },
+  );
 });
 
 describe("a caret with no text beside it while a paragraph is pending", () => {

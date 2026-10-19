@@ -1169,6 +1169,21 @@ export function $getNodeFromLocation(
     if (!node || propertyName === undefined) return [undefined, undefined];
 
     const wanted: DisplayByteKind = { kind: "property", property: propertyName };
+    // A verse glyph's trailing separator at the end of a line other than the document's last
+    // stands for the line's newline, so the caret on either side of it reports the number's end.
+    // The one behind the glyph is where the editor puts its own caret at the paragraph's end and
+    // where the verse's text is typed; in front of the separator, typing would extend the number.
+    // At the document's end the caret behind the glyph has a spelling of its own (one past the
+    // final newline), so the number's end stays in front of the separator there.
+    if (
+      propertyName === "number" &&
+      $isVerseNode(node) &&
+      location.propertyOffset === node.getNumber().length &&
+      $endsInOwnSeparator(node) &&
+      $endsItsLine(node) &&
+      !$endsDocument(node)
+    )
+      return [node, node.getTextContentSize()];
     const point = $pointFromDisplayBytes(node, wanted, location.propertyOffset);
     if (point) return point;
     // Past the bytes a read-only decorator displays of the value (a collapsed caller shows the
@@ -1782,6 +1797,18 @@ function $locationOfFirstByteAfter(
   )
     return undefined;
   return $locationFromNode(leaf, 0, collapsesSpaceRuns);
+}
+
+/** Whether nothing follows `node` in its line, looking through annotation marks. */
+function $endsItsLine(node: LexicalNode): boolean {
+  let current = node;
+  for (
+    let mark = current.getParent();
+    !current.getNextSibling() && $isTypedMarkNode(mark);
+    mark = current.getParent()
+  )
+    current = mark;
+  return !current.getNextSibling();
 }
 
 /** Whether nothing follows `node` anywhere in the document. */
