@@ -101,21 +101,24 @@ export function $displayWhitespaceTransform(node: TextNode): void {
 
 /**
  * Whether `node`, an untagged text that is exactly one NBSP, is what is left of a displayed space
- * run — two spaces between two char spans display as two NBSPs, and a backspace leaves one — rather
- * than one of the engine's structural lone-NBSP nodes. Content NBSP displays as `~`, so in content
- * a lone NBSP is one or the other, and the editor→USJ conversion drops every lone NBSP as
- * structural: left as it is, the space would be lost from the file while the screen still shows
- * it. A plain space is the shape the same single space loads as.
+ * run — two spaces between two elements (char spans, notes, milestones) display as two NBSPs, and a
+ * backspace leaves one — rather than one of the engine's structural lone-NBSP nodes. Content NBSP
+ * displays as `~`, so in content a lone NBSP is one or the other, and the editor→USJ conversion
+ * drops every lone NBSP as structural: left as it is, the space would be lost from the file while
+ * the screen still shows it. A plain space is the shape the same single space loads as. This holds
+ * at every depth — in a paragraph, inside a char span, and directly inside an expanded note.
  *
  * Every structural lone NBSP sits where this says no:
  *
- * - under a `CharNode`: an empty span's placeholder (`EMPTY_CHAR_PLACEHOLDER_TEXT`), the spacer in
- *   front of a span's leading nested element, a separator a split stranded;
- * - directly under a `NoteNode`: a collapsed note's display separators, and the bare separator
- *   `NoteNodePlugin` turns into its tagged one after a caller or a top-level span;
- * - right after a marker glyph: a paragraph's or note's separator that lost its tag;
+ * - right after a marker glyph: an empty span's placeholder (`EMPTY_CHAR_PLACEHOLDER_TEXT`), the
+ *   spacer in front of a span's leading nested element, a separator a split stranded, and a
+ *   paragraph's or note's separator that lost its tag;
+ * - directly under a note with a collapsed caller (`ImmutableNoteCallerNode`): its display
+ *   separators, and the bare separator `NoteNodePlugin` turns into its tagged one after the caller
+ *   or a top-level span;
  * - inside or beside an annotation mark, where a lone NBSP may be content the wrap split off
- *   (`$isNbspContentAtMark`) or a run piece the mark separated from the rest of its run;
+ *   (`$isNbspContentAtMark`) or a run piece the mark separated from the rest of its run — the
+ *   editor→USJ conversion already keeps those as content;
  * - inside an attribute display run.
  *
  * Nor is a token-mode or tagged node one; a note's caller slot, and chapter and unknown-block text,
@@ -126,13 +129,8 @@ export function $displayWhitespaceTransform(node: TextNode): void {
 function $isLeftoverDisplaySpace(node: TextNode): boolean {
   if (node.getMode() !== "normal" || $getState(node, textTypeState) !== undefined) return false;
   const parent = node.getParent();
-  if (
-    $isCharNode(parent) ||
-    $isNoteNode(parent) ||
-    $isTypedMarkNode(parent) ||
-    $isAttributeRunNode(parent)
-  )
-    return false;
+  if ($isTypedMarkNode(parent) || $isAttributeRunNode(parent)) return false;
+  if ($isNoteNode(parent) && parent.getChildren().some($isImmutableNoteCallerNode)) return false;
   const previous = node.getPreviousSibling();
   const next = node.getNextSibling();
   return !$isMarkerNode(previous) && !$isTypedMarkNode(previous) && !$isTypedMarkNode(next);
