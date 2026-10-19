@@ -190,9 +190,9 @@ describe("a pasted copy of annotated display bytes", () => {
     expect(displayAnnotated(mounted.lexical)).toEqual({ "1": ["grace"] });
 
     const copied = await copyWholeSpan(mounted);
-    // The internal flavor serializes node state, so the copy itself carries the annotation; what
-    // this pins is that the paste leaves it behind.
-    expect(copied["application/x-lexical-editor"]).toContain('"displayAnnotations"');
+    // A copy is written as the document with no annotation writes it, so its internal flavor
+    // carries no hold; the paste of it must leave the annotation where it was, and nowhere else.
+    expect(copied["application/x-lexical-editor"]).not.toContain('"displayAnnotations"');
 
     await pasteAtEndOfParagraph(mounted, copied);
 
