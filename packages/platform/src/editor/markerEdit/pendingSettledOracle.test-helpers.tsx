@@ -1932,13 +1932,26 @@ async function writeClipboard(
   command: typeof COPY_COMMAND | typeof CUT_COMMAND,
 ): Promise<{ [flavor: string]: string }> {
   const { event, getData } = copyEvent({ native: true });
-  await act(async () => {
-    mounted.lexical.dispatchCommand(command, event);
-    // Lexical's own cut removes the range only once its copy has resolved.
-    await Promise.resolve();
-    await Promise.resolve();
-    await drainNativeSelectionChange();
-  });
+  // Lexical's own cut removes the range in an update of its own once its copy has resolved, so
+  // an update that throws there rejects a promise no command returns. The editor's error handler
+  // is borrowed for the gesture so the throw comes back from here, as a throw in a synchronous
+  // command does.
+  const errors: unknown[] = [];
+  const onError = mounted.lexical._onError;
+  mounted.lexical._onError = (error) => {
+    errors.push(error);
+  };
+  try {
+    await act(async () => {
+      mounted.lexical.dispatchCommand(command, event);
+      await Promise.resolve();
+      await Promise.resolve();
+      await drainNativeSelectionChange();
+    });
+  } finally {
+    mounted.lexical._onError = onError;
+  }
+  if (errors.length > 0) throw errors[0];
   return Object.fromEntries(
     CLIPBOARD_FLAVORS.map((flavor) => [flavor, getData(flavor)]).filter(([, data]) => data !== ""),
   );
