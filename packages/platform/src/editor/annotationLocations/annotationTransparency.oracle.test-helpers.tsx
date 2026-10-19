@@ -798,6 +798,31 @@ function startsWithWord(block: unknown, word: string): boolean {
   return Array.isArray(content) && typeof content[0] === "string" && content[0].startsWith(word);
 }
 
+/**
+ * Whether `paste`'s internal flavor holds a note caller with no note around it. The editor with no
+ * annotation writes one (a copy of a collapsed note's inside), and pasting it throws while the
+ * caller renders, outside any command that could catch it, so such a paste is not made.
+ */
+function hasNoteCallerOutsideNote(paste: { [flavor: string]: string }): boolean {
+  const json = paste["application/x-lexical-editor"];
+  if (!json) return false;
+  const visit = (nodes: unknown, isInNote: boolean): boolean =>
+    Array.isArray(nodes) &&
+    nodes.some((node: unknown) => {
+      if (typeof node !== "object" || node === null || !("type" in node)) return false;
+      if (node.type === "immutable-note-caller" && !isInNote) return true;
+      return "children" in node && visit(node.children, isInNote || node.type === "note");
+    });
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return typeof parsed === "object" && parsed !== null && "nodes" in parsed
+      ? visit(parsed.nodes, false)
+      : false;
+  } catch {
+    return false;
+  }
+}
+
 /** A paste {@link pastedAs} reports. */
 interface PastedAs {
   flavors: string[];
@@ -852,6 +877,10 @@ async function pastedAs(payload: { [flavor: string]: string }, view: string): Pr
     await act(async () => {
       for (const [index, paste] of pastes.entries()) {
         pasting = index;
+        if (hasNoteCallerOutsideNote(paste)) {
+          errors[index].push("not pasted: a note caller with no note around it");
+          continue;
+        }
         mounted.lexical.update(
           () => {
             const target = $getNodeByKey(targets[index]);
