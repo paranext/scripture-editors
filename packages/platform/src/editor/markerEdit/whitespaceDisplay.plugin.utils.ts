@@ -847,7 +847,9 @@ export function $selectionToUsfmText(selection: RangeSelection): string {
                 ? nodeText.slice(anchorOffset, focusOffset)
                 : nodeText.slice(focusOffset, anchorOffset);
         } else nodeText = isBefore ? nodeText.slice(anchorOffset) : nodeText.slice(focusOffset);
-      } else if (node === lastNode) {
+      } else if (node === lastNode && (isBefore ? focus : anchor).type === "text") {
+        // An element point ends the range after the last node, which is then read whole: its
+        // character offset (0 unless the point is at its element's end) is not into this text.
         nodeText = isBefore ? nodeText.slice(0, focusOffset) : nodeText.slice(0, anchorOffset);
       }
       text += $isNoteInternalDisplaySeparator(node)

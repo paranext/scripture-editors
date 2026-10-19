@@ -27,7 +27,10 @@ import {
   TRANSPARENCY_RANGE_KEYSTROKES,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
 import { drainNativeSelectionChange } from "../editor-test.utils";
-import { $copyWithoutAnnotations } from "../markerEdit/whitespaceDisplay.plugin.utils";
+import {
+  $copyWithoutAnnotations,
+  $selectionToUsfmText,
+} from "../markerEdit/whitespaceDisplay.plugin.utils";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
@@ -43,6 +46,7 @@ import {
 import {
   $isCharNode,
   $isMarkerNode,
+  $isNoteNode,
   $isTypedMarkNode,
   $lastPiece,
   $logicalText,
@@ -571,4 +575,46 @@ describe("a copy of annotated text", () => {
     },
     120_000,
   );
+});
+
+describe("a Standard-view copy whose range ends just past a collapsed note", () => {
+  it("copies the note whole, from either spelling of its end, with and without annotations", async () => {
+    const usj = oracleRows("standard").find(([name]) => name.startsWith("note ("))?.[1];
+    if (!usj) throw new Error("no row note");
+    const viewOptions = pendingOracleView("standard");
+    for (const isAnnotated of [false, true]) {
+      const mounted = await mountInView(usj, viewOptions);
+      if (isAnnotated) {
+        const plan = mounted.lexical.getEditorState().read(() => $planAnnotations(viewOptions));
+        for (const { id, range } of plan)
+          await act(async () => {
+            mounted.ref.current?.setAnnotation(range, ORACLE_TYPE, id);
+            await Promise.resolve();
+          });
+      }
+      const copied = mounted.lexical.getEditorState().read(() =>
+        (["past the note", "end of the note"] as const).map((end) => {
+          const para = $getRoot().getChildren()[2];
+          const note = $isElementNode(para) ? para.getChildren().find($isNoteNode) : undefined;
+          if (!note) throw new Error("no note");
+          const start = $textContaining("a");
+          const selection = $createRangeSelection();
+          selection.anchor.set(start.getKey(), start.getTextContentSize(), "text");
+          if (end === "past the note")
+            selection.focus.set(
+              note.getParentOrThrow().getKey(),
+              note.getIndexWithinParent() + 1,
+              "element",
+            );
+          else selection.focus.set(note.getKey(), note.getChildrenSize(), "element");
+          return $selectionToUsfmText(selection);
+        }),
+      );
+      expect(copied, `annotated: ${isAnnotated}`).toEqual([
+        "\\f + \\ft note text\\ft*\\f*",
+        "\\f + \\ft note text\\ft*\\f*",
+      ]);
+      mounted.unmount();
+    }
+  }, 120_000);
 });
