@@ -164,6 +164,91 @@ export function $restCaretThroughMarks(): void {
   selection.focus.set(node.getKey(), offset, "text");
 }
 
+/**
+ * Put a range's start Lexical read onto the start of the text right after an annotation mark back
+ * at the end of the mark's content, where it is in the document. Lexical reads a range's start at
+ * the end of a mark's text onto the start of the node after the mark, at every read from the
+ * screen, including the one an update that inserts makes as it starts; with no mark there the
+ * start stays at the end of the content. A start the screen has at the start of that node is
+ * where it is, so `$isReadFromEnd` says whether the screen has the start at the end of a given
+ * text; without it, every such start is put back. A no-op for a collapsed selection
+ * ({@link $restoreCaretAtMarkEnd} restates a caret). Mutating (the selection only).
+ *
+ * @returns Whether the start moved.
+ */
+export function $restoreRangeStartAtMarkEnd(
+  selection: RangeSelection,
+  $isReadFromEnd?: (text: LexicalNode) => boolean,
+): boolean {
+  if (selection.isCollapsed()) return false;
+  const start = selection.isBackward() ? selection.focus : selection.anchor;
+  if (start.type !== "text" || start.offset !== 0) return false;
+  const node = start.getNode();
+  if (!$isTypedMarkNode(node.getPreviousSibling())) return false;
+  const { node: place, offset } = $caretPlaceThroughMarks(start);
+  if (place.is(node) || ($isReadFromEnd && !$isReadFromEnd(place))) return false;
+  start.set(place.getKey(), offset, "text");
+  return true;
+}
+
+/**
+ * Restate the ends of a range Lexical read from the screen beside an annotation mark as Lexical
+ * reads them in the tree without marks. Lexical moves a range's start at the end of a text into an
+ * inline element the text is followed by, and its end at the start of a text into an inline element
+ * the text follows or onto the end of a text it follows: a range from the end of a word up into a
+ * char span's opener starts inside the span, and one from a paragraph marker's separator up to the
+ * start of the content ends in the separator. A mark at that edge hides the neighbour from the
+ * rule, so the end stays where it was read: a cut or copy of the first range takes the span's
+ * element along, and typing over the second replaces the separator. Read through marks
+ * ({@link $nextSiblingThroughMarks}, {@link $previousSiblingThroughMarks}), each end moves as it
+ * does with no mark; a display-byte carrier cut into pieces is one node. A collapsed caret is left
+ * alone ({@link $restoreCaretAtMarkEnd} restates that); a range's start Lexical read onto the
+ * start of the text after a mark from the end of the mark's content is put back there first
+ * ({@link $restoreRangeStartAtMarkEnd}, with `$isReadFromEnd`). Mutating (the selection only).
+ *
+ * @returns Whether an end moved.
+ */
+export function $resolveRangeEndsThroughMarks(
+  selection: RangeSelection,
+  $isReadFromEnd?: (text: LexicalNode) => boolean,
+): boolean {
+  if (selection.isCollapsed()) return false;
+  const [start, end] = selection.isBackward()
+    ? [selection.focus, selection.anchor]
+    : [selection.anchor, selection.focus];
+  let moved = $restoreRangeStartAtMarkEnd(selection, $isReadFromEnd);
+  const isHiddenInlineElement = (
+    node: LexicalNode | null,
+    rawNeighbour: LexicalNode | null,
+  ): node is ElementNode =>
+    $isElementNode(node) && !$isTypedMarkNode(node) && node.isInline() && !node.is(rawNeighbour);
+  if (start.type === "text") {
+    const node = start.getNode();
+    if (start.offset === node.getTextContentSize() && $lastPiece(node).is(node)) {
+      const next = $nextSiblingThroughMarks(node);
+      if (isHiddenInlineElement(next, node.getNextSibling())) {
+        start.set(next.getKey(), 0, "element");
+        moved = true;
+      }
+    }
+  }
+  if (end.type === "text") {
+    const node = end.getNode();
+    if (end.offset === 0 && $pieceHead(node).is(node)) {
+      const previous = $previousSiblingThroughMarks(node);
+      if (isHiddenInlineElement(previous, node.getPreviousSibling())) {
+        end.set(previous.getKey(), previous.getChildrenSize(), "element");
+        moved = true;
+      } else if ($isTextNode(previous) && !$lastPiece(previous).is(node.getPreviousSibling())) {
+        const last = $lastPiece(previous);
+        end.set(last.getKey(), last.getTextContentSize(), "text");
+        moved = true;
+      }
+    }
+  }
+  return moved;
+}
+
 /** Whether `node` is a plain content `TextNode` (not a subclass such as a marker glyph or a
  * verse), the kind of node a mark cuts content text into. */
 export function $isPlainTextNode(node: LexicalNode | null | undefined): node is TextNode {
@@ -222,6 +307,69 @@ export function $isRangeSplitByMarks(selection: RangeSelection): boolean {
 export function $removeRangeSplitByMarks(selection: RangeSelection): boolean {
   if (selection.isCollapsed() || !$isRangeSplitByMarks(selection)) return false;
   selection.removeText();
+  return true;
+}
+
+/**
+ * Where a caret goes once a range starting at an edge of an annotation mark's text is removed: at
+ * that edge of the text when it is still there — where Lexical types beside the mark, outside it, as
+ * at any mark's edge — or else, the mark gone with its text, at the place the outermost mark it
+ * starts or ends stood. `undefined` when `point` is at no mark's edge.
+ */
+function $caretAfterRemoval(point: PointType): (() => void) | undefined {
+  if (point.type !== "text") return undefined;
+  const text = point.getNode();
+  const isAtStart = point.offset === 0;
+  const isAtEnd = point.offset === text.getTextContentSize();
+  let node: LexicalNode = text;
+  let parent = node.getParent();
+  let outer: LexicalNode | undefined;
+  while (
+    $isTypedMarkNode(parent) &&
+    ((isAtStart && node.is(parent.getFirstChild())) || (isAtEnd && node.is(parent.getLastChild())))
+  ) {
+    outer = parent;
+    node = parent;
+    parent = parent.getParent();
+  }
+  const element = parent;
+  if (!outer || !element) return undefined;
+  const mark = outer;
+  const before = mark.getPreviousSibling();
+  return () => {
+    if ($isTextNode(text) && text.isAttached()) {
+      const offset = isAtStart ? 0 : text.getTextContentSize();
+      text.select(offset, offset);
+      return;
+    }
+    if (!element.isAttached()) return;
+    const left = isAtStart || !mark.isAttached() ? before : mark;
+    const offset = left?.isAttached() ? left.getIndexWithinParent() + 1 : 0;
+    element.select(offset, offset);
+  };
+}
+
+/**
+ * Remove `selection`'s range, before text replaces it, when the replacement would not go where it
+ * goes with no mark: its ends sit in different parents only because a mark holds one of them
+ * ({@link $isRangeSplitByMarks}), or it starts at an edge of a mark's text. Lexical replaces a
+ * range in a parent that takes no text before or after it (a mark) by clearing it and typing at
+ * the place it then resolves, which is past the node before the mark (into a glyph's run) rather
+ * than where the range was. So the range is removed here, and a caret that started at a mark's
+ * edge is put back at that edge ({@link $caretAfterRemoval}), where the text typed next goes
+ * beside the mark as with no mark.
+ *
+ * Mutating: call inside `editor.update()`, before the insertion that replaces the range.
+ *
+ * @returns Whether the range was removed.
+ */
+export function $removeRangeHeldByMarks(selection: RangeSelection): boolean {
+  if (selection.isCollapsed()) return false;
+  const start = selection.isBackward() ? selection.focus : selection.anchor;
+  const $placeCaret = $caretAfterRemoval(start);
+  if (!$placeCaret && !$isRangeSplitByMarks(selection)) return false;
+  selection.removeText();
+  $placeCaret?.();
   return true;
 }
 

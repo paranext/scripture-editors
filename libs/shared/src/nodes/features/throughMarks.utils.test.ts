@@ -11,6 +11,8 @@ import {
   $nodeAfterBoundaryThroughMarks,
   $nodeBeforeBoundaryThroughMarks,
   $previousSiblingThroughMarks,
+  $removeRangeHeldByMarks,
+  $resolveRangeEndsThroughMarks,
   $restoreCaretAtMarkEnd,
   $textRunThroughMarks,
 } from "./throughMarks.utils.js";
@@ -321,5 +323,181 @@ describe("restoring a caret Lexical read past a mark's end", () => {
       },
       { discrete: true },
     );
+  });
+});
+
+describe("restating a range's ends Lexical read beside a mark", () => {
+  /**
+   * Where `$resolveRangeEndsThroughMarks` puts the ends of a range from `anchor` to `focus`, each a
+   * text spelled `[text, offset]`, in `In th` + a mark holding `e ` + `\w grace\w*` + a mark holding
+   * ` o` + `f God`, or (with `isUnmarked`) the same paragraph with no mark, or (with `lead`) `lead`
+   * in place of `In th`: each end's node (an element by its type) and offset, and whether either
+   * moved.
+   */
+  function resolved(
+    anchor: [string, number],
+    focus: [string, number],
+    isUnmarked = false,
+    lead?: string,
+  ): string {
+    const { editor } = createBasicTestEnvironment(nodes);
+    let out = "";
+    editor.update(
+      () => {
+        const texts = lead
+          ? [
+              $createTextNode(lead),
+              $createTypedMarkNode({ t: ["1"] }).append($createTextNode("e ")),
+            ]
+          : isUnmarked
+            ? [$createTextNode("In the ")]
+            : [
+                $createTextNode("In th"),
+                $createTypedMarkNode({ t: ["1"] }).append($createTextNode("e ")),
+              ];
+        const after = isUnmarked
+          ? [$createTextNode(" of God")]
+          : [
+              $createTypedMarkNode({ t: ["1"] }).append($createTextNode(" o")),
+              $createTextNode("f God"),
+            ];
+        $getRoot().append(
+          $createParaNode().append(
+            ...texts,
+            $createCharNode("w").append(
+              $createMarkerNode("w"),
+              $createTextNode(" grace"),
+              $createMarkerNode("w", "closing"),
+            ),
+            ...after,
+          ),
+        );
+        const find = (text: string): TextNode => {
+          const found = $getRoot()
+            .getAllTextNodes()
+            .find((node) => node.getTextContent() === text);
+          if (!found) throw new Error(`no text ${text}`);
+          return found;
+        };
+        const selection = $createRangeSelection();
+        selection.anchor.set(find(anchor[0]).getKey(), anchor[1], "text");
+        selection.focus.set(find(focus[0]).getKey(), focus[1], "text");
+        const moved = $resolveRangeEndsThroughMarks(selection);
+        const spell = (point: typeof selection.anchor): string =>
+          `${name(point.getNode())}@${point.offset}`;
+        out = `${moved} ${spell(selection.anchor)} ${spell(selection.focus)}`;
+      },
+      { discrete: true },
+    );
+    return out;
+  }
+
+  it("moves a range's start at a mark's end into the span after the mark", () => {
+    // Lexical moves the start at the end of `In the ` into the span it is followed by.
+    expect(resolved(["e ", 2], ["\\w", 1])).toBe("true char@0 \\w@1");
+    expect(resolved(["\\w", 1], ["e ", 2])).toBe("true \\w@1 char@0");
+  });
+
+  it("moves a range's end at a mark's start into the span before the mark", () => {
+    // Lexical moves the end at the start of ` of God` into the span it follows.
+    expect(resolved(["\\w*", 2], [" o", 0])).toBe("true \\w*@2 char@3");
+    expect(resolved([" o", 0], ["\\w*", 2])).toBe("true char@3 \\w*@2");
+  });
+
+  it("moves a range's end at a mark's start onto the end of the text before the mark", () => {
+    // Lexical moves the end at the start of `In the ` onto the end of the text before it.
+    expect(resolved(["P ", 0], ["e ", 0], false, "P ")).toBe("true P @0 P @2");
+  });
+
+  it("puts a range's start Lexical read past a mark's end back at the mark's content end", () => {
+    // Lexical reads a start at the end of a mark's content onto the start of the text after it.
+    expect(resolved(["f God", 0], ["f God", 3])).toBe("true  o@2 f God@3");
+  });
+
+  it("leaves ends alone that no mark keeps from Lexical's own reading", () => {
+    expect(resolved(["In the ", 7], ["\\w", 1], true)).toBe("false In the @7 \\w@1");
+    expect(resolved(["In th", 2], [" o", 1])).toBe("false In th@2  o@1");
+    // A range's start at the start of a text, and its end at the end of one, stay.
+    expect(resolved(["e ", 0], ["f God", 5])).toBe("false e @0 f God@5");
+  });
+});
+
+describe("removing a range that starts at a mark's edge", () => {
+  it("leaves the caret where the range was, outside the mark", () => {
+    const { editor } = createBasicTestEnvironment(nodes);
+    let out = "";
+    editor.update(
+      () => {
+        const held = $createTextNode("b");
+        const para = $createParaNode().append(
+          $createTextNode("a "),
+          $createMarkerNode("w"),
+          $createTypedMarkNode({ t: ["1"] }).append(held),
+        );
+        $getRoot().append(para);
+        held.select(0, 1);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        const removed = $removeRangeHeldByMarks(selection);
+        selection.insertText("x");
+        out = `${removed} ${para
+          .getChildren()
+          .map((child) => `${child.getType()}:${child.getTextContent()}`)
+          .join(",")}`;
+      },
+      { discrete: true },
+    );
+    // With no mark, "x" replaces "b" after the glyph; it does not join the glyph.
+    expect(out).toBe("true text:a ,marker:\\w,text:x");
+  });
+});
+
+describe("removing part of a mark's text from the mark's edge", () => {
+  /**
+   * The caret left once `held`'s `[start, end)` is removed, and the paragraph's texts after typing
+   * "x" there, marks read through.
+   */
+  function typedOver(start: number, end: number, isMarked: boolean): string {
+    const { editor } = createBasicTestEnvironment(nodes);
+    let out = "";
+    editor.update(
+      () => {
+        const held = $createTextNode("bc");
+        const para = $createParaNode().append(
+          $createTextNode("a "),
+          $createMarkerNode("w"),
+          isMarked ? $createTypedMarkNode({ t: ["1"] }).append(held) : held,
+        );
+        $getRoot().append(para);
+        held.select(start, end);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("no range selection");
+        if (!isMarked || !$removeRangeHeldByMarks(selection)) selection.removeText();
+        const { anchor } = selection;
+        const caret = `${anchor.type} ${anchor.getNode().getTextContent()}@${anchor.offset}`;
+        selection.insertText("x");
+        const texts = para
+          .getChildren()
+          .flatMap((child) => (child instanceof TypedMarkNode ? child.getChildren() : [child]));
+        // Adjacent texts read as one run, as the mark's cut is not a boundary of the document.
+        const runs: string[] = [];
+        for (const text of texts) {
+          const last = runs.length - 1;
+          if (text.getType() === "text" && runs[last]?.startsWith("text:"))
+            runs[last] += text.getTextContent();
+          else runs.push(`${text.getType()}:${text.getTextContent()}`);
+        }
+        out = `${caret} ${runs.join(",")}`;
+      },
+      { discrete: true },
+    );
+    return out;
+  }
+
+  it.each([
+    [0, 1],
+    [1, 2],
+  ])("leaves the caret on the rest of the text, as with no mark, over [%i, %i)", (start, end) => {
+    expect(typedOver(start, end, true)).toBe(typedOver(start, end, false));
   });
 });

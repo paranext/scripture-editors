@@ -14,20 +14,25 @@ import {
   $copyNode,
   $createRangeSelection,
   $createTextNode,
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $getState,
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  $parseSerializedNode,
   $setSelection,
   $setState,
   COMMAND_PRIORITY_HIGH,
   createEditor,
   HISTORIC_TAG,
+  INSERT_PARAGRAPH_COMMAND,
   LexicalEditor,
   LexicalNode,
+  NodeKey,
   SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+  SerializedLexicalNode,
   TextNode,
 } from "lexical";
 import {
@@ -38,6 +43,7 @@ import {
   $logicalText,
   $pieceHead,
   $pieces,
+  displayPieceChainState,
   displayPieceTokenTextState,
   NBSP,
   getDecoratorPaint,
@@ -1132,6 +1138,37 @@ describe("the display-annotation index", () => {
     release();
   });
 
+  describe("a paragraph break inside a cut carrier", () => {
+    it("splits the carrier's text at the caret, as a break in the carrier no annotation cuts does", () => {
+      const { editor, run, release } = setup();
+      let closer!: TextNode;
+      editor.update(() => (closer = run.replace($createMarkerNode("w", "closing"))), {
+        discrete: true,
+      });
+      wrap(editor, closer, 0, 1, "external-spelling", "a");
+      editor.update(
+        () => {
+          const [head] = $pieces(closer.getLatest());
+          head.select(1, 1);
+          editor.dispatchCommand(INSERT_PARAGRAPH_COMMAND, undefined);
+        },
+        { discrete: true },
+      );
+      editor.read(() => {
+        // The generic break would split the text it finds at the caret, and leave the rest there.
+        const para = $getRoot().getFirstChild();
+        if (!$isElementNode(para)) throw new Error("no paragraph");
+        expect(
+          para.getChildren().map((node) => `${node.getType()} ${node.getTextContent()}`),
+        ).toEqual(["text In the ", "marker \\", "text w*"]);
+        expect(
+          $displayAnnotationsOf(para.getChildAtIndex(1) ?? closer).map(({ id }) => id),
+        ).toEqual(["a"]);
+      });
+      release();
+    });
+  });
+
   describe("a pasted copy of a carrier's pieces", () => {
     /** Paste `nodes` through the command, then put them at the start of the run's paragraph, as
      * the default handler inserts a paste at a caret there: before its content text, which no
@@ -1517,6 +1554,96 @@ describe("the display-annotation index", () => {
         { discrete: true },
       );
       release();
+    });
+
+    // A paste builds its nodes from the clipboard's JSON (`$parseSerializedNode`) in the update
+    // that inserts them, into an editor where no carrier of their class may have been cut yet (a
+    // fresh editor, another editor of the page), so the states they were copied with are read
+    // from that JSON there.
+    describe("built from the clipboard's JSON in another editor", () => {
+      /** The serialized pieces of a closing glyph `\w*` held by one annotation over its `\`,
+       * each piece as a copy writes it. */
+      function copiedPieces(): SerializedLexicalNode[] {
+        const { editor, run, release } = setup();
+        let closer!: TextNode;
+        editor.update(() => (closer = run.replace($createMarkerNode("w", "closing"))), {
+          discrete: true,
+        });
+        wrap(editor, closer, 0, 1, "external-spelling", "a");
+        const json = editor.read(() =>
+          $pieces(closer.getLatest()).map((piece) => piece.exportJSON()),
+        );
+        release();
+        return json;
+      }
+
+      /** Paste `json` into a fresh editor ({@link $paste}); the pasted nodes' keys. */
+      function pasteFresh(json: SerializedLexicalNode[]) {
+        const target = setup();
+        let keys!: NodeKey[];
+        target.editor.update(
+          () => {
+            const nodes = json.map((each) => $parseSerializedNode(each));
+            keys = nodes.map((node) => node.getKey());
+            $paste(target.editor, target.run, nodes);
+          },
+          { discrete: true },
+        );
+        return { ...target, keys };
+      }
+
+      it("holds nothing it was copied holding", () => {
+        const { editor, release } = pasteFresh(copiedPieces());
+        editor.read(() => {
+          const para = $getRoot().getFirstChild();
+          if (!$isElementNode(para)) throw new Error("no paragraph");
+          expect(para.getAllTextNodes().flatMap((node) => $displayAnnotationsOf(node))).toEqual([]);
+        });
+        expect(painted(editor)).toEqual([]);
+        release();
+      });
+
+      it("makes a head pasted without its continuation a carrier of its own, of no chain", () => {
+        const [head] = copiedPieces();
+        const { editor, keys, release } = pasteFresh([head]);
+        editor.read(() => {
+          const node = $getNodeByKey(keys[0]);
+          if (!node) throw new Error("the pasted head is gone");
+          expect($pieces(node).map((piece) => piece.getTextContent())).toEqual(["\\"]);
+          expect($getState(node, displayPieceChainState)).toBeUndefined();
+        });
+        release();
+      });
+
+      it("pastes a piece of a cut token whole, as a copy takes the token it touches whole", () => {
+        const { editor, run, release } = setup();
+        editor.update(() => run.getWritable().setMode("token"), { discrete: true });
+        wrap(editor, run, 1, 6, "external-spelling", "a");
+        const [, continuation] = editor.read(() =>
+          $pieces(run.getLatest()).map((piece) => piece.exportJSON()),
+        );
+        release();
+        const { editor: target, keys, release: releaseTarget } = pasteFresh([continuation]);
+        target.read(() => {
+          const node = $getNodeByKey(keys[0]);
+          if (!node) throw new Error("the pasted piece is gone");
+          expect(node.getTextContent()).toBe("|grace");
+          expect($getState(node, displayPieceTokenTextState)).toBeUndefined();
+        });
+        releaseTarget();
+      });
+
+      it("makes a continuation pasted without its head a carrier of its own", () => {
+        const [, continuation] = copiedPieces();
+        const { editor, keys, release } = pasteFresh([continuation]);
+        editor.read(() => {
+          const node = $getNodeByKey(keys[0]);
+          if (!node) throw new Error("the pasted continuation is gone");
+          expect($isPieceContinuation(node)).toBe(false);
+          expect($getState(node, displayPieceChainState)).toBeUndefined();
+        });
+        release();
+      });
     });
   });
 });

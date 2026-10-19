@@ -4,12 +4,17 @@
  * its content into the previous paragraph (PT9 reformat outcome).
  */
 
-import { $requestTier2ForNode, $settleScopeNodesInOrder } from "./tier2Rebuild.utils";
+import {
+  $isTornSecondHalf,
+  $requestTier2ForNode,
+  $settleScopeNodesInOrder,
+} from "./tier2Rebuild.utils";
 import { MarkerEditContext } from "./markerEditTier1.utils";
 import { isParaKindMarker } from "./markerKind.utils";
 import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
 import { $dfs } from "@lexical/utils";
 import {
+  $addUpdateTag,
   $createTextNode,
   $getSelection,
   $getState,
@@ -51,8 +56,10 @@ import {
   $logicalNextSibling,
   $logicalText,
   $pieces,
-  $removeRangeSplitByMarks,
+  $removeRangeHeldByMarks,
   $setLogicalText,
+  $joinCarriersAtSelection,
+  CARET_IN_GLYPH_TAG,
 } from "shared";
 import { showParaMarkerPrefix } from "shared-react";
 
@@ -320,10 +327,10 @@ export function $armCollapsedParaDeletion(context: MarkerEditContext): void {
  * that touches no glyph is left to the stock replacement, which is already delete-then-insert
  * for plain content; a PARTIALLY covered glyph keeps its surviving bytes and the typed text
  * joins them (`\` + typed `x` → the pending literal `\x`), exactly as delete-then-type implies.
- * The one glyph-free range the stock replacement cannot take is one whose ends sit in different
- * parents only because an annotation mark holds one of them (`$removeRangeSplitByMarks`): it
- * climbs out of the span and pulls the paragraph's text after it in, so that range is removed
- * here too.
+ * The glyph-free ranges the stock replacement cannot take are those an annotation mark holds an
+ * end of (`$removeRangeHeldByMarks`): one whose ends sit in different parents only because of a
+ * mark climbs out of the span and pulls the paragraph's text after it in, and one starting at a
+ * mark's edge types past the node before the mark; so those are removed here too.
  *
  * Mutating (arms context state and removes the selected text): call from a
  * CONTROLLED_TEXT_INSERTION_COMMAND handler registered above the default insertion and below
@@ -333,11 +340,19 @@ export function $prepareReplaceSelection(context: MarkerEditContext): void {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return;
   if (!selection.getNodes().some((node) => $isMarkerNode(node))) {
-    $removeRangeSplitByMarks(selection);
+    $removeRangeHeldByMarks(selection);
     return;
   }
   $armWholeParaDeletion(context);
+  // A glyph an annotation cut is removed from as one text, as the uncut glyph is: removing a
+  // whole piece would take its node, and the caret with it, out of the glyph.
+  $joinCarriersAtSelection();
   selection.removeText();
+  // The caret this removal leaves at a glyph's start is in the glyph, as with no mark before it.
+  const { anchor } = selection;
+  if (selection.isCollapsed() && anchor.type === "text" && anchor.offset === 0) {
+    if ($isMarkerNode(anchor.getNode())) $addUpdateTag(CARET_IN_GLYPH_TAG);
+  }
 }
 
 /**
@@ -702,49 +717,64 @@ export function $charNodeDeletionTransform(char: CharNode, context: MarkerEditCo
   const first = char.getFirstChild();
   const hasOpener = $isMarkerNode(first) && first.getMarkerSyntax() === "opening";
   if (!hasOpener) {
-    // A span torn in two (a line break typed inside it) is an opener-less half after a half
-    // missing its closer. The second half's closer is the first half's: the Tier-2 rebuild the
-    // first half routes to re-reads both halves' bytes and pairs them, while unwrapping the second
-    // half first drops that closer. Which half's transform runs first is not ours to choose, so
-    // the rebuild is made from here too.
-    const torn = $earlierSpanMissingCloser(char);
-    if (torn && $requestTier2ForNode(torn, context)) return;
+    // A span Lexical split where it put nodes inside it (a line break typed, a paste) is no
+    // deleted opener: its closer belongs to the opener of the half before it, and the Tier-2
+    // rebuild that half routes to re-reads both halves, and what went in between, back into spans.
+    // Unwrapping this half first would drop that closer, and which half's transform runs first is
+    // Lexical's dirty order, which an annotation mark among the span's children changes — so the
+    // rebuild is made from here too.
+    const firstHalf = $firstHalfOfSplitSpan(char);
+    if (firstHalf) {
+      $requestTier2ForNode(firstHalf, context);
+      return;
+    }
     $unwrapCharNode(char); // opener deleted -> unwrap the span
     context.logger?.debug(`[MarkerEdit] unwrapped char span "${char.getMarker()}"`);
     return;
   }
-  if ($isMissingNeededCloser(char)) {
+  if ($needsMissingCloser(char)) {
     // Closer deletion goes through Tier 2 (tokenizer decides the span extent).
     $requestTier2ForNode(char, context);
   }
 }
 
-/**
- * Whether `char` has its opening glyph but not a closing glyph it needs. A span "needs" a closer
- * iff it is not marked closed="false": that flag (which ParatextData emits on every
- * genuinely-unclosed span, footnote/cross-ref content included) means the missing closer is the
- * span's normal shape, not deletion damage. Closer-ness keys on this actual state, never on the
- * marker family — an explicitly-closed \xt DOES need its closer, so deleting it must still
- * re-route through Tier 2.
- */
-function $isMissingNeededCloser(char: CharNode): boolean {
-  const first = char.getFirstChild();
-  if (!$isMarkerNode(first) || first.getMarkerSyntax() !== "opening") return false;
-  const needsCloser = char.getUnknownAttributes()?.closed !== "false";
-  const hasCloser = char
+/** Whether `char` holds a closing glyph among its children. */
+function $hasCloserGlyph(char: CharNode): boolean {
+  return char
     .getChildren()
     .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing");
-  return needsCloser && !hasCloser;
 }
 
-/** A span of `char`'s marker before it in its settle scope ({@link $settleScopeNodesInOrder})
- * that is missing a closer it needs ({@link $isMissingNeededCloser}): the opening half of a span
- * `char` is the other half of. */
-function $earlierSpanMissingCloser(char: CharNode): CharNode | undefined {
-  for (const node of $settleScopeNodesInOrder(char)) {
-    if (node.is(char)) return undefined;
-    if ($isCharNode(node) && node.getMarker() === char.getMarker() && $isMissingNeededCloser(node))
-      return node;
+/**
+ * Whether `char` lacks the closing glyph it needs. A span "needs" a closer iff it is not marked
+ * closed="false": that flag (which ParatextData emits on every genuinely-unclosed span,
+ * footnote/cross-ref content included) means the missing closer is the span's normal shape, not
+ * deletion damage. Closer-ness keys on this actual state, never on the marker family — an
+ * explicitly-closed \xt DOES need its closer, so deleting it must still re-route through Tier 2.
+ */
+function $needsMissingCloser(char: CharNode): boolean {
+  return char.getUnknownAttributes()?.closed !== "false" && !$hasCloserGlyph(char);
+}
+
+/**
+ * The span whose opener `char`'s closer belongs to, when `char` is the opener-less second half of
+ * a span Lexical split to put nodes inside it ({@link $isTornSecondHalf}): the nearest earlier span
+ * of its marker in its settle scope ({@link $settleScopeNodesInOrder}), in document order and past
+ * whole spans the insertion put between them, when that span holds an opener and lacks the closer
+ * it needs. The scope, not the parent, because a nested span's halves sit in the two halves of the
+ * span around it. Read-only.
+ */
+function $firstHalfOfSplitSpan(char: CharNode): CharNode | undefined {
+  if (!$isTornSecondHalf(char)) return undefined;
+  const nodes = $settleScopeNodesInOrder(char);
+  const at = nodes.findIndex((node) => node.is(char));
+  for (const node of nodes.slice(0, Math.max(at, 0)).reverse()) {
+    if (!$isCharNode(node) || node.getMarker() !== char.getMarker()) continue;
+    const opener = node.getFirstChild();
+    const hasOpener = $isMarkerNode(opener) && opener.getMarkerSyntax() === "opening";
+    // A whole span between the two halves is one the insertion put there.
+    if (hasOpener && $hasCloserGlyph(node)) continue;
+    return hasOpener && $needsMissingCloser(node) ? node : undefined;
   }
   return undefined;
 }

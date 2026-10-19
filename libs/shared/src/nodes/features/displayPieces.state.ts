@@ -23,6 +23,7 @@ import {
 } from "./displayAnnotations.state.js";
 import {
   $addUpdateTag,
+  $createTextNode,
   $getEditor,
   $getNodeByKey,
   $getSelection,
@@ -205,11 +206,14 @@ export function $logicalPointOffset(
 /**
  * For a node transform (or any per-node pass) over a carrier class: when `node` is a continuation
  * piece, mark its carrier's head dirty, so the head's own pass reads and writes the whole carrier,
- * and return `true` — the caller then leaves `node` alone. A continuation whose head is gone is a
- * carrier of its own and returns `false`. Mutating: call inside `editor.update()`.
+ * and return `true` — the caller then leaves `node` alone. A continuation an element split moved
+ * off its head ({@link $isSplitOffPiece}) also returns `true`: the piece transform makes it a text,
+ * and nothing reads it as the carrier it was. A continuation whose head is gone is a carrier of its
+ * own and returns `false`. Mutating: call inside `editor.update()`.
  */
 export function $deferToPieceHead(node: LexicalNode): boolean {
   if (!$isPieceContinuation(node)) return false;
+  if ($isSplitOffPiece(node)) return true;
   const head = $pieceHead(node);
   if (head.is(node)) return false;
   head.markDirty();
@@ -456,16 +460,25 @@ export function $recordPieceChain(node: LexicalNode): void {
  * chain id of the pasted head's own, so the copy never continues the carrier it was copied from,
  * wherever it lands; a continuation pasted without its head is a carrier of its own, keeping its
  * class and state; a node pasted alone carries no chain id; and no piece keeps the token record of
- * the chain it came from. Where a pasted copy then joins a carrier is the piece transform's to
+ * the chain it came from. A `token` carrier is copied whole wherever a selection touches it, since
+ * a token's text is never cut, so the pieces of a cut token pasted without the rest of it are
+ * pasted as the whole token, which their record holds: the first takes its text and the others
+ * are left out of `nodes` (or removed from the element they were pasted in). Where a pasted copy then joins a carrier is the piece transform's to
  * decide, as Lexical decides it for text no annotation holds: beside a text Lexical would merge it
  * with, it is joined into that carrier (`$joinMergeableNeighbours`), and nowhere else. One sibling
- * list only, not the nodes' children. Mutating: call inside `editor.update()`.
+ * list only, not the nodes' children; each node may have been built from the clipboard's JSON in
+ * this update ({@link $parsePastedPieceStates}). Mutating: call inside `editor.update()`.
  */
-export function $restatePastedPieces(nodes: readonly LexicalNode[]): void {
+export function $restatePastedPieces(nodes: LexicalNode[]): void {
+  nodes.forEach($parsePastedPieceStates);
   // The pasted chains, each a head and the continuations pasted right after it.
   const chains: LexicalNode[][] = [];
+  /** Each pasted token piece's record of its whole token. */
+  const tokenTexts = new Map<LexicalNode, string>();
   let previous: { node: LexicalNode; chain: string | undefined } | undefined;
-  for (const node of nodes) {
+  for (const node of [...nodes]) {
+    const tokenText = $getState(node, displayPieceTokenTextState);
+    if (tokenText !== undefined) tokenTexts.set(node, tokenText);
     const chain = $getState(node, displayPieceChainState);
     const continues =
       $isPieceContinuation(node) &&
@@ -481,6 +494,23 @@ export function $restatePastedPieces(nodes: readonly LexicalNode[]): void {
       $setState(node, displayPieceTokenTextState, undefined);
     previous = { node, chain };
   }
+  for (const [index, pieces] of chains.entries()) {
+    const [head] = pieces;
+    const tokenText = tokenTexts.get(head);
+    if (
+      !$isTextNode(head) ||
+      tokenText === undefined ||
+      pieces.map((piece) => piece.getTextContent()).join("") === tokenText
+    )
+      continue;
+    head.setTextContent(tokenText);
+    for (const piece of pieces.slice(1)) {
+      const at = nodes.indexOf(piece);
+      if (at >= 0) nodes.splice(at, 1);
+      if (piece.getParent()) piece.remove();
+    }
+    chains[index] = [head];
+  }
   // A chain of more than one piece takes its pasted head's key as its id; a node pasted alone is
   // no chain, and carries none (a stale id would keep Lexical from merging it with equal text).
   for (const pieces of chains) {
@@ -492,12 +522,37 @@ export function $restatePastedPieces(nodes: readonly LexicalNode[]): void {
 }
 
 /** The node states a cut or a hold puts on a text: everything a text no annotation holds lacks. */
-const PIECE_STATE_KEYS: ReadonlySet<string> = new Set([
-  displayPieceContinuationState.key,
-  displayPieceChainState.key,
-  displayPieceTokenTextState.key,
-  displayAnnotationsState.key,
-]);
+const PIECE_STATES = [
+  displayPieceContinuationState,
+  displayPieceChainState,
+  displayPieceTokenTextState,
+  displayAnnotationsState,
+] as const;
+
+/** The keys of {@link PIECE_STATES}. */
+const PIECE_STATE_KEYS: ReadonlySet<string> = new Set(PIECE_STATES.map(({ key }) => key));
+
+/**
+ * Make the piece and hold states ({@link PIECE_STATES}) that `node`, built from a clipboard's JSON
+ * in this update, was copied with writable. Lexical parses a state a node's JSON brings only once
+ * the editor knows that state for nodes of its type; until then the value stays in the node's
+ * record of unparsed states, which `$getState` falls back to whenever the parsed value is the
+ * default, until the node is next copied. So in an editor that has not yet read a state on a node
+ * of the pasted node's type (a fresh editor, another editor on the page), `$setState(node, state,
+ * undefined)` would not take: the paste would keep the holds and the chain it was copied with, and
+ * a transform clearing them would run forever. Reading each state makes it known; re-reading the
+ * node from its own JSON then parses it out of the unparsed record. Mutating.
+ */
+function $parsePastedPieceStates(node: LexicalNode): void {
+  const json = node.exportJSON();
+  const state = json[NODE_STATE_KEY];
+  if (!state || !Object.keys(state).some((key) => PIECE_STATE_KEYS.has(key))) return;
+  $getState(node, displayPieceContinuationState);
+  $getState(node, displayPieceChainState);
+  $getState(node, displayPieceTokenTextState);
+  $getState(node, displayAnnotationsState);
+  node.updateFromJSON(json);
+}
 
 /** `node`'s node state without {@link PIECE_STATE_KEYS}, as one comparable string. */
 function baseStateOf(node: TextNode): string {
@@ -615,11 +670,74 @@ export function $splitCarrierAt(node: LexicalNode, offset: number): TextNode | u
 }
 
 /**
+ * Whether `node` is the first of the pieces an element split moved off their carrier's head: a
+ * continuation with no piece of its chain before it, whose chain's head was not removed but is
+ * under another parent ({@link $replaceSplitOffPieces}). That parent may since have been rebuilt
+ * out of the tree in the same update; a removed head has no parent at all.
+ */
+export function $isSplitOffPiece(node: LexicalNode): boolean {
+  if (!$isPieceContinuation(node) || !$pieceHead(node).is(node)) return false;
+  const chain = $getState(node, displayPieceChainState);
+  const head = chain === undefined ? null : $getNodeByKey(chain);
+  const headParent = head && !head.is(node) ? head.getParent() : null;
+  return !!headParent && !headParent.is(node.getParent());
+}
+
+/**
+ * When `node` is the first of the pieces an element split moved off their head
+ * ({@link $isSplitOffPiece}), replace it and the pieces of its chain after it with one `TextNode`
+ * of their text, as `TextNode.splitText` makes the bytes after the point it splits an unsplit
+ * carrier at: the same
+ * format, style, detail and node state (but no piece or hold state), whatever the carrier's class.
+ * An element split at a cut between two pieces (Lexical's own `insertParagraph`, which a paste of
+ * several lines makes with no command) moves the pieces after the cut into the new block, where
+ * the carrier no annotation cuts is split by `splitText` instead. Returns the new text, or
+ * `undefined` when `node` is no such piece. Mutating.
+ */
+export function $replaceSplitOffPieces(node: LexicalNode): TextNode | undefined {
+  if (!$isTextNode(node) || !$isSplitOffPiece(node)) return undefined;
+  const pieces = $pieces(node);
+  const json = node.exportJSON();
+  const state = Object.fromEntries(
+    Object.entries(json[NODE_STATE_KEY] ?? {}).filter(([key]) => !PIECE_STATE_KEYS.has(key)),
+  );
+  const text = $createTextNode(pieces.map((piece) => piece.getTextContent()).join(""))
+    .setFormat(node.getFormat())
+    .setStyle(node.getStyle())
+    .setDetail(node.getDetail());
+  if (Object.keys(state).length > 0)
+    text.updateFromJSON({ ...text.exportJSON(), [NODE_STATE_KEY]: state });
+  node.insertBefore(text);
+  let offset = 0;
+  for (const piece of pieces) {
+    $movePoints(piece, text, offset);
+    offset += piece.getTextContentSize();
+    piece.remove();
+  }
+  return text;
+}
+
+/**
  * Join `node`'s whole carrier back into one node ({@link $joinPieces}). Returns the head; a
  * carrier in one piece is returned untouched. Mutating.
  */
 export function $mergePieces<T extends LexicalNode>(node: T): T {
   return $joinPieces($pieces(node));
+}
+
+/**
+ * Join the carrier each end of the selection is in back into one node ({@link $mergePieces}), the
+ * ends moving with their bytes, so an edit made at them in this update meets the carrier as one
+ * text, as it does where no annotation cuts it. The piece transform cuts the carrier again where a
+ * hold ends inside it once the update is done. A no-op for any other selection. Mutating.
+ */
+export function $joinCarriersAtSelection(): void {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return;
+  for (const point of [selection.anchor, selection.focus]) {
+    const node = point.getNode();
+    if (point.type === "text" && $isSplitCarrier(node)) $mergePieces(node);
+  }
 }
 
 /**

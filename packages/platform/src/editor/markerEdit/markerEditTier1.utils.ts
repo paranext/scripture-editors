@@ -592,22 +592,24 @@ function $markerGlyphCaretHeld(glyph: MarkerNode): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
   // A glyph an annotation cuts into pieces is one glyph: any of its pieces is its text, and its
-  // flanking sites are those of the whole chain.
+  // flanking sites are those of the whole chain, read through annotation marks (a caret at the
+  // end of a mark's text right before the glyph is at the glyph, as with no mark there).
   const pieces = $pieces(glyph);
   const first = pieces[0];
   const last = pieces[pieces.length - 1];
+  const before = $previousSiblingThroughMarks(first);
+  const previous = before && $lastPiece(before);
+  const next = $nextSiblingThroughMarks(last);
   const points = selection.isCollapsed() ? [selection.anchor] : [selection.anchor, selection.focus];
   for (const point of points) {
     const pointNode = point.getNode();
     if (pieces.some((piece) => pointNode.is(piece))) return true;
-    const previous = first.getPreviousSibling();
     if (
       previous !== null &&
       pointNode.is(previous) &&
       point.offset === previous.getTextContentSize()
     )
       return true;
-    const next = last.getNextSibling();
     if (next !== null && pointNode.is(next) && point.offset === 0) return true;
     const parent = glyph.getParent();
     if (parent !== null && pointNode.is(parent)) {

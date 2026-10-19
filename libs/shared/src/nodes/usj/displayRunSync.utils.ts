@@ -322,6 +322,9 @@ export function $syncDisplayRun(descriptor: DisplayRunDescriptor, owner: Lexical
   const pieces = descriptor.scanPieces(owner);
   if (!$runDiverges(descriptor, pieces, expected)) return;
   if ($isDisplayOwnerPended(owner)) return;
+  // A value the engine holds pending (an edit of the run's bytes) is the engine's to settle, on
+  // caret departure, as it settles the same edit wherever this sync is not run.
+  if (pieces.value && $pieces(pieces.value).some($isDisplayOwnerPended)) return;
   if ($runDestroyedSinceLastCommit(descriptor, owner, expected, pieces)) {
     $reportDestroyedDisplayOwner(owner);
     return;

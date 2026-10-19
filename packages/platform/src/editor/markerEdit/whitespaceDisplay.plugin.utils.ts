@@ -12,6 +12,7 @@
  * (`MarkerEditPlugin.tsx`) — they must not run in other view modes.
  */
 
+import { $uncutClipboardData } from "./uncutClipboard.utils";
 import { $getLexicalContent, copyToClipboard, LexicalClipboardData } from "@lexical/clipboard";
 import {
   $getCharacterOffsets,
@@ -49,7 +50,7 @@ import {
   NBSP,
   textTypeState,
   $logicalText,
-  $removeRangeSplitByMarks,
+  $removeRangeHeldByMarks,
 } from "shared";
 import {
   $hasCopyableSelection,
@@ -584,7 +585,12 @@ function $insertPastedTextIntoAttributeContext(selection: RangeSelection, text: 
   const resolved = valueBytes ? text : normalizePastedNbsp(stripPastedChapterAndBookId(text));
   // Nothing survived the strip, so there is nothing to replace the selection with — see
   // `$handlePasteForStandardView`.
-  if (resolved) selection.insertText(resolved.replace(/\n/g, " "));
+  if (!resolved) return;
+  // A range an annotation mark holds an end of is removed first, as for any paste
+  // (`$removeRangeHeldByMarks`): Lexical's replacement of a range whose ends a mark puts in
+  // different parents moves what follows the range's end into the start's parent.
+  $removeRangeHeldByMarks(selection);
+  selection.insertText(resolved.replace(/\n/g, " "));
 }
 
 /**
@@ -711,10 +717,10 @@ export function $handlePasteForStandardView(
   const normalized = normalizePastedNbsp(stripPastedChapterAndBookId(text));
   if (!normalized) return true;
   const lines = normalized.split("\n");
-  // A range an annotation mark splits is removed first, so the insertions below type at a caret
-  // rather than through Lexical's range replacement, which climbs out of it
-  // (`$removeRangeSplitByMarks`).
-  $removeRangeSplitByMarks(selection);
+  // A range an annotation mark holds an end of is removed first, so the insertions below type at
+  // the caret it leaves rather than through Lexical's range replacement, which climbs out of a mark
+  // or past the node before it (`$removeRangeHeldByMarks`).
+  $removeRangeHeldByMarks(selection);
   // A protected document never gains a paragraph from a paste: each newline becomes a single space
   // and the payload goes in as one insertion, so the block structure the user sees is exactly the
   // one they had. Every byte-level rule above still applied.
@@ -898,7 +904,9 @@ export function $selectionToUsfmText(selection: RangeSelection): string {
                 ? nodeText.slice(anchorOffset, focusOffset)
                 : nodeText.slice(focusOffset, anchorOffset);
         } else nodeText = isBefore ? nodeText.slice(anchorOffset) : nodeText.slice(focusOffset);
-      } else if (node === lastNode) {
+      } else if (node === lastNode && (isBefore ? focus : anchor).type === "text") {
+        // An element point ends the range after the last node, which is then read whole: its
+        // character offset (0 unless the point is at its element's end) is not into this text.
         nodeText = isBefore ? nodeText.slice(0, focusOffset) : nodeText.slice(0, anchorOffset);
       }
       text += $isNoteInternalDisplaySeparator(node)
@@ -1013,7 +1021,11 @@ export function $getStandardViewClipboardData(
     "text/html": usfmToClipboardHtml(usfm),
   };
   if ($selectionReachesIntoOpaqueBlock() || $selectionTouchesBookOrChapter(selection)) return data;
-  const lexical = $getLexicalContent(editor);
+  // An annotated selection's internal flavor is written as the document with no annotation
+  // writes it.
+  const lexical =
+    $uncutClipboardData(editor, selection)?.["application/x-lexical-editor"] ??
+    $getLexicalContent(editor);
   if (lexical) data["application/x-lexical-editor"] = lexical;
   return data;
 }
@@ -1107,6 +1119,32 @@ export function $writeCopyPayload(
   // selected by the two element points either side of it). `$writeClipboardData` then writes
   // nothing but still claims the command, and a cut still removes the range: the bytes it would
   // have carried are the ones that do not exist, not the nodes.
+  return $writeClipboardData(
+    event,
+    editor,
+    data,
+    isCut && editor.isEditable() ? () => selection.removeText() : undefined,
+  );
+}
+
+/**
+ * A copy or cut of a selection touching anything an annotation puts in the tree, for a view whose
+ * copy is Lexical's own (no view handler claimed it above): the clipboard is written as the same
+ * selection in the document with no annotation writes it (`$uncutClipboardData`), the document
+ * only read. Declines a selection that touches no annotation, which Lexical's own copy writes.
+ *
+ * Mutating only for a cut, which removes the range: call inside `editor.update()` — in practice,
+ * from a `COPY_COMMAND` or `CUT_COMMAND` handler.
+ */
+export function $copyWithoutAnnotations(
+  event: ClipboardEvent | null,
+  editor: LexicalEditor,
+  isCut: boolean,
+): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+  const data = $uncutClipboardData(editor, selection);
+  if (!data) return false;
   return $writeClipboardData(
     event,
     editor,

@@ -5,6 +5,7 @@ import { $logicalText, $mergePieces, $setLogicalText } from "./displayPieces.sta
 import { $isTypedMarkNode } from "./TypedMarkNode.js";
 import {
   $applyNodeReplacement,
+  $hasUpdateTag,
   EditorConfig,
   LexicalNode,
   LexicalUpdateJSON,
@@ -16,6 +17,13 @@ import {
 } from "lexical";
 
 export const MARKER_VERSION = 1;
+
+/**
+ * Update tag: the update left the caret at a glyph's start by removing the glyph's first bytes, so
+ * text typed at that caret goes into the glyph even right after an annotation mark
+ * ({@link MarkerNode.canInsertTextBefore}).
+ */
+export const CARET_IN_GLYPH_TAG = "caret-in-glyph";
 
 export type MarkerSyntax = "opening" | "closing" | "selfClosing";
 export type SerializedMarkerNode = Spread<
@@ -164,11 +172,13 @@ export class MarkerNode extends TextNode {
    * presentation and takes no text after it, so Lexical reads a caret at the end of the mark's
    * content onto this glyph's start; text typed there is the content's, as it is with no mark
    * there (where the caret rests at the end of the content text), so it goes into a text of its own
-   * before the glyph rather than into the glyph's bytes. Anywhere else a glyph takes text at its
-   * front as any text does.
+   * before the glyph rather than into the glyph's bytes. A caret an update put at the glyph's start
+   * by removing the glyph's first bytes ({@link CARET_IN_GLYPH_TAG}) is in the glyph, as it is with
+   * no mark there, and the glyph takes the text. Anywhere else a glyph takes text at its front as
+   * any text does.
    */
   override canInsertTextBefore(): boolean {
-    return !$isTypedMarkNode(this.getPreviousSibling());
+    return !$isTypedMarkNode(this.getPreviousSibling()) || $hasUpdateTag(CARET_IN_GLYPH_TAG);
   }
 
   override exportJSON(): SerializedMarkerNode {

@@ -12,14 +12,34 @@
  * piece and pasted at the caret (`PASTE_KEYSTROKES`), with the carriers cut by the ranges over them
  * alone, so a paste between two pieces must join the carrier as a paste into the unsplit one does.
  *
+ * With `ANNOTATION_TRANSPARENCY_CLIPBOARD=1`, at a site the annotations change the tree at — a cut
+ * between two pieces of a carrier, a mark's edge inside a text, or in a mark ({@link $isTouched})
+ * — the clipboard and range gestures run too, with the whole annotation set
+ * ({@link clipboardKeystrokes}): a cut of the byte before the caret, the byte after it and the
+ * three bytes either side of it (and, once per document, of the whole edited block); a copy of the
+ * text at the caret with the text after it, pasted at the caret and over the byte either side of
+ * it, and of the whole block, pasted at the caret; Shift+Left or Shift+Right then `x`, Backspace or
+ * Delete; and a one-line and a two-line `text/plain` paste. What a cut or a copy wrote
+ * is compared by its `text/plain` and by what it pastes as — each flavor alone and all together,
+ * pasted in a fresh editor of the view with no annotations ({@link pastedAs}) — since its HTML may
+ * carry the classes its source was painted with; a paste of the plain run's clipboard that pastes
+ * other than that clipboard's own `text/plain` is a fault of the editor with no annotation, and is
+ * left out of the comparison on both sides ({@link consistentPastes}). The whole paragraph's copy,
+ * compared by its text after every case, is compared by what it pastes as after a cut or a copy
+ * pasted back, and once for the document as loaded.
+ *
  * The annotated run is also graded on its own: every annotation paints exactly the bytes it holds
  * (plus whitespace), nothing is painted in part, a byte the edit left in place in the same carrier
- * keeps its holds, and an annotation is reported removed exactly when its bytes are gone. Before any case runs, every planned annotation must hold the bytes it
- * was planned to hold.
+ * keeps its holds, and an annotation is reported removed exactly when its bytes are gone. Before
+ * any case runs, every planned annotation must hold the bytes it was planned to hold.
  *
  * Every site × keystroke a row attempts is accounted for: compared, or skipped for a stated reason
  * (the plain run did nothing there; a keystroke on a content node a planned crossing cuts that is
- * not the plain run's keystroke there). The plain run reaches each site as the pending/settled
+ * not the plain run's keystroke there; a clipboard or range gesture whose plain run breaks the
+ * pending/settled oracle's own contract, whose paste Lexical refuses to insert, or which changes
+ * the paragraph after the edited block, a fault of the editor with no annotation at all; a
+ * gesture whose range does not end at the caret, which selects the same bytes from every spelling
+ * of it and so runs at the first). The plain run reaches each site as the pending/settled
  * oracle does, and each site's restatement by document bytes must be that oracle's own caret, so a
  * case the plain run skips is one that oracle skips. Every spelling of a case the plain run applied
  * is compared, or skipped as such a cut, or — in the popover's view, whose caret guard keeps one
@@ -47,26 +67,34 @@ import {
   $editableTexts,
   $editSites,
   $shellTexts,
+  $caretPositions,
+  BLOCK_CUT_KEYSTROKE,
   CaseRun,
   CaseSite,
   caseMismatches,
+  COPY_PASTE_KEYSTROKES,
+  CUT_KEYSTROKES,
   ENTER_KEYSTROKES,
   expectMismatchesListed,
   ExpectedFailures,
+  GestureRange,
+  isSpellingFree,
   keystrokesFor,
   OracleKeystroke,
   oracleRows,
   outsideNotes,
   PASTE_KEYSTROKES,
   pendingOracleView,
+  PLAIN_PASTE_KEYSTROKES,
   PositionReport,
   PROTECTED_NOTE_SHELL_VIEW,
   readExpectedFailures,
   runKeystrokeCase,
+  TRANSPARENCY_RANGE_KEYSTROKES,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
-import { copyEvent } from "../markerEdit/markerEdit.test-helpers";
+import { copyEvent, pasteEvent } from "../markerEdit/markerEdit.test-helpers";
 import { drainNativeSelectionChange } from "../editor-test.utils";
-import { UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
+import { Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $getNodeByKey,
@@ -79,6 +107,7 @@ import {
   LexicalEditor,
   LexicalNode,
   NodeKey,
+  PASTE_COMMAND,
   SELECTION_CHANGE_COMMAND,
   TextNode,
 } from "lexical";
@@ -101,6 +130,12 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 
 const WRITE = process.env.ANNOTATION_TRANSPARENCY_WRITE === "1";
 const ACCOUNTING = process.env.ANNOTATION_TRANSPARENCY_ACCOUNTING === "1";
+/**
+ * Run the clipboard and range gestures ({@link clipboardKeystrokes}) and compare what the whole
+ * paragraph as loaded pastes as (`ANNOTATION_TRANSPARENCY_CLIPBOARD=1`). Off by default because
+ * running them more than doubles the oracle's time; the SE gates run every view with it on.
+ */
+const CLIPBOARD = process.env.ANNOTATION_TRANSPARENCY_CLIPBOARD === "1";
 
 /**
  * The bytes a range crossing between content and a carrier is planned to hold, by byte index (the
@@ -351,6 +386,10 @@ function $holdMismatches(plan: readonly PlannedAnnotation[]): Map<string, string
 /** Why a site × keystroke attempt compared nothing. */
 type SkipReason =
   | "plain run did not apply"
+  | "plain run breaks the pending/settled contract"
+  | "plain run throws"
+  | "plain run's paste is refused"
+  | "plain run edits the paragraph after the edited block"
   | "keystroke on a cut content node"
   | "no annotated spelling applied";
 
@@ -398,6 +437,68 @@ interface RowSite {
   /** Whether the site is strictly inside a display-byte carrier: where a paste splits it, and
    * where the plan's ranges over it cut it into pieces. */
   isInsideCarrier: boolean;
+}
+
+/**
+ * Whether the annotation set changes the tree at `site` ({@link $spellings}): the site is a cut
+ * the plain tree does not have (between two pieces of a carrier, or at a mark's edge inside a
+ * text), so it is spelled twice, or it is in a mark. The clipboard and range gestures run only
+ * there ({@link clipboardKeystrokes}). Read in the annotated tree.
+ */
+function $isTouched(site: RowSite): boolean {
+  const spellings = $spellings(site.global);
+  return spellings.length > 1 || spellings.some(({ node }) => $isTypedMarkNode(node.getParent()));
+}
+
+/**
+ * The clipboard and range gestures the oracle adds at a site the annotation set changes
+ * ({@link $isTouched}), none of them among the pending/settled oracle's own keystrokes: the cuts,
+ * the copies pasted back, the range edits (but those `view` already runs at every site), and the
+ * plain-text pastes; with `isFirst`, the cut of the whole edited block too.
+ */
+function clipboardKeystrokes(view: string, shell: boolean, isFirst: boolean): OracleKeystroke[] {
+  const own = new Set(keystrokesFor(view, shell).map(({ name }) => name));
+  return [
+    ...(isFirst ? [BLOCK_CUT_KEYSTROKE] : []),
+    ...CUT_KEYSTROKES,
+    ...COPY_PASTE_KEYSTROKES,
+    ...TRANSPARENCY_RANGE_KEYSTROKES.filter(({ name }) => !own.has(name)),
+    ...PLAIN_PASTE_KEYSTROKES,
+  ];
+}
+
+/** How far a keystroke may reach from the caret ({@link $carrierHolds}): the bytes before it and
+ * after it it may remove, or split off a carrier. */
+interface Reach {
+  before: number;
+  after: number;
+}
+
+/** How far `range` reaches from the caret; everywhere for the whole block. */
+function rangeReach(range: GestureRange | "site"): Reach {
+  if (range === "site") return { before: 0, after: 0 };
+  if (range === "block")
+    return { before: Number.POSITIVE_INFINITY, after: Number.POSITIVE_INFINITY };
+  const ends = [range.anchor, range.focus].map((end) => (typeof end === "number" ? end : 0));
+  return { before: Math.max(1, -Math.min(...ends)), after: Math.max(0, ...ends) };
+}
+
+/** How far `keystroke` reaches from the caret. */
+function keystrokeReach(keystroke: OracleKeystroke): Reach {
+  if ("copies" in keystroke || "pastesText" in keystroke) return { before: 0, after: 0 };
+  if ("cuts" in keystroke) return rangeReach(keystroke.cuts);
+  if ("copiesRange" in keystroke) return rangeReach(keystroke.pastesOver);
+  if ("extend" in keystroke) return { before: 1, after: keystroke.extend === "right" ? 1 : 0 };
+  return { before: 1, after: 0 };
+}
+
+/** Whether `keystroke` selects the same bytes whichever spelling of the caret it starts from
+ * ({@link isSpellingFree}): only its first spelling runs. */
+function isKeystrokeSpellingFree(keystroke: OracleKeystroke): boolean {
+  if ("cuts" in keystroke) return isSpellingFree(keystroke.cuts);
+  if ("copiesRange" in keystroke)
+    return isSpellingFree(keystroke.copiesRange) && isSpellingFree(keystroke.pastesOver);
+  return false;
 }
 
 /**
@@ -570,7 +671,7 @@ function composedChange(commits: readonly (readonly DeltaOp[])[]): string {
 }
 
 /** What the transparency comparison reads of a run, each as one string. */
-function observables(run: CaseRun): { [name: string]: string } {
+export function observables(run: CaseRun): { [name: string]: string } {
   return {
     pending: JSON.stringify(run.pending),
     settled: JSON.stringify(run.settled),
@@ -594,9 +695,9 @@ function composedDelta(editor: LexicalEditor): string {
 
 /**
  * The pending/settled oracle's own checks of `run`, as the mismatch each produced by the check's
- * key, the case label taken off both the key and the detail (both runs' labels spell the same
- * site, the annotated one by the piece or mark text its caret is on). The same-place check needs
- * the whole row's history and is not read here.
+ * key, the case label taken off key and detail alike: both runs' labels spell the same site, the
+ * annotated one by the piece or mark text its caret is on. The same-place check needs the whole
+ * row's history and is not read here.
  */
 function invariantResults(
   run: CaseRun,
@@ -608,7 +709,7 @@ function invariantResults(
     if (!key.includes("[same place]"))
       out.set(
         key.startsWith(run.label) ? key.slice(run.label.length).trim() : key,
-        detail.replaceAll(run.label, ""),
+        detail.replaceAll(run.label, "<case>"),
       );
   return out;
 }
@@ -620,14 +721,17 @@ function isNodeShaped(keystroke: OracleKeystroke): boolean {
 }
 
 /**
- * The `text/plain` a copy of the whole edited paragraph puts on the clipboard. In the popover's
- * view the selection is announced as a change in the same update, as every caret placement there
- * is, and the native `selectionchange` it queues is drained ({@link drainNativeSelectionChange}),
- * so the shell's caret guard has always confined it to the note before the copy reads it. The
- * event is one Lexical's default copy handler fills in (`native`), so a view with no copy plugin
- * of its own still yields the bytes it copies rather than an `execCommand` fallback.
+ * Every flavor a copy of the whole edited paragraph puts on the clipboard. In the popover's view
+ * the selection is announced as a change in the same update, as every caret placement there is,
+ * and the native `selectionchange` it queues is drained ({@link drainNativeSelectionChange}), so
+ * the shell's caret guard has always confined it to the note before the copy reads it. The event
+ * is one Lexical's default copy handler fills in (`native`), so a view with no copy plugin of its
+ * own still yields the bytes it copies rather than an `execCommand` fallback.
  */
-async function copiedBytes(mounted: MountedInView, view: string): Promise<string> {
+async function copiedPayload(
+  mounted: MountedInView,
+  view: string,
+): Promise<{ [flavor: string]: string }> {
   await act(async () => {
     mounted.lexical.update(() => {
       const para = $getRoot().getChildren()[2];
@@ -642,7 +746,237 @@ async function copiedBytes(mounted: MountedInView, view: string): Promise<string
     mounted.lexical.dispatchCommand(COPY_COMMAND, event);
     await drainNativeSelectionChange();
   });
-  return getData("text/plain");
+  return Object.fromEntries(
+    CLIPBOARD_FLAVORS.map((flavor) => [flavor, getData(flavor)]).filter(([, data]) => data !== ""),
+  );
+}
+
+/** The first line of what `error` says. */
+function firstLine(error: unknown): string {
+  return String(error).split("\n")[0];
+}
+
+/** Unmount `mounted`, which a throw left in whatever state it reached. */
+function unmountQuietly(mounted: MountedInView): void {
+  try {
+    mounted.unmount();
+  } catch {
+    // Already torn down by the throw.
+  }
+}
+
+/** The clipboard flavors a copy in this editor can write. */
+const CLIPBOARD_FLAVORS = ["application/x-lexical-editor", "text/html", "text/plain"];
+
+/** The words of the blocks of {@link PASTE_TARGET_USJ}, one block per paste. */
+const PASTE_TARGET_WORDS = ["one", "two", "three", "four"];
+
+/** The document a clipboard is pasted into to read what it pastes as: a block per paste, each
+ * `<word> target`. */
+const PASTE_TARGET_USJ: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+    { type: "chapter", marker: "c", number: "1" },
+    ...PASTE_TARGET_WORDS.map((word) => ({
+      type: "para",
+      marker: "p",
+      content: [`${word} target`],
+    })),
+  ],
+};
+
+/** What each clipboard pastes as, by view and payload: a paste of the same payload in the same
+ * view pastes the same. */
+const pastedAsCache = new Map<string, string>();
+
+/** Whether USJ block `block`'s first content is text starting with `word`. */
+function startsWithWord(block: unknown, word: string): boolean {
+  if (typeof block !== "object" || block === null || !("content" in block)) return false;
+  const { content } = block;
+  return Array.isArray(content) && typeof content[0] === "string" && content[0].startsWith(word);
+}
+
+/**
+ * Whether `paste`'s internal flavor holds a note caller with no note around it. The editor with no
+ * annotation writes one (a copy of a collapsed note's inside), and pasting it throws while the
+ * caller renders, outside any command that could catch it, so such a paste is not made.
+ */
+function hasNoteCallerOutsideNote(paste: { [flavor: string]: string }): boolean {
+  const json = paste["application/x-lexical-editor"];
+  if (!json) return false;
+  const visit = (nodes: unknown, isInNote: boolean): boolean =>
+    Array.isArray(nodes) &&
+    nodes.some((node: unknown) => {
+      if (typeof node !== "object" || node === null || !("type" in node)) return false;
+      if (node.type === "immutable-note-caller" && !isInNote) return true;
+      return "children" in node && visit(node.children, isInNote || node.type === "note");
+    });
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return typeof parsed === "object" && parsed !== null && "nodes" in parsed
+      ? visit(parsed.nodes, false)
+      : false;
+  } catch {
+    return false;
+  }
+}
+
+/** A paste {@link pastedAs} reports. */
+interface PastedAs {
+  flavors: string[];
+  blocks: string;
+}
+
+/** Whether `value` is {@link pastedAs}'s report of each paste. */
+function isPastedAsList(value: unknown): value is PastedAs[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (paste: unknown) =>
+        typeof paste === "object" && paste !== null && "flavors" in paste && "blocks" in paste,
+    )
+  );
+}
+
+/**
+ * What `payload` pastes as: each of its flavors alone, then all of them together (as a real paste
+ * delivers them), pasted in a fresh editor of `view` with no annotations, each between the word and
+ * ` target` of a block of its own ({@link PASTE_TARGET_USJ}), as the paste command a paste
+ * dispatches; for each paste, the blocks it left from its own block up to the next paste's (its
+ * word read as `*`, so pastes compare) and what it logged as errors. A copy's HTML may carry the
+ * classes its source was painted with, so a clipboard is compared by what it pastes as, not by its
+ * bytes. Each paste goes in right after its caret is placed, with no wait for the native selection
+ * change between them: the blocks hold plain text no selection listener moves a caret in, and each
+ * paste places its own caret.
+ */
+async function pastedAs(payload: { [flavor: string]: string }, view: string): Promise<string> {
+  const flavors = Object.keys(payload);
+  if (flavors.length === 0) return "nothing copied";
+  const key = JSON.stringify([view, payload]);
+  const cached = pastedAsCache.get(key);
+  if (cached !== undefined) return cached;
+  const pastes = [
+    ...flavors.map((flavor) => ({ [flavor]: payload[flavor] })),
+    ...(flavors.length > 1 ? [payload] : []),
+  ];
+  const mounted = await mountInView(PASTE_TARGET_USJ, pendingOracleView(view));
+  const targets = mounted.lexical.getEditorState().read(() =>
+    $getRoot()
+      .getAllTextNodes()
+      .filter((node) => node.getTextContent().endsWith(" target"))
+      .map((node) => node.getKey()),
+  );
+  const errors: string[][] = pastes.map(() => []);
+  let pasting = 0;
+  const consoleError = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    errors[pasting].push(String(args[0]).split("\n")[0]);
+  });
+  try {
+    await act(async () => {
+      for (const [index, paste] of pastes.entries()) {
+        pasting = index;
+        if (hasNoteCallerOutsideNote(paste)) {
+          errors[index].push("not pasted: a note caller with no note around it");
+          continue;
+        }
+        mounted.lexical.update(
+          () => {
+            const target = $getNodeByKey(targets[index]);
+            if (!$isTextNode(target)) return;
+            const at = PASTE_TARGET_WORDS[index].length;
+            target.select(at, at);
+          },
+          { discrete: true },
+        );
+        try {
+          mounted.lexical.dispatchCommand(PASTE_COMMAND, pasteEvent(paste).event);
+        } catch (error) {
+          errors[index].push(`threw ${firstLine(error)}`);
+        }
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      await drainNativeSelectionChange();
+    });
+  } catch (error) {
+    errors[pasting].push(`pasting threw ${firstLine(error)}`);
+  } finally {
+    consoleError.mockRestore();
+  }
+  let blocks: unknown[] = [];
+  try {
+    blocks = mounted.ref.current?.getUsj()?.content.slice(2) ?? [];
+  } catch (error) {
+    errors[pasting].push(`getUsj threw ${firstLine(error)}`);
+  }
+  // Each paste's blocks: from the block its word starts (the first such block after the previous
+  // paste's) to the next paste's.
+  const starts: number[] = [];
+  for (const word of PASTE_TARGET_WORDS.slice(0, pastes.length)) {
+    const from = (starts.at(-1) ?? -1) + 1;
+    const found = blocks.findIndex((block, index) => index >= from && startsWithWord(block, word));
+    starts.push(found < 0 ? blocks.length : found);
+  }
+  const pasted = pastes.map((paste, index) => ({
+    flavors: Object.keys(paste),
+    blocks: JSON.stringify(
+      blocks.slice(starts[index], index + 1 < starts.length ? starts[index + 1] : undefined),
+    ).replaceAll(`"${PASTE_TARGET_WORDS[index]}`, '"*'),
+    errors: errors[index],
+  }));
+  const result = JSON.stringify(pasted);
+  unmountQuietly(mounted);
+  pastedAsCache.set(key, result);
+  return result;
+}
+
+/**
+ * What a plain run's clipboard and an annotated run's paste as ({@link pastedAs}), each reduced to
+ * the pastes the plain clipboard pastes consistently: a paste of the plain clipboard that pastes
+ * other than its own `text/plain` alone is a fault of the editor with no annotation at all (the
+ * internal flavor of a whole paragraph pastes inline where the text splits it; a copy starting at
+ * a `token`'s end carries the token whole in the internal flavor), and is not compared.
+ */
+function consistentPastes(
+  plain: string,
+  annotated: string | undefined,
+): [string, string | undefined] {
+  const parse = (value: string | undefined): PastedAs[] | undefined => {
+    try {
+      const parsed: unknown = value === undefined ? undefined : JSON.parse(value);
+      return isPastedAsList(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const plainPastes = parse(plain);
+  const annotatedPastes = parse(annotated);
+  if (!plainPastes || !annotatedPastes) return [plain, annotated];
+  const text = plainPastes.find(
+    ({ flavors }) => flavors.length === 1 && flavors[0] === "text/plain",
+  );
+  if (!text) return [plain, annotated];
+  const kept = plainPastes.flatMap((paste, index) => (paste.blocks === text.blocks ? [index] : []));
+  return [
+    JSON.stringify(kept.map((index) => plainPastes[index])),
+    JSON.stringify(kept.map((index) => annotatedPastes[index])),
+  ];
+}
+
+/** The comparable reads of a clipboard `payload` named `name`: its `text/plain`, and, with
+ * `isPasted`, what it pastes as ({@link pastedAs}). */
+async function clipboardObservables(
+  name: string,
+  payload: { [flavor: string]: string },
+  view: string,
+  isPasted: boolean,
+): Promise<{ [name: string]: string }> {
+  return {
+    [name]: payload["text/plain"] ?? "",
+    ...(isPasted ? { [`${name} pastes as`]: await pastedAs(payload, view) } : {}),
+  };
 }
 
 /** A byte of a carrier: the key of the carrier's head piece, and the byte's offset in the whole
@@ -676,22 +1010,20 @@ interface CarrierHolds {
   texts: Map<NodeKey, string>;
   /**
    * The carrier bytes each annotation holds — but for the bytes of the carrier the keystroke is
-   * made in from the caret on (from the byte before it, for a keystroke that may delete it), which
-   * the keystroke may delete or split off the carrier as content (a paste), and which the engine
-   * may then spell anew (a glyph's canonical text restored): what became of them is not known
-   * from the bytes alone.
+   * made in from the caret on (from the bytes before it a keystroke may delete), which the
+   * keystroke may delete or split off the carrier as content (a paste), and which the engine may
+   * then spell anew (a glyph's canonical text restored): what became of them is not known from the
+   * bytes alone.
    */
   held: Map<string, CarrierByte[]>;
 }
 
 /** The carrier bytes each of `ids` holds now ({@link CarrierHolds.held}), with every carrier's
- * text, the caret of the keystroke about to be made at `site`; `keepsByteBeforeCaret` for a
- * keystroke that leaves the byte before the caret in its carrier (a paste). Read-only. */
-function $carrierHolds(
-  ids: readonly string[],
-  site: CaseSite,
-  keepsByteBeforeCaret: boolean,
-): CarrierHolds {
+ * text, the caret of the keystroke about to be made at `site`; `reach` is how far from the caret
+ * the keystroke may remove bytes (none before it for a paste at the caret): of the caret's own
+ * carrier the bytes from that far before the caret on, and every byte of another carrier with a
+ * byte within that reach. Read-only. */
+function $carrierHolds(ids: readonly string[], site: CaseSite, reach: Reach): CarrierHolds {
   const carrierBytes = $carrierBytes();
   const texts = new Map<NodeKey, string>();
   for (const byte of carrierBytes)
@@ -701,13 +1033,32 @@ function $carrierHolds(
     }
   const edited = $pieceHead(site.node).getKey();
   const caret = $pieceStart(site.node) + site.offset;
-  const firstUnknown = keepsByteBeforeCaret ? caret : caret - 1;
+  const firstUnknown = caret - reach.before;
+  // Every other carrier with a byte the keystroke may reach.
+  const positions = $caretPositions();
+  const textStart = new Map(
+    positions
+      .filter(({ offset }) => offset === 0)
+      .map(({ node, position }) => [node.getKey(), position]),
+  );
+  const at =
+    positions.find(({ node, offset }) => node.is(site.node) && offset === site.offset)?.position ??
+    0;
+  const reached = new Set<NodeKey>();
+  $byteNodes().forEach(([node, offset], index) => {
+    const byte = carrierBytes[index];
+    const start = textStart.get(node.getKey());
+    if (!byte || offset < 0 || start === undefined) return;
+    const position = start + offset;
+    if (position >= at - reach.before && position < at + reach.after) reached.add(byte.carrier);
+  });
   const held = new Map(
     ids.map((id) => [
       id,
       [...$heldIndexes(HELD_TYPE, id).keys()].flatMap((index) => {
         const byte = carrierBytes[index];
         if (!byte || (byte.carrier === edited && byte.offset >= firstUnknown)) return [];
+        if (byte.carrier !== edited && reached.has(byte.carrier)) return [];
         return [byte];
       }),
     ]),
@@ -802,7 +1153,8 @@ function $droppedHolds(ids: readonly string[], before: CarrierHolds): string[] {
  * The annotated run's own failures after `mounted` settled: a held byte nothing paints, a
  * non-whitespace byte painted but not held, a leaf painted in part, a hold dropped from a byte the
  * edit left in place in a carrier that is still there, and a removal report that disagrees with
- * `setAnnotation`'s `onRemove` contract — an annotation whose bytes are all gone reports once; one
+ * `setAnnotation`'s `onRemove` contract — an annotation whose bytes are all gone reports once (or
+ * once from each of its marks that went); one
  * still held reports nothing, unless a `<mark>` that held it once it was set has gone (that mark
  * reports its own removal, whatever else still holds the annotation). `before` is what the
  * carriers held before the keystroke (none: not graded).
@@ -831,12 +1183,16 @@ function annotatedFailures(
       if (extra.length > 0)
         failures.push(`${id}: painted but not held, non-whitespace, at ${extra.join(",")}`);
       const reports = applied.removals.get(id) ?? [];
-      if (reports.length > 1) failures.push(`${id}: reported removed ${reports.length} times`);
+      const nowMarks = new Set($marksHolding(id));
+      // Each mark reports its own removal, so one edit taking several marks of an annotation
+      // (a cut over two marks a crossing range was cut into) hears one report from each.
+      const marksGone = (applied.marks.get(id) ?? []).filter((key) => !nowMarks.has(key)).length;
+      if (reports.length > Math.max(1, marksGone))
+        failures.push(`${id}: reported removed ${reports.length} times`);
       if (!history) {
         if (reports.length === 0 && held.size === 0)
           failures.push(`${id}: its bytes are gone but its removal was never reported`);
-        const nowMarks = new Set($marksHolding(id));
-        const aMarkWent = (applied.marks.get(id) ?? []).some((key) => !nowMarks.has(key));
+        const aMarkWent = marksGone > 0;
         if (reports.length === 1 && held.size > 0 && !aMarkWent)
           failures.push(`${id}: reported removed (${reports[0][2]}) while it still holds bytes`);
       }
@@ -912,8 +1268,28 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
         expect(plan.length, "the paragraph has display bytes to annotate").toBeGreaterThan(0);
         expect(unrestated, "every site restates as the oracle's own caret").toEqual([]);
         await applyAnnotations(probe, plan);
-        const mismatches = probe.lexical.getEditorState().read(() => $holdMismatches(plan));
+        const { mismatches, touched } = probe.lexical.getEditorState().read(() => ({
+          mismatches: $holdMismatches(plan),
+          touched: sites.map($isTouched),
+        }));
+        // The whole paragraph as loaded, copied and pasted, with and without the annotations.
+        if (CLIPBOARD) {
+          const annotatedLoadedCopy = await pastedAs(await copiedPayload(probe, view), view);
+          const plainLoaded = await mountInView(usj, viewOptions);
+          const plainLoadedCopy = await pastedAs(await copiedPayload(plainLoaded, view), view);
+          plainLoaded.unmount();
+          const [plainPastes, annotatedPastes] = consistentPastes(
+            plainLoadedCopy,
+            annotatedLoadedCopy,
+          );
+          if (annotatedPastes !== plainPastes)
+            mismatches.set(
+              "loaded [copy pastes as]",
+              `loaded [copy pastes as]\n    plain     ${plainPastes}\n    annotated ${annotatedPastes}`,
+            );
+        }
         probe.unmount();
+        const firstTouched = touched.indexOf(true);
         // A paste is compared with the carriers cut by the ranges over them alone: a crossing's
         // mark beside the pasted bytes would cut the whitespace run they can form with the content
         // there, the limit of marks over content the plan's crossings already keep clear of.
@@ -925,31 +1301,49 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
           skipped: [],
           skippedSpellings: [],
         };
-        for (const {
-          index,
-          offset,
-          global: site,
-          label: siteLabel,
-          text,
-          isCrossed,
-          isInsideCarrier,
-        } of sites)
+        for (const [
+          siteIndex,
+          { index, offset, global: site, label: siteLabel, text, isCrossed, isInsideCarrier },
+        ] of sites.entries()) {
+          const added =
+            CLIPBOARD && touched[siteIndex]
+              ? clipboardKeystrokes(view, site.shell, siteIndex === firstTouched)
+              : [];
           for (const keystroke of [
             ...keystrokesFor(view, site.shell),
             ...ENTER_KEYSTROKES,
             ...(isInsideCarrier ? PASTE_KEYSTROKES : []),
+            ...added,
           ]) {
+            // After a cut or a copy pasted back the whole paragraph's copy is compared by what it
+            // pastes as too; after any other keystroke by its text, as the paste of it after each
+            // of them would double the oracle's run.
+            const pastesCopy = "cuts" in keystroke || "copiesRange" in keystroke;
             const casePlan = "copies" in keystroke ? piecePlan : plan;
+            const isOneSpelling = isKeystrokeSpellingFree(keystroke);
             accounting.attempted += 1;
             const plainMounted = await mountInView(usj, viewOptions);
             // The plain run reaches the site as the pending/settled oracle does, so a case it
             // skips is one that oracle skips too.
-            const plain = await runKeystrokeCase(
-              plainMounted,
-              view,
-              () => ({ node: $textsOf(site.shell)[index], offset, shell: site.shell }),
-              keystroke,
-            );
+            let plain: CaseRun | undefined;
+            try {
+              plain = await runKeystrokeCase(
+                plainMounted,
+                view,
+                () => ({ node: $textsOf(site.shell)[index], offset, shell: site.shell }),
+                keystroke,
+              );
+            } catch (error) {
+              // A clipboard or range gesture the editor cannot make with no annotation at all is a
+              // fault of its own, as below.
+              if (!added.includes(keystroke)) throw error;
+              unmountQuietly(plainMounted);
+              accounting.skipped.push({
+                label: `${siteLabel} ${keystroke.name} (${firstLine(error)})`,
+                reason: "plain run throws",
+              });
+              continue;
+            }
             if (!plain) {
               accounting.skipped.push({
                 label: `${siteLabel} ${keystroke.name}`,
@@ -960,9 +1354,51 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
             const expected = observables(plain);
             expected.delta = composedDelta(plainMounted.lexical);
             expected.ops = composedChange(plainMounted.ops);
-            expected.copy = await copiedBytes(plainMounted, view);
+            const plainCopy = await copiedPayload(plainMounted, view);
             const plainInvariants = invariantResults(plain, view, loadedOutsideNotes);
             plainMounted.unmount();
+            // A clipboard or range gesture the editor gets wrong with no annotation at all (the
+            // pending/settled oracle's own contract broken) is a fault of its own, not of the
+            // annotations, and is not compared: it is skipped, by label and the checks it breaks.
+            if (added.includes(keystroke) && plainInvariants.size > 0) {
+              accounting.skipped.push({
+                label: `${plain.label} (${[...plainInvariants.keys()].join(" ")})`,
+                reason: "plain run breaks the pending/settled contract",
+              });
+              continue;
+            }
+            // So is a paste the editor with no annotation cannot insert: Lexical refuses the
+            // insertion, logs it and tries the clipboard's next flavor, so what lands is not the
+            // copy at all.
+            if (added.includes(keystroke) && plain.pasteErrors.length > 0) {
+              accounting.skipped.push({
+                label: `${plain.label} (${plain.pasteErrors.join("; ")})`,
+                reason: "plain run's paste is refused",
+              });
+              continue;
+            }
+            // And so is one that changes the paragraph the caret departs to, which no gesture's
+            // range reaches: the bytes landed somewhere other than where the gesture was made.
+            const departBlock = JSON.stringify(usj.content.at(-1));
+            if (
+              added.includes(keystroke) &&
+              JSON.stringify(plain.settled?.content.at(-1)) !== departBlock
+            ) {
+              accounting.skipped.push({
+                label: `${plain.label} (${JSON.stringify(plain.settled?.content.at(-1))})`,
+                reason: "plain run edits the paragraph after the edited block",
+              });
+              continue;
+            }
+            Object.assign(
+              expected,
+              await clipboardObservables("copy", plainCopy, view, pastesCopy),
+            );
+            if (plain.clipboard)
+              Object.assign(
+                expected,
+                await clipboardObservables("clipboard", plain.clipboard, view, true),
+              );
             /** The spellings compared, by their place in the site's spellings. */
             const comparedAt = new Set<number>();
             const cutSpellings: string[] = [];
@@ -970,6 +1406,8 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
             const respelled: [label: string, to: number][] = [];
             /** Each spelling the plain run's case did not run at: its failure's key, and why. */
             const unrun: [key: string, why: string][] = [];
+            /** Spellings after the first of a gesture that does not start or end at the caret. */
+            const oneSpelling: string[] = [];
             // Every spelling the annotated tree gives the site, each run on a fresh mount (a
             // node belongs to the editor it was read from, so each mount reads its own).
             let spellingCount: number | undefined;
@@ -978,7 +1416,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               const applied = await applyAnnotations(mounted, casePlan);
               const holdsBefore = mounted.lexical.getEditorState().read(() => {
                 const found = $spellings(site)[which];
-                return found && $carrierHolds(applied.ids, found, "copies" in keystroke);
+                return found && $carrierHolds(applied.ids, found, keystrokeReach(keystroke));
               });
               // Setting an annotation emits no change, so the ops streams start equal here.
               const opsBefore = mounted.ops.length;
@@ -1003,6 +1441,13 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
                 });
               spellingCount ??= count;
               const label = `${plain.label}${spellingCount > 1 ? ` [spelling ${which + 1}/${spellingCount}]` : ""}`;
+              // A gesture that does not start or end at the caret selects the same bytes from
+              // every spelling of it: the first spelling's run is every spelling's.
+              if (isOneSpelling && which > 0) {
+                oneSpelling.push(label);
+                mounted.unmount();
+                continue;
+              }
               if (count !== spellingCount)
                 unrun.push([
                   `${label} [spellings]`,
@@ -1019,15 +1464,26 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
                 mounted.unmount();
                 continue;
               }
-              const annotated = await runKeystrokeCase(
-                mounted,
-                view,
-                () => {
-                  const found = $spellings(site)[which];
-                  return found && edgeOf(found) === spelling.edge ? found : undefined;
-                },
-                keystroke,
-              );
+              let annotated: CaseRun | undefined;
+              try {
+                annotated = await runKeystrokeCase(
+                  mounted,
+                  view,
+                  () => {
+                    const found = $spellings(site)[which];
+                    return found && edgeOf(found) === spelling.edge ? found : undefined;
+                  },
+                  keystroke,
+                );
+              } catch (error) {
+                unmountQuietly(mounted);
+                comparedAt.add(which);
+                mismatches.set(
+                  `${label} [throws]`,
+                  `${label} [throws]\n    plain     ran\n    annotated ${firstLine(error)}`,
+                );
+                continue;
+              }
               // `runKeystrokeCase` has unmounted a mount it did not run. The oracle splices a
               // keystroke into the one node at its caret, so at a cut in a content node a splice
               // across the cut (Backspace at the start of the piece after it) is no keystroke
@@ -1051,19 +1507,33 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               const actual = observables(annotated);
               actual.delta = composedDelta(mounted.lexical);
               actual.ops = composedChange(mounted.ops.slice(opsBefore));
-              actual.copy = await copiedBytes(mounted, view);
-              for (const [name, value] of Object.entries(expected))
-                if (actual[name] !== value)
-                  mismatches.set(
-                    `${label} [${name}]`,
-                    `${label} [${name}]\n    plain     ${value}\n    annotated ${actual[name]}`,
-                  );
+              const annotatedCopy = await copiedPayload(mounted, view);
               const paint = annotatedFailures(mounted, applied, annotated.history, holdsBefore);
               if (paint.length > 0)
                 mismatches.set(`${label} [paint]`, `${label} [paint]\n    ${paint.join("\n    ")}`);
               // The annotated run keeps the pending/settled oracle's own invariants exactly as
               // the plain run does: a case that violates one does so identically in both.
               const annotatedInvariants = invariantResults(annotated, view, loadedOutsideNotes);
+              mounted.unmount();
+              Object.assign(
+                actual,
+                await clipboardObservables("copy", annotatedCopy, view, pastesCopy),
+              );
+              if (annotated.clipboard)
+                Object.assign(
+                  actual,
+                  await clipboardObservables("clipboard", annotated.clipboard, view, true),
+                );
+              for (const [name, expectedValue] of Object.entries(expected)) {
+                const [value, actualValue] = name.endsWith(" pastes as")
+                  ? consistentPastes(expectedValue, actual[name])
+                  : [expectedValue, actual[name]];
+                if (actualValue !== value)
+                  mismatches.set(
+                    `${label} [${name}]`,
+                    `${label} [${name}]\n    plain     ${value}\n    annotated ${actualValue}`,
+                  );
+              }
               for (const key of new Set([
                 ...plainInvariants.keys(),
                 ...annotatedInvariants.keys(),
@@ -1076,7 +1546,6 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
                   `${label} [invariant] ${key}\n    plain     ${inPlain ?? "(holds)"}\n    annotated ${inAnnotated ?? "(holds)"}`,
                 );
               }
-              mounted.unmount();
             }
             // A spelling the caret guard moved is covered by the spelling it moved to, when
             // that one compared.
@@ -1100,6 +1569,10 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
                   label,
                   reason: `the view moves this caret to spelling ${to + 1}`,
                 })),
+                ...oneSpelling.map((label) => ({
+                  label,
+                  reason: "a range not ending at the caret: the same bytes as spelling 1",
+                })),
               );
             } else if (cutSpellings.length > 0 && unrun.length === 0)
               accounting.skipped.push({
@@ -1118,6 +1591,7 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
                 );
             }
           }
+        }
         const summary = describeAccounting(row, accounting, false);
         if (ACCOUNTING)
           // eslint-disable-next-line no-console -- ANNOTATION_TRANSPARENCY_ACCOUNTING asks for this output.

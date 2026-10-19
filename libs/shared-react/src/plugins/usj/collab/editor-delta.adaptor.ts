@@ -64,12 +64,15 @@ import {
   textTypeState,
   UnknownNode,
   VERSE_MARKER,
+  $previousSiblingThroughMarks,
 } from "shared";
 
 interface OpenEmbedContext {
   node: NoteNode | UnknownNode;
   children: LexicalNode[];
   contentsOps?: DeltaOp[];
+  /** The text the embed's last text op came from. */
+  lastText?: TextNode;
 }
 
 export function $getTextOp(node: TextNode, openCharNodes?: CharNode[]): DeltaOp {
@@ -393,7 +396,16 @@ function $handleTextNodes(
     // separator is stripped: a separator followed by an `~` the author wrote is content.
     const isSpacer = nodeText === NBSP && !$isNbspContentAtMark(currentNode);
     if (!text || isSpacer || isNodeAttributeText) return;
-    activeEmbed.contentsOps?.push(textOp);
+    // A text an annotation mark cut off the text before it joins that text's op, as a Delta
+    // pushes it: the embed is compared whole, so the texts a mark cut apart must make the ops the
+    // uncut text makes. Texts apart for any other reason (two spans) stay apart.
+    const isCutByMark =
+      activeEmbed.lastText !== undefined &&
+      !currentNode.getPreviousSibling()?.is(activeEmbed.lastText) &&
+      $previousSiblingThroughMarks(currentNode)?.is(activeEmbed.lastText);
+    if (isCutByMark && activeEmbed.contentsOps) new Delta(activeEmbed.contentsOps).push(textOp);
+    else activeEmbed.contentsOps?.push(textOp);
+    activeEmbed.lastText = currentNode;
   } else {
     // Attribute display text is presentation-only regardless of WHERE it rides — inside a char
     // span (the original, narrower rule) or, like a milestone's or a verse's \va/\vp value, as a

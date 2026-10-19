@@ -33,6 +33,7 @@ import { $rependPendShapedNodes, $textNodeTier2Transform } from "./markerEditTie
 import {
   $displayWhitespaceTransform,
   $handleCopyForStandardView,
+  $copyWithoutAnnotations,
   $handlePasteForStandardView,
   normalizePastedNbsp,
   stripPastedChapterAndBookId,
@@ -1307,6 +1308,20 @@ export function MarkerEditPlugin({
         COMMAND_PRIORITY_HIGH,
       ),
       registerPasteNormalization(editor, context, isStandardView),
+      // Below every view's own copy (Standard view's at HIGH) and the copy limit's, above
+      // Lexical's own copy at EDITOR, which writes the cuts annotations make in the tree.
+      ...([COPY_COMMAND, CUT_COMMAND] as const).map((command) =>
+        editor.registerCommand(
+          command,
+          (event) =>
+            $copyWithoutAnnotations(
+              event && typeof event === "object" && "clipboardData" in event ? event : null,
+              editor,
+              command === CUT_COMMAND,
+            ),
+          COMMAND_PRIORITY_LOW,
+        ),
+      ),
       editor.registerCommand(
         COMMIT_PENDING_MARKERS_COMMAND,
         () => {
