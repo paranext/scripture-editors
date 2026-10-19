@@ -16,7 +16,11 @@ import {
 } from "../adaptors/usj-editor.adaptor";
 import { contentPath } from "../positions/positions.test-helpers";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
-import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
+import {
+  MarkerObject,
+  Usj,
+  UsjPropertyValueLocation,
+} from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
   $createTextNode,
@@ -589,7 +593,10 @@ describe("note insertion where a note cannot live", () => {
       "refuses a note at the chapter's number location (propertyOffset %i)",
       async (propertyOffset) => {
         const { ref, lexical } = await mountStandardViewEditor(lineUsj);
-        const location = { jsonPath: "$.content[1]['number']", propertyOffset };
+        const location: UsjPropertyValueLocation = {
+          jsonPath: "$.content[1]['number']",
+          propertyOffset,
+        };
 
         await act(async () => {
           ref.current?.insertNote("f", "+", { start: location, end: location });
