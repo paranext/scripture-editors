@@ -34,7 +34,8 @@
  * Every site × keystroke a row attempts is accounted for: compared, or skipped for a stated reason
  * (the plain run did nothing there; a keystroke on a content node a planned crossing cuts that is
  * not the plain run's keystroke there; a clipboard or range gesture whose plain run breaks the
- * pending/settled oracle's own contract, a fault of the editor with no annotation at all; a
+ * pending/settled oracle's own contract, whose paste Lexical refuses to insert, or which changes
+ * the paragraph after the edited block, a fault of the editor with no annotation at all; a
  * gesture whose range does not end at the caret, which selects the same bytes from every spelling
  * of it and so runs at the first). The plain run reaches each site as the pending/settled
  * oracle does, and each site's restatement by document bytes must be that oracle's own caret, so a
@@ -385,6 +386,8 @@ type SkipReason =
   | "plain run did not apply"
   | "plain run breaks the pending/settled contract"
   | "plain run throws"
+  | "plain run's paste is refused"
+  | "plain run edits the paragraph after the edited block"
   | "keystroke on a cut content node"
   | "no annotated spelling applied";
 
@@ -1250,6 +1253,29 @@ export function describeAnnotationTransparencyOracle(view: string, listFile: URL
               accounting.skipped.push({
                 label: `${plain.label} (${[...plainInvariants.keys()].join(" ")})`,
                 reason: "plain run breaks the pending/settled contract",
+              });
+              continue;
+            }
+            // So is a paste the editor with no annotation cannot insert: Lexical refuses the
+            // insertion, logs it and tries the clipboard's next flavor, so what lands is not the
+            // copy at all.
+            if (added.includes(keystroke) && plain.pasteErrors.length > 0) {
+              accounting.skipped.push({
+                label: `${plain.label} (${plain.pasteErrors.join("; ")})`,
+                reason: "plain run's paste is refused",
+              });
+              continue;
+            }
+            // And so is one that changes the paragraph the caret departs to, which no gesture's
+            // range reaches: the bytes landed somewhere other than where the gesture was made.
+            const departBlock = JSON.stringify(usj.content.at(-1));
+            if (
+              added.includes(keystroke) &&
+              JSON.stringify(plain.settled?.content.at(-1)) !== departBlock
+            ) {
+              accounting.skipped.push({
+                label: `${plain.label} (${JSON.stringify(plain.settled?.content.at(-1))})`,
+                reason: "plain run edits the paragraph after the edited block",
               });
               continue;
             }
