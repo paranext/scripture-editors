@@ -30,16 +30,21 @@ export function closingMarkerText(marker: string, nested = false): string {
 }
 
 /**
- * Gets the open marker text with the marker visible.
+ * Gets the open marker text with the marker visible: the marker, a no-break separator, and then
+ * the content and a trailing space when there is content (`\v` + NBSP + `2` + space).
+ *
+ * With no content yet the text ends in the no-break separator (`\v` + NBSP), the place the content
+ * is typed. It must be a no-break space: a verse glyph renders `white-space: nowrap`, which removes
+ * a plain space at the end of a line, so a plain separator at the end of a paragraph would show no
+ * space and no caret after the marker. The trailing space after content is plain on purpose: at
+ * the end of a line it is invisible, and the caret rests right after the content.
  * @param marker - Verse marker.
  * @param content - Content such as chapter or verse number.
  * @returns the marker text with the open marker visible.
  */
 export function getVisibleOpenMarkerText(marker: string, content: string | undefined): string {
-  let text = openingMarkerText(marker);
-  if (content) text += `${NBSP}${content}`;
-  text += " ";
-  return text;
+  const text = `${openingMarkerText(marker)}${NBSP}`;
+  return content ? `${text}${content} ` : text;
 }
 
 /**
