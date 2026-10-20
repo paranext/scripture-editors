@@ -54,6 +54,7 @@ import {
   $isRangeSelection,
   $isTextNode,
   $setSelection,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
   ElementNode,
   LexicalEditor,
   LexicalNode,
@@ -64,6 +65,7 @@ import {
   $isAttributeRunNode,
   $isMarkerNode,
   $isNoteNode,
+  $isVerseNode,
   $isVisibleMarkerNode,
   $noteEditableCallerNode,
   getPendedDisplayOwners,
@@ -466,12 +468,15 @@ describe.each(VIEWS)("reporting a caret with no text beside it (%s)", (_name, vi
   });
 });
 
-/** Whether a point is where the editor puts its own caret at the end of the document. */
+/** Whether a point is where End puts the caret at the end of the document: the end of the last
+ * line, in front of a line-final verse glyph's trailing separator, which stands for no byte. */
 function $isAtEndOfLastBlock(node: LexicalNode, offset: number): boolean {
   const root = $getRoot();
   const lastBlock = root.getLastChild();
   if (!$isElementNode(lastBlock)) return node.is(root) && offset === root.getChildrenSize();
   const lastDescendant = lastBlock.getLastDescendant();
+  if ($isVerseNode(lastDescendant))
+    return node.is(lastDescendant) && offset === lastDescendant.getTextContentSize() - 1;
   if ($isTextNode(lastDescendant))
     return node.is(lastDescendant) && offset === lastDescendant.getTextContentSize();
   const container = $isElementNode(lastDescendant)
@@ -895,53 +900,106 @@ describe("the editor API", () => {
     ],
   };
 
-  // A caret behind the glyph of a verse that ends its line is where that verse's text is typed. A
-  // host hands a reported caret back to restore it (paranext-core does when focus returns), so the
-  // caret must come back there, not in front of the glyph's separator, inside the verse number.
+  // USFM writes no separator after a line's last number, only the newline, and the browser does
+  // not draw the glyph's trailing separator at a line end. Both carets after the number are the
+  // number's end, which a host hands back to restore the caret (paranext-core does when focus
+  // returns): it comes back right after the number, where End puts it.
   it.each<[string, Usj]>([
     ["a paragraph", doc(endsInVerse, { type: "para", marker: "p", content: ["more"] })],
     ["the document", doc(endsInVerse)],
   ])(
-    "text typed at a restored caret behind the verse that ends %s is the verse's text",
+    "reports both carets after the number of the verse that ends %s as its end, and restores it there",
     async (_name, usj) => {
       const { ref, lexical } = await mountStandardViewEditor(usj);
-      await act(async () => {
-        lexical.update(
-          () => {
-            const glyph = $getRoot().getChildren().filter($isElementNode)[2].getLastDescendant();
-            if (!$isTextNode(glyph)) throw new Error("expected the verse glyph's text");
-            glyph.select(glyph.getTextContentSize(), glyph.getTextContentSize());
-          },
-          { discrete: true },
-        );
-        await Promise.resolve();
-      });
-      const reported = ref.current?.getSelection();
-      if (!reported) throw new Error("expected a reported caret");
+      const numberEnd: { start: UsjDocumentLocation } = {
+        start: { jsonPath: "$.content[2].content[2]['number']", propertyOffset: 1 },
+      };
+      for (const offsetFromEnd of [0, 1]) {
+        await act(async () => {
+          lexical.update(
+            () => {
+              const glyph = $getRoot().getChildren().filter($isElementNode)[2].getLastDescendant();
+              if (!$isTextNode(glyph)) throw new Error("expected the verse glyph's text");
+              const offset = glyph.getTextContentSize() - offsetFromEnd;
+              glyph.select(offset, offset);
+            },
+            { discrete: true },
+          );
+          await Promise.resolve();
+        });
+        expect(ref.current?.getSelection()).toEqual(numberEnd);
+      }
 
       await act(async () => {
-        ref.current?.setSelection(reported);
-        await Promise.resolve();
-      });
-      expect(ref.current?.getSelection()).toEqual(reported);
-      await act(async () => {
-        lexical.update(
-          () => {
-            const selection = $getSelection();
-            if ($isRangeSelection(selection)) selection.insertText("abc");
-          },
-          { discrete: true },
-        );
+        ref.current?.setSelection(numberEnd);
         await Promise.resolve();
       });
 
-      const para = ref.current?.getUsj()?.content[2];
-      expect(typeof para === "object" && para.content?.slice(-2)).toEqual([
-        { type: "verse", marker: "v", number: "2" },
-        "abc",
-      ]);
+      const caret = lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return undefined;
+        const node = selection.anchor.getNode();
+        return { text: node.getTextContent(), offset: selection.anchor.offset };
+      });
+      expect(caret).toEqual({ text: "\\v\u00a02 ", offset: 4 });
     },
   );
+
+  it("reports a caret among spaces typed after the number of a verse that ends a paragraph as the number's end", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(
+      doc(endsInVerse, { type: "para", marker: "p", content: ["more"] }),
+    );
+    await act(async () => {
+      lexical.update(
+        () => {
+          const glyph = $getRoot().getChildren().filter($isElementNode)[2].getLastDescendant();
+          if (!$isTextNode(glyph)) throw new Error("expected the verse glyph's text");
+          const afterNumber = glyph.getTextContentSize() - 1;
+          glyph.select(afterNumber, afterNumber);
+        },
+        { discrete: true },
+      );
+      await Promise.resolve();
+    });
+
+    for (let press = 1; press <= 2; press += 1) {
+      await act(async () => {
+        lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, " ");
+        await Promise.resolve();
+      });
+      expect(ref.current?.getSelection()).toEqual({
+        start: { jsonPath: "$.content[2].content[2]['number']", propertyOffset: 1 },
+      });
+    }
+  });
+
+  it("puts one past the number of a verse that ends a paragraph where the next line's marker is", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(
+      doc(endsInVerse, { type: "para", marker: "q1", content: ["more"] }),
+    );
+    const caretAt = async (location: UsjDocumentLocation) => {
+      await act(async () => {
+        ref.current?.setSelection({ start: location });
+        await Promise.resolve();
+      });
+      return lexical.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return undefined;
+        const { key, offset, type } = selection.anchor;
+        return { key, offset, type };
+      });
+    };
+
+    const nextLine = await caretAt({ jsonPath: "$.content[3]" });
+    const pastNumber = await caretAt({
+      jsonPath: "$.content[2].content[2]['number']",
+      propertyOffset: 2,
+    });
+
+    expect(nextLine).toBeDefined();
+    expect(pastNumber).toEqual(nextLine);
+    expect(ref.current?.getSelection()).toEqual({ start: { jsonPath: "$.content[3]" } });
+  });
 });
 
 describe("a caret with no text beside it while a paragraph is pending", () => {

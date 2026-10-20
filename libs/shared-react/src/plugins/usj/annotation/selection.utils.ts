@@ -923,11 +923,18 @@ function $locationFromDisplayBytes(
       return { jsonPath } satisfies UsjMarkerLocation;
     case "closingMarker":
       return { jsonPath, closingMarkerOffset: within } satisfies UsjClosingMarkerLocation;
-    case "property":
+    case "property": {
+      // Spaces after a verse's number are its separator and, at a line end, the newline USFM
+      // writes instead; extra ones typed there are a run USFM normalizes away. None is a byte of
+      // the number, so a caret among them is the number's end.
+      const { owner } = bytes;
+      const number =
+        span.bytes.property === "number" && $isVerseNode(owner) ? owner.getNumber() : undefined;
       return {
         jsonPath: propertyJsonPath(jsonPath, span.bytes.property),
-        propertyOffset: within,
+        propertyOffset: number === undefined ? within : Math.min(within, number.length),
       } satisfies UsjPropertyValueLocation;
+    }
     case "attributeKey":
       return { jsonPath, keyName: span.bytes.keyName, keyOffset: within };
     case "attributeMarker":
@@ -1169,21 +1176,19 @@ export function $getNodeFromLocation(
     if (!node || propertyName === undefined) return [undefined, undefined];
 
     const wanted: DisplayByteKind = { kind: "property", property: propertyName };
-    // A verse glyph's trailing separator at the end of a line other than the document's last
-    // stands for the line's newline, so the caret on either side of it reports the number's end.
-    // The one behind the glyph is where the editor puts its own caret at the paragraph's end and
-    // where the verse's text is typed; in front of the separator, typing would extend the number.
-    // At the document's end the caret behind the glyph has a spelling of its own (one past the
-    // final newline), so the number's end stays in front of the separator there.
+    // At the end of a line, USFM has no separator after a verse's number: the newline follows it.
+    // The glyph's trailing separator stands for nothing there (the browser does not even draw it),
+    // so one past the number is the newline's far side, the start of the next line.
     if (
       propertyName === "number" &&
       $isVerseNode(node) &&
-      location.propertyOffset === node.getNumber().length &&
+      location.propertyOffset === node.getNumber().length + 1 &&
       $endsInOwnSeparator(node) &&
-      $endsItsLine(node) &&
-      !$endsDocument(node)
-    )
-      return [node, node.getTextContentSize()];
+      $endsItsLine(node)
+    ) {
+      const nextLine = $nextLineStart(node);
+      if (nextLine) return nextLine;
+    }
     const point = $pointFromDisplayBytes(node, wanted, location.propertyOffset);
     if (point) return point;
     // Past the bytes a read-only decorator displays of the value (a collapsed caller shows the
@@ -1769,9 +1774,8 @@ function $endsInOwnSeparator(node: TextNode): boolean {
  * The location of the first byte after `node`: in front of the first leaf of whatever follows it,
  * looking through annotation marks, so a `\va` run or a char span answers with its own first byte.
  * With nothing after `node` in its parent, that byte is the parent's content end (a paragraph's
- * newline) — except at the very end of the document, whose spelling is one past that newline.
- * `undefined` there, and when what follows answers with the end of whatever precedes it — this
- * node.
+ * newline, the last paragraph's included). `undefined` when what follows answers with the end of
+ * whatever precedes it — this node.
  */
 function $locationOfFirstByteAfter(
   node: LexicalNode,
@@ -1787,7 +1791,7 @@ function $locationOfFirstByteAfter(
   const next = current.getNextSibling();
   if (!next) {
     const parent = current.getParent();
-    if (!parent || $endsDocument(current)) return undefined;
+    if (!parent) return undefined;
     return $locationFromNode(parent, parent.getChildrenSize(), collapsesSpaceRuns);
   }
   const leaf = $isElementNode(next) ? (next.getFirstDescendant() ?? next) : next;
@@ -1797,6 +1801,22 @@ function $locationOfFirstByteAfter(
   )
     return undefined;
   return $locationFromNode(leaf, 0, collapsesSpaceRuns);
+}
+
+/**
+ * Where the line after `node`'s starts — in front of the next block's first byte, as its marker
+ * location resolves — or `undefined` when `node`'s line is the document's last.
+ */
+function $nextLineStart(node: LexicalNode): ReturnType<typeof $pointBeside> | undefined {
+  let line: LexicalNode | null = node.getParent();
+  while (line && !$endsLine(line)) line = line.getParent();
+  const next = line?.getNextSibling();
+  if (!next) return undefined;
+  const point = $pointFromDisplayBytes(next, { kind: "marker" }, 0);
+  if (point) return point;
+  const firstChild = $isElementNode(next) ? next.getFirstChild() : null;
+  if (firstChild && $isTextNode(firstChild)) return [firstChild, 0];
+  return $pointBeside(next, false);
 }
 
 /** Whether nothing follows `node` in its line, looking through annotation marks. */
@@ -1809,13 +1829,6 @@ function $endsItsLine(node: LexicalNode): boolean {
   )
     current = mark;
   return !current.getNextSibling();
-}
-
-/** Whether nothing follows `node` anywhere in the document. */
-function $endsDocument(node: LexicalNode): boolean {
-  for (let current: LexicalNode | null = node; current; current = current.getParent())
-    if (current.getNextSibling()) return false;
-  return true;
 }
 
 /** The node carrying the first display byte at `child`'s front: `child` itself, or the first piece
@@ -2236,8 +2249,8 @@ function $leafPropertyValue(node: LexicalNode, property: string): string | undef
 /**
  * The document-end point when `location` is the end of the document — one past the final newline,
  * spelled on the last token (see {@link $contentEndLocation}) — and `undefined` otherwise. The
- * point is the end of the last block, where the editor places its own caret, so text typed there
- * joins that block instead of falling outside every paragraph.
+ * point is the end of the last line, where End puts the caret, so text typed there joins that
+ * block instead of falling outside every paragraph.
  */
 function $documentEndPoint(
   location: UsjDocumentLocation,
@@ -2249,6 +2262,10 @@ function $documentEndPoint(
   const lastBlock = root.getLastChild();
   if (!$isElementNode(lastBlock)) return [root, root.getChildrenSize()];
   const lastDescendant = lastBlock.getLastDescendant();
+  // A verse glyph's trailing separator stands for no byte at a line end, and the browser does not
+  // draw it, so the caret goes in front of it, where End puts it.
+  if ($isVerseNode(lastDescendant) && $endsInOwnSeparator(lastDescendant))
+    return [lastDescendant, lastDescendant.getTextContentSize() - 1];
   if ($isTextNode(lastDescendant)) return [lastDescendant, lastDescendant.getTextContentSize()];
   if ($isElementNode(lastDescendant)) return [lastDescendant, lastDescendant.getChildrenSize()];
   const container = lastDescendant?.getParent() ?? lastBlock;
