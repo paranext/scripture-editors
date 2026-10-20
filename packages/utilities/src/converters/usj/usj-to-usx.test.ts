@@ -15,7 +15,7 @@ import {
 import { usjToUsxString } from "./usj-to-usx.js";
 import { EMPTY_USJ } from "./usj.model.js";
 import { usxStringToUsj } from "./usx-to-usj.js";
-import { EMPTY_USX } from "./usx.model.js";
+import { EMPTY_USX, USX_VERSION } from "./usx.model.js";
 
 const SELF_CLOSING_ELEMENT_WHITESPACE = /(?!")\s+(?=\/>)/g;
 const INTER_ELEMENT_WHITESPACE = /(?!>)\s{2,}(?=<)/g;
@@ -78,5 +78,39 @@ describe("USJ to USX Converter", () => {
     const usx = usjToUsxString(usjEph1v1Whitespace);
     const usj = usxStringToUsj(usx);
     expect(usj).toEqual(usjEph1v1Whitespace);
+  });
+
+  describe("usxVersion option", () => {
+    it("should stamp the root with the requested USX version", () => {
+      const usx = usjToUsxString(usjGen1v1, { usxVersion: "3.0" });
+      expect(usx.startsWith('<usx version="3.0">')).toBe(true);
+    });
+
+    it("should change nothing but the version stamp", () => {
+      const defaultUsx = usjToUsxString(usjGen1v1);
+      const usx = usjToUsxString(usjGen1v1, { usxVersion: "3.0" });
+      expect(usx).toEqual(
+        defaultUsx.replace(`<usx version="${USX_VERSION}">`, '<usx version="3.0">'),
+      );
+    });
+
+    it("should stamp an empty document with the requested USX version", () => {
+      expect(usjToUsxString(EMPTY_USJ, { usxVersion: "3.0" })).toEqual('<usx version="3.0"/>');
+    });
+
+    it("should stamp USX_VERSION when the option is omitted", () => {
+      const usx = usjToUsxString(usjGen1v1, {});
+      expect(usx).toEqual(usjToUsxString(usjGen1v1));
+      expect(usx.startsWith(`<usx version="${USX_VERSION}">`)).toBe(true);
+    });
+
+    it("should let a caller restore the source USX version across a round trip", () => {
+      const sourceUsx = removeXmlWhitespace(usxGen1v1).replace(
+        `<usx version="${USX_VERSION}">`,
+        '<usx version="3.0">',
+      );
+      const usx = usjToUsxString(usxStringToUsj(sourceUsx), { usxVersion: "3.0" });
+      expect(usx).toEqual(sourceUsx);
+    });
   });
 });

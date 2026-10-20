@@ -15,6 +15,11 @@ this package's publish today — `Publish Scribe Package` publishes only `packag
 - `MarkerObject.closed` — an optional marker attribute carrying a character span's explicit
   `closed="false"` state, so a span the author has not closed survives a USJ round trip instead of
   being silently normalized to closed.
+- `usjToUsxString(usj, { usxVersion })` — an optional `UsjToUsxOptions` argument whose `usxVersion`
+  sets the root `<usx version>` attribute. USJ's own `version` is the USJ format version, so a USX
+  round trip cannot recover the source USX version on its own; a caller that must hand USX back at
+  the version it was served passes that version here. Omitting it stamps `USX_VERSION` as before,
+  byte for byte.
 
 ### Changed
 

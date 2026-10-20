@@ -12,17 +12,35 @@ let chapterEid: string | undefined;
 let verseEid: string | undefined;
 
 /**
+ * Options for {@link usjToUsxString}.
+ *
+ * @public
+ */
+export interface UsjToUsxOptions {
+  /**
+   * The `version` attribute to stamp on the root `<usx>` element. Defaults to {@link USX_VERSION}.
+   *
+   * A USJ document cannot supply this itself: its `version` is the USJ format version, which
+   * `usxStringToUsj` always sets to `USJ_VERSION` whatever version the source USX declared. A
+   * caller that must hand USX back to a system expecting a particular version (for example, the
+   * version that system served) passes it here.
+   */
+  usxVersion?: string;
+}
+
+/**
  * Converts a USJ object to a USX string.
  *
  * @param usj - The USJ object to convert
+ * @param options - Conversion options; see {@link UsjToUsxOptions}.
  * @returns The converted USX string.
  *
  * @public
  */
-export function usjToUsxString(usj: Usj): string {
+export function usjToUsxString(usj: Usj, options?: UsjToUsxOptions): string {
   const usxDoc = new DOMImplementation().createDocument("", USX_TYPE);
   if (usxDoc.documentElement) {
-    usxDoc.documentElement.setAttribute("version", USX_VERSION);
+    usxDoc.documentElement.setAttribute("version", options?.usxVersion ?? USX_VERSION);
     usjToUsxDom(usj, usxDoc);
   }
   return usxDoc.toString();

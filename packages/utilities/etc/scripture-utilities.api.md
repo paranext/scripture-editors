@@ -138,7 +138,12 @@ export interface UsjTextContentLocation {
 }
 
 // @public
-export function usjToUsxString(usj: Usj): string;
+export interface UsjToUsxOptions {
+    usxVersion?: string;
+}
+
+// @public
+export function usjToUsxString(usj: Usj, options?: UsjToUsxOptions): string;
 
 // @public
 export const USX_TYPE = "usx";

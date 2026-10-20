@@ -43,9 +43,9 @@ function K(e) {
 }
 const d = "usx", T = "3.1", x = `<${d} version="${T}" />`;
 let u, c;
-function G(e) {
-  const t = new b().createDocument("", d);
-  return t.documentElement && (t.documentElement.setAttribute("version", T), k(e, t)), t.toString();
+function G(e, t) {
+  const n = new b().createDocument("", d);
+  return n.documentElement && (n.documentElement.setAttribute("version", t?.usxVersion ?? T), k(e, n)), n.toString();
 }
 function k(e, t) {
   if (t.documentElement) {
@@ -96,9 +96,9 @@ const N = "USJ", P = "3.1", $ = Object.freeze({ type: N, version: P, content: []
   "category"
 ];
 function Z(e) {
-  return B.includes(e);
+  return V.includes(e);
 }
-const B = [
+const V = [
   // Old Testament
   "GEN",
   "EXO",
@@ -222,9 +222,9 @@ const B = [
 ];
 function Y(e) {
   const n = new g().parseFromString(e, "text/xml");
-  return H(n.documentElement);
+  return B(n.documentElement);
 }
-function H(e) {
+function B(e) {
   const [t] = e ? M(e) : [{ content: [] }];
   return t.type = N, t.version = P, t;
 }
@@ -256,9 +256,9 @@ function M(e) {
   return i.content.length === 0 && i.type !== d && delete i.content, "eid" in i && ["verse", "chapter"].includes(n) && (f = "ignore"), [i, f];
 }
 function E(e) {
-  return I(e) !== "" || !/[\r\n]/.test(e);
+  return H(e) !== "" || !/[\r\n]/.test(e);
 }
-function I(e) {
+function H(e) {
   return e.replace(/(^[ \t\n\r\f\v]+)|([ \t\n\r\f\v]+$)/g, "");
 }
 export {
@@ -269,7 +269,7 @@ export {
   P as USJ_VERSION,
   d as USX_TYPE,
   T as USX_VERSION,
-  B as VALID_BOOK_CODES,
+  V as VALID_BOOK_CODES,
   j as assertSafeKey,
   K as getUsjDocumentLocationTypeName,
   D as indexesFromUsjJsonPath,
