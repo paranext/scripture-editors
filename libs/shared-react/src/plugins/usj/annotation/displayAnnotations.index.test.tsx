@@ -1893,6 +1893,99 @@ describe("the first and last element an annotation paints", () => {
     expect(edges(editor)).toEqual({ starts: [], ends: [] });
   });
 
+  describe("into a collapsed note", () => {
+    /** `In the beginning` then a footnote whose caller is `+` and whose content is `a note`. */
+    function $verseEndingInNote(collapsed: boolean): {
+      text: TextNode;
+      note: LexicalNode;
+      caller: LexicalNode;
+      content: TextNode;
+    } {
+      const text = $createTextNode("In the beginning");
+      const caller = $createImmutableNoteCallerNode("+");
+      const content = $createTextNode("a note");
+      const note = $createNoteNode("f", "+", collapsed).append(caller, content);
+      $getRoot().append($createParaNode().append(text, note));
+      return { text, note, caller, content };
+    }
+
+    /** Whether the caller's element carries the end class. The caller is a decorator React would
+     * draw, so its element reads empty here. */
+    const callerEnds = (editor: LexicalEditor, caller: LexicalNode) =>
+      editor.getElementByKey(caller.getKey())?.classList.contains(END) ?? false;
+
+    const toggle = (editor: LexicalEditor, note: LexicalNode) =>
+      editor.update(
+        () => {
+          const latest = note.getLatest();
+          if ($isNoteNode(latest)) latest.toggleIsCollapsed();
+        },
+        { discrete: true },
+      );
+
+    it("puts the end on the last element the note does not hide: its caller", () => {
+      const editor = setupEdges();
+      let parts!: ReturnType<typeof $verseEndingInNote>;
+      editor.update(() => void (parts = $verseEndingInNote(true)), { discrete: true });
+      // From `beginning` over the caller to the content's `a`.
+      wrapRange(editor, [parts.text, 7], [parts.content, 1], "a");
+      expect(edges(editor)).toEqual({ starts: ["beginning"], ends: [""] });
+      expect(callerEnds(editor, parts.caller)).toBe(true);
+    });
+
+    it("moves the end into the note as it expands, and back as it collapses", () => {
+      const editor = setupEdges();
+      let parts!: ReturnType<typeof $verseEndingInNote>;
+      editor.update(() => void (parts = $verseEndingInNote(true)), { discrete: true });
+      wrapRange(editor, [parts.text, 7], [parts.content, 1], "a");
+      toggle(editor, parts.note);
+      expect(edges(editor)).toEqual({ starts: ["beginning"], ends: ["a"] });
+      expect(callerEnds(editor, parts.caller)).toBe(false);
+      toggle(editor, parts.note);
+      expect(edges(editor)).toEqual({ starts: ["beginning"], ends: [""] });
+      expect(callerEnds(editor, parts.caller)).toBe(true);
+    });
+
+    it("gives a marker glyph held inside a note its edges as the note expands, and none as it collapses", () => {
+      const editor = setupEdges();
+      let note!: LexicalNode;
+      let glyph!: LexicalNode;
+      editor.update(
+        () => {
+          glyph = $createMarkerNode("ft");
+          note = $createNoteNode("f", "+", true).append(
+            $createImmutableNoteCallerNode("+"),
+            glyph,
+            $createTextNode(`${NBSP}a note`),
+          );
+          $getRoot().append($createParaNode().append($createTextNode("In the beginning"), note));
+          // The whole glyph.
+          $addDisplayAnnotation(glyph, TYPE, "a", 0, 0);
+        },
+        { discrete: true },
+      );
+      const glyphEdges = () =>
+        [START, END].filter((name) =>
+          editor.getElementByKey(glyph.getKey())?.classList.contains(name),
+        );
+      expect(glyphEdges()).toEqual([]);
+      toggle(editor, note);
+      expect(glyphEdges()).toEqual([START, END]);
+      toggle(editor, note);
+      expect(glyphEdges()).toEqual([]);
+    });
+
+    it("gives an annotation held only inside a collapsed note no edges", () => {
+      const editor = setupEdges();
+      let parts!: ReturnType<typeof $verseEndingInNote>;
+      editor.update(() => void (parts = $verseEndingInNote(true)), { discrete: true });
+      wrapRange(editor, [parts.content, 2], [parts.content, 6], "a");
+      expect(edges(editor)).toEqual({ starts: [], ends: [] });
+      toggle(editor, parts.note);
+      expect(edges(editor)).toEqual({ starts: ["note"], ends: ["note"] });
+    });
+  });
+
   it("paints no edge class when the theme names no edge prefix", () => {
     const { editor, run, release } = setup();
     wrap(editor, run, 0, 6, "external-spelling", "a");

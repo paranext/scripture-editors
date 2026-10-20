@@ -97,6 +97,7 @@ import { drainNativeSelectionChange } from "../editor-test.utils";
 import { Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
+  $getNearestNodeFromDOMNode,
   $getNodeByKey,
   $getRoot,
   $getSelection,
@@ -115,6 +116,7 @@ import {
   $carrierHoldableRange,
   $isDisplayAnnotationCarrier,
   $isMarkerTrailingSeparator,
+  $isNoteNode,
   $isTypedMarkNode,
   $logicalText,
   $pieceHead,
@@ -123,7 +125,13 @@ import {
   TypedMarkOnRemove,
   ZWSP,
 } from "shared";
-import { AnnotationRange, DeltaOp, getEditorDelta, ViewOptions } from "shared-react";
+import {
+  $isImmutableNoteCallerNode,
+  AnnotationRange,
+  DeltaOp,
+  getEditorDelta,
+  ViewOptions,
+} from "shared-react";
 import Delta from "quill-delta";
 import { writeFileSync } from "node:fs";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -1204,22 +1212,41 @@ function annotatedFailures(
   return failures;
 }
 
+/** Whether `node` is in the content a collapsed note hides: inside a note whose `isCollapsed` is set,
+ * and not its caller, which a collapsed note shows. */
+function $isHiddenByCollapsedNote(node: LexicalNode): boolean {
+  let child = node;
+  for (let parent = node.getParent(); parent; child = parent, parent = parent.getParent())
+    if ($isNoteNode(parent) && parent.getIsCollapsed() === true)
+      return !$isImmutableNoteCallerNode(child);
+  return false;
+}
+
 /**
  * Where the edge classes disagree with what each annotation paints, read from the DOM: an
  * annotation's first painted element (by document order, leaving out one inside another of its
- * elements) must carry the editor theme's start class for its type and its last the end class,
- * and no other element may carry either unless it is some annotation's first or last.
+ * elements and one a collapsed note hides) must carry the editor theme's start class for its type
+ * and its last the end class, and no other element may carry either unless it is some
+ * annotation's first or last.
  */
 function edgeFailures(mounted: MountedInView, ids: Iterable<string>): string[] {
   const root = mounted.lexical.getRootElement();
   if (!root) return [];
+  const isShown = (element: Element) =>
+    mounted.lexical.getEditorState().read(
+      () => {
+        const node = $getNearestNodeFromDOMNode(element);
+        return !node || !$isHiddenByCollapsedNote(node);
+      },
+      { editor: mounted.lexical },
+    );
   const startClass = `editor-typed-markStart-${HELD_TYPE}`;
   const endClass = `editor-typed-markEnd-${HELD_TYPE}`;
   const failures: string[] = [];
   const starts = new Set<Element>();
   const ends = new Set<Element>();
   for (const id of ids) {
-    const elements = [...root.getElementsByClassName(`annotationId-${id}`)];
+    const elements = [...root.getElementsByClassName(`annotationId-${id}`)].filter(isShown);
     const outermost = elements.filter(
       (element) => !elements.some((other) => other !== element && other.contains(element)),
     );

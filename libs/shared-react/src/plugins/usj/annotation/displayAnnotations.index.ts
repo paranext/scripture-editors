@@ -15,7 +15,10 @@
  * decorator's sub-span — so a host can draw one box over everything it paints.
  */
 
-import { ImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
+import {
+  $isImmutableNoteCallerNode,
+  ImmutableNoteCallerNode,
+} from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { ImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
 import { $renderedOffsetOf } from "./decoratorHolds.utils";
 import { $readDecoratorHoldableText } from "./selection.utils";
@@ -59,6 +62,7 @@ import {
 import {
   $coveredDisplayText,
   $displayAnnotationsOf,
+  $isNoteNode,
   $isPieceContinuation,
   $isTypedMarkNode,
   clearDecoratorPaints,
@@ -78,6 +82,7 @@ import {
   ImmutableTypedTextNode,
   ImmutableUnmatchedNode,
   MarkerNode,
+  NoteNode,
   registerDisplayAnnotationBasis,
   $restatePastedPieces,
   $isSplitCarrier,
@@ -238,6 +243,19 @@ function $splitCarrierAtPoint(at: RangeSelection, needsBlock: boolean): void {
   // reads is restated on the split: the end of the part before the caret.
   const points = isCollapsed ? [at.anchor, at.focus] : [at.anchor];
   for (const point of points) point.set(before.getKey(), before.getTextContentSize(), "text");
+}
+
+/**
+ * Whether `node` is in the content a collapsed note hides: inside a note whose `isCollapsed` is set,
+ * and not its caller, the one part of it a collapsed note shows. Read from the tree, not the page,
+ * so it holds in a hidden tab too.
+ */
+function $isInCollapsedNoteContent(node: LexicalNode): boolean {
+  let child = node;
+  for (let parent = node.getParent(); parent; child = parent, parent = parent.getParent())
+    if ($isNoteNode(parent) && parent.getIsCollapsed() === true)
+      return !$isImmutableNoteCallerNode(child);
+  return false;
 }
 
 interface Entry {
@@ -571,12 +589,16 @@ function createIndex(editor: LexicalEditor): Entry {
   /**
    * The first and last node annotation `annotationKey` paints, by the document order of their
    * elements: its marks and the leaves painted here, leaving out one inside another of them (a
-   * carrier inside a mark of the same annotation is painted by the mark). Read after the commit,
-   * from the DOM, as {@link rangesFor} orders what it paints. Call inside a read.
+   * carrier inside a mark of the same annotation is painted by the mark) and one a collapsed note
+   * hides ({@link $isInCollapsedNoteContent}), whose element shows nothing to draw a side on.
+   * Read after the commit, from the DOM, as {@link rangesFor} orders what it paints. Call inside a
+   * read.
    */
   function $edgesOf(annotationKey: string): { start: NodeKey; end: NodeKey } | undefined {
     const painting: { key: NodeKey; element: HTMLElement }[] = [];
     const add = (key: NodeKey) => {
+      const node = $getNodeByKey(key);
+      if (!node || $isInCollapsedNoteContent(node)) return;
       const element = editor.getElementByKey(key);
       if (element?.isConnected) painting.push({ key, element });
     };
@@ -814,6 +836,32 @@ function createIndex(editor: LexicalEditor): Entry {
     });
   }
 
+  /** A note collapsing or expanding hides or shows what its content paints, so the edges of every
+   * annotation painting there may move into or out of it. */
+  function onNoteMutations(mutations: Map<NodeKey, NodeMutation>): void {
+    editor.getEditorState().read(
+      () => {
+        for (const [key, mutation] of mutations) {
+          if (mutation === "destroyed") continue;
+          const note = $getNodeByKey(key);
+          if (!$isNoteNode(note)) continue;
+          const $staleUnder = (node: LexicalNode) => {
+            const nodeKey = node.getKey();
+            annotationsByMark
+              .get(nodeKey)
+              ?.forEach((annotationKey) => staleEdges.add(annotationKey));
+            annotationsByLeaf
+              .get(nodeKey)
+              ?.forEach((annotationKey) => staleEdges.add(annotationKey));
+            if ($isElementNode(node)) node.getChildren().forEach($staleUnder);
+          };
+          $staleUnder(note);
+        }
+      },
+      { editor },
+    );
+  }
+
   function forget(annotationKey: string, type: string, id: string): void {
     deleteDisplayAnnotationRegistration(editor, type, id);
     markOnRemove.delete(annotationKey);
@@ -946,6 +994,9 @@ function createIndex(editor: LexicalEditor): Entry {
       ? editor.registerMutationListener(TypedMarkNode, onMarkMutations, {
           skipInitialization: false,
         })
+      : () => undefined,
+    editor.hasNodes([NoteNode])
+      ? editor.registerMutationListener(NoteNode, onNoteMutations, { skipInitialization: true })
       : () => undefined,
     listenForTypedMarkRemovalReports(editor),
     editor.registerUpdateListener(reportDestroyed),
