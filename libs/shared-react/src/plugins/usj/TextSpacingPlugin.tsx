@@ -91,9 +91,9 @@ function useTextSpacing(editor: LexicalEditor) {
  *
  * It also deletes almost nothing. The one deletion kept is an empty verse's space-only content
  * (a verse marker precedes the node, through any annotation mark) — see
- * {@link $isEmptyVerseContent} for why that space cannot round-trip and what limits the check. A lone space anywhere else — an
- * empty paragraph, before a milestone, at the end of a paragraph — is a byte the user or the
- * source put there and survives.
+ * {@link $isEmptyVerseContent} for why that space cannot round-trip and what limits the check. A
+ * lone space anywhere else — an empty paragraph, before a milestone, at the end of a paragraph —
+ * is a byte the user or the source put there and survives.
  *
  * The exemption early-returns keep the transform away from contexts that own their own spacing:
  * non-editable nodes, already-spaced text, note/char/typed-mark adjacency, unknown-node content,

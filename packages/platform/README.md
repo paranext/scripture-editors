@@ -171,10 +171,12 @@ whitespace the editor shows between two of its bytes in one paragraph (a marker'
 space after a verse number); never whitespace at its edges. Every painted element gets the same class
 names: a display-byte element gets `display-annotation` too. An editable display byte covered in
 part is cut at the covered part's edges into pieces of its own kind, so the covered part is an
-element of its own; a read-only glyph covered in part paints a sub-span of its text. So style
-annotations by class (never by the `mark` element name): every class rule — background, border,
-padding, font, `:hover`, `::selection` — applies to everything an annotation paints. The overlap
-class marks only the text two annotations of one type share. To measure or scroll to an
+element of its own; every piece after the first carries `data-piece-continuation`, so a rule that
+boxes a carrier (padding, a border, a margin) can apply to its first piece alone with
+`:not([data-piece-continuation])`. A read-only glyph covered in part paints a sub-span of its text.
+So style annotations by class (never by the `mark` element name): every class rule — background,
+border, padding, font, `:hover`, `::selection` — applies to everything an annotation paints. The
+overlap class marks only the text two annotations of one type share. To measure or scroll to an
 annotation, use `getAnnotationRanges(type, id)`, which lists every element it paints. An
 annotation on display bytes follows the bytes it holds through an edit (a
 collaborator renumbering a verse) and is dropped, with `onRemove` reporting `"destroyed"`, once none

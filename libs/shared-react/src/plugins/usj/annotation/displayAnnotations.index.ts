@@ -408,7 +408,7 @@ function createIndex(editor: LexicalEditor): Entry {
     );
   }
 
-  /** The class names an element or highlight painted by `annotationKeys` gets. */
+  /** The class names an element or a decorator sub-span painted by `annotationKeys` gets. */
   function classNamesFor(annotationKeys: Iterable<string>): string[] {
     const typedIds: TypedIDs = {};
     const states = new Set<string>();
