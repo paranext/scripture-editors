@@ -757,12 +757,16 @@ describe("an annotation beside a no-break space the text itself contains", () =>
     },
   );
 
-  it("keeps a paragraph's leading space, displayed as a no-break space, beside a mark (standard)", async () => {
+  it("leaves a paragraph's leading space, displayed as a no-break space, unsaved beside a mark (standard)", async () => {
+    // A paragraph's leading spaces are not content in Standard view (Paratext 9 skips whitespace
+    // after a paragraph marker's separator), so the word starts the saved text; the mark splitting
+    // the displayed space off into its own node must not bring it back.
     const mounted = await mountInView(twoParaUsj([" word"]), oracleView("standard"));
     const before = mounted.ref.current?.getUsj();
+    expect(before?.content[2]).toEqual({ type: "para", marker: "p", content: ["word"] });
 
     await act(async () => {
-      mounted.ref.current?.setAnnotation(at(1, 5), ORACLE_TYPE, "lead");
+      mounted.ref.current?.setAnnotation(at(0, 4), ORACLE_TYPE, "lead");
       await Promise.resolve();
     });
 

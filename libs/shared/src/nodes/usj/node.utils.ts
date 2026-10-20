@@ -69,7 +69,7 @@ import {
   $isSplicedImpliedPara,
 } from "./logicalParent.utils.js";
 import { closingMarkerText, openingMarkerText, typedCallerRange } from "./markerText.utils.js";
-import { collapsedSpaceRunRanges } from "./spaceRuns.utils.js";
+import { collapsedSpaceRunRanges, leadingDisplaySpaceLength } from "./spaceRuns.utils.js";
 import {
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   IMMUTABLE_NOTE_CALLER_NODE_TYPE,
@@ -128,10 +128,11 @@ export interface LogicalTextSegment {
    */
   lead: number;
   /**
-   * The characters after the lead that the editor→USJ conversion drops — a collapsed space run's
-   * extra characters (see `collapsedSpaceRunRanges`; none unless the editor's serialization
-   * collapses runs), and the caller's own bytes behind typed caller bytes — as ascending local
-   * `[start, end)` ranges.
+   * The characters after the lead that the editor→USJ conversion drops — the spaces after a
+   * marker's separator and a collapsed space run's extra characters (see
+   * `leadingDisplaySpaceLength` and `collapsedSpaceRunRanges`; neither unless the editor's
+   * serialization collapses runs), and the caller's own bytes behind typed caller bytes — as
+   * ascending local `[start, end)` ranges.
    */
   collapsed: readonly (readonly [number, number])[];
   /** How many characters the segment contributes to the item: the node's kept characters. */
@@ -1182,20 +1183,84 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
 
 /**
  * Which live nodes make up each logical content item, before any text is measured. An item's
- * index depends only on this shape; its text offsets also depend on how serialization treats
- * whitespace.
+ * index depends only on this shape — and, where serialization drops the spaces after a marker's
+ * separator, on which texts hold nothing else; its text offsets also depend on how serialization
+ * treats whitespace.
  */
 type LogicalItemShape =
   | { type: "element"; node: LexicalNode }
-  | { type: "text"; nodes: TextNode[] };
+  | {
+      type: "text";
+      nodes: TextNode[];
+      /** Serialization drops the spaces this text starts with: they follow a marker's separator
+       * (see {@link $getLogicalItemShapes}). */
+      dropsLeadingSpaces?: true;
+    };
 
-/** The shape half of {@link $getLogicalContentItems}. */
-function $getLogicalItemShapes(parent: ElementNode): LogicalItemShape[] {
+/** The characters of `node` the conversion keeps before any whitespace rule: past its lead, up to
+ * the end of any typed caller bytes. */
+function $keptRange(node: TextNode): { lead: number; keptEnd: number } {
+  // A char span's separator NBSP is a prefix of its first content text and the exporter strips
+  // it before anything else, so it occupies no USJ offset and never belongs to a space run —
+  // see $charSeparatorPrefixLength.
+  // A caller text holding typed bytes contributes only those bytes: the caller's own bytes in
+  // front of them are its lead, and any behind them are dropped too.
+  const typed = $typedNoteCallerRange(node);
+  return {
+    lead: typed ? typed.start : $charSeparatorPrefixLength(node),
+    keptEnd: typed ? typed.end : node.getTextContentSize(),
+  };
+}
+
+/** Whether every character `nodes` keep is a display space. */
+function $holdsOnlySpaces(nodes: TextNode[]): boolean {
+  return nodes.every((node) => {
+    const { lead, keptEnd } = $keptRange(node);
+    const kept = node.getTextContent().slice(lead, keptEnd);
+    return leadingDisplaySpaceLength(kept) === kept.length;
+  });
+}
+
+/** Whether a text right after `node` follows a verse number's separator: a verse with no `\va` or
+ * `\vp`, whose closing marker the text would follow instead. */
+function $endsInVerseNumber(node: LexicalNode): boolean {
+  return (
+    $isVerseNode(node) && node.getAltnumber() === undefined && node.getPubnumber() === undefined
+  );
+}
+
+/** Whether the root's implied paragraph `implied` starts its content after a marker's separator:
+ * not after a chapter's `\ca`/`\cp`, whose closing marker or text the content would follow. */
+function $startsAfterSeparator(implied: ImpliedParaNode): boolean {
+  const previous = implied.getPreviousSibling();
+  return (
+    !$isSomeChapterNode(previous) ||
+    (previous.getAltnumber() === undefined && previous.getPubnumber() === undefined)
+  );
+}
+
+/**
+ * The shape half of {@link $getLogicalContentItems}. Serialization that collapses space runs
+ * (Standard view's) also drops the spaces a text starts with right after a marker's separator,
+ * which Paratext 9 skips as part of the separator rather than reading as content:
+ *
+ * - at the start of a paragraph's content — under any paragraph marker, and in the root's implied
+ *   paragraph after a chapter;
+ * - right after a verse number.
+ *
+ * A text holding nothing but such spaces is no item.
+ */
+function $getLogicalItemShapes(
+  parent: ElementNode,
+  collapsesSpaceRuns: boolean,
+): LogicalItemShape[] {
   // A chapter marker has no `content` in USJ: an editable ChapterNode's children are entirely the
   // `\c N` glyph it displays and the runs that ride after it.
   if ($isChapterNode(parent)) return [];
 
   const shapes: LogicalItemShape[] = [];
+  /** Where in `shapes` each paragraph's content starts that starts after a separator. */
+  const paragraphStarts: number[] = [];
   let run: TextNode[] | undefined;
 
   const flushRun = () => {
@@ -1207,6 +1272,15 @@ function $getLogicalItemShapes(parent: ElementNode): LogicalItemShape[] {
 
   const visit = (node: LexicalNode) => {
     if ($shouldIgnoreNodeForContentIndexes(node)) return;
+    if ($isSplicedImpliedPara(node)) {
+      // The conversion splices the implied paragraph into the root, so its content starts among
+      // the root's items.
+      flushRun();
+      if ($startsAfterSeparator(node)) paragraphStarts.push(shapes.length);
+      node.getChildren().forEach(visit);
+      flushRun();
+      return;
+    }
     if ($isContentTransparent(node)) {
       // For marks, recursion is defense-in-depth: nested marks only exist transiently before the
       // AnnotationPlugin's nested-element resolver flattens them into siblings.
@@ -1226,31 +1300,47 @@ function $getLogicalItemShapes(parent: ElementNode): LogicalItemShape[] {
 
   parent.getChildren().forEach(visit);
   flushRun();
-  return shapes;
+  if (!collapsesSpaceRuns) return shapes;
+
+  if ($isParaNode(parent)) paragraphStarts.push(0);
+  return shapes.filter((shape, index) => {
+    if (shape.type !== "text") return true;
+    const previous = shapes[index - 1];
+    const afterSeparator =
+      paragraphStarts.includes(index) ||
+      (previous?.type === "element" && $endsInVerseNumber(previous.node));
+    if (!afterSeparator) return true;
+    shape.dropsLeadingSpaces = true;
+    return !$holdsOnlySpaces(shape.nodes);
+  });
 }
 
 /**
  * Measures a coalesced text run in the exporter's coordinates. Each node is measured on its own,
  * as the exporter converts each node's text before joining it to its neighbors, so a space run
- * split across an annotation's edge does not collapse.
+ * split across an annotation's edge does not collapse. The spaces the run starts with, when
+ * serialization drops them (see {@link $getLogicalItemShapes}), are dropped across nodes, as the
+ * exporter drops them from the joined string.
  */
-function $measureTextItem(nodes: TextNode[], collapsesSpaceRuns: boolean): LogicalTextItem {
+function $measureTextItem(
+  shape: Extract<LogicalItemShape, { type: "text" }>,
+  collapsesSpaceRuns: boolean,
+): LogicalTextItem {
   const segments: LogicalTextSegment[] = [];
   let length = 0;
-  for (const node of nodes) {
-    // A char span's separator NBSP is a prefix of its first content text and the exporter strips
-    // it before anything else, so it occupies no USJ offset and never belongs to a space run —
-    // see $charSeparatorPrefixLength.
-    // A caller text holding typed bytes contributes only those bytes: the caller's own bytes in
-    // front of them are its lead, and any behind them are dropped too.
-    const typed = $typedNoteCallerRange(node);
-    const lead = typed ? typed.start : $charSeparatorPrefixLength(node);
-    const keptEnd = typed ? typed.end : node.getTextContentSize();
+  let dropsLeadingSpaces = !!shape.dropsLeadingSpaces;
+  for (const node of shape.nodes) {
+    const { lead, keptEnd } = $keptRange(node);
+    const kept = node.getTextContent().slice(lead, keptEnd);
+    const leadingSpaces = dropsLeadingSpaces ? leadingDisplaySpaceLength(kept) : 0;
+    if (leadingSpaces < kept.length) dropsLeadingSpaces = false;
+    const runsStart = lead + leadingSpaces;
     const collapsed: (readonly [number, number])[] = collapsesSpaceRuns
-      ? collapsedSpaceRunRanges(node.getTextContent().slice(lead, keptEnd)).map(
-          ([start, end]) => [start + lead, end + lead] as const,
+      ? collapsedSpaceRunRanges(kept.slice(leadingSpaces)).map(
+          ([start, end]) => [start + runsStart, end + runsStart] as const,
         )
       : [];
+    if (leadingSpaces > 0) collapsed.unshift([lead, runsStart]);
     if (keptEnd < node.getTextContentSize()) collapsed.push([keptEnd, node.getTextContentSize()]);
     const segmentLength =
       node.getTextContentSize() -
@@ -1291,25 +1381,29 @@ function segmentLocalOffset(segment: LogicalTextSegment, contentOffset: number):
  * Maps a parent element's Lexical children to its logical USJ content items — the items the
  * editor→USJ conversion would export: presentation-only nodes skipped, TypedMarkNodes
  * transparent (children spliced in, recursively), contiguous text coalesced into single items,
- * and the characters the conversion drops (a char span's structural separator NBSP, and a
- * collapsed space run's extra characters) excluded from its text item's coordinates. The root's
- * implied paragraph is transparent the same way marks are: the conversion splices its children
- * into the root.
+ * and the characters the conversion drops (a char span's structural separator NBSP, a collapsed
+ * space run's extra characters, and the spaces after a marker's separator — at a paragraph's
+ * content start and after a verse number) excluded from its text item's coordinates — a text
+ * holding only such spaces is no item. The root's implied paragraph is transparent the same way
+ * marks are: the conversion splices its children into the root.
  *
  * Known exclusion: comment-type TypedMarkNodes are treated as transparent like every other
  * mark, even though the exporter still serializes them as milestone items. That milestone
  * serialization is deprecated and pending removal, so the model intentionally ignores it.
  * @param parent - The parent element node.
  * @param collapsesSpaceRuns - Whether this editor's serialization collapses space runs (Standard
- *   view's whitespace, `hasStandardViewWhitespace` in shared-react).
+ *   view's whitespace, `hasStandardViewWhitespace` in shared-react), and with them drops the
+ *   spaces after a marker's separator.
  * @returns the logical content items in document order.
  */
 export function $getLogicalContentItems(
   parent: ElementNode,
   collapsesSpaceRuns: boolean,
 ): LogicalContentItem[] {
-  return $getLogicalItemShapes(parent).map((shape) =>
-    shape.type === "element" ? shape : $measureTextItem(shape.nodes, collapsesSpaceRuns),
+  return $getLogicalItemShapes(parent, collapsesSpaceRuns).map((shape) =>
+    shape.type === "element"
+      ? { type: "element", node: shape.node }
+      : $measureTextItem(shape, collapsesSpaceRuns),
   );
 }
 
@@ -1318,10 +1412,17 @@ export function $getLogicalContentItems(
  * inside TypedMarkNodes under the parent).
  * @param parent - The logical parent element.
  * @param child - The node to find.
- * @returns the logical index, or -1 if the child is presentation-only or not found.
+ * @param collapsesSpaceRuns - Whether this editor's serialization collapses space runs; see
+ *   {@link $getLogicalContentItems}.
+ * @returns the logical index, or -1 if the child is presentation-only, is text holding only
+ *   spaces after a marker's separator that the conversion drops whole, or is not found.
  */
-export function $getLogicalIndexOfChild(parent: ElementNode, child: LexicalNode): number {
-  return $getLogicalItemShapes(parent).findIndex((shape) =>
+export function $getLogicalIndexOfChild(
+  parent: ElementNode,
+  child: LexicalNode,
+  collapsesSpaceRuns: boolean,
+): number {
+  return $getLogicalItemShapes(parent, collapsesSpaceRuns).findIndex((shape) =>
     shape.type === "element" ? shape.node.is(child) : shape.nodes.some((node) => node.is(child)),
   );
 }
@@ -1410,7 +1511,10 @@ export function $getLogicalPointFromElementPoint(
         parent.getIndexWithinParent() + 1,
         collapsesSpaceRuns,
       );
-    if ($shouldIgnoreNodeForContentIndexes(child))
+    if (
+      $shouldIgnoreNodeForContentIndexes(child) ||
+      !$logicalItemWithin($getLogicalContentItems(root, collapsesSpaceRuns), child)
+    )
       return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
     return $logicalPointBefore(root, child, collapsesSpaceRuns);
   }
@@ -1422,11 +1526,12 @@ export function $getLogicalPointFromElementPoint(
   if ($shouldIgnoreNodeForContentIndexes(child))
     return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
 
-  // A transparent child with no content items of its own — an implied paragraph the conversion
-  // splices away, or an annotation mark left holding nothing USJ carries. It contributes no item
-  // to search for, so the boundary in front of it is the one in front of whatever follows it;
-  // falling through would report the END of the parent's content instead.
-  if ($isContentTransparent(child) && !$logicalItemWithin(items, child))
+  // A child with no content items of its own — an implied paragraph the conversion splices away,
+  // an annotation mark left holding nothing USJ carries, or a text holding only spaces after a
+  // marker's separator, which the conversion drops whole. It contributes no item to search for,
+  // so the boundary in front of it is the one in front of whatever follows it; falling through
+  // would report the END of the parent's content instead.
+  if (!$logicalItemWithin(items, child))
     return $getLogicalPointFromElementPoint(parent, elementOffset + 1, collapsesSpaceRuns);
 
   return $logicalPointBefore(parent, child, collapsesSpaceRuns);
@@ -1497,15 +1602,18 @@ function $logicalPointBefore(
  * `parent`.
  * @param parent - The parent element node.
  * @param logicalIndex - The logical boundary index (0 = before the first item).
+ * @param collapsesSpaceRuns - Whether this editor's serialization collapses space runs; see
+ *   {@link $getLogicalContentItems}.
  * @returns the element holding the point and the child offset within it.
  */
 export function $getElementPointFromLogicalIndex(
   parent: ElementNode,
   logicalIndex: number,
+  collapsesSpaceRuns: boolean,
 ): [ElementNode, number] {
   if (logicalIndex <= 0) return [parent, 0];
 
-  const shapes = $getLogicalItemShapes(parent);
+  const shapes = $getLogicalItemShapes(parent, collapsesSpaceRuns);
   if (shapes.length === 0 || logicalIndex > shapes.length)
     return [parent, parent.getChildrenSize()];
 

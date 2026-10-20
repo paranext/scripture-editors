@@ -1498,9 +1498,10 @@ describe("Note caller index vs the USJ note walk", () => {
       return (result?.content?.[0] as MarkerObject).content;
     }
 
-    it("standard view: preserves a lone leading space", () => {
+    // Paratext 9 skips all whitespace after a paragraph marker's separator, so a paragraph's
+    // leading spaces are not content: Standard view saves none of them.
+    it("standard view: drops a lone leading space", () => {
       expect(roundTripLeading(" ", STANDARD_VIEW_MODE)).toEqual([
-        " ",
         { type: "verse", marker: "v", number: "1" },
         "in the days",
       ]);
@@ -1514,9 +1515,8 @@ describe("Note caller index vs the USJ note walk", () => {
       ]);
     });
 
-    it("standard view: collapses a leading two-space run to one space (space-run normalization)", () => {
+    it("standard view: drops a leading two-space run", () => {
       expect(roundTripLeading("  ", STANDARD_VIEW_MODE)).toEqual([
-        " ",
         { type: "verse", marker: "v", number: "1" },
         "in the days",
       ]);

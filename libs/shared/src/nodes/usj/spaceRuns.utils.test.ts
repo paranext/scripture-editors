@@ -1,5 +1,9 @@
 import { NBSP } from "./node-constants.js";
-import { collapsedSpaceRunRanges, collapseSpaceRuns } from "./spaceRuns.utils.js";
+import {
+  collapsedSpaceRunRanges,
+  collapseSpaceRuns,
+  leadingDisplaySpaceLength,
+} from "./spaceRuns.utils.js";
 
 describe("collapsedSpaceRunRanges", () => {
   it("drops every character of a run after its first", () => {
@@ -52,5 +56,20 @@ describe("collapseSpaceRuns", () => {
       );
       expect(collapseSpaceRuns(text)).toBe(kept.join(""));
     }
+  });
+});
+
+describe("leadingDisplaySpaceLength", () => {
+  it("counts leading plain spaces and display NBSPs together", () => {
+    expect(leadingDisplaySpaceLength(` ${NBSP} text`)).toBe(3);
+  });
+
+  it("counts a text that is all spaces whole", () => {
+    expect(leadingDisplaySpaceLength(`${NBSP}${NBSP}`)).toBe(2);
+  });
+
+  it("stops at a displayed data NBSP and counts nothing in text that starts with a word", () => {
+    expect(leadingDisplaySpaceLength(" ~ a")).toBe(1);
+    expect(leadingDisplaySpaceLength("a  b")).toBe(0);
   });
 });

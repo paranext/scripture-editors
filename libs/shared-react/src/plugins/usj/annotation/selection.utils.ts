@@ -916,7 +916,7 @@ function $locationFromDisplayBytes(
     span = candidate;
   }
   const within = span.base + (clamped - span.start);
-  const jsonPath = usjJsonPathFromIndexes($getJsonPathIndexes(bytes.owner));
+  const jsonPath = usjJsonPathFromIndexes($getJsonPathIndexes(bytes.owner, collapsesSpaceRuns));
 
   switch (span.bytes.kind) {
     case "marker":
@@ -1620,7 +1620,10 @@ function $locationFromNode(
     const typed = $getLogicalTextLocation(node, offset, collapsesSpaceRuns);
     if (typed)
       return {
-        jsonPath: usjJsonPathFromIndexes([...$getJsonPathIndexes(typed.parent), typed.index]),
+        jsonPath: usjJsonPathFromIndexes([
+          ...$getJsonPathIndexes(typed.parent, collapsesSpaceRuns),
+          typed.index,
+        ]),
         offset: typed.offset,
       };
   }
@@ -1689,7 +1692,7 @@ function $locationFromNode(
     }
     if (childAtOffset && $isDisplayByteDecorator(childAtOffset))
       return {
-        jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)),
+        jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node, collapsesSpaceRuns)),
       } satisfies UsjMarkerLocation;
 
     // Past the container's own closing glyph is past the container.
@@ -1730,7 +1733,7 @@ function $locationFromNode(
     if (logicalTextLocation) {
       return {
         jsonPath: usjJsonPathFromIndexes([
-          ...$getJsonPathIndexes(logicalTextLocation.parent),
+          ...$getJsonPathIndexes(logicalTextLocation.parent, collapsesSpaceRuns),
           logicalTextLocation.index,
         ]),
         offset: logicalTextLocation.offset,
@@ -1879,7 +1882,7 @@ function $locationFromLogicalPoint(
   point: LogicalPoint,
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation {
-  const containerIndexes = $getJsonPathIndexes(container);
+  const containerIndexes = $getJsonPathIndexes(container, collapsesSpaceRuns);
   if (point.type === "text")
     return {
       jsonPath: usjJsonPathFromIndexes([...containerIndexes, point.index]),
@@ -1901,7 +1904,8 @@ function $locationBeside(
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation {
   const parent = node.getParent();
-  if (!parent) return { jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)) };
+  if (!parent)
+    return { jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node, collapsesSpaceRuns)) };
   const index = node.getIndexWithinParent() + (after ? 1 : 0);
   if ($isTypedMarkNode(parent)) {
     // A mark is transparent, so a gap at its edge is the gap beside the mark itself, and a gap
@@ -2292,16 +2296,19 @@ function $getPreviousContentSibling(child: LexicalNode): LexicalNode | undefined
  * and the answer for a node that is not itself a position (the first node of a region, a note a
  * path has to be prefixed with).
  * @param node - The node to get the path for.
+ * @param collapsesSpaceRuns - Whether this editor's serialization collapses space runs, and with
+ *   them drops a paragraph's leading spaces — which can remove a paragraph's first item, so the
+ *   items after it are indexed one lower; see `$getLogicalContentItems`.
  * @returns An array of indexes representing the path from root to node.
  */
-export function $getJsonPathIndexes(node: LexicalNode): number[] {
+export function $getJsonPathIndexes(node: LexicalNode, collapsesSpaceRuns: boolean): number[] {
   const jsonPathIndexes: number[] = [];
   let current: LexicalNode | null = node;
   while (current) {
     const parent = $getLogicalParent(current);
     if (!parent) break;
 
-    const index = $getLogicalIndexOfChild(parent, current);
+    const index = $getLogicalIndexOfChild(parent, current, collapsesSpaceRuns);
     if (index >= 0) jsonPathIndexes.unshift(index);
     current = parent;
   }
