@@ -1050,8 +1050,7 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
     const remainderMatch = VERSE_GLYPH_REGEXES.valueAndRest.exec(remainder);
     if (remainderMatch && SEPARATOR_RUN_ONLY_REGEX.test(remainderMatch[2] ?? "")) {
       context.pendingKeys.delete(node.getKey());
-      if (remainderMatch[1] !== node.getNumber())
-        for (const piece of $pieces(node)) piece.setNumber(remainderMatch[1]);
+      node.setNumber(remainderMatch[1]);
       return;
     }
   }
@@ -1119,9 +1118,8 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
   // number being edited, and a later commit duplicated the run. A changed number retags STATE
   // only; the typed bytes stay visible as-is, exactly like the space-only case.
   if (SEPARATOR_RUN_ONLY_REGEX.test(rest ?? "")) {
-    // PT9 GetNextWord; every piece carries the verse's fields.
-    if (numberToken !== node.getNumber())
-      for (const piece of $pieces(node)) piece.setNumber(numberToken);
+    // PT9 GetNextWord; `setNumber` writes it on every piece.
+    node.setNumber(numberToken);
     return;
   }
   const head = $setLogicalText(node, getVisibleOpenMarkerText("v", numberToken));

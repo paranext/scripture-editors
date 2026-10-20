@@ -20,6 +20,7 @@ import { $getClipboardDataFromSelection, LexicalClipboardData } from "@lexical/c
 import {
   $createRangeSelection,
   $getRoot,
+  $getState,
   $isElementNode,
   $isRootNode,
   $isTextNode,
@@ -251,8 +252,12 @@ function $uncutPoint(point: PointType, places: Map<NodeKey, Place>): UncutPoint 
 
 /** Whether `node` carries a state a hold or a cut puts on a node. */
 function $hasAnnotationState(node: LexicalNode): boolean {
-  const state = node.exportJSON()[NODE_STATE_KEY];
-  return !!state && Object.keys(state).some((key) => ANNOTATION_STATE_KEYS.has(key));
+  return (
+    $getState(node, displayAnnotationsState) !== undefined ||
+    $getState(node, displayPieceChainState) !== undefined ||
+    $getState(node, displayPieceContinuationState) !== undefined ||
+    $getState(node, displayPieceTokenTextState) !== undefined
+  );
 }
 
 /** Whether `selection` touches anything an annotation puts in the tree: a mark, a piece, a hold. */
