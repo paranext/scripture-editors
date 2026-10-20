@@ -9,13 +9,23 @@
  * into pieces where a hold ends (`displayPieces.state.ts`), so what an annotation paints on it is
  * either all of a piece or none. A read-only decorator held in part paints sub-spans of its own
  * rendered text, through the paint store in `decoratorPaint.ts`.
+ *
+ * Every annotation's first painted element, by document order, also gets its type's start class and
+ * its last its end class (`typedMarkEdgeClassName`) — a `<mark>`, a leaf painted whole, or a
+ * decorator's sub-span — so a host can draw one box over everything it paints.
  */
 
 import { ImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
 import { ImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
 import { $renderedOffsetOf } from "./decoratorHolds.utils";
 import { $readDecoratorHoldableText } from "./selection.utils";
-import { $paintIntervalsOf, $paintText, leafPaint, PaintIntervals } from "./annotationPaint.utils";
+import {
+  $paintIntervalsOf,
+  $paintSize,
+  $paintText,
+  leafPaint,
+  PaintIntervals,
+} from "./annotationPaint.utils";
 import { addClassNamesToElement, mergeRegister, removeClassNamesFromElement } from "@lexical/utils";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import {
@@ -82,6 +92,7 @@ import {
   takeTypedMarkRemovalReports,
   TypedIDs,
   typedMarkClassNames,
+  typedMarkEdgeClassName,
   TypedMarkNode,
   TypedMarkOnRemove,
   VerseNode,
@@ -283,6 +294,14 @@ function createIndex(editor: LexicalEditor): Entry {
   const wholeLeaves = new Set<NodeKey>();
   /** Extra class names the host's state adds to an annotation's painting (`selected`). */
   const stateClasses = new Map<string, Set<string>>();
+  /** Each annotation's first and last painted node by document order: a mark, or a leaf painted
+   * here. The edge classes go on their elements (on a decorator painted in part, on its first or
+   * last sub-span the annotation paints). */
+  const edgesByAnnotation = new Map<string, { start: NodeKey; end: NodeKey }>();
+  /** Annotations whose first or last painted node may have moved since the last paint pass. */
+  let staleEdges = new Set<string>();
+  /** The edge class names last put on each mark's element, which Lexical owns and may re-create. */
+  const markEdges = new Map<NodeKey, { element: HTMLElement; names: string[] }>();
   /** Set once the index is released: nothing paints after that. */
   let disposed = false;
   let emptied = new Set<string>();
@@ -428,6 +447,27 @@ function createIndex(editor: LexicalEditor): Entry {
     ].flatMap((name) => name.match(/\S+/g) ?? []);
   }
 
+  /** The edge class names node `key` gets for each of `annotationKeys` whose first (`"start"`) or
+   * last (`"end"`) painted node it is. */
+  function edgeClassNamesFor(
+    key: NodeKey,
+    annotationKeys: Iterable<string>,
+    edges: readonly ("start" | "end")[] = ["start", "end"],
+  ): string[] {
+    const names: string[] = [];
+    for (const annotationKey of annotationKeys) {
+      const edgeKeys = edgesByAnnotation.get(annotationKey);
+      if (!edgeKeys) continue;
+      const [type] = parseIndexKey(annotationKey);
+      for (const edge of edges) {
+        if (edgeKeys[edge] !== key) continue;
+        const name = typedMarkEdgeClassName(theme, type, edge);
+        if (name) names.push(...(name.match(/\S+/g) ?? []));
+      }
+    }
+    return [...new Set(names)];
+  }
+
   function paintElement(element: HTMLElement, next: string[]): void {
     const previous = painted.get(element) ?? [];
     removeClassNamesFromElement(element, ...previous.filter((name) => !next.includes(name)));
@@ -490,21 +530,106 @@ function createIndex(editor: LexicalEditor): Entry {
     if (plan.whole) {
       wholeLeaves.add(key);
       $paintDecorator(node, element, []);
-      paintElement(element, classNamesFor(annotationKeys));
+      paintElement(element, [
+        ...classNamesFor(annotationKeys),
+        ...edgeClassNamesFor(key, annotationKeys),
+      ]);
       return;
     }
     wholeLeaves.delete(key);
     paintElement(element, []);
+    const { segments } = plan;
+    // An annotation's start or end on this decorator goes on the first or last sub-span it paints.
+    const firstOf = (annotationKey: string) =>
+      segments.findIndex(({ annotations }) => annotations.includes(annotationKey));
+    const lastOf = (annotationKey: string) =>
+      segments.findLastIndex(({ annotations }) => annotations.includes(annotationKey));
     $paintDecorator(
       node,
       element,
-      plan.segments.map(({ start, end, annotations }) => ({
+      segments.map(({ start, end, annotations }, index) => ({
         start,
         end,
-        classNames: classNamesFor(annotations),
+        classNames: [
+          ...classNamesFor(annotations),
+          ...edgeClassNamesFor(
+            key,
+            annotations.filter((annotationKey) => firstOf(annotationKey) === index),
+            ["start"],
+          ),
+          ...edgeClassNamesFor(
+            key,
+            annotations.filter((annotationKey) => lastOf(annotationKey) === index),
+            ["end"],
+          ),
+        ],
         annotationKeys: annotations,
       })),
     );
+  }
+
+  /**
+   * The first and last node annotation `annotationKey` paints, by the document order of their
+   * elements: its marks and the leaves painted here, leaving out one inside another of them (a
+   * carrier inside a mark of the same annotation is painted by the mark). Read after the commit,
+   * from the DOM, as {@link rangesFor} orders what it paints. Call inside a read.
+   */
+  function $edgesOf(annotationKey: string): { start: NodeKey; end: NodeKey } | undefined {
+    const painting: { key: NodeKey; element: HTMLElement }[] = [];
+    const add = (key: NodeKey) => {
+      const element = editor.getElementByKey(key);
+      if (element?.isConnected) painting.push({ key, element });
+    };
+    for (const key of marksByAnnotation.get(annotationKey) ?? []) add(key);
+    // A leaf rendering nothing is painted on its element alone.
+    for (const [key, intervals] of paintByAnnotation.get(annotationKey) ?? []) {
+      const leaf = $getNodeByKey(key);
+      if (leaf && (intervals.some(([start, end]) => end > start) || $paintSize(leaf) === 0))
+        add(key);
+    }
+    const outermost = painting.filter(
+      ({ element }) =>
+        !painting.some((other) => other.element !== element && other.element.contains(element)),
+    );
+    if (outermost.length === 0) return undefined;
+    outermost.sort((a, b) =>
+      a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+    );
+    return { start: outermost[0].key, end: outermost[outermost.length - 1].key };
+  }
+
+  /** Recompute the edges of every annotation in `stale`, and return the nodes whose edge classes
+   * changed: each annotation's previous and next first and last node. */
+  function $refreshEdges(stale: Iterable<string>): Set<NodeKey> {
+    const changed = new Set<NodeKey>();
+    for (const annotationKey of stale) {
+      const previous = edgesByAnnotation.get(annotationKey);
+      const next = $edgesOf(annotationKey);
+      if (previous?.start === next?.start && previous?.end === next?.end) continue;
+      for (const key of [previous?.start, previous?.end, next?.start, next?.end])
+        if (key !== undefined) changed.add(key);
+      if (next) edgesByAnnotation.set(annotationKey, next);
+      else edgesByAnnotation.delete(annotationKey);
+    }
+    return changed;
+  }
+
+  /** Put mark `key`'s edge classes on its current element, and take them off the one it had. */
+  function repaintMarkEdges(key: NodeKey): void {
+    const element = editor.getElementByKey(key);
+    const previous = markEdges.get(key);
+    const names = edgeClassNamesFor(key, annotationsByMark.get(key) ?? []);
+    const kept = previous?.element === element ? previous.names : [];
+    if (previous && previous.element !== element)
+      removeClassNamesFromElement(previous.element, ...previous.names);
+    if (!element || names.length === 0) {
+      if (element) removeClassNamesFromElement(element, ...kept);
+      markEdges.delete(key);
+      return;
+    }
+    removeClassNamesFromElement(element, ...kept.filter((name) => !names.includes(name)));
+    addClassNamesToElement(element, ...names);
+    markEdges.set(key, { element, names });
   }
 
   /** Give decorator `node` its sub-span paint: through the store for one React renders, and
@@ -523,7 +648,12 @@ function createIndex(editor: LexicalEditor): Entry {
    */
   function $refreshPaint(dirty: Iterable<NodeKey>): void {
     const affected = new Set<NodeKey>();
-    for (const key of dirty) if (annotationsByLeaf.has(key)) affected.add(key);
+    const stale = staleEdges;
+    staleEdges = new Set();
+    for (const key of dirty) {
+      if (annotationsByLeaf.has(key)) affected.add(key);
+      annotationsByMark.get(key)?.forEach((annotationKey) => stale.add(annotationKey));
+    }
     const candidates = new Set([...keysByAnnotation.keys(), ...paintByAnnotation.keys()]);
     for (const [annotationKey, marks] of marksByAnnotation)
       if (marks.size >= 2) candidates.add(annotationKey);
@@ -537,7 +667,10 @@ function createIndex(editor: LexicalEditor): Entry {
       );
       const previous = paintByAnnotation.get(annotationKey) ?? new Map<NodeKey, PaintIntervals>();
       for (const key of new Set([...previous.keys(), ...next.keys()]))
-        if (JSON.stringify(previous.get(key)) !== JSON.stringify(next.get(key))) affected.add(key);
+        if (JSON.stringify(previous.get(key)) !== JSON.stringify(next.get(key))) {
+          affected.add(key);
+          stale.add(annotationKey);
+        }
       for (const key of previous.keys()) {
         if (next.has(key)) continue;
         const keys = annotationsByLeaf.get(key);
@@ -554,7 +687,15 @@ function createIndex(editor: LexicalEditor): Entry {
     }
     for (const [key, element] of leafElement)
       if (editor.getElementByKey(key) !== element) affected.add(key);
+    const marks = new Set<NodeKey>();
+    for (const key of $refreshEdges(stale)) {
+      if (annotationsByMark.has(key) || markEdges.has(key)) marks.add(key);
+      else affected.add(key);
+    }
     for (const key of affected) $repaintLeaf(key);
+    for (const [key, { element }] of markEdges)
+      if (editor.getElementByKey(key) !== element) marks.add(key);
+    for (const key of marks) repaintMarkEdges(key);
   }
 
   function refreshPaint(dirty: Iterable<NodeKey>): void {
@@ -650,6 +791,8 @@ function createIndex(editor: LexicalEditor): Entry {
         const mark = $isTypedMarkNode(node) ? node : undefined;
         const typedIds = mark ? Object.entries(mark.getTypedIDs()) : [];
         const after = typedIds.flatMap(([type, ids]) => ids.map((id) => indexKey(type, id)));
+        for (const annotationKey of [...(annotationsByMark.get(key) ?? []), ...after])
+          staleEdges.add(annotationKey);
         for (const annotationKey of annotationsByMark.get(key) ?? []) {
           if (after.includes(annotationKey)) continue;
           dropHolder(marksByAnnotation, annotationKey, key);

@@ -335,9 +335,11 @@ export interface EditorRef {
    * display byte held in part is cut at the hold's edges into pieces of its own kind, so the held
    * part is its own element and is painted whole; a read-only glyph held in part paints a sub-span
    * of its text. So every host class rule — background, border, padding, font, `:hover`,
-   * `::selection` — applies to everything an annotation paints. Find painted annotations with
-   * {@link EditorRef.getAnnotationRanges}, which lists every element it paints, rather than by
-   * class alone.
+   * `::selection` — applies to everything an annotation paints. The first element it paints, in
+   * document order, also gets `<typedMarkStart>-<type>` and the last `<typedMarkEnd>-<type>`, so
+   * a box style can put its inline sides only there and draw one box over every element. Find
+   * painted annotations with {@link EditorRef.getAnnotationRanges}, which lists every element it
+   * paints, rather than by class alone.
    *
    * A read-only glyph, verse number or chapter number (the views without editable markers) holds
    * and paints exactly the part of what it shows that the range names. A range that names only

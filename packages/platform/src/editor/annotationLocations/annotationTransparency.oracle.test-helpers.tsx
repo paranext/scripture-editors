@@ -1198,8 +1198,53 @@ function annotatedFailures(
       }
     }
   });
+  failures.push(...edgeFailures(mounted, applied.ids));
   for (const log of mounted.logs)
     if (log.includes("painted in part")) failures.push(`painted in part: ${log}`);
+  return failures;
+}
+
+/**
+ * Where the edge classes disagree with what each annotation paints, read from the DOM: an
+ * annotation's first painted element (by document order, leaving out one inside another of its
+ * elements) must carry the editor theme's start class for its type and its last the end class,
+ * and no other element may carry either unless it is some annotation's first or last.
+ */
+function edgeFailures(mounted: MountedInView, ids: Iterable<string>): string[] {
+  const root = mounted.lexical.getRootElement();
+  if (!root) return [];
+  const startClass = `editor-typed-markStart-${HELD_TYPE}`;
+  const endClass = `editor-typed-markEnd-${HELD_TYPE}`;
+  const failures: string[] = [];
+  const starts = new Set<Element>();
+  const ends = new Set<Element>();
+  for (const id of ids) {
+    const elements = [...root.getElementsByClassName(`annotationId-${id}`)];
+    const outermost = elements.filter(
+      (element) => !elements.some((other) => other !== element && other.contains(element)),
+    );
+    const first = outermost[0];
+    const last = outermost[outermost.length - 1];
+    if (!first || !last) continue;
+    starts.add(first);
+    ends.add(last);
+    if (!first.classList.contains(startClass))
+      failures.push(
+        `${id}: its first element (${JSON.stringify(first.textContent)}) has no start class`,
+      );
+    if (!last.classList.contains(endClass))
+      failures.push(
+        `${id}: its last element (${JSON.stringify(last.textContent)}) has no end class`,
+      );
+  }
+  for (const element of root.getElementsByClassName(startClass))
+    if (!starts.has(element))
+      failures.push(
+        `a start class on ${JSON.stringify(element.textContent)}, no annotation's first`,
+      );
+  for (const element of root.getElementsByClassName(endClass))
+    if (!ends.has(element))
+      failures.push(`an end class on ${JSON.stringify(element.textContent)}, no annotation's last`);
   return failures;
 }
 

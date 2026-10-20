@@ -301,6 +301,58 @@ describe("annotation painting in Standard view", () => {
   });
 });
 
+describe("the first and last element an annotation paints", () => {
+  let mounted: MountedInView;
+  beforeEach(async () => {
+    mounted = await mountInView(paintUsj, oracleView("standard"));
+  });
+  afterEach(() => mounted.unmount());
+
+  /** The text of every element carrying the editor theme's start class for the oracle's type, and
+   * of every one carrying its end class, in document order. */
+  function edges(): { starts: string[]; ends: string[] } {
+    const root = mounted.lexical.getRootElement();
+    const texts = (prefix: string) =>
+      [...(root?.getElementsByClassName(`${prefix}-${HELD_TYPE}`) ?? [])].map(
+        (element) => element.textContent ?? "",
+      );
+    return { starts: texts("editor-typed-markStart"), ends: texts("editor-typed-markEnd") };
+  }
+
+  it("puts the start on a verse number and the end inside the char span the range ends in", async () => {
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: `${para}.content[0]['number']`, propertyOffset: 0 },
+        end: { jsonPath: `${para}.content[2].content[0]`, offset: 2 },
+      },
+      "across",
+    );
+    expect(edges()).toEqual({ starts: ["12"], ends: ["gr"] });
+  });
+
+  it("leaves no edge class behind when the document is loaded again", async () => {
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: `${para}.content[0]['number']`, propertyOffset: 0 },
+        end: { jsonPath: `${para}.content[1]`, offset: 2 },
+      },
+      "across",
+    );
+    expect(edges()).toEqual({ starts: ["12"], ends: ["In"] });
+    await act(async () => {
+      mounted.ref.current?.setUsj({
+        ...paintUsj,
+        content: [...paintUsj.content, { type: "para", marker: "p", content: ["more"] }],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(edges()).toEqual({ starts: [], ends: [] });
+  });
+});
+
 describe("annotation painting on read-only decorators", () => {
   const number = `${para}.content[0]['number']`;
   const digit: AnnotationRange = {

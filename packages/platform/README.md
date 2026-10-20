@@ -165,6 +165,33 @@ Annotations are added with a specific `type` via the editor's reference API (see
 
 For example, if an annotation of type _"grammar"_ is overlapping it will have both CSS classnames `editor-typed-mark-external-grammar` and `editor-typed-markOverlap-external-grammar`. If it's not overlapping it still has the first classname. Annotations and comments are the same when considering if it's overlapping.
 
+An annotation can paint several elements — a verse number and the text after it, text on both sides
+of a char span's edge, a run across paragraphs — so a box style on its class (a border, a radius,
+horizontal padding or margin) would draw one box per element. The first element an annotation
+paints, in document order, therefore also has `${typedMarkStart}-external-${type}` and its last
+`${typedMarkEnd}-external-${type}`, where `typedMarkStart` and `typedMarkEnd` are set by
+`config.theme.typedMarkStart`/`typedMarkEnd` (defaulting to _"editor-typed-markStart"_ and
+_"editor-typed-markEnd"_); an annotation painting one element has both. They are per annotation, so
+two overlapping annotations of one type each have their own. Put the block sides on the base class
+and the inline sides and corners on these to draw one box, with logical properties so it is right in
+right-to-left text too:
+
+```css
+.editor-typed-mark-external-grammar {
+  border-block: 1px solid red;
+}
+.editor-typed-markStart-external-grammar {
+  border-inline-start: 1px solid red;
+  border-start-start-radius: 4px;
+  border-end-start-radius: 4px;
+}
+.editor-typed-markEnd-external-grammar {
+  border-inline-end: 1px solid red;
+  border-start-end-radius: 4px;
+  border-end-end-radius: 4px;
+}
+```
+
 An annotation paints exactly the bytes it covers, including display bytes — a marker glyph, a
 verse or chapter number, a note caller, an attribute run such as `|lemma="grace"` — plus the
 whitespace the editor shows between two of its bytes in one paragraph (a marker's separator, the

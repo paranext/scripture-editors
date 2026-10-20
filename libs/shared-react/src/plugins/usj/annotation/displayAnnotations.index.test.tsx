@@ -38,6 +38,8 @@ import {
 import {
   $addDisplayAnnotation,
   $createCharNode,
+  $createVerseNode,
+  getVisibleOpenMarkerText,
   $isPieceContinuation,
   $logicalChildren,
   $logicalText,
@@ -1645,5 +1647,257 @@ describe("the display-annotation index", () => {
         release();
       });
     });
+  });
+});
+
+describe("the first and last element an annotation paints", () => {
+  const TYPE = "external-check";
+  const START = "editor-typed-markStart-external-check";
+  const END = "editor-typed-markEnd-external-check";
+
+  function setupEdges() {
+    const editor = createEditor({
+      namespace: "DisplayAnnotationEdgesTest",
+      nodes: [TypedMarkNode, ...usjReactNodes],
+      theme: {
+        ...THEME,
+        typedMarkStart: "editor-typed-markStart",
+        typedMarkEnd: "editor-typed-markEnd",
+      },
+      onError: (error) => {
+        throw error;
+      },
+    });
+    const container = document.createElement("div");
+    lastContainer = container;
+    document.body.appendChild(container);
+    editor.setRootElement(container);
+    const { release } = acquireDisplayAnnotationIndex(editor);
+    lastRelease = release;
+    return editor;
+  }
+
+  /** The text of every element carrying the start class, and of every one carrying the end class,
+   * in document order. */
+  function edges(editor: LexicalEditor): { starts: string[]; ends: string[] } {
+    const root = editor.getRootElement();
+    const texts = (name: string) =>
+      [...(root?.getElementsByClassName(name) ?? [])].map((element) => element.textContent ?? "");
+    return { starts: texts(START), ends: texts(END) };
+  }
+
+  /** Wrap `TYPE`/`id` from `from` to `to`, each a text node and an offset into it. */
+  function wrapRange(
+    editor: LexicalEditor,
+    [fromNode, fromOffset]: [LexicalNode, number],
+    [toNode, toOffset]: [LexicalNode, number],
+    id: string,
+  ) {
+    editor.update(
+      () => {
+        const selection = $createRangeSelection();
+        selection.anchor.set(fromNode.getKey(), fromOffset, "text");
+        selection.focus.set(toNode.getKey(), toOffset, "text");
+        $wrapSelectionInTypedMarkNode(selection, TYPE, id);
+      },
+      { discrete: true },
+    );
+  }
+
+  /** `In the ` then a `\w` span holding `beginning`, in one paragraph. */
+  function $textAndSpan(): { text: TextNode; inSpan: TextNode } {
+    const text = $createTextNode("In the ");
+    const inSpan = $createTextNode("beginning");
+    $getRoot().append($createParaNode().append(text, $createCharNode("w").append(inSpan)));
+    return { text, inSpan };
+  }
+
+  it("gives an annotation painting one element both classes", () => {
+    const editor = setupEdges();
+    let text!: TextNode;
+    editor.update(() => void (text = $textAndSpan().text), { discrete: true });
+    wrapRange(editor, [text, 3], [text, 6], "a");
+    expect(edges(editor)).toEqual({ starts: ["the"], ends: ["the"] });
+  });
+
+  it("puts the start on a verse number's piece and the end on the text after it", () => {
+    const editor = setupEdges();
+    let verse!: LexicalNode;
+    let text!: TextNode;
+    editor.update(
+      () => {
+        verse = $createVerseNode("12", getVisibleOpenMarkerText("v", "12"));
+        text = $createTextNode("In the");
+        $getRoot().append($createParaNode().append(verse, text));
+      },
+      { discrete: true },
+    );
+    // `2 In`: the verse number's last digit, its trailing space and the first word.
+    wrapRange(editor, [verse, 4], [text, 2], "a");
+    expect(edges(editor)).toEqual({ starts: ["2"], ends: ["In"] });
+  });
+
+  it("puts the end inside a char span the annotation crosses into", () => {
+    const editor = setupEdges();
+    let parts!: { text: TextNode; inSpan: TextNode };
+    editor.update(() => void (parts = $textAndSpan()), { discrete: true });
+    wrapRange(editor, [parts.text, 3], [parts.inSpan, 5], "a");
+    expect(edges(editor)).toEqual({ starts: ["the "], ends: ["begin"] });
+  });
+
+  it("puts the start in the first paragraph and the end in the last", () => {
+    const editor = setupEdges();
+    let first!: TextNode;
+    let last!: TextNode;
+    editor.update(
+      () => {
+        first = $createTextNode("In the beginning");
+        last = $createTextNode("was the Word");
+        $getRoot().append(
+          $createParaNode().append(first),
+          $createParaNode().append($createTextNode("and")),
+          $createParaNode().append(last),
+        );
+      },
+      { discrete: true },
+    );
+    wrapRange(editor, [first, 7], [last, 3], "a");
+    expect(edges(editor)).toEqual({ starts: ["beginning"], ends: ["was"] });
+  });
+
+  it("gives each of two overlapping annotations of one type its own edges", () => {
+    const editor = setupEdges();
+    let text!: TextNode;
+    editor.update(() => void (text = $textAndSpan().text), { discrete: true });
+    // `a` over `In the`, then `b` over `the ` — through the mark `a` made and the space after it.
+    wrapRange(editor, [text, 0], [text, 6], "a");
+    const [marked, space] = editor.read(() => {
+      const texts = $getRoot().getAllTextNodes();
+      return [
+        texts.find((node) => node.getTextContent() === "In the"),
+        texts.find((node) => node.getTextContent() === " "),
+      ];
+    });
+    if (!marked || !space) throw new Error("the first wrap did not split `In the `");
+    wrapRange(editor, [marked, 3], [space, 1], "b");
+    // `a` is one mark holding `In ` and `b`'s mark over `the`, so it starts and ends there; `b`
+    // starts on its mark inside `a`'s and ends on the space.
+    expect(edges(editor)).toEqual({ starts: ["In the", "the"], ends: ["In the", " "] });
+  });
+
+  it("puts a decorator's edges on the sub-spans the annotation paints first and last", () => {
+    const editor = setupEdges();
+    let verse!: ImmutableVerseNode;
+    let text!: TextNode;
+    editor.update(
+      () => {
+        verse = $createImmutableVerseNode("12");
+        text = $createTextNode("In the");
+        $getRoot().append($createParaNode().append(verse, text));
+        // `2` of the number, then a mark over `In`.
+        $addDisplayAnnotation(verse, TYPE, "a", 4, 5);
+      },
+      { discrete: true },
+    );
+    wrapRange(editor, [text, 0], [text, 2], "a");
+    const paint = getDecoratorPaint(editor, verse.getKey());
+    expect(paint).toHaveLength(1);
+    expect(paint[0].classNames).toContain(START);
+    expect(paint[0].classNames).not.toContain(END);
+    expect(edges(editor)).toEqual({ starts: [], ends: ["In"] });
+
+    editor.update(() => $removeDisplayAnnotation(verse.getLatest(), TYPE, "a"), {
+      discrete: true,
+    });
+    expect(getDecoratorPaint(editor, verse.getKey())).toEqual([]);
+    expect(edges(editor)).toEqual({ starts: ["In"], ends: ["In"] });
+  });
+
+  it("keeps the end on the last element as text is typed at its end", () => {
+    const editor = setupEdges();
+    let parts!: { text: TextNode; inSpan: TextNode };
+    editor.update(() => void (parts = $textAndSpan()), { discrete: true });
+    wrapRange(editor, [parts.text, 3], [parts.inSpan, 5], "a");
+    editor.update(
+      () => {
+        const last = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === "begin");
+        if (!last) throw new Error("no mark reads `begin`");
+        last.setTextContent("beginn");
+      },
+      { discrete: true },
+    );
+    expect(edges(editor)).toEqual({ starts: ["the "], ends: ["beginn"] });
+  });
+
+  it("moves the start to the next element when the first one is deleted", () => {
+    const editor = setupEdges();
+    let parts!: { text: TextNode; inSpan: TextNode };
+    editor.update(() => void (parts = $textAndSpan()), { discrete: true });
+    wrapRange(editor, [parts.text, 3], [parts.inSpan, 5], "a");
+    editor.update(
+      () => {
+        const first = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === "the ");
+        first?.getParent()?.remove();
+      },
+      { discrete: true },
+    );
+    expect(edges(editor)).toEqual({ starts: ["begin"], ends: ["begin"] });
+  });
+
+  it("moves the edges onto a carrier piece's element when Lexical re-creates it", () => {
+    const editor = setupEdges();
+    let verse!: LexicalNode;
+    let text!: TextNode;
+    editor.update(
+      () => {
+        verse = $createVerseNode("12", getVisibleOpenMarkerText("v", "12"));
+        text = $createTextNode("In the");
+        $getRoot().append($createParaNode().append(verse, text));
+      },
+      { discrete: true },
+    );
+    wrapRange(editor, [verse, 4], [text, 2], "a");
+    const held = editor.read(() =>
+      $pieces(verse.getLatest()).find((piece) => piece.getTextContent() === "2"),
+    );
+    if (!$isTextNode(held)) throw new Error("no piece reads `2`");
+    const before = editor.getElementByKey(held.getKey());
+    // `code` changes the node's own DOM tag, so Lexical creates a new element for it.
+    editor.update(() => held.getLatest().setFormat("code"), { discrete: true });
+    expect(editor.getElementByKey(held.getKey())).not.toBe(before);
+    expect(edges(editor)).toEqual({ starts: ["2"], ends: ["In"] });
+  });
+
+  it("takes every edge class away when the annotation goes", () => {
+    const editor = setupEdges();
+    let parts!: { text: TextNode; inSpan: TextNode };
+    editor.update(() => void (parts = $textAndSpan()), { discrete: true });
+    wrapRange(editor, [parts.text, 3], [parts.inSpan, 5], "a");
+    expect(edges(editor)).toEqual({ starts: ["the "], ends: ["begin"] });
+    editor.update(
+      () => {
+        for (const node of $getRoot().getAllTextNodes()) {
+          const mark = node.getParent();
+          if (mark?.getType() === "typed-mark") {
+            for (const child of mark.getChildren()) mark.insertBefore(child);
+            mark.remove();
+          }
+        }
+      },
+      { discrete: true },
+    );
+    expect(edges(editor)).toEqual({ starts: [], ends: [] });
+  });
+
+  it("paints no edge class when the theme names no edge prefix", () => {
+    const { editor, run, release } = setup();
+    wrap(editor, run, 0, 6, "external-spelling", "a");
+    const root = editor.getRootElement();
+    expect(root?.querySelector('[class*="markStart"], [class*="markEnd"]')).toBeNull();
+    release();
   });
 });

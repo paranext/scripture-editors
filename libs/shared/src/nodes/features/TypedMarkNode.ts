@@ -1427,6 +1427,23 @@ export function typedMarkClassNames(theme: EditorThemeClasses, typedIDs: TypedID
 }
 
 /**
+ * The class name that marks the first (`"start"`) or the last (`"end"`) element an annotation of
+ * `type` paints: `<theme.typedMarkStart>-<type>` or `<theme.typedMarkEnd>-<type>`, or `undefined`
+ * when the theme names no such prefix. An annotation can paint several elements (a verse number
+ * and the text after it, text on both sides of a char span's edge), and a box style on its class
+ * repeats on each of them; drawing the block sides on every element and the inline-start or
+ * inline-end side only on the element carrying the start or end class draws one box.
+ */
+export function typedMarkEdgeClassName(
+  theme: EditorThemeClasses,
+  type: string,
+  edge: "start" | "end",
+): string | undefined {
+  const prefix: unknown = edge === "start" ? theme.typedMarkStart : theme.typedMarkEnd;
+  return typeof prefix === "string" ? getTypedClassName(prefix, type) : undefined;
+}
+
+/**
  * Gets the external typed mark type.
  *
  * @remarks
