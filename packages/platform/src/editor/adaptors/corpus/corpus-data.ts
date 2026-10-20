@@ -42,6 +42,20 @@ export const ROUND_TRIP_VIEW_CONFIGS: { label: string; viewOptions: ViewOptions 
   { label: "standard-expanded", viewOptions: { ...standardViewOptions, noteMode: "expanded" } },
 ];
 
+/**
+ * The subset of {@link ROUND_TRIP_VIEW_CONFIGS} a user edits Scripture in — Standard, formatted,
+ * and paragraph-structure (Simple mode's default) — for the suites that mount an editor per view
+ * and so cannot afford the whole matrix. Same labels, so a key written for one suite reads the same
+ * in the others.
+ */
+export const EDITING_VIEW_CONFIGS: { label: string; viewOptions: ViewOptions }[] =
+  ROUND_TRIP_VIEW_CONFIGS.flatMap(({ label, viewOptions }) => {
+    if (![STANDARD_VIEW_MODE, FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE].includes(label))
+      return [];
+    if (!viewOptions) throw new Error(`${label} view options not found`);
+    return [{ label, viewOptions }];
+  });
+
 export interface CorpusFixture {
   /** Unique fixture name, used as the test name. */
   name: string;

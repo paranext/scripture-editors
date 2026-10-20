@@ -25,11 +25,14 @@
  * diagnostic is deliberately not automated, because it is quadratic and only useful while chasing a
  * specific failure.
  *
- * Standard view only. The other view modes stay on the adaptor-only path in
- * `corpus-round-trip.test.ts`, so the fixture matrix does not multiply by an editor mount.
+ * Runs in each view a user edits Scripture in ({@link EDITING_VIEW_CONFIGS}): Standard, formatted,
+ * and paragraph-structure. The plugins register their transforms in every view, and a transform
+ * that keys on what a node looks like can read a view without marker glyphs differently. The
+ * remaining view configurations stay on the adaptor-only path in `corpus-round-trip.test.ts`, so
+ * the fixture matrix does not multiply by an editor mount for views nobody edits in.
  */
 
-import { corpusFixtures } from "./corpus-data";
+import { corpusFixtures, EDITING_VIEW_CONFIGS } from "./corpus-data";
 import { expectEveryTextBearingNodeRendered } from "./corpusRendering.test-helpers";
 import {
   initialize as initializeSerialize,
@@ -44,33 +47,23 @@ import { MarkerEditPlugin } from "../../markerEdit/MarkerEditPlugin";
 import { usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
-import {
-  CharNodePlugin,
-  getViewOptions,
-  STANDARD_VIEW_MODE,
-  TextSpacingPlugin,
-  ViewOptions,
-} from "shared-react";
+import { CharNodePlugin, TextSpacingPlugin, ViewOptions } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { baseTestEnvironment } from "../../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 
 /**
- * Fixtures this suite is KNOWN to fail, with the mechanism named. Skipped rather than left red so
- * the branch every track builds on stays green — a standing red suite trains readers to ignore it,
- * and the next real regression lands invisibly.
+ * Fixture-and-view combinations this suite is KNOWN to fail, keyed `"<fixture name> [<view label>]"`,
+ * with the mechanism named. A listed test runs as `it.fails` rather than being left red, so the
+ * branch every track builds on stays green — a standing red suite trains readers to ignore it, and
+ * the next real regression lands invisibly.
  *
  * Each entry is a specification of a defect, not an excuse for one: the track named in the reason
- * deletes its entry as part of its fix, and the entry failing to fail afterwards is itself
- * meaningful. Do NOT add an entry for a NEW failure without a named mechanism and a named owner.
+ * deletes its entry as part of its fix, and the listed test fails once the defect is gone, so a fix
+ * cannot leave a stale entry behind. Do NOT add an entry for a NEW failure without a named
+ * mechanism and a named owner.
  */
 const KNOWN_FAILURES: { [fixtureName: string]: string } = {};
-
-function requireStandardViewOptions(): ViewOptions {
-  const options = getViewOptions(STANDARD_VIEW_MODE);
-  if (!options) throw new Error("Standard view options are required for these tests.");
-  return options;
-}
 
 /** Marks `node` and every descendant dirty, so each one's registered transforms run. */
 function $markSubtreeDirty(node: LexicalNode): void {
@@ -104,36 +97,41 @@ describe("corpus transform fixed point (USJ -> editor state -> dirty -> USJ)", (
   });
 
   for (const fixture of corpusFixtures) {
-    const skip =
-      fixture.skipModes?.find((entry) => entry.startsWith(`${STANDARD_VIEW_MODE}:`)) ??
-      KNOWN_FAILURES[fixture.name];
-    const run = skip ? it.skip : it;
-    run(`${fixture.name}${skip ? ` (${skip})` : ""}`, async () => {
-      const viewOptions = requireStandardViewOptions();
-      const usj = usxStringToUsj(fixture.usx);
-      reset();
-      initializeDeserialize(undefined);
+    for (const { label, viewOptions } of EDITING_VIEW_CONFIGS) {
+      const testKey = `${fixture.name} [${label}]`;
+      const skip = fixture.skipModes?.find((entry) => entry.startsWith(`${label}:`));
+      const known = KNOWN_FAILURES[testKey];
+      let run = known ? it.fails : it;
+      if (skip) run = it.skip;
+      run(
+        `${testKey}${skip ? ` (${skip})` : ""}${known ? ` (known failure: ${known})` : ""}`,
+        async () => {
+          const usj = usxStringToUsj(fixture.usx);
+          reset();
+          initializeDeserialize(undefined);
 
-      const state = serializeEditorState(usj, viewOptions);
-      const editor = await mountWithTransforms(state, viewOptions);
-      expectEveryTextBearingNodeRendered(editor, `${fixture.name} after load`);
+          const state = serializeEditorState(usj, viewOptions);
+          const editor = await mountWithTransforms(state, viewOptions);
+          expectEveryTextBearingNodeRendered(editor, `${testKey} after load`);
 
-      await act(async () => {
-        editor.update(
-          () => {
-            $getRoot().getChildren().forEach($markSubtreeDirty);
-          },
-          { discrete: true },
-        );
-      });
+          await act(async () => {
+            editor.update(
+              () => {
+                $getRoot().getChildren().forEach($markSubtreeDirty);
+              },
+              { discrete: true },
+            );
+          });
 
-      expectEveryTextBearingNodeRendered(editor, `${fixture.name} after the dirty pass`);
+          expectEveryTextBearingNodeRendered(editor, `${testKey} after the dirty pass`);
 
-      const afterTransforms = deserializeSerializedEditorState(
-        editor.getEditorState().toJSON(),
-        viewOptions,
+          const afterTransforms = deserializeSerializedEditorState(
+            editor.getEditorState().toJSON(),
+            viewOptions,
+          );
+          expect(afterTransforms).toEqual(usj);
+        },
       );
-      expect(afterTransforms).toEqual(usj);
-    });
+    }
   }
 });
