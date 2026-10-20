@@ -632,9 +632,16 @@ function $serializedDocument(node: LexicalNode): string {
  * created (Lexical's per-update `_cloneNotNeeded`, which every `getWritable` and every new node
  * adds to and each commit clears), each resolved to its block in the pending state or, for a node
  * the update removed, in the state before it. Costs a walk up from each changed node.
+ *
+ * `_cloneNotNeeded` is private to Lexical, and nothing public lists an update's written nodes.
+ * Only an update that cut pieces asks, and a cut writes nodes, so a record that is missing or
+ * empty means Lexical no longer keeps it as read here: the answer is then `undefined`, and the
+ * update keeps its own undo step rather than folding a real edit into the previous one.
  */
 function $changedBlockKeys(): Set<NodeKey> | undefined {
   const editor = $getEditor();
+  const written: Set<NodeKey> | undefined = editor._cloneNotNeeded;
+  if (!(written instanceof Set) || written.size === 0) return undefined;
   const root = $getRoot();
   const blocks = new Set<NodeKey>();
   const $blockOf = (key: NodeKey): NodeKey | null | undefined => {
@@ -650,7 +657,7 @@ function $changedBlockKeys(): Set<NodeKey> | undefined {
         : null;
     });
   };
-  for (const key of editor._cloneNotNeeded) {
+  for (const key of written) {
     const block = $blockOf(key);
     if (block === undefined) {
       // The root itself was written: its children changed unless the same blocks stand in order.

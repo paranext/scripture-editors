@@ -36,6 +36,7 @@ import {
   $restatePastedPieces,
   $setLogicalText,
   $splitCarrierAt,
+  DISPLAY_PIECES_CUT_TAG,
   displayPieceChainState,
 } from "./displayPieces.state.js";
 import { $createMarkerNode, $isCanonicalMarkerNode, MarkerNode } from "./MarkerNode.js";
@@ -57,6 +58,7 @@ import {
   LexicalEditor,
   LexicalNode,
   NODE_STATE_KEY,
+  NodeKey,
   SerializedLexicalNode,
   TextNode,
 } from "lexical";
@@ -1065,6 +1067,58 @@ describe("an update that only re-cuts a carrier", () => {
     );
     tags.length = 0;
     editor.update(() => void $setLogicalText(verse, `\\v${NBSP}2 `), { discrete: true });
+    expect(tags.at(-1)).not.toContain(HISTORY_MERGE_TAG);
+  });
+
+  // The finalizer reads which nodes an update wrote from Lexical's private `_cloneNotNeeded`. This
+  // fails first if a Lexical upgrade stops keeping that record as the finalizer reads it.
+  it("finds the nodes an update wrote in Lexical's per-update record", () => {
+    const editor = mount();
+    let text!: LexicalNode;
+    editor.update(
+      () => {
+        text = $createTextNode("In the");
+        $getRoot().append($createParaNode().append(text));
+      },
+      { discrete: true },
+    );
+    let written: NodeKey[] = [];
+    editor.update(
+      () => {
+        if ($isTextNode(text)) text.setTextContent("In the end");
+        written = [...editor._cloneNotNeeded];
+      },
+      { discrete: true },
+    );
+    expect(written).toContain(text.getKey());
+    expect(editor._cloneNotNeeded.size).toBe(0);
+  });
+
+  it("keeps its own undo step when Lexical's record of written nodes is empty", () => {
+    const { editor, tags } = $mountWithTags();
+    let verse!: LexicalNode;
+    editor.update(
+      () => {
+        verse = $createVerseNode("1", getVisibleOpenMarkerText("v", "1"));
+        $getRoot().append($createParaNode().append(verse, $createTextNode("In the")));
+        $addDisplayAnnotation(verse, "check", "a", 3, 4);
+      },
+      { discrete: true },
+    );
+    tags.length = 0;
+    // A Lexical that no longer fills the record: the finalizer cannot tell what changed, so it
+    // must not fold the update into the previous step.
+    const record = editor._cloneNotNeeded;
+    const spy = vi.spyOn(record, "add").mockImplementation(() => record);
+    onTestFinished(() => spy.mockRestore());
+    editor.update(
+      () => {
+        $setLogicalText(verse, `\\v${NBSP}1  `);
+        $setLogicalText(verse, `\\v${NBSP}1 `);
+      },
+      { discrete: true },
+    );
+    expect(tags.at(-1)).toContain(DISPLAY_PIECES_CUT_TAG);
     expect(tags.at(-1)).not.toContain(HISTORY_MERGE_TAG);
   });
 });
