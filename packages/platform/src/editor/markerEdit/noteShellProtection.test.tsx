@@ -65,6 +65,7 @@ import {
   NoteNode,
 } from "shared";
 import { $isLiteralNoteShell } from "./tier2Rebuild.utils";
+import { flushQueuedEvents } from "../editor-test.utils";
 import { NoteShellCaretGuardPlugin, ViewOptions } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
@@ -215,8 +216,9 @@ function expectShellIntact(editor: LexicalEditor) {
  * (but above the default handler's `COMMAND_PRIORITY_EDITOR`) catches an unrefused command there
  * instead and reports it undone — real text is never actually touched either way.
  *
- * `$placeCaret`, when given, places the caret in the same update the key arrives in, so no
- * selection change can reach the editor between the two.
+ * `$placeCaret`, when given, puts the caret in the same update the command is dispatched in, so
+ * the delete arrives before anything — the `selectionchange` jsdom queues for the caret's DOM
+ * selection, and the caret guard that runs from it — can move the caret again.
  */
 async function dispatchGuardedDelete(
   editor: LexicalEditor,
@@ -670,9 +672,10 @@ describe("expanded note shell", () => {
     ] as const)("keeps the note whole with the caret as %s", async (_label, $placeCaret) => {
       const { editor } = await mount(protectedShell);
 
-      // The key arrives with the caret still outside the note: once a selection change reaches
-      // the editor, the guard moves a caret there into the note, and the Delete is then an
-      // ordinary one at the content's start.
+      // The caret guard moves a caret resting here to the start of the note's content as soon as a
+      // selection change announces it, so the Delete this refusal is for is one that arrives before
+      // that announcement does. Placing the caret in the Delete's own update is that order, with
+      // no queued `selectionchange` able to run in between.
       const handled = await dispatchGuardedDelete(
         editor,
         DELETE_CHARACTER_COMMAND,
@@ -1105,6 +1108,11 @@ describe("a closed note's closing glyph, with the shell protected", () => {
     const { editor } = await mount(protectedShell, "");
 
     await deleteCloserCharacter(editor, anchor, focusOffset);
+    // The caret is read where it settles: the `selectionchange` events the edit's DOM selection
+    // writes queued are delivered first, and with them the caret guard, which rests a caret at the
+    // end of a protected note's content on the closer's front.
+    await flushQueuedEvents();
+    await flushQueuedEvents();
 
     editor.getEditorState().read(() => {
       const note = findOnlyNote($getRoot());
@@ -1116,12 +1124,13 @@ describe("a closed note's closing glyph, with the shell protected", () => {
       if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
       const { anchor } = selection;
       const closer = $closer(note);
-      expect(
-        anchor.getNode().is(note)
-          ? anchor.offset <= closer.getIndexWithinParent()
-          : (anchor.getNode().is(closer) && anchor.offset === 0) ||
-              (note.isParentOf(anchor.getNode()) && anchor.getNode().isBefore(closer)),
-      ).toBe(true);
+      let isInFrontOfCloser: boolean;
+      if (anchor.getNode().is(note))
+        isInFrontOfCloser = anchor.offset <= closer.getIndexWithinParent();
+      else if (anchor.getNode().is(closer)) isInFrontOfCloser = anchor.offset === 0;
+      else
+        isInFrontOfCloser = note.isParentOf(anchor.getNode()) && anchor.getNode().isBefore(closer);
+      expect(isInFrontOfCloser).toBe(true);
     });
     // The next Backspace reaches the note's text rather than the closer again: it is the ordinary
     // delete, from the end of that text.
@@ -1139,6 +1148,44 @@ describe("a closed note's closing glyph, with the shell protected", () => {
       { type: "char", marker: "ft", closed: "false", content: ["A note"] },
     ]);
     expect(tail).toEqual([" after"]);
+  });
+
+  // The closer's front is where a caret past the content rests, so Backspace there is the
+  // ordinary Backspace at the end of the note's text.
+  it("deletes the note's last character on the first Backspace with the caret at its front", async () => {
+    const { editor } = await mount(protectedShell, "");
+    // Lexical's own deletion extends the selection with the native selection's `modify`, which
+    // jsdom lacks; this does the same removal from wherever the guard leaves the caret.
+    const unregister = editor.registerCommand(
+      DELETE_CHARACTER_COMMAND,
+      (isBackward) => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !isBackward) return false;
+        const { key, offset, type } = selection.anchor;
+        if (type !== "text" || offset === 0) return false;
+        selection.anchor.set(key, offset - 1, "text");
+        selection.removeText();
+        return true;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+    try {
+      await act(async () => {
+        editor.update(() => {
+          $closer(findOnlyNote($getRoot())).select(0, 0);
+          editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+        });
+      });
+    } finally {
+      unregister();
+    }
+
+    const { note, tail } = savedNoteAndTail(editor);
+    expect(note.content).toEqual([
+      { type: "char", marker: "ft", closed: "false", content: ["A not"] },
+    ]);
+    expect(tail).toEqual([" after"]);
+    expectShellIntact(editor);
   });
 
   it("keeps text that still arrives behind it in the note's content, where the screen shows it", async () => {

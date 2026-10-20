@@ -486,7 +486,7 @@ function $closedNoteLayout(
   const bytes = $noteBytesPastCaller(settledNote);
   const parent = settledNote.getParent();
   if (!bytes || !parent) return undefined;
-  const scratchNotePath = $getJsonPathIndexes(settledNote);
+  const scratchNotePath = $getJsonPathIndexes(settledNote, hasStandardViewWhitespace(viewOptions));
   const noteIndex = scratchNotePath.at(-1);
   if (noteIndex === undefined) return undefined;
   // The root's implied paragraph has no path of its own: its items are the root's.
@@ -850,7 +850,7 @@ function $rootItemsAddedByClosedNotes(
     const settledItems = plan.closedNote?.settledItemsFromNote;
     const block = note.getTopLevelElement();
     if (settledItems === undefined || !$isImpliedParaNode(block) || !note.isAttached()) continue;
-    const [noteIndex, ...below] = $getJsonPathIndexes(note);
+    const [noteIndex, ...below] = $getJsonPathIndexes(note, collapsesSpaceRuns);
     if (noteIndex === undefined || below.length > 0) continue;
     const liveItems = $getLogicalContentItems($getRoot(), collapsesSpaceRuns)
       .slice(noteIndex)

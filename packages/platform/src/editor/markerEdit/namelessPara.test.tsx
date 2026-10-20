@@ -119,7 +119,14 @@ describe("a nameless paragraph", () => {
   // Each edit leaves the glyph naming no marker, and the paragraph's bytes then read the way
   // ParatextData reads them: a `\\` that opens them is the nameless marker, one after text is text.
   // The file gets every byte the screen shows, and getUsj() reports it before the edit settles.
-  const GLYPH_EDITS: { name: string; glyph: string; caret: number; settled: MarkerContent }[] = [
+  const GLYPH_EDITS: {
+    name: string;
+    glyph: string;
+    caret: number;
+    settled: MarkerContent;
+    /** What the standard view saves instead, where it differs. */
+    standardSettled?: MarkerContent;
+  }[] = [
     {
       name: "a byte typed before the backslash",
       glyph: "x\\",
@@ -143,12 +150,15 @@ describe("a nameless paragraph", () => {
       glyph: "",
       caret: 0,
       settled: { type: "para", marker: "p", content: [" df"] },
+      // The separator left behind starts the paragraph's content, and Standard view does not save
+      // a paragraph's leading spaces (Paratext 9 skips whitespace after a paragraph marker).
+      standardSettled: { type: "para", marker: "p", content: ["df"] },
     },
   ];
   describe.each(["standard", "unformatted"])("in the %s view", (viewName) => {
     it.each(GLYPH_EDITS)(
       "saves what the screen shows: $name",
-      async ({ glyph, caret, settled }) => {
+      async ({ glyph, caret, settled, standardSettled }) => {
         const mounted = await mountInView(namelessParaUsj(), oracleView(viewName));
         await editNamelessPara(mounted, ([glyphText]) => {
           glyphText.setTextContent(glyph);
@@ -160,7 +170,9 @@ describe("a nameless paragraph", () => {
         const screen = mounted.lexical.getEditorState().read(() => $screenBytes());
         mounted.unmount();
 
-        expect(saved?.content[2]).toEqual(settled);
+        expect(saved?.content[2]).toEqual(
+          viewName === "standard" ? (standardSettled ?? settled) : settled,
+        );
         expect(withoutLineBreaks(screen ?? "")).toBe(withoutLineBreaks(savedBytes(saved)));
         expect(pending).toEqual(saved);
       },

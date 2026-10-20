@@ -1072,8 +1072,8 @@ describe("Editor Node Utilities", () => {
         // Logical parent of text inside the mark is the para, not the mark.
         expect($getLogicalParent(markedText)?.getKey()).toBe(para.getKey());
         // All three text pieces belong to logical item 0.
-        expect($getLogicalIndexOfChild(para, markedText)).toBe(0);
-        expect($getLogicalIndexOfChild(para, trailingText)).toBe(0);
+        expect($getLogicalIndexOfChild(para, markedText, false)).toBe(0);
+        expect($getLogicalIndexOfChild(para, trailingText, false)).toBe(0);
 
         // Cumulative offsets: "the " (4) + "man" (3) + " who".
         expect($getLogicalTextLocation(markedText, 1, false)).toEqual({
@@ -1111,8 +1111,8 @@ describe("Editor Node Utilities", () => {
         if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
 
         // USJ content: [0]="aaa bb cc ", [1]=char, [2]="dd" — the mark is invisible.
-        expect($getLogicalIndexOfChild(para, charNode)).toBe(1);
-        expect($getLogicalIndexOfChild(para, tailText)).toBe(2);
+        expect($getLogicalIndexOfChild(para, charNode, false)).toBe(1);
+        expect($getLogicalIndexOfChild(para, tailText, false)).toBe(2);
         expect($getLogicalTextLocation(tailText, 1, false)).toEqual({
           parent: para,
           index: 2,
@@ -1131,7 +1131,7 @@ describe("Editor Node Utilities", () => {
       editor.getEditorState().read(() => {
         const para = $getRoot().getFirstChild();
         if (!$isElementNode(para)) throw new Error("Expected an ElementNode");
-        expect($getLogicalIndexOfChild(para, markerNode)).toBe(-1);
+        expect($getLogicalIndexOfChild(para, markerNode, false)).toBe(-1);
         expect($getLogicalTextLocation(markerNode, 0, false)).toBeUndefined();
       });
     });
@@ -1509,7 +1509,7 @@ describe("Editor Node Utilities", () => {
           "verse",
           "text",
         ]);
-        expect($getLogicalIndexOfChild(para, bodyText)).toBe(1);
+        expect($getLogicalIndexOfChild(para, bodyText, false)).toBe(1);
       });
     });
 
@@ -1532,7 +1532,7 @@ describe("Editor Node Utilities", () => {
         expect(items.map((item) => (item.type === "text" ? "text" : item.node.getType()))).toEqual([
           "char",
         ]);
-        expect($getLogicalIndexOfChild(note, content)).toBe(0);
+        expect($getLogicalIndexOfChild(note, content, false)).toBe(0);
       });
     });
 
@@ -1566,8 +1566,8 @@ describe("Editor Node Utilities", () => {
           "char",
           "text",
         ]);
-        expect($getLogicalIndexOfChild(note, content)).toBe(0);
-        expect($getLogicalIndexOfChild(note, echoText)).toBe(1);
+        expect($getLogicalIndexOfChild(note, content, false)).toBe(0);
+        expect($getLogicalIndexOfChild(note, echoText, false)).toBe(1);
       });
     });
 
@@ -1592,9 +1592,9 @@ describe("Editor Node Utilities", () => {
         expect(
           chapter.getChildren().map((child) => $shouldIgnoreNodeForContentIndexes(child)),
         ).toEqual([true, true]);
-        expect($getLogicalIndexOfChild(chapter, chapter.getFirstChildOrThrow())).toBe(-1);
-        expect($getLogicalIndexOfChild($getRoot(), chapter)).toBe(0);
-        expect($getLogicalIndexOfChild($getRoot(), paraText.getParentOrThrow())).toBe(1);
+        expect($getLogicalIndexOfChild(chapter, chapter.getFirstChildOrThrow(), false)).toBe(-1);
+        expect($getLogicalIndexOfChild($getRoot(), chapter, false)).toBe(0);
+        expect($getLogicalIndexOfChild($getRoot(), paraText.getParentOrThrow(), false)).toBe(1);
       });
     });
   });
@@ -1649,7 +1649,7 @@ describe("Editor Node Utilities", () => {
 
         // Inverse: earliest element point for each logical boundary.
         const $pointAt = (index: number) => {
-          const [node, offset] = $getElementPointFromLogicalIndex(para, index);
+          const [node, offset] = $getElementPointFromLogicalIndex(para, index, false);
           return [node.getKey(), offset];
         };
         expect($pointAt(0)).toEqual([para.getKey(), 0]);
@@ -1745,7 +1745,7 @@ describe("a root-level implied paragraph", () => {
 
       // A root boundary among the implied paragraph's items is expressed inside it.
       const $pointAt = (index: number) => {
-        const [node, offset] = $getElementPointFromLogicalIndex(root, index);
+        const [node, offset] = $getElementPointFromLogicalIndex(root, index, false);
         return [node.getKey(), offset];
       };
       expect($pointAt(0)).toEqual([root.getKey(), 0]);
@@ -1920,7 +1920,7 @@ describe("a display-byte carrier an annotation cut into pieces", () => {
       const para = $firstPara();
       // Children: 0="In the "  1=`\v `  2="12"  3=" "  4="beginning".
       expect(para.getChildrenSize()).toBe(5);
-      expect($getLogicalIndexOfChild(para, para.getChildAtIndex(2) ?? para)).toBe(1);
+      expect($getLogicalIndexOfChild(para, para.getChildAtIndex(2) ?? para, false)).toBe(1);
       // A point between two pieces of the verse is inside it: the closest point to its left is in
       // front of the verse.
       for (const offset of [2, 3])
@@ -1930,7 +1930,7 @@ describe("a display-byte carrier an annotation cut into pieces", () => {
         });
       expect($getLogicalPointFromElementPoint(para, 4, false)).toEqual({ type: "index", index: 2 });
       // After the verse is after its last piece.
-      expect($getElementPointFromLogicalIndex(para, 2)).toEqual([para, 4]);
+      expect($getElementPointFromLogicalIndex(para, 2, false)).toEqual([para, 4]);
     });
   });
 

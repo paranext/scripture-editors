@@ -22,9 +22,12 @@ import {
   $getLogicalTextLocation,
   $getTextNodeAtLogicalOffset,
   $isCharNode,
+  $isImpliedParaNode,
   $isMarkerNode,
+  $isParaNode,
   $isTypedMarkNode,
   CharNode,
+  LogicalContentItem,
   LogicalTextItem,
   MarkerNode,
   NBSP,
@@ -125,6 +128,8 @@ interface OracleReport {
   collapsedSegments: number;
   /** Segments inside an annotation mark. */
   markedSegments: number;
+  /** Text items after a marker's separator whose leading spaces serialization drops. */
+  leadingSpaceDrops: number;
 }
 
 /** The view options the 2SA fixture generator uses for each marker mode. */
@@ -144,7 +149,8 @@ const modes: { name: string; viewOptions: ViewOptions; hasSeparators: boolean }[
  * Space runs in every place a text item can carry one: mid-paragraph, at either end of a
  * paragraph, right after a verse, around and inside char spans (a span whose content starts with
  * one space, and one whose content starts with a run), beside a data NBSP, and in a note. Standard
- * view displays each run as NBSPs, exactly as it displays a run the user types.
+ * view displays each run as NBSPs, exactly as it displays a run the user types, and serializes the
+ * one right after a verse number as nothing.
  */
 const spaceRunUsx =
   `<usx version="3.0"><book code="RUT" style="id">T</book><chapter number="1" style="c" />` +
@@ -206,11 +212,34 @@ const impliedParaUsx =
   `<para style="p"><verse number="2" style="v" />The earth <char style="wj">was</char> void.</para>` +
   `<para style="p">And darkness.</para></usx>`;
 
+/**
+ * Texts that start with spaces right after a marker's separator, which Standard view's
+ * serialization drops: at a paragraph's content start — typed after the marker (with a run in
+ * them and after them), before a char span (a text that is nothing else, so the span becomes the
+ * paragraph's first item), under several paragraph markers, in the root's implied paragraph after
+ * a chapter, and in a paragraph holding only spaces — and after a verse number, including a text
+ * holding only spaces between two verses. A data NBSP starting a paragraph, a space mid-paragraph
+ * after a span, and a space after a verse's `\vp` or a chapter's `\ca` (which follows that
+ * marker's closing marker) are content and stay.
+ */
+const paraLeadingUsx =
+  `<usx version="3.0"><book code="RUT" style="id">T</book><chapter number="1" style="c" />` +
+  `  Implied  start <para style="p">  In the   beginning</para>` +
+  `<para style="q1"> <char style="nd">LORD</char> made</para>` +
+  `<para style="m">${NBSP}kept <char style="w">x</char>  y</para>` +
+  `<para style="li1">   </para>` +
+  `<para style="p"><verse number="2" style="v" />  after verse<verse number="3" style="v" /> ` +
+  `<verse number="4" style="v" pubnumber="4a" /> after vp</para>` +
+  `<chapter number="2" style="c" altnumber="3" /> after ca</usx>`;
+
 const corpora: {
   name: string;
   usj: Usj;
   minimumCheckedItems: number;
   hasSpaceRuns: boolean;
+  /** Whether a text starts with spaces after a marker's separator, which Standard view's
+   * serialization drops. */
+  hasSpacesAfterSeparator?: boolean;
   /** Decorates the loaded editor before it is exported; a corpus that has one must have marks. */
   $decorate?: () => void;
 }[] = [
@@ -220,6 +249,7 @@ const corpora: {
     usj: usxStringToUsj(spaceRunUsx),
     minimumCheckedItems: 8,
     hasSpaceRuns: true,
+    hasSpacesAfterSeparator: true,
   },
   {
     name: "implied paragraph",
@@ -232,7 +262,15 @@ const corpora: {
     usj: usxStringToUsj(markedUsx),
     minimumCheckedItems: 8,
     hasSpaceRuns: true,
+    hasSpacesAfterSeparator: true,
     $decorate: $markCorpus,
+  },
+  {
+    name: "paragraph-leading spaces",
+    usj: usxStringToUsj(paraLeadingUsx),
+    minimumCheckedItems: 5,
+    hasSpaceRuns: true,
+    hasSpacesAfterSeparator: true,
   },
 ];
 
@@ -253,11 +291,18 @@ function toSettledText(text: string, isStandard: boolean, before = ""): string {
   return before.endsWith(" ") ? settled.replace(/^ +/, "") : settled;
 }
 
+/** What serialization keeps of a text after a marker's separator: everything but its leading
+ * spaces. */
+function withoutLeadingSpaces(text: string, dropsLeadingSpaces: boolean): string {
+  return dropsLeadingSpaces ? text.replace(/^ +/, "") : text;
+}
+
 /**
  * Checks one logical text item against the USJ string the exporter emitted for it: the item's
  * converted text must BE that string, every live point must report the offset whose USJ prefix is
  * what serialization makes of the live text before the point, and every USJ offset must resolve
- * to the live character it names and report itself back.
+ * to the live character it names and report itself back. `dropsLeadingSpaces` is whether the item
+ * follows a marker's separator in a view whose serialization drops the spaces it starts with.
  */
 function $checkTextItem(
   item: LogicalTextItem,
@@ -265,6 +310,7 @@ function $checkTextItem(
   index: number,
   path: string,
   isStandard: boolean,
+  dropsLeadingSpaces: boolean,
   report: OracleReport,
 ): void {
   report.leadSegments += item.segments.filter((segment) => segment.lead > 0).length;
@@ -280,14 +326,16 @@ function $checkTextItem(
   const settledContents: string[] = [];
   for (const text of contents)
     settledContents.push(toSettledText(text, isStandard, settledContents.join("")));
-  if (settledContents.join("") !== usjString) {
+  const settledText = withoutLeadingSpaces(settledContents.join(""), dropsLeadingSpaces);
+  if (settledText !== usjString) {
     report.disagreements.push({
       path,
-      detail: `item text ${JSON.stringify(settledContents.join(""))} vs USJ ${JSON.stringify(usjString)}`,
+      detail: `item text ${JSON.stringify(settledText)} vs USJ ${JSON.stringify(usjString)}`,
     });
     return;
   }
   report.checkedItems++;
+  if (settledText !== settledContents.join("")) report.leadingSpaceDrops++;
 
   if (item.length !== usjString.length)
     report.disagreements.push({
@@ -310,13 +358,15 @@ function $checkTextItem(
         });
         return;
       }
-      const livePrefix =
+      const livePrefix = withoutLeadingSpaces(
         before +
-        toSettledText(
-          contents[segmentIndex].slice(0, Math.max(0, offset - segment.lead)),
-          isStandard,
-          before,
-        );
+          toSettledText(
+            contents[segmentIndex].slice(0, Math.max(0, offset - segment.lead)),
+            isStandard,
+            before,
+          ),
+        dropsLeadingSpaces,
+      );
       if (usjString.slice(0, location.offset) !== livePrefix) {
         report.disagreements.push({
           path,
@@ -360,6 +410,54 @@ function $checkTextItem(
   }
 }
 
+/** The paragraph (marker-bearing or implied) `node` sits in, looking through annotation marks. */
+function $paragraphOf(node: LexicalNode): ElementNode | undefined {
+  for (let current = node.getParent(); current; current = current.getParent())
+    if ($isParaNode(current) || $isImpliedParaNode(current)) return current;
+  return undefined;
+}
+
+/** The live node an item starts with. */
+function firstNodeOf(item: LogicalContentItem): LexicalNode {
+  return item.type === "text" ? item.segments[0].node : item.node;
+}
+
+/** Whether `node` writes something after its number in USFM: a verse's `\va`/`\vp`, a chapter's
+ * `\ca`/`\cp`. */
+function $hasNumberAttribute(node: LexicalNode | null | undefined): boolean {
+  const json = node?.exportJSON();
+  if (!json) return false;
+  return (
+    ("altnumber" in json && json.altnumber !== undefined) ||
+    ("pubnumber" in json && json.pubnumber !== undefined)
+  );
+}
+
+/**
+ * Whether `items[index]` follows a marker's separator: it starts a paragraph's content — a
+ * paragraph's first item, or the root's first item from an implied paragraph (whose content the
+ * exporter splices into the root) not after a chapter's `\ca`/`\cp` — or it follows a verse
+ * number with no `\va`/`\vp`.
+ */
+function $followsSeparator(
+  parent: ElementNode,
+  items: LogicalContentItem[],
+  index: number,
+): boolean {
+  const previous = items[index - 1];
+  if (
+    previous?.type === "element" &&
+    previous.node.getType() === "verse" &&
+    !$hasNumberAttribute(previous.node)
+  )
+    return true;
+  if ($isParaNode(parent)) return index === 0;
+  const paragraph = $paragraphOf(firstNodeOf(items[index]));
+  if (!$isImpliedParaNode(paragraph) || $hasNumberAttribute(paragraph.getPreviousSibling()))
+    return false;
+  return !previous || !$paragraphOf(firstNodeOf(previous))?.is(paragraph);
+}
+
 /**
  * Walks `parent`'s logical content items alongside the USJ content the exporter emitted for the
  * same element, recursing into element items, and collects every disagreement.
@@ -394,7 +492,15 @@ function $checkElement(
         });
         return;
       }
-      $checkTextItem(item, entry, index, itemPath, isStandard, report);
+      $checkTextItem(
+        item,
+        entry,
+        index,
+        itemPath,
+        isStandard,
+        isStandard && $followsSeparator(parent, modeled, index),
+        report,
+      );
       return;
     }
     if (typeof entry === "string") {
@@ -435,7 +541,7 @@ function $checkCharGlyphs(char: CharNode, path: string, report: OracleReport): v
 
 describe.each(corpora)(
   "the $name corpus",
-  ({ usj: corpus, minimumCheckedItems, hasSpaceRuns, $decorate }) => {
+  ({ usj: corpus, minimumCheckedItems, hasSpaceRuns, hasSpacesAfterSeparator, $decorate }) => {
     describe.each(modes)(
       "logical text coordinates agree with the exporter ($name)",
       ({ viewOptions, hasSeparators }) => {
@@ -452,6 +558,7 @@ describe.each(corpora)(
             leadSegments: 0,
             collapsedSegments: 0,
             markedSegments: 0,
+            leadingSpaceDrops: 0,
           };
           editor.getEditorState().read(() => {
             $checkElement($getRoot(), usj.content, "$", isStandard, report);
@@ -466,6 +573,7 @@ describe.each(corpora)(
           expect(report.leadSegments > 0).toBe(hasSeparators);
           expect(report.collapsedSegments > 0).toBe(hasSpaceRuns && isStandard);
           expect(report.markedSegments > 0).toBe($decorate !== undefined);
+          expect(report.leadingSpaceDrops > 0).toBe(!!hasSpacesAfterSeparator && isStandard);
         });
       },
     );

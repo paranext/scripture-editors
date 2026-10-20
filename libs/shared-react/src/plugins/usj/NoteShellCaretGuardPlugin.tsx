@@ -455,6 +455,9 @@ function $nodeAfter(point: PointType): LexicalNode | undefined {
  * the start of an ordinary delete into the note's content, handled below like any other caret past
  * the shell.
  *
+ * A caret at the closer's front, where a caret past the content rests, backward-deletes from the
+ * end of the content; any other caret at or past the closer deletes nothing and moves to that end.
+ *
  * A word delete that would run on past the content into the shell or the closing glyph (nothing
  * but separators and punctuation between the caret and it) deletes back to that edge instead. A
  * line delete does the same UNLESS the two ends are measurably on different visual lines, in which

@@ -150,6 +150,8 @@ export function $displayWhitespaceTransform(node: TextNode): void {
  * - right after a marker glyph: an empty span's placeholder (`EMPTY_CHAR_PLACEHOLDER_TEXT`), the
  *   spacer in front of a span's leading nested element, a separator a split stranded, and a
  *   paragraph's or note's separator that lost its tag;
+ * - first in a char span or note: the spacer that followed an opening glyph the user deleted,
+ *   before the span unwraps;
  * - directly under a note with a collapsed caller (`ImmutableNoteCallerNode`): its display
  *   separators, and the bare separator `NoteNodePlugin` turns into its tagged one after the caller
  *   or a top-level span;
@@ -171,7 +173,11 @@ function $isLeftoverDisplaySpace(node: TextNode): boolean {
   const parent = $parentOutsideMarks(node);
   if ($isAttributeRunNode(parent)) return false;
   if ($isNoteNode(parent) && parent.getChildren().some($isImmutableNoteCallerNode)) return false;
-  return !$isMarkerNode($previousSiblingThroughMarks(node));
+  const previous = $previousSiblingThroughMarks(node);
+  // A span's or note's opening glyph always comes first, so a leftover space never does; a first
+  // child is the spacer that followed a glyph the user deleted.
+  if (($isCharNode(parent) || $isNoteNode(parent)) && !previous) return false;
+  return !$isMarkerNode(previous);
 }
 
 /**

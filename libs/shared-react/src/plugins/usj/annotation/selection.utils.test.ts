@@ -1025,14 +1025,15 @@ describe("$getLocationFromNode behind a verse's trailing separator", () => {
     });
   });
 
-  it("keeps the document-end spelling for a verse ending the document", () => {
+  // USFM writes no separator after the last line's number either, only the final newline.
+  it("reports the number's end for a verse ending the document", () => {
     const { editor, verseKey } = createVerse("2", "x", "");
 
     editor.getEditorState().read(() => {
       const verse = $requireNode<VerseNode>(verseKey);
       expect($getLocationFromNode(verse, verse.getTextContentSize(), undefined)).toEqual({
         jsonPath: "$.content[0].content[1]['number']",
-        propertyOffset: 2,
+        propertyOffset: 1,
       });
     });
   });

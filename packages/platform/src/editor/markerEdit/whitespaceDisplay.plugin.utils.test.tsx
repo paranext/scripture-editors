@@ -31,6 +31,7 @@ import {
   Usj,
   usjJsonPathFromIndexes,
   usxStringToUsj,
+  MarkerContent,
 } from "@eten-tech-foundation/scripture-utilities";
 import { $dfs, mergeRegister } from "@lexical/utils";
 import {
@@ -544,6 +545,98 @@ describe("a lone display NBSP", () => {
     expect(ref.current?.getUsj()).toEqual(loaded);
     expect(ref.current?.getUsj()?.content[2]).toEqual(usj.content[2]);
   });
+
+  // Deleting a span's opening glyph leaves the spacer that followed it as the span's first child,
+  // with no glyph in front of it; the span then unwraps. The spacer was never a space the user typed.
+  const w = (text: string): MarkerContent => ({ type: "char", marker: "w", content: [text] });
+  const milestone: MarkerContent = { type: "ms", marker: "qt-s" };
+  const note: MarkerContent = {
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "ft", content: ["note body"] }],
+  };
+  const expandedNote = (content: MarkerContent[]): MarkerContent => ({
+    type: "note",
+    marker: "f",
+    caller: "+",
+    content: [{ type: "char", marker: "fr", content: ["1.1 "] }, ...content],
+  });
+  it.each<[string, Usj["content"], string, Usj["content"], typeof mountStandardViewEditor]>([
+    [
+      "a span opening with a nested span, at paragraph start",
+      [{ type: "char", marker: "nd", content: [w("a"), " b"] }, " z"],
+      "nd",
+      [w("a"), " b z"],
+      mountStandardViewEditor,
+    ],
+    [
+      "a span opening with a milestone",
+      [{ type: "char", marker: "nd", content: [milestone, "Lord"] }, " z"],
+      "nd",
+      [milestone, "Lord z"],
+      mountStandardViewEditor,
+    ],
+    [
+      "a span opening with a footnote",
+      [{ type: "char", marker: "nd", content: [note, "Lord"] }, " z"],
+      "nd",
+      [note, "Lord z"],
+      mountStandardViewEditor,
+    ],
+    [
+      "a nested span opening with a nested span",
+      [
+        {
+          type: "char",
+          marker: "nd",
+          content: [{ type: "char", marker: "wj", content: [w("a")] }],
+        },
+      ],
+      "wj",
+      [{ type: "char", marker: "nd", content: [w("a")] }],
+      mountStandardViewEditor,
+    ],
+    [
+      "an expanded footnote's span opening with a nested span",
+      [expandedNote([{ type: "char", marker: "ft", content: [w("a"), " b"] }])],
+      "ft",
+      [expandedNote([w("a"), " b"])],
+      mountExpandedNoteEditor,
+    ],
+    [
+      "an expanded footnote's empty span",
+      [expandedNote([{ type: "char", marker: "ft" }])],
+      "ft",
+      [expandedNote([])],
+      mountExpandedNoteEditor,
+    ],
+  ])(
+    "saves no space when the opening glyph of %s is deleted",
+    async (_label, content, marker, expected, mount) => {
+      const { lexical, ref } = await mount(paraUsj(content));
+
+      await act(async () =>
+        lexical.update(() => {
+          const glyph = $getRoot()
+            .getAllTextNodes()
+            .find(
+              (node) =>
+                $isMarkerNode(node) &&
+                node.getMarker() === marker &&
+                node.getMarkerSyntax() === "opening",
+            );
+          if (!glyph) throw new Error(`no \\${marker} opening glyph`);
+          glyph.select(0, glyph.getTextContentSize());
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+          selection.removeText();
+        }),
+      );
+
+      expect(ref.current?.getUsj()?.content[2]).toEqual(paraUsj(expected).content[2]);
+    },
+  );
 
   // Each separator sits in front of an element, so the untagged NBSP has no text to merge into.
   it.each<[string, Usj["content"], (separator: TextNode) => boolean]>([

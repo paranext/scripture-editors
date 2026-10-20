@@ -142,10 +142,17 @@ function propertyNameOf(location: UsjDocumentLocation): string | undefined {
 }
 
 /** Whether `location` names `note`'s own marker, caller or closing marker. */
-function $isOwnBytesLocationOf(location: UsjDocumentLocation, note: LexicalNode): boolean {
+function $isOwnBytesLocationOf(
+  location: UsjDocumentLocation,
+  note: LexicalNode,
+  viewOptions: ViewOptions,
+): boolean {
   return (
     isNoteOwnBytesLocation(location) &&
-    isSamePath(indexesFromUsjJsonPath(contentPathOf(location.jsonPath)), $getJsonPathIndexes(note))
+    isSamePath(
+      indexesFromUsjJsonPath(contentPathOf(location.jsonPath)),
+      $getJsonPathIndexes(note, hasStandardViewWhitespace(viewOptions)),
+    )
   );
 }
 
@@ -158,7 +165,7 @@ function $livePointOnNoteOwnBytes(
   // A memoized plan holds live node references the tree may have moved on from.
   if (!note.isAttached()) return undefined;
   const [node, offset] = $getNodeFromLocation(
-    withContentIndexes(location, $getJsonPathIndexes(note)),
+    withContentIndexes(location, $getJsonPathIndexes(note, hasStandardViewWhitespace(viewOptions))),
     viewOptions,
   );
   if (!node || offset === undefined) return undefined;
@@ -353,7 +360,7 @@ function $settledLocationInSpelling(
   if (folded)
     return foldedAttributeLocation(
       folded,
-      usjJsonPathFromIndexes($getJsonPathIndexes(node)),
+      usjJsonPathFromIndexes($getJsonPathIndexes(node, hasStandardViewWhitespace(viewOptions))),
       point.offset,
     );
   return $getLocationFromNode(node, point.offset, viewOptions);
@@ -519,6 +526,7 @@ type ScratchResolution =
 function $resolveFoldedAttribute(
   settledOnlyRuns: readonly SettledOnlyRun[],
   location: UsjDocumentLocation,
+  viewOptions: ViewOptions,
 ): { resolution: ScratchResolution | undefined } | undefined {
   const keyName = attributeNameOf(location);
   if (keyName === undefined) return undefined;
@@ -526,7 +534,11 @@ function $resolveFoldedAttribute(
   for (const run of settledOnlyRuns)
     for (const folded of run.foldedAttributes) {
       const owner = $getNodeByKey(folded.ownerKey);
-      if (folded.keyName !== keyName || !owner || !isSamePath($getJsonPathIndexes(owner), path))
+      if (
+        folded.keyName !== keyName ||
+        !owner ||
+        !isSamePath($getJsonPathIndexes(owner, hasStandardViewWhitespace(viewOptions)), path)
+      )
         continue;
       const offset = foldedAttributeOffset(folded, location);
       const span = run.spelling.spans.find((candidate) => candidate.key === folded.ownerKey);
@@ -554,7 +566,7 @@ function $resolveInScratch(
   location: UsjDocumentLocation,
   tier2: Tier2Context,
 ): ScratchResolution | undefined {
-  const folded = $resolveFoldedAttribute(settledOnlyRuns, location);
+  const folded = $resolveFoldedAttribute(settledOnlyRuns, location, tier2.viewOptions);
   if (folded) return folded.resolution;
   const [node, offset] = $getNodeFromLocation(location, tier2.viewOptions);
   if (!node || offset === undefined) return undefined;
@@ -600,7 +612,8 @@ function $resolveInScratch(
       atWordByte: isWordByte(noteContent, noteAnchored.position),
     },
     isNoteOwnBytes:
-      $isNoteNode(preserved.member) && $isOwnBytesLocationOf(location, preserved.member),
+      $isNoteNode(preserved.member) &&
+      $isOwnBytesLocationOf(location, preserved.member, tier2.viewOptions),
   };
 }
 
@@ -615,7 +628,7 @@ function $namesSomethingInScratch(
   location: UsjDocumentLocation,
   viewOptions: ViewOptions,
 ): boolean {
-  const folded = $resolveFoldedAttribute(settledOnlyRuns, location);
+  const folded = $resolveFoldedAttribute(settledOnlyRuns, location, viewOptions);
   if (folded) return folded.resolution !== undefined;
   const [node, offset] = $getNodeFromLocation(location, viewOptions);
   return node !== undefined && offset !== undefined;
@@ -1139,7 +1152,11 @@ function $renamedCloserLocation(
   const path = indexesFromUsjJsonPath(contentPathOf(location.jsonPath));
   for (const [key, closer] of prepared.renamedClosers) {
     const span = $getNodeByKey(key)?.getParent();
-    if (!span || !isSamePath($getJsonPathIndexes(span), path)) continue;
+    if (
+      !span ||
+      !isSamePath($getJsonPathIndexes(span, hasStandardViewWhitespace(prepared.viewOptions)), path)
+    )
+      continue;
     return {
       ...location,
       closingMarkerOffset: glyphOffsetAcross(
@@ -1447,8 +1464,10 @@ function $settledScopePath(prepared: PreparedScopes, plan: SettleScopePlan): num
  * of its own — USJ splices it away, and its children are the root's items — so its scope starts at
  * the root index of its first item. */
 function $scopeStartIndexes(node: LexicalNode, viewOptions: ViewOptions): number[] {
-  if (!$isImpliedParaNode(node) || !$isRootNode(node.getParent())) return $getJsonPathIndexes(node);
-  return [$getLogicalPointFromElementPoint(node, 0, hasStandardViewWhitespace(viewOptions)).index];
+  const collapsesSpaceRuns = hasStandardViewWhitespace(viewOptions);
+  if (!$isImpliedParaNode(node) || !$isRootNode(node.getParent()))
+    return $getJsonPathIndexes(node, collapsesSpaceRuns);
+  return [$getLogicalPointFromElementPoint(node, 0, collapsesSpaceRuns).index];
 }
 
 /**
@@ -1822,13 +1841,14 @@ function $exactSettledLocationInScope(
       !$isOwnBytesLocationOf(
         $getLocationFromNode(twin.node, twin.offset, prepared.viewOptions),
         note,
+        prepared.viewOptions,
       )
     ) {
       const fromContent = $exactSettledLocationInScope(prepared, plan, twin.node, twin.offset);
       if (typeof fromContent === "object") return fromContent;
     }
     const location = $getLocationFromNode(node, offset, prepared.viewOptions);
-    if ($isOwnBytesLocationOf(location, note)) {
+    if ($isOwnBytesLocationOf(location, note, prepared.viewOptions)) {
       const settledPath = $settledScopePath(prepared, plan);
       return settledPath && withContentIndexes(location, settledPath);
     }

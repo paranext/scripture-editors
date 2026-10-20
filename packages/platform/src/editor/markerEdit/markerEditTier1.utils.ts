@@ -1122,11 +1122,31 @@ export function $verseNodeTransform(node: VerseNode, context: MarkerEditContext)
     node.setNumber(numberToken);
     return;
   }
+  // A caret inside the rest stays on the byte it was on; with no caret in the glyph (a
+  // programmatic edit) the caret follows to the end of the rest. Whitespace between that caret and
+  // the glyph's end is the glyph's own trailing separator run, which the canonical glyph spells
+  // again: in `\v 2 t| ` (Space typed right after the number, then `t`) the `t` is the verse's
+  // text and the last space is the glyph's. That run stays with the glyph rather than moving into
+  // the text, where the next keystroke would land in front of it (`t ext`). Whitespace in a
+  // separator run never reaches the file, so nothing the file gets is lost. The caret is measured
+  // in the whole glyph, whichever of its pieces it is in.
+  const selection = $getSelection();
+  const caretOffset =
+    $isRangeSelection(selection) && selection.isCollapsed() && selection.anchor.type === "text"
+      ? $logicalPointOffset(node, selection.anchor.key, selection.anchor.offset)
+      : undefined;
+  const restText = rest ?? "";
+  const restStart = text.length - restText.length;
+  const caretInRest =
+    caretOffset !== undefined && caretOffset >= restStart ? caretOffset - restStart : undefined;
+  const extracted =
+    caretInRest !== undefined && SEPARATOR_RUN_ONLY_REGEX.test(restText.slice(caretInRest))
+      ? restText.slice(0, caretInRest)
+      : restText;
   const head = $setLogicalText(node, getVisibleOpenMarkerText("v", numberToken));
   head.setNumber(numberToken); // PT9 GetNextWord: whole word, valid or not
-  // The caret follows to the end of the extracted rest (see $insertRestAfterGlyph for the
-  // merge-into-following behavior both arms share).
-  if (rest) $insertRestAfterGlyph(head, rest, rest.length);
+  // See $insertRestAfterGlyph for the merge-into-following behavior both arms share.
+  if (extracted) $insertRestAfterGlyph(head, extracted, caretInRest ?? extracted.length);
 }
 
 // An expanded note's editable caller text: whitespace run, caller word, ONE trailing separator,

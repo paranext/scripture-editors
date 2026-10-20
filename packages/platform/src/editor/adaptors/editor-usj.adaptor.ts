@@ -50,7 +50,6 @@ import {
   SerializedCharNode,
   SerializedImmutableChapterNode,
   SerializedImmutableUnmatchedNode,
-  SerializedImpliedParaNode,
   SerializedMilestoneNode,
   SerializedNoteNode,
   SerializedParaNode,
@@ -170,8 +169,7 @@ export function deserializeSerializedEditorState(
     return;
   }
 
-  const children = removeImpliedParasRecurse(rootChildren);
-  const content = recurseNodes(children, viewOptions);
+  const content = recurseRootNodes(rootChildren, viewOptions);
   if (!content) return;
 
   const usj: Usj = { type: USJ_TYPE, version: USJ_VERSION, content };
@@ -303,25 +301,63 @@ function createTableCellMarker(
 }
 
 /**
- * Standard view's space-run collapse (see {@link normalizeSpaceRuns}) across the seam between a
- * note's caller and its content. The USFM writer puts one space after the caller, so content that
- * starts with plain spaces (`\f +  text`, a space typed after an expanded note's caller) makes a
- * run that no single text node holds; Paratext 9 collapses it to `\f + text` on reformat, as it
- * does any other run. An NBSP is not a space run and stays. Not for a note with a category: its
- * `\cat …\cat*` is written between the caller and the content, so a space at the start of the
- * content follows `\cat*` and is the note's own (`\f + \cat things\cat* \fr …`).
+ * Drops the plain spaces Standard view's serialization does not keep at the start of a container's
+ * content, where the USFM writer has already put one separator space in front of them:
  *
- * @param content - The note's serialized content.
+ * - A paragraph's content, under any paragraph marker or in the root's implied paragraph. Paratext
+ *   9's tokenizer skips all whitespace after a paragraph marker's separator, so they are not
+ *   content (`\p  \w a\w*` reads as `\p \w a\w*`): a space left at a paragraph's start — typed
+ *   there, or a deleted char marker's separator — is shown while editing and not saved. The
+ *   logical position model drops the same spaces (`$getLogicalContentItems` in `shared`), and the
+ *   same ones after a verse number ({@link dropSpacesAfterVerseNumbers}).
+ * - A note's content, after its caller: content that starts with plain spaces (`\f +  text`, a
+ *   space typed after an expanded note's caller) makes a run with the caller's separator that no
+ *   single text node holds; Paratext 9 collapses it to `\f + text` on reformat, as it does any
+ *   other run. Not for a note with a category: its `\cat …\cat*` is written between the caller and
+ *   the content, so a space at the start of the content follows `\cat*` and is the note's own
+ *   (`\f + \cat things\cat* \fr …`).
+ *
+ * Only a first item that is a string loses anything. An NBSP is data (`~`), not a space, and stays.
+ *
+ * @param content - The container's serialized content.
  * @returns `content` without leading plain spaces in its first string, dropping a string that held
  *   nothing else.
  */
-function collapseSpacesAfterCaller(
-  content: MarkerContent[] | undefined,
-): MarkerContent[] | undefined {
+function dropLeadingSpaces(content: MarkerContent[] | undefined): MarkerContent[] | undefined {
   const first = content?.[0];
   if (!content || typeof first !== "string" || !first.startsWith(" ")) return content;
   const trimmed = first.replace(/^ +/, "");
   return trimmed ? [trimmed, ...content.slice(1)] : content.slice(1);
+}
+
+/**
+ * Drops the plain spaces a text right after a verse number starts with, in Standard view: the USFM
+ * writer follows the verse number with a separator space, and Paratext 9 skips all whitespace
+ * after a verse number (`\v 2  x` reads as `\v 2 x`), so they are not content. A text holding
+ * nothing else goes. Not after a verse with a `\va` or `\vp`: the text follows that marker's
+ * closing marker, so its spaces are content (`\v 1 \vp 1a\vp* text`). The logical position model
+ * drops the same spaces (`$getLogicalContentItems` in `shared`).
+ *
+ * @param content - A container's serialized content.
+ * @returns `content` with those spaces dropped.
+ */
+function dropSpacesAfterVerseNumbers(content: MarkerContent[]): MarkerContent[] {
+  return content.flatMap((item, index) => {
+    const previous = content[index - 1];
+    if (typeof item !== "string" || !endsInVerseNumber(previous)) return [item];
+    const trimmed = item.replace(/^ +/, "");
+    return trimmed ? [trimmed] : [];
+  });
+}
+
+/** Whether `item` is a verse whose number is the last thing its USFM writes — no `\va` or `\vp`. */
+function endsInVerseNumber(item: MarkerContent | undefined): boolean {
+  return (
+    typeof item === "object" &&
+    item.type === VerseNode.getType() &&
+    item.altnumber === undefined &&
+    item.pubnumber === undefined
+  );
 }
 
 function createNoteMarker(
@@ -685,14 +721,15 @@ function recurseNodes(
           ),
         );
         break;
-      case ParaNode.getType():
+      case ParaNode.getType(): {
+        let paraContent = recurseNodes(serializedParaNode.children, viewOptions);
+        if (isStandardView(viewOptions)) paraContent = dropLeadingSpaces(paraContent);
+        // A paragraph that held only spaces has no content, as one that held nothing has none.
         markers.push(
-          createParaMarker(
-            serializedParaNode,
-            recurseNodes(serializedParaNode.children, viewOptions),
-          ),
+          createParaMarker(serializedParaNode, paraContent?.length ? paraContent : undefined),
         );
         break;
+      }
       case ImmutableTableNode.getType():
         markers.push(
           createTableMarker(
@@ -727,7 +764,7 @@ function recurseNodes(
           createNoteMarker(
             serializedNoteNode,
             isStandardView(viewOptions) && serializedNoteNode.category === undefined
-              ? collapseSpacesAfterCaller(noteContent)
+              ? dropLeadingSpaces(noteContent)
               : noteContent,
           ),
         );
@@ -870,24 +907,53 @@ function recurseNodes(
         _logger?.error(`Unexpected node type '${node.type}'!`);
     }
   });
+  const content = isStandardView(viewOptions) ? dropSpacesAfterVerseNumbers(markers) : markers;
   // Ensure empty arrays are removed.
-  return markers && markers.length > 0 ? markers : undefined;
+  return content.length > 0 ? content : undefined;
 }
 
 /**
- * Remove implied paras.
- * @param nodes - serialized nodes.
- * @returns nodes with all implied paras removed.
+ * {@link recurseNodes} over the root's children, splicing each implied paragraph's content into the
+ * root's in its place — an implied paragraph has no USJ object of its own. Its content is still a
+ * paragraph's, so in Standard view it loses its leading spaces as any paragraph's does
+ * ({@link dropLeadingSpaces}) — except after a chapter with a `\ca` or `\cp`, whose closing marker
+ * or text the content follows instead.
+ * @param nodes - The root's serialized children.
+ * @param viewOptions - The view options the editor state was built for.
+ * @returns the root's USJ content, or `undefined` when there is none.
  */
-function removeImpliedParasRecurse(nodes: SerializedLexicalNode[]): SerializedLexicalNode[] {
-  const impliedParaIndex = nodes.findIndex((node) => isSerializedImpliedParaNode(node));
-  if (impliedParaIndex >= 0) {
-    const nodesBefore = nodes.slice(0, impliedParaIndex);
-    const nodesFromImpliedPara = (nodes[impliedParaIndex] as SerializedImpliedParaNode).children;
-    const nodesAfter = removeImpliedParasRecurse(nodes.slice(impliedParaIndex + 1));
-    nodes = [...nodesBefore, ...nodesFromImpliedPara, ...nodesAfter];
+function recurseRootNodes(
+  nodes: SerializedLexicalNode[],
+  viewOptions: ViewOptions | undefined,
+): MarkerContent[] | undefined {
+  const content: MarkerContent[] = [];
+  let blocks: SerializedLexicalNode[] = [];
+  const flushBlocks = () => {
+    content.push(...(recurseNodes(blocks, viewOptions) ?? []));
+    blocks = [];
+  };
+  for (const node of nodes) {
+    if (!isSerializedImpliedParaNode(node)) {
+      blocks.push(node);
+      continue;
+    }
+    flushBlocks();
+    let impliedContent = recurseNodes(node.children, viewOptions);
+    const previous = content.at(-1);
+    const followsChapterAttribute =
+      typeof previous === "object" &&
+      previous.type === ChapterNode.getType() &&
+      (previous.altnumber !== undefined || previous.pubnumber !== undefined);
+    if (isStandardView(viewOptions) && !followsChapterAttribute)
+      impliedContent = dropLeadingSpaces(impliedContent);
+    impliedContent?.forEach((item) =>
+      typeof item === "string"
+        ? combineTextContentOrAdd(content, item, viewOptions)
+        : content.push(item),
+    );
   }
-  return nodes;
+  flushBlocks();
+  return content.length > 0 ? content : undefined;
 }
 
 const editorUsjAdaptor: EditorUsjAdaptor = {
