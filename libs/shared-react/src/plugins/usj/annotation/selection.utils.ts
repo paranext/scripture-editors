@@ -29,13 +29,14 @@ import {
   RangeSelection,
 } from "lexical";
 import {
-  $getElementOffsetFromLogicalIndex,
+  $getElementPointFromLogicalIndex,
   $getLogicalContentItems,
   $getLogicalIndexOfChild,
   $getLogicalParent,
   $getLogicalPointFromElementPoint,
   $getLogicalTextLocation,
   $getTextNodeAtLogicalOffset,
+  $isImpliedParaNode,
   $isMarkerNode,
   $isParaLikeNode,
   $isTypedMarkNode,
@@ -155,7 +156,7 @@ function $getNodeFromLocation(
     // The jsonPath resolved to an ElementNode (e.g. "$.content[0]"): interpret offset as a
     // logical child boundary offset and return an element point.
     if (currentNode && $isElementNode(currentNode)) {
-      return [currentNode, $getElementOffsetFromLogicalIndex(currentNode, location.offset)];
+      return $getElementPointFromLogicalIndex(currentNode, location.offset);
     }
     return [undefined, undefined];
   }
@@ -426,11 +427,13 @@ function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLoc
     // reported position can be off by the length of the mark's preceding text. That is a valid
     // nearby point in the correct text run; placing it exactly would require the resolution
     // side to express points inside a mark.
-    const logicalParent = $getLogicalParent(node);
-    if (logicalParent?.is(node.getParent())) {
+    // A mark directly inside an implied paragraph anchors on the paragraph, whose own element
+    // points are converted to its logical parent's coordinates below.
+    const parent = node.getParent();
+    if (parent && ($getLogicalParent(node)?.is(parent) || $isImpliedParaNode(parent))) {
       const markIndex = node.getIndexWithinParent();
       const elementOffset = offset >= childrenSize ? markIndex + 1 : markIndex;
-      return $getLocationFromNode(logicalParent, elementOffset);
+      return $getLocationFromNode(parent, elementOffset);
     }
   }
 

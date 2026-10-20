@@ -469,7 +469,8 @@ function replaceMarkWithMilestones(
 
 // Keep this function's content semantics in sync with `$getLogicalContentItems` in
 // `libs/shared/src/nodes/usj/node.utils.ts` — the logical content model mirrors which nodes
-// this export skips, splices (TypedMarkNodes), and coalesces into single text strings.
+// this export skips, splices (TypedMarkNodes here, and ImpliedParaNodes via
+// `removeImpliedParasRecurse` before this runs), and coalesces into single text strings.
 function recurseNodes(
   nodes: SerializedLexicalNode[],
   viewOptions: ViewOptions | undefined,

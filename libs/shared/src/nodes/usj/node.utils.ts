@@ -1087,9 +1087,21 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
 }
 
 /**
+ * Whether `node` is a wrapper the editor→USJ conversion splices away, so its children belong to
+ * its parent's logical content: an annotation TypedMarkNode, or an ImpliedParaNode (the editor
+ * wraps content that sits outside any paragraph, e.g. verses before a chapter's first paragraph
+ * marker, and the conversion unwraps it again). Read-only: call inside
+ * `editor.getEditorState().read(...)` or an update.
+ */
+function $isLogicallyTransparent(node: LexicalNode | null | undefined): node is ElementNode {
+  return $isTypedMarkNode(node) || $isImpliedParaNode(node);
+}
+
+/**
  * Maps a parent element's Lexical children to its logical USJ content items — the items the
- * editor→USJ conversion would export: presentation-only nodes skipped, TypedMarkNodes
- * transparent (children spliced in, recursively), contiguous text coalesced into single items.
+ * editor→USJ conversion would export: presentation-only nodes skipped, TypedMarkNodes and
+ * ImpliedParaNodes transparent (children spliced in, recursively), contiguous text coalesced into
+ * single items.
  *
  * Known exclusion: comment-type TypedMarkNodes are treated as transparent like every other
  * mark, even though the exporter still serializes them as milestone items. That milestone
@@ -1110,9 +1122,10 @@ export function $getLogicalContentItems(parent: ElementNode): LogicalContentItem
 
   const visit = (node: LexicalNode) => {
     if ($shouldIgnoreNodeForContentIndexes(node)) return;
-    if ($isTypedMarkNode(node)) {
-      // Recursion is defense-in-depth: nested marks only exist transiently before the
-      // AnnotationPlugin's nested-element resolver flattens them into siblings.
+    if ($isLogicallyTransparent(node)) {
+      // Recursion covers a mark inside an implied paragraph. Nested marks are defense-in-depth:
+      // they only exist transiently before the AnnotationPlugin's nested-element resolver
+      // flattens them into siblings.
       node.getChildren().forEach(visit);
       return;
     }
@@ -1134,14 +1147,14 @@ export function $getLogicalContentItems(parent: ElementNode): LogicalContentItem
 }
 
 /**
- * Gets the nearest ancestor that is not a TypedMarkNode — the element that owns the node's
- * logical content index (annotation wrappers are transparent in USJ).
+ * Gets the nearest ancestor that is not a TypedMarkNode or ImpliedParaNode — the element that owns
+ * the node's logical content index (both wrappers are transparent in USJ).
  * @param node - The node to get the logical parent of.
  * @returns the logical parent element, or `null` at the root.
  */
 export function $getLogicalParent(node: LexicalNode): ElementNode | null {
   let parent: ElementNode | null = node.getParent();
-  while (parent && $isTypedMarkNode(parent)) parent = parent.getParent();
+  while (parent && $isLogicallyTransparent(parent)) parent = parent.getParent();
   return parent;
 }
 
@@ -1216,6 +1229,10 @@ export function $getTextNodeAtLogicalOffset(
  * Converts an element point (parent + child index) to a logical point. Boundaries that fall
  * inside a coalesced text item (e.g. at an annotation edge) become text points; boundaries
  * between logical items become index points.
+ *
+ * An element point inside an ImpliedParaNode is a point in its logical parent's content (the
+ * paragraph is not in the USJ), so the result is relative to `$getLogicalParent(parent)` — which
+ * is also what `parent`'s own jsonPath resolves to, since a transparent node has no index.
  * @param parent - The parent element node of the element point.
  * @param elementOffset - The child index of the element point.
  * @returns the logical point.
@@ -1224,13 +1241,31 @@ export function $getLogicalPointFromElementPoint(
   parent: ElementNode,
   elementOffset: number,
 ): LogicalPoint {
+  const logicalParent = $isImpliedParaNode(parent) ? $getLogicalParent(parent) : null;
+  if (logicalParent)
+    return $getLogicalPointBeforeNode(
+      logicalParent,
+      parent.getChildAtIndex(elementOffset) ?? parent.getNextSibling(),
+    );
+  return $getLogicalPointBeforeNode(parent, parent.getChildAtIndex(elementOffset));
+}
+
+/**
+ * The logical point at the boundary just before `child` in `parent`'s logical content, or at the
+ * end when `child` is null. `child` is a direct child of `parent` or of an ImpliedParaNode in it.
+ */
+function $getLogicalPointBeforeNode(parent: ElementNode, child: LexicalNode | null): LogicalPoint {
   const items = $getLogicalContentItems(parent);
-  const child = parent.getChildAtIndex(elementOffset);
   if (!child) return { type: "index", index: items.length };
 
   // Boundary before a presentation-only node: use the boundary before the next content child.
-  if ($shouldIgnoreNodeForContentIndexes(child))
-    return $getLogicalPointFromElementPoint(parent, elementOffset + 1);
+  if ($shouldIgnoreNodeForContentIndexes(child)) {
+    const childParent = child.getParent();
+    const next =
+      child.getNextSibling() ??
+      (childParent && !childParent.is(parent) ? childParent.getNextSibling() : null);
+    return $getLogicalPointBeforeNode(parent, next);
+  }
 
   for (let index = 0; index < items.length; index++) {
     const item = items[index];
@@ -1251,28 +1286,57 @@ export function $getLogicalPointFromElementPoint(
 }
 
 /**
- * Converts a logical boundary index to the earliest element child offset at that boundary
- * (the inverse of `$getLogicalPointFromElementPoint` for index points).
+ * Converts a logical boundary index to the earliest element point at that boundary (the inverse
+ * of `$getLogicalPointFromElementPoint` for index points).
+ *
+ * The point is normally in `parent`. A boundary that falls inside an ImpliedParaNode child of
+ * `parent` resolves to a point inside that paragraph instead, so the caret lands in the paragraph
+ * that holds the content rather than between blocks.
  * @param parent - The parent element node.
  * @param logicalIndex - The logical boundary index (0 = before the first item).
- * @returns the element child offset.
+ * @returns the element node and child offset of the point.
  */
-export function $getElementOffsetFromLogicalIndex(
+export function $getElementPointFromLogicalIndex(
   parent: ElementNode,
   logicalIndex: number,
-): number {
-  if (logicalIndex <= 0) return 0;
-
+): [ElementNode, number] {
+  const index = Math.max(0, logicalIndex);
   const items = $getLogicalContentItems(parent);
-  if (items.length === 0 || logicalIndex > items.length) return parent.getChildrenSize();
 
-  const previousItem = items[logicalIndex - 1];
-  const lastNode =
-    previousItem.type === "element"
-      ? previousItem.node
-      : previousItem.segments[previousItem.segments.length - 1]?.node;
-  const topLevelChild = lastNode ? $findChildOfParent(parent, lastNode) : undefined;
-  return topLevelChild ? topLevelChild.getIndexWithinParent() + 1 : parent.getChildrenSize();
+  const nextItem: LogicalContentItem | undefined = items[index];
+  const nextNode = nextItem && $getItemFirstNode(nextItem);
+  const nextImpliedPara = nextNode && $findImpliedParaChildOf(parent, nextNode);
+  const nextInImpliedPara =
+    nextNode && nextImpliedPara && $findChildOfParent(nextImpliedPara, nextNode);
+  if (nextImpliedPara && nextInImpliedPara)
+    return [nextImpliedPara, nextInImpliedPara.getIndexWithinParent()];
+
+  if (index === 0) return [parent, 0];
+  if (index > items.length) return [parent, parent.getChildrenSize()];
+
+  const lastNode = $getItemLastNode(items[index - 1]);
+  const container = (lastNode && $findImpliedParaChildOf(parent, lastNode)) ?? parent;
+  const lastInContainer = lastNode && $findChildOfParent(container, lastNode);
+  return lastInContainer
+    ? [container, lastInContainer.getIndexWithinParent() + 1]
+    : [parent, parent.getChildrenSize()];
+}
+
+function $getItemFirstNode(item: LogicalContentItem): LexicalNode | undefined {
+  return item.type === "element" ? item.node : item.segments[0]?.node;
+}
+
+function $getItemLastNode(item: LogicalContentItem): LexicalNode | undefined {
+  return item.type === "element" ? item.node : item.segments[item.segments.length - 1]?.node;
+}
+
+/** The ImpliedParaNode child of `parent` that contains `descendant`, if there is one. */
+function $findImpliedParaChildOf(
+  parent: ElementNode,
+  descendant: LexicalNode,
+): ElementNode | undefined {
+  const topLevelChild = $findChildOfParent(parent, descendant);
+  return $isImpliedParaNode(topLevelChild) ? topLevelChild : undefined;
 }
 
 /** Walks up from a descendant to the direct child of the given parent. */

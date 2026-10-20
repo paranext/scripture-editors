@@ -22,6 +22,7 @@ import {
   $createChapterNode,
   $createCharNode,
   $createImmutableChapterNode,
+  $createImpliedParaNode,
   $createImmutableTypedTextNode,
   $createMarkerNode,
   $createMilestoneNode,
@@ -34,6 +35,7 @@ import {
   closingMarkerText,
   ImmutableChapterNode,
   ImmutableTypedTextNode,
+  ImpliedParaNode,
   MarkerNode,
   MilestoneNode,
   NBSP,
@@ -1742,5 +1744,171 @@ describe("block verse layout", () => {
       .read(() => $getRangeFromUsjSelection({ start: { jsonPath: "$.content[0]", offset: 0 } }));
 
     expect(range).toBeUndefined();
+  });
+});
+
+describe("USJ locations with an implied paragraph", () => {
+  // Verses before a chapter's first paragraph marker load into an ImpliedParaNode, which the
+  // editor→USJ conversion unwraps: the editor root is
+  //   [chapter, impliedPara(verse 1, "one "), para(verse 5, "are you kidding me")]
+  // while the USJ content is
+  //   [0]=chapter, [1]=verse 1, [2]="one ", [3]=para(verse 5, "are you kidding me")
+  function buildImpliedParaEnvironment() {
+    let impliedPara: ImpliedParaNode;
+    let impliedText: TextNode;
+    let paraText: TextNode;
+    const { editor } = createBasicTestEnvironment(
+      [ParaNode, ImpliedParaNode, ImmutableChapterNode, ImmutableVerseNode],
+      () => {
+        impliedPara = $createImpliedParaNode();
+        impliedText = $createTextNode("one ");
+        paraText = $createTextNode("are you kidding me");
+        $getRoot().append(
+          $createImmutableChapterNode("1"),
+          impliedPara.append($createImmutableVerseNode("1"), impliedText),
+          $createParaNode().append($createImmutableVerseNode("5"), paraText),
+        );
+      },
+    );
+    // Non-null assertions are safe: all three are assigned during the setup callback.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    return { editor, impliedPara: impliedPara!, impliedText: impliedText!, paraText: paraText! };
+  }
+
+  describe("$getUsjSelectionFromEditor", () => {
+    it("indexes text in a paragraph after the implied paragraph as the USJ does", () => {
+      const { editor, paraText } = buildImpliedParaEnvironment();
+      updateSelection(editor, paraText, 8, paraText, 15); // "kidding"
+
+      editor.getEditorState().read(() => {
+        expect($getUsjSelectionFromEditor()).toEqual({
+          start: { jsonPath: "$.content[3].content[1]", offset: 8 },
+          end: { jsonPath: "$.content[3].content[1]", offset: 15 },
+        });
+      });
+    });
+
+    it("indexes text inside the implied paragraph as root content", () => {
+      const { editor, impliedText } = buildImpliedParaEnvironment();
+      updateSelection(editor, impliedText, 0, impliedText, 3); // "one"
+
+      editor.getEditorState().read(() => {
+        expect($getUsjSelectionFromEditor()).toEqual({
+          start: { jsonPath: "$.content[2]", offset: 0 },
+          end: { jsonPath: "$.content[2]", offset: 3 },
+        });
+      });
+    });
+
+    it("maps an element point inside the implied paragraph to a root boundary", () => {
+      const { editor, impliedPara } = buildImpliedParaEnvironment();
+      // Between verse 1 and "one ": root boundary 2 (after the verse, before the text).
+      updateSelection(editor, impliedPara, 1);
+
+      editor.getEditorState().read(() => {
+        expect($getUsjSelectionFromEditor()).toEqual({ start: { jsonPath: "$", offset: 2 } });
+      });
+    });
+
+    it("anchors an element point on a mark inside the implied paragraph at the mark's root position", () => {
+      let markNode: TypedMarkNode;
+      const { editor } = createBasicTestEnvironment(
+        [ParaNode, ImpliedParaNode, ImmutableChapterNode, TypedMarkNode, CharNode],
+        () => {
+          markNode = $createTypedMarkNode({ testType: ["testId"] }).append(
+            $createCharNode("nd").append($createTextNode("LORD")),
+          );
+          $getRoot().append(
+            $createImmutableChapterNode("1"),
+            $createImpliedParaNode().append($createTextNode("ab"), markNode, $createTextNode("cd")),
+          );
+        },
+      );
+      // Non-null assertion is safe: markNode is assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, markNode!, 0);
+
+      editor.getEditorState().read(() => {
+        // USJ content: [0]=chapter, [1]="ab", [2]=char, [3]="cd" — before the char is boundary 2.
+        expect($getUsjSelectionFromEditor()).toEqual({ start: { jsonPath: "$", offset: 2 } });
+      });
+    });
+
+    it("maps the element point at the implied paragraph's end to the root boundary after it", () => {
+      const { editor, impliedPara } = buildImpliedParaEnvironment();
+      updateSelection(editor, impliedPara, 2);
+
+      editor.getEditorState().read(() => {
+        expect($getUsjSelectionFromEditor()).toEqual({ start: { jsonPath: "$", offset: 3 } });
+      });
+    });
+  });
+
+  describe("$getRangeFromUsjSelection", () => {
+    it("resolves text in a paragraph after the implied paragraph", () => {
+      const { editor, paraText } = buildImpliedParaEnvironment();
+
+      editor.getEditorState().read(() => {
+        const range = $getRangeFromUsjSelection({
+          start: { jsonPath: "$.content[3].content[1]", offset: 8 },
+        });
+
+        if (!range) throw new Error("Expected range to be defined");
+        expect(range.anchor.key).toBe(paraText.getKey());
+        expect(range.anchor.offset).toBe(8);
+      });
+    });
+
+    it("resolves root text content into the implied paragraph", () => {
+      const { editor, impliedText } = buildImpliedParaEnvironment();
+
+      editor.getEditorState().read(() => {
+        const range = $getRangeFromUsjSelection({ start: { jsonPath: "$.content[2]", offset: 1 } });
+
+        if (!range) throw new Error("Expected range to be defined");
+        expect(range.anchor.key).toBe(impliedText.getKey());
+        expect(range.anchor.offset).toBe(1);
+      });
+    });
+
+    it("resolves a root boundary inside the implied paragraph to an element point within it", () => {
+      const { editor, impliedPara } = buildImpliedParaEnvironment();
+
+      editor.getEditorState().read(() => {
+        const range = $getRangeFromUsjSelection({ start: { jsonPath: "$", offset: 2 } });
+
+        if (!range) throw new Error("Expected range to be defined");
+        expect(range.anchor.key).toBe(impliedPara.getKey());
+        expect(range.anchor.offset).toBe(1);
+      });
+    });
+
+    it("round-trips every selection point in the chapter", () => {
+      const { editor, impliedPara, impliedText, paraText } = buildImpliedParaEnvironment();
+      const points: [TextNode | ImpliedParaNode, number][] = [
+        [impliedPara, 0],
+        [impliedPara, 1],
+        [impliedText, 0],
+        [impliedText, 2],
+        [impliedText, 4],
+        [paraText, 0],
+        [paraText, 8],
+        [paraText, 18],
+      ];
+
+      for (const [node, offset] of points) {
+        updateSelection(editor, node, offset);
+        editor.getEditorState().read(() => {
+          const usjSelection = $getUsjSelectionFromEditor();
+          if (!usjSelection) throw new Error("Expected usjSelection to be defined");
+          const range = $getRangeFromUsjSelection(usjSelection);
+          if (!range) throw new Error(`Expected a range for ${JSON.stringify(usjSelection)}`);
+          expect({ key: range.anchor.key, offset: range.anchor.offset }).toEqual({
+            key: node.getKey(),
+            offset,
+          });
+        });
+      }
+    });
   });
 });

@@ -6,7 +6,7 @@ import { $createCharNode, CharNode } from "./CharNode.js";
 import { $createImmutableChapterNode } from "./ImmutableChapterNode.js";
 import { usjBaseNodes } from "./index.js";
 import {
-  $getElementOffsetFromLogicalIndex,
+  $getElementPointFromLogicalIndex,
   $getLogicalContentItems,
   $getLogicalIndexOfChild,
   $getLogicalParent,
@@ -1111,7 +1111,7 @@ describe("Editor Node Utilities", () => {
     });
   });
 
-  describe("$getLogicalPointFromElementPoint / $getElementOffsetFromLogicalIndex", () => {
+  describe("$getLogicalPointFromElementPoint / $getElementPointFromLogicalIndex", () => {
     it("maps element boundaries around an annotated run", () => {
       const { editor } = createBasicTestEnvironment(nodes, () => {
         $getRoot().append(
@@ -1150,11 +1150,11 @@ describe("Editor Node Utilities", () => {
         // End boundary.
         expect($getLogicalPointFromElementPoint(para, 5)).toEqual({ type: "index", index: 3 });
 
-        // Inverse: earliest element child offset for each logical boundary.
-        expect($getElementOffsetFromLogicalIndex(para, 0)).toBe(0);
-        expect($getElementOffsetFromLogicalIndex(para, 1)).toBe(3); // after " cc "
-        expect($getElementOffsetFromLogicalIndex(para, 2)).toBe(4); // after Char
-        expect($getElementOffsetFromLogicalIndex(para, 3)).toBe(5); // after "dd"
+        // Inverse: earliest element point for each logical boundary.
+        expect($getElementPointFromLogicalIndex(para, 0)).toEqual([para, 0]);
+        expect($getElementPointFromLogicalIndex(para, 1)).toEqual([para, 3]); // after " cc "
+        expect($getElementPointFromLogicalIndex(para, 2)).toEqual([para, 4]); // after Char
+        expect($getElementPointFromLogicalIndex(para, 3)).toEqual([para, 5]); // after "dd"
       });
     });
 
