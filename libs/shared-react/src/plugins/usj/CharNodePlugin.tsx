@@ -226,11 +226,13 @@ function $charTextNodeTransform(node: TextNode): void {
   const placeholderKey = $placeholderKeyBeforeUpdate(parent.getKey());
   if (placeholderKey === undefined) {
     // A span this update created: its only text loses a leading placeholder byte, unless that text
-    // was already in the document.
+    // was already in the document. A caret still at the text's start means nothing was typed into
+    // it: a split (Enter) moved it there from a text node it cut in two.
     if (
       parent.getChildrenSize() === 1 &&
       text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT) &&
-      !$heldContentBeforeUpdate(node.getKey())
+      !$heldContentBeforeUpdate(node.getKey()) &&
+      !$isCaretAtStartOf(node)
     )
       $dropPlaceholderByte(node, 0);
     return;
@@ -267,6 +269,17 @@ function $placeholderIndex(node: TextNode, text: string): number | undefined {
   if (text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT)) return 0;
   if (text.endsWith(EMPTY_CHAR_PLACEHOLDER_TEXT)) return text.length - 1;
   return undefined;
+}
+
+/** Whether the selection is a caret at the very start of `node`. */
+function $isCaretAtStartOf(node: TextNode): boolean {
+  const selection = $getSelection();
+  return (
+    $isRangeSelection(selection) &&
+    selection.isCollapsed() &&
+    selection.anchor.key === node.getKey() &&
+    selection.anchor.offset === 0
+  );
 }
 
 /** Removes the byte at `index` from `node`. A selection point in `node` keeps its user byte; any

@@ -5,7 +5,9 @@ import {
   $createRangeSelection,
   $createTextNode,
   $getRoot,
+  $getSelection,
   $getState,
+  $isRangeSelection,
   $isTextNode,
   $setState,
   TextNode,
@@ -515,6 +517,41 @@ describe("CharNodePlugin", () => {
       const p = $getRoot().getFirstChildOrThrow<ParaNode>();
       expect(p.getChildrenSize()).toBe(1);
       expect(p.getTextContent()).toBe(`x${NBSP}b`);
+    });
+  });
+
+  it("keeps the author's leading no-break space when Enter splits a span right in front of it", async () => {
+    // Enter splits the text at the caret, so the `~cd` it moves into the new paragraph's span is a
+    // text node the update created — but nothing was typed into it.
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createParaNode().append($createCharNode("w").append($createTextNode(`ab${NBSP}cd`))),
+      );
+    });
+
+    await act(async () => {
+      editor.update(() => {
+        $getRoot()
+          .getFirstChildOrThrow<ParaNode>()
+          .getFirstChildOrThrow<CharNode>()
+          .getFirstChildOrThrow<TextNode>()
+          .select(2, 2);
+      });
+    });
+    await act(async () => {
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        selection.insertParagraph();
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getRoot()
+          .getChildren()
+          .map((p) => p.getTextContent()),
+      ).toEqual(["ab", `${NBSP}cd`]);
     });
   });
 
