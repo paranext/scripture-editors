@@ -168,6 +168,7 @@ export interface EditorRef {
     extendCharacterMarker(marker: string, conflictingMarkers?: readonly string[]): boolean;
     focus(): void;
     formatPara(blockMarker: string): void;
+    getAnnotationRanges(type: string, id: string): Range[];
     getElementByKey(nodeKey: string): HTMLElement | undefined;
     getMarkerMenuContext(): (MarkerMenuContext & {
         anchorRect?: {

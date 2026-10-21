@@ -1,0 +1,162 @@
+/**
+ * The state a settled↔live position translation needs, and the per-scope basis it computes from
+ * that state.
+ *
+ * `getUsj()` hands a host the SETTLED document — the one a Tier-2 settle would produce — while the
+ * user's pending edits stay pending on screen (virtualSettle.utils.ts). Every position a host can
+ * construct is therefore settled-derived, and every position API resolves against the LIVE tree.
+ * While anything is pending the two documents differ, so a position has to be carried across the
+ * difference before it can be resolved.
+ */
+
+import { SettledOnlyRun, SettledRunMember } from "../markerEdit/settledOnlyRuns.utils";
+import { FragmentAccumulator, Tier2Context } from "../markerEdit/tier2Rebuild.utils";
+import { ByteAlignment } from "../markerEdit/usfmByteAlignment.utils";
+import { AnchoredTransientInput, LastKnownCaret } from "../markerEdit/virtualSettle.utils";
+import { Klass, LexicalEditor, LexicalNode, LexicalNodeReplacement, NodeKey } from "lexical";
+
+/** Everything the translation needs about the editor's current pending state. */
+export interface SettledPositionContext {
+  /** The display owners the marker-edit engine currently holds a pend for. */
+  readonly pendedKeys: ReadonlySet<NodeKey>;
+  /** The in-progress input an in-editor command surface has declared, if any. */
+  readonly transientInput: AnchoredTransientInput | undefined;
+  /** The last collapsed text caret the editor observed — `$verifiedTransientLiteral`'s fallback
+   * when the live selection is absent. */
+  readonly lastKnownCaret: LastKnownCaret | undefined;
+  readonly tier2: Tier2Context;
+  /** The live editor's node registry, for scratch editors. */
+  readonly nodes: readonly (Klass<LexicalNode> | LexicalNodeReplacement)[];
+  readonly cache: SettledScopeCache;
+}
+
+/**
+ * Live ≡ settled: nothing pending, nothing declared, so a settled position addresses the live tree
+ * unchanged and no translation is needed at all. The predicate a caller can check WITHOUT an
+ * editor-state read — the same one `Editor.tsx`'s settled read uses to skip its own recompute.
+ */
+export function isLiveSettledIdentical(context: SettledPositionContext): boolean {
+  return context.pendedKeys.size === 0 && !context.transientInput;
+}
+
+/**
+ * Where a scope's declared transient bytes sat in its live fragment, so a position mapped through
+ * the CUT fragment can be restated in real live coordinates.
+ *
+ * The cut removes the declared bytes from the middle of one node's span (`$transientCutRange`,
+ * virtualSettle.utils.ts), so every live offset at or past the cut is short by the run's length —
+ * the offsets in the node's own text still count the bytes the settled document was built
+ * without.
+ */
+export interface TransientCut {
+  /** The live TextNode the declared bytes were typed into. */
+  readonly key: NodeKey;
+  /** The offset within that node's text where the declared bytes start. */
+  readonly nodeOffset: number;
+  /** How many bytes were declared. */
+  readonly length: number;
+}
+
+/**
+ * One settle scope, prepared for position mapping: the live nodes the settle replaces, the settled
+ * nodes it replaces them with (materialized into a scratch editor so they can be walked like any
+ * other tree), and the two byte fragments that pair the two sides up.
+ *
+ * The fragments are the joint. Settling is re-tokenization of DISPLAYED bytes, so the live scope
+ * and its settled replacement spell the same bytes in the same order while their structures
+ * differ — which is exactly what the Tier-2 caret's whitespace-tolerant byte anchor already
+ * carries a position across (`$caretSpanByteAnchor` / `$resolveFragmentByteAnchor`,
+ * tier2Rebuild.utils.ts).
+ */
+export interface SettleScopePlan {
+  readonly kind: "para" | "note" | "chapter";
+  /** Live nodes the scope replaces: the paragraph(s) — or the `\id` line and the paragraphs a
+   * rejoin widens it by — / the chapter region / [the note]. */
+  readonly liveNodes: readonly LexicalNode[];
+  /**
+   * Live fragment over `liveNodes` (spans keyed by LIVE keys), with the declared transient bytes
+   * and the placeholder byte of every preserved run the settled side dropped already cut out.
+   * `undefined` when the scope's live bytes cannot be fragmented, which leaves the scope's
+   * top-level index shift usable while a position INSIDE it can only be placed at the scope's
+   * front.
+   */
+  readonly liveFragment: FragmentAccumulator | undefined;
+  /** Where the declared bytes were cut out of `liveFragment`, when they were. */
+  readonly liveCut: TransientCut | undefined;
+  /** Headless editor whose root children are the settled replacement nodes (para/chapter) or the
+   *  single settled note (note). Fragment spans keyed by SCRATCH keys. */
+  readonly scratch: LexicalEditor;
+  /** Settled fragment over the scratch root, or `undefined` for the same reason
+   * {@link SettleScopePlan.liveFragment} can be. */
+  readonly scratchFragment: FragmentAccumulator | undefined;
+  /** How many top-level settled content items the scope becomes (para/chapter); 1 for a note. */
+  readonly settledCount: number;
+  /**
+   * Where each live preserved-run member sits in {@link SettleScopePlan.scratchFragment}'s own run
+   * list, indexed `[live run][live member]` — `undefined` for a member the settled side has no
+   * counterpart for, and `undefined` wholesale when a scope with preserved runs could not be
+   * paired (see {@link SettleScopePlan.alignment}).
+   *
+   * The two run lists are built by the same builder over DIFFERENT trees, so a construct that
+   * needs a preserved run on one side but not the other — a dead optbreak husk the settle splices
+   * out, a char span whose sentinel condition the rebuild resolves — shifts every run after it by
+   * one. Crossing by raw index would then reach some other construct entirely, and where its shape
+   * happens to match (two notes in one paragraph is an ordinary document) the walk succeeds and
+   * the position lands silently in the wrong one.
+   *
+   * A dropped run also costs {@link SettleScopePlan.liveFragment} its placeholder byte, so the two
+   * sides' byte anchors keep addressing the same document bytes.
+   */
+  readonly sentinelMap: readonly (readonly (SettledRunMember | undefined)[])[] | undefined;
+  /**
+   * The settled fragment's preserved runs the LIVE fragment spells as literal bytes instead — a
+   * typed `\f + \ft note\f*` that settles into a note — in settled fragment order. Empty when
+   * every settled run is carried from the live side. Meaningful only alongside a
+   * {@link SettleScopePlan.sentinelMap}.
+   */
+  readonly settledOnlyRuns: readonly SettledOnlyRun[];
+  /**
+   * How {@link SettleScopePlan.liveFragment}'s non-whitespace bytes line up with
+   * {@link SettleScopePlan.scratchFragment}'s, every byte counted — the correspondence every
+   * position inside the scope crosses by, in both directions. A position in front of bytes one
+   * side has and the other lacks snaps LEFT (`mapCountSnapped`, usfmByteAlignment.utils.ts).
+   * `undefined` only when a fragment is missing or — in a scope with preserved runs — the
+   * rebuild's account of which of them it carried is; a position inside the scope then lands at
+   * the scope's front.
+   */
+  readonly alignment: ByteAlignment | undefined;
+  /**
+   * Set on a note scope whose settle closes an unclosed note at a closer typed into it: what
+   * followed the closer moves out of the note into its parent, after the note. The scope's live
+   * nodes are then the note and every sibling after it, the scratch holds the note's whole settled
+   * top-level block, and the two fragments spell the note's content and those siblings — the same
+   * bytes on both sides, the typed closer among them.
+   */
+  readonly closedNote?: ClosedNoteLayout;
+}
+
+/** Where a note a typed closer closes sits in its scope's scratch tree. */
+export interface ClosedNoteLayout {
+  /** The settled note's content indexes in the scratch tree — the scratch counterpart of the live
+   * note's own path, which a path through the note's parent at or past the note crosses by. */
+  readonly scratchNotePath: readonly number[];
+  /** How many content items the settled note's parent holds from the note on: the note, what
+   * moved out of it, and the siblings after it. */
+  readonly settledItemsFromNote: number;
+}
+
+/**
+ * Plans memoized on their scope's content and nodes, so repeated position calls against an
+ * unchanged pending state reuse one basis rather than re-running the settle and rebuilding a
+ * scratch editor per call. Keyed by the scope's first live node; entries whose scope is no longer
+ * pending are dropped on the next preparation.
+ */
+export interface SettledScopeCache {
+  entries: Map<NodeKey, { signature: string; plan: SettleScopePlan }>;
+  /**
+   * The marker lookup the entries were planned under. A stylesheet change re-tokenizes the same
+   * bytes differently without touching the tree — so without changing any entry's signature — and
+   * so clears every entry.
+   */
+  getMarker?: Tier2Context["getMarker"];
+}

@@ -25,25 +25,46 @@
  * Builders construct the separator (transforms do not run on `setEditorState`, so loaded states
  * must render correctly as-is), and {@link $syncOpenerSeparators} — registered as a CharNode
  * transform in CharNodePlugin — re-derives it whenever a span is dirtied, healing paths that
- * restructure spans without rebuilding them through an adaptor. Deleting the separator is
- * semantically a no-op (the writer emits the space regardless), so healing it back is display
- * canonicalization, exactly like Tier-2's rebuild produces — but deleting must still be
- * ALLOWED: while the collapsed caret sits at the deletion point the sync leaves the gap alone
- * (mid-edit grace), and the marker-edit engine settles it back on caret departure by pending
- * spans reported by {@link $hasCaretHeldSeparatorGap} into its Tier-2 completion path.
+ * restructure spans without rebuilding them through an adaptor.
+ *
+ * A missing separator is healed back in place only when the displayed bytes tokenize IDENTICALLY
+ * without it (`separatorRemovalTokenizesIdentically`, beside the tokenizer's own name scan): `\nd`
+ * before `\`, `|` or more whitespace means the same with or without the space, so restoring it is
+ * display canonicalization. Anything else is the user's bytes — `\ndthings` renames the marker and
+ * `\nd*` is a closer, whether the separator was deleted or typed over — and healing it back would
+ * rewrite what the screen shows. For those the marker-edit engine pends the span
+ * ({@link $hasUnsettledSeparatorGap}), graces it while the caret is anywhere inside it
+ * ({@link $hasCaretGracedSeparatorGap}), and settles it on caret departure by re-tokenizing, so the
+ * displayed bytes win; the sync leaves a pended span alone and hands such a gap to the engine
+ * instead of healing it. Deleting a separator must always be ALLOWED: while the collapsed caret sits
+ * at the deletion point ({@link $hasCaretHeldSeparatorGap}) even a healable gap waits for departure.
+ *
+ * An annotation mark is transparent to all of this: a range into a span wraps its content in a
+ * `TypedMarkNode`, and the text the gap is decided by — and the caret boundary — is the mark's
+ * first text, not the mark element.
  *
  * Only char-span glyphs take a separator — a milestone's display run inside a span is left
  * alone — so which glyphs qualify is decided by the same classifier the nested-`+` sync uses
  * ({@link $charGlyphNestedValue}).
  */
 
+import { separatorRemovalTokenizesIdentically } from "../../converters/usfm/usfmFragmentToUsj.js";
 import { $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
+import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { $isCharNode, CharNode } from "./CharNode.js";
+import { $isInLiteralOnlyBlock } from "./literalOnlyBlock.utils.js";
 import { $charGlyphNestedValue } from "./nestedGlyphs.utils.js";
+import { openingMarkerText } from "./markerText.utils.js";
 import { NBSP } from "./node-constants.js";
 import {
+  $isDisplayOwnerPended,
+  $reportDestroyedDisplayOwner,
+  getPendedDisplayOwners,
+} from "./pendedDisplayOwners.utils.js";
+import {
   $createTextNode,
+  $getEditor,
   $getSelection,
   $getState,
   $isRangeSelection,
@@ -73,6 +94,58 @@ export function $isSeparatorPrefixHostText(node: LexicalNode | null | undefined)
 }
 
 /**
+ * How many of `node`'s leading characters are the char-span separator rather than content: `1`
+ * when `node` is a plain TextNode carrying an opening char glyph's separator NBSP as its prefix,
+ * `0` otherwise.
+ *
+ * The separator is display state the editor→USJ conversion strips, so that byte is not part of
+ * the span's USJ text: anything that measures content or maps between live and settled text
+ * offsets must skip it, or every offset inside a char span is off by one. Shape-based on purpose
+ * — glyph adjacency, not view options, which this layer does not see. The editor→USJ
+ * conversion's strip (`precedesOpeningCharGlyph` in `editor-usj.adaptor.ts`, every editable view)
+ * decides the same way over the serialized tree, so an authored `~` right after a nested closer,
+ * or leading a span's content once a mark split the separator off, survives the export.
+ *
+ * Read-only: safe inside `editor.update()` or either read form.
+ */
+export function $charSeparatorPrefixLength(node: TextNode): 0 | 1 {
+  if (!$isSeparatorPrefixHostText(node) || !node.getTextContent().startsWith(NBSP)) return 0;
+  // The span is the nearest non-annotation ancestor, and the glyph is whatever sits immediately
+  // before the text in document order within it — annotation wrappers are transparent on BOTH
+  // sides. A host can annotate a range that starts on the opening glyph (a marker location), so
+  // the glyph can share the text's mark, sit in a mark of its own, or be a plain sibling of the
+  // mark the text is in.
+  let child: LexicalNode = node;
+  let previous: LexicalNode | null = child.getPreviousSibling();
+  let parent = child.getParent();
+  while (parent && $isTypedMarkNode(parent)) {
+    child = parent;
+    parent = child.getParent();
+    previous ??= child.getPreviousSibling();
+  }
+  if (!$isCharNode(parent)) return 0;
+  // A mark that ends right before the text hides the glyph as its last descendant.
+  while ($isTypedMarkNode(previous)) previous = previous.getLastChild();
+  if (!$isMarkerNode(previous) || previous.getMarkerSyntax() !== "opening") return 0;
+  // Only char-span glyphs take a separator (not a milestone's display run) — the same classifier
+  // $openerSeparatorGap builds one with, so reading and writing can never disagree about which
+  // glyphs own one.
+  return $ownsOpenerSeparator(previous, parent) ? 1 : 0;
+}
+
+/**
+ * The node whose leading bytes follow `opener`'s separator site: the glyph's next sibling, read
+ * through any annotation marks to the first node that is not one. A range into a span wraps the
+ * content in a `TypedMarkNode`, which is presentation only — whether a separator is owed, and what
+ * removing it would mean, is a question about that content.
+ */
+function $contentAfterOpener(opener: MarkerNode): LexicalNode | null {
+  let node = opener.getNextSibling();
+  while ($isTypedMarkNode(node)) node = node.getFirstChild();
+  return node;
+}
+
+/**
  * How many leading UTF-16 code units of `node` are an opening glyph's display separator rather
  * than content: `NBSP.length` when `node` is {@link $isSeparatorPrefixHostText} text directly
  * after a char-span opening glyph and starts with the NBSP, otherwise 0. That is exactly the slot
@@ -82,8 +155,11 @@ export function $isSeparatorPrefixHostText(node: LexicalNode | null | undefined)
  * `~` and stays content: after a nested closer (`\ft A\+nd x\+nd*~B`), after a milestone's display
  * glyph, or in a span rendered without glyphs.
  *
- * THE one reading of the convention for sites that turn a text node's bytes into content, such as
- * caret placement inside a span or a note. The collab emit path (editor-delta.adaptor.ts) narrows
+ * The reading for sites that turn a text node's bytes into content, such as caret placement
+ * inside a span or a note, where the text is a direct child of the span. Positions that must see
+ * through annotation marks (a mark can split the separator off, or hold the glyph) read
+ * {@link $charSeparatorPrefixLength} instead, which agrees with this one wherever no mark
+ * intervenes. The collab emit path (editor-delta.adaptor.ts) narrows
  * this: it calls this function only for a span's OWN opener (its first child), matching the
  * reverse adaptor's `content[0]` strip, so a nested opener's separator is left in the emitted text
  * and reaches peers as ordinary content, like any other byte the collab-flattened shape exposes.
@@ -101,8 +177,8 @@ export function $separatorPrefixLength(node: TextNode): number {
 /**
  * Whether `opener` (a direct child of `char`) is an opening glyph that takes a display separator
  * at all — a char-span glyph (not a milestone's display run). Shared by
- * {@link $separatorPrefixLength} and {@link $openerSeparatorGap}, the two sites that otherwise
- * repeat this same test.
+ * {@link $separatorPrefixLength}, {@link $charSeparatorPrefixLength} and
+ * {@link $openerSeparatorGap}, the sites that otherwise repeat this same test.
  */
 function $ownsOpenerSeparator(opener: MarkerNode, char: CharNode): boolean {
   return (
@@ -113,29 +189,50 @@ function $ownsOpenerSeparator(opener: MarkerNode, char: CharNode): boolean {
 /**
  * Where a separator is missing after `opener` (a direct child of `char`):
  *
- * - `"prefix"` — the glyph is followed by plain text that lacks the NBSP prefix;
+ * - `"prefix"` — the glyph is directly followed by plain text that lacks the NBSP prefix;
  * - `"spacer"` — the glyph is followed by an element (or, in the collab-flattened shape, a nested
- *   span's opening glyph) with no standalone NBSP spacer between them;
+ *   span's opening glyph) with no standalone NBSP spacer between them, or by an annotation mark
+ *   whose text lacks the NBSP prefix (the separator then stands in front of the mark, the shape
+ *   the wrap itself leaves);
  * - `undefined` — no separator is owed: the glyph is not a char-span glyph (a milestone's display
  *   run), has nothing after it, sits directly before a non-nested glyph, or its separator exists.
  */
 function $openerSeparatorGap(opener: MarkerNode, char: CharNode): "prefix" | "spacer" | undefined {
   if (!$ownsOpenerSeparator(opener, char)) return undefined;
   const next = opener.getNextSibling();
-  if (next === null) return undefined;
-  if ($isMarkerNode(next)) {
+  const content = $contentAfterOpener(opener);
+  if (next === null || content === null) return undefined;
+  if ($isMarkerNode(content)) {
     // Opening glyph directly before another glyph: in the collab-flattened shape that next glyph
     // opens a nested span (`\add\+wj …`) and the separator goes between them. Any other adjacent
     // glyph (the span's own closer on a degenerate empty span) takes none.
-    return $charGlyphNestedValue(next, char) === true ? "spacer" : undefined;
+    return $charGlyphNestedValue(content, char) === true ? "spacer" : undefined;
   }
   // Plain text directly after the glyph carries the separator as its prefix — see
   // $isSeparatorPrefixHostText for what qualifies and why.
-  if ($isSeparatorPrefixHostText(next))
-    return next.getTextContent().startsWith(NBSP) ? undefined : "prefix";
+  if ($isSeparatorPrefixHostText(content)) {
+    if (content.getTextContent().startsWith(NBSP)) return undefined;
+    return content.is(next) ? "prefix" : "spacer";
+  }
   // Element content (nested char span, note, milestone, verse), TextNode subclasses, and
   // attribute-run text: standalone NBSP spacer.
   return "spacer";
+}
+
+/**
+ * Whether the bytes after `opener`'s separator site are the user's to decide rather than the
+ * sync's to heal: the site is followed by plain content text (read through annotation marks) whose
+ * first byte would change the token stream if the separator stayed gone — a name character that
+ * the marker name runs into, or the `*` of a closer. Element content, glyphs and attribute runs
+ * all begin with bytes the name scan stops at, so their gaps always heal. So does any gap in a
+ * block no settle scope re-tokenizes ({@link $isInLiteralOnlyBlock}: a table cell, the `\id`
+ * line, an opaque block): nothing could ever settle the new name there, and healing keeps the
+ * screen equal to what the writer saves.
+ */
+function $isRenamingGap(opener: MarkerNode): boolean {
+  if (!$isSeparatorPrefixHostText($contentAfterOpener(opener))) return false;
+  if ($isInLiteralOnlyBlock(opener)) return false;
+  return !separatorRemovalTokenizesIdentically(opener.getNextSibling()?.getTextContent() ?? "");
 }
 
 /**
@@ -158,51 +255,155 @@ export function $openerSeparatorGapFollowingBytes(char: CharNode): string | unde
 
 /**
  * Whether the collapsed caret sits at `opener`'s separator site — on the glyph itself, on the
- * span (an element point), or at the very start of the node after the glyph. This is where the
- * caret lands when the user deletes the separator, and deleting must always be allowed: while
- * the caret stays here the sync leaves the gap alone (mid-edit grace), and the marker-edit
- * engine settles the span back to canonical on caret departure (it pends spans reported by
- * {@link $hasCaretHeldSeparatorGap} and routes them to a Tier-2 rebuild, the same completion
- * path as a pending marker literal).
+ * span (an element point), or at the very start of the node after the glyph (read through any
+ * annotation marks, so the start of a mark's first text counts). This is where the caret lands
+ * when the user deletes the separator, and deleting must always be allowed: while the caret stays
+ * here the sync leaves the gap alone (mid-edit grace), and the marker-edit engine settles the span
+ * on caret departure (it pends spans reported by {@link $hasCaretHeldSeparatorGap}).
  */
 function $isCaretAtOpenerBoundary(opener: MarkerNode, char: CharNode): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
   const anchorNode = selection.anchor.getNode();
   if (anchorNode.is(opener) || anchorNode.is(char)) return true;
-  const next = opener.getNextSibling();
-  return next !== null && anchorNode.is(next) && selection.anchor.offset === 0;
+  if (selection.anchor.offset !== 0) return false;
+  for (let node = opener.getNextSibling(); node; ) {
+    if (anchorNode.is(node)) return true;
+    if (!$isTypedMarkNode(node)) return false;
+    node = node.getFirstChild();
+  }
+  return false;
 }
 
 /**
  * Ensure every opening char glyph among `char`'s direct children is followed by its display
  * separator — except one whose separator site holds the collapsed caret (see
- * {@link $isCaretAtOpenerBoundary}). Idempotent — a healed span passes untouched, so the
- * registering transform converges.
+ * {@link $isCaretAtOpenerBoundary}), and, while a marker-edit engine is mounted, one whose
+ * following bytes would read differently with the separator back: that span is reported to the
+ * engine, which settles it by re-tokenizing what the screen shows. A span the engine already holds
+ * pending is left alone entirely — its settle decides. Without an engine (a host with no editable
+ * marker mode) every gap heals. Idempotent — a healed span passes untouched, so the registering
+ * transform converges.
+ *
+ * The healed spacer is a plain NBSP text node, the same shape the forward adaptor builds for a span
+ * whose content starts with an element: a char span's separator is recognized by position (the
+ * NBSP right after its opening glyph), not by the tagged token separator a paragraph or note glyph
+ * takes, and typing next to it must stay ordinary text editing.
  *
  * @param char - The char span whose separators to sync. Must be called inside `editor.update()`.
  */
 export function $syncOpenerSeparators(char: CharNode): void {
   // An earlier transform in the same pass may have merged/removed the span.
   if (!char.isAttached()) return;
+  if ($isDisplayOwnerPended(char)) return;
+  const isEngineMounted = getPendedDisplayOwners($getEditor()) !== undefined;
   char.getChildren().forEach((child: LexicalNode) => {
     if (!$isMarkerNode(child)) return;
     const gap = $openerSeparatorGap(child, char);
     if (gap === undefined) return;
     if ($isCaretAtOpenerBoundary(child, char)) return;
-    if (gap === "prefix") {
-      const next = child.getNextSibling();
-      if ($isTextNode(next)) next.setTextContent(NBSP + next.getTextContent());
-    } else {
-      child.insertAfter($createTextNode(NBSP));
+    if (isEngineMounted && $isRenamingGap(child)) {
+      $reportDestroyedDisplayOwner(char);
+      return;
     }
+    if (gap === "spacer") {
+      child.insertAfter($createTextNode(NBSP));
+      return;
+    }
+    const next = child.getNextSibling();
+    if (!$isTextNode(next)) return;
+    if (!$moveTypedBytesBehindSeparator(next)) $prefixSeparator(next);
   });
+}
+
+/**
+ * Bytes typed with the caret between an opening glyph and its separator (`\w|⍽grace`, caret
+ * behind the `|`): the separator is still there, behind them, so they move behind it rather than
+ * a second separator going in front of them — which would leave the first one inside the content
+ * (a lemma ` grace` where the user typed `|grace`). Recognized by the caret sitting right after
+ * the typed bytes, on the separator; a text whose separator was deleted has no such caret and is
+ * prefixed as usual.
+ *
+ * @returns Whether the bytes were moved.
+ */
+function $moveTypedBytesBehindSeparator(text: TextNode): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const { anchor } = selection;
+  if (anchor.type !== "text" || anchor.key !== text.getKey() || anchor.offset === 0) return false;
+  const content = text.getTextContent();
+  if (content[anchor.offset] !== NBSP) return false;
+  const typed = content.slice(0, anchor.offset);
+  text.setTextContent(NBSP + typed + content.slice(anchor.offset + 1));
+  text.select(anchor.offset + 1, anchor.offset + 1);
+  return true;
+}
+
+/**
+ * Bytes typed at the END of a char span's opening glyph that the marker name cannot take and that
+ * read with the content rather than the marker — a `|` or whitespace (`\w|` in front of `⍽grace`)
+ * — move behind the separator that still follows the glyph, the shape the same keystroke leaves
+ * with the caret at the content's front ({@link $moveTypedBytesBehindSeparator}). The two carets
+ * are one place on screen and must save one file: the lemma `grace`, not ` grace`. Bytes that do
+ * read with the marker (a name byte, `*`, `\`) stay in the glyph.
+ *
+ * Decided by where the caret is: only a collapsed caret at the glyph's end moves bytes, so a glyph
+ * whose separator was deleted, or a rename in progress, keeps its bytes.
+ *
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the bytes moved; the glyph is then canonical again.
+ */
+export function $moveGlyphTailBehindSeparator(opener: MarkerNode): boolean {
+  if (opener.getMarkerSyntax() !== "opening" || !$isCharNode(opener.getParent())) return false;
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const text = opener.getTextContent();
+  const { anchor } = selection;
+  if (anchor.key !== opener.getKey() || anchor.offset !== text.length) return false;
+  const spelled = openingMarkerText(opener.getMarker(), opener.getNested());
+  const tail = text.slice(spelled.length);
+  if (!text.startsWith(spelled) || !/^[|\s]+$/.test(tail)) return false;
+  const content = $contentAfterOpener(opener);
+  if (!$isSeparatorPrefixHostText(content)) return false;
+  const contentText = content.getTextContent();
+  if (!contentText.startsWith(NBSP)) return false;
+  opener.setTextContent(spelled);
+  content.setTextContent(NBSP + tail + contentText.slice(NBSP.length));
+  content.select(NBSP.length + tail.length, NBSP.length + tail.length);
+  return true;
+}
+
+/**
+ * Give `opener`, a char span's opening glyph that a builder just made, the standalone spacer it owes
+ * in front of an annotation mark — the shape {@link $syncOpenerSeparators} heals that gap to, when
+ * it heals it. A builder adds it rather than waiting for the sync, because the sync leaves a gap in
+ * front of a mark over a name byte to the marker-edit engine as the user's possible rename
+ * ({@link $isRenamingGap}), and bytes a builder just put behind a glyph it made are no rename. Any
+ * other element after the glyph begins with bytes the name scan stops at, so the sync heals its gap.
+ *
+ * Mutating: call inside `editor.update()`.
+ */
+export function $insertOwedOpenerSpacer(opener: MarkerNode, char: CharNode): void {
+  if (!$isTypedMarkNode(opener.getNextSibling())) return;
+  if ($openerSeparatorGap(opener, char) === "spacer") opener.insertAfter($createTextNode(NBSP));
+}
+
+/** Prefix `text` with the separator NBSP, keeping any selection point inside it on the same
+ * character it was on. */
+function $prefixSeparator(text: TextNode): void {
+  text.setTextContent(NBSP + text.getTextContent());
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return;
+  for (const point of [selection.anchor, selection.focus])
+    if (point.type === "text" && point.key === text.getKey())
+      point.set(point.key, point.offset + 1, "text");
 }
 
 /**
  * True when `char` has a separator gap the sync is deliberately leaving alone because the caret
  * sits at it (a just-deleted separator). The marker-edit engine pends such spans so caret
- * departure settles them back to canonical via Tier-2.
+ * departure settles them.
  */
 export function $hasCaretHeldSeparatorGap(char: CharNode): boolean {
   if (!char.isAttached()) return false;
@@ -214,4 +415,62 @@ export function $hasCaretHeldSeparatorGap(char: CharNode): boolean {
         $openerSeparatorGap(child, char) !== undefined &&
         $isCaretAtOpenerBoundary(child, char),
     );
+}
+
+/**
+ * True when `char` has a separator gap the sync must leave for the marker-edit engine: the caret
+ * sits at its site (see {@link $hasCaretHeldSeparatorGap}), or the bytes after it would read
+ * differently with the separator back (a letter the marker name runs into, or the `*` of a closer)
+ * — the gap a type-over leaves as readily as a deletion. The engine pends such a span and settles
+ * it on caret departure: a healable gap in place, any other by re-tokenizing the displayed bytes.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $hasUnsettledSeparatorGap(char: CharNode): boolean {
+  if (!char.isAttached()) return false;
+  return char
+    .getChildren()
+    .some(
+      (child: LexicalNode) =>
+        $isMarkerNode(child) &&
+        $openerSeparatorGap(child, char) !== undefined &&
+        ($isCaretAtOpenerBoundary(child, char) || $isRenamingGap(child)),
+    );
+}
+
+/**
+ * True when `char` has a separator gap that settles by re-tokenizing rather than healing in place:
+ * the bytes after it would read differently with the separator back, in a block that has a settle
+ * scope. The settle's in-place heal and the sync decide by this same rule, so a gap the sync would
+ * heal is never re-tokenized on departure, and the reverse.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $hasRenamingSeparatorGap(char: CharNode): boolean {
+  if (!char.isAttached()) return false;
+  return char
+    .getChildren()
+    .some(
+      (child: LexicalNode) =>
+        $isMarkerNode(child) &&
+        $openerSeparatorGap(child, char) !== undefined &&
+        $isRenamingGap(child),
+    );
+}
+
+/**
+ * Whether the collapsed caret holds `char`'s separator gap for the user: it sits at the gap's site
+ * ({@link $hasCaretHeldSeparatorGap}), or anywhere inside the span while the gap is one the bytes
+ * decide ({@link $hasUnsettledSeparatorGap}) — the user is still typing the new marker name, and
+ * settling now would split the paragraph under the caret after the first keystroke.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $hasCaretGracedSeparatorGap(char: CharNode): boolean {
+  if ($hasCaretHeldSeparatorGap(char)) return true;
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const anchorNode = selection.anchor.getNode();
+  const isCaretInSpan = anchorNode.is(char) || char.isParentOf(anchorNode);
+  return isCaretInSpan && $hasUnsettledSeparatorGap(char);
 }

@@ -18,6 +18,7 @@ import {
 } from "lexical";
 import { createRef } from "react";
 import {
+  $createCharNode,
   $createParaNode,
   $createTypedMarkNode,
   $isParaNode,
@@ -25,6 +26,9 @@ import {
   TypedMarkNode,
 } from "shared";
 import { vi } from "vitest";
+import { $createImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode";
+import { FORMATTED_VIEW_MODE } from "../../../views/view-mode.model";
+import { getViewOptions, ViewOptions } from "../../../views/view-options.utils";
 
 describe("AnnotationPlugin", () => {
   it("does not dispatch onRemove when marks are internally rewrapped", async () => {
@@ -103,6 +107,70 @@ describe("AnnotationPlugin", () => {
       const fourthChild = thirdChild.getNextSibling();
       if (!$isTextNode(fourthChild)) throw new Error("Expected a TextNode");
       expect(fourthChild.getTextContent()).toBe(" stands");
+    });
+  });
+
+  describe("re-setting an id whose old mark spans runs that do not merge back (Formatted view)", () => {
+    const view = getViewOptions(FORMATTED_VIEW_MODE) as ViewOptions;
+
+    function $seed() {
+      $getRoot().append(
+        $createParaNode().append(
+          $createImmutableVerseNode("1"),
+          $createTextNode("alpha "),
+          $createCharNode("nd").append($createTextNode("LORD")),
+          $createTextNode(" beta "),
+          $createImmutableVerseNode("2"),
+          $createTextNode("gamma delta"),
+        ),
+      );
+    }
+
+    /** The text of each mark carrying `id`, with the mark's position among the paragraph's children. */
+    function $markedRuns(id: string): { index: number; text: string }[] {
+      const para = $getRoot().getFirstChild();
+      if (!$isElementNode(para)) throw new Error("Expected a para node");
+      return para
+        .getChildren()
+        .flatMap((child, index) =>
+          $isTypedMarkNode(child) && child.getTypedIDs().review?.includes(id)
+            ? [{ index, text: child.getTextContent() }]
+            : [],
+        );
+    }
+
+    it("marks exactly the new range, starting at a verse's marker location", async () => {
+      const { annotationPlugin, editor } = await testEnvironment($seed, view);
+      const para = "$.content[0]";
+      // The old mark covers "alpha " and the \nd span: two runs that stay apart once unwrapped.
+      await act(async () => {
+        annotationPlugin.setAnnotation(
+          {
+            start: { jsonPath: `${para}.content[1]`, offset: 0 },
+            end: { jsonPath: `${para}.content[3]`, offset: 0 },
+          },
+          "review",
+          "r1",
+        );
+      });
+
+      // SUT: re-set the id from verse 2's marker location through the first five letters after it.
+      await act(async () => {
+        annotationPlugin.setAnnotation(
+          {
+            start: { jsonPath: `${para}.content[4]` },
+            end: { jsonPath: `${para}.content[5]`, offset: 5 },
+          },
+          "review",
+          "r1",
+        );
+      });
+
+      editor.getEditorState().read(() => {
+        const runs = $markedRuns("r1");
+        expect(runs.map(({ text }) => text)).toEqual(["gamma"]);
+        expect($getRoot().getTextContent()).toContain("alpha LORD beta ");
+      });
     });
   });
 
@@ -271,7 +339,7 @@ describe("PT-3835: inserting annotations from reported selections", () => {
     if (!target) throw new Error(`No text node contains '${word}'`);
     updateSelection(editor, target, localOffset, target, localOffset + word.length);
 
-    const reported = editor.getEditorState().read($getUsjSelectionFromEditor);
+    const reported = editor.getEditorState().read(() => $getUsjSelectionFromEditor(undefined));
     const start = reported?.start;
     const end = reported?.end;
     if (!start || !end || !isUsjTextContentLocation(start) || !isUsjTextContentLocation(end)) {
@@ -322,11 +390,11 @@ function $findMergedTypedMarkNode(expectedText: string): TypedMarkNode | null {
   return null;
 }
 
-async function testEnvironment($initialEditorState: () => void) {
+async function testEnvironment($initialEditorState: () => void, viewOptions?: ViewOptions) {
   const annotationPluginRef = createRef<AnnotationRef>();
   const result = await baseTestEnvironment(
     $initialEditorState,
-    <AnnotationPlugin ref={annotationPluginRef} />,
+    <AnnotationPlugin ref={annotationPluginRef} viewOptions={viewOptions} />,
   );
   const annotationPlugin = annotationPluginRef.current;
   if (!annotationPlugin) throw new Error("AnnotationPlugin did not mount");

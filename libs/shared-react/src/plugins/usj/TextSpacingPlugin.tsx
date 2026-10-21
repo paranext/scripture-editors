@@ -1,4 +1,4 @@
-import { ImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
+import { $isImmutableVerseNode, ImmutableVerseNode } from "../../nodes/usj/ImmutableVerseNode";
 import {
   $addTrailingSpace,
   $isSomeVerseNode,
@@ -10,6 +10,7 @@ import { mergeRegister } from "@lexical/utils";
 import {
   $createTextNode,
   $getState,
+  $hasUpdateTag,
   $isTextNode,
   LexicalEditor,
   LexicalNode,
@@ -25,8 +26,10 @@ import {
   $syncDisplayRun,
   CharNode,
   displayRunDescriptor,
+  NBSP,
   NoteNode,
   textTypeState,
+  TYPED_MARK_WRAP_TAG,
   VerseNode,
 } from "shared";
 
@@ -177,13 +180,19 @@ function $textNodeTrailingSpaceTransform(node: TextNode): void {
 
 /**
  * Moves a TextNode out of an UnknownNode when it was planted there by an edit, so a read-only
- * opaque block never gains prose of its own.
+ * opaque block never gains prose of its own. Text a mark wrap splits off stays where it is.
  * @param node - The TextNode to check.
  * @param editor - The LexicalEditor instance.
  */
 function $textNodeInUnknownTransform(node: TextNode, editor: LexicalEditor): void {
   const unknownNode = node.getParent();
   if (!$isUnknownNode(unknownNode) || !node.isAttached()) return;
+
+  // A mark wrap splits caption text into pieces that are new nodes but no new text. Lexical
+  // unions the tags of every update batched into one commit, so the skip covers the whole commit:
+  // text typed into a figure in an update batched with a wrap would stay in the figure too. A
+  // host's annotation call and DOM input arrive in separate tasks, so they are not batched.
+  if ($hasUpdateTag(TYPED_MARK_WRAP_TAG)) return;
 
   // Only text planted inside a PRE-EXISTING opaque block is an intrusion (e.g. typing into a
   // figure). A wrapper that appeared in this SAME update brought its own content with it — a
@@ -219,10 +228,23 @@ function $verseNodeTransform(node: SomeVerseNode): void {
   // - Text inside an annotation wrapper: bare text gets its structural space from
   //   $textNodeTrailingSpaceTransform, but wrapped text can't (that transform skips
   //   TypedMarkNode parents), so the space is inserted here instead and coalesces onto the same
-  //   USJ text run.
+  //   USJ text run. Only where bare text would get one — before an ImmutableVerseNode, since that
+  //   transform leaves text in front of a VerseNode (itself a TextNode) alone — and only when the
+  //   text does not already end in one, the rule `$addTrailingSpace` applies to bare text.
+  //   Anywhere else, setting an annotation would write a space into the document.
   if (
     $isCharNode(previousSibling) ||
-    ($isTextNode(previousSibling) && $isTypedMarkNode(previousSibling.getParent()))
+    ($isImmutableVerseNode(node) &&
+      $isTextNode(previousSibling) &&
+      $isTypedMarkNode(previousSibling.getParent()) &&
+      !$endsInSpace(previousSibling))
   )
     node.insertBefore($createTextNode(" "));
+}
+
+/** Whether `node`'s text already ends in a space or NBSP — the same test `$addTrailingSpace` uses
+ * to decide text is already spaced. */
+function $endsInSpace(node: TextNode): boolean {
+  const text = node.getTextContent();
+  return text.endsWith(" ") || text.endsWith(NBSP);
 }

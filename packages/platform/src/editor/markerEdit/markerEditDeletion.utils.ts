@@ -604,6 +604,25 @@ export function $noteDeletionTransform(note: NoteNode, context: MarkerEditContex
 
   if (note.getIsCollapsed() !== true) {
     if (hasOpener) return; // intact — unclosed expanded notes have no closer by construction
+    // A note whose shell the host governs (`ViewOptions.isNoteShellEditable: false`, built as
+    // `token` glyphs) is not text the user edits: Delete in front of it, which Lexical turns into
+    // removing the whole opening glyph, gets its opener back rather than unwrapping the note — the
+    // host (the footnote popover) edits and saves that note alone. Read off the mode of what is left
+    // of the shell — the caller text the opener stood in front of, or the closing glyph — as the
+    // caret guard and the closer's transform read the opener's.
+    const first = children[0];
+    const last = children[children.length - 1];
+    if (
+      ($isTextNode(first) && first.isUnmergeable() && first.getMode() === "token") ||
+      ($isMarkerNode(last) && last.getMarkerSyntax() === "closing" && last.getMode() === "token")
+    ) {
+      const opener = $createMarkerNode(note.getMarker());
+      opener.setMode("token");
+      const first = note.getFirstChild();
+      if (first) first.insertBefore(opener);
+      else note.append(opener);
+      return;
+    }
     // Recognize an editable-built note by ANY marker-glyph evidence: the editable caller text,
     // a closing glyph, or a MarkerNode anywhere in the subtree (content char spans carry their
     // own glyphs). A single evidence anchor (caller only) is not enough: a RANGE deletion
@@ -611,14 +630,10 @@ export function $noteDeletionTransform(note: NoteNode, context: MarkerEditContex
     // evidence at all (shapes built by non-editable creation paths) are left alone, as for
     // collapsed.
     const caller = note.getCaller();
-    const hasEditableCaller =
-      caller !== "" &&
-      children.some(
-        (c) =>
-          $isTextNode(c) &&
-          !$isMarkerNode(c) &&
-          c.getTextContent() === getEditableCallerText(caller),
-      );
+    const hasEditableCaller = children.some(
+      (c) =>
+        $isTextNode(c) && !$isMarkerNode(c) && c.getTextContent() === getEditableCallerText(caller),
+    );
     const hasAnyMarkerGlyph = $dfs(note).some(({ node: n }) => $isMarkerNode(n));
     if (!hasEditableCaller && !hasAnyMarkerGlyph) return; // glyph-less shape — not ours
     // UNWRAP, don't delete: an expanded note's content is visible inline (an unclosed note may
@@ -629,8 +644,9 @@ export function $noteDeletionTransform(note: NoteNode, context: MarkerEditContex
     // object — glyph damage removes the whole note (below).
     children.forEach((child) => {
       if ($isMarkerNode(child)) return; // closing glyph (if any) dissolves with the note
+      // An empty caller's two separators stand for the one space between marker and content.
       if ($isTextNode(child) && child.getTextContent() === getEditableCallerText(caller))
-        child.setTextContent(` ${caller} `);
+        child.setTextContent(caller ? ` ${caller} ` : " ");
       note.insertBefore(child);
     });
     note.remove();

@@ -15,7 +15,7 @@ import {
   isHTMLElement,
 } from "lexical";
 import { CHAPTER_CLASS_NAME, UnknownAttributes } from "./node-constants.js";
-import { getVisibleOpenMarkerText } from "./node.utils.js";
+import { getVisibleOpenMarkerText } from "./markerText.utils.js";
 
 export const IMMUTABLE_CHAPTER_VERSION = 1;
 
@@ -245,6 +245,11 @@ export class ImmutableChapterNode extends DecoratorNode<string> {
    * these bytes from `createDOM` instead, the way `ImmutableTypedTextNode` does.
    */
   override decorate(): string {
+    return this.getRenderedText();
+  }
+
+  /** The text this chapter shows on screen: its whole `\c N` glyph, or only its number. */
+  getRenderedText(): string {
     return this.getShowMarker()
       ? getVisibleOpenMarkerText(this.getMarker(), this.getNumber())
       : this.getNumber();

@@ -43,7 +43,7 @@
 
 import { $createMarkerNode, $isMarkerNode } from "../features/MarkerNode.js";
 import { CharNode } from "./CharNode.js";
-import { $isSeparatorPrefixHostText } from "./markerSeparators.utils.js";
+import { $insertOwedOpenerSpacer, $isSeparatorPrefixHostText } from "./markerSeparators.utils.js";
 import { $isNestedCharNode } from "./nestedGlyphs.utils.js";
 import { NBSP, UnknownAttributes } from "./node-constants.js";
 import { LexicalNode } from "lexical";
@@ -114,18 +114,19 @@ export function $buildContinuationCharSpan(
   const marker = source.getMarker();
   const nested = $isNestedCharNode(source);
   const hasCloser = $charHasClosingGlyph(source);
-  if (renderGlyphs) {
-    span.append($createMarkerNode(marker, "opening", nested));
+  const opener = renderGlyphs ? $createMarkerNode(marker, "opening", nested) : undefined;
+  if (opener) {
+    span.append(opener);
     // Plain-text-first content carries the separator as its prefix — the same host predicate the
     // separator sync uses ($isSeparatorPrefixHostText): TextNode SUBCLASSES (VerseNode,
     // ImmutableUnmatchedNode, MarkerNode) render their own marker bytes and attribute runs are
     // engine-owned canonical output, so splicing an NBSP into either rewrites a glyph or corrupts
-    // the run. Everything else takes a standalone NBSP spacer, which `$syncOpenerSeparators` adds
-    // when the span is next dirtied.
+    // the run. Everything else takes a standalone NBSP spacer, added once the content is in.
     const [firstContent] = content;
     if ($isSeparatorPrefixHostText(firstContent) && !firstContent.getTextContent().startsWith(NBSP))
       firstContent.setTextContent(NBSP + firstContent.getTextContent());
   }
   span.append(...content);
+  if (opener) $insertOwedOpenerSpacer(opener, span);
   if (hasCloser) span.append($createMarkerNode(marker, "closing", nested));
 }

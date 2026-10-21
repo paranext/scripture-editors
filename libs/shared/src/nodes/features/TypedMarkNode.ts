@@ -9,6 +9,7 @@ import { addClassNamesToElement, removeClassNamesFromElement } from "@lexical/ut
 import type {
   BaseSelection,
   EditorConfig,
+  EditorThemeClasses,
   LexicalEditor,
   LexicalNode,
   LexicalUpdateJSON,
@@ -21,7 +22,8 @@ import type {
 } from "lexical";
 import {
   $applyNodeReplacement,
-  $isElementNode,
+  $getEditor,
+  $getNodeByKey,
   $isRangeSelection,
   $isTextNode,
   ElementNode,
@@ -146,6 +148,108 @@ const typedOnRemoveRegistry = new Map<NodeKey, TypedOnRemoves>();
 const typedOnMouseEnterRegistry = new Map<NodeKey, TypedOnMouseEnters>();
 const typedOnMouseLeaveRegistry = new Map<NodeKey, TypedOnMouseLeaves>();
 
+/** Per editor a reporter listens to, the `type`/`id` pairs whose `onRemove` a mark has called
+ * since the last take. An editor nobody listens to has no entry, so nothing piles up for it. */
+const removalReports = new WeakMap<LexicalEditor, [type: string, id: string][]>();
+
+/** Per editor a reporter listens to, the marks that have reported each `type`/`id`'s removal since
+ * it was last set (by {@link removalKey}). An undo brings a mark back under its own key, so a mark
+ * found here has already told the host and stays quiet the next time it goes. */
+const reportedMarks = new WeakMap<LexicalEditor, Map<string, Set<NodeKey>>>();
+
+/**
+ * Start recording the `type`/`id` pairs whose `onRemove` a mark of `editor` calls, for
+ * {@link takeTypedMarkRemovalReports}. Returns the function that stops it and drops what was not
+ * taken. One reporter per editor: a second call restarts the record.
+ */
+export function listenForTypedMarkRemovalReports(editor: LexicalEditor): () => void {
+  removalReports.set(editor, []);
+  reportedMarks.set(editor, new Map());
+  return () => {
+    removalReports.delete(editor);
+    reportedMarks.delete(editor);
+  };
+}
+
+/**
+ * The `type`/`id` pairs whose `onRemove` a mark of `editor` has called since the last take, so a
+ * reporter that runs after the commit knows the host has already heard of them. Clears the list.
+ * Empty unless {@link listenForTypedMarkRemovalReports} is recording for `editor`.
+ */
+export function takeTypedMarkRemovalReports(editor: LexicalEditor): [type: string, id: string][] {
+  const taken = removalReports.get(editor);
+  if (!taken) return [];
+  removalReports.set(editor, []);
+  return taken;
+}
+
+/** Per editor, the `type`/`id` pairs whose removal no mark reports any more. */
+const silencedRemovals = new WeakMap<LexicalEditor, Set<string>>();
+
+/** One key per `type`/`id` pair. JSON, not a delimiter join: a type or id may itself contain any
+ * delimiter character, NUL included. */
+function removalKey(type: string, id: string): string {
+  return JSON.stringify([type, id]);
+}
+
+/**
+ * Stop, or resume, every mark of `editor` reporting the removal of `type`/`id`. A reporter that has
+ * already told the host an annotation is gone silences it, so a mark an undo brings back cannot
+ * report it a second time. Resuming starts a new lifecycle, in which every mark may report once
+ * again.
+ */
+export function setTypedMarkRemovalSilenced(
+  editor: LexicalEditor,
+  type: string,
+  id: string,
+  silenced: boolean,
+): void {
+  let keys = silencedRemovals.get(editor);
+  if (silenced) {
+    if (!keys) silencedRemovals.set(editor, (keys = new Set()));
+    keys.add(removalKey(type, id));
+  } else {
+    keys?.delete(removalKey(type, id));
+    reportedMarks.get(editor)?.delete(removalKey(type, id));
+  }
+}
+
+/** Resume reporting every silenced removal in `editor`. */
+export function clearTypedMarkRemovalSilences(editor: LexicalEditor): void {
+  silencedRemovals.delete(editor);
+  reportedMarks.get(editor)?.clear();
+}
+
+/** Drop the callback for `type`/`id` from `registry`'s entry for `key`. */
+function dropRegisteredCallback<T>(
+  registry: Map<NodeKey, { [type: string]: { [id: string]: T } }>,
+  key: NodeKey,
+  type: string,
+  id: string,
+): void {
+  const entry = registry.get(key);
+  const typeCallbacks = entry?.[type];
+  if (!entry || !typeCallbacks || !(id in typeCallbacks)) return;
+  const remaining = omitRecordKey(typeCallbacks, id);
+  const next =
+    Object.keys(remaining).length > 0
+      ? { ...entry, [type]: remaining }
+      : omitRecordKey(entry, type);
+  if (Object.keys(next).length > 0) registry.set(key, next);
+  else registry.delete(key);
+}
+
+/**
+ * Drop mark `key`'s callbacks for `type`/`id`, as `remove()` drops a mark's callbacks, for a mark
+ * that left the document without `remove()` running.
+ */
+export function forgetTypedMarkCallbacks(key: NodeKey, type: string, id: string): void {
+  dropRegisteredCallback(typedOnClickRegistry, key, type, id);
+  dropRegisteredCallback(typedOnRemoveRegistry, key, type, id);
+  dropRegisteredCallback(typedOnMouseEnterRegistry, key, type, id);
+  dropRegisteredCallback(typedOnMouseLeaveRegistry, key, type, id);
+}
+
 export class TypedMarkNode extends ElementNode {
   __typedIDs: TypedIDs;
   __typedOnClicks?: TypedOnClicks;
@@ -224,15 +328,7 @@ export class TypedMarkNode extends ElementNode {
 
   override createDOM(config: EditorConfig, editor: LexicalEditor): HTMLElement {
     const element = document.createElement("mark");
-    for (const [type, ids] of Object.entries(this.__typedIDs)) {
-      addClassNamesToElement(element, getTypedClassName(config.theme.typedMark, type));
-      if (ids.length > 1) {
-        addClassNamesToElement(element, getTypedClassName(config.theme.typedMarkOverlap, type));
-      }
-      for (const id of ids) {
-        addClassNamesToElement(element, getTypedClassName("annotationId", id));
-      }
-    }
+    addClassNamesToElement(element, ...typedMarkClassNames(config.theme, this.__typedIDs));
     const clickListener = this.getOrCreateDOMClickListener(editor);
     element.addEventListener("click", clickListener);
     const mouseEnterListener = this.getOrCreateDOMMouseEnterListener(editor);
@@ -945,7 +1041,29 @@ export class TypedMarkNode extends ElementNode {
     const callback = callbacks[type]?.[id];
     if (!callback) return;
 
-    callback(type, id, cause, this.getTextContent());
+    const editor = $getEditor();
+    const key = removalKey(type, id);
+    const reportedHere = reportedMarks.get(editor);
+    if (silencedRemovals.get(editor)?.has(key) || reportedHere?.get(key)?.has(this.getKey())) {
+      this.removeOnRemoveFor(type, id);
+      return;
+    }
+    removalReports.get(editor)?.push([type, id]);
+    if (reportedHere) {
+      let marks = reportedHere.get(key);
+      if (!marks) reportedHere.set(key, (marks = new Set()));
+      marks.add(this.getKey());
+    }
+    try {
+      callback(type, id, cause, this.getTextContent());
+    } catch (error) {
+      // Thrown here, a host's error would make Lexical discard the whole update — the user's edit
+      // with it — and skip this removal's other reports. The editor's error handler gets it once
+      // the update is done instead.
+      queueMicrotask(() =>
+        editor._onError(error instanceof Error ? error : new Error(String(error))),
+      );
+    }
     this.removeOnRemoveFor(type, id);
   }
 
@@ -1298,6 +1416,22 @@ function getTypedClassName(className: string, type: string): string {
 }
 
 /**
+ * The CSS class names an annotation carrying `typedIDs` is painted with: per type
+ * `<theme.typedMark>-<type>`, `<theme.typedMarkOverlap>-<type>` whenever two ids of the type paint
+ * the same text, and `annotationId-<id>` per id. A `<mark>` and the display bytes an annotation is
+ * held on are painted with the same names, so one host stylesheet styles both.
+ */
+export function typedMarkClassNames(theme: EditorThemeClasses, typedIDs: TypedIDs): string[] {
+  const names: string[] = [];
+  for (const [type, ids] of Object.entries(typedIDs)) {
+    names.push(getTypedClassName(theme.typedMark, type));
+    if (ids.length > 1) names.push(getTypedClassName(theme.typedMarkOverlap, type));
+    for (const id of ids) names.push(getTypedClassName("annotationId", id));
+  }
+  return names;
+}
+
+/**
  * Gets the external typed mark type.
  *
  * @remarks
@@ -1336,6 +1470,22 @@ export function isSerializedTypedMarkNode(
   return node?.type === TypedMarkNode.getType();
 }
 
+/**
+ * Remove `type`/`id` from every mark in `markKeys` still holding it (`deleteID`), unwrapping any
+ * mark `deleteID` leaves holding no id of any type. Returns how many marks held it.
+ */
+export function $removeTypedMarkId(type: string, id: string, markKeys: Iterable<NodeKey>): number {
+  let count = 0;
+  for (const key of markKeys) {
+    const node = $getNodeByKey(key);
+    if (!$isTypedMarkNode(node) || !node.hasID(type, id)) continue;
+    count++;
+    node.deleteID(type, id);
+    if (node.hasNoIDsForEveryType()) $unwrapTypedMarkNode(node);
+  }
+  return count;
+}
+
 // #region adapted from https://github.com/facebook/lexical/blob/92c47217244f9d3c22a59728633fb41a10420724/packages/lexical-mark/src/index.ts
 
 export function $unwrapTypedMarkNode(node: TypedMarkNode): void {
@@ -1350,104 +1500,6 @@ export function $unwrapTypedMarkNode(node: TypedMarkNode): void {
     target = child;
   }
   node.remove();
-}
-
-export function $wrapSelectionInTypedMarkNode(
-  selection: RangeSelection,
-  type: string,
-  id: string,
-  onClick?: TypedMarkOnClick,
-  onRemove?: TypedMarkOnRemove,
-  onMouseEnter?: TypedMarkOnMouseEnter,
-  onMouseLeave?: TypedMarkOnMouseLeave,
-): void {
-  const nodes = selection.getNodes();
-  const anchorOffset = selection.anchor.offset;
-  const focusOffset = selection.focus.offset;
-  const nodesLength = nodes.length;
-  const isBackward = selection.isBackward();
-  const startOffset = isBackward ? focusOffset : anchorOffset;
-  const endOffset = isBackward ? anchorOffset : focusOffset;
-  let currentNodeParent;
-  let lastCreatedMarkNode;
-
-  // We only want wrap adjacent text nodes, line break nodes and inline element nodes. For decorator
-  // nodes and block element nodes, we step out of their boundary and start again after, if there
-  // are more nodes.
-  for (let i = 0; i < nodesLength; i++) {
-    const node = nodes[i];
-    if ($isElementNode(lastCreatedMarkNode) && lastCreatedMarkNode.isParentOf(node)) {
-      // If the current node is a child of the last created mark node, there is nothing to do here
-      continue;
-    }
-    const isFirstNode = i === 0;
-    const isLastNode = i === nodesLength - 1;
-    let targetNode: LexicalNode | null = null;
-
-    if ($isTextNode(node)) {
-      // Case 1: The node is a text node and we can split it
-      const textContentSize = node.getTextContentSize();
-      const startTextOffset = isFirstNode ? startOffset : 0;
-      const endTextOffset = isLastNode ? endOffset : textContentSize;
-      if (startTextOffset === 0 && endTextOffset === 0) {
-        continue;
-      }
-      const splitNodes = node.splitText(startTextOffset, endTextOffset);
-      targetNode =
-        splitNodes.length > 1 &&
-        (splitNodes.length === 3 ||
-          (isFirstNode && !isLastNode) ||
-          endTextOffset === textContentSize)
-          ? splitNodes[1]
-          : splitNodes[0];
-    } else if ($isTypedMarkNode(node)) {
-      // Case 2: the node is a mark node and we can ignore it as a target, moving on to its
-      // children. Note that when we make a mark inside another mark, it may ultimately be un-nested
-      // by a call to `registerNestedElementResolver<TypedMarkNode>` somewhere else in the
-      // codebase.
-
-      continue;
-    } else if ($isElementNode(node) && node.isInline()) {
-      // Case 3: inline element nodes can be added in their entirety to the new mark
-      targetNode = node;
-    }
-
-    if (targetNode !== null) {
-      // Now that we have a target node for wrapping with a mark, we can run through special cases.
-      if (targetNode && targetNode.is(currentNodeParent)) {
-        // The current node is a child of the target node to be wrapped, there is nothing to do
-        // here.
-        continue;
-      }
-      const parentNode = targetNode.getParent();
-      if (parentNode == null || !parentNode.is(currentNodeParent)) {
-        // If the parent node is not the current node's parent node, we can clear the last created
-        // mark node.
-        lastCreatedMarkNode = undefined;
-      }
-
-      currentNodeParent = parentNode;
-
-      if (lastCreatedMarkNode === undefined) {
-        lastCreatedMarkNode = $createTypedMarkNode();
-        lastCreatedMarkNode.addID(type, id, onClick, onRemove, onMouseEnter, onMouseLeave);
-        targetNode.insertBefore(lastCreatedMarkNode);
-      }
-
-      // Add the target node to be wrapped in the latest created mark node
-      lastCreatedMarkNode.append(targetNode);
-    } else {
-      // If we don't have a target node to wrap we can clear our state and continue on with the next
-      // node
-      currentNodeParent = undefined;
-      lastCreatedMarkNode = undefined;
-    }
-  }
-  // Make selection collapsed at the end for comments.
-  if (type === COMMENT_MARK_TYPE && $isElementNode(lastCreatedMarkNode)) {
-    if (isBackward) lastCreatedMarkNode.selectStart();
-    else lastCreatedMarkNode.selectEnd();
-  }
 }
 
 export function $getMarkIDs(node: TextNode, type: string, offset: number): string[] | undefined {

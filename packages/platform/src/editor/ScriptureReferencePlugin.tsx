@@ -121,8 +121,8 @@ import {
   $isSomeChapterNode,
   $placeCaretAtBoundary,
   BookNode,
+  APP_PLACED_CARET_COMMAND,
   ChapterNode,
-  CURSOR_CHANGE_TAG,
   ImmutableChapterNode,
   getSelectionStartNode,
   isVerseInRange,
@@ -138,7 +138,6 @@ import {
   $isSomeVerseNode,
   $resolveVerseNode,
   ImmutableVerseNode,
-  releaseTagsAfterNextCommit,
   SomeVerseNode,
 } from "shared-react";
 
@@ -376,9 +375,7 @@ function onPropChanged(machine: Machine, editor: LexicalEditor, newRef: Serializ
   // Prop-driven placement gate: never move the caret inside a different book's (stale) document.
   const bookCode = getCommittedBookCode(editor);
   if (!bookCode || bookCode === newRef.book) {
-    editor.update(() => $placeCaretAtVerseStart(editor, newRef.chapterNum, newRef.verseNum), {
-      tag: CURSOR_CHANGE_TAG,
-    });
+    editor.update(() => $placeCaretAtVerseStart(editor, newRef.chapterNum, newRef.verseNum));
   }
 }
 
@@ -494,30 +491,24 @@ function onDocumentChanged(
  * would skip the placement that makes the caret match the just-emitted correction. */
 function schedulePlacingCaretAtVerseStart(machine: Machine, editor: LexicalEditor) {
   queueMicrotask(() => {
-    editor.update(
-      () => $placeCaretAtVerseStart(editor, machine.scrRef.chapterNum, machine.scrRef.verseNum),
-      { tag: CURSOR_CHANGE_TAG },
+    editor.update(() =>
+      $placeCaretAtVerseStart(editor, machine.scrRef.chapterNum, machine.scrRef.verseNum),
     );
   });
 }
 
 /**
- * {@link $moveCaretToVerseStart} for an update tagged `CURSOR_CHANGE_TAG`, releasing that tag once
- * the placement commits.
- *
- * A pure caret placement dirties no nodes, so Lexical never resets its pending tags for it: the tag
- * would ride along onto whatever commit the user's next keystroke produces (a footnote insert
- * included), and every listener that ignores caret moves (`DeltaOnChangePlugin` among them) would
- * drop that edit. The release is armed only when the caret actually moved: an unchanged selection
- * commits nothing, and an armed release would then strip the tag from some later, unrelated commit.
- *
- * Mutating: call inside `editor.update()`.
+ * {@link $moveCaretToVerseStart}, announced as the editor's own placement when it moved the caret
+ * (see `APP_PLACED_CARET_COMMAND`) — the move follows a navigation, not the user. The update is
+ * deliberately untagged: it moves only the caret, and a tag on a caret-only update would ride along
+ * on the user's next edit.
  */
 function $placeCaretAtVerseStart(editor: LexicalEditor, chapterNum: number, verseNum: number) {
   const before = $getSelection()?.clone();
   $moveCaretToVerseStart(chapterNum, verseNum);
   const after = $getSelection();
-  if (after && !(before && after.is(before))) releaseTagsAfterNextCommit(editor, CURSOR_CHANGE_TAG);
+  if (after && !(before && after.is(before)))
+    editor.dispatchCommand(APP_PLACED_CARET_COMMAND, undefined);
 }
 
 /** Moves the caret to the start of `verseNum` in `chapterNum`. No-op when the caret already
