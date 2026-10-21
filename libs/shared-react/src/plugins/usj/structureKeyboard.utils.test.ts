@@ -671,14 +671,21 @@ describe("$mergeParaIntoPrevious", () => {
       );
     });
 
+    // Check the caret inside the update that places it. Once committed, Lexical may read the DOM
+    // selection back and move a caret at content start onto the end of the separator before it, so
+    // a check after the commit races that read-back. Typing from the real landing is pinned
+    // end-to-end by the guarded-merge typing tests.
     await sutUpdate(editor, () => {
       $mergeParaIntoPrevious(q1!);
-    });
 
-    expect(caretOf(editor)).toEqual({ text: "two", offset: 0 });
-    editor.getEditorState().read(() => {
-      const anchor = ($getSelection() as RangeSelection).anchor.getNode();
-      expect($isMarkerNode(anchor) || $isMarkerTrailingSeparator(anchor)).toBe(false);
+      const selection = $getSelection();
+      expect($isRangeSelection(selection) && selection.isCollapsed()).toBe(true);
+      const { anchor } = selection as RangeSelection;
+      expect(anchor.getNode().getTextContent()).toBe("two");
+      expect(anchor.offset).toBe(0);
+      expect($isMarkerNode(anchor.getNode()) || $isMarkerTrailingSeparator(anchor.getNode())).toBe(
+        false,
+      );
     });
   });
 });
