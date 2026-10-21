@@ -210,8 +210,11 @@ const placeholderDroppedThisUpdate = new WeakSet<TextNode>();
  * into, read through its read-only glyphs (the visible views frame it with them). A span whose text
  * merely starts with a no-break space — the author's own `~b`, or that text merged back together
  * when an annotation mark around its `~` is removed — keeps the byte. A span the update created has
- * no earlier state: its only text loses a leading NBSP as before. The editable views are left
- * alone: there the placeholder is the opener's separator, which the editor→USJ conversion strips.
+ * no earlier state: its only text loses a leading NBSP, unless that text node already held content
+ * there. A split moves the text after its point into a new span (Lexical's `insertNewAfter`), so
+ * that span's leading NBSP is the author's, or, in the editable views, the opener's separator. The
+ * editable views are otherwise left alone: there the placeholder is the opener's separator, which
+ * the editor→USJ conversion strips.
  * @param node - TextNode that might hold a placeholder.
  */
 function $charTextNodeTransform(node: TextNode): void {
@@ -222,8 +225,13 @@ function $charTextNodeTransform(node: TextNode): void {
   if (text.length < 2 || !text.includes(EMPTY_CHAR_PLACEHOLDER_TEXT)) return;
   const placeholderKey = $placeholderKeyBeforeUpdate(parent.getKey());
   if (placeholderKey === undefined) {
-    // A span this update created: its only text loses a leading placeholder byte.
-    if (parent.getChildrenSize() === 1 && text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT))
+    // A span this update created: its only text loses a leading placeholder byte, unless that text
+    // was already in the document.
+    if (
+      parent.getChildrenSize() === 1 &&
+      text.startsWith(EMPTY_CHAR_PLACEHOLDER_TEXT) &&
+      !$heldContentBeforeUpdate(node.getKey())
+    )
       $dropPlaceholderByte(node, 0);
     return;
   }
@@ -278,6 +286,19 @@ function $dropPlaceholderByte(node: TextNode, index: number): void {
     const offset = offsets[i];
     point.set(writable.getKey(), offset > index ? offset - 1 : offset, "text");
   });
+}
+
+/** Whether the text node `key` held anything but a lone placeholder in the editor's last committed
+ * state — text an update moved, not text it brought. */
+function $heldContentBeforeUpdate(key: NodeKey): boolean {
+  return $getEditor()
+    .getEditorState()
+    .read(() => {
+      const previous = $getNodeByKey(key);
+      if (!$isTextNode(previous)) return false;
+      const text = previous.getTextContent();
+      return text !== "" && text !== EMPTY_CHAR_PLACEHOLDER_TEXT;
+    });
 }
 
 /**

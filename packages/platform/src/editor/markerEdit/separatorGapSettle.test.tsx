@@ -17,19 +17,25 @@ import {
   oracleView,
 } from "../annotationLocations/annotationLocations.test-helpers";
 import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import { copyEvent, pasteEvent } from "./markerEdit.test-helpers";
 import { $textContaining, contentPath, twoParaUsj } from "../positions/positions.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import {
+  $createRangeSelection,
   $getRoot,
   $getSelection,
   $isRangeSelection,
   $isElementNode,
   $isTextNode,
+  $setSelection,
   CLICK_COMMAND,
+  COPY_COMMAND,
   LexicalEditor,
   LexicalNode,
+  PASTE_COMMAND,
   REDO_COMMAND,
+  SELECTION_CHANGE_COMMAND,
   UNDO_COMMAND,
 } from "lexical";
 import {
@@ -818,3 +824,100 @@ describe.each(["standard", "unformatted"])(
     });
   },
 );
+
+describe.each([
+  ["standard+expandedNotes", false],
+  ["the footnote popover", true],
+])("a paste over a span's glyph letters inside an unclosed note (%s)", (_name, isPopover) => {
+  it("keeps the span's separator, so its marker is never renamed into its content", async () => {
+    // `\f + \ft note text`, note and span both unclosed. Copy the span (`\ft note text`), select
+    // the letters `ft` of the in-note glyph, and paste every flavor the copy wrote. Nothing the
+    // paste replaces is the separator, so the span never reads as `\ftnote` + `text`. Where the
+    // pasted copy itself lands is not this row's concern.
+    const expanded = oracleView("standard+expandedNotes");
+    const view = isPopover ? { ...expanded, isNoteShellEditable: false } : expanded;
+    const mounted = await mountInView(
+      twoParaUsj([
+        "a",
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          closed: "false",
+          content: [{ type: "char", marker: "ft", closed: "false", content: ["note text"] }],
+        },
+      ]),
+      view,
+    );
+    const $glyph = () => {
+      const glyph = $getRoot()
+        .getAllTextNodes()
+        .find((node) => $isMarkerNode(node) && node.getTextContent() === "\\ft");
+      if (!glyph) throw new Error("no live \\ft glyph");
+      return glyph;
+    };
+    const select = async ($select: () => void) => {
+      await act(async () => {
+        mounted.lexical.update(() => {
+          $select();
+          // The popover hears each selection the way a host's selection change announces it.
+          if (isPopover) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        });
+        await Promise.resolve();
+      });
+    };
+    await select(() => {
+      const glyph = $glyph();
+      const content = glyph.getNextSibling();
+      if (!$isTextNode(content)) throw new Error("no span content after the glyph");
+      const selection = $createRangeSelection();
+      selection.anchor.set(glyph.getKey(), 0, "text");
+      selection.focus.set(content.getKey(), content.getTextContentSize(), "text");
+      $setSelection(selection);
+    });
+    const copied = copyEvent();
+    await act(async () => {
+      mounted.lexical.dispatchCommand(COPY_COMMAND, copied.event);
+      await Promise.resolve();
+    });
+    const payload = Object.fromEntries(
+      ["application/x-lexical-editor", "text/html", "text/plain"].map((type) => [
+        type,
+        copied.getData(type),
+      ]),
+    );
+    expect(payload["text/plain"]).toBe("\\ft note text");
+    expect(payload["application/x-lexical-editor"]).not.toBe("");
+
+    await select(() => $glyph().select(1, 3));
+    await act(async () => {
+      mounted.lexical.dispatchCommand(PASTE_COMMAND, pasteEvent(payload).event);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const noteSpans = (usj: Usj | undefined) => {
+      const para = usj?.content[2];
+      const note =
+        typeof para === "object" &&
+        para.content?.find(
+          (item): item is MarkerObject => typeof item === "object" && item.type === "note",
+        );
+      if (!note) throw new Error(`no note in ${JSON.stringify(para)}`);
+      return (note.content ?? []).filter(
+        (item): item is MarkerObject => typeof item === "object" && item.type === "char",
+      );
+    };
+    const pending = mounted.ref.current?.getUsj();
+    expect(noteSpans(pending).map((span) => span.marker)).toEqual(["ft"]);
+    expect(mounted.lexical.getEditorState().read(() => $getRoot().getTextContent())).not.toContain(
+      "\\ftnote",
+    );
+
+    await depart(mounted);
+    const settled = mounted.ref.current?.getUsj();
+    expect(noteSpans(settled).map((span) => span.marker)).toEqual(["ft"]);
+    expect(settled).toEqual(pending);
+    expect(mounted.logs.filter((line) => line.includes("Unexpected char marker"))).toEqual([]);
+    mounted.unmount();
+  });
+});
