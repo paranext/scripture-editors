@@ -19,6 +19,7 @@ import {
 } from "lexical";
 import {
   $createCharNode,
+  $createGutterMarkerNode,
   $createImmutableTypedTextNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
@@ -50,6 +51,10 @@ async function putDomCaret(node: Node, offset: number): Promise<void> {
   await act(async () => {
     domSelection.setBaseAndExtent(node, offset, node, offset);
   });
+  await flushSelectionChange();
+  // Drained twice, as `dragSelect` (decoratorBoundarySelection.test.tsx, platform) explains: a repair
+  // that writes the DOM selection queues one more `selectionchange`, and Lexical skips the next real
+  // one as its own until that one is delivered.
   await flushSelectionChange();
 }
 
@@ -155,6 +160,41 @@ describe("a landing on a collapsed note's caller", () => {
       const selection = $getSelection();
       if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
       expect(selection.anchor.key).toBe(host.getKey());
+    });
+  });
+});
+
+describe("a drag that starts on a paragraph's gutter marker", () => {
+  // A click on the glyph belongs to the marker's own rules (selecting it, or moving past it); a
+  // drag from it across the text is an ordinary range, which must keep its highlight.
+  it("is snapped like any other range end, keeping the selection", async () => {
+    const { editor } = await baseTestEnvironment(
+      () => {
+        $getRoot().append(
+          $createParaNode("q1").append(
+            $createGutterMarkerNode("\\q1\u00a0"),
+            $createTextNode("a poetry line"),
+          ),
+        );
+      },
+      <DecoratorBoundarySelectionPlugin />,
+    );
+    const root = editor.getRootElement();
+    const glyphText = root?.querySelector('[data-text-type="marker"]')?.firstChild;
+    const lineText = Array.from(root?.querySelectorAll("span") ?? []).find(
+      (span) => span.textContent === "a poetry line",
+    )?.firstChild;
+    if (!glyphText || !lineText) throw new Error("the paragraph did not render");
+
+    await flushSelectionChange();
+    await act(async () => {
+      document.getSelection()?.setBaseAndExtent(glyphText, 1, lineText, 5);
+    });
+    await flushSelectionChange();
+
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      expect($isRangeSelection(selection) && !selection.isCollapsed()).toBe(true);
     });
   });
 });

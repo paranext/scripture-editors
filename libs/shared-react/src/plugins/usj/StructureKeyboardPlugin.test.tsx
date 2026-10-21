@@ -13,6 +13,7 @@ import {
 } from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
+  $createNodeSelection,
   $getRoot,
   $createTextNode,
   $getSelection,
@@ -31,6 +32,7 @@ import {
 } from "lexical";
 import {
   $createBookNode,
+  $createGutterMarkerNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createParaNode,
@@ -329,6 +331,46 @@ describe("StructureKeyboardPlugin — paste/drop payload sanitization", () => {
       expect(hasVerse).toBe(false);
       expect($getRoot().getTextContent()).not.toContain("pasted");
     });
+  });
+
+  // A drop with no range to land at is refused, as a paste is: the default handler would let the
+  // browser insert the payload itself, structure and all.
+  it.each([
+    ["no selection", () => $setSelection(null)],
+    [
+      "a node selection",
+      () => {
+        const selection = $createNodeSelection();
+        const glyph = $getRoot().getFirstChildOrThrow<ParaNode>().getFirstChildOrThrow();
+        selection.add(glyph.getKey());
+        $setSelection(selection);
+      },
+    ],
+  ])("refuses a drop from %s, inserting nothing, when protected", async (_name, $select) => {
+    const { editor } = await protectedEnvironment(() => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createGutterMarkerNode("\\p\u00a0"),
+          $createTextNode("hello world"),
+        ),
+      );
+    });
+    await act(async () => {
+      editor.update($select, { discrete: true });
+    });
+    const before = JSON.stringify(editor.getEditorState().toJSON());
+    const event = htmlDropEvent(VERSE_HTML);
+    const spy = vi.fn(() => false);
+    const unregister = editor.registerCommand(DROP_COMMAND, spy, COMMAND_PRIORITY_LOW);
+
+    await act(async () => {
+      editor.dispatchCommand(DROP_COMMAND, event);
+    });
+    unregister();
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
+    expect(JSON.stringify(editor.getEditorState().toJSON())).toBe(before);
   });
 
   it("still hard-blocks paste over a selection spanning a block boundary when protected", async () => {
