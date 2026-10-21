@@ -1386,6 +1386,74 @@ describe("HiddenContentDeleteGuardPlugin", () => {
     });
   });
 
+  describe("guarded structure, after a 'delete' answer", () => {
+    let before: TextNode;
+    let verseText: TextNode;
+    const $init = () => {
+      before = $createTextNode("before");
+      verseText = $createTextNode("text");
+      $getRoot().append(
+        $createParaNode("p").append(before, $createFigureNode(), $createTextNode("after")),
+        $createParaNode("p").append($createImmutableVerseNode("2"), verseText),
+      );
+    };
+
+    it("removes a selection holding a verse for a delete command, rather than arming it", async () => {
+      const handler = answering("delete");
+      const { editor } = await guardedEnvironment($init, handler, {
+        structureProtectionMode: "guarded",
+      });
+      updateSelection(editor, before!, 3, verseText!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+      });
+      await settle();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(readTree(editor)).toEqual(["befxt"]);
+      expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
+    });
+
+    it("removes a cut selection holding a verse, rather than arming it", async () => {
+      const { editor } = await guardedEnvironment($init, answering("delete"), {
+        structureProtectionMode: "guarded",
+      });
+      updateSelection(editor, before!, 3, verseText!, 2);
+
+      await act(async () => {
+        editor.dispatchCommand(CUT_COMMAND, clipboardEvent("cut"));
+      });
+      await settle();
+
+      expect(readTree(editor)).toEqual(["befxt"]);
+    });
+  });
+
+  it("lets typing after 'keep' land past a note opening the next paragraph, losing nothing", async () => {
+    let first: TextNode;
+    const { editor } = await guardedEnvironment(() => {
+      first = $createTextNode("first");
+      $getRoot().append(
+        $createParaNode("p").append(first),
+        $createSidebarNode(),
+        $createParaNode("p").append(
+          $createNoteNode("f", "+").append($createTextNode("note text")),
+          $createTextNode("second"),
+        ),
+      );
+    }, answering("keep"));
+    updateSelection(editor, first!, "first".length);
+
+    await pressKey(editor, "Delete");
+    await settle();
+    await act(async () => {
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "Z");
+    });
+
+    expect(readTree(editor)).toEqual(["first", "[sidebar: sidebar text]", "note textZsecond"]);
+  });
+
   describe("a word or line delete measured by the browser", () => {
     it("removes only the figure for a line delete already at the line's start, never merging", async () => {
       let second: TextNode;
@@ -1515,7 +1583,7 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       expect(readTree(editor)).toEqual(["before[figure: caption]after"]);
     });
 
-    it("asks before a delete command over a selection protected structure does not refuse there", async () => {
+    it("asks before Enter over a selection protected structure refuses only at the keystroke", async () => {
       let first: TextNode;
       let second: TextNode;
       const handler = answering("keep");
@@ -1533,8 +1601,16 @@ describe("HiddenContentDeleteGuardPlugin", () => {
       );
       updateSelection(editor, first!, 2, second!, 2);
 
+      let isDeleteRefused = false;
       await act(async () => {
-        editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+        // Refused by protected structure's own command handler, so nothing is asked.
+        isDeleteRefused = editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+      });
+      await settle();
+      expect(isDeleteRefused).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+
+      await act(async () => {
         editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
       });
       await settle();

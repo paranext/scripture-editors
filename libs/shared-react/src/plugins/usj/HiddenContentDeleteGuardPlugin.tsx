@@ -23,12 +23,14 @@ import { StructureProtectionMode } from "./structure-protection.model";
 import {
   $shouldBlockSelectionReplacement,
   $shouldBlockStructuralEdit,
+  CONFIRMED_DELETE_TAG,
   isSamePoint,
   PointSnapshot,
 } from "./structureKeyboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
 import {
+  $addUpdateTag,
   $createRangeSelection,
   $getNodeByKey,
   $getSelection,
@@ -99,7 +101,10 @@ interface Settlement {
   $keep?: () => void;
   /** Removes the hidden content on "delete", inside the update that restores the selection. */
   $delete?: () => void;
-  /** Replays a selection edit on "delete", once that update has committed. Dispatches commands. */
+  /**
+   * Replays a selection edit on "delete", once that update has committed. Dispatches commands, in
+   * an update tagged as a confirmed delete, so guarded structure lets a replayed delete through.
+   */
   replay?: () => void;
 }
 
@@ -122,7 +127,8 @@ interface DeleteExtent {
  * Handlers run at CRITICAL, ahead of `StructureKeyboardPlugin`'s KEY_DOWN, and step aside where
  * `OpaqueBlockGuardPlugin` or protected structure refuse the edit. A guarded two-step selection
  * delete is asked about on the press that fires it, which reaches this plugin as a
- * `DELETE_CHARACTER_COMMAND`.
+ * `DELETE_CHARACTER_COMMAND`; an edit replayed after a "delete" answer is tagged
+ * `CONFIRMED_DELETE_TAG`, so that plugin lets it go ahead rather than arming again.
  *
  * Known gap: an IME composition started over a selection that holds hidden content is held like
  * typing, which ends the composition; on `"delete"` the user types the composed text again.
@@ -316,7 +322,16 @@ export function HiddenContentDeleteGuardPlugin({
         { discrete: true },
       );
       const { replay } = settlement;
-      if (isResumed && replay) runBypassed(replay);
+      if (isResumed && replay)
+        runBypassed(() =>
+          editor.update(
+            () => {
+              $addUpdateTag(CONFIRMED_DELETE_TAG);
+              replay();
+            },
+            { discrete: true },
+          ),
+        );
     };
 
     /**
@@ -424,6 +439,15 @@ export function HiddenContentDeleteGuardPlugin({
       refusedWhilePending((isBackward: boolean): boolean => {
         const selection = $judgedSelection();
         if (!selection) return false;
+        // Protected structure refuses a character delete it would refuse at the keystroke, so the
+        // question would be asked for nothing. It registers no word, line or Enter handler, so those
+        // are still asked about.
+        if (
+          command === DELETE_CHARACTER_COMMAND &&
+          structureProtectionModeRef.current === "protected" &&
+          $shouldBlockStructuralEdit(selection, isBackward ? "deleteBackward" : "deleteForward")
+        )
+          return false;
         if (selection.isCollapsed())
           return $holdCaretDelete(selection, isBackward ? "backward" : "forward", granularity);
         const hidden = $hiddenNodesInSelection(selection);

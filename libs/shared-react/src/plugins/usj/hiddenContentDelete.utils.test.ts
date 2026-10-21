@@ -521,14 +521,14 @@ describe("$placeCaretPastHiddenRun", () => {
     });
   });
 
-  it("puts the caret beside, never inside, a figure ending the paragraph before a block run", async () => {
-    let para: ParaNode;
+  it("puts the caret at the end of the text before a figure ending the paragraph before a block run", async () => {
+    let first: TextNode;
     let text: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      para = $createParaNode("p");
+      first = $createTextNode("first");
       text = $createTextNode("text");
       $getRoot().append(
-        para.append($createTextNode("first"), $createFigureNode()),
+        $createParaNode("p").append(first, $createFigureNode()),
         $createSidebarNode(),
         $createParaNode("p").append(text),
       );
@@ -536,9 +536,33 @@ describe("$placeCaretPastHiddenRun", () => {
     updateSelection(editor, text!, 0);
 
     expect(await caretAfterSkip(editor, "backward")).toEqual({
-      key: para!.getKey(),
-      offset: 2,
-      type: "element",
+      key: first!.getKey(),
+      offset: "first".length,
+      type: "text",
+    });
+  });
+
+  it("puts the caret just past a note opening the paragraph after a block run", async () => {
+    let text: TextNode;
+    let next: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      text = $createTextNode("text");
+      next = $createTextNode("next");
+      $getRoot().append(
+        $createParaNode("p").append(text),
+        $createSidebarNode(),
+        $createParaNode("p").append(
+          $createNoteNode("f", "+").append($createTextNode("note text")),
+          next,
+        ),
+      );
+    });
+    updateSelection(editor, text!, "text".length);
+
+    expect(await caretAfterSkip(editor, "forward")).toEqual({
+      key: next!.getKey(),
+      offset: 0,
+      type: "text",
     });
   });
 

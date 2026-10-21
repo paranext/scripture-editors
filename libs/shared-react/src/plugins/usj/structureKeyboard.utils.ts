@@ -25,6 +25,15 @@ import {
   SomeParaNode,
 } from "shared";
 
+/**
+ * Update tag for a delete the user has already confirmed: `StructureKeyboardPlugin`'s own fire of an
+ * armed selection delete, and a delete replayed after the user answered a question about it (the
+ * hidden-content guard's). Under `"guarded"` protection a `DELETE_CHARACTER_COMMAND` dispatched in an
+ * update carrying it goes ahead rather than arming the two-step delete again. Add it with
+ * `$addUpdateTag` inside the update that dispatches the delete.
+ */
+export const CONFIRMED_DELETE_TAG = "confirmed-delete";
+
 /** Editing operations that can alter block structure. */
 export type EditIntent = "insertParagraph" | "deleteBackward" | "deleteForward" | "insertText";
 

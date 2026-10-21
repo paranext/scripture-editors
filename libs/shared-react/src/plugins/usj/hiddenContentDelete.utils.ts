@@ -162,8 +162,8 @@ export function $hiddenNodesToParaEdge(
  * collapsed caret. An inline run puts the caret just before (backward) or after (forward) the run
  * in the same paragraph; a block run puts it at the visible end of the block before the run
  * (backward) or the visible start of the block after it (forward), past that block's leading marker
- * label. The caret never lands inside a hidden construct or a note: where one ends (or starts) that
- * block, the caret rests beside it.
+ * label. The caret never lands inside a hidden construct or a note: it passes over hidden content
+ * ending the block before the run, and rests just past a note opening the block after it.
  *
  * @param run - The run the caret skips, as found by {@link $hiddenRunAtCaret}.
  * @param direction - The direction of the delete that found it.
@@ -383,20 +383,30 @@ function $collapseAtBoundary(parent: ElementNode, index: number): void {
   $setSelection(selection);
 }
 
-/** Collapses the caret at the end of `block`'s last visible text, or just past what ends it. */
+/**
+ * Collapses the caret at the end of `block`'s last visible text, or just past the note or decorator
+ * that ends it. Hidden content ending the block is passed over: no text hosts the position past it,
+ * so typing there would land before it anyway, and the caret goes where the typing will.
+ */
 function $placeCaretAtVisibleEnd(block: ElementNode): void {
   const last = block.getLastChild();
-  const leaf = last ? $resolveLeaf(last, "backward", block) : undefined;
-  if (!leaf) $collapseAtBoundary(block, block.getChildrenSize());
+  let leaf = last ? $resolveLeaf(last, "backward", block) : undefined;
+  while ($isUnknownNode(leaf)) leaf = $nextLeaf(leaf, "backward", block);
+  if (!leaf) $collapseAtBoundary(block, 0);
   else if ($isTextNode(leaf)) leaf.select(leaf.getTextContentSize(), leaf.getTextContentSize());
   else $selectAfter(leaf, block);
 }
 
-/** Collapses the caret at the start of `block`'s first visible text, or just before what starts it. */
+/**
+ * Collapses the caret at the start of `block`'s first visible text, or just before what starts it.
+ * A block that opens with a note has no position before the note the browser can hold (typing there
+ * is lost), so the caret goes just past the note instead.
+ */
 function $placeCaretAtVisibleStart(block: ElementNode): void {
   const first = block.getFirstChild();
   const leaf = first ? $resolveLeaf(first, "forward", block) : undefined;
   if (!leaf) $collapseAtBoundary(block, 0);
   else if ($isTextNode(leaf)) leaf.select(0, 0);
+  else if ($isNoteNode(leaf)) $selectAfter(leaf, block);
   else $selectBefore(leaf, block);
 }
