@@ -360,6 +360,13 @@ export declare interface EditorProps<TLogger extends LoggerBasic> {
   onUsjChange?: (usj: Usj, ops?: DeltaOp[], source?: DeltaSource, insertedNodeKey?: string) => void;
   /** Callback function when state changes. */
   onStateChange?: ({ canUndo, canRedo, blockMarker, contextMarker }: StateChangeSnapshot) => void;
+  /**
+   * Callback function when the user asks, by keyboard, to change the selected paragraph marker
+   * (an unmodified Enter, or Alt+ArrowDown, while a paragraph marker is selected — see
+   * {@link EditorRef.getSelectedParaMarker}). The marker stays selected; apply the choice with
+   * {@link EditorRef.formatPara}. Not called in a read-only editor.
+   */
+  onParaMarkerMenuRequest?: () => void;
   /** Options to configure the editor. */
   options?: EditorOptions;
   /** Logger instance. */
@@ -592,8 +599,8 @@ export declare interface EditorRef {
    * one aligner serves both directions, and each end of a range resolves on its own. A caret behind
    * a verse number's (or a note caller's) trailing space reports the first byte after it — a
    * verse's text at offset 0, the next marker — since that space has no position of its own.
-   * Outbound, every real caret has a location: this returns `undefined` only when there is no selection,
-   * never because a position could not be translated. Typed bytes a pending edit holds that the
+   * Outbound, every real caret has a location: this returns `undefined` only when there is no text
+   * selection, never because a position could not be translated. Typed bytes a pending edit holds that the
    * settled document carries as an attribute — a typed `\cat …\cat*` becomes a note's `category`,
    * a typed figure's `|src="…"` its `file` — are reported as that attribute's location. With
    * `|lemma="grace"` pending (settles to `|grace`), the settled value start
@@ -603,11 +610,32 @@ export declare interface EditorRef {
    * reported as the one location its USFM position has (see `UsjDocumentLocation`), never as a
    * container plus a content index; {@link EditorRef.setSelection} still accepts that older shape.
    *
-   * @returns the selection location or range, or `undefined` only when there is no selection —
-   *   never because a position could not be expressed. The json-path in the selection assumes no
+   * @returns the selection location or range, or `undefined` only when there is no text selection
+   *   (none, or a selected paragraph marker — see {@link EditorRef.getSelectedParaMarker}) — never
+   *   because a position could not be expressed. The json-path in the selection assumes no
    *   comment Milestone nodes are present in the USJ.
    */
   getSelection(): SelectionRange | undefined;
+  /**
+   * The selected paragraph marker's name (e.g. `"li2"`), if a paragraph's gutter marker is
+   * selected.
+   *
+   * @remarks
+   * In the paragraph-structure view (`ViewOptions.hasGutterParaMarkers`) the user can select a
+   * paragraph's marker itself — by clicking it in the gutter — rather than placing a caret in its
+   * text. That selection names a paragraph, not a text range, so {@link EditorRef.getSelection}
+   * reports `undefined` for it; this method reports it instead.
+   * {@link EditorRef.formatPara} retags that paragraph. Always returns `undefined` in the block
+   * verse layout, which renders no gutter markers, and while the editor is read-only.
+   *
+   * Reads the committed editor state. {@link EditorProps.onSelectionChange} fires before a
+   * selection change commits, so a read inside that callback still reports the selection being
+   * replaced; defer it (e.g. `queueMicrotask`), or use `onStateChange`'s `blockMarker`, which is
+   * reported after the commit.
+   *
+   * @returns the selected paragraph marker's name, or `undefined`.
+   */
+  getSelectedParaMarker(): string | undefined;
   /**
    * Set the selection location or range.
    *
@@ -758,7 +786,9 @@ export declare interface EditorRef {
    */
   getAnnotationRanges(type: string, id: string): Range[];
   /**
-   * Format the paragraph at the current cursor position with the given block marker.
+   * Format the paragraph at the current cursor position — or the paragraph whose marker is
+   * selected (see {@link EditorRef.getSelectedParaMarker}) — with the given block marker. A
+   * selected marker stays selected on the retagged paragraph.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
    */
