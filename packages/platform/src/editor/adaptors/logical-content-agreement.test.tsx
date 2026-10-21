@@ -26,7 +26,9 @@ import {
 } from "lexical";
 import {
   $createAttributeRunNode,
+  $createChapterNode,
   $createCharNode,
+  $createImpliedParaNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createMilestoneNode,
@@ -257,6 +259,61 @@ describe("content semantics agreement: deserializeEditorState vs $getLogicalCont
 
     // Pin the expected items themselves first, so both sides drifting together still fails
     // loudly; then the two projections must agree with each other by transitivity.
+    expect(logicalItems).toEqual(expected);
+    expect(usjItems).toEqual(expected);
+  });
+});
+
+// The root's logical content is what the tree outside any paragraph exports to: ImpliedParaNodes
+// (content before a chapter's first paragraph marker) are unwrapped by `removeImpliedParasRecurse`
+// before `recurseNodes` runs, so their children become root content and text across adjacent
+// implied paragraphs joins one string.
+const rootCases: AgreementCase[] = [
+  {
+    name: "implied paragraphs are transparent at the root, and text across them coalesces",
+    $build: () => {
+      $getRoot().append(
+        $createChapterNode("1"),
+        $createImpliedParaNode().append(
+          $createVerseNode("1"),
+          $createTextNode("one "),
+          $createTypedMarkNode({ spelling: ["s1"] }).append($createTextNode("marked ")),
+        ),
+        $createImpliedParaNode().append($createTextNode("two")),
+        $createParaNode("p").append($createTextNode("three")),
+      );
+    },
+    expected: [
+      { kind: "chapter" },
+      { kind: "verse" },
+      { kind: "text", text: "one marked two" },
+      { kind: "para" },
+    ],
+  },
+];
+
+describe("root content agreement: deserializeEditorState vs $getLogicalContentItems", () => {
+  it.each(rootCases)("$name", ({ $build, expected }) => {
+    const { editor } = createBasicTestEnvironment(twinPinNodes, $build);
+
+    let logicalItems: ContentItemSummary[] = [];
+    editor.getEditorState().read(() => {
+      logicalItems = $getLogicalContentItems($getRoot()).map((item) =>
+        item.type === "text"
+          ? {
+              kind: "text",
+              text: item.segments.map((segment) => segment.node.getTextContent()).join(""),
+            }
+          : { kind: item.node.getType() },
+      );
+    });
+
+    const usj = deserializeEditorState(editor.getEditorState(), viewOptions);
+    if (!usj) throw new Error("Expected USJ from deserialization");
+    const usjItems: ContentItemSummary[] = usj.content.map((entry) =>
+      typeof entry === "string" ? { kind: "text", text: entry } : { kind: entry.type },
+    );
+
     expect(logicalItems).toEqual(expected);
     expect(usjItems).toEqual(expected);
   });

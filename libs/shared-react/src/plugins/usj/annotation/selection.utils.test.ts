@@ -15,6 +15,8 @@ import {
   $createTextNode,
   $getRoot,
   $setState,
+  ElementNode,
+  LexicalEditor,
   LineBreakNode,
   TextNode,
 } from "lexical";
@@ -33,6 +35,7 @@ import {
   ChapterNode,
   CharNode,
   closingMarkerText,
+  CURSOR_PLACEHOLDER_CHAR,
   ImmutableChapterNode,
   ImmutableTypedTextNode,
   ImpliedParaNode,
@@ -1909,6 +1912,266 @@ describe("USJ locations with an implied paragraph", () => {
           });
         });
       }
+    });
+  });
+});
+
+describe("USJ locations at transparent-wrapper boundaries", () => {
+  const nodes = [
+    ParaNode,
+    ImpliedParaNode,
+    ImmutableChapterNode,
+    ImmutableVerseNode,
+    ImmutableTypedTextNode,
+    MarkerNode,
+    TypedMarkNode,
+    CharNode,
+    LineBreakNode,
+  ];
+
+  /** Asserts the caret at `node`/`offset` survives `getSelection` → `setSelection` unchanged. */
+  function expectCaretRoundTrip(
+    editor: LexicalEditor,
+    node: TextNode | ElementNode,
+    offset: number,
+  ) {
+    updateSelection(editor, node, offset);
+    editor.getEditorState().read(() => {
+      const usjSelection = $getUsjSelectionFromEditor();
+      if (!usjSelection) throw new Error("Expected usjSelection to be defined");
+      const range = $getRangeFromUsjSelection(usjSelection);
+      if (!range) throw new Error(`Expected a range for ${JSON.stringify(usjSelection)}`);
+      expect({ key: range.anchor.key, offset: range.anchor.offset }).toEqual({
+        key: node.getKey(),
+        offset,
+      });
+    });
+  }
+
+  function getStart(editor: LexicalEditor) {
+    return editor.getEditorState().read(() => $getUsjSelectionFromEditor()?.start);
+  }
+
+  it("locates a caret host in an implied paragraph beside it, not at the document start", () => {
+    let caretHost: TextNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      caretHost = $createTextNode(CURSOR_PLACEHOLDER_CHAR);
+      $getRoot().append(
+        $createImmutableChapterNode("2"),
+        // The empty-verse caret guard's host after an empty last verse.
+        $createImpliedParaNode().append(
+          $createImmutableVerseNode("1"),
+          $createTextNode("one "),
+          $createImmutableVerseNode("2"),
+          caretHost,
+        ),
+        $createParaNode().append($createTextNode("three")),
+      );
+    });
+    // Non-null assertion is safe: caretHost is assigned during the test setup callback.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    updateSelection(editor, caretHost!, 1);
+
+    // USJ content: [0]=chapter, [1]=verse 1, [2]="one ", [3]=verse 2, [4]=para.
+    expect(getStart(editor)).toEqual({ jsonPath: "$", offset: 4 });
+  });
+
+  it("locates a marker glyph in an implied paragraph at a resolvable content position", () => {
+    let glyph: MarkerNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      glyph = $createMarkerNode("ts", "selfClosing");
+      $getRoot().append(
+        $createImmutableChapterNode("2"),
+        $createImpliedParaNode().append($createTextNode("aaa "), glyph, $createTextNode("bbb")),
+      );
+    });
+    // Non-null assertion is safe: glyph is assigned during the test setup callback.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    updateSelection(editor, glyph!, 1);
+
+    // USJ content: [0]=chapter, [1]="aaa bbb". After the glyph is offset 4 in the text.
+    const start = getStart(editor);
+    expect(start).toEqual({ jsonPath: "$.content[1]", offset: 4 });
+    editor.getEditorState().read(() => {
+      if (!start) throw new Error("Expected a start location");
+      expect($getRangeFromUsjSelection({ start })).toBeDefined();
+    });
+  });
+
+  it("locates an element point before a visible glyph in an implied paragraph as content", () => {
+    let impliedPara: ImpliedParaNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      impliedPara = $createImpliedParaNode();
+      $getRoot().append(
+        $createImmutableChapterNode("2"),
+        impliedPara.append(
+          $createTextNode("aaa "),
+          $createImmutableTypedTextNode("marker", "\\ts\\*"),
+          $createTextNode("bbb"),
+        ),
+      );
+    });
+    // Non-null assertion is safe: impliedPara is assigned during the test setup callback.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    updateSelection(editor, impliedPara!, 1);
+
+    expect(getStart(editor)).toEqual({ jsonPath: "$.content[1]", offset: 4 });
+  });
+
+  it("round-trips a caret in an empty implied paragraph left by Enter", () => {
+    let emptyImpliedPara: ImpliedParaNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      emptyImpliedPara = $createImpliedParaNode();
+      $getRoot().append(
+        $createImmutableChapterNode("1"),
+        $createImpliedParaNode().append($createImmutableVerseNode("1"), $createTextNode("one ")),
+        emptyImpliedPara,
+        $createParaNode().append($createImmutableVerseNode("3"), $createTextNode("three")),
+      );
+    });
+    // Non-null assertion is safe: emptyImpliedPara is assigned during the test setup callback.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    updateSelection(editor, emptyImpliedPara!, 0);
+
+    // Not the end of the document: the boundary before the para, USJ index 3.
+    expect(getStart(editor)).toEqual({ jsonPath: "$", offset: 3 });
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expectCaretRoundTrip(editor, emptyImpliedPara!, 0);
+  });
+
+  it("round-trips a caret in an empty document's implied paragraph", () => {
+    let impliedPara: ImpliedParaNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      impliedPara = $createImpliedParaNode();
+      $getRoot().append(impliedPara);
+    });
+
+    // Non-null assertion is safe: impliedPara is assigned during the test setup callback.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expectCaretRoundTrip(editor, impliedPara!, 0);
+  });
+
+  it("round-trips carets around line breaks in an implied paragraph", () => {
+    let impliedPara: ImpliedParaNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      impliedPara = $createImpliedParaNode();
+      $getRoot().append(
+        $createImmutableChapterNode("1"),
+        impliedPara.append(
+          $createLineBreakNode(),
+          $createImmutableVerseNode("1"),
+          $createTextNode("one "),
+          $createLineBreakNode(),
+          $createImmutableVerseNode("2"),
+          $createTextNode("two"),
+        ),
+      );
+    });
+
+    // Non-null assertions are safe: impliedPara is assigned during the test setup callback.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expectCaretRoundTrip(editor, impliedPara!, 0);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expectCaretRoundTrip(editor, impliedPara!, 3);
+  });
+
+  it("keeps a caret at the end of one implied paragraph off the next one's line", () => {
+    let one: TextNode;
+    let two: TextNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      one = $createTextNode("one ");
+      two = $createTextNode("two");
+      $getRoot().append(
+        $createImmutableChapterNode("1"),
+        $createImpliedParaNode().append($createImmutableVerseNode("1"), one),
+        $createImpliedParaNode().append(two),
+      );
+    });
+
+    // Non-null assertions are safe: one and two are assigned during the test setup callback.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expectCaretRoundTrip(editor, one!, 4);
+
+    // A range over "two" starts on its own line, not at the end of the line before.
+    editor.getEditorState().read(() => {
+      const range = $getRangeFromUsjSelection({
+        start: { jsonPath: "$.content[2]", offset: 4 },
+        end: { jsonPath: "$.content[2]", offset: 7 },
+      });
+      if (!range) throw new Error("Expected range to be defined");
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      expect([range.anchor.key, range.anchor.offset]).toEqual([two!.getKey(), 0]);
+    });
+  });
+
+  it("resolves a boundary inside a multi-child mark in an implied paragraph exactly", () => {
+    let mark: TypedMarkNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      mark = $createTypedMarkNode({ comment: ["c1"] });
+      $getRoot().append(
+        $createImmutableChapterNode("1"),
+        $createImpliedParaNode().append(
+          $createImmutableVerseNode("1"),
+          $createTextNode("In the "),
+          mark.append(
+            $createTextNode("beginning "),
+            $createImmutableVerseNode("2"),
+            $createTextNode("God"),
+          ),
+          $createTextNode(" created"),
+        ),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      // USJ content: [0]=chapter, [1]=verse 1, [2]="In the beginning ", [3]=verse 2, ...
+      const range = $getRangeFromUsjSelection({ start: { jsonPath: "$", offset: 3 } });
+      if (!range) throw new Error("Expected range to be defined");
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      expect([range.anchor.key, range.anchor.offset]).toEqual([mark!.getKey(), 1]);
+    });
+  });
+
+  it("round-trips an element point between a mark's children", () => {
+    let mark: TypedMarkNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      mark = $createTypedMarkNode({ comment: ["c1"] });
+      $getRoot().append(
+        $createParaNode().append(
+          $createTextNode("xy"),
+          mark.append(
+            $createTextNode("ab"),
+            $createCharNode("nd").append($createTextNode("LORD")),
+            $createTextNode("cd"),
+          ),
+          $createTextNode("ef"),
+        ),
+      );
+    });
+    // Non-null assertion is safe: mark is assigned during the test setup callback.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    updateSelection(editor, mark!, 1);
+
+    // USJ content of the para: [0]="xyab", [1]=char, [2]="cdef".
+    expect(getStart(editor)).toEqual({ jsonPath: "$.content[0]", offset: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expectCaretRoundTrip(editor, mark!, 1);
+  });
+
+  it("resolves a non-numeric offset on a para with no content instead of throwing", () => {
+    let para: ParaNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      para = $createParaNode();
+      $getRoot().append(para);
+    });
+
+    editor.getEditorState().read(() => {
+      const range = $getRangeFromUsjSelection({
+        start: { jsonPath: "$.content[0]", offset: Number.NaN },
+      });
+      if (!range) throw new Error("Expected range to be defined");
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      expect([range.anchor.key, range.anchor.offset]).toEqual([para!.getKey(), 0]);
     });
   });
 });

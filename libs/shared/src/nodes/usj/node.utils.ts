@@ -34,7 +34,7 @@ import {
   isSerializedImmutableTypedTextNode,
 } from "../features/ImmutableTypedTextNode.js";
 import { $isMarkerNode, isSerializedMarkerNode } from "../features/MarkerNode.js";
-import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
+import { $isTypedMarkNode, TypedMarkNode } from "../features/TypedMarkNode.js";
 import { $isUnknownNode, UnknownNode } from "../features/UnknownNode.js";
 import { $isAttributeRunNode } from "./AttributeRunNode.js";
 import { $isBookNode, BookNode } from "./BookNode.js";
@@ -94,8 +94,9 @@ export interface LogicalTextSegment {
 /**
  * One USJ content item as represented in the editor. Either a standalone content item (CharNode,
  * NoteNode, VerseNode, MilestoneNode, …) or a coalesced text run: the maximal sequence of plain
- * TextNodes (exact "text" type) — top-level, inside TypedMarkNodes (annotations), or separated
- * only by presentation-only nodes — that the editor→USJ conversion exports as a single string.
+ * TextNodes (exact "text" type) — top-level, inside logically transparent wrappers (annotation
+ * TypedMarkNodes and ImpliedParaNodes), or separated only by presentation-only nodes — that the
+ * editor→USJ conversion exports as a single string.
  * TextNode subclasses never join a run: VerseNode is a standalone item (the exporter emits it
  * as its own verse marker object) and MarkerNode is presentation-only scaffolding.
  */
@@ -111,6 +112,15 @@ export type LogicalContentItem = { type: "element"; node: LexicalNode } | Logica
 export type LogicalPoint =
   | { type: "index"; index: number }
   | { type: "text"; index: number; offset: number };
+
+/**
+ * Which side a logical boundary resolves to when it lies on a block break the USJ does not record:
+ * two implied paragraphs export as one run of content, so the end of one and the start of the
+ * next are the same logical point. "backward" picks the end of the earlier block (a caret, or the
+ * end of a range); "forward" picks the start of the later one (the start of a range). Within one
+ * block the two agree.
+ */
+export type LogicalPointAffinity = "forward" | "backward";
 
 /** RegEx to test for a string only containing digits. */
 const ONLY_DIGITS_TEST = /^\d+$/;
@@ -1090,10 +1100,12 @@ export function $paraPrefixSeparatorCaretHeld(element: ElementNode): boolean {
  * Whether `node` is a wrapper the editor→USJ conversion splices away, so its children belong to
  * its parent's logical content: an annotation TypedMarkNode, or an ImpliedParaNode (the editor
  * wraps content that sits outside any paragraph, e.g. verses before a chapter's first paragraph
- * marker, and the conversion unwraps it again). Read-only: call inside
- * `editor.getEditorState().read(...)` or an update.
+ * marker, and the conversion unwraps it again). Neither has a USJ location of its own. Read-only:
+ * call inside `editor.getEditorState().read(...)` or an update.
  */
-function $isLogicallyTransparent(node: LexicalNode | null | undefined): node is ElementNode {
+export function $isLogicallyTransparent(
+  node: LexicalNode | null | undefined,
+): node is TypedMarkNode | ImpliedParaNode {
   return $isTypedMarkNode(node) || $isImpliedParaNode(node);
 }
 
@@ -1106,6 +1118,8 @@ function $isLogicallyTransparent(node: LexicalNode | null | undefined): node is 
  * Known exclusion: comment-type TypedMarkNodes are treated as transparent like every other
  * mark, even though the exporter still serializes them as milestone items. That milestone
  * serialization is deprecated and pending removal, so the model intentionally ignores it.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
  * @param parent - The parent element node.
  * @returns the logical content items in document order.
  */
@@ -1148,7 +1162,8 @@ export function $getLogicalContentItems(parent: ElementNode): LogicalContentItem
 
 /**
  * Gets the nearest ancestor that is not a TypedMarkNode or ImpliedParaNode — the element that owns
- * the node's logical content index (both wrappers are transparent in USJ).
+ * the node's logical content index (both wrappers are transparent in USJ). Read-only: call inside
+ * `editor.getEditorState().read(...)` or an update.
  * @param node - The node to get the logical parent of.
  * @returns the logical parent element, or `null` at the root.
  */
@@ -1160,7 +1175,8 @@ export function $getLogicalParent(node: LexicalNode): ElementNode | null {
 
 /**
  * Gets the logical content index of the item containing the child (the child may be nested
- * inside TypedMarkNodes under the parent).
+ * inside logically transparent wrappers under the parent). Read-only: call inside
+ * `editor.getEditorState().read(...)` or an update.
  * @param parent - The logical parent element.
  * @param child - The node to find.
  * @returns the logical index, or -1 if the child is presentation-only or not found.
@@ -1203,21 +1219,37 @@ export function $getLogicalTextLocation(
  * Finds the TextNode and local offset at a cumulative offset within a logical text item.
  * At internal segment boundaries the next segment's start is preferred, so a point at an
  * annotation edge targets the start of the following content rather than the end of the
- * previous piece.
+ * previous piece. The exception is a boundary between two blocks (adjacent implied paragraphs
+ * coalesce into one item): there `affinity` decides, and "backward" keeps the end of the earlier
+ * block.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
  * @param item - The logical text item.
  * @param offset - The cumulative offset within the item.
+ * @param affinity - The side to take at a block break; see {@link LogicalPointAffinity}.
  * @returns the text node and local offset, or `undefined` when out of range.
  */
 export function $getTextNodeAtLogicalOffset(
   item: LogicalTextItem,
   offset: number,
+  affinity: LogicalPointAffinity = "forward",
 ): [TextNode, number] | undefined {
   if (offset < 0 || offset > item.length) return undefined;
 
-  for (const segment of item.segments) {
+  for (let i = 0; i < item.segments.length; i++) {
+    const segment = item.segments[i];
     const segmentLength = segment.node.getTextContentSize();
-    if (offset >= segment.start && offset < segment.start + segmentLength)
-      return [segment.node, offset - segment.start];
+    if (offset < segment.start || offset >= segment.start + segmentLength) continue;
+
+    const previous = item.segments[i - 1];
+    if (
+      affinity === "backward" &&
+      previous &&
+      offset === segment.start &&
+      !$getBlockOf(previous.node)?.is($getBlockOf(segment.node))
+    )
+      return [previous.node, previous.node.getTextContentSize()];
+    return [segment.node, offset - segment.start];
   }
   // offset === item.length: end of the last segment.
   const lastSegment = item.segments[item.segments.length - 1];
@@ -1230,9 +1262,12 @@ export function $getTextNodeAtLogicalOffset(
  * inside a coalesced text item (e.g. at an annotation edge) become text points; boundaries
  * between logical items become index points.
  *
- * An element point inside an ImpliedParaNode is a point in its logical parent's content (the
- * paragraph is not in the USJ), so the result is relative to `$getLogicalParent(parent)` — which
- * is also what `parent`'s own jsonPath resolves to, since a transparent node has no index.
+ * A logically transparent wrapper (see {@link $isLogicallyTransparent}) has no USJ location of its
+ * own, so an element point inside one is a point in its logical parent's content and the result
+ * is relative to `$getLogicalParent(parent)` — which is also what `parent`'s own jsonPath resolves
+ * to. Otherwise it is relative to `parent`.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
  * @param parent - The parent element node of the element point.
  * @param elementOffset - The child index of the element point.
  * @returns the logical point.
@@ -1241,111 +1276,136 @@ export function $getLogicalPointFromElementPoint(
   parent: ElementNode,
   elementOffset: number,
 ): LogicalPoint {
-  const logicalParent = $isImpliedParaNode(parent) ? $getLogicalParent(parent) : null;
-  if (logicalParent)
-    return $getLogicalPointBeforeNode(
-      logicalParent,
-      parent.getChildAtIndex(elementOffset) ?? parent.getNextSibling(),
-    );
-  return $getLogicalPointBeforeNode(parent, parent.getChildAtIndex(elementOffset));
-}
+  const logicalParent = ($isLogicallyTransparent(parent) && $getLogicalParent(parent)) || parent;
 
-/**
- * The logical point at the boundary just before `child` in `parent`'s logical content, or at the
- * end when `child` is null. `child` is a direct child of `parent` or of an ImpliedParaNode in it.
- */
-function $getLogicalPointBeforeNode(parent: ElementNode, child: LexicalNode | null): LogicalPoint {
-  const items = $getLogicalContentItems(parent);
-  if (!child) return { type: "index", index: items.length };
-
-  // Boundary before a presentation-only node: use the boundary before the next content child.
-  if ($shouldIgnoreNodeForContentIndexes(child)) {
-    const childParent = child.getParent();
-    const next =
-      child.getNextSibling() ??
-      (childParent && !childParent.is(parent) ? childParent.getNextSibling() : null);
-    return $getLogicalPointBeforeNode(parent, next);
+  // The boundary sits before the first content node at or after the point in document order.
+  let node =
+    parent.getChildAtIndex(elementOffset) ??
+    (logicalParent.is(parent) ? null : $getNextNodeWithin(parent, logicalParent));
+  while (node) {
+    if ($shouldIgnoreNodeForContentIndexes(node)) node = $getNextNodeWithin(node, logicalParent);
+    else if ($isLogicallyTransparent(node))
+      node = node.getFirstChild() ?? $getNextNodeWithin(node, logicalParent);
+    else break;
   }
 
-  for (let index = 0; index < items.length; index++) {
-    const item = items[index];
-    if (item.type === "element") {
-      if (item.node.is(child) || $isDescendantOf(item.node, child.getKey()))
-        return { type: "index", index };
-      continue;
-    }
-    for (const segment of item.segments) {
-      if (segment.node.is(child) || $isDescendantOf(segment.node, child.getKey())) {
+  const items = $getLogicalContentItems(logicalParent);
+  if (node) {
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      if (item.type === "element") {
+        if (item.node.is(node)) return { type: "index", index };
+        continue;
+      }
+      const segment = item.segments.find((segment) => segment.node.is(node));
+      if (segment)
         return segment.start === 0
           ? { type: "index", index }
           : { type: "text", index, offset: segment.start };
-      }
     }
   }
   return { type: "index", index: items.length };
 }
 
 /**
- * Converts a logical boundary index to the earliest element point at that boundary (the inverse
- * of `$getLogicalPointFromElementPoint` for index points).
+ * Converts a logical boundary index to an element point at that boundary (the inverse of
+ * `$getLogicalPointFromElementPoint` for index points).
  *
- * The point is normally in `parent`. A boundary that falls inside an ImpliedParaNode child of
- * `parent` resolves to a point inside that paragraph instead, so the caret lands in the paragraph
- * that holds the content rather than between blocks.
- * @param parent - The parent element node.
- * @param logicalIndex - The logical boundary index (0 = before the first item).
+ * Every element point from just after the previous item to just before the next one is the same
+ * logical boundary. Of those, this picks:
+ * - never a point on a TypedMarkNode's edge — the point just outside the mark is the same place,
+ *   and typing there must not extend the annotation;
+ * - a point inside an ImpliedParaNode over one between blocks, so the caret lands in a paragraph;
+ * - a point inside an implied paragraph with no content, which no other boundary reaches (e.g.
+ *   the empty line Enter leaves, or an empty document);
+ * - otherwise the earliest point, or with "forward" affinity the earliest in the last block (see
+ *   {@link LogicalPointAffinity}).
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ * @param parent - The logical parent element node.
+ * @param logicalIndex - The logical boundary index (0 = before the first item); clamped to the
+ *   items, and a non-finite index is treated as 0.
+ * @param affinity - The side to take at a block break; see {@link LogicalPointAffinity}.
  * @returns the element node and child offset of the point.
  */
 export function $getElementPointFromLogicalIndex(
   parent: ElementNode,
   logicalIndex: number,
+  affinity: LogicalPointAffinity = "backward",
 ): [ElementNode, number] {
-  const index = Math.max(0, logicalIndex);
   const items = $getLogicalContentItems(parent);
+  const index = Math.min(Math.max(0, Math.trunc(logicalIndex) || 0), items.length);
 
-  const nextItem: LogicalContentItem | undefined = items[index];
-  const nextNode = nextItem && $getItemFirstNode(nextItem);
-  const nextImpliedPara = nextNode && $findImpliedParaChildOf(parent, nextNode);
-  const nextInImpliedPara =
-    nextNode && nextImpliedPara && $findChildOfParent(nextImpliedPara, nextNode);
-  if (nextImpliedPara && nextInImpliedPara)
-    return [nextImpliedPara, nextInImpliedPara.getIndexWithinParent()];
+  const previousNode = index > 0 ? $getItemLastNode(items[index - 1]) : undefined;
+  const previousParent = previousNode?.getParent();
+  let point: [ElementNode, number] =
+    previousNode && previousParent
+      ? [previousParent, previousNode.getIndexWithinParent() + 1]
+      : [parent, 0];
 
-  if (index === 0) return [parent, 0];
-  if (index > items.length) return [parent, parent.getChildrenSize()];
+  // Walk forward through the equivalent points until the next content node or `parent`'s end.
+  const candidates: [ElementNode, number][] = [];
+  for (;;) {
+    candidates.push(point);
+    const [container, offset] = point;
+    const child = container.getChildAtIndex(offset);
+    if (child) {
+      if ($shouldIgnoreNodeForContentIndexes(child)) point = [container, offset + 1];
+      else if ($isLogicallyTransparent(child)) point = [child, 0];
+      else break;
+    } else {
+      const containerParent = container.getParent();
+      if (container.is(parent) || !containerParent) break;
+      point = [containerParent, container.getIndexWithinParent() + 1];
+    }
+  }
 
-  const lastNode = $getItemLastNode(items[index - 1]);
-  const container = (lastNode && $findImpliedParaChildOf(parent, lastNode)) ?? parent;
-  const lastInContainer = lastNode && $findChildOfParent(container, lastNode);
-  return lastInContainer
-    ? [container, lastInContainer.getIndexWithinParent() + 1]
-    : [parent, parent.getChildrenSize()];
-}
+  const blockOf = ([container]: [ElementNode, number]) => $getBlockOf(container) ?? container;
+  let points = candidates.filter(
+    ([container, offset]) =>
+      !$isTypedMarkNode(container) || (offset > 0 && offset < container.getChildrenSize()),
+  );
+  if (points.length === 0) points = candidates;
 
-function $getItemFirstNode(item: LogicalContentItem): LexicalNode | undefined {
-  return item.type === "element" ? item.node : item.segments[0]?.node;
+  if (points.some((point) => $isImpliedParaNode(blockOf(point)))) {
+    const inBlocks = points.filter((point) => !blockOf(point).is(parent));
+    if (inBlocks.length > 0) points = inBlocks;
+  }
+
+  // A block the walk passes all the way through holds no content.
+  const firstBlock = blockOf(candidates[0]);
+  const lastBlock = blockOf(candidates[candidates.length - 1]);
+  const emptyBlockPoint = points.find((point) => {
+    const block = blockOf(point);
+    return $isImpliedParaNode(block) && !block.is(firstBlock) && !block.is(lastBlock);
+  });
+  if (emptyBlockPoint) return emptyBlockPoint;
+
+  if (affinity === "forward") {
+    const lastPointBlock = blockOf(points[points.length - 1]);
+    return points.find((point) => blockOf(point).is(lastPointBlock)) ?? points[0];
+  }
+  return points[0];
 }
 
 function $getItemLastNode(item: LogicalContentItem): LexicalNode | undefined {
   return item.type === "element" ? item.node : item.segments[item.segments.length - 1]?.node;
 }
 
-/** The ImpliedParaNode child of `parent` that contains `descendant`, if there is one. */
-function $findImpliedParaChildOf(
-  parent: ElementNode,
-  descendant: LexicalNode,
-): ElementNode | undefined {
-  const topLevelChild = $findChildOfParent(parent, descendant);
-  return $isImpliedParaNode(topLevelChild) ? topLevelChild : undefined;
+/** The nearest ancestor-or-self of `node` that is not a TypedMarkNode: the line it renders on. */
+function $getBlockOf(node: LexicalNode): ElementNode | null {
+  let current: LexicalNode | null = $isElementNode(node) ? node : node.getParent();
+  while (current && $isTypedMarkNode(current)) current = current.getParent();
+  return $isElementNode(current) ? current : null;
 }
 
-/** Walks up from a descendant to the direct child of the given parent. */
-function $findChildOfParent(parent: ElementNode, descendant: LexicalNode): LexicalNode | undefined {
-  let current: LexicalNode | null = descendant;
-  while (current) {
-    const currentParent: ElementNode | null = current.getParent();
-    if (currentParent?.is(parent)) return current;
-    current = currentParent;
+/** The node after `node` in document order, without entering `node`, staying inside `stop`. */
+function $getNextNodeWithin(node: LexicalNode, stop: ElementNode): LexicalNode | null {
+  let current: LexicalNode | null = node;
+  while (current && !current.is(stop)) {
+    const next = current.getNextSibling();
+    if (next) return next;
+    current = current.getParent();
   }
-  return undefined;
+  return null;
 }

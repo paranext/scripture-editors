@@ -5,6 +5,7 @@ import {
   type UsjDocumentLocation,
   type UsjMarkerLocation,
   type UsjPropertyValueLocation,
+  type UsjTextContentLocation,
   getUsjDocumentLocationTypeName,
   indexesFromUsjJsonPath,
   isUsjAttributeKeyLocation,
@@ -36,7 +37,7 @@ import {
   $getLogicalPointFromElementPoint,
   $getLogicalTextLocation,
   $getTextNodeAtLogicalOffset,
-  $isImpliedParaNode,
+  $isLogicallyTransparent,
   $isMarkerNode,
   $isParaLikeNode,
   $isTypedMarkNode,
@@ -45,6 +46,7 @@ import {
   $shouldIgnoreNodeForContentIndexes,
   ImmutableTypedTextNode,
   type LogicalContentItem,
+  type LogicalPointAffinity,
   MarkerNode,
 } from "shared";
 
@@ -79,9 +81,12 @@ export function $getRangeFromUsjSelection(
   let { end } = selection;
   end ??= start;
 
-  // Find the start and end nodes with offsets based on the location.
-  let [startNode, startOffset] = $getNodeFromLocation(start);
-  let [endNode, endOffset] = $getNodeFromLocation(end);
+  // Find the start and end nodes with offsets based on the location. A boundary on a block break
+  // the USJ does not record resolves into the selected content: the start forward, the end (and a
+  // caret) backward.
+  const isCaret = areLocationsEqual(start, end);
+  let [startNode, startOffset] = $getNodeFromLocation(start, isCaret ? "backward" : "forward");
+  let [endNode, endOffset] = $getNodeFromLocation(end, "backward");
   if (!startNode || !endNode || startOffset === undefined || endOffset === undefined)
     return undefined;
 
@@ -131,8 +136,18 @@ export function $getUsjSelectionFromEditor(): SelectionRange | undefined {
   return { start, end };
 }
 
+function areLocationsEqual(a: UsjDocumentLocation, b: UsjDocumentLocation): boolean {
+  if (a === b) return true;
+  const aEntries = Object.entries(a);
+  const bValues = new Map<string, unknown>(Object.entries(b));
+  return (
+    aEntries.length === bValues.size && aEntries.every(([key, value]) => bValues.get(key) === value)
+  );
+}
+
 function $getNodeFromLocation(
   location: UsjDocumentLocation,
+  affinity: LogicalPointAffinity,
 ): [LexicalNode | undefined, number | undefined] {
   // Handle UsjTextContentLocation first (most common case)
   if (isUsjTextContentLocation(location)) {
@@ -148,7 +163,9 @@ function $getNodeFromLocation(
       if (item.type === "text") {
         // Text items are terminal — the path must end here.
         if (i !== jsonPathIndexes.length - 1) return [undefined, undefined];
-        return $getTextNodeAtLogicalOffset(item, location.offset) ?? [undefined, undefined];
+        return (
+          $getTextNodeAtLogicalOffset(item, location.offset, affinity) ?? [undefined, undefined]
+        );
       }
       currentNode = item.node;
     }
@@ -156,7 +173,7 @@ function $getNodeFromLocation(
     // The jsonPath resolved to an ElementNode (e.g. "$.content[0]"): interpret offset as a
     // logical child boundary offset and return an element point.
     if (currentNode && $isElementNode(currentNode)) {
-      return $getElementPointFromLogicalIndex(currentNode, location.offset);
+      return $getElementPointFromLogicalIndex(currentNode, location.offset, affinity);
     }
     return [undefined, undefined];
   }
@@ -372,6 +389,16 @@ function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLoc
 
     // Prefer anchoring to the previous node if the marker is scaffolding for it.
     const anchorNode = $getMarkerAnchorNode(node);
+    // A glyph whose anchor has no USJ location of its own (an implied paragraph, or the
+    // AttributeRunNode holding a `\va`/`\vp`/milestone attribute run) has no marker location that
+    // resolves back to it, so report the content position beside the glyph instead.
+    if (
+      anchorNode &&
+      ($isLogicallyTransparent(anchorNode) || $shouldIgnoreNodeForContentIndexes(anchorNode))
+    ) {
+      const besideLocation = $getLocationBesideNode(node, offset > 0);
+      if (besideLocation) return besideLocation;
+    }
     const anchorJsonPath = anchorNode
       ? usjJsonPathFromIndexes($getJsonPathIndexes(anchorNode))
       : usjJsonPathFromIndexes($getJsonPathIndexes(node));
@@ -406,41 +433,13 @@ function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLoc
     } satisfies UsjPropertyValueLocation;
   }
 
-  if ($isTypedMarkNode(node)) {
-    // An element point on the annotation wrapper: convert to the equivalent point as if the
-    // mark did not exist.
-    const childrenSize = node.getChildrenSize();
-    const childAtOffset = node.getChildAtIndex(Math.min(offset, childrenSize - 1));
-    if ($isTextNode(childAtOffset)) {
-      const localOffset = offset >= childrenSize ? childAtOffset.getTextContentSize() : 0;
-      return $getLocationFromNode(childAtOffset, localOffset);
-    }
-
-    // Non-text child (e.g. a CharNode wrapped in the mark) or an empty mark (childAtOffset is
-    // null): anchor on the logical parent at the mark's own position instead of falling through
-    // to treat the mark itself as the logical parent, which would drop the mark's content index.
-    // The mark contributes no content of its own, so the boundary before/after it is the
-    // boundary before/after its own position in the logical parent.
-    // Known approximation: for a mark with several children of different kinds, an INTERIOR
-    // boundary (offset between two of the mark's children) does not place the point between
-    // those exact children — it snaps to the front (or back) edge of the whole mark, so the
-    // reported position can be off by the length of the mark's preceding text. That is a valid
-    // nearby point in the correct text run; placing it exactly would require the resolution
-    // side to express points inside a mark.
-    // A mark directly inside an implied paragraph anchors on the paragraph, whose own element
-    // points are converted to its logical parent's coordinates below.
-    const parent = node.getParent();
-    if (parent && ($getLogicalParent(node)?.is(parent) || $isImpliedParaNode(parent))) {
-      const markIndex = node.getIndexWithinParent();
-      const elementOffset = offset >= childrenSize ? markIndex + 1 : markIndex;
-      return $getLocationFromNode(parent, elementOffset);
-    }
-  }
-
-  // Element selection - offset is a child index, convert to a logical point.
+  // Element selection - offset is a child index, convert to a logical point. An element point on
+  // a logically transparent wrapper (an annotation mark or an implied paragraph) is a point in its
+  // logical parent's content.
   if ($isElementNode(node)) {
     const childAtOffset = node.getChildAtIndex(offset);
-    if ($isVisibleMarkerNode(childAtOffset)) {
+    // A transparent wrapper has no marker location of its own to report the glyph against.
+    if ($isVisibleMarkerNode(childAtOffset) && !$isLogicallyTransparent(node)) {
       // Which glyph the point sits before decides which location this is, by the same
       // trailing-`*` test `$findMarkerNode` resolves them back with. Keyed only on the parent, an
       // element point before the CLOSING glyph resolved to the same location as one before the
@@ -453,18 +452,7 @@ function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLoc
         : ({ jsonPath } satisfies UsjMarkerLocation);
     }
 
-    const logicalPoint = $getLogicalPointFromElementPoint(node, offset);
-    if (logicalPoint.type === "text") {
-      // The boundary falls inside a coalesced USJ text item (e.g. at an annotation edge).
-      return {
-        jsonPath: usjJsonPathFromIndexes([...$getJsonPathIndexes(node), logicalPoint.index]),
-        offset: logicalPoint.offset,
-      };
-    }
-    return {
-      jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)),
-      offset: logicalPoint.index,
-    };
+    return $getLocationFromElementPoint(node, offset);
   }
 
   // Regular text node - UsjTextContentLocation in coalesced-USJ coordinates.
@@ -481,8 +469,50 @@ function $getLocationFromNode(node: LexicalNode, offset: number): UsjDocumentLoc
     }
   }
 
-  // Fallback for nodes outside the logical content model (e.g. presentation-only text).
+  // Presentation-only text (e.g. a caret host, an NBSP spacer, attribute text) has no USJ location
+  // of its own: report the content position beside it.
+  if ($shouldIgnoreNodeForContentIndexes(node)) {
+    const besideLocation = $getLocationBesideNode(node, offset > 0);
+    if (besideLocation) return besideLocation;
+  }
+
+  // Fallback for other nodes outside the logical content model.
   return { jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)), offset };
+}
+
+/** The text-content location of an element point, in its logical parent's coordinates. */
+function $getLocationFromElementPoint(node: ElementNode, offset: number): UsjTextContentLocation {
+  const logicalPoint = $getLogicalPointFromElementPoint(node, offset);
+  if (logicalPoint.type === "text") {
+    // The boundary falls inside a coalesced USJ text item (e.g. at an annotation edge).
+    return {
+      jsonPath: usjJsonPathFromIndexes([...$getJsonPathIndexes(node), logicalPoint.index]),
+      offset: logicalPoint.offset,
+    };
+  }
+  return {
+    jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node)),
+    offset: logicalPoint.index,
+  };
+}
+
+/**
+ * The text-content location just before `node` (or just after it, when `after`), for a
+ * presentation-only node with no USJ location of its own. Climbs out of presentation-only
+ * wrappers (e.g. an `AttributeRunNode`) first, since a point inside one is not in any content.
+ */
+function $getLocationBesideNode(
+  node: LexicalNode,
+  after: boolean,
+): UsjTextContentLocation | undefined {
+  let target = node;
+  let parent = node.getParent();
+  while (parent && $shouldIgnoreNodeForContentIndexes(parent)) {
+    target = parent;
+    parent = parent.getParent();
+  }
+  if (!parent) return undefined;
+  return $getLocationFromElementPoint(parent, target.getIndexWithinParent() + (after ? 1 : 0));
 }
 
 function $getMarkerAnchorNode(markerNode: MarkerNode): LexicalNode | undefined {
@@ -512,8 +542,8 @@ function $getPreviousContentSibling(child: LexicalNode): LexicalNode | undefined
 }
 
 /**
- * Gets the jsonPath indexes from a node by traversing up to the root using logical
- * (annotation-transparent) content indexes.
+ * Gets the jsonPath indexes from a node by traversing up to the root using logical content
+ * indexes, in which annotation marks and implied paragraphs are transparent.
  * @param node - The node to get the path for.
  * @returns An array of indexes representing the path from root to node.
  */
@@ -524,7 +554,8 @@ function $getJsonPathIndexes(node: LexicalNode): number[] {
     const parent = $getLogicalParent(current);
     if (!parent) break;
 
-    const index = $getLogicalIndexOfChild(parent, current);
+    // A transparent wrapper has no index; skip the lookup rather than build the parent's items.
+    const index = $isLogicallyTransparent(current) ? -1 : $getLogicalIndexOfChild(parent, current);
     if (index >= 0) jsonPathIndexes.unshift(index);
     current = parent;
   }
