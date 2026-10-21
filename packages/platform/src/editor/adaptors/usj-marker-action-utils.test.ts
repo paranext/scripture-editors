@@ -14,6 +14,7 @@ import {
   isUsjMarkerSupported,
 } from "./usj-marker-action.utils";
 import {
+  $createNodeSelection,
   $createTextNode,
   $getRoot,
   $getSelection,
@@ -21,6 +22,7 @@ import {
   $isNodeSelection,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   $setState,
   LexicalEditor,
   TextNode,
@@ -209,6 +211,34 @@ describe("USJ Marker Action Utils", () => {
       if (!$isParaNode(children[4]))
         throw new Error("Inserted node after inserted chapter is not a ParaNode");
     });
+  });
+
+  // A non-range selection gives the action nowhere to insert: it inserts nothing, and says so.
+  it("inserts nothing at a node selection and warns that it did nothing", () => {
+    const { editor } = createBasicTestEnvironment(nodes, $defaultInitialEditorState);
+    const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    const markerAction = getUsjMarkerAction(
+      "nd",
+      expandedNoteKeyRef,
+      undefined,
+      undefined,
+      logger,
+      { discrete: true },
+    );
+    editor.update(
+      () => {
+        const selection = $createNodeSelection();
+        selection.add(secondVerseTextNode.getKey());
+        $setSelection(selection);
+      },
+      { discrete: true },
+    );
+    const before = JSON.stringify(editor.getEditorState().toJSON());
+
+    markerAction.action({ editor, reference });
+
+    expect(JSON.stringify(editor.getEditorState().toJSON())).toBe(before);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 
   function $initialEditorStateWithNoChapterNode() {

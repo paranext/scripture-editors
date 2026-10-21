@@ -26,7 +26,18 @@ import {
   TextNode,
 } from "lexical";
 import { useEffect, useState } from "react";
-import { $createImmutableVerseNode, getDefaultViewOptions } from "shared-react";
+import {
+  $createGutterMarkerNode,
+  $createParaNode,
+  $selectParaMarker,
+  ImmutableTypedTextNode,
+  NBSP,
+} from "shared";
+import {
+  $createImmutableVerseNode,
+  getDefaultViewOptions,
+  ParaMarkerSelectionPlugin,
+} from "shared-react";
 
 /**
  * A null-payload `COPY_COMMAND` dispatch that this plugin lets through (limit > 0) reaches
@@ -961,4 +972,62 @@ describe("CopyLimitPlugin", () => {
       expect(getData("application/x-lexical-editor") !== "").toBe(isNormalCopy);
     },
   );
+});
+
+// A selected paragraph marker answers a copy by adopting the range the browser moved to (a
+// right-click on other text moves it without Lexical rebuilding its selection). The limit must
+// apply to that range, not to the one-glyph selection it replaced.
+describe("CopyLimitPlugin with a selected paragraph marker", () => {
+  async function mountWithSelectedMarker(limit: number) {
+    let glyph!: ImmutableTypedTextNode;
+    let text!: TextNode;
+    const { editor } = await baseTestEnvironment(
+      () => {
+        glyph = $createGutterMarkerNode(`\\p${NBSP}`);
+        text = $createTextNode("abcdefghij");
+        $getRoot().append($createParaNode("p").append(glyph, text));
+      },
+      <>
+        <CopyLimitPlugin limit={limit} />
+        <ParaMarkerSelectionPlugin />
+      </>,
+    );
+    await act(async () => editor.update(() => $selectParaMarker(glyph), { discrete: true }));
+    return { editor, text };
+  }
+
+  it("limits a copy of the range the browser moved to", async () => {
+    const { editor, text } = await mountWithSelectedMarker(4);
+    const textElement = editor.getElementByKey(text.getKey())?.firstChild;
+    if (!textElement) throw new Error("editor text not rendered");
+    selectInDom((range) => {
+      range.setStart(textElement, 0);
+      range.setEnd(textElement, 10);
+    });
+    const { event, getData } = clipboardEvent("copy");
+
+    await act(async () => {
+      editor.dispatchCommand(COPY_COMMAND, event);
+    });
+
+    expect(getData("text/plain")).toBe("abcd");
+  });
+
+  it("limits a cut of the range the browser moved to, removing only what it copies", async () => {
+    const { editor, text } = await mountWithSelectedMarker(4);
+    const textElement = editor.getElementByKey(text.getKey())?.firstChild;
+    if (!textElement) throw new Error("editor text not rendered");
+    selectInDom((range) => {
+      range.setStart(textElement, 0);
+      range.setEnd(textElement, 10);
+    });
+    const { event, getData } = clipboardEvent("cut");
+
+    await act(async () => {
+      editor.dispatchCommand(CUT_COMMAND, event);
+    });
+
+    expect(getData("text/plain")).toBe("abcd");
+    expect(rootText(editor)).toBe(`\\p${NBSP}efghij`);
+  });
 });

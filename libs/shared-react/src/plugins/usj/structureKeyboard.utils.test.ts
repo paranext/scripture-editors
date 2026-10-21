@@ -26,18 +26,27 @@ import {
   $isRangeSelection,
   $isTextNode,
   $setSelection,
+  LexicalEditor,
+  RangeSelection,
   TextNode,
 } from "lexical";
 import {
   $createChapterNode,
   $createCharNode,
+  $createGutterMarkerNode,
+  $createMarkerNode,
+  $createMarkerTrailingSeparator,
   $createNoteNode,
   $createParaNode,
   $createImpliedParaNode,
   $createVerseNode,
   $isCharNode,
   $isNoteNode,
+  $isGutterMarkerNode,
+  $isMarkerNode,
+  $isMarkerTrailingSeparator,
   $isSomeParaNode,
+  NBSP,
   ParaNode,
 } from "shared";
 
@@ -526,6 +535,15 @@ describe("$isArmedSelection", () => {
   });
 });
 
+/** The committed caret, as the text it sits in and its offset there. */
+function caretOf(editor: LexicalEditor): { text: string; offset: number } | undefined {
+  return editor.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
+    return { text: selection.anchor.getNode().getTextContent(), offset: selection.anchor.offset };
+  });
+}
+
 describe("$mergeParaIntoPrevious", () => {
   it("moves children into the previous block, drops the merged para and its marker, preserves text", async () => {
     let p: ParaNode;
@@ -548,6 +566,42 @@ describe("$mergeParaIntoPrevious", () => {
       expect(merged.getMarker()).toBe("p"); // previous block's marker kept; "q" gone
       expect(merged.getTextContent()).toBe("firstsecond");
     });
+    expect(caretOf(editor)).toEqual({ text: "firstsecond", offset: 5 });
+  });
+
+  // In the paragraph-structure view each paragraph leads with its marker glyph in the gutter. The
+  // merged paragraph's marker is the one being removed, so its glyph goes with it.
+  it("drops the merged paragraph's gutter marker glyph instead of moving it into the previous one", async () => {
+    let li1: ParaNode;
+    let q1: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      li1 = $createParaNode("li1");
+      q1 = $createParaNode("q1");
+      $getRoot().append(
+        li1.append($createGutterMarkerNode(`\\li1${NBSP}`), $createTextNode("first")),
+        q1.append(
+          $createGutterMarkerNode(`\\q1${NBSP}`),
+          $createImmutableVerseNode("2"),
+          $createTextNode("second"),
+        ),
+      );
+    });
+
+    await sutUpdate(editor, () => {
+      $mergeParaIntoPrevious(q1!);
+    });
+
+    editor.getEditorState().read(() => {
+      const merged = li1!.getChildren();
+      expect(merged.filter($isGutterMarkerNode).map((n) => n.getTextContent())).toEqual([
+        `\\li1${NBSP}`,
+      ]);
+      expect(merged[0].getTextContent()).toBe(`\\li1${NBSP}`);
+      expect(li1!.getTextContent()).toContain("first");
+      expect(merged.some($isSomeVerseNode)).toBe(true);
+      expect(li1!.getTextContent()).toContain("second");
+    });
+    expect(caretOf(editor)).toEqual({ text: "first", offset: 5 });
   });
 
   it("merges an empty para by simply removing it", async () => {
@@ -566,6 +620,72 @@ describe("$mergeParaIntoPrevious", () => {
     editor.getEditorState().read(() => {
       expect($getRoot().getChildrenSize()).toBe(1);
       expect(($getRoot().getChildren()[0] as ParaNode).getTextContent()).toBe("text");
+    });
+    expect(caretOf(editor)).toEqual({ text: "text", offset: 4 });
+  });
+
+  // Standard view: each paragraph opens with its marker as editable text. The caret must never
+  // land in a marker or its separator, where the next keystroke would rename the marker.
+  it("lands past a note that ends the previous paragraph, not in the merged marker", async () => {
+    let p: ParaNode;
+    let q1: ParaNode;
+    let two: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      p = $createParaNode("p");
+      q1 = $createParaNode("q1");
+      two = $createTextNode("two");
+      $getRoot().append(
+        p.append(
+          $createMarkerNode("p"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("one"),
+          $createNoteNode("f", "+").append($createTextNode("note")),
+        ),
+        q1.append($createMarkerNode("q1"), $createMarkerTrailingSeparator(), two),
+      );
+    });
+
+    await sutUpdate(editor, () => {
+      $mergeParaIntoPrevious(q1!);
+    });
+
+    expect(caretOf(editor)).toEqual({ text: "two", offset: 0 });
+    editor.getEditorState().read(() => {
+      expect(p!.getChildren().filter($isMarkerNode)).toHaveLength(1);
+    });
+  });
+
+  it("lands at the merged text when the previous paragraph holds only its marker", async () => {
+    let p: ParaNode;
+    let q1: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      p = $createParaNode("p");
+      q1 = $createParaNode("q1");
+      $getRoot().append(
+        p.append($createMarkerNode("p"), $createMarkerTrailingSeparator()),
+        q1.append(
+          $createMarkerNode("q1"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode("two"),
+        ),
+      );
+    });
+
+    // Check the caret inside the update that places it. Once committed, Lexical may read the DOM
+    // selection back and move a caret at content start onto the end of the separator before it, so
+    // a check after the commit races that read-back. Typing from the real landing is pinned
+    // end-to-end by the guarded-merge typing tests.
+    await sutUpdate(editor, () => {
+      $mergeParaIntoPrevious(q1!);
+
+      const selection = $getSelection();
+      expect($isRangeSelection(selection) && selection.isCollapsed()).toBe(true);
+      const { anchor } = selection as RangeSelection;
+      expect(anchor.getNode().getTextContent()).toBe("two");
+      expect(anchor.offset).toBe(0);
+      expect($isMarkerNode(anchor.getNode()) || $isMarkerTrailingSeparator(anchor.getNode())).toBe(
+        false,
+      );
     });
   });
 });
