@@ -38,8 +38,11 @@ const MARKER_TEXT_TYPE = "marker";
  * `textType: "marker"`. Nor can it be read off the view, because "is this marker in the gutter?" is
  * asked one node at a time — a document can carry gutter markers and inline glyphs at once (a
  * book's `\id` line, for one). So the fact travels on the node that has it, set where the glyph is
- * built, and it is what makes gutter markers unclickable in
- * `ParaMarkerPrefixCursorGuardPlugin` (shared-react) while inline glyphs keep their caret.
+ * built. It separates three cases, each decided per node: an inline glyph keeps its caret; a gutter
+ * glyph is never a caret position; and a paragraph's gutter glyph is also a selection target
+ * (`$getSelectedParaMarker`, node.utils.ts) that admits a retag or, on Backspace/Delete, a merge
+ * into the previous paragraph. This is the one place that explanation lives; the plugins that act
+ * on it link here.
  *
  * Set on the SERIALIZED twin by the USJ→editor adaptor's `createImmutableTypedText`
  * (usj-editor.adaptor.ts, platform), which builds JSON rather than live nodes — the same split the
@@ -195,6 +198,12 @@ export class ImmutableTypedTextNode extends DecoratorNode<null> {
 
   // Mutation
 
+  /**
+   * Stays `false` even though a paragraph's gutter glyph can be selected: it is selected only by
+   * clicking it (`ParaMarkerSelectionPlugin`, shared-react), and arrow keys never stop on it.
+   * Returning `true` would also change Lexical's native Backspace-beside-a-decorator behavior at
+   * every paragraph start, where `StructureKeyboardPlugin` arms paragraph merges.
+   */
   override isKeyboardSelectable(): false {
     return false;
   }
@@ -226,7 +235,8 @@ export function $createGutterMarkerNode(text: string): ImmutableTypedTextNode {
 
 /**
  * Whether the node is a marker glyph the view renders in the gutter, which is never a place a
- * caret may come to rest — see {@link gutterMarkerState}.
+ * caret may come to rest — though a paragraph's gutter glyph can be selected whole (see
+ * {@link gutterMarkerState}).
  *
  * @param node - The node to check.
  * @returns `true` for a gutter-rendered marker glyph.

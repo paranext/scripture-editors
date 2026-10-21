@@ -16,6 +16,7 @@ import {
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
 import { useEffect, useRef } from "react";
+import { $isGutterMarkerNode } from "shared";
 
 /** One end of a DOM selection — the container node plus the offset within it. */
 interface DomPoint {
@@ -67,7 +68,14 @@ function nearestBoundary(point: DomPoint): Boundary {
  * Whether another rule already owns where a selection landing on this decorator belongs, so
  * normalizing it here would take the landing away from that rule.
  *
- * A note caller is the one such decorator. `TrailingNoteCaretGuardPlugin` answers a landing on the
+ * A gutter marker glyph is one, for a collapsed landing: a click on it selects the paragraph's
+ * marker (`ParaMarkerSelectionPlugin`) or moves the caret past the paragraph's prefix
+ * (`ParaMarkerPrefixCursorGuardPlugin`). Snapping the press to the glyph's boundary first would
+ * report a caret before the paragraph's leading verse — the previous verse — to the host. Those
+ * rules answer a click only, so an end of a range (a drag from the glyph across the text) is
+ * snapped like any other.
+ *
+ * A note caller is the other. `TrailingNoteCaretGuardPlugin` answers a landing on the
  * caller of a collapsed note that ends its block by hosting a caret PAST the whole note, and it
  * recognizes that landing precisely by the selection being unresolved — so supplying a selection
  * for it silently disables the repair and leaves the caret in the note's hidden body, which is the
@@ -75,8 +83,8 @@ function nearestBoundary(point: DomPoint): Boundary {
  * between the note's opening glyph and the caller, or between the caller and its hidden content.
  * Neither is a position a collapsed note can draw a caret at, so there is nothing here to win.
  */
-function $hasDedicatedSelectionOwner(node: LexicalNode): boolean {
-  return $isImmutableNoteCallerNode(node);
+function $hasDedicatedSelectionOwner(node: LexicalNode, isCollapsed: boolean): boolean {
+  return (isCollapsed && $isGutterMarkerNode(node)) || $isImmutableNoteCallerNode(node);
 }
 
 /**
@@ -93,9 +101,10 @@ function $decoratorBoundary(
   editor: LexicalEditor,
   point: DomPoint,
   boundary: Boundary,
+  isCollapsed: boolean,
 ): DomPoint | undefined {
   const node = $getNearestNodeFromDOMNode(point.node);
-  if (!$isDecoratorNode(node) || $hasDedicatedSelectionOwner(node)) return undefined;
+  if (!$isDecoratorNode(node) || $hasDedicatedSelectionOwner(node, isCollapsed)) return undefined;
   const element = editor.getElementByKey(node.getKey());
   if (!element || element === point.node || !element.contains(point.node)) return undefined;
   const parent = element.parentNode;
@@ -141,7 +150,7 @@ function $snapSelectionToDecoratorBoundaries(
   let snappedAnchor: DomPoint | undefined;
   let snappedFocus: DomPoint | undefined;
   if (domSelection.isCollapsed) {
-    snappedAnchor = $decoratorBoundary(editor, anchor, nearestBoundary(anchor));
+    snappedAnchor = $decoratorBoundary(editor, anchor, nearestBoundary(anchor), true);
     snappedFocus = snappedAnchor;
   } else {
     // A range grows OUTWARD, so the decorator ends up wholly inside the selection rather than
@@ -149,8 +158,8 @@ function $snapSelectionToDecoratorBoundaries(
     // one. That is what makes a drag begun on `\fig ` carry the whole glyph, and a drag that runs
     // into `|src="…"` carry the whole attribute run.
     const anchorLeads = isRangeStart(domSelection.getRangeAt(0), anchor);
-    snappedAnchor = $decoratorBoundary(editor, anchor, anchorLeads ? "before" : "after");
-    snappedFocus = $decoratorBoundary(editor, focus, anchorLeads ? "after" : "before");
+    snappedAnchor = $decoratorBoundary(editor, anchor, anchorLeads ? "before" : "after", false);
+    snappedFocus = $decoratorBoundary(editor, focus, anchorLeads ? "after" : "before", false);
   }
   if (!snappedAnchor && !snappedFocus) return false;
 
