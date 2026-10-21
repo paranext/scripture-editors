@@ -237,6 +237,32 @@ function $collapsedTextCaret(): LastKnownCaret | undefined {
   return $isTextNode(node) ? { key: node.getKey(), offset: selection.focus.offset } : undefined;
 }
 
+/**
+ * A caret at `caret`, the last one the editor observed, when its text is still in the document and
+ * a caret there reports exactly `selection`. Several carets can share one location — spaces typed
+ * after a line-final verse number, or the extra spaces of a typed run, are no bytes of their own —
+ * so a host handing back a caret it read (a focus-out snapshot) would otherwise land it on the
+ * first of them, in front of spaces the user typed.
+ */
+function $lastKnownCaretAt(
+  caret: LastKnownCaret | undefined,
+  selection: SelectionRange,
+  viewOptions: ViewOptions | undefined,
+): RangeSelection | undefined {
+  if (!caret || (selection.end && !deepEqual(selection.end, selection.start))) return undefined;
+  const node = $getNodeByKey(caret.key);
+  if (!$isTextNode(node) || caret.offset > node.getTextContentSize()) return undefined;
+
+  const candidate = $createRangeSelection();
+  candidate.anchor.set(caret.key, caret.offset, "text");
+  candidate.focus.set(caret.key, caret.offset, "text");
+  const previous = $getSelection();
+  $setSelection(candidate);
+  const reported = $getUsjSelectionFromEditor(viewOptions);
+  $setSelection(previous);
+  return reported && deepEqual(reported.start, selection.start) ? candidate : undefined;
+}
+
 /** The jsonPath of every note in `usj`, in document order — what `selectNote`'s index counts
  * against, so a note still pending as a typed literal counts too. */
 function settledNotePaths(usj: Usj | undefined): ContentJsonPath[] {
@@ -1128,7 +1154,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         return;
       }
       editorRef.current?.update(() => {
-        const editorSelection = $getRangeFromUsjSelection(live, viewOptions);
+        const editorSelection =
+          $lastKnownCaretAt(lastKnownCaretRef.current, live, viewOptions) ??
+          $getRangeFromUsjSelection(live, viewOptions);
         if (editorSelection !== undefined) {
           // No update tag here, deliberately: Lexical clears an update's tags only when its commit
           // dirties a node, so a tag on this selection-only update would ride along on the user's

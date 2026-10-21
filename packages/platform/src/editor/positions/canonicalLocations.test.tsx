@@ -973,6 +973,82 @@ describe("the editor API", () => {
     }
   });
 
+  /** Mounts a verse that ends a paragraph and types a space right after its number. */
+  async function mountWithSpaceTypedAfterParagraphFinalNumber() {
+    const mounted = await mountStandardViewEditor(
+      doc(endsInVerse, { type: "para", marker: "p", content: ["more"] }),
+    );
+    await act(async () => {
+      mounted.lexical.update(
+        () => {
+          const glyph = $getRoot().getChildren().filter($isElementNode)[2].getLastDescendant();
+          if (!$isTextNode(glyph)) throw new Error("expected the verse glyph's text");
+          const afterNumber = glyph.getTextContentSize() - 1;
+          glyph.select(afterNumber, afterNumber);
+        },
+        { discrete: true },
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      mounted.lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, " ");
+      await Promise.resolve();
+    });
+    return mounted;
+  }
+
+  // A host saves the caret as focus leaves and hands it back if the editor lost it (paranext-core
+  // does around the marker palette). The spaces typed after the number are no byte of their own, so
+  // the saved location is the number's end; putting it back must not move the caret in front of
+  // them, where the next letter would join the number.
+  it("restores a caret among spaces typed after a paragraph-final verse number where it was", async () => {
+    const { ref, lexical } = await mountWithSpaceTypedAfterParagraphFinalNumber();
+    const saved = ref.current?.getSelection();
+    if (!saved) throw new Error("expected a reported caret");
+
+    await act(async () => {
+      lexical.update(() => $setSelection(null), { discrete: true });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      ref.current?.setSelection(saved);
+      await Promise.resolve();
+    });
+    expect(ref.current?.getSelection()).toEqual(saved);
+    await act(async () => {
+      lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, "t");
+      await Promise.resolve();
+    });
+
+    const para = ref.current?.getUsj()?.content[2];
+    expect(typeof para === "object" && para.content?.slice(-2)).toEqual([
+      { type: "verse", marker: "v", number: "2" },
+      "t",
+    ]);
+  });
+
+  it("puts the number's end of a paragraph-final verse right after the number when the last caret was elsewhere", async () => {
+    const { ref, lexical } = await mountWithSpaceTypedAfterParagraphFinalNumber();
+    await act(async () => {
+      lexical.update(() => $textContaining("more").select(0, 0), { discrete: true });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      ref.current?.setSelection({
+        start: { jsonPath: "$.content[2].content[2]['number']", propertyOffset: 1 },
+      });
+      await Promise.resolve();
+    });
+
+    const caret = lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) return undefined;
+      return { text: selection.anchor.getNode().getTextContent(), offset: selection.anchor.offset };
+    });
+    expect(caret).toEqual({ text: "\\v\u00a02  ", offset: 4 });
+  });
+
   it("puts one past the number of a verse that ends a paragraph where the next line's marker is", async () => {
     const { ref, lexical } = await mountStandardViewEditor(
       doc(endsInVerse, { type: "para", marker: "q1", content: ["more"] }),
