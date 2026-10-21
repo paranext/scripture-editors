@@ -35,6 +35,13 @@ export interface PointSnapshot {
   type: "text" | "element";
 }
 
+/** Whether `point` (a live selection point, or another snapshot) is the one `snapshot` recorded. */
+export function isSamePoint(point: PointSnapshot, snapshot: PointSnapshot): boolean {
+  return (
+    point.key === snapshot.key && point.offset === snapshot.offset && point.type === snapshot.type
+  );
+}
+
 /** A pending two-step delete: the armed target's kind + the intent that armed it. */
 export interface ArmedDelete {
   kind: "verse" | "para" | "selection";
@@ -284,15 +291,7 @@ export function $isArmedSelection(selection: BaseSelection | null, armed: ArmedD
   if (armed.kind === "selection") {
     if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
     if (!armed.anchor || !armed.focus) return false;
-    const { anchor, focus } = selection;
-    return (
-      anchor.key === armed.anchor.key &&
-      anchor.offset === armed.anchor.offset &&
-      anchor.type === armed.anchor.type &&
-      focus.key === armed.focus.key &&
-      focus.offset === armed.focus.offset &&
-      focus.type === armed.focus.type
-    );
+    return isSamePoint(selection.anchor, armed.anchor) && isSamePoint(selection.focus, armed.focus);
   }
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
   const anchorPara = $getParaAncestor(selection.anchor.getNode());

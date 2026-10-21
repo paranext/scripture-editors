@@ -1,23 +1,20 @@
 import { $advancePastParaPrefixes } from "./ParaMarkerPrefixCursorGuardPlugin";
-import { $placeCaretAtEnd } from "./structureKeyboard.utils";
 import { HiddenContentItem } from "./hidden-content-delete.model";
 import { $findMatchingParent } from "@lexical/utils";
 import {
+  $createRangeSelection,
   $isElementNode,
   $isRangeSelection,
   $isRootNode,
   $isTextNode,
+  $setSelection,
   BaseSelection,
+  ElementNode,
   LexicalNode,
+  PointType,
   RangeSelection,
 } from "lexical";
-import {
-  $isNoteNode,
-  $isParaLikeNode,
-  $isSynthesizedMarkerNode,
-  $isUnknownNode,
-  UnknownNode,
-} from "shared";
+import { $isNoteNode, $isParaLikeNode, $isUnknownNode, UnknownNode } from "shared";
 
 /** Which way a delete keystroke removes content from a collapsed caret. */
 export type DeleteDirection = "backward" | "forward";
@@ -49,11 +46,13 @@ export interface HiddenRun {
  * into the paragraph.
  *
  * The caret's paragraph is walked from the caret outward: inline wrappers (character styles) are
- * looked through, empty text is skipped, and the walk stops at a note's boundary. Contiguous hidden
- * constructs count as one run - none of them is visible, so stopping between them would leave the
- * user deleting things they cannot see one press at a time. When nothing but the paragraph's
- * leading marker label lies between the caret and the paragraph's edge, the hidden blocks right
- * beside the paragraph are the run.
+ * looked through, empty text is skipped, and a note is never entered. A caret inside an expanded
+ * note walks to the note's edge and, when nothing in the note is in the way, on into the paragraph
+ * holding it, as the delete would. Contiguous hidden constructs count as one run - none of them is
+ * visible, so stopping between them would leave the user deleting things they cannot see one press
+ * at a time. When nothing lies between the caret and the paragraph's edge, the hidden blocks right
+ * beside the paragraph are the run. A paragraph's leading marker label (the gutter's `\q1`) is in
+ * the way: Backspace just past it removes the label.
  *
  * Word and line deletes can reach hidden content further along; their callers measure that extent
  * separately.
@@ -77,7 +76,7 @@ export function $hiddenRunAtCaret(
     return $isUnknownNode(child) ? $siblingBlockRun(child, direction, true) : undefined;
   }
 
-  const container = $caretContainer(node);
+  let container = $caretContainer(node);
   if (!container) return undefined;
 
   if (anchor.type === "text") {
@@ -88,19 +87,21 @@ export function $hiddenRunAtCaret(
   let leaf = $firstLeafFromCaret(selection, direction, container);
 
   const inline: UnknownNode[] = [];
-  while (leaf) {
-    if ($isUnknownNode(leaf)) inline.push(leaf);
-    else if (!$isEmptyText(leaf)) break;
-    leaf = $nextLeaf(leaf, direction, container);
+  for (;;) {
+    while (leaf) {
+      if ($isUnknownNode(leaf)) inline.push(leaf);
+      else if (!$isEmptyText(leaf)) break;
+      leaf = $nextLeaf(leaf, direction, container);
+    }
+    // An expanded note's text runs on into its paragraph's: a delete at the note's edge leaves it.
+    if (leaf || !$isNoteNode(container)) break;
+    const outer = $caretContainer(container.getParentOrThrow());
+    if (!outer) return undefined;
+    leaf = $nextLeaf(container, direction, outer);
+    container = outer;
   }
   if (inline.length > 0) {
     return { nodes: direction === "backward" ? inline.reverse() : inline, placement: "inline" };
-  }
-
-  // A paragraph's leading marker label (the gutter's `\q1`) is not content: a caret just past it
-  // is at the paragraph's visible start.
-  if (direction === "backward") {
-    while (leaf && $isSynthesizedMarkerNode(leaf)) leaf = $nextLeaf(leaf, direction, container);
   }
   if (leaf || !$isParaLikeNode(container)) return undefined;
   return $siblingBlockRun(container, direction, false);
@@ -159,8 +160,10 @@ export function $hiddenNodesToParaEdge(
  *
  * Moves the caret to the far side of `run` without removing anything - the "keep it" answer for a
  * collapsed caret. An inline run puts the caret just before (backward) or after (forward) the run
- * in the same paragraph; a block run puts it at the end of the block before the run (backward) or
- * at the start of the block after it (forward), past that block's leading marker label.
+ * in the same paragraph; a block run puts it at the visible end of the block before the run
+ * (backward) or the visible start of the block after it (forward), past that block's leading marker
+ * label. The caret never lands inside a hidden construct or a note: where one ends (or starts) that
+ * block, the caret rests beside it.
  *
  * @param run - The run the caret skips, as found by {@link $hiddenRunAtCaret}.
  * @param direction - The direction of the delete that found it.
@@ -171,19 +174,21 @@ export function $placeCaretPastHiddenRun(run: HiddenRun, direction: DeleteDirect
   const first = run.nodes[0];
   const last = run.nodes[run.nodes.length - 1];
   if (run.placement === "inline") {
-    if (direction === "backward") $selectBefore(first);
-    else $selectAfter(last);
+    const container = $caretContainer(first);
+    if (!container) return false;
+    if (direction === "backward") $selectBefore(first, container);
+    else $selectAfter(last, container);
     return true;
   }
   if (direction === "backward") {
     const before = first.getPreviousSibling();
     if (!$isParaLikeNode(before)) return false;
-    $placeCaretAtEnd(before);
+    $placeCaretAtVisibleEnd(before);
     return true;
   }
   const after = last.getNextSibling();
   if (!$isParaLikeNode(after)) return false;
-  if (!$advancePastParaPrefixes(after)) after.selectStart();
+  if (!$advancePastParaPrefixes(after)) $placeCaretAtVisibleStart(after);
   return true;
 }
 
@@ -204,6 +209,22 @@ export function $canPlaceCaretPastHiddenRun(run: HiddenRun, direction: DeleteDir
       ? run.nodes[0].getPreviousSibling()
       : run.nodes[run.nodes.length - 1].getNextSibling();
   return $isParaLikeNode(beyond);
+}
+
+/**
+ * Read-only: safe inside `editor.getEditorState().read()`, an `editor.update()`, or a command
+ * handler.
+ *
+ * Whether `point` lies in the paragraph (or note) holding the collapsed caret `caret`. A word or
+ * line delete measured past that edge would merge the paragraph, or leave the note.
+ *
+ * @param point - A point the delete's extent reaches.
+ * @param caret - The collapsed caret the delete starts from.
+ */
+export function $isInCaretContainer(point: PointType, caret: RangeSelection): boolean {
+  const container = $caretContainer(caret.anchor.getNode());
+  const node = point.getNode();
+  return !!container && (container.is(node) || container.isParentOf(node));
 }
 
 /**
@@ -327,25 +348,55 @@ function $outermostUnknown(node: LexicalNode): UnknownNode | undefined {
   return outermost;
 }
 
-/** Collapses the caret just before `node`, in the text before it when there is any. */
-function $selectBefore(node: LexicalNode): void {
-  const previous = node.getPreviousSibling();
-  if ($isTextNode(previous) && !previous.isToken()) {
-    const size = previous.getTextContentSize();
-    previous.select(size, size);
-    return;
-  }
-  const index = node.getIndexWithinParent();
-  node.getParentOrThrow().select(index, index);
+/**
+ * Collapses the caret just before `node`: at the end of the editable text before it within
+ * `container` (looking out of a character span `node` starts), or at the boundary when there is none.
+ */
+function $selectBefore(node: LexicalNode, container: LexicalNode): void {
+  const previous = $nextLeaf(node, "backward", container);
+  if ($isTextNode(previous) && !previous.isToken())
+    previous.select(previous.getTextContentSize(), previous.getTextContentSize());
+  else $collapseAtBoundary(node.getParentOrThrow(), node.getIndexWithinParent());
 }
 
-/** Collapses the caret just after `node`, in the text after it when there is any. */
-function $selectAfter(node: LexicalNode): void {
-  const next = node.getNextSibling();
-  if ($isTextNode(next) && !next.isToken()) {
-    next.select(0, 0);
-    return;
-  }
-  const index = node.getIndexWithinParent() + 1;
-  node.getParentOrThrow().select(index, index);
+/**
+ * Collapses the caret just after `node`: at the start of the editable text after it within
+ * `container` (looking out of a character span `node` ends), or at the boundary when there is none.
+ */
+function $selectAfter(node: LexicalNode, container: LexicalNode): void {
+  const next = $nextLeaf(node, "forward", container);
+  if ($isTextNode(next) && !next.isToken()) next.select(0, 0);
+  else $collapseAtBoundary(node.getParentOrThrow(), node.getIndexWithinParent() + 1);
+}
+
+/**
+ * Collapses the caret to `parent`'s element point at `index`, the fallback where no text hosts the
+ * position. Set directly: `ElementNode.select` would carry it into the child at that boundary when
+ * `parent` cannot be empty (a character span), and that child may be a hidden construct or a note.
+ * A text point is preferred wherever there is one, because Lexical's normalization of a point read
+ * back from the DOM likewise descends into the element at a boundary.
+ */
+function $collapseAtBoundary(parent: ElementNode, index: number): void {
+  const selection = $createRangeSelection();
+  selection.anchor.set(parent.getKey(), index, "element");
+  selection.focus.set(parent.getKey(), index, "element");
+  $setSelection(selection);
+}
+
+/** Collapses the caret at the end of `block`'s last visible text, or just past what ends it. */
+function $placeCaretAtVisibleEnd(block: ElementNode): void {
+  const last = block.getLastChild();
+  const leaf = last ? $resolveLeaf(last, "backward", block) : undefined;
+  if (!leaf) $collapseAtBoundary(block, block.getChildrenSize());
+  else if ($isTextNode(leaf)) leaf.select(leaf.getTextContentSize(), leaf.getTextContentSize());
+  else $selectAfter(leaf, block);
+}
+
+/** Collapses the caret at the start of `block`'s first visible text, or just before what starts it. */
+function $placeCaretAtVisibleStart(block: ElementNode): void {
+  const first = block.getFirstChild();
+  const leaf = first ? $resolveLeaf(first, "forward", block) : undefined;
+  if (!leaf) $collapseAtBoundary(block, 0);
+  else if ($isTextNode(leaf)) leaf.select(0, 0);
+  else $selectBefore(leaf, block);
 }

@@ -833,20 +833,11 @@ export interface EditorOptions {
    */
   structureProtectionMode?: StructureProtectionMode;
   /**
-   * Asks the user before an edit removes content the view does not show.
-   *
-   * Constructs the editor carries without modeling them - figures, sidebars, `\periph`, and the
-   * like - are hidden in every view whose `view.markerMode` is not `"editable"` (all but Standard
-   * and Unformatted). A Backspace or Delete that would reach one, a word or line delete that would
-   * cover one, and any delete, typing, Enter, paste or cut over a selection holding one is held, and
-   * this is called to ask. On `"delete"` the edit goes ahead, removing the hidden content; a
-   * character delete removes exactly the hidden content and nothing else, so no paragraph is merged
-   * or dissolved around it. On `"keep"` nothing is removed: the caret moves past the hidden content
-   * when the request's `canSkip` says so, and otherwise the edit is cancelled. Dragging a selection
-   * that holds hidden content is refused, and so is cutting one while
-   * {@link EditorOptions.copyLimit} is set.
-   *
-   * Without this option editing is native, and such edits remove hidden content without asking.
+   * Asks the user before an edit removes content the view hides: figures, sidebars, `\periph` and
+   * other constructs the editor carries unmodeled, hidden whenever `view.markerMode` is not
+   * `"editable"`. Deletes that reach one, and any edit over a selection holding one, wait for the
+   * answer (see {@link HiddenContentDeleteHandler}). Dragging such a selection, or cutting it while
+   * {@link EditorOptions.copyLimit} is set, is refused. Unset, editing is native.
    */
   onHiddenContentDelete?: HiddenContentDeleteHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */

@@ -73,16 +73,14 @@ refused. The public surface grew substantially; nothing was removed.
 - `EditorOptions.onHiddenContentDelete`, with the types `HiddenContentDeleteHandler`,
   `HiddenContentDeleteRequest`, `HiddenContentDeleteDecision`, `HiddenContentDeleteAction` and
   `HiddenContentItem`: asks before an edit removes content the view does not show (a figure, a
-  sidebar, `\periph`, ...), which is hidden in every view whose `markerMode` is not `"editable"`
-  (all but Standard and Unformatted). Answering `"delete"` lets the edit remove it; `"keep"` moves a
-  caret past it or cancels the edit, and the request's `canSkip` says which, so a host can label its
-  choice to match. The answered edit is dropped, and the drop logged, if the document's text
-  changed, the held content was removed, the selection moved or the editor became read-only while
-  the host was asking. Under guarded structure protection, a selection holding a verse marker still
-  takes two presses: the first arms the delete as before, a press the other way still cancels it,
-  and the question is asked on the press that deletes. While the option is set, dragging a
-  selection that holds such content is refused, and so is cutting one while `copyLimit` is set.
-  Without the option editing is unchanged.
+  sidebar, `\periph`, ...), which is hidden in every view whose `markerMode` is not `"editable"`.
+  Left native, such an edit can empty a figure's caption, merge a paragraph into a hidden sidebar
+  or dissolve the sidebar into it, all unseen. With the option set, a delete that reaches hidden
+  content, and any edit over a selection holding some, waits for the answer. `"delete"` lets the
+  edit remove it, and a delete that stops at a paragraph's edge never merges or dissolves a
+  paragraph; `"keep"` moves a caret past it or cancels the edit, as the request's `canSkip` says,
+  so a host can label its choice to match. Dragging a selection that holds such content is
+  refused, and so is cutting one while `copyLimit` is set.
 
 ### Changed
 
@@ -159,14 +157,6 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Fixed
 
-- With `EditorOptions.onHiddenContentDelete` set, edits no longer remove hidden figures, sidebars
-  and other constructs the editor does not model without asking, in views that hide them (every
-  view whose `markerMode` is not `"editable"`). Before, a character delete next to a figure emptied
-  its caption and left the caret stuck in the empty figure; at a paragraph's edge it merged the
-  paragraph into a hidden sidebar or dissolved the sidebar into the paragraph; and a word or line
-  delete, or any edit over a selection, removed whatever hidden content it covered. Confirmed, a
-  character delete removes just the hidden constructs at the caret, without merging or dissolving
-  any paragraph.
 - The caller of an unclosed note (which renders expanded, its caller as text) can be deleted; the
   note keeps an empty caller and shows both separators (`\f  \fr …`), as Paratext 9 does.
 - Typing a note's own closer (`\f*`) into an unclosed note closes it there; what followed the

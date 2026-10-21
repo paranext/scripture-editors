@@ -26,16 +26,16 @@ export interface HiddenContentDeleteRequest {
   /**
    * Whether `"keep"` moves the caret past the hidden content, leaving the user free to keep going.
    * When `false`, `"keep"` cancels the edit and the caret stays where it was. `true` only for a
-   * caret delete whose only hidden content is the run right at the caret, with visible content
-   * beyond it to move to; a word or line delete reaching hidden content further along, a run with
-   * nothing beyond it, and any selection edit cannot skip.
+   * caret delete whose sole hidden content is the run at the caret, with somewhere past it to go.
    */
   readonly canSkip: boolean;
 }
 
 /**
  * The user's answer.
- * - `"delete"`: go ahead and remove the hidden content along with the edit.
+ * - `"delete"`: go ahead and remove the hidden content along with the edit. A delete that stops at
+ *   a paragraph's edge removes only the hidden content there: it never merges the paragraph into a
+ *   hidden block, or dissolves one into the paragraph.
  * - `"keep"`: keep it. The caret moves past it when the request's `canSkip` is `true`; otherwise
  *   the edit is cancelled.
  */
@@ -48,7 +48,11 @@ export type HiddenContentDeleteDecision = "delete" | "keep";
  * The editor holds the edit until this settles and refuses typing, deleting, pasting and cutting
  * meanwhile, so it must settle: a modal dialog whose every way out answers is the intended shape.
  * Until it does, editing stays held. A rejected promise, a thrown error, and any answer other than
- * `"delete"` count as `"keep"`.
+ * `"delete"` count as `"keep"`. It is called after the keystroke's own dispatch has finished, so
+ * it may call back into the editor.
+ *
+ * The answer is dropped, and nothing changed, if what the edit covers changed, the selection moved
+ * or the editor became read-only while the host was asking.
  */
 export type HiddenContentDeleteHandler = (
   request: HiddenContentDeleteRequest,

@@ -26,10 +26,10 @@ import {
   COMMAND_PRIORITY_HIGH,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   CUT_COMMAND,
+  DELETE_CHARACTER_COMMAND,
   DRAGSTART_COMMAND,
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
-  LexicalEditor,
   PASTE_COMMAND,
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -37,27 +37,6 @@ import { $isSomeVerseNode } from "../../nodes/usj";
 import { $isSomeParaNode } from "shared";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
-
-/**
- * The direction of the two-step selection delete {@link StructureKeyboardPlugin} has armed, read
- * from the signal it publishes on the editor root, or `undefined` when none is armed. A press in
- * that direction fires the delete; a press the other way cancels it. For another plugin that must
- * act on the press that fires the delete, not on the one that arms or cancels it.
- *
- * @param editor - The editor to read; any context, it reads only the DOM.
- */
-export function armedSelectionDeleteIntent(
-  editor: LexicalEditor,
-): "deleteBackward" | "deleteForward" | undefined {
-  const root = editor.getRootElement();
-  if (
-    !root?.classList.contains("verse-delete-armed") ||
-    root.getAttribute("data-verse-delete-kind") !== "selection"
-  )
-    return undefined;
-  const intent = root.getAttribute("data-verse-delete-intent");
-  return intent === "deleteBackward" || intent === "deleteForward" ? intent : undefined;
-}
 
 /**
  * Governs structural keystrokes (Backspace/Delete/Enter/typing) at verse- and paragraph-marker
@@ -138,11 +117,13 @@ export function StructureKeyboardPlugin({
             else parent?.selectStart();
           }
         } else if (armed.kind === "selection") {
+          // Deletes the whole range, verse included, through the command every selection delete
+          // reaches, so the guards on one judge this one too (the question before hidden content
+          // goes, among them). A range that starts before the `\id` line's prefix is kept off the
+          // glyph here as well, so this fire never relies on the prefix guard being mounted.
           if ($isRangeSelection(selection)) {
-            // Straight off the keystroke, so the prefix guard's DELETE_CHARACTER_COMMAND narrowing
-            // never runs — keep a range that starts before the `\id` line's prefix off the glyph.
             $narrowSelectionPastBookPrefix(selection);
-            selection.removeText(); // deletes the whole range, verse included
+            editor.dispatchCommand(DELETE_CHARACTER_COMMAND, intent === "deleteBackward");
           }
         } else if ($isSomeParaNode(node)) {
           // Only paragraphs merge into paragraphs; never merge some other ElementNode.

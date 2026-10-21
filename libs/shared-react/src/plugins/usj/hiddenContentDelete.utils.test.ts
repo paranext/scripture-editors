@@ -29,11 +29,13 @@ import {
   UnknownNode,
 } from "shared";
 
-function $figure(caption = "caption"): UnknownNode {
+/** A hidden `\fig`, its caption token-mode text as the editor loads it. */
+function $createFigureNode(caption = "caption"): UnknownNode {
   return $createUnknownNode("figure", "fig").append($createTextNode(caption).setMode("token"));
 }
 
-function $sidebar(text = "sidebar text"): UnknownNode {
+/** A hidden `\esb` sidebar holding one paragraph. */
+function $createSidebarNode(text = "sidebar text"): UnknownNode {
   return $createUnknownNode("sidebar", "esb").append(
     $createParaNode("p").append($createTextNode(text)),
   );
@@ -53,7 +55,7 @@ describe("$hiddenRunAtCaret", () => {
     let fig: UnknownNode;
     let after: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      fig = $figure();
+      fig = $createFigureNode();
       after = $createTextNode("after");
       $getRoot().append($createParaNode("p").append($createTextNode("before"), fig, after));
     });
@@ -67,7 +69,7 @@ describe("$hiddenRunAtCaret", () => {
     let fig: UnknownNode;
     let before: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      fig = $figure();
+      fig = $createFigureNode();
       before = $createTextNode("before");
       $getRoot().append($createParaNode("p").append(before, fig, $createTextNode("after")));
     });
@@ -81,7 +83,9 @@ describe("$hiddenRunAtCaret", () => {
     let after: TextNode;
     const { editor } = await baseTestEnvironment(() => {
       after = $createTextNode("after");
-      $getRoot().append($createParaNode("p").append($createTextNode("before"), $figure(), after));
+      $getRoot().append(
+        $createParaNode("p").append($createTextNode("before"), $createFigureNode(), after),
+      );
     });
     updateSelection(editor, after!, 2);
 
@@ -93,8 +97,8 @@ describe("$hiddenRunAtCaret", () => {
     let fig2: UnknownNode;
     let after: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      fig1 = $figure("one");
-      fig2 = $figure("two");
+      fig1 = $createFigureNode("one");
+      fig2 = $createFigureNode("two");
       after = $createTextNode("after");
       $getRoot().append(
         $createParaNode("p").append(
@@ -115,7 +119,7 @@ describe("$hiddenRunAtCaret", () => {
     let fig: UnknownNode;
     let styled: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      fig = $figure();
+      fig = $createFigureNode();
       styled = $createTextNode("styled");
       $getRoot().append(
         $createParaNode("p").append(
@@ -134,7 +138,7 @@ describe("$hiddenRunAtCaret", () => {
     let fig: UnknownNode;
     let after: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      fig = $figure();
+      fig = $createFigureNode();
       after = $createTextNode("after");
       $getRoot().append(
         $createParaNode("p").append($createCharNode("nd").append($createTextNode("x"), fig), after),
@@ -149,21 +153,24 @@ describe("$hiddenRunAtCaret", () => {
     let fig: UnknownNode;
     let para: ParaNode;
     const { editor } = await baseTestEnvironment(() => {
-      fig = $figure();
-      para = $createParaNode("p").append(fig);
-      $getRoot().append(para);
+      fig = $createFigureNode();
+      para = $createParaNode("p");
+      $getRoot().append(para.append(fig));
     });
     updateSelection(editor, para!, 1);
 
     expect(readRunKeys(editor, "backward")?.keys).toEqual([fig!.getKey()]);
   });
 
-  it("never walks out of a note", async () => {
+  it("stops at what in a note lies between the caret and the note's edge", async () => {
     let noteText: TextNode;
     const { editor } = await baseTestEnvironment(() => {
       noteText = $createTextNode("note text");
       $getRoot().append(
-        $createParaNode("p").append($figure(), $createNoteNode("f", "+").append(noteText)),
+        $createParaNode("p").append(
+          $createFigureNode(),
+          $createNoteNode("f", "+").append($createTextNode("+ ").setMode("token"), noteText),
+        ),
       );
     });
     updateSelection(editor, noteText!, 0);
@@ -171,11 +178,65 @@ describe("$hiddenRunAtCaret", () => {
     expect(readRun(editor, "backward")).toBeUndefined();
   });
 
+  it("walks on out of an expanded note's far edge into its paragraph's neighbors", async () => {
+    let sidebar: UnknownNode;
+    let noteText: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      sidebar = $createSidebarNode();
+      noteText = $createTextNode("note text");
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createTextNode("text"),
+          $createNoteNode("f", "+").append($createTextNode("+ ").setMode("token"), noteText),
+        ),
+        sidebar,
+        $createParaNode("p").append($createTextNode("next")),
+      );
+    });
+    updateSelection(editor, noteText!, "note text".length);
+
+    expect(readRunKeys(editor, "forward")).toEqual({
+      keys: [sidebar!.getKey()],
+      placement: "block",
+    });
+  });
+
+  it("finds a hidden block from a caret between root children", async () => {
+    let sidebar: UnknownNode;
+    const { editor } = await baseTestEnvironment(() => {
+      sidebar = $createSidebarNode();
+      $getRoot().append($createParaNode("p").append($createTextNode("first")), sidebar);
+    });
+    await sutUpdate(editor, () => {
+      $getRoot().select(1, 1);
+    });
+
+    expect(readRunKeys(editor, "forward")).toEqual({
+      keys: [sidebar!.getKey()],
+      placement: "block",
+    });
+  });
+
+  it("looks past empty text between the caret and a figure", async () => {
+    let fig: UnknownNode;
+    let after: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      fig = $createFigureNode();
+      after = $createTextNode("after");
+      $getRoot().append(
+        $createParaNode("p").append($createTextNode("before"), fig, $createTextNode(""), after),
+      );
+    });
+    updateSelection(editor, after!, 0);
+
+    expect(readRunKeys(editor, "backward")?.keys).toEqual([fig!.getKey()]);
+  });
+
   it("finds a hidden sidebar before the paragraph when the caret is at its start", async () => {
     let sidebar: UnknownNode;
     let text: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      sidebar = $sidebar();
+      sidebar = $createSidebarNode();
       text = $createTextNode("text");
       $getRoot().append(
         $createParaNode("p").append($createTextNode("first")),
@@ -191,28 +252,26 @@ describe("$hiddenRunAtCaret", () => {
     });
   });
 
-  it("counts a caret just past the paragraph's marker label as the paragraph start", async () => {
-    let sidebar: UnknownNode;
+  it("stops at the paragraph's marker label, which a Backspace just past it removes", async () => {
     let text: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      sidebar = $sidebar();
       text = $createTextNode("text");
       $getRoot().append(
         $createParaNode("p").append($createTextNode("first")),
-        sidebar,
+        $createSidebarNode(),
         $createParaNode("q1").append($createImmutableTypedTextNode("marker", "\\q1 "), text),
       );
     });
     updateSelection(editor, text!, 0);
 
-    expect(readRunKeys(editor, "backward")?.keys).toEqual([sidebar!.getKey()]);
+    expect(readRun(editor, "backward")).toBeUndefined();
   });
 
   it("finds a hidden sidebar after the paragraph when the caret is at its end", async () => {
     let sidebar: UnknownNode;
     let text: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      sidebar = $sidebar();
+      sidebar = $createSidebarNode();
       text = $createTextNode("text");
       $getRoot().append(
         $createParaNode("p").append(text),
@@ -232,9 +291,9 @@ describe("$hiddenRunAtCaret", () => {
     let fig: UnknownNode;
     let text: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      fig = $figure();
+      fig = $createFigureNode();
       text = $createTextNode("text");
-      $getRoot().append($sidebar(), $createParaNode("p").append(fig, text));
+      $getRoot().append($createSidebarNode(), $createParaNode("p").append(fig, text));
     });
     updateSelection(editor, text!, 0);
 
@@ -259,7 +318,7 @@ describe("$hiddenRunAtCaret", () => {
     let text: TextNode;
     const { editor } = await baseTestEnvironment(() => {
       text = $createTextNode("text");
-      $getRoot().append($createParaNode("p").append($figure(), text));
+      $getRoot().append($createParaNode("p").append($createFigureNode(), text));
     });
     updateSelection(editor, text!, 0, text!, 2);
 
@@ -273,7 +332,7 @@ describe("$hiddenNodesInSelection", () => {
     let before: TextNode;
     let after: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      fig = $figure();
+      fig = $createFigureNode();
       before = $createTextNode("before");
       after = $createTextNode("after");
       $getRoot().append($createParaNode("p").append(before, fig, after));
@@ -291,14 +350,18 @@ describe("$hiddenNodesInSelection", () => {
     let first: TextNode;
     let last: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      sidebar = $createUnknownNode("sidebar", "esb").append(
-        $createParaNode("p").append($createTextNode("a"), $figure(), $createTextNode("b")),
-      );
+      sidebar = $createUnknownNode("sidebar", "esb");
       first = $createTextNode("first");
       last = $createTextNode("last");
       $getRoot().append(
         $createParaNode("p").append(first),
-        sidebar,
+        sidebar.append(
+          $createParaNode("p").append(
+            $createTextNode("a"),
+            $createFigureNode(),
+            $createTextNode("b"),
+          ),
+        ),
         $createParaNode("p").append(last),
       );
     });
@@ -314,7 +377,7 @@ describe("$hiddenNodesInSelection", () => {
     let text: TextNode;
     const { editor } = await baseTestEnvironment(() => {
       text = $createTextNode("text");
-      $getRoot().append($createParaNode("p").append(text, $figure()));
+      $getRoot().append($createParaNode("p").append(text, $createFigureNode()));
     });
     updateSelection(editor, text!, 0, text!, 3);
 
@@ -329,12 +392,12 @@ describe("$hiddenNodesToParaEdge", () => {
     let fig2: UnknownNode;
     let end: TextNode;
     const { editor } = await baseTestEnvironment(() => {
-      fig1 = $figure("one");
-      fig2 = $figure("two");
+      fig1 = $createFigureNode("one");
+      fig2 = $createFigureNode("two");
       end = $createTextNode("end");
       $getRoot().append(
         $createParaNode("p").append(fig1, $createTextNode("middle"), fig2, end),
-        $createParaNode("p").append($figure("elsewhere")),
+        $createParaNode("p").append($createFigureNode("elsewhere")),
       );
     });
     updateSelection(editor, end!, 3);
@@ -349,7 +412,10 @@ describe("$hiddenNodesToParaEdge", () => {
     let start: TextNode;
     const { editor } = await baseTestEnvironment(() => {
       start = $createTextNode("start");
-      $getRoot().append($createParaNode("p").append(start, $createTextNode(" more")), $figure());
+      $getRoot().append(
+        $createParaNode("p").append(start, $createTextNode(" more")),
+        $createFigureNode(),
+      );
     });
     updateSelection(editor, start!, 2);
 
@@ -385,7 +451,7 @@ describe("$placeCaretPastHiddenRun", () => {
     const { editor } = await baseTestEnvironment(() => {
       before = $createTextNode("before");
       after = $createTextNode("after");
-      $getRoot().append($createParaNode("p").append(before, $figure(), after));
+      $getRoot().append($createParaNode("p").append(before, $createFigureNode(), after));
     });
     updateSelection(editor, after!, 0);
 
@@ -402,7 +468,7 @@ describe("$placeCaretPastHiddenRun", () => {
     const { editor } = await baseTestEnvironment(() => {
       before = $createTextNode("before");
       after = $createTextNode("after");
-      $getRoot().append($createParaNode("p").append(before, $figure(), after));
+      $getRoot().append($createParaNode("p").append(before, $createFigureNode(), after));
     });
     updateSelection(editor, before!, "before".length);
 
@@ -421,7 +487,7 @@ describe("$placeCaretPastHiddenRun", () => {
       text = $createTextNode("text");
       $getRoot().append(
         $createParaNode("p").append(first),
-        $sidebar(),
+        $createSidebarNode(),
         $createParaNode("q1").append(text),
       );
     });
@@ -442,7 +508,7 @@ describe("$placeCaretPastHiddenRun", () => {
       next = $createTextNode("next");
       $getRoot().append(
         $createParaNode("p").append(text),
-        $sidebar(),
+        $createSidebarNode(),
         $createParaNode("q1").append(next),
       );
     });
@@ -455,11 +521,99 @@ describe("$placeCaretPastHiddenRun", () => {
     });
   });
 
+  it("puts the caret beside, never inside, a figure ending the paragraph before a block run", async () => {
+    let para: ParaNode;
+    let text: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      para = $createParaNode("p");
+      text = $createTextNode("text");
+      $getRoot().append(
+        para.append($createTextNode("first"), $createFigureNode()),
+        $createSidebarNode(),
+        $createParaNode("p").append(text),
+      );
+    });
+    updateSelection(editor, text!, 0);
+
+    expect(await caretAfterSkip(editor, "backward")).toEqual({
+      key: para!.getKey(),
+      offset: 2,
+      type: "element",
+    });
+  });
+
+  it("puts the caret beside, never inside, a note ending the paragraph before a block run", async () => {
+    let para: ParaNode;
+    let text: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      para = $createParaNode("p");
+      text = $createTextNode("text");
+      $getRoot().append(
+        para.append(
+          $createTextNode("first"),
+          $createNoteNode("f", "+").append($createTextNode("note text")),
+        ),
+        $createSidebarNode(),
+        $createParaNode("p").append(text),
+      );
+    });
+    updateSelection(editor, text!, 0);
+
+    expect(await caretAfterSkip(editor, "backward")).toEqual({
+      key: para!.getKey(),
+      offset: 2,
+      type: "element",
+    });
+  });
+
+  it("puts the caret beside, never inside, a figure starting the paragraph after a block run", async () => {
+    let para: ParaNode;
+    let text: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      para = $createParaNode("p");
+      text = $createTextNode("text");
+      $getRoot().append(
+        $createParaNode("p").append(text),
+        $createSidebarNode(),
+        para.append($createFigureNode(), $createTextNode("next")),
+      );
+    });
+    updateSelection(editor, text!, "text".length);
+
+    expect(await caretAfterSkip(editor, "forward")).toEqual({
+      key: para!.getKey(),
+      offset: 0,
+      type: "element",
+    });
+  });
+
+  it("puts the caret in the text before a character span an inline run starts, never inside the run", async () => {
+    let before: TextNode;
+    let word: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      before = $createTextNode("before ");
+      word = $createTextNode("word");
+      $getRoot().append(
+        $createParaNode("p").append(
+          before,
+          $createCharNode("nd").append($createFigureNode(), word),
+        ),
+      );
+    });
+    updateSelection(editor, word!, 0);
+
+    expect(await caretAfterSkip(editor, "backward")).toEqual({
+      key: before!.getKey(),
+      offset: "before ".length,
+      type: "text",
+    });
+  });
+
   it("leaves the caret alone when no paragraph lies beyond a block run", async () => {
     let text: TextNode;
     const { editor } = await baseTestEnvironment(() => {
       text = $createTextNode("text");
-      $getRoot().append($sidebar(), $createParaNode("q1").append(text));
+      $getRoot().append($createSidebarNode(), $createParaNode("q1").append(text));
     });
     updateSelection(editor, text!, 0);
 
@@ -472,7 +626,11 @@ describe("$hiddenContentItems", () => {
     const { editor } = await baseTestEnvironment();
     let items: ReturnType<typeof $hiddenContentItems> = [];
     await sutUpdate(editor, () => {
-      items = $hiddenContentItems([$figure(), $sidebar(), $createUnknownNode("periph")]);
+      items = $hiddenContentItems([
+        $createFigureNode(),
+        $createSidebarNode(),
+        $createUnknownNode("periph"),
+      ]);
     });
     expect(items).toEqual([
       { tag: "figure", marker: "fig" },

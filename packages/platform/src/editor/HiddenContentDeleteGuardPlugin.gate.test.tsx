@@ -66,7 +66,10 @@ async function renderEditor(
   return lexicalRef.current;
 }
 
-/** Puts the caret at the start of the text right after the figure and presses Backspace. */
+/**
+ * Puts the caret at the start of the text right after the figure, presses Backspace, and waits the
+ * task after which the guard asks.
+ */
 async function backspaceAfterFigure(editor: LexicalEditor) {
   await act(async () => {
     editor.update(
@@ -85,6 +88,7 @@ async function backspaceAfterFigure(editor: LexicalEditor) {
       KEY_DOWN_COMMAND,
       new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }),
     );
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
 

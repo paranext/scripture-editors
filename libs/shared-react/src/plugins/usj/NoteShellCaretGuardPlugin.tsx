@@ -310,8 +310,13 @@ function $protectedNotesIn(selection: RangeSelection): NoteNode[] {
  * note. Taking the whole shell into the range would still let that edit remove it; narrowing keeps
  * the edit to the content the note lets the user change. It is also what select-all means in a
  * note editor: all the note's text, never its marker, caller, or closer.
+ *
+ * Mutating (it moves `selection`'s points): call inside `editor.update()` or a command handler.
+ * Exported for a handler that acts on a range ahead of this plugin's own narrowing.
+ *
+ * @returns Whether the range was narrowed.
  */
-function $narrowSelectionOutOfShell(selection: RangeSelection): boolean {
+export function $narrowSelectionOutOfShell(selection: RangeSelection): boolean {
   const notes = $protectedNotesIn(selection);
   if (notes.length === 0) return false;
   const isBackward = selection.isBackward();
