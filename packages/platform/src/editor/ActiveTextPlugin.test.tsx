@@ -1,15 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { $getRoot, $createTextNode, $getSelection, LexicalNode } from "lexical";
 import {
+  $getRoot,
+  $createTextNode,
+  $getSelection,
+  LexicalEditor,
+  LexicalNode,
+  TextNode,
+} from "lexical";
+import {
+  $addDisplayAnnotation,
   $createImmutableTypedTextNode,
   $createMarkerNode,
   $createParaNode,
   $createVerseNode,
+  $lastPiece,
+  $pieces,
   CharNode,
+  getVisibleOpenMarkerText,
   ImmutableTypedTextNode,
   MarkerNode,
   NBSP,
   ParaNode,
+  registerDisplayAnnotationBasis,
   VerseNode,
 } from "shared";
 import { $createImmutableVerseNode, ImmutableVerseNode, SomeVerseNode } from "shared-react";
@@ -333,6 +345,70 @@ describe("$getActiveVerseKey", () => {
         expect(result).toBe(v2.getKey());
       });
     });
+  });
+});
+
+describe("a verse marker an annotation cuts into pieces", () => {
+  /** An editable paragraph holding `\v 1 ` (cut around its number) and then `body`, if any. */
+  function cutVerse(body?: string): { editor: LexicalEditor; para: ParaNode; verse: VerseNode } {
+    let para!: ParaNode;
+    let verse!: VerseNode;
+    const { editor } = createBasicTestEnvironment(nodes, () => {
+      verse = $createVerseNode("1", getVisibleOpenMarkerText("v", "1"));
+      para = $createParaNode("p");
+      $getRoot().append(
+        para.append(
+          ...$createParaMarkerPrefixNodes("editable", "p"),
+          verse,
+          ...(body ? [$createTextNode(body)] : []),
+        ),
+      );
+    });
+    registerDisplayAnnotationBasis(editor);
+    editor.update(() => $addDisplayAnnotation(verse, "test", "a", 3, 4), { discrete: true });
+    editor.getEditorState().read(() => expect($pieces(verse).length).toBe(3));
+    return { editor, para, verse };
+  }
+
+  it("marks the whole verse empty once, on its last piece, when it has no body text", () => {
+    const { editor, para, verse } = cutVerse();
+    editor.getEditorState().read(() => {
+      expect($getEmptyVerseStatus(para)).toEqual({
+        emptyKeys: [$lastPiece(verse).getKey()],
+        nonEmptyKeys: [],
+      });
+    });
+  });
+
+  it("marks the whole verse non-empty once when it has body text", () => {
+    const { editor, para, verse } = cutVerse("In the beginning");
+    editor.getEditorState().read(() => {
+      expect($getEmptyVerseStatus(para)).toEqual({
+        emptyKeys: [],
+        nonEmptyKeys: [$lastPiece(verse).getKey()],
+      });
+    });
+  });
+
+  it("names the verse by the key its status is reported on, wherever in it the caret is", () => {
+    const { editor, verse } = cutVerse("In the beginning");
+    const keys: (string | undefined)[] = [];
+    for (const $node of [
+      () => verse,
+      () => $lastPiece(verse),
+      () => $lastPiece(verse).getNextSibling(),
+    ]) {
+      editor.update(
+        () => {
+          const node = $node();
+          if (node instanceof TextNode) node.select(1, 1);
+        },
+        { discrete: true },
+      );
+      keys.push(editor.getEditorState().read($getActiveVerseKey));
+    }
+    const last = editor.getEditorState().read(() => $lastPiece(verse).getKey());
+    expect(keys).toEqual([last, last, last]);
   });
 });
 

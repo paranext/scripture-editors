@@ -19,14 +19,34 @@ const LEADING_SPACES = /^[ \u00A0]*/;
 /**
  * Finds the characters the collapse drops: every character of a run after its first.
  *
+ * A run can cross from one text node into the next (an annotation mark cuts a text into several
+ * nodes, and the mark is presentation only), and is collapsed as ONE run: when `continuesRun` says
+ * the text before this one ends in a display space, this text's leading spaces are that run's
+ * later characters and all drop.
+ *
  * @param displayText - A text node's display text, without a char span's separator prefix.
+ * @param continuesRun - Whether the text this one follows in the same run of text ends in a
+ *   display space ({@link endsInSpaceRun} of what it keeps).
  * @returns The dropped characters as ascending, non-overlapping `[start, end)` ranges.
  */
-export function collapsedSpaceRunRanges(displayText: string): [number, number][] {
-  return [...displayText.matchAll(SPACE_RUN)].map((run) => [
-    run.index + 1,
-    run.index + run[0].length,
+export function collapsedSpaceRunRanges(
+  displayText: string,
+  continuesRun = false,
+): [number, number][] {
+  // With the run's earlier space prepended, a run at `index` in the joined text drops
+  // `[index + 1, index + length)` there, which is `[index, index + length - 1)` in this text.
+  const shift = continuesRun ? 1 : 0;
+  const text = continuesRun ? ` ${displayText}` : displayText;
+  return [...text.matchAll(SPACE_RUN)].map((run) => [
+    run.index + 1 - shift,
+    run.index + run[0].length - shift,
   ]);
+}
+
+/** Whether display text ends in a display space, so a space run the next text starts with
+ * continues it. */
+export function endsInSpaceRun(displayText: string): boolean {
+  return /[ \u00A0]$/.test(displayText);
 }
 
 /**

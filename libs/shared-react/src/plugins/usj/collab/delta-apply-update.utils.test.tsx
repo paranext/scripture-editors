@@ -3,6 +3,7 @@
 import {
   editorStateEmpty,
   editorStateGen1v1,
+  editorStateGen1v1Editable,
   editorStateGen1v1ImpliedPara,
   editorStateGen1v1ImpliedParaEmpty,
   NOTE_CALLER_INDEX,
@@ -21,11 +22,17 @@ import { $createImmutableVerseNode } from "../../../nodes/usj/ImmutableVerseNode
 import { $isSomeVerseNode } from "../../../nodes/usj/node-react.utils";
 import { UsjNodeOptions } from "../../../nodes/usj/usj-node-options.model";
 import { CharNodePlugin } from "../CharNodePlugin";
-import { baseTestEnvironment, removeNoteCallerOnClick } from "../react-test.utils";
+import {
+  baseTestEnvironment,
+  countContinuationPieces,
+  cutEveryCarrierIntoPieces,
+  removeNoteCallerOnClick,
+} from "../react-test.utils";
 import { getDefaultViewOptions, ViewOptions } from "../../../views/view-options.utils";
 import { $applyUpdate } from "./delta-apply-update.utils";
-import { DeltaOp, LF } from "./delta-common.utils";
+import { $getOTPositionOfNode, DeltaOp, LF } from "./delta-common.utils";
 import { getEditorDelta } from "./editor-delta.adaptor";
+import { $dfs } from "@lexical/utils";
 import { act } from "@testing-library/react";
 import {
   $createTextNode,
@@ -65,6 +72,7 @@ import {
   getEditableCallerText,
   getVisibleOpenMarkerText,
   NBSP,
+  $pieces,
   removeUndefinedProperties,
   segmentState,
   SerializedNoteNode,
@@ -5280,6 +5288,124 @@ describe("Delta Utils $applyUpdate", () => {
         expect(content.getTextContent()).toBe("the first verse");
       });
     });
+  });
+});
+
+describe("a carrier cut into pieces", () => {
+  // An annotation held over part of a display-byte carrier cuts it into pieces of its own class
+  // (`displayPieces.state.ts`). The pieces are one carrier, so every update must leave the cut
+  // document exactly as it leaves the uncut one.
+  const editableViewOptions: ViewOptions = { ...defaultViewOptions, markerMode: "editable" };
+
+  /** The first node (a carrier's first piece) `predicate` matches, and its "apply" position. */
+  function $find(predicate: (node: LexicalNode) => boolean): {
+    node: LexicalNode;
+    position: number;
+  } {
+    const node = $dfs()
+      .map((dfsNode) => dfsNode.node)
+      .find(predicate);
+    const position = node && $getOTPositionOfNode(node, "apply");
+    if (!node || position === undefined) throw new Error("node not found");
+    return { node, position };
+  }
+  const $verse = (number: string) =>
+    $find((node) => $isSomeVerseNode(node) && node.getNumber() === number).position;
+  const $unmatched = () => $find($isImmutableUnmatchedNode).position;
+  const $paraClose = (marker: string) =>
+    $find((node) => $isParaNode(node) && node.getMarker() === marker).position;
+  const $glyph = (marker: string, syntax: "opening" | "closing") =>
+    $find(
+      (node) =>
+        $isMarkerNode(node) && node.getMarker() === marker && node.getMarkerSyntax() === syntax,
+    ).position;
+
+  const cases: [string, () => DeltaOp[]][] = [
+    ["deleting a verse", () => [{ retain: $verse("2") }, { delete: 1 }]],
+    ["deleting an unmatched closer", () => [{ retain: $unmatched() }, { delete: 1 }]],
+    ["inserting text right after a verse", () => [{ retain: $verse("1") + 1 }, { insert: "X" }]],
+    [
+      "inserting a note right after a verse",
+      () => [
+        { retain: $verse("1") + 1 },
+        {
+          insert: {
+            note: {
+              style: "f",
+              caller: "+",
+              contents: { ops: [{ insert: "note", attributes: { char: { style: "ft" } } }] },
+            },
+          },
+        },
+      ],
+    ],
+    [
+      "inserting a milestone right after a verse",
+      () => [{ retain: $verse("2") + 1 }, { insert: { milestone: { style: "ts-s" } } }],
+    ],
+    [
+      "setting an attribute of a verse",
+      () => [{ retain: $verse("15") }, { retain: 1, attributes: { "attr-x": "y" } }],
+    ],
+    [
+      "retagging a paragraph",
+      () => [{ retain: $paraClose("p") }, { retain: 1, attributes: { style: "q1" } }],
+    ],
+    [
+      "retagging a paragraph to its own marker",
+      () => [{ retain: $paraClose("p") }, { retain: 1, attributes: { style: "p" } }],
+    ],
+    [
+      "retagging a char span",
+      // The span's own glyphs count in "apply" coordinates: `\nd` + ` Lord` + `\nd*`.
+      () => [
+        { retain: $glyph("nd", "opening") },
+        { retain: 12, attributes: { char: { style: "wj" } } },
+      ],
+    ],
+    [
+      "inserting a span's text in front of its closer",
+      () => [
+        { retain: $glyph("nd", "closing") },
+        { insert: "X", attributes: { char: { style: "nd" } } },
+      ],
+    ],
+    [
+      "inserting a paragraph break right after a verse",
+      () => [{ retain: $verse("2") + 1 }, { insert: LF, attributes: { para: { style: "q2" } } }],
+    ],
+  ];
+
+  it.each(cases)("leaves the same document after %s", async (_name, $ops) => {
+    const results = [];
+    for (const cut of [false, true]) {
+      const { editor } = await testEnvironment();
+      await act(async () => {
+        editor.setEditorState(editor.parseEditorState(editorStateGen1v1Editable));
+      });
+      const ops = editor.getEditorState().read($ops);
+      if (cut) {
+        await cutEveryCarrierIntoPieces(editor);
+        expect(countContinuationPieces(editor)).toBeGreaterThan(0);
+      }
+      await sutApplyUpdate(editor, ops, editableViewOptions);
+      results.push(
+        editor.getEditorState().read(() => ({
+          delta: getEditorDelta(editor.getEditorState()).ops,
+          text: $getRoot().getTextContent(),
+          // Every piece of a carrier is the same node: the same fields as its first piece.
+          piecesAgree: $dfs().every(({ node }) =>
+            $pieces(node).every(
+              (piece) =>
+                JSON.stringify({ ...piece.exportJSON(), text: "", $: undefined }) ===
+                JSON.stringify({ ...node.exportJSON(), text: "", $: undefined }),
+            ),
+          ),
+        })),
+      );
+    }
+    expect(results[1]).toEqual(results[0]);
+    expect(results[1].piecesAgree).toBe(true);
   });
 });
 

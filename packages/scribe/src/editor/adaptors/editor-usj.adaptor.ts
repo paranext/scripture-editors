@@ -24,6 +24,7 @@ import {
   ImmutableTypedTextNode,
   ImmutableUnmatchedNode,
   isSerializedImpliedParaNode,
+  isSerializedMarkerNode,
   isSerializedTypedMarkNode,
   LoggerBasic,
   MarkerNode,
@@ -328,9 +329,33 @@ function replaceMarkWithMilestones(
   }
 }
 
+/**
+ * Whether the lone-NBSP text `nodes[index]` is content a comment's mark split off rather than
+ * display. A lone-NBSP text is normally the separator an editable paragraph's marker is followed
+ * by, but text can contain a no-break space of its own, and a comment's mark is built from the
+ * milestones around the text it holds: a mark holding just that space makes it a node of its own,
+ * and a mark ending or starting right beside it leaves it one outside the mark. A paragraph's
+ * separator is never inside a mark and always follows the paragraph's marker, so a lone NBSP
+ * inside a mark, or beside one and not right after a marker, is content.
+ */
+function isNbspContentAtMark(
+  nodes: SerializedLexicalNode[],
+  index: number,
+  inMark: boolean,
+): boolean {
+  if (inMark) return true;
+  const previous = index > 0 ? nodes[index - 1] : undefined;
+  return (
+    (isSerializedTypedMarkNode(previous) || isSerializedTypedMarkNode(nodes[index + 1])) &&
+    !isSerializedMarkerNode(previous)
+  );
+}
+
 export function recurseNodes(
   nodes: SerializedLexicalNode[],
   noteCaller?: string,
+  // Whether `nodes` are a TypedMarkNode's own children — see `isNbspContentAtMark`.
+  inMark = false,
 ): MarkerContent[] | undefined {
   const markers: MarkerContent[] = [];
   let childMarkers: MarkerContent[] | undefined;
@@ -388,7 +413,7 @@ export function recurseNodes(
         // These nodes are for presentation only so they don't go into the USJ.
         break;
       case TypedMarkNode.getType():
-        childMarkers = recurseNodes(serializedMarkNode.children);
+        childMarkers = recurseNodes(serializedMarkNode.children, undefined, true);
         if (childMarkers) {
           const commentIDs = serializedMarkNode.typedIDs[COMMENT_MARK_TYPE];
           if (commentIDs) {
@@ -414,7 +439,7 @@ export function recurseNodes(
       case TextNode.getType():
         if (
           serializedTextNode.text &&
-          serializedTextNode.text !== NBSP &&
+          (serializedTextNode.text !== NBSP || isNbspContentAtMark(nodes, index, inMark)) &&
           (!noteCaller || serializedTextNode.text !== getEditableCallerText(noteCaller))
         ) {
           combineTextContentOrAdd(markers, createTextMarker(serializedTextNode));

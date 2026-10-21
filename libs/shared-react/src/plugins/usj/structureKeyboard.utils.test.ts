@@ -1,7 +1,13 @@
 // Should only be used on nodes that are initialized in the test environment.
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
-import { baseTestEnvironment, sutUpdate, updateSelection } from "./react-test.utils";
+import {
+  baseTestEnvironment,
+  countContinuationPieces,
+  cutEveryCarrierIntoPieces,
+  sutUpdate,
+  updateSelection,
+} from "./react-test.utils";
 import { $createImmutableVerseNode, $isSomeVerseNode } from "../../nodes/usj";
 import {
   $adjacentVerseMarker,
@@ -16,29 +22,39 @@ import {
   $shouldBlockSelectionReplacement,
   $shouldBlockStructuralEdit,
   $structuralDeleteTarget,
+  DeleteTarget,
   keyDownToIntent,
 } from "./structureKeyboard.utils";
 import {
   $createNodeSelection,
+  $createRangeSelection,
   $getRoot,
   $getSelection,
   $createTextNode,
+  $isElementNode,
   $isRangeSelection,
   $isTextNode,
   $setSelection,
+  LexicalNode,
   TextNode,
 } from "lexical";
 import {
+  $addDisplayAnnotation,
   $createChapterNode,
   $createCharNode,
   $createNoteNode,
   $createParaNode,
   $createImpliedParaNode,
+  $createMarkerNode,
   $createVerseNode,
   $isCharNode,
   $isNoteNode,
   $isSomeParaNode,
+  $logicalOffset,
+  $pieces,
   ParaNode,
+  registerDisplayAnnotationBasis,
+  VerseNode,
 } from "shared";
 
 describe("structureKeyboard.utils", () => {
@@ -566,6 +582,125 @@ describe("$mergeParaIntoPrevious", () => {
     editor.getEditorState().read(() => {
       expect($getRoot().getChildrenSize()).toBe(1);
       expect(($getRoot().getChildren()[0] as ParaNode).getTextContent()).toBe("text");
+    });
+  });
+});
+
+describe("a carrier cut into pieces", () => {
+  // An annotation held over part of a carrier cuts it into pieces (`displayPieces.state.ts`); the
+  // pieces are one carrier.
+  it("$adjacentVerseMarker names the verse, not the piece the caret touches", async () => {
+    let before: TextNode;
+    let after: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      before = $createTextNode("before ");
+      after = $createTextNode("text");
+      $getRoot().append(
+        $createParaNode("p").append(before, $createVerseNode("2", "\\v 2 "), after),
+      );
+    });
+    await cutEveryCarrierIntoPieces(editor);
+    expect(countContinuationPieces(editor)).toBeGreaterThan(0);
+    const verseKey = editor
+      .getEditorState()
+      .read(() => $getRoot().getAllTextNodes().find($isSomeVerseNode)?.getKey());
+
+    updateSelection(editor, after!, 0);
+    editor.getEditorState().read(() => {
+      expect($adjacentVerseMarker($getSelection()!, "backward")?.getKey()).toBe(verseKey);
+    });
+    updateSelection(editor, before!, "before ".length);
+    editor.getEditorState().read(() => {
+      expect($adjacentVerseMarker($getSelection()!, "forward")?.getKey()).toBe(verseKey);
+    });
+  });
+
+  it("finds a verse beside a caret in a verse's pieces only where the uncut verse has one", async () => {
+    let para: ParaNode;
+    let first: VerseNode;
+    let second: VerseNode;
+    let third: VerseNode;
+    const { editor } = await baseTestEnvironment(() => {
+      first = $createVerseNode("1", "\\v 1 ");
+      second = $createVerseNode("2", "\\v 2 ");
+      third = $createVerseNode("3", "\\v 3 ");
+      para = $createParaNode("p").append(first, second, third, $createTextNode("text"));
+      $getRoot().append(para);
+    });
+    /** For every caret in verse 2 (as `[logical offset, node, offset]`): the verse each direction
+     * finds beside it, and the delete each direction would arm, by verse number or `para` (`-`:
+     * none). */
+    const $besideEveryCaret = (points: [number, LexicalNode, number][]): string[] =>
+      points.map(([logical, node, offset]) => {
+        const caret = $createRangeSelection();
+        const type = $isElementNode(node) ? "element" : "text";
+        caret.anchor.set(node.getKey(), offset, type);
+        caret.focus.set(node.getKey(), offset, type);
+        const name = (target: DeleteTarget | undefined) =>
+          target?.kind === "verse" ? target.node.getNumber() : target?.kind;
+        return [
+          `@${logical}`,
+          $adjacentVerseMarker(caret, "backward")?.getNumber(),
+          $adjacentVerseMarker(caret, "forward")?.getNumber(),
+          name($structuralDeleteTarget(caret, "deleteBackward")),
+          name($structuralDeleteTarget(caret, "deleteForward")),
+        ]
+          .map((part) => part ?? "-")
+          .join(" ");
+      });
+    let uncut: string[] = [];
+    editor.update(
+      () => {
+        const length = second.getTextContentSize();
+        uncut = $besideEveryCaret(
+          Array.from({ length: length + 1 }, (_, offset) => [offset, second, offset]),
+        );
+      },
+      { discrete: true },
+    );
+    expect(uncut[0]).toBe("@0 1 - 1 -");
+    expect(uncut[3]).toBe("@3 - - - -");
+    expect(uncut.at(-1)).toBe("@5 - 3 - 3");
+
+    registerDisplayAnnotationBasis(editor);
+    editor.update(() => void $addDisplayAnnotation(second, "check", "a", 3, 4), { discrete: true });
+    let cut: string[] = [];
+    editor.update(
+      () => {
+        const pieces = $pieces(second.getLatest());
+        expect(pieces.map((piece) => piece.getTextContent())).toEqual(["\\v ", "2", " "]);
+        const points: [number, LexicalNode, number][] = [];
+        for (const piece of pieces)
+          for (let offset = 0; offset <= piece.getTextContentSize(); offset++)
+            points.push([$logicalOffset(piece, offset), piece, offset]);
+        // An element point between two pieces is a place inside the verse too.
+        for (const piece of pieces.slice(1))
+          points.push([$logicalOffset(piece, 0), para.getLatest(), piece.getIndexWithinParent()]);
+        cut = $besideEveryCaret(points);
+      },
+      { discrete: true },
+    );
+    expect(cut).toEqual(cut.map((answer) => uncut[Number(answer.slice(1, 2))]));
+  });
+
+  it("$mergeParaIntoPrevious drops every piece of the merged paragraph's marker glyph", async () => {
+    let q: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      q = $createParaNode("q1");
+      $getRoot().append(
+        $createParaNode("p").append($createMarkerNode("p"), $createTextNode("first")),
+        q.append($createMarkerNode("q1"), $createTextNode("second")),
+      );
+    });
+    await cutEveryCarrierIntoPieces(editor);
+    expect(countContinuationPieces(editor)).toBeGreaterThan(1);
+
+    await sutUpdate(editor, () => {
+      $mergeParaIntoPrevious(q!);
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toBe("\\pfirstsecond");
     });
   });
 });

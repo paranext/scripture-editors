@@ -281,10 +281,14 @@ function invertDisplay(text: string, isStandard: boolean): string {
 
 /**
  * The whole per-text-node conversion serialization applies, written independently of the editor's
- * own: invert the display text, then collapse runs of plain spaces in the data.
+ * own: invert the display text, then collapse runs of plain spaces in the data. A run that
+ * continues from the text before (`before`, already converted) is still one run: an annotation
+ * mark's edge cutting it into two text nodes does not keep its later spaces.
  */
-function toSettledText(text: string, isStandard: boolean): string {
-  return isStandard ? displayTextToUsj(text).replace(/ {2,}/g, " ") : text;
+function toSettledText(text: string, isStandard: boolean, before = ""): string {
+  if (!isStandard) return text;
+  const settled = displayTextToUsj(text).replace(/ {2,}/g, " ");
+  return before.endsWith(" ") ? settled.replace(/^ +/, "") : settled;
 }
 
 /** What serialization keeps of a text after a marker's separator: everything but its leading
@@ -319,7 +323,9 @@ function $checkTextItem(
   const contents = item.segments.map((segment) =>
     segment.node.getTextContent().slice(segment.lead),
   );
-  const settledContents = contents.map((text) => toSettledText(text, isStandard));
+  const settledContents: string[] = [];
+  for (const text of contents)
+    settledContents.push(toSettledText(text, isStandard, settledContents.join("")));
   const settledText = withoutLeadingSpaces(settledContents.join(""), dropsLeadingSpaces);
   if (settledText !== usjString) {
     report.disagreements.push({
@@ -357,6 +363,7 @@ function $checkTextItem(
           toSettledText(
             contents[segmentIndex].slice(0, Math.max(0, offset - segment.lead)),
             isStandard,
+            before,
           ),
         dropsLeadingSpaces,
       );

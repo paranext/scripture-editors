@@ -67,7 +67,10 @@ import {
   $isNoteNode,
   $isVerseNode,
   $isVisibleMarkerNode,
+  $logicalOffset,
+  $logicalText,
   $noteEditableCallerNode,
+  $pieces,
   getPendedDisplayOwners,
   TypedMarkNode,
 } from "shared";
@@ -999,6 +1002,68 @@ describe("the editor API", () => {
     expect(nextLine).toBeDefined();
     expect(pastNumber).toEqual(nextLine);
     expect(ref.current?.getSelection()).toEqual({ start: { jsonPath: "$.content[3]" } });
+  });
+
+  // An annotation on the verse number cuts the glyph into pieces (`\v `, `2`, ` `): each spelling
+  // of the carets after the number reads and restores as it does in the uncut glyph.
+  it("reports and restores the carets after the number of a line-ending verse an annotation cuts as in the uncut verse", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(
+      doc(endsInVerse, { type: "para", marker: "p", content: ["more"] }),
+    );
+    const numberEnd: { start: UsjDocumentLocation } = {
+      start: { jsonPath: "$.content[2].content[2]['number']", propertyOffset: 1 },
+    };
+    await act(async () => {
+      ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[2].content[2]['number']", propertyOffset: 0 },
+          end: numberEnd.start,
+        },
+        "spelling",
+        "s1",
+      );
+      await Promise.resolve();
+    });
+    const $glyphPieces = () => {
+      const last = $getRoot().getChildren().filter($isElementNode)[2].getLastDescendant();
+      if (!$isVerseNode(last)) throw new Error("expected the verse glyph's last piece");
+      return $pieces(last);
+    };
+    lexical
+      .getEditorState()
+      .read(() =>
+        expect($glyphPieces().map((piece) => piece.getTextContent())).toEqual([
+          "\\v\u00a0",
+          "2",
+          " ",
+        ]),
+      );
+
+    for (const [pieceIndex, offset] of [
+      [1, 1],
+      [2, 0],
+      [2, 1],
+    ]) {
+      await act(async () => {
+        lexical.update(() => void $glyphPieces()[pieceIndex].select(offset, offset), {
+          discrete: true,
+        });
+        await Promise.resolve();
+      });
+      expect(ref.current?.getSelection()).toEqual(numberEnd);
+    }
+
+    await act(async () => {
+      ref.current?.setSelection(numberEnd);
+      await Promise.resolve();
+    });
+    const caret = lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) return undefined;
+      const node = selection.anchor.getNode();
+      return { text: $logicalText(node), offset: $logicalOffset(node, selection.anchor.offset) };
+    });
+    expect(caret).toEqual({ text: "\\v\u00a02 ", offset: 4 });
   });
 });
 

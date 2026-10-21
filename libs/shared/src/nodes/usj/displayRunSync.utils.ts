@@ -17,6 +17,12 @@ import {
   $isDisplayOwnerPended,
   $reportDestroyedDisplayOwner,
 } from "./pendedDisplayOwners.utils.js";
+import {
+  $lastPiece,
+  $logicalText,
+  $pieces,
+  $setLogicalText,
+} from "../features/displayPieces.state.js";
 import { $createMarkerNode } from "../features/MarkerNode.js";
 import { textTypeState } from "../collab/delta.state.js";
 import {
@@ -83,6 +89,12 @@ function valueDiverges(actual: string | undefined, expected: string | undefined)
   return value === "" || actual.trim() !== value;
 }
 
+/** The run's displayed value bytes: the whole value carrier's text, however an annotation has
+ * cut it into pieces (`displayPieces.state.ts`). */
+function $valueTextOf(pieces: ScannedRun): string | undefined {
+  return pieces.value ? $logicalText(pieces.value) : undefined;
+}
+
 /**
  * Whether `pieces` diverge from `expected`.
  *
@@ -100,7 +112,7 @@ export function $runDiverges(
   expected: ExpectedRun,
 ): boolean {
   if (!expected.wantsRun) return runHasPieces(pieces);
-  if (valueDiverges(pieces.value?.getTextContent(), expected.valueText)) return true;
+  if (valueDiverges($valueTextOf(pieces), expected.valueText)) return true;
   // A closer-less kind (`closerSyntax: "none"` — a chapter's `\cp`) owes only its opener; every
   // other glyph-bearing kind owes both glyphs.
   if (descriptor.byteFormat.glyphs !== "none") {
@@ -129,7 +141,7 @@ export function $runNeedsOnlyWrapMigration(
   const expected = descriptor.expectedPieces(owner);
   if (!expected.wantsRun) return false;
   const pieces = descriptor.scanPieces(owner);
-  if (valueDiverges(pieces.value?.getTextContent(), expected.valueText)) return false;
+  if (valueDiverges($valueTextOf(pieces), expected.valueText)) return false;
   if (descriptor.byteFormat.glyphs !== "none") {
     if (!pieces.opener) return false;
     if (descriptor.byteFormat.closerSyntax !== "none" && !pieces.closer) return false;
@@ -171,7 +183,7 @@ export function $caretHoldsRunSite(descriptor: DisplayRunDescriptor, owner: Lexi
   if (wrapper && (anchorNode.is(wrapper) || $isDescendantOf(anchorNode, wrapper.getKey())))
     return true;
   // A live value node is the mid-edit case: the caret is IN the bytes, so nothing else matters.
-  if (value) return anchorNode.is(value);
+  if (value) return $pieces(value).some((piece) => anchorNode.is(piece));
   return descriptor.graceSite(owner, pieces);
 }
 
@@ -210,9 +222,8 @@ function $runDestroyedSinceLastCommit(
  * it is a transient husk the marker-edit engine's settle removes, so the removal and the owner's
  * own deletion policy stay in one place. */
 function $clearRun(pieces: ScannedRun): void {
-  pieces.opener?.remove();
-  pieces.value?.remove();
-  pieces.closer?.remove();
+  for (const piece of [pieces.opener, pieces.value, pieces.closer])
+    if (piece) $pieces(piece).forEach((part) => part.remove());
 }
 
 function $createValueNode(text: string) {
@@ -233,10 +244,10 @@ function $ensureWrapper(
   const anchor = insertRunAfter?.(owner);
   if (!runKind || !anchor) return undefined;
   const created = $createAttributeRunNode(runKind);
-  anchor.insertAfter(created);
-  if (pieces.opener) created.append(pieces.opener);
-  if (pieces.value) created.append(pieces.value);
-  if (pieces.closer) created.append(pieces.closer);
+  $lastPiece(anchor).insertAfter(created);
+  if (pieces.opener) created.append(...$pieces(pieces.opener));
+  if (pieces.value) created.append(...$pieces(pieces.value));
+  if (pieces.closer) created.append(...$pieces(pieces.closer));
   return created;
 }
 
@@ -253,7 +264,7 @@ function $writeRun(
   if (writer === "owner-children") {
     const anchor = insertRunBefore?.(owner);
     if (!anchor || expected.valueText === undefined) return;
-    if ($isTextNode(pieces.value)) pieces.value.setTextContent(expected.valueText);
+    if ($isTextNode(pieces.value)) $setLogicalText(pieces.value, expected.valueText);
     else anchor.insertBefore($createValueNode(expected.valueText));
     return;
   }
@@ -270,20 +281,20 @@ function $writeRun(
     })();
   let value = pieces.value;
   if (expected.valueText === undefined) {
-    value?.remove();
+    if (value) $pieces(value).forEach((part) => part.remove());
     value = undefined;
   } else if ($isTextNode(value)) {
     // The same licence the divergence rule grants: a value the user only padded with structural
     // whitespace is left exactly as typed, even when a missing glyph is what brought the writer here.
-    if (valueDiverges(value.getTextContent(), expected.valueText))
-      value.setTextContent(expected.valueText);
+    if (valueDiverges($logicalText(value), expected.valueText))
+      value = $setLogicalText(value, expected.valueText);
   } else {
     value = $createValueNode(expected.valueText);
-    opener.insertAfter(value);
+    $lastPiece(opener).insertAfter(value);
   }
   // A closer-less kind never builds a trailing glyph; its wrapper bounds the value instead.
   if (closerSyntax !== "none" && !pieces.closer)
-    (value ?? opener).insertAfter(
+    $lastPiece(value ?? opener).insertAfter(
       $createMarkerNode(closerSyntax === "selfClosing" ? "" : glyphMarker(owner), closerSyntax),
     );
 }
@@ -311,6 +322,9 @@ export function $syncDisplayRun(descriptor: DisplayRunDescriptor, owner: Lexical
   const pieces = descriptor.scanPieces(owner);
   if (!$runDiverges(descriptor, pieces, expected)) return;
   if ($isDisplayOwnerPended(owner)) return;
+  // A value the engine holds pending (an edit of the run's bytes) is the engine's to settle, on
+  // caret departure, as it settles the same edit wherever this sync is not run.
+  if (pieces.value && $pieces(pieces.value).some($isDisplayOwnerPended)) return;
   if ($runDestroyedSinceLastCommit(descriptor, owner, expected, pieces)) {
     $reportDestroyedDisplayOwner(owner);
     return;

@@ -177,20 +177,78 @@ host's session, since the apply still replaces the note node.
 Consequence for tests: asserting that the mode is `token` proves nothing about whether the shell is
 protected. Assert what the DOCUMENT does under a keystroke.
 
-### Annotations never restructure display bytes
+### Annotations never restructure display bytes — they cut them into pieces
 
 An annotation covers content text with a `TypedMarkNode` and covers display bytes — marker glyphs,
 attribute-run text, a verse, a note caller, a chapter glyph, read-only glyph decorators — by state
 held on the node itself (`displayAnnotationsState`, `libs/shared/src/nodes/features/`). A display
-node is never moved into a mark and never split by one: display runs are found by position and read
-as single nodes, so either would read as the run being deleted, and the sync would rebuild or remove
-it. Separators hold nothing — they have no position of their own. The settle carries both
-representations by bytes: kept or re-spelled bytes carry their annotation to the settled
-counterpart, discarded bytes drop it. `getUsj()` carries no display-byte annotation.
+node is never moved into a mark. Separators hold nothing — they have no position of their own.
+
+Painting is by element only: every painted element carries the class names a `<mark>` does. Since
+Lexical maps one DOM text node to one `TextNode`, an editable carrier held only in PART is cut at
+every hold boundary into **pieces** (`displayPieces.state.ts`): adjacent siblings of the same class
+and identity, the first the carrier's own node, every later one carrying the continuation state,
+each held whole or not at all, joined again where neighbours are held by the same annotations. Every
+piece of a carrier cut into more than one piece carries its chain's id (a carrier in one piece
+carries none), and a continuation continues only the piece before it with the same id: a class
+match alone is not a chain, so when a carrier's first piece is deleted the rest becomes a carrier
+of its own rather than joining a neighbour of its class (in `\v 1 \v 2 ` with a hold on
+the `2`, deleting verse 2's `\v ` piece never makes the `2` part of verse 1). The piece transform
+beside the hold-basis transform keeps that so after every update. A read-only
+decorator never splits; held in part it draws sub-spans of its own text from the per-editor paint
+store (`decoratorPaint.ts`).
+
+**A piece chain is one node to every reader of structure.** Display runs are found by position and
+read as single nodes, so each reader goes through the chain helpers: `$logicalText` for a carrier's
+bytes (a glyph's canonical check, a run's value compare, an exporter, an ops count), `$logicalNextSibling`
+/ `$lastPiece` for the node after a carrier (a run scan, an insertion anchor), `$logicalChildren` for
+a parent's children (one item per carrier), `$pieceHead` for a transform or owner walk that must act
+once per carrier, and `$setLogicalText` / the glyph setters for a rewrite, which joins the chain
+first so the holds remap through the basis as on an unsplit carrier. A reader that takes a
+continuation piece for a carrier of its own duplicates a run, a verse, an op or a position — the
+corruption the annotation-transparency oracle
+(`packages/platform/src/editor/annotationLocations/annotationTransparency.*`) exists to catch: with
+annotations covering every display byte of a paragraph, every keystroke case of the pending/settled
+oracle must give the same documents, screen, positions and delta as the same case with none.
+
+The settle carries both representations by bytes: kept or re-spelled bytes carry their annotation to
+the settled counterpart, discarded bytes drop it. `getUsj()` carries no display-byte annotation.
 
 The wrap measures coverage by caret order: an inline element moves into a mark only when the range
 covers it whole; otherwise its text is split and its glyphs hold the annotation. The wrap tags its
 update (`TYPED_MARK_WRAP_TAG`) so no transform takes the text it splits for typed text.
+
+**A mark is transparent to every reader, and so is an annotation update.** A mark cuts one run of
+content into several text nodes and puts a parent between a text and its neighbours, so any rule
+that reads "the node before/after" or "the text run" by direct siblings sees a different document
+once something is annotated. Those readers go through `libs/shared/src/nodes/features/throughMarks.utils.ts`
+(`$nextSiblingThroughMarks`, `$textRunThroughMarks`, `$isRangeSplitByMarks`, …), which also treat a
+piece chain as one node: the note-shell caret guard, the caret shield around a pending glyph, the
+chapter scope's fixed-point signature, the Standard-view space-run rule (a run of spaces is
+collapsed on save and shown as NBSPs as ONE run even when a mark splits it — the display rule, the
+exporter's text join and the position model all read the run across the join), and the
+leading-space move onto a verse. Typing or pasting over a range whose two ends sit in different
+parents only because a mark holds one of them first removes the range
+(`$removeRangeSplitByMarks`), since Lexical's own replacement would climb to the paragraph and pull
+the text after the span into it.
+
+A hold follows its bytes like a mark follows its text. When a carrier's text changes, the holds are
+re-measured through a character alignment; a byte typed at either edge of a held range stays
+outside it and a byte typed strictly inside grows it, so the alignment reads the user's edit at the
+caret first (an insertion of n bytes ending at the caret, a deletion of n bytes starting there) and
+only falls back to the longest common subsequence — held bytes preferred where one edit can slide
+over identical bytes — for an engine rewrite with no caret (`displayAnnotations.state.ts`). A
+`token` carrier (a protected note shell's glyphs) cut into pieces is one token: deleting any piece
+removes the chain, so the deletion transforms see what they see with no annotation. Cutting or
+joining pieces keeps an element point between a parent's children in place.
+
+Setting or removing an annotation edits no byte, so the marker-edit engine sits out an update that
+carries an annotation tag and changes no block's text (the mark wrap and the piece cut dirty the
+nodes beside them, which must not pend or settle anything), and the update adds no undo step
+(`HISTORY_MERGE_TAG`): an undo that reverts the edit an annotation was set on reverts the
+annotation with it, silently. A mark Lexical drops without `remove()` (a selection delete that
+empties it) still makes its one removal report, read from the previous state, unless the
+annotation was handed on to another holder in the same commit.
 
 ### The `\id` line is content, not a header
 

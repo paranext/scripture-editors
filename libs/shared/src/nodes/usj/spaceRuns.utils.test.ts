@@ -2,6 +2,7 @@ import { NBSP } from "./node-constants.js";
 import {
   collapsedSpaceRunRanges,
   collapseSpaceRuns,
+  endsInSpaceRun,
   leadingDisplaySpaceLength,
 } from "./spaceRuns.utils.js";
 
@@ -55,6 +56,39 @@ describe("collapseSpaceRuns", () => {
           !collapsedSpaceRunRanges(text).some(([start, end]) => index >= start && index < end),
       );
       expect(collapseSpaceRuns(text)).toBe(kept.join(""));
+    }
+  });
+});
+
+describe("a run that continues from the text before", () => {
+  it("drops the leading spaces a run continued from the text before brings", () => {
+    expect(collapsedSpaceRunRanges(`${NBSP} b`, true)).toEqual([[0, 2]]);
+    expect(collapsedSpaceRunRanges(` b${NBSP}${NBSP}c`, true)).toEqual([
+      [0, 1],
+      [3, 4],
+    ]);
+    expect(collapsedSpaceRunRanges("b c", true)).toEqual([]);
+  });
+
+  it("collapses a run cut in two exactly as the uncut run", () => {
+    for (const [before, after] of [
+      [`a${NBSP}`, `${NBSP}b`],
+      ["a ", " b"],
+      [`a${NBSP}${NBSP}`, ` ${NBSP} b`],
+      ["a~", " b"],
+      ["a", " b"],
+    ]) {
+      const kept = (text: string, continuesRun: boolean) =>
+        [...text]
+          .filter(
+            (_, index) =>
+              !collapsedSpaceRunRanges(text, continuesRun).some(
+                ([start, end]) => index >= start && index < end,
+              ),
+          )
+          .join("");
+      const first = kept(before, false);
+      expect(first + kept(after, endsInSpaceRun(first))).toBe(collapseSpaceRuns(before + after));
     }
   });
 });

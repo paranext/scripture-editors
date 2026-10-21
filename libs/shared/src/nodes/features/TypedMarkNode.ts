@@ -157,6 +157,9 @@ const removalReports = new WeakMap<LexicalEditor, [type: string, id: string][]>(
  * found here has already told the host and stays quiet the next time it goes. */
 const reportedMarks = new WeakMap<LexicalEditor, Map<string, Set<NodeKey>>>();
 
+/** Per editor a reporter listens to, the marks whose `remove()` ran since the last take. */
+const removedMarks = new WeakMap<LexicalEditor, Set<NodeKey>>();
+
 /**
  * Start recording the `type`/`id` pairs whose `onRemove` a mark of `editor` calls, for
  * {@link takeTypedMarkRemovalReports}. Returns the function that stops it and drops what was not
@@ -165,10 +168,26 @@ const reportedMarks = new WeakMap<LexicalEditor, Map<string, Set<NodeKey>>>();
 export function listenForTypedMarkRemovalReports(editor: LexicalEditor): () => void {
   removalReports.set(editor, []);
   reportedMarks.set(editor, new Map());
+  removedMarks.set(editor, new Set());
   return () => {
     removalReports.delete(editor);
     reportedMarks.delete(editor);
+    removedMarks.delete(editor);
   };
+}
+
+/**
+ * The marks of `editor` whose `remove()` has run since the last take, so a reporter can tell them
+ * from a mark Lexical dropped without calling it (an emptied mark a selection delete takes away, a
+ * mark inside a removed element). Each of these has made its own report, or was told not to (a
+ * merge or a rebuild handing its ids on to another mark). Clears the set. Empty unless
+ * {@link listenForTypedMarkRemovalReports} is recording for `editor`.
+ */
+export function takeRemovedTypedMarks(editor: LexicalEditor): Set<NodeKey> {
+  const taken = removedMarks.get(editor);
+  if (!taken) return new Set();
+  removedMarks.set(editor, new Set());
+  return taken;
 }
 
 /**
@@ -256,9 +275,6 @@ export class TypedMarkNode extends ElementNode {
   __typedOnRemoves?: TypedOnRemoves;
   __typedOnMouseEnters?: TypedOnMouseEnters;
   __typedOnMouseLeaves?: TypedOnMouseLeaves;
-  __domOnClickListener?: (event: DomMouseEvent) => void;
-  __domOnMouseEnterListener?: (event: DomMouseEvent) => void;
-  __domOnMouseLeaveListener?: (event: DomMouseEvent) => void;
   __suppressOnRemoveCallbacks?: boolean;
 
   constructor(
@@ -329,12 +345,17 @@ export class TypedMarkNode extends ElementNode {
   override createDOM(config: EditorConfig, editor: LexicalEditor): HTMLElement {
     const element = document.createElement("mark");
     addClassNamesToElement(element, ...typedMarkClassNames(config.theme, this.__typedIDs));
-    const clickListener = this.getOrCreateDOMClickListener(editor);
-    element.addEventListener("click", clickListener);
-    const mouseEnterListener = this.getOrCreateDOMMouseEnterListener(editor);
-    element.addEventListener("mouseenter", mouseEnterListener);
-    const mouseLeaveListener = this.getOrCreateDOMMouseLeaveListener(editor);
-    element.addEventListener("mouseleave", mouseLeaveListener);
+    // Fresh listeners per element, stored nowhere on the node: a node object the reconciler has
+    // frozen (every node it has committed, DOM created for it or not) can need a new element
+    // later — an undo brings back a mark whose element went with its removal — and the handlers
+    // find the mark's current callbacks by key at event time anyway.
+    element.addEventListener("click", (event: DomMouseEvent) => this.handleDOMClick(event, editor));
+    element.addEventListener("mouseenter", (event: DomMouseEvent) =>
+      this.handleDOMMouseEnter(event, editor),
+    );
+    element.addEventListener("mouseleave", (event: DomMouseEvent) =>
+      this.handleDOMMouseLeave(event, editor),
+    );
     return element;
   }
 
@@ -605,6 +626,7 @@ export class TypedMarkNode extends ElementNode {
   override remove(preserveEmptyParent?: boolean): void {
     const self = this.getWritable();
     const typedIDs = this.getTypedIDs();
+    removedMarks.get($getEditor())?.add(self.getKey());
     if (self.__suppressOnRemoveCallbacks) {
       self.__suppressOnRemoveCallbacks = undefined;
     } else {
@@ -621,15 +643,6 @@ export class TypedMarkNode extends ElementNode {
     self.__typedOnMouseLeaves = undefined;
 
     super.remove.call(self, preserveEmptyParent);
-  }
-
-  private getOrCreateDOMClickListener(editor: LexicalEditor): (event: DomMouseEvent) => void {
-    if (!this.__domOnClickListener) {
-      this.__domOnClickListener = (event: DomMouseEvent) => {
-        this.handleDOMClick(event, editor);
-      };
-    }
-    return this.__domOnClickListener;
   }
 
   private handleDOMClick(event: DomMouseEvent, editor: LexicalEditor): void {
@@ -651,15 +664,6 @@ export class TypedMarkNode extends ElementNode {
     }
   }
 
-  private getOrCreateDOMMouseEnterListener(editor: LexicalEditor): (event: DomMouseEvent) => void {
-    if (!this.__domOnMouseEnterListener) {
-      this.__domOnMouseEnterListener = (event: DomMouseEvent) => {
-        this.handleDOMMouseEnter(event, editor);
-      };
-    }
-    return this.__domOnMouseEnterListener;
-  }
-
   private handleDOMMouseEnter(event: DomMouseEvent, editor: LexicalEditor): void {
     const typedOnMouseEnters = typedOnMouseEnterRegistry.get(this.getKey());
     if (!typedOnMouseEnters) return;
@@ -677,15 +681,6 @@ export class TypedMarkNode extends ElementNode {
     for (const [callback, type, id] of callbacks) {
       callback(event, type, id, textContent);
     }
-  }
-
-  private getOrCreateDOMMouseLeaveListener(editor: LexicalEditor): (event: DomMouseEvent) => void {
-    if (!this.__domOnMouseLeaveListener) {
-      this.__domOnMouseLeaveListener = (event: DomMouseEvent) => {
-        this.handleDOMMouseLeave(event, editor);
-      };
-    }
-    return this.__domOnMouseLeaveListener;
   }
 
   private handleDOMMouseLeave(event: DomMouseEvent, editor: LexicalEditor): void {
@@ -1429,6 +1424,23 @@ export function typedMarkClassNames(theme: EditorThemeClasses, typedIDs: TypedID
     for (const id of ids) names.push(getTypedClassName("annotationId", id));
   }
   return names;
+}
+
+/**
+ * The class name that marks the first (`"start"`) or the last (`"end"`) element an annotation of
+ * `type` paints: `<theme.typedMarkStart>-<type>` or `<theme.typedMarkEnd>-<type>`, or `undefined`
+ * when the theme names no such prefix. An annotation can paint several elements (a verse number
+ * and the text after it, text on both sides of a char span's edge), and a box style on its class
+ * repeats on each of them; drawing the block sides on every element and the inline-start or
+ * inline-end side only on the element carrying the start or end class draws one box.
+ */
+export function typedMarkEdgeClassName(
+  theme: EditorThemeClasses,
+  type: string,
+  edge: "start" | "end",
+): string | undefined {
+  const prefix: unknown = edge === "start" ? theme.typedMarkStart : theme.typedMarkEnd;
+  return typeof prefix === "string" ? getTypedClassName(prefix, type) : undefined;
 }
 
 /**

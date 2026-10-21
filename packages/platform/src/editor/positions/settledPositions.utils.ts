@@ -84,7 +84,10 @@ import {
   $isImpliedParaNode,
   $isMarkerNode,
   $isNoteNode,
+  $isPieceContinuation,
+  $lastPiece,
   $noteEditableCallerNode,
+  $pieceHead,
 } from "shared";
 import {
   $getJsonPathIndexes,
@@ -184,9 +187,23 @@ function $closingGlyphByte(
 ): FragmentPoint | undefined {
   const byte = $resolveFragmentByteAnchor(fragment, anchor, { addressDisplayBytes: true });
   const glyph = byte && $getNodeByKey(byte.key);
-  return byte && byte.offset > 0 && $isMarkerNode(glyph) && glyph.getMarkerSyntax() !== "opening"
+  // The front of a closer's later piece is inside the closer: an annotation cut it there.
+  return byte &&
+    (byte.offset > 0 || $isPieceContinuation(glyph)) &&
+    $isMarkerNode(glyph) &&
+    glyph.getMarkerSyntax() !== "opening"
     ? byte
     : undefined;
+}
+
+/** Whether `offset` in `node` is the end of a whole closing glyph: the end of its last piece. */
+function $isClosingGlyphEnd(node: LexicalNode, offset: number): boolean {
+  return (
+    $isMarkerNode(node) &&
+    node.getMarkerSyntax() !== "opening" &&
+    node.is($lastPiece(node)) &&
+    offset === node.getTextContentSize()
+  );
 }
 
 /**
@@ -1657,6 +1674,21 @@ function $scratchLocationFromLivePoint(
     logger?.error("settled-position basis out of date — rebuilt");
     return undefined;
   }
+  // The end of a closing glyph is a caret resting on that closer, which reports the closer's own
+  // end outside a pending scope too. The byte addressing below spells the same place as the front
+  // of whatever follows the glyph, so it is asked for the glyph's last byte instead, one past it.
+  if (offset > 0 && $isClosingGlyphEnd(node, offset)) {
+    const lastByte = $scratchLocationFromLivePoint(
+      plan,
+      sides,
+      node,
+      offset - 1,
+      viewOptions,
+      logger,
+    );
+    if (isUsjClosingMarkerLocation(lastByte))
+      return { ...lastByte, closingMarkerOffset: lastByte.closingMarkerOffset + 1 };
+  }
   const anchored = $anchorForPoint(liveFragment, node, cutFragmentOffset(plan, node, offset));
   if (!anchored) return undefined;
   const literal = withinLiteral(plan.settledOnlyRuns, anchored.anchor);
@@ -1795,10 +1827,12 @@ function $exactSettledLocationInScope(
     // content settle hands them through unchanged: the same location, at the note's settled path.
     const note = plan.liveNodes[0];
     // The end of the caller text is also the front of the content: the settled note spells it from
-    // the content, so it crosses as the content's first position does.
+    // the content, so it crosses as the content's first position does. The end of a caller an
+    // annotation cuts into pieces is the end of its last piece.
     const twin =
       $isNoteNode(note) &&
-      $noteEditableCallerNode(note)?.is(node) &&
+      $noteEditableCallerNode(note)?.is($pieceHead(node)) &&
+      node.is($lastPiece(node)) &&
       offset === node.getTextContentSize()
         ? $twinCaret(node, offset)
         : undefined;
@@ -1947,7 +1981,7 @@ export function $settledLocationFromLivePoint(
 ): UsjDocumentLocation | undefined {
   const plan = prepared.planContaining(node);
   if (plan) return $settledLocationInScope(prepared, plan, node, offset);
-  const renamed = prepared.renamedClosers.get(node.getKey());
+  const renamed = prepared.renamedClosers.get($pieceHead(node).getKey());
   if (renamed) {
     // Restated after the live closer's own location is taken: the settled offset can run past the
     // live closer's end (`\w*` renamed `\wx*`), and the live node would clamp it.

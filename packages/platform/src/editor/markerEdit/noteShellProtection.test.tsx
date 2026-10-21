@@ -35,6 +35,7 @@ import editorUsjAdaptor, {
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
 import { act } from "@testing-library/react";
+import { drainNativeSelectionChange } from "../editor-test.utils";
 import {
   $createTextNode,
   $getRoot,
@@ -139,6 +140,7 @@ async function placeCaretInShell(
       // the caret came FROM rather than where it just went.
       editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
     });
+    await drainNativeSelectionChange();
   });
 }
 
@@ -161,6 +163,7 @@ async function clickCaretInShell(
       editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
     });
     doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    await drainNativeSelectionChange();
   });
 }
 
@@ -174,6 +177,7 @@ async function focusPastNoteContent(editor: LexicalEditor): Promise<void> {
     editor.update(() => {
       findOnlyNote($getRoot()).getLastChild()?.selectEnd();
     });
+    await drainNativeSelectionChange();
   });
 }
 
@@ -326,6 +330,7 @@ describe("expanded note shell", () => {
           editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
         });
         doc.dispatchEvent(new Event("pointerup", { bubbles: true }));
+        await drainNativeSelectionChange();
       });
     }
 
@@ -478,6 +483,7 @@ describe("expanded note shell", () => {
             .find((node) => $isMarkerNode(node) && node.getTextContent().startsWith("\\ft"));
           requireDefined(glyph, "content run's opening glyph").select(0, 0);
         });
+        await drainNativeSelectionChange();
       });
     }
 
@@ -1076,6 +1082,8 @@ describe("a closed note's closing glyph, with the shell protected", () => {
         selection.focus.set(closer.getKey(), focusOffset(closer), "text");
         selection.removeText();
       });
+      // What the test then reads is the caret after the browser has told the editor where it is.
+      await drainNativeSelectionChange();
     });
   }
 
@@ -1110,8 +1118,8 @@ describe("a closed note's closing glyph, with the shell protected", () => {
       const note = findOnlyNote($getRoot());
       expect($closer(note).getMode()).toBe("token");
       expect($noteParagraphText()).toMatch(/\\ft A note\\f\* after$/);
-      // The caret is left in the note, in front of the closer: the next Backspace reaches the
-      // note's text rather than the closer again.
+      // The caret is left in the note, in front of the closer — at the closer's front, where the
+      // caret guard rests a caret at the end of the note's content, or before it.
       const selection = $getSelection();
       if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
       const { anchor } = selection;
@@ -1123,6 +1131,16 @@ describe("a closed note's closing glyph, with the shell protected", () => {
       else
         isInFrontOfCloser = note.isParentOf(anchor.getNode()) && anchor.getNode().isBefore(closer);
       expect(isInFrontOfCloser).toBe(true);
+    });
+    // The next Backspace reaches the note's text rather than the closer again: it is the ordinary
+    // delete, from the end of that text.
+    expect(await dispatchGuardedDelete(editor, DELETE_CHARACTER_COMMAND, true)).toBe(false);
+    editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+      const text = $noteContentText(findOnlyNote($getRoot()));
+      expect(selection.anchor.getNode().is(text)).toBe(true);
+      expect(selection.anchor.offset).toBe(text.getTextContentSize());
     });
     const { note, tail } = savedNoteAndTail(editor);
     expect(note).not.toHaveProperty("closed");
@@ -1264,6 +1282,7 @@ describe("a range selection beside a protected note shell", () => {
         select(findOnlyNote($getRoot()));
         editor.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
       });
+      await drainNativeSelectionChange();
     });
     await act(async () => {
       editor.update(() => {

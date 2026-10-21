@@ -17,6 +17,8 @@ import { TextDirectionPlugin } from "./TextDirectionPlugin";
 import {
   $createBookLine,
   baseTestEnvironment,
+  countContinuationPieces,
+  cutEveryCarrierIntoPieces,
   pressKey,
   pressKeyThroughDom,
   updateSelection,
@@ -57,6 +59,7 @@ import {
   CharNode,
   getVisibleOpenMarkerText,
   ImpliedParaNode,
+  $lastPiece,
   MarkerNode,
   NoteNode,
   ParaNode,
@@ -2193,6 +2196,25 @@ describe("a table's marker glyphs are crossed whole", () => {
     await pressKey(editor, "ArrowRight");
 
     expect(caretIsInsideGlyph(editor, rowGlyph)).toBe(false);
+  });
+
+  // An annotation held over part of a glyph cuts it into pieces (`displayPieces.state.ts`); the
+  // pieces are one glyph, crossed whole.
+  it("crosses a glyph cut into pieces whole in one press, either way", async () => {
+    const { editor, rowGlyph, cellGlyph } = await tableEnvironment();
+    await cutEveryCarrierIntoPieces(editor);
+    expect(countContinuationPieces(editor)).toBeGreaterThan(1);
+    const [rowEnd, cellEnd] = editor
+      .getEditorState()
+      .read(() => [$lastPiece(rowGlyph), $lastPiece(cellGlyph)]);
+
+    updateSelection(editor, rowGlyph, 0);
+    await pressKey(editor, "ArrowRight");
+    expect(seamOf(editor)).toBe(seamAfter(editor, rowEnd));
+
+    updateSelection(editor, cellEnd);
+    await pressKey(editor, "ArrowLeft");
+    expect(seamOf(editor)).toBe(seamBefore(editor, cellGlyph));
   });
 
   it("still walks through an ordinary paragraph's glyph, which IS editable", async () => {

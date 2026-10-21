@@ -50,8 +50,14 @@
  * milestone runs (built by the adaptor, never edited) untouched.
  */
 
+import {
+  $lastPiece,
+  $logicalNextSibling,
+  $logicalText,
+  $pieceHead,
+} from "../features/displayPieces.state.js";
 import { $isCanonicalMarkerNode, $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
-import { $isTypedMarkNode } from "../features/TypedMarkNode.js";
+import { $nodeAfterBoundaryThroughMarks } from "../features/throughMarks.utils.js";
 import { textTypeState } from "../collab/delta.state.js";
 import { $isAttributeRunNode, AttributeRunNode } from "./AttributeRunNode.js";
 import { ChapterNode } from "./ChapterNode.js";
@@ -294,7 +300,7 @@ export function $verseAttributeRunPieces(
   after: LexicalNode,
   marker: VerseAttributeMarker,
 ): VerseAttributeRunPieces {
-  return $attributeMarkerRunPieces(after.getNextSibling(), marker);
+  return $attributeMarkerRunPieces($logicalNextSibling(after), marker);
 }
 
 /** The separator-run alphabet — plain space and NBSP, the whitespace class the marker-edit
@@ -318,7 +324,7 @@ export function $isCanonicalRunOpenerGlyph(node: MarkerNode): boolean {
   if ($isCanonicalMarkerNode(node)) return true;
   if (node.getMarkerSyntax() !== "opening") return false;
   const canonical = openingMarkerText(node.getMarker(), node.getNested());
-  const text = node.getTextContent();
+  const text = $logicalText(node);
   return text.startsWith(canonical) && TYPED_SPACING_ONLY_REGEX.test(text.slice(canonical.length));
 }
 
@@ -352,13 +358,14 @@ function $attributeMarkerRunPieces(
     $isCanonicalRunOpenerGlyph(cursor)
   ) {
     opener = cursor;
-    cursor = cursor.getNextSibling();
+    cursor = $logicalNextSibling(cursor);
   }
   // A MarkerNode is itself a TextNode subclass, so the attribute-state check (never set on a
-  // glyph) is what keeps a closer from being misread as the value.
+  // glyph) is what keeps a closer from being misread as the value. Each piece is read whole: a
+  // piece an annotation cut off (`displayPieces.state.ts`) is part of the piece before it.
   if ($isTextNode(cursor) && $getState(cursor, textTypeState) === "attribute") {
     value = cursor;
-    cursor = cursor.getNextSibling();
+    cursor = $logicalNextSibling(cursor);
   }
   if (
     $isMarkerNode(cursor) &&
@@ -368,19 +375,6 @@ function $attributeMarkerRunPieces(
   )
     closer = cursor;
   return { opener, value, closer, wrapper };
-}
-
-/**
- * The node an annotation mark wraps, unwrapped — marks are transparent to every USJ-facing view
- * of the tree (the exporter splices them, the logical content model splices them), so a slot that
- * identifies a node by its position among its parent's children has to see through one or the
- * construct dissolves the moment a comment is placed on it. Nested marks only exist transiently
- * before the AnnotationPlugin flattens them, hence the loop.
- */
-function $throughMarks(node: LexicalNode | undefined): LexicalNode | undefined {
-  let current = node;
-  while ($isTypedMarkNode(current)) current = current.getChildren()[0];
-  return current;
 }
 
 /**
@@ -407,9 +401,12 @@ export function $noteEditableCallerNode(note: NoteNode): TextNode | undefined {
     if (!$isMarkerNode(child) || child.getMarkerSyntax() !== "opening") break;
     index++;
   }
-  const caller = $throughMarks(children[index]);
+  // The caller slot is identified by position, which an annotation mark wrapping the caller does
+  // not change.
+  const caller = $nodeAfterBoundaryThroughMarks(note, index);
   if (!$isTextNode(caller) || caller.getType() !== TextNode.getType()) return undefined;
-  if (caller.getTextContent() === getEditableCallerText(note.getCaller())) return caller;
+  // A caller an annotation cut into pieces is read whole; its head is the caller.
+  if ($logicalText(caller) === getEditableCallerText(note.getCaller())) return caller;
   return caller.isUnmergeable() ? caller : undefined;
 }
 
@@ -423,7 +420,7 @@ export function $noteEditableCallerNode(note: NoteNode): TextNode | undefined {
 export function $noteCategoryRunPieces(note: NoteNode): VerseAttributeRunPieces {
   const caller = $noteEditableCallerNode(note);
   if (!caller) return {};
-  return $attributeMarkerRunPieces(caller.getNextSibling(), "cat");
+  return $attributeMarkerRunPieces($logicalNextSibling(caller), "cat");
 }
 
 /**
@@ -450,18 +447,19 @@ export function $chapterGlyphTextNode(chapter: ChapterNode): TextNode | undefine
 export function $chapterAltnumberRunPieces(chapter: ChapterNode): VerseAttributeRunPieces {
   const glyph = $chapterGlyphTextNode(chapter);
   if (!glyph) return {};
-  return $attributeMarkerRunPieces(glyph.getNextSibling(), "ca");
+  return $attributeMarkerRunPieces($logicalNextSibling(glyph), "ca");
 }
 
 /** The child a chapter's `\cp` run is anchored after: `\ca`'s wrapper (or, while caret-grace
  * defers the wrap, its loose closer), else the `\c N` glyph text — the chapter twin of
- * `$verseRunAnchor`'s `\vp` arm. Shared by the scanner and the writer so the two can never
+ * `$verseRunAnchor`'s `\vp` arm; a text anchor is its last piece, so the run is scanned for and
+ * inserted after the whole carrier. Shared by the scanner and the writer so the two can never
  * disagree about where the run belongs. `undefined` when the glyph anchor is gone. */
 export function $chapterCpAnchor(chapter: ChapterNode): LexicalNode | undefined {
   const glyph = $chapterGlyphTextNode(chapter);
   if (!glyph) return undefined;
-  const ca = $attributeMarkerRunPieces(glyph.getNextSibling(), "ca");
-  return ca.wrapper ?? ca.closer ?? glyph;
+  const ca = $attributeMarkerRunPieces($logicalNextSibling(glyph), "ca");
+  return ca.wrapper ?? (ca.closer ? $lastPiece(ca.closer) : $lastPiece(glyph));
 }
 
 /**
@@ -474,7 +472,7 @@ export function $chapterCpAnchor(chapter: ChapterNode): LexicalNode | undefined 
 export function $chapterPubnumberRunPieces(chapter: ChapterNode): VerseAttributeRunPieces {
   const anchor = $chapterCpAnchor(chapter);
   if (!anchor) return {};
-  return $attributeMarkerRunPieces(anchor.getNextSibling(), "cp");
+  return $attributeMarkerRunPieces($logicalNextSibling(anchor), "cp");
 }
 
 /**
@@ -501,7 +499,7 @@ export function $verseOfAttributeSourceText(node: LexicalNode): VerseNode | unde
   const marker = span.getMarker();
   if (marker !== "va" && marker !== "vp") return undefined;
   for (let prev = span.getPreviousSibling(); prev; prev = prev.getPreviousSibling()) {
-    if ($isVerseNode(prev)) return prev;
+    if ($isVerseNode(prev)) return $pieceHead(prev);
     const isRunPiece =
       ($isMarkerNode(prev) && (prev.getMarker() === "va" || prev.getMarker() === "vp")) ||
       ($isTextNode(prev) && $getState(prev, textTypeState) === "attribute") ||
@@ -570,11 +568,11 @@ export function $milestoneAttributeRunPieces(milestone: MilestoneNode): Mileston
     $isCanonicalRunOpenerGlyph(cursor)
   ) {
     opening = cursor;
-    cursor = cursor.getNextSibling();
+    cursor = $logicalNextSibling(cursor);
   }
   if ($isTextNode(cursor) && $getState(cursor, textTypeState) === "attribute") {
     attribute = cursor;
-    cursor = cursor.getNextSibling();
+    cursor = $logicalNextSibling(cursor);
   }
   if (
     $isMarkerNode(cursor) &&

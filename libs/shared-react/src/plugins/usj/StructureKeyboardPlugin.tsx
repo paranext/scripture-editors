@@ -30,10 +30,11 @@ import {
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
   PASTE_COMMAND,
+  SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { $isSomeVerseNode } from "../../nodes/usj";
-import { $isSomeParaNode } from "shared";
+import { $isSomeParaNode, $pieces } from "shared";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 
@@ -107,10 +108,12 @@ export function StructureKeyboardPlugin({
         const node = $getNodeByKey(armed.key) ?? undefined;
         if (armed.kind === "verse") {
           if (node) {
+            // Every piece of a verse an annotation cut into pieces.
+            const pieces = $pieces(node);
             const parent = node.getParent();
-            const prev = node.getPreviousSibling();
-            const next = node.getNextSibling();
-            node.remove();
+            const prev = pieces[0].getPreviousSibling();
+            const next = pieces[pieces.length - 1].getNextSibling();
+            pieces.forEach((piece) => piece.remove());
             if (prev) $placeCaretAtEnd(prev);
             else if (next && $isTextNode(next)) next.select(0, 0);
             else parent?.selectStart();
@@ -196,7 +199,18 @@ export function StructureKeyboardPlugin({
       const sanitized = $sanitizeNodesForProtectedStructure($generateNodesFromDOM(editor, dom));
       // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
       const selection = $getSelection();
-      if ($isRangeSelection(selection)) selection.insertNodes(sanitized);
+      // Inserted the way Lexical's own paste inserts (`$insertGeneratedNodes`): the clipboard-nodes
+      // command first, so its handlers — the display-annotation index splits a carrier an
+      // annotation cut into pieces at the caret, as the insertion splits an uncut one — see this
+      // insertion too, then the selection's own insertion unless one of them took it.
+      if (
+        $isRangeSelection(selection) &&
+        !editor.dispatchCommand(SELECTION_INSERT_CLIPBOARD_NODES_COMMAND, {
+          nodes: sanitized,
+          selection,
+        })
+      )
+        selection.insertNodes(sanitized);
       event.preventDefault();
       return true;
     };

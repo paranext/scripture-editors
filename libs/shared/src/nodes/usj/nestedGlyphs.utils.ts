@@ -32,6 +32,7 @@
  */
 
 import { $isMarkerNode, MarkerNode } from "../features/MarkerNode.js";
+import { $logicalChildren } from "../features/displayPieces.state.js";
 import { $isCharNode, CharNode } from "./CharNode.js";
 import { $getLogicalParent } from "./logicalParent.utils.js";
 import { LexicalNode } from "lexical";
@@ -83,7 +84,8 @@ export function $syncNestedGlyphs(char: CharNode): void {
   // An earlier transform in the same pass may have merged/removed the span (adjacent-span
   // combining); a detached span has no tree position to derive from.
   if (!char.isAttached()) return;
-  char.getChildren().forEach((child: LexicalNode) => {
+  // One glyph at a time, however an annotation has cut it: `setNested` respells the whole glyph.
+  $logicalChildren(char).forEach((child: LexicalNode) => {
     if (!$isMarkerNode(child)) return;
     const nested = $charGlyphNestedValue(child, char);
     if (nested !== undefined) child.setNested(nested);

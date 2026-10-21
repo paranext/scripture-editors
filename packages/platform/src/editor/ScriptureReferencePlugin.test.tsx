@@ -31,6 +31,7 @@ import {
 } from "lexical";
 import { useEffect, useState } from "react";
 import {
+  $addDisplayAnnotation,
   $createBookNode,
   $createChapterNode,
   $createCharNode,
@@ -40,10 +41,13 @@ import {
   $createParaNode,
   $createVerseNode,
   $isBookNode,
+  $pieces,
+  $removeDisplayAnnotation,
   getSelectionStartNode,
   getVisibleOpenMarkerText,
   NoteNode,
   ParaNode,
+  registerDisplayAnnotationBasis,
 } from "shared";
 import {
   $createImmutableVerseNode,
@@ -415,6 +419,69 @@ describe("ScriptureReferencePlugin", () => {
         $expectSelectionToBe(emptyVerseMarker, emptyVerseMarker.getTextContentSize());
       });
       expect(mockOnScrRefChange).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["an empty verse", 5, () => emptyVerseMarker],
+      ["a verse a char span opens", 4, () => charVerseMarker],
+    ])(
+      "rests at the end of an editable verse marker an annotation cuts, for %s",
+      async (_label, verseNum, $marker) => {
+        const { editor, setScrRef } = await testEnvironment(
+          scrRef,
+          mockOnScrRefChange,
+          $editableVerseContentStartingWithNonTextState,
+        );
+        registerDisplayAnnotationBasis(editor);
+        // `\v N ` cut around its number: three pieces of one verse marker.
+        await act(async () => {
+          editor.update(() => $addDisplayAnnotation($marker(), "test", "a", 3, 4));
+        });
+        updateSelection(editor, firstVerseTextNode, 2);
+        await flushQueuedEvents();
+
+        await setScrRef({ ...scrRef, verseNum });
+        await flushQueuedEvents();
+
+        editor.getEditorState().read(() => {
+          const pieces = $pieces($marker());
+          expect(pieces.length).toBe(3);
+          // The end of the whole marker, not of its first piece, which is inside `\v N `.
+          const last = pieces[pieces.length - 1];
+          $expectSelectionToBe(last, last.getTextContentSize());
+        });
+        expect(mockOnScrRefChange).not.toHaveBeenCalled();
+      },
+    );
+
+    it("does not re-report the position when an annotation cuts a verse marker", async () => {
+      const { editor } = await testEnvironment(
+        scrRef,
+        mockOnScrRefChange,
+        $editableVerseContentStartingWithNonTextState,
+      );
+      registerDisplayAnnotationBasis(editor);
+      await flushQueuedEvents();
+      // The plugin re-reads the selection through the editor's own `dispatchCommand` when a verse
+      // is created or destroyed; the DOM's selection events reach it by another path.
+      const dispatch = vi.spyOn(editor, "dispatchCommand");
+
+      // Cut into three pieces, then joined again: the same verse throughout.
+      await act(async () => {
+        editor.update(() => $addDisplayAnnotation(emptyVerseMarker, "test", "a", 3, 4));
+      });
+      editor.getEditorState().read(() => expect($pieces(emptyVerseMarker).length).toBe(3));
+      await act(async () => {
+        editor.update(() => {
+          for (const piece of $pieces(emptyVerseMarker))
+            $removeDisplayAnnotation(piece, "test", "a");
+        });
+      });
+      await flushQueuedEvents();
+
+      editor.getEditorState().read(() => expect($pieces(emptyVerseMarker).length).toBe(1));
+      expect(dispatch).not.toHaveBeenCalledWith(SELECTION_CHANGE_COMMAND, undefined);
+      dispatch.mockRestore();
     });
 
     // Documents intended behavior; it cannot fail without the placement code. With nothing after the

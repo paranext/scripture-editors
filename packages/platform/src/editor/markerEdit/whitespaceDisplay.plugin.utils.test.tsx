@@ -240,6 +240,46 @@ describe("a lone display NBSP", () => {
     },
   );
 
+  // An annotation is presentation: the space a backspace leaves inside it shows and saves exactly
+  // as the same space with no annotation.
+  it("saves and shows the space left between two char spans when an annotation holds the spaces", async () => {
+    const { lexical, ref } = await mountStandardViewEditor(paraUsj(twoWords));
+    await act(async () => {
+      ref.current?.setAnnotation(
+        {
+          start: { jsonPath: "$.content[2].content[1]", offset: 0 },
+          end: { jsonPath: "$.content[2].content[1]", offset: 1 },
+        },
+        "spelling",
+        "s1",
+      );
+      await Promise.resolve();
+    });
+    const $heldSpaces = () => {
+      const held = $getRoot()
+        .getAllTextNodes()
+        .filter((text) => $isTypedMarkNode(text.getParent()));
+      if (held.length !== 1) throw new Error(`${held.length} held texts`);
+      return held[0];
+    };
+    lexical
+      .getEditorState()
+      .read(() => expect($heldSpaces().getTextContent()).toBe(`${NBSP}${NBSP}`));
+
+    await act(async () =>
+      lexical.update(() => {
+        $heldSpaces().spliceText(1, 1, "", true);
+      }),
+    );
+
+    lexical.getEditorState().read(() => expect($heldSpaces().getTextContent()).toBe(" "));
+    expect(ref.current?.getUsj()?.content[2]).toEqual({
+      type: "para",
+      marker: "p",
+      content: [twoWords[0], " ", twoWords[2]],
+    });
+  });
+
   /** `content` with every two-space string reduced to the one space it saves as. */
   function oneSpace(content: Usj["content"]): Usj["content"] {
     return JSON.parse(JSON.stringify(content).replaceAll('"  "', '" "'));

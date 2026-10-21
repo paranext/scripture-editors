@@ -72,6 +72,14 @@ export const APP_PLACED_CARET_COMMAND: LexicalCommand<void> = createCommand(
 );
 export const ANNOTATION_CHANGE_TAG = "annotation-change";
 /**
+ * The tag an update carries when all it means to do is wrap or unwrap annotation marks, or set or
+ * clear display-byte holds — a comment added or deleted in the editor's own comment panel. Such an
+ * update changes no byte of the document, although a comment's mark is still a change to the USJ
+ * (it writes `zmsc` milestones), which is why this is not {@link ANNOTATION_CHANGE_TAG}: that tag
+ * also hides the update from USJ-change consumers.
+ */
+export const ANNOTATION_MARKS_TAG = "annotation-marks";
+/**
  * The tag every update that wraps a selection in a `TypedMarkNode` carries. The wrap splits
  * text nodes, and the pieces it creates are the same content in new nodes — never typed text.
  */

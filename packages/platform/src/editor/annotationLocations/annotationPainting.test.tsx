@@ -19,19 +19,22 @@ import { typeOver } from "../positions/positions.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $dfs } from "@lexical/utils";
-import { $addUpdateTag, REDO_COMMAND, UNDO_COMMAND } from "lexical";
+import { $addUpdateTag, $getRoot, REDO_COMMAND, UNDO_COMMAND } from "lexical";
 import { vi } from "vitest";
 import {
   $decoratorRenderedText,
   $displayAnnotationsOf,
+  $logicalText,
+  $setLogicalText,
+  setDecoratorPaint,
   DELTA_CHANGE_TAG,
   NBSP,
   TypedMarkOnRemove,
 } from "shared";
 import {
   $isImmutableVerseNode,
-  annotationHighlightClassNames,
   AnnotationRange,
+  DISPLAY_PIECE_CONTINUATION_ATTRIBUTE,
 } from "shared-react";
 
 /** A marker object with attributes `MarkerObject` does not name. */
@@ -206,7 +209,7 @@ describe("annotation painting in Standard view", () => {
     expect(texts("missing")).toEqual([]);
   });
 
-  it("keeps a partial highlight on its bytes through undo and redo of an edit to its carrier", async () => {
+  it("keeps a partial paint on its bytes through undo and redo of an edit to its carrier", async () => {
     const number = `${para}.content[0]['number']`;
     await annotate(
       mounted,
@@ -217,7 +220,18 @@ describe("annotation painting in Standard view", () => {
       "one",
     );
     expect(paintedText(mounted, "one")).toBe("1");
-    await typeOver(mounted.lexical, "12", `\\v${NBSP}13 `);
+    // The hold cuts the verse glyph into pieces: it is retyped as one carrier.
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const verse = $getRoot()
+          .getAllTextNodes()
+          .find((node) => $logicalText(node).includes("12"));
+        if (!verse) throw new Error("no verse glyph");
+        $setLogicalText(verse, `\\v${NBSP}13 `).select(0, 0);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(paintedText(mounted, "one")).toBe("1");
 
     await act(async () => mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined));
@@ -229,9 +243,8 @@ describe("annotation painting in Standard view", () => {
     expect(paintedText(mounted, "one")).toBe("1");
   });
 
-  // A load replaces every node, so this pins that it leaves no highlight behind; the stale-range
-  // path itself is reached by the undo and redo test above.
-  it("leaves no highlight behind when the document is loaded again", async () => {
+  // A load replaces every node, so this pins that it leaves no paint behind.
+  it("leaves no paint behind when the document is loaded again", async () => {
     const number = `${para}.content[0]['number']`;
     await annotate(
       mounted,
@@ -253,10 +266,8 @@ describe("annotation painting in Standard view", () => {
       await Promise.resolve();
     });
     expect(heldText(mounted, "one")).toBe("");
-    const ranges = [...CSS.highlights]
-      .filter(([name]) => annotationHighlightClassNames(name)?.includes("annotationId-one"))
-      .flatMap(([, highlight]) => [...highlight]);
-    expect(ranges).toEqual([]);
+    expect(paintedText(mounted, "one")).toBe("");
+    expect(mounted.ref.current?.getAnnotationRanges(ORACLE_TYPE, "one")).toEqual([]);
   });
 
   it("paints a whole char span the same whether it moved into the mark whole or not", async () => {
@@ -290,28 +301,55 @@ describe("annotation painting in Standard view", () => {
   });
 });
 
-describe("annotation painting without the CSS Custom Highlight API", () => {
-  const highlightApi = Object.getOwnPropertyDescriptor(globalThis, "Highlight");
-  beforeEach(() => {
-    Object.defineProperty(globalThis, "Highlight", { value: undefined, configurable: true });
+describe("the first and last element an annotation paints", () => {
+  let mounted: MountedInView;
+  beforeEach(async () => {
+    mounted = await mountInView(paintUsj, oracleView("standard"));
   });
-  afterEach(() => {
-    if (highlightApi) Object.defineProperty(globalThis, "Highlight", highlightApi);
-  });
+  afterEach(() => mounted.unmount());
 
-  it("falls back to painting a display-byte node it holds part of whole", async () => {
-    const mounted = await mountInView(paintUsj, oracleView("standard"));
-    const number = `${para}.content[0]['number']`;
+  /** The text of every element carrying the editor theme's start class for the oracle's type, and
+   * of every one carrying its end class, in document order. */
+  function edges(): { starts: string[]; ends: string[] } {
+    const root = mounted.lexical.getRootElement();
+    const texts = (prefix: string) =>
+      [...(root?.getElementsByClassName(`${prefix}-${HELD_TYPE}`) ?? [])].map(
+        (element) => element.textContent ?? "",
+      );
+    return { starts: texts("editor-typed-markStart"), ends: texts("editor-typed-markEnd") };
+  }
+
+  it("puts the start on a verse number and the end inside the char span the range ends in", async () => {
     await annotate(
       mounted,
       {
-        start: { jsonPath: number, propertyOffset: 1 },
-        end: { jsonPath: number, propertyOffset: 2 },
+        start: { jsonPath: `${para}.content[0]['number']`, propertyOffset: 0 },
+        end: { jsonPath: `${para}.content[2].content[0]`, offset: 2 },
       },
-      "digit",
+      "across",
     );
-    expect(paintedText(mounted, "digit")).toBe(`\\v${NBSP}12 `);
-    mounted.unmount();
+    expect(edges()).toEqual({ starts: ["12"], ends: ["gr"] });
+  });
+
+  it("leaves no edge class behind when the document is loaded again", async () => {
+    await annotate(
+      mounted,
+      {
+        start: { jsonPath: `${para}.content[0]['number']`, propertyOffset: 0 },
+        end: { jsonPath: `${para}.content[1]`, offset: 2 },
+      },
+      "across",
+    );
+    expect(edges()).toEqual({ starts: ["12"], ends: ["In"] });
+    await act(async () => {
+      mounted.ref.current?.setUsj({
+        ...paintUsj,
+        content: [...paintUsj.content, { type: "para", marker: "p", content: ["more"] }],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(edges()).toEqual({ starts: [], ends: [] });
   });
 });
 
@@ -338,9 +376,41 @@ describe("annotation painting on read-only decorators", () => {
     },
   );
 
+  it("grades a decorator held in part by the characters it paints, not by any paint at all", async () => {
+    const mounted = await mountInView(paintUsj, oracleView("formatted"));
+    await annotate(mounted, digit, "digit");
+    const $verse = () => {
+      const index = $byteNodes().findIndex(([node]) => $isImmutableVerseNode(node));
+      const [node] = $byteNodes()[index];
+      return { index, key: node.getKey(), rendered: $decoratorRenderedText(node) };
+    };
+    const verse = mounted.lexical.getEditorState().read($verse);
+    const painted = () =>
+      mounted.lexical
+        .getEditorState()
+        .read(() => $paintedIndexes(mounted.lexical, "digit").has(verse.index));
+    expect(painted()).toBe(true);
+
+    // A sub-span still paints the annotation, but on the digit it does not hold.
+    const one = verse.rendered.indexOf("1");
+    await act(async () =>
+      setDecoratorPaint(mounted.lexical, verse.key, [
+        {
+          start: one,
+          end: one + 1,
+          classNames: ["annotationId-digit"],
+          annotationKeys: [JSON.stringify([HELD_TYPE, "digit"])],
+        },
+      ]),
+    );
+    expect(paintedText(mounted, "digit")).toBe("1");
+    expect(painted()).toBe(false);
+    mounted.unmount();
+  });
+
   // The verse decorator re-renders inside the commit here, so this pins the result of a renumber;
   // a decorator rendering after its commit is covered in `displayAnnotations.index.test.tsx`.
-  it("keeps a partial highlight on its bytes when a collaborator renumbers the verse", async () => {
+  it("keeps a partial paint on its bytes when a collaborator renumbers the verse", async () => {
     const mounted = await mountInView(paintUsj, oracleView("formatted"));
     await annotate(
       mounted,
@@ -611,5 +681,56 @@ describe("annotation painting on read-only decorators", () => {
       expect(paintedText(mounted, "both")).toBe("2");
       mounted.unmount();
     });
+  });
+});
+
+describe("a table row's glyph an annotation cuts into pieces", () => {
+  it("marks every piece's element after the first, so a style can box the head alone", async () => {
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        {
+          type: "table",
+          content: [
+            {
+              type: "table:row",
+              marker: "tr",
+              content: [{ type: "table:cell", marker: "tc1", align: "start", content: ["a"] }],
+            },
+          ],
+        },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const mounted = await mountInView(usj, oracleView("standard"));
+    const marker = "$.content[2].content[0]['marker']";
+    // The `t` of `\tr`.
+    await act(async () => {
+      mounted.ref.current?.setAnnotation(
+        {
+          start: { jsonPath: marker, propertyOffset: 0 },
+          end: { jsonPath: marker, propertyOffset: 1 },
+        },
+        ORACLE_TYPE,
+        "t",
+      );
+      await Promise.resolve();
+    });
+    const row = mounted.lexical.getRootElement()?.querySelector("tr.table-row");
+    const glyph = [...(row?.children ?? [])]
+      .filter((element) => element.classList.contains("opening"))
+      .map((element) => [
+        element.textContent,
+        element.hasAttribute(DISPLAY_PIECE_CONTINUATION_ATTRIBUTE),
+      ]);
+    expect(glyph).toEqual([
+      ["\\", false],
+      ["t", true],
+      ["r", true],
+    ]);
+    mounted.unmount();
   });
 });

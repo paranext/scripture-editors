@@ -16,12 +16,31 @@ import {
   positionContext,
 } from "../markerEdit/pendingSettledOracle.test-helpers";
 import { $prepareSettleScopes } from "./settledScopes.utils";
-import { $liveSelectionFromSettled, $settledLocationFromLivePoint } from "./settledPositions.utils";
+import {
+  $livePointFromSettledLocation,
+  $liveSelectionFromSettled,
+  $settledLocationFromLivePoint,
+} from "./settledPositions.utils";
 import { twoParaUsj } from "./positions.test-helpers";
-import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
+import {
+  isUsjClosingMarkerLocation,
+  MarkerContent,
+  Usj,
+  UsjDocumentLocation,
+} from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getNodeByKey, $getRoot, $isElementNode, TextNode } from "lexical";
-import { getPendedDisplayOwners, NBSP } from "shared";
+import { $dfs } from "@lexical/utils";
+import { $getNodeByKey, $getRoot, $isElementNode, LexicalNode, TextNode } from "lexical";
+import {
+  $addDisplayAnnotation,
+  $isCharNode,
+  $isNoteNode,
+  $noteEditableCallerNode,
+  $pieceHead,
+  $pieces,
+  getPendedDisplayOwners,
+  NBSP,
+} from "shared";
 import { $getRangeFromUsjSelection } from "shared-react";
 import { describe, expect, it } from "vitest";
 
@@ -607,6 +626,192 @@ describe.each(VIEWS)("a paragraph's marker retyped as a note's (%s view)", (view
   });
 });
 
+describe.each(VIEWS)(
+  "the closer of a renamed span an annotation cuts into pieces (%s view)",
+  (view) => {
+    const content: MarkerContent[] = [
+      "In the ",
+      { type: "char", marker: "w", content: ["grace"] },
+      " of God",
+    ];
+
+    /** The span's closer, whole, while `\w` is pending as `\wx`; cut at its `w` when `cut`. */
+    async function pendingRenamedCloser(cut: boolean) {
+      const pending = await pendingEdit(content, view, "\\w", "\\wx", 3);
+      const $closer = (): LexicalNode => {
+        const last = pending.$node().getParentOrThrow().getLastChild();
+        if (!last) throw new Error("expected the span's closer");
+        return $pieceHead(last);
+      };
+      if (cut)
+        await act(async () => {
+          pending.mounted.lexical.update(() => $addDisplayAnnotation($closer(), "test", "a", 1, 2));
+          await Promise.resolve();
+        });
+      expect(getPendedDisplayOwners(pending.mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+      return { ...pending, $closer };
+    }
+
+    /** Every settled position on the closer (`\wx*`), taken back to live coordinates; and what
+     * the caret points on the closer's first piece report. */
+    function closerTrips(pending: Awaited<ReturnType<typeof pendingRenamedCloser>>) {
+      const viewOptions = oracleView(view);
+      const context = positionContext(pending.mounted.lexical, viewOptions);
+      return pending.mounted.lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const head = pending.$closer();
+        const reported: (UsjDocumentLocation | undefined)[] = [];
+        for (let offset = 0; offset <= head.getTextContentSize(); offset += 1)
+          reported.push($settledLocationFromLivePoint(prepared, head, offset));
+        const front = reported[0];
+        if (!isUsjClosingMarkerLocation(front)) throw new Error("expected a closer location");
+        const takenBack: unknown[] = [];
+        for (let offset = 0; offset <= "\\wx*".length; offset += 1)
+          takenBack.push(
+            $liveSelectionFromSettled(context, prepared, {
+              start: { ...front, closingMarkerOffset: offset },
+            }),
+          );
+        return { reported, takenBack };
+      });
+    }
+
+    it("takes every settled closer position back where the uncut closer does", async () => {
+      const uncut = await pendingRenamedCloser(false);
+      const cut = await pendingRenamedCloser(true);
+      expect(
+        cut.mounted.lexical.getEditorState().read(() => $pieces(cut.$closer()).length),
+      ).toBeGreaterThan(1);
+
+      const whole = closerTrips(uncut);
+      // `\w*` settles as `\wx*`: the settled closer's end is the live closer's end.
+      expect(whole.takenBack.at(-1)).toEqual({
+        start: { jsonPath: whole.reported[0]?.jsonPath, closingMarkerOffset: "\\w*".length },
+      });
+      const pieced = closerTrips(cut);
+      expect(pieced.takenBack).toEqual(whole.takenBack);
+      expect(pieced.reported).toEqual(whole.reported.slice(0, pieced.reported.length));
+    });
+  },
+);
+
+describe.each(VIEWS)(
+  "a closer an annotation cuts into pieces inside a settling paragraph (%s view)",
+  (view) => {
+    // The `\nd*` the user damaged settles the paragraph; the `\w*` in front of it is cut at its `w`.
+    const content: MarkerContent[] = [
+      "In the ",
+      { type: "char", marker: "w", content: ["grace"] },
+      " of ",
+      { type: "char", marker: "nd", content: ["God"] },
+      " made",
+    ];
+
+    async function pendingParagraph(cut: boolean) {
+      const pending = await pendingEdit(content, view, "\\nd*", "\\ nd*", 2);
+      const $closer = (): LexicalNode => {
+        const span = $dfs()
+          .map(({ node }) => node)
+          .find((node) => $isCharNode(node) && node.getMarker() === "w");
+        const last = $isCharNode(span) ? span.getLastChild() : null;
+        if (!last) throw new Error("expected the w closer");
+        return $pieceHead(last);
+      };
+      if (cut)
+        await act(async () => {
+          pending.mounted.lexical.update(() => $addDisplayAnnotation($closer(), "test", "a", 1, 2));
+          await Promise.resolve();
+        });
+      expect(getPendedDisplayOwners(pending.mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+      return { ...pending, $closer };
+    }
+
+    /** Each settled position on the `\w*` closer, resolved to a live point and restated as an offset
+     * into the whole closer, or as the text and offset it lands on anywhere else. */
+    function livePoints(pending: Awaited<ReturnType<typeof pendingParagraph>>) {
+      const viewOptions = oracleView(view);
+      const context = positionContext(pending.mounted.lexical, viewOptions);
+      return pending.mounted.lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const head = pending.$closer();
+        const front = $settledLocationFromLivePoint(prepared, head, 0);
+        if (!isUsjClosingMarkerLocation(front)) throw new Error("expected a closer location");
+        const points: (number | string | undefined)[] = [];
+        for (let offset = 0; offset <= "\\w*".length; offset += 1) {
+          const point = $livePointFromSettledLocation(context, prepared, {
+            ...front,
+            closingMarkerOffset: offset,
+          });
+          const node = point && $getNodeByKey(point.key);
+          if (!point || !node) {
+            points.push(undefined);
+            continue;
+          }
+          const pieces = $pieces(head);
+          const index = pieces.findIndex((piece) => piece.is(node));
+          if (index < 0) {
+            points.push(`${node.getTextContent()}@${point.offset}`);
+            continue;
+          }
+          points.push(
+            pieces.slice(0, index).reduce((at, piece) => at + piece.getTextContentSize(), 0) +
+              point.offset,
+          );
+        }
+        return points;
+      });
+    }
+
+    it("lands every settled closer position where the uncut closer does", async () => {
+      const uncut = await pendingParagraph(false);
+      const cut = await pendingParagraph(true);
+      expect(
+        cut.mounted.lexical.getEditorState().read(() => $pieces(cut.$closer()).length),
+      ).toBeGreaterThan(1);
+      const whole = livePoints(uncut);
+      expect(livePoints(cut)).toEqual(whole);
+    });
+
+    /** What every caret point on the `\w*` closer reports, keyed by its offset into the whole
+     * closer: one entry per spelling, so a cut boundary is reported from both sides of it. */
+    function reportedByOffset(pending: Awaited<ReturnType<typeof pendingParagraph>>) {
+      const viewOptions = oracleView(view);
+      const context = positionContext(pending.mounted.lexical, viewOptions);
+      return pending.mounted.lexical.getEditorState().read(() => {
+        const prepared = $prepareSettleScopes(context);
+        const reported: [number, UsjDocumentLocation | undefined][] = [];
+        let start = 0;
+        for (const piece of $pieces(pending.$closer())) {
+          for (let offset = 0; offset <= piece.getTextContentSize(); offset += 1)
+            reported.push([start + offset, $settledLocationFromLivePoint(prepared, piece, offset)]);
+          start += piece.getTextContentSize();
+        }
+        return reported;
+      });
+    }
+
+    it("reports the end of a closer, cut or not, as the closer's own end", async () => {
+      const uncut = await pendingParagraph(false);
+      const cut = await pendingParagraph(true);
+      expect(
+        cut.mounted.lexical.getEditorState().read(() => $pieces(cut.$closer()).length),
+      ).toBeGreaterThan(2);
+      const whole = reportedByOffset(uncut);
+      const [, front] = whole[0];
+      if (!isUsjClosingMarkerLocation(front)) throw new Error("expected a closer location");
+      // A caret at the closer's end rests on the closer, as it reports outside a pending scope;
+      // the content after it starts at the same place but is not where the caret is.
+      expect(whole.at(-1)).toEqual([
+        "\\w*".length,
+        { jsonPath: front.jsonPath, closingMarkerOffset: "\\w*".length },
+      ]);
+      const byOffset = new Map(whole);
+      const pieced = reportedByOffset(cut);
+      expect(pieced).toEqual(pieced.map(([offset]) => [offset, byOffset.get(offset)]));
+    });
+  },
+);
+
 describe.each(VIEWS)("a closer typed into an unclosed note (%s view)", (view) => {
   // `\ft` retyped `\f*t`: the settle closes the note at the typed `\f*`, and `t note text` moves
   // after the note into the paragraph. A position on the typed closer is on the settled note's
@@ -702,6 +907,55 @@ describe.each(VIEWS)("a closer typed into an unclosed note (%s view)", (view) =>
     expect(getPendedDisplayOwners(mounted.lexical)?.size ?? 0).toBeGreaterThanOrEqual(edits.length);
     return mounted;
   }
+
+  /** Every caret position's report, as one sorted set per document position (a carrier cut into
+   * pieces spells a boundary twice), and the document read while the edit waits. */
+  function reportsWhilePending(mounted: Mounted): { reports: string[]; pending: unknown } {
+    const context = positionContext(mounted.lexical, oracleView(view));
+    const reports = mounted.lexical.getEditorState().read(() => {
+      const prepared = $prepareSettleScopes(context);
+      const byPosition = new Map<number, Set<string>>();
+      for (const { node, offset, position } of $caretPositions()) {
+        const location = $settledLocationFromLivePoint(prepared, node, offset);
+        let set = byPosition.get(position);
+        if (!set) byPosition.set(position, (set = new Set()));
+        set.add(JSON.stringify(location ?? null));
+      }
+      return [...byPosition].map(([at, set]) => `${at}: ${[...set].sort().join(" | ")}`);
+    });
+    return { reports, pending: mounted.ref.current?.getUsj() };
+  }
+
+  it("reports every position as it does when an annotation cuts the note's caller", async () => {
+    const plain = await pendingEdit(unclosedNote("+"), view, "\\ft", "\\f*t", 3);
+    const cut = await pendingEdit(unclosedNote("+"), view, "\\ft", "\\f*t", 3);
+    // The caller's `+` held, cutting the caller into three pieces.
+    await act(async () => {
+      cut.mounted.lexical.update(() => {
+        const note = $getRoot()
+          .getAllTextNodes()
+          .map((text) => text.getParent())
+          .find($isNoteNode);
+        const caller = note && $noteEditableCallerNode(note);
+        if (!caller) throw new Error("no editable caller");
+        $addDisplayAnnotation(caller, "test", "a", 1, 2);
+      });
+      await Promise.resolve();
+    });
+    const callerPieces = cut.mounted.lexical.getEditorState().read(() => {
+      const note = $getRoot()
+        .getAllTextNodes()
+        .map((text) => text.getParent())
+        .find($isNoteNode);
+      const caller = note && $noteEditableCallerNode(note);
+      return caller ? $pieces(caller).length : 0;
+    });
+    expect(callerPieces).toBe(3);
+    expect(getPendedDisplayOwners(cut.mounted.lexical)?.size ?? 0).toBeGreaterThan(0);
+    expect(reportsWhilePending(cut.mounted)).toEqual(reportsWhilePending(plain.mounted));
+    plain.mounted.unmount();
+    cut.mounted.unmount();
+  });
 
   it("reports the text past the typed closer when the note's paragraph settles too", async () => {
     // The paragraph's own marker is pending as well, so the paragraph's settle carries the note's.

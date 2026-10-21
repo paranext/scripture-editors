@@ -64,14 +64,24 @@ import {
   $isNestedCharNode,
   $isNoteNode,
   $isParaNode,
+  $isPieceContinuation,
   $isSomeChapterNode,
   $isTypedMarkNode,
   $isUnknownNode,
   $isVerseBlockNode,
   $isVerseNode,
   $isVisibleMarkerNode,
+  $lastPiece,
+  $logicalOffset,
+  $logicalNextSibling,
+  $logicalText,
+  $nextSiblingThroughMarks,
   $noteEditableCallerNode,
   $ownerOfRunPiece,
+  $parentOutsideMarks,
+  $pieceAtLogicalOffset,
+  $pieceHead,
+  $previousSiblingThroughMarks,
   $shouldIgnoreNodeForContentIndexes,
   $typedNoteCallerRange,
   canonicalAttributeText,
@@ -482,12 +492,14 @@ function closingGlyphSpans(keyName?: string): DisplayByteSpan[] {
 function $runPieceOf(
   node: LexicalNode,
 ): { owner: LexicalNode; kind: DisplayRunKind; role: "opener" | "value" | "closer" } | undefined {
-  const reference = $ownerOfRunPiece(node);
+  // A run piece an annotation cut into pieces is that run piece whole: the scan names its head.
+  const head = $pieceHead(node);
+  const reference = $ownerOfRunPiece(head);
   if (!reference) return undefined;
   const pieces = displayRunDescriptor(reference.kind).scanPieces(reference.owner);
-  if (pieces.opener?.is(node)) return { ...reference, role: "opener" };
-  if (pieces.value?.is(node)) return { ...reference, role: "value" };
-  if (pieces.closer?.is(node)) return { ...reference, role: "closer" };
+  if (pieces.opener?.is(head)) return { ...reference, role: "opener" };
+  if (pieces.value?.is(head)) return { ...reference, role: "value" };
+  if (pieces.closer?.is(head)) return { ...reference, role: "closer" };
   return undefined;
 }
 
@@ -579,7 +591,7 @@ function $glyphOwner(glyph: LexicalNode): LexicalNode {
 
 /** The spans of an editable `MarkerNode` glyph. */
 function $markerGlyphBytes(glyph: MarkerNode): DisplayBytes {
-  const length = glyph.getTextContentSize();
+  const length = $logicalText(glyph).length;
   const piece = $runPieceOf(glyph);
   if (piece && piece.role !== "value") {
     const attributeRun = ATTRIBUTE_MARKER_RUNS[piece.kind];
@@ -677,7 +689,7 @@ function $attributeRunValueBytes(value: TextNode): DisplayBytes | undefined {
   const piece = $runPieceOf(value);
   if (piece?.role !== "value") return undefined;
   const { owner, kind } = piece;
-  const text = value.getTextContent();
+  const text = $logicalText(value);
   const length = text.length;
 
   const attributeRun = ATTRIBUTE_MARKER_RUNS[kind];
@@ -767,8 +779,14 @@ function markerAndNumberSpans(marker: string, text: string): DisplayByteSpan[] |
   ];
 }
 
-/** The USFM display bytes `node` carries, or `undefined` when it carries none. */
-function $displayBytesOf(node: LexicalNode): DisplayBytes | undefined {
+/**
+ * The USFM display bytes `node` carries, or `undefined` when it carries none. A text carrier an
+ * annotation has cut into pieces (`displayPieces.state.ts`) carries its bytes as one: every piece
+ * answers with the whole carrier's bytes, measured in the whole carrier's text, so an offset into
+ * a piece is first restated in it ({@link $logicalOffset}).
+ */
+function $displayBytesOf(piece: LexicalNode): DisplayBytes | undefined {
+  const node = $isTextNode(piece) ? $pieceHead(piece) : piece;
   if ($isMarkerNode(node)) return $markerGlyphBytes(node);
   if ($isVisibleMarkerNode(node)) return $visibleGlyphBytes(node);
   if ($isImmutableTypedTextNode(node) && node.getTextType() === "attribute")
@@ -787,29 +805,31 @@ function $displayBytesOf(node: LexicalNode): DisplayBytes | undefined {
   }
 
   if ($isVerseNode(node)) {
-    const spans = markerAndNumberSpans(node.getMarker(), node.getTextContent());
-    return spans ? { owner: node, length: node.getTextContentSize(), spans } : undefined;
+    const text = $logicalText(node);
+    const spans = markerAndNumberSpans(node.getMarker(), text);
+    return spans ? { owner: node, length: text.length, spans } : undefined;
   }
 
   if (!$isTextNode(node)) return undefined;
 
   // An unmatched marker spells `\` then its marker name, which carries its own `*` (`\*`, `\nd*`).
   if ($isImmutableUnmatchedNode(node))
-    return { owner: node, length: node.getTextContentSize(), spans: markerGlyphSpans(1) };
+    return { owner: node, length: $logicalText(node).length, spans: markerGlyphSpans(1) };
 
   if ($getState(node, textTypeState) === "attribute") return $attributeRunValueBytes(node);
 
   const parent = node.getParent();
   if ($isChapterNode(parent) && $chapterGlyphTextNode(parent)?.is(node)) {
-    const spans = markerAndNumberSpans(parent.getMarker(), node.getTextContent());
-    return spans ? { owner: parent, length: node.getTextContentSize(), spans } : undefined;
+    const text = $logicalText(node);
+    const spans = markerAndNumberSpans(parent.getMarker(), text);
+    return spans ? { owner: parent, length: text.length, spans } : undefined;
   }
   // An annotation mark around the caller is transparent in USJ, so the note is the logical parent.
   const note = $getLogicalParent(node);
   if ($isNoteNode(note) && $noteEditableCallerNode(note)?.is(node)) {
     return {
       owner: note,
-      length: node.getTextContentSize(),
+      length: $logicalText(node).length,
       spans: [
         // The caller's leading space is the space after the note's own marker, which counts into
         // that marker name's offset space.
@@ -848,6 +868,8 @@ function $displayByteCarriers(owner: LexicalNode): LexicalNode[] {
     const chapterGlyph = $isChapterNode(owner) ? $chapterGlyphTextNode(owner) : undefined;
     const noteCaller = $isNoteNode(owner) ? $noteEditableCallerNode(owner) : undefined;
     for (const child of owner.getChildren()) {
+      // A carrier cut into pieces is one carrier, named by its first piece.
+      if ($isPieceContinuation(child)) continue;
       // The caller can sit inside an annotation mark, which is transparent in USJ.
       if (noteCaller && (noteCaller.is(child) || child.isParentOf(noteCaller)))
         carriers.push(noteCaller);
@@ -909,7 +931,8 @@ function $locationFromDisplayBytes(
   const bytes = $displayBytesOf(node);
   if (!bytes || bytes.spans.length === 0) return undefined;
 
-  const clamped = Math.max(0, Math.min(offset, bytes.length));
+  const carrierOffset = $isTextNode(node) ? $logicalOffset(node, offset) : offset;
+  const clamped = Math.max(0, Math.min(carrierOffset, bytes.length));
   let span = bytes.spans[0];
   for (const candidate of bytes.spans) {
     if (candidate.start > clamped) break;
@@ -942,7 +965,7 @@ function $locationFromDisplayBytes(
     case "closingAttributeMarker":
       return { jsonPath, keyName: span.bytes.keyName, keyClosingMarkerOffset: within };
     case "precedingText":
-      return $precedingTextLocation(node, collapsesSpaceRuns);
+      return $precedingTextLocation($pieceHead(node), collapsesSpaceRuns);
   }
 }
 
@@ -971,18 +994,15 @@ function $precedingTextLocation(
   node: LexicalNode,
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation | undefined {
-  // An annotation mark around the run is transparent: step out of it to find what precedes.
-  let start: LexicalNode = node;
-  for (let mark = start.getParent(); !start.getPreviousSibling() && $isTypedMarkNode(mark); ) {
-    start = mark;
-    mark = start.getParent();
-  }
-  // Walk back over text that would only defer to its neighbor — the deferral points forward, at
-  // this run, so taking it would cycle. Stepping strictly backwards through siblings terminates.
-  let previous = start.getPreviousSibling();
+  // An annotation mark is transparent: what precedes is read through it. Walk back over text that
+  // would only defer to its neighbor — the deferral points forward, at this run, so taking it
+  // would cycle. Stepping strictly backwards terminates.
+  let previous = $previousSiblingThroughMarks(node);
   while (previous && $defersToNeighbor(previous, collapsesSpaceRuns))
-    previous = previous.getPreviousSibling();
+    previous = $previousSiblingThroughMarks(previous);
   if (!previous) return undefined;
+  // The end of a carrier cut into pieces is the end of its last piece.
+  previous = $lastPiece(previous);
   const last = $isElementNode(previous) ? previous.getLastDescendant() : previous;
   if (last && ($isTextNode(last) || $isDisplayByteDecorator(last))) {
     // The same deferral one level down (a wrapper whose last descendant is that placeholder).
@@ -1014,7 +1034,11 @@ function $pointFromDisplayBytes(
       if (!isSameByteKind(span.bytes, wanted)) continue;
       const highest = highestSpanOffset(bytes, index);
       if (offset < span.base || offset > highest) continue;
-      return [carrier, span.start + (offset - span.base)];
+      const carrierOffset = span.start + (offset - span.base);
+      // The offset is into the whole carrier: name the piece holding it.
+      return $isTextNode(carrier)
+        ? $pieceAtLogicalOffset(carrier, carrierOffset)
+        : [carrier, carrierOffset];
     }
   }
   return undefined;
@@ -1179,14 +1203,16 @@ export function $getNodeFromLocation(
     // At the end of a line, USFM has no separator after a verse's number: the newline follows it.
     // The glyph's trailing separator stands for nothing there (the browser does not even draw it),
     // so one past the number is the newline's far side, the start of the next line.
+    // A verse an annotation cuts into pieces ends at its last piece.
+    const verseEnd = $isVerseNode(node) ? $lastPiece(node) : undefined;
     if (
       propertyName === "number" &&
-      $isVerseNode(node) &&
-      location.propertyOffset === node.getNumber().length + 1 &&
-      $endsInOwnSeparator(node) &&
-      $endsItsLine(node)
+      verseEnd &&
+      location.propertyOffset === verseEnd.getNumber().length + 1 &&
+      $endsInOwnSeparator(verseEnd) &&
+      $endsItsLine(verseEnd)
     ) {
-      const nextLine = $nextLineStart(node);
+      const nextLine = $nextLineStart(verseEnd);
       if (nextLine) return nextLine;
     }
     const point = $pointFromDisplayBytes(node, wanted, location.propertyOffset);
@@ -1742,9 +1768,13 @@ function $locationFromNode(
     // Presentation-only text (the space Standard view shows after a paragraph's `\p` glyph, where
     // a caret at the paragraph's content start sits) is no USJ content of its own: a point in it
     // is the point beside it — the start of the text after it, or the end of the bytes before it.
-    const isAfter = offset > 0;
-    let neighbor = isAfter ? node.getNextSibling() : node.getPreviousSibling();
-    // An annotation mark is transparent: the text beside it is its first or last leaf.
+    // A carrier cut into pieces is one node here: past its front is past the front of all of it,
+    // and its neighbours are the nodes beside the whole chain.
+    const isAfter = $logicalOffset(node, offset) > 0;
+    let neighbor = isAfter ? $logicalNextSibling(node) : $pieceHead(node).getPreviousSibling();
+    // A mark beside the text is transparent: the text beside it is its first or last leaf. A mark
+    // the text sits in is not stepped out of — the text at its edge answers for the mark's own
+    // edge, the place the mark's first content starts.
     while ($isTypedMarkNode(neighbor))
       neighbor = isAfter ? neighbor.getFirstChild() : neighbor.getLastChild();
     if (
@@ -1759,18 +1789,25 @@ function $locationFromNode(
   }
 
   // Anything else — presentation text with nothing beside it to defer to, a decorator the model
-  // counts as one item — is the gap in front of it, or after it for a point past its start.
-  return $locationBeside(node, offset > 0, collapsesSpaceRuns);
+  // counts as one item — is the gap in front of it, or after it for a point past its start (of the
+  // whole carrier, for a piece).
+  return $locationBeside(
+    node,
+    ($isTextNode(node) ? $logicalOffset(node, offset) : offset) > 0,
+    collapsesSpaceRuns,
+  );
 }
 
 /** Whether `node` is editable glyph text ending in its own trailing separator: a verse's `\v 1 `,
  * or an expanded note's ` + ` caller. A chapter's glyph is not one: only its own runs follow it. */
 function $endsInOwnSeparator(node: TextNode): boolean {
+  // Only the end of a carrier's last piece is the end of the carrier.
+  if (!$lastPiece(node).is(node)) return false;
   if (!TRAILING_SEPARATOR_REGEX.test(node.getTextContent())) return false;
   if ($isVerseNode(node)) return true;
   // An annotation mark around the caller is transparent in USJ, so the note is the logical parent.
   const note = $getLogicalParent(node);
-  return $isNoteNode(note) && !!$noteEditableCallerNode(note)?.is(node);
+  return $isNoteNode(note) && !!$noteEditableCallerNode(note)?.is($pieceHead(node));
 }
 
 /**
@@ -1784,16 +1821,10 @@ function $locationOfFirstByteAfter(
   node: LexicalNode,
   collapsesSpaceRuns: boolean,
 ): UsjDocumentLocation | undefined {
-  let current = node;
-  for (
-    let mark = current.getParent();
-    !current.getNextSibling() && $isTypedMarkNode(mark);
-    mark = current.getParent()
-  )
-    current = mark;
-  const next = current.getNextSibling();
+  // An annotation mark is transparent: what follows is read through it.
+  const next = $nextSiblingThroughMarks(node);
   if (!next) {
-    const parent = current.getParent();
+    const parent = $parentOutsideMarks($lastPiece(node));
     if (!parent) return undefined;
     return $locationFromNode(parent, parent.getChildrenSize(), collapsesSpaceRuns);
   }
@@ -1822,16 +1853,10 @@ function $nextLineStart(node: LexicalNode): ReturnType<typeof $pointBeside> | un
   return $pointBeside(next, false);
 }
 
-/** Whether nothing follows `node` in its line, looking through annotation marks. */
+/** Whether nothing follows `node` in its line, looking through annotation marks and past the
+ * other pieces of its carrier. */
 function $endsItsLine(node: LexicalNode): boolean {
-  let current = node;
-  for (
-    let mark = current.getParent();
-    !current.getNextSibling() && $isTypedMarkNode(mark);
-    mark = current.getParent()
-  )
-    current = mark;
-  return !current.getNextSibling();
+  return !$nextSiblingThroughMarks(node);
 }
 
 /** The node carrying the first display byte at `child`'s front: `child` itself, or the first piece
@@ -1906,7 +1931,9 @@ function $locationBeside(
   const parent = node.getParent();
   if (!parent)
     return { jsonPath: usjJsonPathFromIndexes($getJsonPathIndexes(node, collapsesSpaceRuns)) };
-  const index = node.getIndexWithinParent() + (after ? 1 : 0);
+  // Beside a carrier cut into pieces is beside all of it.
+  const index =
+    (after ? $lastPiece(node) : $pieceHead(node)).getIndexWithinParent() + (after ? 1 : 0);
   if ($isTypedMarkNode(parent)) {
     // A mark is transparent, so a gap at its edge is the gap beside the mark itself, and a gap
     // between its children is in front of the content that follows. Asking the mark for its own
@@ -2149,9 +2176,9 @@ function $nearestPointAfterContent(
       ];
   }
 
-  // A decorator (e.g. ImmutableChapterNode) or an element with no children: the start of what
-  // follows it is the nearest point there is.
-  const nextSibling = node.getNextSibling();
+  // A decorator (e.g. ImmutableChapterNode), a leaf carrier (whose pieces are one node), or an
+  // element with no children: the start of what follows it is the nearest point there is.
+  const nextSibling = $logicalNextSibling(node);
   if (nextSibling && $isElementNode(nextSibling)) return [nextSibling, 0];
 
   return $pointBeside(node, true);
@@ -2183,7 +2210,8 @@ function $bareValueStart(owner: LexicalNode, keyName: string): [LexicalNode, num
     const value = spans.find((span) =>
       isSameByteKind(span.bytes, { kind: "property", property: keyName }),
     );
-    if (value && carrier.getTextContent()[value.start - 1] === "|") return [carrier, value.start];
+    if (value && $logicalText(carrier)[value.start - 1] === "|")
+      return $pieceAtLogicalOffset(carrier, value.start);
   }
   return undefined;
 }
@@ -2235,7 +2263,9 @@ function $pointBeside(
 ): [LexicalNode | undefined, number | undefined] {
   const parent = node.getParent();
   if (!parent) return [undefined, undefined];
-  return [parent, node.getIndexWithinParent() + (after ? 1 : 0)];
+  // Beside a carrier cut into pieces is beside all of it.
+  const side = after ? $lastPiece(node) : $pieceHead(node);
+  return [parent, side.getIndexWithinParent() + (after ? 1 : 0)];
 }
 
 /** The value of a leaf marker's property, for the leaves that carry one on screen. */
@@ -2303,7 +2333,8 @@ function $getPreviousContentSibling(child: LexicalNode): LexicalNode | undefined
  */
 export function $getJsonPathIndexes(node: LexicalNode, collapsesSpaceRuns: boolean): number[] {
   const jsonPathIndexes: number[] = [];
-  let current: LexicalNode | null = node;
+  // A piece of a carrier is at its carrier's place.
+  let current: LexicalNode | null = $pieceHead(node);
   while (current) {
     const parent = $getLogicalParent(current);
     if (!parent) break;

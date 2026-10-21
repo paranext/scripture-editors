@@ -17,6 +17,12 @@ import {
   $isSomeChapterNode,
   $isSomeParaNode,
   $isSynthesizedMarkerNode,
+  $lastPiece,
+  $logicalNextSibling,
+  $logicalOffset,
+  $logicalPreviousSibling,
+  $logicalText,
+  $pieceHead,
   SomeParaNode,
 } from "shared";
 
@@ -181,16 +187,22 @@ export function $adjacentVerseMarker(
     const idx = direction === "backward" ? anchor.offset - 1 : anchor.offset;
     if (idx < 0) return undefined;
     const candidate = children[idx];
-    return $isSomeVerseNode(candidate) ? candidate : undefined;
+    if (!$isSomeVerseNode(candidate)) return undefined;
+    // A verse an annotation cut into pieces is named by its first piece. A point between two of
+    // its pieces is inside it, not beside it.
+    const edge = direction === "backward" ? $lastPiece(candidate) : $pieceHead(candidate);
+    return edge.is(candidate) ? $pieceHead(candidate) : undefined;
   }
+  // A caret in a carrier cut into pieces is at its edge only at the edge of the whole carrier.
+  const offset = $logicalOffset(node, anchor.offset);
   if (direction === "backward") {
-    if (anchor.offset !== 0) return undefined;
-    const prev = node.getPreviousSibling();
+    if (offset !== 0) return undefined;
+    const prev = $logicalPreviousSibling(node);
     return $isSomeVerseNode(prev) ? prev : undefined;
   }
-  if (anchor.offset !== node.getTextContentSize()) return undefined;
-  const next = node.getNextSibling();
-  return $isSomeVerseNode(next) ? next : undefined;
+  if (offset !== $logicalText(node).length) return undefined;
+  const next = $logicalNextSibling(node);
+  return $isSomeVerseNode(next) ? $pieceHead(next) : undefined;
 }
 
 /** True when the paragraph holding the caret has a preceding block sibling. */
@@ -344,12 +356,12 @@ export function $mergeParaIntoPrevious(para: SomeParaNode): void {
   // ImmutableTypedTextNode) is still its first child here; moving it into `prev` would fuse it
   // onto `prev`'s trailing text as a literal marker byte (e.g. `first\qsecond`), so it is dropped
   // along with the separator instead of moved.
-  const moved = para
-    .getChildren()
-    .filter(
-      (child) =>
-        !$isMarkerTrailingSeparator(child) && !(dropsLeadingPrefix && child.is(leadingPrefix)),
-    );
+  const moved = para.getChildren().filter(
+    (child) =>
+      !$isMarkerTrailingSeparator(child) &&
+      // Every piece of a prefix glyph an annotation cut into pieces.
+      !(dropsLeadingPrefix && $pieceHead(child).is(leadingPrefix)),
+  );
   prev.append(...moved);
   para.remove();
   // When `prev` had content, the junction is the end of its last child; when it was empty the

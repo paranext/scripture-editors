@@ -22,6 +22,11 @@ import {
   $isSomeChapterNode,
   $isVerseBlockNode,
   $isVerseNode,
+  $lastPiece,
+  $logicalOffset,
+  $logicalText,
+  $pieceHead,
+  $pieces,
   isSerializedVerseNode,
   isVerseInRange,
   NBSP,
@@ -160,7 +165,8 @@ export function $findPreviousVerseInSiblings(
   const children = parent.getChildren();
   for (let i = fromIndex - 1; i >= 0; i--) {
     const child = children[i];
-    if ($isSomeVerseNode(child)) return child;
+    // A verse cut into pieces by an annotation is met at its last piece: name the verse.
+    if ($isSomeVerseNode(child)) return $pieceHead(child);
   }
   return undefined;
 }
@@ -176,7 +182,8 @@ export function $findNextVerseAfter(verseNode: SomeVerseNode): SomeVerseNode | u
   const parent = verseNode.getParent();
   if (parent && $isElementNode(parent)) {
     const children = parent.getChildren();
-    for (let i = verseNode.getIndexWithinParent() + 1; i < children.length; i++) {
+    // Past every piece of a verse an annotation cut into pieces.
+    for (let i = $lastPiece(verseNode).getIndexWithinParent() + 1; i < children.length; i++) {
       const child = children[i];
       if ($isSomeVerseNode(child)) return child;
     }
@@ -199,9 +206,11 @@ export function $findNextVerseAfter(verseNode: SomeVerseNode): SomeVerseNode | u
 export function $findLastVerseInNode(
   node: LexicalNode | null | undefined,
 ): SomeVerseNode | undefined {
-  return $getVerseSiblings(node).findLast((child): child is SomeVerseNode =>
+  const last = $getVerseSiblings(node).findLast((child): child is SomeVerseNode =>
     $isSomeVerseNode(child),
   );
+  // A verse cut into pieces by an annotation is met at its last piece: name the verse.
+  return last && $pieceHead(last);
 }
 
 /**
@@ -233,13 +242,13 @@ export function $findLastVerse(nodes: LexicalNode[]) {
  * node is a non-VerseNode (e.g. ImmutableVerseNode, whose whole node is the number), returns 0 —
  * treats all positions as "after" and shows the current verse.
  */
-function getVerseNumberPrefixLength(verseNode: SomeVerseNode): number {
+function $getVerseNumberPrefixLength(verseNode: SomeVerseNode): number {
   if (!$isVerseNode(verseNode)) return 0;
   const verseNumber = verseNode.getNumber();
   if (!verseNumber) return 0;
   // Only the marker's own syntax can precede the number, and no digit appears in it, so the first
   // occurrence is the number itself.
-  const numberIndex = verseNode.getTextContent().indexOf(verseNumber);
+  const numberIndex = $logicalText(verseNode).indexOf(verseNumber);
   return numberIndex < 0 ? 0 : numberIndex + verseNumber.length;
 }
 
@@ -275,15 +284,17 @@ function $shouldShowPreviousVerseForBcv(
 ): boolean {
   const anchorNode = selection.anchor.getNode();
 
-  // Anchor not on verse node: check if cursor is before verse (parent offset or previous sibling)
-  if (anchorNode !== verseNode) {
+  // Anchor not on verse node (any piece of it, when an annotation cut it into pieces): check if
+  // cursor is before verse (parent offset or previous sibling)
+  if (!$pieces(verseNode).some((piece) => piece.is(anchorNode))) {
     return $isSelectionBeforeVerseNode(selection, verseNode, anchorNode);
   }
 
-  // Anchor on verse node: show previous if cursor is before verse number
+  // Anchor on verse node: show previous if cursor is before verse number, counted in the whole
+  // verse's text
   if ($isTextNode(verseNode)) {
-    const prefixLength = getVerseNumberPrefixLength(verseNode);
-    return selection.anchor.offset < prefixLength;
+    const prefixLength = $getVerseNumberPrefixLength(verseNode);
+    return $logicalOffset(anchorNode, selection.anchor.offset) < prefixLength;
   }
   // ImmutableVerseNode (DecoratorNode): whole node is verse number; show previous
   return true;
@@ -305,9 +316,9 @@ function currentVerseResult(verseNode: SomeVerseNode): { verseNum: number; verse
  * @returns the previous verse node, or `undefined` when `verseNode` is its chapter's first.
  */
 function $findPreviousVerse(verseNode: SomeVerseNode): SomeVerseNode | undefined {
-  const previous = $findNearestPreviousNode(verseNode);
+  const previous = $findNearestPreviousNode($pieceHead(verseNode));
   if (!previous || $isSomeChapterNode(previous)) return undefined;
-  if ($isSomeVerseNode(previous)) return previous;
+  if ($isSomeVerseNode(previous)) return $pieceHead(previous);
   return $findLastVerseInNode(previous) ?? $findThisVerse(previous);
 }
 
@@ -421,7 +432,7 @@ export function $selectNextVerse(selection: RangeSelection): boolean {
     }
     if (!nextVerse && parent && $isElementNode(parent)) {
       const children = parent.getChildren();
-      const currentIndex = currentVerse.getIndexWithinParent();
+      const currentIndex = $lastPiece(currentVerse).getIndexWithinParent();
       for (let i = currentIndex + 1; i < children.length; i++) {
         const child = children[i];
         if ($isSomeVerseNode(child)) {
@@ -456,7 +467,8 @@ export function $selectNextVerse(selection: RangeSelection): boolean {
   }
 
   if (!nextVerse) return false;
-  nextVerse.selectNext(0, 0);
+  // The content starts past every piece of a verse an annotation cut into pieces.
+  $lastPiece(nextVerse).selectNext(0, 0);
   return true;
 }
 
@@ -516,7 +528,8 @@ export function $selectPreviousVerse(selection: RangeSelection): boolean {
   }
 
   if (!prevVerse) return false;
-  prevVerse.selectNext(0, 0);
+  // The content starts past every piece of a verse an annotation cut into pieces.
+  $lastPiece(prevVerse).selectNext(0, 0);
   return true;
 }
 
@@ -560,7 +573,7 @@ export function $resolveVerseNode(
 
   if (isCursorOnElement) {
     const childAtOffset = startNode.getChildAtIndex(selection.anchor.offset);
-    if (childAtOffset && $isSomeVerseNode(childAtOffset)) return childAtOffset;
+    if (childAtOffset && $isSomeVerseNode(childAtOffset)) return $pieceHead(childAtOffset);
     const prev = $findPreviousVerseInSiblings(startNode, selection.anchor.offset);
     if (prev) return prev;
     const firstVerseInPara = $findNextVerseInNode(startNode);
@@ -578,16 +591,16 @@ export function $resolveVerseNode(
 export function $findThisVerse(node: LexicalNode | null | undefined) {
   if (!node || $isSomeChapterNode(node)) return;
 
-  // is this node a verse
-  if ($isSomeVerseNode(node)) return node;
+  // is this node a verse (a piece of one an annotation cut into pieces names the verse)
+  if ($isSomeVerseNode(node)) return $pieceHead(node);
 
   let previousSiblingOrParent = $findNearestPreviousNode(node);
   while (previousSiblingOrParent) {
     // If this node is a chapter node, stop searching as we've reached the start of this chapter
     if ($isSomeChapterNode(previousSiblingOrParent)) return;
 
-    // If this node is a verse node, return it
-    if ($isSomeVerseNode(previousSiblingOrParent)) return previousSiblingOrParent;
+    // If this node is a verse node, return it (met at its last piece when cut into pieces)
+    if ($isSomeVerseNode(previousSiblingOrParent)) return $pieceHead(previousSiblingOrParent);
 
     // If this node contains a verse node, return that
     const verseNode = $findLastVerseInNode(previousSiblingOrParent);

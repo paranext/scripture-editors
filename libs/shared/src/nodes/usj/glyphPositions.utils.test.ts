@@ -1,6 +1,15 @@
 import { $createCharNode } from "./CharNode.js";
-import { $isGlyphTextNode, $normalizeSelectionOutOfGlyphText } from "./glyphPositions.utils.js";
+import {
+  $isGlyphTextNode,
+  $isPointInMarkerGlyphText,
+  $normalizeSelectionOutOfGlyphText,
+} from "./glyphPositions.utils.js";
 import { $createMarkerNode } from "../features/MarkerNode.js";
+import {
+  $addDisplayAnnotation,
+  registerDisplayAnnotationBasis,
+} from "../features/displayAnnotations.utils.js";
+import { $pieces } from "../features/displayPieces.state.js";
 import { NBSP } from "./node-constants.js";
 import { $createMarkerTrailingSeparator, getVisibleOpenMarkerText } from "./node.utils.js";
 import { $createParaNode } from "./ParaNode.js";
@@ -331,5 +340,115 @@ describe("$normalizeSelectionOutOfGlyphText over a range", () => {
     expect(anchor.offset).toBe(0);
     expect(focus.key).toBe(opener.getKey());
     expect(focus.offset).toBe(openerText.length);
+  });
+});
+
+describe("a glyph an annotation cut into pieces", () => {
+  function mount() {
+    const { editor } = createBasicTestEnvironment();
+    registerDisplayAnnotationBasis(editor);
+    return editor;
+  }
+
+  /** `\v 5 ` + "In the beginning", the verse cut into `\v`, NBSP + `5`, and its trailing space. */
+  function buildCutVerse() {
+    const editor = mount();
+    let verse!: TextNode;
+    editor.update(
+      () => {
+        verse = $createVerseNode("5", getVisibleOpenMarkerText("v", "5"));
+        $getRoot().append($createParaNode("p").append(verse, $createTextNode("In the beginning")));
+        $addDisplayAnnotation(verse, "check", "a", 2, 4);
+      },
+      { discrete: true },
+    );
+    let pieces: TextNode[] = [];
+    editor.getEditorState().read(() => (pieces = $pieces(verse)));
+    expect(pieces.length).toBe(3);
+    return { editor, pieces };
+  }
+
+  /** `\add one\add*` with its opener cut into `\`, `ad`, `d` and its closer into `\add`, `*`. */
+  function buildCutSpan() {
+    const editor = mount();
+    let opener!: TextNode;
+    let content!: TextNode;
+    let closer!: TextNode;
+    editor.update(
+      () => {
+        opener = $createMarkerNode("add");
+        content = $createTextNode(`${NBSP}one`);
+        closer = $createMarkerNode("add", "closing");
+        $getRoot().append(
+          $createParaNode("p").append($createCharNode("add").append(opener, content, closer)),
+        );
+        $addDisplayAnnotation(opener, "check", "a", 1, 3);
+        $addDisplayAnnotation(closer, "check", "b", 4, 5);
+      },
+      { discrete: true },
+    );
+    let openers: TextNode[] = [];
+    let closers: TextNode[] = [];
+    editor.getEditorState().read(() => {
+      openers = $pieces(opener);
+      closers = $pieces(closer);
+    });
+    expect(openers.length).toBe(3);
+    expect(closers.length).toBe(2);
+    return { editor, openers, content, closers };
+  }
+
+  it("resolves a caret at a cut inside the glyph to the end of its last piece", () => {
+    const { editor, pieces } = buildCutVerse();
+    const last = pieces[2];
+    for (const [piece, offset] of [
+      [pieces[0], 2],
+      [pieces[1], 0],
+      [pieces[1], 2],
+    ] as const) {
+      const { moved, anchor, focus } = normalize(editor, () => piece.select(offset, offset));
+      expect(moved).toBe(true);
+      expect(anchor.key).toBe(last.getKey());
+      expect(anchor.offset).toBe(1);
+      expect(focus.offset).toBe(1);
+    }
+  });
+
+  it("leaves a caret at either end of the whole glyph alone", () => {
+    const { editor, pieces } = buildCutVerse();
+    for (const [piece, offset] of [
+      [pieces[0], 0],
+      [pieces[2], 1],
+    ] as const) {
+      const { moved, anchor } = normalize(editor, () => piece.select(offset, offset));
+      expect(moved).toBe(false);
+      expect(anchor.key).toBe(piece.getKey());
+      expect(anchor.offset).toBe(offset);
+    }
+  });
+
+  it("leaves a range START at a cut inside the opening glyph alone", () => {
+    const { editor, openers, content } = buildCutSpan();
+    const { moved, anchor } = normalize(editor, () => $selectRange(openers[1], 0, content, 3));
+    expect(moved).toBe(false);
+    expect(anchor.key).toBe(openers[1].getKey());
+    expect(anchor.offset).toBe(0);
+  });
+
+  it("steps a range START at the start of the whole opening glyph off it", () => {
+    const { editor, openers, content } = buildCutSpan();
+    const { moved, anchor } = normalize(editor, () => $selectRange(openers[0], 0, content, 3));
+    expect(moved).toBe(true);
+    expect(anchor.key).toBe(content.getKey());
+    expect(anchor.offset).toBe(0);
+  });
+
+  it("is inside a canonical closer at a cut in it, and after it only at its end", () => {
+    const { editor, closers } = buildCutSpan();
+    editor.getEditorState().read(() => {
+      expect($isPointInMarkerGlyphText(closers[0], 4)).toBe(true);
+      expect($isPointInMarkerGlyphText(closers[1], 0)).toBe(true);
+      expect($isPointInMarkerGlyphText(closers[1], 1)).toBe(false);
+    });
   });
 });

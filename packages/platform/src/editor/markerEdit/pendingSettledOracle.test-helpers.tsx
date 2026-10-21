@@ -13,11 +13,13 @@
  * (Delete) it, or — once per node — `x` typed over the node's whole text (a caller, a glyph, a word
  * selected and replaced) — and, as the delete-then-type gesture, Backspace or Delete followed by
  * `x` typed at the caret it leaves.
- * Typing is a direct splice into the node rather than `insertText`, so both nodes on either side
- * of a boundary are exercised: the editor can resolve a caret at a glyph's end to the end of the
- * glyph or to the start of the next text, and the two must settle alike. At every node boundary
- * each character is also typed the way a click and a keystroke arrive — the caret placed in one
- * update, `insertText` in the next — so the caret is wherever the selection listeners leave it.
+ * That first keystroke is a direct splice into the node rather than a key press, so both nodes on
+ * either side of a boundary are exercised: the editor can resolve a caret at a glyph's end to the
+ * end of the glyph or to the start of the next text, and the two must settle alike. Every later key
+ * is pressed the way a user presses it, as the command a key press dispatches (typing, Backspace,
+ * Delete), so every handler a key reaches takes part. At every node boundary each character is
+ * also typed the way a click and a keystroke arrive — the caret placed in one update, the key
+ * pressed in the next — so the caret is wherever the selection listeners leave it.
  *
  * In the footnote popover's view, whose note shell is `token` glyphs a user cannot splice, each
  * glyph is also visited at its two ends: a character typed with the caret placed there, and
@@ -68,7 +70,10 @@ import {
 import { SettledPositionContext } from "../positions/settledPositions.model";
 import { MarkerContent, Usj, UsjDocumentLocation } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
+import { drainNativeSelectionChange } from "../editor-test.utils";
+import { copyEvent, pasteEvent } from "./markerEdit.test-helpers";
 import {
+  $createRangeSelection,
   $getRoot,
   $getSelection,
   $getState,
@@ -76,13 +81,20 @@ import {
   $isRangeSelection,
   $isTextNode,
   CLICK_COMMAND,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  COPY_COMMAND,
+  CUT_COMMAND,
+  DELETE_CHARACTER_COMMAND,
   HISTORY_PUSH_TAG,
+  KEY_ENTER_COMMAND,
   LexicalEditor,
   LexicalNode,
   NodeKey,
+  PASTE_COMMAND,
   REDO_COMMAND,
   SELECT_ALL_COMMAND,
   SELECTION_CHANGE_COMMAND,
+  $setSelection,
   TextNode,
   UNDO_COMMAND,
 } from "lexical";
@@ -92,6 +104,12 @@ import {
   $isNoteNode,
   $isParaNode,
   $isVerseNode,
+  $isDisplayAnnotationCarrier,
+  $isPlainTextNode,
+  $logicalText,
+  $pieces,
+  $setLogicalText,
+  $textRunThroughMarks,
   createMarkerLookup,
   defaultStyleInfo,
   canonicalAttributeText,
@@ -114,7 +132,7 @@ import {
   ViewOptions,
 } from "shared-react";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 type Mounted = Awaited<ReturnType<typeof mountInView>>;
 
@@ -366,7 +384,7 @@ const deleteForward: Keystroke = (text, offset) =>
 
 /**
  * One keystroke at a node offset, as {@link Keystroke}; `typed` is the character it types, and
- * `then` a character typed next at the caret it leaves (`insertText`, in an update of its own) —
+ * `then` a character typed next at the caret it leaves (a key press, in an update of its own) —
  * the delete-then-type gesture, which reaches what a deletion leaves waiting for the next key (a
  * note's caller retyped after being deleted).
  */
@@ -425,8 +443,10 @@ const KEYSTROKES: KeystrokeCase[] = [
  * The keystrokes at a protected note shell's glyphs (`token` nodes), which a user cannot splice:
  * a character typed with the caret placed at either end of one — the selection change announced,
  * so the shell's caret guard moves a caret it does not allow there — and Backspace at its end or
- * Delete at its front, which Lexical's `deleteCharacter` turns into removing a one-character range
- * reaching into the glyph (the native selection's `modify`, which jsdom lacks, is what extends it).
+ * Delete at its front, pressed as the command a key press dispatches, which the shell's guard
+ * answers first and Lexical's `deleteCharacter` otherwise turns into removing a one-character range
+ * reaching into the glyph (extended with the native selection's `modify`, given to jsdom here by
+ * {@link modifyByCharacter}).
  */
 type ShellKeystroke =
   | { name: string; character: string }
@@ -439,15 +459,17 @@ const SHELL_KEYSTROKES: ShellKeystroke[] = [
 ];
 
 /**
- * A range made from a caret in a note's content the way the keyboard makes one — Shift with Left
- * or Right (one caret position), Home or End (the paragraph's edge), or select-all — announced as
- * a selection change, then typed over with `x` or removed (Backspace), as edits of their own. Run
- * in the popover's view, whose shell guard keeps such a range to the note's content.
+ * A range made from a caret the way the keyboard makes one — Shift with Left or Right (one caret
+ * position), Home or End (the paragraph's edge), or select-all — announced as a selection change,
+ * then typed over with `x` or removed (Backspace, or Delete), as edits of their own. The oracle runs
+ * them in the popover's view, from a caret in a note's content, whose shell guard keeps such a range
+ * to the note's content; the annotation-transparency oracle also runs some from a caret anywhere in
+ * every view ({@link TRANSPARENCY_RANGE_KEYSTROKES}).
  */
 interface RangeKeystroke {
   name: string;
   extend: "left" | "right" | "home" | "end" | "all";
-  edit: "x" | "";
+  edit: "x" | "" | "delete";
 }
 
 const RANGE_KEYSTROKES: RangeKeystroke[] = (
@@ -462,6 +484,174 @@ const RANGE_KEYSTROKES: RangeKeystroke[] = (
   { name: `${gesture}, then type "x"`, extend, edit: "x" as const },
   { name: `${gesture}, then Backspace`, extend, edit: "" as const },
 ]);
+
+/**
+ * One byte of the text at the caret copied the way a user copies it — the byte selected, then the
+ * copy command the editor's copy plugins answer — and pasted back at the caret with every flavor
+ * the copy wrote, as the paste command a paste dispatches. `copies` names the byte: the one before
+ * the caret or the one after it. Not one of the pending/settled oracle's keystrokes: the
+ * annotation-transparency oracle runs it, where the byte of a carrier an annotation has cut into
+ * pieces is copied out of its piece and pasted back at every spelling of the caret, a cut
+ * included.
+ */
+interface PasteKeystroke {
+  name: string;
+  copies: "before" | "after";
+}
+
+export const PASTE_KEYSTROKES: PasteKeystroke[] = [
+  { name: "copy the byte before the caret, then paste it there", copies: "before" },
+  { name: "copy the byte after the caret, then paste it there", copies: "after" },
+];
+
+/**
+ * Enter or Shift+Enter pressed at the caret: the caret placed in one update, then the key's command
+ * dispatched in the next, as a key press dispatches it — so the editor's Enter handling (a note's
+ * `\fp` break, a split through a char stack, a line break) acts at the caret the editor reads back
+ * from the screen. Not one of the pending/settled oracle's keystrokes: the annotation-transparency
+ * oracle runs it, where a caret at an annotation mark's end is read back past the mark.
+ */
+interface EnterKeystroke {
+  name: string;
+  isShift: boolean;
+}
+
+export const ENTER_KEYSTROKES: EnterKeystroke[] = [
+  { name: "place the caret, then press Enter", isShift: false },
+  { name: "place the caret, then press Shift+Enter", isShift: true },
+];
+
+/**
+ * The range keystrokes the annotation-transparency oracle runs from a caret anywhere in every view:
+ * Shift with Left or Right, then `x`, Backspace or Delete. Not among the pending/settled oracle's
+ * own keystrokes.
+ */
+export const TRANSPARENCY_RANGE_KEYSTROKES: RangeKeystroke[] = (
+  [
+    ["Shift+Left", "left"],
+    ["Shift+Right", "right"],
+  ] as const
+).flatMap(([gesture, extend]) => [
+  { name: `${gesture}, then type "x"`, extend, edit: "x" as const },
+  { name: `${gesture}, then Backspace`, extend, edit: "" as const },
+  { name: `${gesture}, then Delete`, extend, edit: "delete" as const },
+]);
+
+/**
+ * One end of a range a clipboard gesture selects: the caret itself (`"site"`); the place `n`
+ * document text positions away from it (negative: before it), at the caret there nearest the
+ * site — the start of the later of two texts meeting there for an end before the site, the end of
+ * the earlier one for an end after it — where a place with no caret (inside a `token` glyph, in a
+ * collapsed note) moves on away from the site, to the edited block's edge at most; the start of
+ * the text the caret is in (`"textStart"`); or the end of the text after that one
+ * (`"nextTextEnd"`). A text is read whole: a carrier with all its pieces, content with every part
+ * a mark cut it into ({@link $wholeText}).
+ */
+type RangeEnd = "site" | number | "textStart" | "nextTextEnd";
+
+/** A range a clipboard gesture selects: from `anchor` to `focus`, or (`"block"`) the whole content
+ * of the edited block. */
+export type GestureRange = { anchor: RangeEnd; focus: RangeEnd } | "block";
+
+/** Whether `range` selects the same bytes whichever spelling of the caret it is made from: it
+ * does not end at the caret itself. */
+export function isSpellingFree(range: GestureRange | "site"): boolean {
+  return (
+    range !== "site" && (range === "block" || (range.anchor !== "site" && range.focus !== "site"))
+  );
+}
+
+/**
+ * A cut the way a user cuts: the range `cuts` selected (announced as a selection change), then the
+ * cut command with a clipboard event the editor's copy plugins fill in. What it wrote to the
+ * clipboard is read back ({@link CaseRun.clipboard}). Not one of the pending/settled oracle's
+ * keystrokes: the annotation-transparency oracle runs it.
+ */
+interface CutKeystroke {
+  name: string;
+  cuts: GestureRange;
+}
+
+/**
+ * A copy of the range `copiesRange`, pasted with every flavor it wrote over `pastesOver`: a caret
+ * at the site (`"site"`), or a range there that the paste replaces. What the copy wrote is read
+ * back ({@link CaseRun.clipboard}). Not one of the pending/settled oracle's keystrokes.
+ */
+interface CopyPasteKeystroke {
+  name: string;
+  copiesRange: GestureRange;
+  pastesOver: GestureRange | "site";
+}
+
+/** A paste of `pastesText` as the clipboard's only flavor (`text/plain`) at the caret: what
+ * pasting as plain text, or from a plain-text source, delivers. Not one of the pending/settled
+ * oracle's keystrokes. */
+interface PlainPasteKeystroke {
+  name: string;
+  pastesText: string;
+}
+
+/** The bytes either side of the caret, three each way: a range a caret inside a short glyph
+ * crosses the glyph's edges with, into the content beside it. */
+const AROUND: GestureRange = { anchor: -3, focus: 3 };
+
+/** The text the caret is in and the text after it, whole: a glyph or a verse with the content
+ * after it, content with the glyph after it. */
+const TWO_TEXTS: GestureRange = { anchor: "textStart", focus: "nextTextEnd" };
+
+/** The cuts the annotation-transparency oracle makes at a caret. */
+export const CUT_KEYSTROKES: CutKeystroke[] = [
+  { name: "cut the byte before the caret", cuts: { anchor: "site", focus: -1 } },
+  { name: "cut the byte after the caret", cuts: { anchor: "site", focus: 1 } },
+  { name: "cut three bytes either side of the caret", cuts: AROUND },
+];
+
+/** The cut of the edited block's whole content, which the annotation-transparency oracle makes
+ * once per document. */
+export const BLOCK_CUT_KEYSTROKE: CutKeystroke = { name: "cut the whole block", cuts: "block" };
+
+/** The copies the annotation-transparency oracle pastes at a caret: the text the caret is in and
+ * the text after it, pasted at the caret and over the byte either side of it, and the edited
+ * block's whole content, pasted at the caret. */
+export const COPY_PASTE_KEYSTROKES: CopyPasteKeystroke[] = [
+  {
+    name: "copy the text at the caret and the text after it, then paste them at the caret",
+    copiesRange: TWO_TEXTS,
+    pastesOver: "site",
+  },
+  {
+    name: "copy the text at the caret and the text after it, then paste them over the byte either side of the caret",
+    copiesRange: TWO_TEXTS,
+    pastesOver: { anchor: -1, focus: 1 },
+  },
+  {
+    name: "copy the whole block, then paste it at the caret",
+    copiesRange: "block",
+    pastesOver: "site",
+  },
+];
+
+/** The plain-text pastes the annotation-transparency oracle makes at a caret: one line, and two. */
+export const PLAIN_PASTE_KEYSTROKES: PlainPasteKeystroke[] = [
+  { name: 'paste "pq" as plain text', pastesText: "pq" },
+  { name: 'paste "p", a line break and "q" as plain text', pastesText: "p\nq" },
+];
+
+/** The clipboard flavors a copy in this editor can write, every one a paste then reads. */
+const CLIPBOARD_FLAVORS = ["application/x-lexical-editor", "text/html", "text/plain"];
+
+/** The piece of `node`'s carrier holding byte `byte` of the whole carrier's text, and the byte's
+ * offset in that piece. */
+function $pieceHoldingByte(node: TextNode, byte: number): [TextNode, number] | undefined {
+  if (byte < 0) return undefined;
+  let start = 0;
+  for (const piece of $pieces(node)) {
+    const size = piece.getTextContentSize();
+    if (byte < start + size) return [piece, byte - start];
+    start += size;
+  }
+  return undefined;
+}
 
 /** Whether `node` is shown inside a collapsed note, where nothing can be typed. */
 function $isInCollapsedNote(node: LexicalNode): boolean {
@@ -538,17 +728,96 @@ function $shellTexts(): TextNode[] {
 }
 
 /** Click into the second paragraph, blur, and commit whatever is still pending. */
+
+/**
+ * The native selection's `modify` for one character, which jsdom does not implement and Lexical's
+ * `deleteCharacter` needs to extend a collapsed caret over the character Backspace or Delete
+ * removes: the focus moves one character back or forward through the editable text in document
+ * order (the end of one text node and the start of the next are one place, as in a browser), and
+ * the anchor stays unless the selection moves. Text inside a `contenteditable="false"` element is
+ * not stepped through; Lexical handles a decorator beside the caret before it asks `modify`.
+ * Other granularities are left alone.
+ */
+function modifyByCharacter(
+  this: Selection,
+  alter: string,
+  direction: string,
+  granularity: string,
+): void {
+  const { focusNode, focusOffset, anchorNode, anchorOffset } = this;
+  if (granularity !== "character" || !focusNode) return;
+  const root =
+    focusNode.parentElement?.closest('[contenteditable="true"]') ?? focusNode.ownerDocument?.body;
+  if (!root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (text) =>
+      text.parentElement?.closest('[contenteditable="false"]') || !text.textContent
+        ? NodeFilter.FILTER_SKIP
+        : NodeFilter.FILTER_ACCEPT,
+  });
+  const texts: Text[] = [];
+  for (let next = walker.nextNode(); next; next = walker.nextNode())
+    if (next instanceof Text) texts.push(next);
+  // The focus as a text position: in a text node, or before the first text after an element
+  // point.
+  let index = texts.findIndex((text) => text === focusNode);
+  let offset = focusOffset;
+  if (index < 0) {
+    const point = document.createRange();
+    point.setStart(focusNode, focusOffset);
+    index = texts.findIndex((text) => point.comparePoint(text, 0) >= 0);
+    offset = 0;
+    if (index < 0) {
+      index = texts.length - 1;
+      offset = texts[index]?.length ?? 0;
+    }
+  }
+  const backward = direction === "backward" || direction === "left";
+  let text = texts[index];
+  if (!text) return;
+  if (backward) {
+    while (offset === 0 && index > 0) {
+      index -= 1;
+      text = texts[index];
+      offset = text.length;
+    }
+    if (offset === 0) return;
+    offset -= 1;
+  } else {
+    while (offset === text.length && index < texts.length - 1) {
+      index += 1;
+      text = texts[index];
+      offset = 0;
+    }
+    if (offset === text.length) return;
+    offset += 1;
+  }
+  if (alter === "move" || !anchorNode) this.collapse(text, offset);
+  else this.setBaseAndExtent(anchorNode, anchorOffset, text, offset);
+}
+
+if (typeof Selection !== "undefined" && !("modify" in Selection.prototype))
+  Object.defineProperty(Selection.prototype, "modify", {
+    configurable: true,
+    writable: true,
+    value: modifyByCharacter,
+  });
+
 export async function depart(mounted: Mounted): Promise<void> {
   await act(async () => {
     mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
     mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
     await Promise.resolve();
     await Promise.resolve();
+    await drainNativeSelectionChange();
   });
   const rootElement = mounted.lexical.getRootElement();
   if (!rootElement) throw new Error("editor root not found");
   act(() => rootElement.blur());
   act(() => mounted.ref.current?.commitPendingMarkerEdits());
+  await act(async () => {
+    await drainNativeSelectionChange();
+  });
 }
 
 /** The marker lookup `Editor.tsx` classifies with when the host passes no stylesheet. */
@@ -1258,12 +1527,13 @@ function $screenLines(): string | undefined {
  * A nameless paragraph's bytes with its glyph's `\` spelled as {@link NAMELESS_MARKER_NAME} names
  * it, where the tokenizer reads that `\` as the nameless marker: the glyph's first byte after any
  * whitespace, followed by whitespace, the end, or another `\`. Any other glyph is spelled as it
- * shows.
+ * shows. The glyph is read whole, across the pieces an annotation cuts it into.
  */
 function $namelessMarked(bytes: string, block: LexicalNode): string {
   const glyph = $isParaNode(block) && block.getMarker() === "" ? block.getFirstChild() : null;
+  // The glyph is read whole, however an annotation cuts it into pieces.
   const opener = $isMarkerNode(glyph)
-    ? /^[\s\u00A0]*\\(?=[\s\u00A0\\]|$)/.exec(glyph.getTextContent())
+    ? /^[\s\u00A0]*\\(?=[\s\u00A0\\]|$)/.exec($logicalText(glyph))
     : null;
   if (!opener) return bytes;
   return `${opener[0]}${NAMELESS_MARKER_NAME}${bytes.slice(opener[0].length)}`;
@@ -1302,26 +1572,675 @@ const DUMP = process.env.PENDING_SETTLED_ORACLE_DUMP === "1";
 
 /** A view's expected-failures list: per row, the keystroke cases known to fail, by label, each
  * with the reason it is left failing. */
-interface ExpectedFailures {
+export interface ExpectedFailures {
   [row: string]: { [label: string]: string };
 }
 
-function readExpectedFailures(listFile: URL): ExpectedFailures {
+export function readExpectedFailures(listFile: URL): ExpectedFailures {
   if (!existsSync(listFile)) return {};
   const listed: ExpectedFailures = JSON.parse(readFileSync(listFile, "utf8"));
   return listed;
 }
 
+/** A place a keystroke case edits, resolved in the mounted editor: a text node and an offset. */
+export interface CaseSite {
+  node: TextNode;
+  offset: number;
+  shell: boolean;
+}
+
+/** The oracle's keystroke kinds, as one union. */
+export type OracleKeystroke =
+  | KeystrokeCase
+  | ShellKeystroke
+  | RangeKeystroke
+  | PasteKeystroke
+  | EnterKeystroke
+  | CutKeystroke
+  | CopyPasteKeystroke
+  | PlainPasteKeystroke;
+
+/** The keystrokes the oracle runs at a site of `view`. */
+export function keystrokesFor(view: string, shell: boolean): OracleKeystroke[] {
+  return shell
+    ? SHELL_KEYSTROKES
+    : [
+        ...KEYSTROKES,
+        ...PLACED_KEYSTROKES,
+        ...(view === PROTECTED_NOTE_SHELL_VIEW ? RANGE_KEYSTROKES : []),
+      ];
+}
+
+/** What one keystroke case left behind, read before and after the caret departed. */
+export interface CaseRun {
+  label: string;
+  applied: boolean;
+  isPending: boolean;
+  isInNote: boolean;
+  place: string | undefined;
+  history: boolean;
+  pending: Usj | undefined;
+  settled: Usj | undefined;
+  before: {
+    text: string;
+    screen: string | undefined;
+    reported: PositionReport[];
+    roundTrip: string[];
+  };
+  shownLines: string | undefined;
+  after: { text: string; reported: PositionReport[] };
+  /**
+   * What a paste's insertion logged as an error, first line each: `@lexical/clipboard` catches an
+   * insertion that throws (Lexical's own `insertNodes` refuses inline nodes with no block around
+   * the caret) and logs it before trying the clipboard's next flavor, so a refused insertion leaves
+   * no other trace.
+   */
+  pasteErrors: string[];
+  /** What a cut, or the copy of a copy-and-paste, wrote to the clipboard, by flavor (a flavor it
+   * did not write left out). */
+  clipboard?: { [flavor: string]: string };
+}
+
+/** The corpus rows the oracle runs in `view`. */
+export function oracleRows(view: string): (readonly [string, Usj])[] {
+  return corpusFor(view).map(({ name, usj }) => [`${name} (${view} view)`, usj] as const);
+}
+
+/** The oracle's edit sites of the mounted document, read from the editor. */
+export { $editSites, $editableTexts, $shellTexts, outsideNotes, pendingOracleView };
+export type { PositionReport };
+
 /**
- * Register the oracle's rows for `view` (an `ORACLE_VIEWS` name), compared with the cases
- * `listFile` lists as known to fail: a failure the list does not name fails its row, and so does a
- * listed case that no longer fails, so the list only shrinks. Each listed case names the reason
- * it is left failing. `PENDING_SETTLED_ORACLE_WRITE=1` rewrites the list from the run instead,
- * keeping the reasons of the cases still listed.
+ * Run one keystroke case on `mounted`: place the caret at the site `$site` resolves, apply
+ * `keystroke`, read the pending document, depart, read the settled one. `undefined` when the
+ * keystroke does nothing at the site, or the site is unreachable — `mounted` is unmounted then;
+ * after a run the caller unmounts it.
+ *
+ * Every step that moves the selection waits for the native `selectionchange` it queues, and the
+ * editor's answer to it, before the next step ({@link drainNativeSelectionChange}): otherwise
+ * whether a selection listener (the note shell's caret guard) acted before a keystroke would vary
+ * from run to run, and so would the case's result.
+ *
+ * A key pressed at a caret or over a range is dispatched as the command a real key press
+ * dispatches — `CONTROLLED_TEXT_INSERTION_COMMAND` for a character, `DELETE_CHARACTER_COMMAND`
+ * for Backspace (backward) and Delete — so every handler a key press reaches, the note shell's
+ * guard and Lexical's own deletion included, takes part, as it does for a user. Only the first
+ * keystroke of a {@link KeystrokeCase} stays a splice into the node, which is what reaches both
+ * spellings of a boundary.
  */
+export async function runKeystrokeCase(
+  mounted: Mounted,
+  view: string,
+  $site: () => CaseSite | undefined,
+  keystroke: OracleKeystroke,
+): Promise<CaseRun | undefined> {
+  const viewOptions = pendingOracleView(view);
+  let label = "";
+  let applied = false;
+  let place: string | undefined;
+  let isInNote = false;
+  // In the popover's view every caret placement is announced as a selection change, as a
+  // click or an arrow press announces it, so the shell's caret guard moves a caret it
+  // does not let rest there. A splice at such a place is no keystroke a user can make
+  // there, and is skipped.
+  const isAnnounced = view === PROTECTED_NOTE_SHELL_VIEW && !("deletes" in keystroke);
+  await act(async () => {
+    await drainNativeSelectionChange();
+  });
+  if (isAnnounced && !("character" in keystroke)) {
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const site = $site();
+        if (!site) return;
+        site.node.select(site.offset, site.offset);
+        mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+      });
+      await drainNativeSelectionChange();
+    });
+    const isReachable = mounted.lexical.getEditorState().read(() => {
+      const selection = $getSelection();
+      const site = $site();
+      return (
+        site !== undefined &&
+        $isRangeSelection(selection) &&
+        selection.anchor.key === site.node.getKey() &&
+        selection.anchor.offset === site.offset
+      );
+    });
+    if (!isReachable) {
+      mounted.unmount();
+      return undefined;
+    }
+  }
+  await act(async () => {
+    mounted.lexical.update(() => {
+      const site = $site();
+      if (!site) return;
+      const { node, offset, shell } = site;
+      // A carrier an annotation has cut into pieces is edited as one text: its bytes, and the
+      // offset in them (`displayPieces.state.ts`). An unsplit node is its own one piece.
+      const pieceStart = $pieces(node)
+        .slice(
+          0,
+          $pieces(node).findIndex((piece) => piece.is(node)),
+        )
+        .reduce((sum, piece) => sum + piece.getTextContentSize(), 0);
+      const text = $logicalText(node);
+      const at = pieceStart + offset;
+      isInNote = shell || $hasNoteAncestor(node);
+      label = `${shell ? "shell " : ""}${node.getType()} ${JSON.stringify(text.replaceAll(NBSP, "~"))}@${at} ${keystroke.name}`;
+      if ("deletes" in keystroke) {
+        if (at !== (keystroke.deletes === "before" ? text.length : 0)) return;
+        applied = true;
+        node.select(offset, offset);
+        mounted.lexical.dispatchCommand(DELETE_CHARACTER_COMMAND, keystroke.deletes === "before");
+        return;
+      }
+      if ("copies" in keystroke) {
+        const held = $pieceHoldingByte(node, keystroke.copies === "before" ? at - 1 : at);
+        if (!held) return;
+        applied = true;
+        const [piece, byte] = held;
+        piece.select(byte, byte + 1);
+        if (isAnnounced) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        return;
+      }
+      if ("cuts" in keystroke || "copiesRange" in keystroke) {
+        applied = $selectGestureRange(
+          site,
+          "cuts" in keystroke ? keystroke.cuts : keystroke.copiesRange,
+        );
+        if (applied && isAnnounced)
+          mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        return;
+      }
+      if ("pastesText" in keystroke) {
+        applied = true;
+        return;
+      }
+      if ("extend" in keystroke) {
+        // The popover edits only its note.
+        if (!isInNote && view === PROTECTED_NOTE_SHELL_VIEW) return;
+        applied = true;
+        node.select(offset, offset);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return;
+        if (keystroke.extend === "all") {
+          mounted.lexical.dispatchCommand(
+            SELECT_ALL_COMMAND,
+            new KeyboardEvent("keydown", { key: "a", ctrlKey: true }),
+          );
+          return;
+        }
+        const para = $getRoot().getChildren()[2];
+        if (!$isElementNode(para)) return;
+        const positions = $caretPositions();
+        const here = positions.find((caret) => caret.node.is(node) && caret.offset === offset);
+        const neighbor =
+          keystroke.extend === "left"
+            ? positions.filter((caret) => caret.position === (here?.position ?? 0) - 1).at(-1)
+            : positions.find((caret) => caret.position === (here?.position ?? 0) + 1);
+        if (keystroke.extend === "home") selection.focus.set(para.getKey(), 0, "element");
+        else if (keystroke.extend === "end")
+          selection.focus.set(para.getKey(), para.getChildrenSize(), "element");
+        else if (neighbor) selection.focus.set(neighbor.node.getKey(), neighbor.offset, "text");
+        mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        return;
+      }
+      if ("isShift" in keystroke) {
+        applied = true;
+        node.select(offset, offset);
+        if (isAnnounced) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        return;
+      }
+      const typed = "character" in keystroke ? keystroke.character : keystroke.typed;
+      const caret = $caretPositions().find((c) => c.node.is(node) && c.offset === offset);
+      if (typed !== undefined && caret) place = `${JSON.stringify(typed)}@${caret.position}`;
+      if ("character" in keystroke) {
+        if (at !== 0 && at !== text.length) return;
+        applied = true;
+        node.select(offset, offset);
+        if (isAnnounced) mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+        return;
+      }
+      const result = keystroke.apply(text, at);
+      if (!result) return;
+      applied = true;
+      const head = $setLogicalText(node, result.text);
+      head.select(result.caret, result.caret);
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await drainNativeSelectionChange();
+  });
+  let pasteErrors: string[] = [];
+  let clipboard: CaseRun["clipboard"];
+  if (applied && "copies" in keystroke) {
+    const pasted = await copyAndPasteAtSite(mounted, isAnnounced, $site);
+    applied = pasted !== undefined;
+    pasteErrors = pasted ?? [];
+  }
+  if (applied && "isShift" in keystroke)
+    await act(async () => {
+      mounted.lexical.update(() => {
+        mounted.lexical.dispatchCommand(
+          KEY_ENTER_COMMAND,
+          new KeyboardEvent("keydown", { key: "Enter", shiftKey: keystroke.isShift }),
+        );
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await drainNativeSelectionChange();
+    });
+  if (applied && "cuts" in keystroke) clipboard = await writeClipboard(mounted, CUT_COMMAND);
+  if (applied && "copiesRange" in keystroke) {
+    clipboard = await writeClipboard(mounted, COPY_COMMAND);
+    const { pastesOver } = keystroke;
+    const pasted = await pasteAt(
+      mounted,
+      isAnnounced,
+      () => {
+        const site = $site();
+        return !!site && $selectGestureRange(site, pastesOver);
+      },
+      clipboard,
+    );
+    applied = pasted !== undefined;
+    pasteErrors = pasted ?? [];
+  }
+  if (applied && "pastesText" in keystroke) {
+    const pasted = await pasteAt(
+      mounted,
+      isAnnounced,
+      () => {
+        const site = $site();
+        return !!site && $selectGestureRange(site, "site");
+      },
+      { "text/plain": keystroke.pastesText },
+    );
+    applied = pasted !== undefined;
+    pasteErrors = pasted ?? [];
+  }
+  // An empty `next` replaces a range with nothing: Backspace; `delete` is Delete.
+  const next =
+    "character" in keystroke
+      ? keystroke.character
+      : "then" in keystroke
+        ? keystroke.then
+        : "edit" in keystroke
+          ? keystroke.edit
+          : undefined;
+  const history = "history" in keystroke ? keystroke.history : undefined;
+  if (applied && next !== undefined)
+    await act(async () => {
+      mounted.lexical.update(
+        () => {
+          if (next === "") mounted.lexical.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+          else if (next === "delete")
+            mounted.lexical.dispatchCommand(DELETE_CHARACTER_COMMAND, false);
+          else mounted.lexical.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, next);
+        },
+        // Its own history entry, so an undo can stop between the two keystrokes.
+        history ? { tag: HISTORY_PUSH_TAG } : undefined,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await drainNativeSelectionChange();
+    });
+  if (applied && history) {
+    await depart(mounted);
+    for (const command of history)
+      await act(async () => {
+        mounted.lexical.dispatchCommand(
+          command === "undo" ? UNDO_COMMAND : REDO_COMMAND,
+          undefined,
+        );
+        await Promise.resolve();
+        await drainNativeSelectionChange();
+      });
+  }
+  if (!applied) {
+    mounted.unmount();
+    return undefined;
+  }
+  const isPending = (getPendedDisplayOwners(mounted.lexical)?.size ?? 0) > 0;
+  const pending = mounted.ref.current?.getUsj();
+  const pendingContext = positionContext(mounted.lexical, viewOptions);
+  const before = mounted.lexical.getEditorState().read(() => ({
+    text: $documentText(),
+    screen: $screenLines(),
+    reported: $reported(pendingContext),
+    roundTrip: $roundTripFailures(pendingContext, viewOptions),
+  }));
+  await depart(mounted);
+  const settled = mounted.ref.current?.getUsj();
+  const shownLines = mounted.lexical.getEditorState().read(() => $screenLines());
+  const settledContext = positionContext(mounted.lexical, viewOptions);
+  const after = mounted.lexical.getEditorState().read(() => ({
+    text: $documentText(),
+    reported: $reported(settledContext),
+  }));
+  return {
+    label,
+    applied,
+    isPending,
+    isInNote,
+    place,
+    history: history !== undefined,
+    pending,
+    settled,
+    before,
+    shownLines,
+    after,
+    pasteErrors,
+    clipboard,
+  };
+}
+
+/**
+ * The second half of a {@link PasteKeystroke}, with its byte selected: copy it, place the caret at
+ * the site again, and paste the copy there. Returns what the paste logged as an error
+ * ({@link CaseRun.pasteErrors}), recorded rather than printed; `undefined` when the site is gone
+ * once the byte is copied.
+ */
+async function copyAndPasteAtSite(
+  mounted: Mounted,
+  isAnnounced: boolean,
+  $site: () => CaseSite | undefined,
+): Promise<string[] | undefined> {
+  const payload = await writeClipboard(mounted, COPY_COMMAND);
+  return pasteAt(
+    mounted,
+    isAnnounced,
+    () => {
+      const site = $site();
+      if (!site) return false;
+      site.node.select(site.offset, site.offset);
+      return true;
+    },
+    payload,
+  );
+}
+
+/** Copy or cut (`command`) the selection the way a user does — the command with a clipboard event
+ * the editor's copy plugins fill in — and return every flavor it wrote. */
+async function writeClipboard(
+  mounted: Mounted,
+  command: typeof COPY_COMMAND | typeof CUT_COMMAND,
+): Promise<{ [flavor: string]: string }> {
+  const { event, getData } = copyEvent({ native: true });
+  // Lexical's own cut removes the range in an update of its own once its copy has resolved, so
+  // an update that throws there rejects a promise no command returns. The editor's error handler
+  // is borrowed for the gesture so the throw comes back from here, as a throw in a synchronous
+  // command does.
+  const errors: unknown[] = [];
+  const onError = mounted.lexical._onError;
+  mounted.lexical._onError = (error) => {
+    errors.push(error);
+  };
+  try {
+    await act(async () => {
+      mounted.lexical.dispatchCommand(command, event);
+      await Promise.resolve();
+      await Promise.resolve();
+      await drainNativeSelectionChange();
+    });
+  } finally {
+    mounted.lexical._onError = onError;
+  }
+  if (errors.length > 0) throw errors[0];
+  return Object.fromEntries(
+    CLIPBOARD_FLAVORS.map((flavor) => [flavor, getData(flavor)]).filter(([, data]) => data !== ""),
+  );
+}
+
+/**
+ * Select what `$place` selects (announced as a selection change in the popover's view), then paste
+ * `payload` there as the paste command a paste dispatches. Returns what the paste logged as an
+ * error ({@link CaseRun.pasteErrors}), recorded rather than printed; `undefined` when `$place`
+ * selected nothing.
+ */
+async function pasteAt(
+  mounted: Mounted,
+  isAnnounced: boolean,
+  $place: () => boolean,
+  payload: { [flavor: string]: string },
+): Promise<string[] | undefined> {
+  let isPlaced = false;
+  await act(async () => {
+    mounted.lexical.update(() => {
+      isPlaced = $place();
+      if (isPlaced && isAnnounced)
+        mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
+    });
+    await drainNativeSelectionChange();
+  });
+  if (!isPlaced) return undefined;
+  const errors: string[] = [];
+  const consoleError = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    errors.push(String(args[0]).split("\n")[0]);
+  });
+  try {
+    await act(async () => {
+      mounted.lexical.dispatchCommand(PASTE_COMMAND, pasteEvent(payload).event);
+      await Promise.resolve();
+      await Promise.resolve();
+      await drainNativeSelectionChange();
+    });
+  } finally {
+    consoleError.mockRestore();
+  }
+  return errors;
+}
+
+/** The carets a clipboard gesture's range may end at: every caret of the edited block's texts but
+ * one inside a `token` glyph (which a caret steps around) or in a collapsed note, in document
+ * order. */
+function $blockCarets(): CaretPosition[] {
+  const block = $getRoot().getChildren()[2];
+  if (!block) return [];
+  return $caretPositions().filter(
+    ({ node, offset }) =>
+      block.isParentOf(node) &&
+      !$isInCollapsedNote(node) &&
+      (node.getMode() === "normal" || offset === 0 || offset === node.getTextContentSize()),
+  );
+}
+
+/**
+ * The whole text `node` is a part of: a carrier's pieces ({@link $pieces}), or the content text
+ * marks cut into parts, read through the marks; in document order.
+ */
+function $wholeText(node: TextNode): TextNode[] {
+  if ($isPlainTextNode(node) && !$isDisplayAnnotationCarrier(node))
+    return $textRunThroughMarks(
+      node,
+      (candidate): candidate is TextNode =>
+        $isPlainTextNode(candidate) && !$isDisplayAnnotationCarrier(candidate),
+    );
+  return $pieces(node);
+}
+
+/** The caret a {@link RangeEnd} names from `site`; `undefined` when the site is no caret. */
+function $rangeEndCaret(site: CaseSite, end: RangeEnd): CaretPosition | undefined {
+  const all = $caretPositions();
+  const here = all.find(({ node, offset }) => node.is(site.node) && offset === site.offset);
+  if (!here) return undefined;
+  if (end === "site") return here;
+  const carets = $blockCarets();
+  if (end === "textStart" || end === "nextTextEnd") {
+    const text = $wholeText(site.node);
+    if (end === "textStart")
+      return all.find(({ node, offset }) => node.is(text[0]) && offset === 0);
+    const last = text[text.length - 1];
+    const textEnd = all.find(
+      ({ node, offset }) => node.is(last) && offset === last.getTextContentSize(),
+    );
+    const next = carets.find(
+      ({ node, position }) =>
+        textEnd !== undefined &&
+        position >= textEnd.position &&
+        !text.some((part) => part.is(node)) &&
+        node.getTextContentSize() > 0,
+    );
+    if (!next) return textEnd;
+    const nextText = $wholeText(next.node);
+    const nextLast = nextText[nextText.length - 1];
+    return all.find(
+      ({ node, offset }) => node.is(nextLast) && offset === nextLast.getTextContentSize(),
+    );
+  }
+  const target = here.position + end;
+  if (end < 0) return carets.filter(({ position }) => position <= target).at(-1) ?? carets[0];
+  return carets.find(({ position }) => position >= target) ?? carets.at(-1);
+}
+
+/**
+ * Select `range` from `site` ({@link GestureRange}; `"site"`: the caret itself). Returns whether it
+ * selected something: the caret, or a range over at least one document position.
+ */
+function $selectGestureRange(site: CaseSite, range: GestureRange | "site"): boolean {
+  if (range === "site") {
+    site.node.select(site.offset, site.offset);
+    return true;
+  }
+  if (range === "block") {
+    const block = $getRoot().getChildren()[2];
+    if (!$isElementNode(block)) return false;
+    block.select(0, block.getChildrenSize());
+    return true;
+  }
+  const anchor = $rangeEndCaret(site, range.anchor);
+  const focus = $rangeEndCaret(site, range.focus);
+  if (!anchor || !focus || anchor.position === focus.position) return false;
+  const selection = $createRangeSelection();
+  selection.anchor.set(anchor.node.getKey(), anchor.offset, "text");
+  selection.focus.set(focus.node.getKey(), focus.offset, "text");
+  $setSelection(selection);
+  return true;
+}
+
+/**
+ * The pending-equals-settled checks of one case, as the mismatches it produced, each keyed by its
+ * label (with a bracketed suffix for a check other than the document comparison).
+ */
+export function caseMismatches(
+  run: CaseRun,
+  view: string,
+  loadedOutsideNotes: string,
+  savedByPlace: Map<string, { label: string; saved: string }>,
+): Map<string, string> {
+  const viewOptions = pendingOracleView(view);
+  const { label, place, pending, settled, before, shownLines, after, isPending, isInNote } = run;
+  const mismatches = new Map<string, string>();
+  // The same character typed at the same place on screen — at a glyph's end or at the
+  // start of the text after it — saves the same file.
+  // Compared as the saved document's structure, not its normalized bytes: a whitespace
+  // node a reader skips (between a verse and a span) collapses away in the bytes, but
+  // the file still has it, and a reload drops it.
+  if (place !== undefined) {
+    const saved = bodyOf(settled);
+    const first = savedByPlace.get(place);
+    if (!first) savedByPlace.set(place, { label, saved });
+    else if (first.saved !== saved)
+      mismatches.set(
+        `${label} [same place]`,
+        `${label} [same place]\n    saved ${JSON.stringify(saved)}\n    but ${first.label} saved ${JSON.stringify(first.saved)}`,
+      );
+  }
+  // The popover saves only its note, so a keystroke made in the note must leave
+  // everything outside it as loaded: a byte that lands there is lost on save.
+  if (
+    view === PROTECTED_NOTE_SHELL_VIEW &&
+    isInNote &&
+    outsideNotes(settled) !== loadedOutsideNotes
+  )
+    mismatches.set(
+      `${label} [outside the note]`,
+      `${label} [outside the note]\n    settled ${bodyOf(settled)}`,
+    );
+  if (JSON.stringify(pending) !== JSON.stringify(settled))
+    mismatches.set(
+      label,
+      `${label}\n    pending ${bodyOf(pending)}\n    settled ${bodyOf(settled)}`,
+    );
+  // What the screen shows is what the file gets.
+  const shown = shownLines === undefined ? undefined : asUsfmBytes(shownLines);
+  const saved = savedBytes(settled);
+  if (shown !== undefined && withoutLineBreaks(shown) !== withoutLineBreaks(saved))
+    mismatches.set(
+      `${label} [screen]`,
+      `${label} [screen]\n    screen ${JSON.stringify(shown)}\n    saved  ${JSON.stringify(saved)}`,
+    );
+  // And the settle only respelled what the screen showed while the edit was pending: a
+  // typed byte it dropped from the screen and the file alike is not on either.
+  // A view that shows a typed whitespace run as typed is held to keeping it.
+  const keepRuns = hasStandardViewWhitespace(viewOptions);
+  const pendingScreen =
+    before.screen === undefined ? undefined : normalizeUsfm(before.screen, keepRuns);
+  const settledScreen = shownLines === undefined ? undefined : normalizeUsfm(shownLines, keepRuns);
+  const change =
+    pendingScreen && settledScreen ? unrespelledChange(pendingScreen, settledScreen) : undefined;
+  if (change)
+    mismatches.set(
+      `${label} [respelled]`,
+      `${label} [respelled] ${change}\n    pending ${JSON.stringify(pendingScreen?.text)}\n    settled ${JSON.stringify(settledScreen?.text)}`,
+    );
+  const moved = isPending ? positionsReportedAwayFromTheirBytes(before, after) : [];
+  const roundTrip = isPending ? before.roundTrip : [];
+  if (moved.length > 0 || roundTrip.length > 0)
+    mismatches.set(
+      `${label} [positions]`,
+      `${label} [positions]\n    ${[...moved, ...roundTrip].join("\n    ")}`,
+    );
+  return mismatches;
+}
+
+/**
+ * Compare `mismatches` of `row` with the expected-failures `listed` for it: a failure the list
+ * does not name fails the row, and so does a listed case that no longer fails, so the list only
+ * shrinks. Each listed case names the reason it is left failing. With `write`, the row's list is
+ * written into `written` instead, keeping the reasons of the cases still listed. `context` is
+ * printed with an unlisted failure.
+ */
+export function expectMismatchesListed(
+  row: string,
+  mismatches: Map<string, string>,
+  listed: ExpectedFailures,
+  written: ExpectedFailures,
+  write: boolean,
+  context?: string,
+): void {
+  const reasons = listed[row] ?? {};
+  if (write) {
+    // A case still failing keeps the reason it was listed with; a new one is listed without
+    // one, which the comparison below rejects until it is given one.
+    if (mismatches.size > 0)
+      written[row] = Object.fromEntries(
+        [...mismatches.keys()].sort().map((label) => [label, reasons[label] ?? ""]),
+      );
+    return;
+  }
+  const known = new Set(Object.keys(reasons));
+  expect(
+    [...mismatches].filter(([label]) => !known.has(label)).map(([, detail]) => detail),
+    context,
+  ).toEqual([]);
+  expect(
+    [...known].filter((label) => !mismatches.has(label)),
+    "listed as failing but passing — rewrite the list",
+  ).toEqual([]);
+  expect(
+    [...known].filter((label) => !reasons[label]),
+    "listed without the reason it is left failing",
+  ).toEqual([]);
+}
+
+/** Register the oracle's rows for `view` (an `ORACLE_VIEWS` name), compared with the cases
+ * `listFile` lists as known to fail (see {@link expectMismatchesListed}).
+ * `PENDING_SETTLED_ORACLE_WRITE=1` rewrites the list from the run instead. */
 export function describePendingSettledOracle(view: string, listFile: URL): void {
-  const corpus = corpusFor(view);
-  const rows = corpus.map(({ name, usj }) => [`${name} (${view} view)`, usj] as const);
+  const rows = oracleRows(view);
   const listed = readExpectedFailures(listFile);
   const written: ExpectedFailures = {};
   afterAll(() => {
@@ -1342,279 +2261,33 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
         const savedByPlace = new Map<string, { label: string; saved: string }>();
         let pendingCases = 0;
         for (const { index, offset, shell } of sites)
-          for (const keystroke of shell
-            ? SHELL_KEYSTROKES
-            : [
-                ...KEYSTROKES,
-                ...PLACED_KEYSTROKES,
-                ...(view === PROTECTED_NOTE_SHELL_VIEW ? RANGE_KEYSTROKES : []),
-              ]) {
+          for (const keystroke of keystrokesFor(view, !!shell)) {
             const mounted = await mountInView(usj, pendingOracleView(view));
-            let label = "";
-            let applied = false;
-            let place: string | undefined;
-            let isInNote = false;
-            // In the popover's view every caret placement is announced as a selection change, as a
-            // click or an arrow press announces it, so the shell's caret guard moves a caret it
-            // does not let rest there. A splice at such a place is no keystroke a user can make
-            // there, and is skipped.
-            const isAnnounced = view === PROTECTED_NOTE_SHELL_VIEW && !("deletes" in keystroke);
-            if (isAnnounced && !("character" in keystroke)) {
-              await act(async () => {
-                mounted.lexical.update(() => {
-                  (shell ? $shellTexts() : $editableTexts())[index].select(offset, offset);
-                  mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
-                });
-              });
-              const isReachable = mounted.lexical.getEditorState().read(() => {
-                const selection = $getSelection();
-                const node = (shell ? $shellTexts() : $editableTexts())[index];
-                return (
-                  $isRangeSelection(selection) &&
-                  selection.anchor.key === node.getKey() &&
-                  selection.anchor.offset === offset
-                );
-              });
-              if (!isReachable) {
-                mounted.unmount();
-                continue;
-              }
-            }
-            await act(async () => {
-              mounted.lexical.update(() => {
-                const node = (shell ? $shellTexts() : $editableTexts())[index];
-                const text = node.getTextContent();
-                isInNote = shell || $hasNoteAncestor(node);
-                label = `${shell ? "shell " : ""}${node.getType()} ${JSON.stringify(text.replaceAll(NBSP, "~"))}@${offset} ${keystroke.name}`;
-                if ("deletes" in keystroke) {
-                  if (offset !== (keystroke.deletes === "before" ? text.length : 0)) return;
-                  applied = true;
-                  node.select(offset, offset);
-                  const selection = $getSelection();
-                  if (!$isRangeSelection(selection)) return;
-                  selection.focus.set(
-                    node.getKey(),
-                    keystroke.deletes === "before" ? offset - 1 : offset + 1,
-                    "text",
-                  );
-                  selection.removeText();
-                  return;
-                }
-                if ("extend" in keystroke) {
-                  if (!isInNote) return;
-                  applied = true;
-                  node.select(offset, offset);
-                  const selection = $getSelection();
-                  if (!$isRangeSelection(selection)) return;
-                  if (keystroke.extend === "all") {
-                    mounted.lexical.dispatchCommand(
-                      SELECT_ALL_COMMAND,
-                      new KeyboardEvent("keydown", { key: "a", ctrlKey: true }),
-                    );
-                    return;
-                  }
-                  const para = $getRoot().getChildren()[2];
-                  if (!$isElementNode(para)) return;
-                  const positions = $caretPositions();
-                  const at = positions.find(
-                    (caret) => caret.node.is(node) && caret.offset === offset,
-                  );
-                  const neighbor =
-                    keystroke.extend === "left"
-                      ? positions
-                          .filter((caret) => caret.position === (at?.position ?? 0) - 1)
-                          .at(-1)
-                      : positions.find((caret) => caret.position === (at?.position ?? 0) + 1);
-                  if (keystroke.extend === "home") selection.focus.set(para.getKey(), 0, "element");
-                  else if (keystroke.extend === "end")
-                    selection.focus.set(para.getKey(), para.getChildrenSize(), "element");
-                  else if (neighbor)
-                    selection.focus.set(neighbor.node.getKey(), neighbor.offset, "text");
-                  mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
-                  return;
-                }
-                const typed = "character" in keystroke ? keystroke.character : keystroke.typed;
-                const at = $caretPositions().find(
-                  (caret) => caret.node.is(node) && caret.offset === offset,
-                );
-                if (typed !== undefined && at) place = `${JSON.stringify(typed)}@${at.position}`;
-                if ("character" in keystroke) {
-                  if (offset !== 0 && offset !== text.length) return;
-                  applied = true;
-                  node.select(offset, offset);
-                  if (isAnnounced)
-                    mounted.lexical.dispatchCommand(SELECTION_CHANGE_COMMAND, undefined);
-                  return;
-                }
-                const result = keystroke.apply(text, offset);
-                if (!result) return;
-                applied = true;
-                node.setTextContent(result.text);
-                node.select(result.caret, result.caret);
-              });
-              await Promise.resolve();
-              await Promise.resolve();
-            });
-            // An empty `next` replaces a range with nothing: Backspace.
-            const next =
-              "character" in keystroke
-                ? keystroke.character
-                : "then" in keystroke
-                  ? keystroke.then
-                  : "edit" in keystroke
-                    ? keystroke.edit
-                    : undefined;
-            const history = "history" in keystroke ? keystroke.history : undefined;
-            if (applied && next !== undefined)
-              await act(async () => {
-                mounted.lexical.update(
-                  () => {
-                    const selection = $getSelection();
-                    if ($isRangeSelection(selection)) selection.insertText(next);
-                  },
-                  // Its own history entry, so an undo can stop between the two keystrokes.
-                  history ? { tag: HISTORY_PUSH_TAG } : undefined,
-                );
-                await Promise.resolve();
-                await Promise.resolve();
-              });
-            if (applied && history) {
-              await depart(mounted);
-              for (const command of history)
-                await act(async () => {
-                  mounted.lexical.dispatchCommand(
-                    command === "undo" ? UNDO_COMMAND : REDO_COMMAND,
-                    undefined,
-                  );
-                  await Promise.resolve();
-                });
-            }
-            if (!applied) {
-              mounted.unmount();
-              continue;
-            }
-            const isPending = (getPendedDisplayOwners(mounted.lexical)?.size ?? 0) > 0;
-            if (isPending) pendingCases += 1;
-            const pending = mounted.ref.current?.getUsj();
-            const viewOptions = pendingOracleView(view);
-            const pendingContext = positionContext(mounted.lexical, viewOptions);
-            const before = mounted.lexical.getEditorState().read(() => ({
-              text: $documentText(),
-              screen: $screenLines(),
-              reported: $reported(pendingContext),
-              roundTrip: $roundTripFailures(pendingContext, viewOptions),
-            }));
-            await depart(mounted);
-            const settled = mounted.ref.current?.getUsj();
-            // The same character typed at the same place on screen — at a glyph's end or at the
-            // start of the text after it — saves the same file.
-            // Compared as the saved document's structure, not its normalized bytes: a whitespace
-            // node a reader skips (between a verse and a span) collapses away in the bytes, but
-            // the file still has it, and a reload drops it.
-            if (place !== undefined) {
-              const saved = bodyOf(settled);
-              const first = savedByPlace.get(place);
-              if (!first) savedByPlace.set(place, { label, saved });
-              else if (first.saved !== saved)
-                mismatches.set(
-                  `${label} [same place]`,
-                  `${label} [same place]\n    saved ${JSON.stringify(saved)}\n    but ${first.label} saved ${JSON.stringify(first.saved)}`,
-                );
-            }
-            // The popover saves only its note, so a keystroke made in the note must leave
-            // everything outside it as loaded: a byte that lands there is lost on save.
-            if (
-              view === PROTECTED_NOTE_SHELL_VIEW &&
-              isInNote &&
-              outsideNotes(settled) !== loadedOutsideNotes
-            )
-              mismatches.set(
-                `${label} [outside the note]`,
-                `${label} [outside the note]\n    settled ${bodyOf(settled)}`,
-              );
-            if (JSON.stringify(pending) !== JSON.stringify(settled))
-              mismatches.set(
-                label,
-                `${label}\n    pending ${bodyOf(pending)}\n    settled ${bodyOf(settled)}`,
-              );
-            // What the screen shows is what the file gets.
-            const shownLines = mounted.lexical.getEditorState().read(() => $screenLines());
-            const shown = shownLines === undefined ? undefined : asUsfmBytes(shownLines);
-            const saved = savedBytes(settled);
-            if (shown !== undefined && withoutLineBreaks(shown) !== withoutLineBreaks(saved))
-              mismatches.set(
-                `${label} [screen]`,
-                `${label} [screen]\n    screen ${JSON.stringify(shown)}\n    saved  ${JSON.stringify(saved)}`,
-              );
-            // And the settle only respelled what the screen showed while the edit was pending: a
-            // typed byte it dropped from the screen and the file alike is not on either.
-            // A view that shows a typed whitespace run as typed is held to keeping it.
-            const keepRuns = hasStandardViewWhitespace(viewOptions);
-            const pendingScreen =
-              before.screen === undefined ? undefined : normalizeUsfm(before.screen, keepRuns);
-            const settledScreen =
-              shownLines === undefined ? undefined : normalizeUsfm(shownLines, keepRuns);
-            const change =
-              pendingScreen && settledScreen
-                ? unrespelledChange(pendingScreen, settledScreen)
-                : undefined;
-            if (change)
-              mismatches.set(
-                `${label} [respelled]`,
-                `${label} [respelled] ${change}\n    pending ${JSON.stringify(pendingScreen?.text)}\n    settled ${JSON.stringify(settledScreen?.text)}`,
-              );
-            const settledContext = positionContext(mounted.lexical, viewOptions);
-            const after = mounted.lexical.getEditorState().read(() => ({
-              text: $documentText(),
-              reported: $reported(settledContext),
-            }));
-            const moved = isPending ? positionsReportedAwayFromTheirBytes(before, after) : [];
-            const roundTrip = isPending ? before.roundTrip : [];
-            if (moved.length > 0 || roundTrip.length > 0)
-              mismatches.set(
-                `${label} [positions]`,
-                `${label} [positions]\n    ${[...moved, ...roundTrip].join("\n    ")}`,
-              );
+            const run = await runKeystrokeCase(
+              mounted,
+              view,
+              () => ({
+                node: (shell ? $shellTexts() : $editableTexts())[index],
+                offset,
+                shell: !!shell,
+              }),
+              keystroke,
+            );
+            if (!run) continue;
+            if (run.isPending) pendingCases += 1;
+            const found = caseMismatches(run, view, loadedOutsideNotes, savedByPlace);
+            for (const [key, detail] of found) mismatches.set(key, detail);
             if (DUMP)
-              for (const key of [
-                label,
-                `${label} [screen]`,
-                `${label} [positions]`,
-                `${label} [same place]`,
-                `${label} [respelled]`,
-                `${label} [outside the note]`,
-              ])
-                if (mismatches.has(key))
-                  // eslint-disable-next-line no-console -- PENDING_SETTLED_ORACLE_DUMP asks for this output.
-                  console.info(
-                    `DUMP ${row} :: ${mismatches.get(key)}\n    before ${JSON.stringify(before.text)}\n    after  ${JSON.stringify(after.text)}`,
-                  );
+              for (const key of found.keys())
+                // eslint-disable-next-line no-console -- PENDING_SETTLED_ORACLE_DUMP asks for this output.
+                console.info(
+                  `DUMP ${row} :: ${found.get(key)}\n    before ${JSON.stringify(run.before.text)}\n    after  ${JSON.stringify(run.after.text)}`,
+                );
             mounted.unmount();
           }
 
         expect(pendingCases, "no keystroke left an edit pending").toBeGreaterThan(0);
-        const reasons = listed[row] ?? {};
-        if (WRITE) {
-          // A case still failing keeps the reason it was listed with; a new one is listed without
-          // one, which the comparison below rejects until it is given one.
-          if (mismatches.size > 0)
-            written[row] = Object.fromEntries(
-              [...mismatches.keys()].sort().map((label) => [label, reasons[label] ?? ""]),
-            );
-          return;
-        }
-        const known = new Set(Object.keys(reasons));
-        expect(
-          [...mismatches].filter(([label]) => !known.has(label)).map(([, detail]) => detail),
-        ).toEqual([]);
-        expect(
-          [...known].filter((label) => !mismatches.has(label)),
-          "listed as failing but passing — rewrite the list",
-        ).toEqual([]);
-        expect(
-          [...known].filter((label) => !reasons[label]),
-          "listed without the reason it is left failing",
-        ).toEqual([]);
+        expectMismatchesListed(row, mismatches, listed, written, WRITE);
       },
       300_000,
     );

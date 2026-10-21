@@ -6,6 +6,7 @@ import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $isTextNode,
   BaseSelection,
   BLUR_COMMAND,
   CLICK_COMMAND,
@@ -15,7 +16,14 @@ import {
   LexicalNode,
 } from "lexical";
 import { useEffect, useRef } from "react";
-import { $isImmutableTypedTextNode, $isMarkerNode, ZWSP } from "shared";
+import {
+  $isImmutableTypedTextNode,
+  $isMarkerNode,
+  $lastPiece,
+  $logicalChildren,
+  $logicalText,
+  ZWSP,
+} from "shared";
 import { $isSomeVerseNode, ViewOptions } from "shared-react";
 
 const ACTIVE_CLASS = "psc-active-text";
@@ -61,7 +69,7 @@ export function ActiveTextPlugin({ viewOptions }: { viewOptions: ViewOptions | u
           if (!$isSomeVerseNode(node)) return false;
           const para = node.getParent();
           if (!$isElementNode(para)) return false;
-          const after = node.getIndexWithinParent() + 1;
+          const after = $lastPiece(node).getIndexWithinParent() + 1;
           para.select(after, after);
           return false;
         },
@@ -166,10 +174,12 @@ export function $getActiveVerseKey(): string | undefined {
     boundary = topChild.getIndexWithinParent() + 1;
   }
 
+  // A verse marker an annotation cuts into pieces is named by its last piece, as
+  // `$getEmptyVerseStatus` names it.
   const children = para.getChildren();
   let activeKey: string | undefined;
   for (let i = 0; i < boundary && i < children.length; i++) {
-    if ($isSomeVerseNode(children[i])) activeKey = children[i].getKey();
+    if ($isSomeVerseNode(children[i])) activeKey = $lastPiece(children[i]).getKey();
   }
   return activeKey;
 }
@@ -191,13 +201,15 @@ export function $getParaFromSelection(
  * verse marker and the next verse marker (or end of paragraph) — has any non-whitespace body text.
  * Marker-prefix nodes (the paragraph's leading `\p` marker / immutable typed text) and ZWSPs are
  * ignored. Used to apply `psc-empty-text` per verse so the ellipsis placeholder renders next to
- * every empty verse number, not just verses that occupy their own paragraph.
+ * every empty verse number, not just verses that occupy their own paragraph. A verse marker an
+ * annotation cuts into pieces is one verse, reported by its last piece's key: the placeholder is
+ * drawn after the element of the key reported.
  */
 export function $getEmptyVerseStatus(para: ElementNode): {
   emptyKeys: string[];
   nonEmptyKeys: string[];
 } {
-  const children = para.getChildren();
+  const children = $logicalChildren(para);
   const emptyKeys: string[] = [];
   const nonEmptyKeys: string[] = [];
   for (let i = 0; i < children.length; i++) {
@@ -208,12 +220,13 @@ export function $getEmptyVerseStatus(para: ElementNode): {
       const sibling = children[j];
       if ($isSomeVerseNode(sibling)) break;
       if ($isImmutableTypedTextNode(sibling) || $isMarkerNode(sibling)) continue;
-      if (sibling.getTextContent().replaceAll(ZWSP, "").trim() !== "") {
+      const text = $isTextNode(sibling) ? $logicalText(sibling) : sibling.getTextContent();
+      if (text.replaceAll(ZWSP, "").trim() !== "") {
         sectionHasBody = true;
         break;
       }
     }
-    (sectionHasBody ? nonEmptyKeys : emptyKeys).push(verse.getKey());
+    (sectionHasBody ? nonEmptyKeys : emptyKeys).push($lastPiece(verse).getKey());
   }
   return { emptyKeys, nonEmptyKeys };
 }
