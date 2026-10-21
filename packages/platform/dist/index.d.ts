@@ -440,6 +440,77 @@ export declare interface EditorRef {
    */
   commitPendingMarkerEdits(): void;
   /**
+   * EXPERIMENTAL: this signature may change. Suspends (or resumes) the three settle clocks a host
+   * did not ask for: the idle debounce, the blur settle and the caret-departure settle. For a host
+   * that opens a surface of its own over the editor — a marker palette — and needs the document to
+   * stop reformatting underneath it while that surface is open.
+   *
+   * All three are a problem for such a surface, for the same underlying reason: a settle commits
+   * dirty nodes, and Lexical re-asserts the DOM selection on any such commit — focusing the editor
+   * root whenever focus has left it (`updateDOMSelection`). A surface that dismisses itself on
+   * focus loss therefore closes. The blur clock fires the instant the surface takes focus; the
+   * idle clock fires one `EditorOptions.markerSettleDelayMs` later, closing a surface the user is
+   * still looking at; the departure clock is keyed off every COMMIT, so a commit the host or a
+   * display-run sync makes while the surface is open does the same thing with no user involved.
+   *
+   * SUSPEND SYNCHRONOUSLY, BEFORE FOCUS MOVES to the surface — in the keydown that opens it, not
+   * in a promise or an effect that runs after. `BLUR_COMMAND` fires on the focus move itself, and
+   * a suspend that arrives afterwards cannot undo a settle that has already run. "Suspend when the
+   * surface opens" is not precise enough: by the time the surface is showing, the blur settle has
+   * been and gone.
+   *
+   * DRIVE IT FROM ONE DERIVED "any surface open" STATE. This is a single flag, not a reference
+   * count, so the last call wins: if one surface closes while another is open, the closing one's
+   * resume lifts the hold the open one still needs. A host with more than one such surface should
+   * compute "is any of them open" and set that, rather than letting each surface call suspend and
+   * resume for itself. Redispatching the value already in force is a no-op, so driving it from an
+   * effect is safe.
+   *
+   * Suspending CANCELS an already-armed idle timer, which is the part a delay change cannot do:
+   * `EditorOptions.markerSettleDelayMs` is read when the clock is next armed, so a timer armed
+   * before the host changed it still fires.
+   *
+   * RESUMING SETTLES what the suspension held — everything pending except the node under the
+   * caret, the same exception the blur and departure clocks use — and then re-arms the idle clock.
+   * Resume is the moment Paratext 9 reformats, so held edits do not wait out another idle delay,
+   * and they still settle when the idle clock is turned off entirely
+   * (`EditorOptions.markerSettleDelayMs: -1`), where there is no clock to re-arm. The caret's own
+   * node stays pending for whatever settles it next, so a palette's apply can still consume it.
+   *
+   * WHAT STILL SETTLES while suspended, because the host or the user explicitly asked for it:
+   * Enter; {@link EditorRef.commitPendingMarkerEdits}; the settle-on-read inside
+   * {@link EditorRef.getUsj}; and resolution that happens within the same update as the edit. A
+   * forced commit is therefore NOT held back by the suspension — and `commitPendingMarkerEdits`'
+   * own rule still binds: do not issue one while a palette session is open. A host whose pre-save
+   * debounce can fire with the surface open must hold that save itself.
+   *
+   * IF A RESUME IS MISSED, the editor heals itself — but on sustained focus, not on focus alone.
+   * When the editor holds DOM focus continuously for about a second while still suspended, the
+   * suspension is lifted, held edits settle, and a warning is logged. Anything that suggests the
+   * surface is still alive cancels it: another blur (a replacement surface taking focus back), or
+   * the host resuming.
+   *
+   * Focus alone is not evidence, because a host's own commit path returns focus to the editor
+   * mid-session, on purpose, to apply what the user chose — the marker palette's
+   * commit-and-reopen does exactly that. What separates the two is how long the focus lasts: a
+   * legitimate one is brief. Lifting late is also harmless, since a suspension only protects a
+   * surface that HOLDS focus and a settle can only steal focus that is somewhere else.
+   *
+   * A surface left open for a long time is unaffected: the timer only runs while the editor itself
+   * has focus. Until a lift, held marker text stays literal on screen; nothing is lost, since
+   * `getUsj` settles on read.
+   *
+   * The flag is per-`Editor` and RESETS WHEN THE EDITOR REMOUNTS — including when
+   * `ViewOptions.verseLayout` changes, which rebuilds the whole editor. A host that is suspended
+   * across such a change must re-assert it.
+   *
+   * It is not readable back, and nothing else clears it: not {@link EditorRef.setUsj}, not a
+   * plugin re-registration (surviving that is deliberate), and there is no timeout.
+   *
+   * No-op outside editable marker modes, and silently dropped if the editor is not mounted.
+   */
+  setMarkerSettleSuspended(suspended: boolean): void;
+  /**
    * Declares in-progress input that an in-editor command surface (e.g. the marker palette) will
    * consume or discard — analogous to an IME composition string. While declared,
    * {@link EditorRef.getUsj} excludes these bytes from its settled output: the containing paragraph
