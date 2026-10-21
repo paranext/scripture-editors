@@ -14,6 +14,7 @@
  * paragraph is asserted in settledPositions.inbound.test.tsx, against the same
  * `$liveSelectionFromSettled` output these methods consume.
  */
+import { flushQueuedEvents } from "../editor-test.utils";
 import { mountStandardViewEditor, requireStandardViewOptions } from "../settledGetUsj.test-helpers";
 import {
   contentPath,
@@ -677,6 +678,9 @@ describe("setSelection reports the selection it placed", () => {
     const { ref } = await mountStandardViewEditor(twoParaUsj(["plain text"]), {
       onSelectionChange,
     });
+    // jsdom fires `selectionchange` from a `setTimeout(0)`, which `act` does not reliably wait
+    // for: drain the mount's before clearing, and the placement's before counting.
+    await flushQueuedEvents();
     onSelectionChange.mockClear();
 
     // "plain text" is 10 characters — offset 10 is the text's end, a boundary Lexical's own
@@ -686,6 +690,7 @@ describe("setSelection reports the selection it placed", () => {
       ref.current?.setSelection(location);
       await Promise.resolve();
     });
+    await flushQueuedEvents();
 
     expect(onSelectionChange).toHaveBeenCalledTimes(1);
     expect(onSelectionChange).toHaveBeenCalledWith(location);
