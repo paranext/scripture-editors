@@ -88,13 +88,9 @@ const KNOWN_FAILURES: { [fixtureName: string]: string } = {
 
 /** The same contract as {@link KNOWN_FAILURES}, for the transform leg below. */
 const KNOWN_TRANSFORM_FAILURES: { [fixtureName: string]: string } = {
-  // The adaptor leg's lone-NBSP drop, plus the leading NBSP of `\nd ~lead\nd*`, which
-  // `CharNodePlugin`'s empty-span placeholder transform strips once the span is dirtied. Both
-  // entries stay until PT-4391 is fixed; the leading-NBSP half is fixed by PT-4370's PR #11.
-  "testUSFM-2SA-4.usj [formatted]":
-    "lone NBSP dropped outside Standard view (PT-4391); leading NBSP of a char span stripped (PR #11)",
-  "testUSFM-2SA-4.usj [paragraph-structure]":
-    "lone NBSP dropped outside Standard view (PT-4391); leading NBSP of a char span stripped (PR #11)",
+  // The adaptor leg's lone-NBSP drop, seen again through the transform leg.
+  "testUSFM-2SA-4.usj [formatted]": "lone NBSP dropped outside Standard view (PT-4391)",
+  "testUSFM-2SA-4.usj [paragraph-structure]": "lone NBSP dropped outside Standard view (PT-4391)",
 };
 
 function readOracle(name: string): Usj {

@@ -23,10 +23,8 @@ corrected file encodes the intended behavior; the tokenizer matches it exactly.
 `testUSFM-2SA-4` (standard USFM chapters 1-3 do not use, plus known-bug anchors such as lone and
 leading NBSPs), `testUSFM-2SA-5` (damaged USFM that can still exist at rest: a second `\ca`, text on
 the `\c` line, nameless `\ 2` and bare `\` markers) and `testUSFM-1SA-1` (introduction material
-before `\c 1`) are made the same way, from their `pdp-usx/` captures. `testUSFM-2SA-5.usj` carries one hand edit: its three
-nameless paragraphs have `"marker": ""` where `usxStringToUsj` writes a stray `"style": ""` and no
-marker (PR #19 fixes the converter). paranext-core's copy of that directory's README documents the
-recipe and the edit in full.
+before `\c 1`) are made the same way, from their `pdp-usx/` captures, with no hand edits.
+paranext-core's copy of that directory's README documents the recipe in full.
 
 `spacing-word-break.*` is the one fixture NOT captured from Paratext 9.5. Paratext has no exporter
 here that emits USJ, so its `.usj` was written by hand — but every text expectation in it was taken

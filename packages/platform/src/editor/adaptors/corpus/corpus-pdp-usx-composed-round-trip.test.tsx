@@ -54,12 +54,7 @@ import { $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRef } from "react";
-import {
-  FORMATTED_VIEW_MODE,
-  PARAGRAPH_STRUCTURE_VIEW_MODE,
-  STANDARD_VIEW_MODE,
-  ViewOptions,
-} from "shared-react";
+import { FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE, ViewOptions } from "shared-react";
 
 // Vitest's module transform does not preserve a usable `import.meta.url`, so locate the vendored
 // captures relative to the working directory — the platform project root under nx, the repo root
@@ -277,45 +272,16 @@ function inViews(
  * leg it is in, and the work that owns it. A divergence that is not listed fails its test.
  */
 const KNOWN_DIVERGENCES: { [testKey: string]: LegDivergences & { reason: string } } = {
-  // `\v 6` and the `\p ~` paragraph after it. Outside Standard view the editor has no display
-  // mapping to tell a data NBSP from a structural one, so it drops what looks structural:
-  //
-  // - @56 and @65: a content string that is exactly one NBSP — the whole content of `\nd ~\nd*`
-  //   and of `\p ~` — is dropped by the reverse adaptor's lone-NBSP byte test
-  //   (`editor-usj.adaptor.ts`, `recurseNodes`), already at load. Known, PT-4391; the drop is
-  //   pinned for constructed USJ in `constructed-usj-round-trip.test.ts`.
-  // - @59: the leading NBSP of `\nd ~lead\nd*` is stripped by `CharNodePlugin`'s empty-span
-  //   placeholder transform once the span's text is dirtied, because a glyph-less span whose only
-  //   text starts with a NBSP looks like a placeholder the user typed behind. Fixed by PT-4370's
-  //   scripture-editors PR #11, not yet merged; drop the two `@59` lines when it lands.
+  // `\v 6` and the `\p ~` paragraph after it: a content string that is exactly one NBSP — the
+  // whole content of `\nd ~\nd*` (@56) and of `\p ~` (@65) — is dropped by the reverse adaptor's
+  // lone-NBSP byte test (`editor-usj.adaptor.ts`, `recurseNodes`), already at load. Outside
+  // Standard view the editor has no display mapping to tell a data NBSP from a structural one.
+  // Known, PT-4391; the drop is pinned for constructed USJ in `constructed-usj-round-trip.test.ts`.
   ...inViews("testUSFM-2SA-4-ch4.usx", [FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE], {
-    reason: "authored NBSPs dropped outside Standard view (PT-4391; leading NBSP: PR #11)",
-    editor: ['@56 - "\\u00a0"', '@59 - "\\u00a0lead"', '@59 + "lead"', '@65 - "\\u00a0"'],
-    composed: ['@56 - "\\u00a0"', '@59 - "\\u00a0lead"', '@59 + "lead"', '@65 - "\\u00a0"'],
+    reason: "authored lone NBSP dropped outside Standard view (PT-4391)",
+    editor: ['@56 - "\\u00a0"', '@65 - "\\u00a0"'],
+    composed: ['@56 - "\\u00a0"', '@65 - "\\u00a0"'],
   }),
-  // The three nameless-marker paragraphs — the `\ 2` after verse 1 and the bare `\` in verses 2
-  // and 3 — served as `<para style="">`. The root cause is the CONVERTER leg:
-  // `usxStringToUsj` tests `style` for truthiness, so an empty one stays behind as a stray `style`
-  // property and the paragraph gets no `marker`. The editor then loads a marker-less paragraph as
-  // `\p` and exports `marker: "p"` alongside the stray property. The bytes on disk survive only
-  // because `usjToUsxString` writes the stray `style` after the marker's and so overwrites it.
-  // Fixed in the converter by PT-4608's scripture-editors PR #19 (and carried by PR #11), not yet
-  // merged; delete these entries when it lands.
-  ...inViews(
-    "testUSFM-2SA-5-ch5.usx",
-    [STANDARD_VIEW_MODE, FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE],
-    {
-      reason: 'nameless `style=""` paragraph loads as `\\p` (converter; PR #19)',
-      editor: [
-        '@9 - {style="" type="para"}',
-        '@9 + {marker="p" style="" type="para"}',
-        '@14 - {style="" type="para"}',
-        '@14 + {marker="p" style="" type="para"}',
-        '@18 - {style="" type="para" vid=""}',
-        '@18 + {marker="p" style="" type="para" vid=""}',
-      ],
-    },
-  ),
 };
 
 /** Every test key this file generates, so an entry naming no test is caught as stale. */

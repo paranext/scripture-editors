@@ -184,18 +184,13 @@ const CASES: { label: string; usfm: string; usj: string; known?: KnownDivergence
     usfm: "testUSFM-2SA-5.usfm",
     usj: "testUSFM-2SA-5.usj",
     known: {
-      reason: "double `\\ca` folded (PR #11); bare `\\` read as text, not a nameless marker",
+      reason: "bare `\\` read as text, not a nameless marker",
       entries: [
-        // `\c 5 \ca 5a\ca* \ca 5b\ca*`: both runs fold into the chapter, so `altnumber` takes the
-        // second value and the first is lost. ParatextData folds the first and keeps the second as
-        // a top-level `char ca`. Fixed by PT-4370's PR #11; delete these two entries when it lands.
-        '$[0]<chapter:c>.altnumber: oracle="5a" tokenizer="5b"',
-        "$[1] oracle has <char:ca> — tokenizer lacks it",
         // ParatextData reads a bare `\` at any token start as a marker with an empty name — here
         // three `<para style="">` paragraphs (`\ 2`, `\bd \ text`, the `\` ending verse 3). The
         // tokenizer keeps each one as literal text, so the `\ 2` stays in verse 1's paragraph and
         // the unclosed `\bd` runs on through verse 3. PR #11 reads a nameless marker only where a
-        // fragment opens with one (`opensNamelessParagraph`), so these entries outlive it.
+        // fragment opens with one (`opensNamelessParagraph`).
         '$[3]<para:p>[1] text: oracle "Chapter 5 holds deliberately damaged USFM that ..." vs "Chapter 5 holds deliberately damaged USFM that ..."',
         '$[3]<para:p>[+2] tokenizer emits <verse:v number="2"> — oracle lacks it',
         '$[3]<para:p>[+3] tokenizer emits "A bare backslash after a character marker " — oracle lacks it',

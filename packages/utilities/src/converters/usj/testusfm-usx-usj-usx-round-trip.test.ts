@@ -101,13 +101,13 @@ function canonicalUsxLines(usx: string): string[] {
   return lines;
 }
 
-function paragraphsWithEmptyStyle(content: MarkerContent[]): MarkerObject[] {
+function namelessParagraphs(content: MarkerContent[]): MarkerObject[] {
   return content.flatMap((item) => {
     if (typeof item === "string") return [];
-    const nested = paragraphsWithEmptyStyle(item.content ?? []);
-    return item.type === "para" && (item as { style?: unknown }).style === ""
-      ? [item, ...nested]
-      : nested;
+    const nested = namelessParagraphs(item.content ?? []);
+    const isNameless =
+      item.type === "para" && (item.marker === "" || (item as { style?: unknown }).style === "");
+    return isNameless ? [item, ...nested] : nested;
   });
 }
 
@@ -124,25 +124,15 @@ describe("pdp-usx corpus round trip (USX -> USJ -> USX)", () => {
 });
 
 describe('nameless-marker paragraphs (`<para style="">`)', () => {
-  // The bytes round-trip only by accident: `usxStringToUsj` tests `style` for truthiness, so an
-  // empty one stays behind as a stray `style` property and the paragraph gets no `marker`;
-  // `usjToUsxString` then writes that stray `style` where the marker would go. Pins the CURRENT
-  // intermediate shape as an expected failure so the converter fix (scripture-editors PR #19)
-  // flips it visibly — delete `.fails` and rewrite the assertion when it lands.
-  it.fails(
-    "gives a nameless paragraph a marker and no stray style (fixed in scripture-editors PR #19)",
-    () => {
-      const usj = usxStringToUsj(readCapture("testUSFM-2SA-5-ch5.usx"));
-      const nameless = paragraphsWithEmptyStyle(usj.content);
-      expect(nameless.length).toBeGreaterThan(0);
-      for (const para of nameless) expect(para).not.toHaveProperty("style");
-    },
-  );
-
-  it("currently leaves a stray empty `style` on each nameless paragraph", () => {
+  // The composed round trip above cannot tell the intended shape from a stray `style: ""`
+  // property, because `usjToUsxString` writes either one as `style=""`. Assert the USJ directly.
+  it("gives each nameless paragraph an empty marker and no stray style", () => {
     const usj = usxStringToUsj(readCapture("testUSFM-2SA-5-ch5.usx"));
-    const nameless = paragraphsWithEmptyStyle(usj.content);
+    const nameless = namelessParagraphs(usj.content);
     expect(nameless).toHaveLength(3);
-    for (const para of nameless) expect(para).not.toHaveProperty("marker");
+    for (const para of nameless) {
+      expect(para.marker).toBe("");
+      expect(para).not.toHaveProperty("style");
+    }
   });
 });
