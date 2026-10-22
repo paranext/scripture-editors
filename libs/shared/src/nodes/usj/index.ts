@@ -17,6 +17,7 @@ import { ParaNode } from "./ParaNode.js";
 import { VerseNode } from "./VerseNode.js";
 import { Klass, LexicalNode, LexicalNodeReplacement, ParagraphNode } from "lexical";
 
+export * from "./applyingUpdate.utils.js";
 export * from "./attributeDisplay.utils.js";
 export * from "./AttributeRunNode.js";
 export * from "./BookNode.js";
@@ -33,6 +34,7 @@ export * from "./ImmutableTableNode.js";
 export * from "./ImmutableTableRowNode.js";
 export * from "./ImmutableTableCellNode.js";
 export * from "./ImpliedParaNode.js";
+export * from "./literalOnlyBlock.utils.js";
 export * from "./markerSeparators.utils.js";
 export * from "./MilestoneNode.js";
 export * from "./nestedGlyphs.utils.js";
@@ -41,6 +43,7 @@ export * from "./node.utils.js";
 export * from "./NoteNode.js";
 export * from "./ParaNode.js";
 export * from "./pendedDisplayOwners.utils.js";
+export * from "./spaceRuns.utils.js";
 export * from "./VerseBlockNode.js";
 export * from "./VerseNode.js";
 

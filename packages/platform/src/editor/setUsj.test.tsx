@@ -25,8 +25,8 @@ const VERSE_1_PARA: MarkerContent = {
 
 const chapterDoc: Usj = { type: "USJ", version: "3.1", content: [CHAPTER_2, VERSE_1_PARA] };
 
-/** Just past the number in `\c 2 `: the backslash, the marker, the separator, and the number. */
-const AFTER_NUMBER = { start: { jsonPath: "$.content[0].content[0]", offset: 4 } } as const;
+/** Just past the number in `\c 2`: the end of the chapter's `number`. */
+const AFTER_NUMBER = { start: { jsonPath: "$.content[0]['number']", propertyOffset: 1 } } as const;
 
 function $glyph(): TextNode {
   const chapter = requireDefined($getRoot().getChildren().find($isChapterNode), "no chapter");

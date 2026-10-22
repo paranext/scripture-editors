@@ -139,7 +139,7 @@ describe("closed \\nd span with an inner trailing space", () => {
 
     // Rename the paragraph's own opening glyph (`\p` -> `\q1`): a structural pend whose settle
     // scope is the whole paragraph (`$settleScopeForNode`), so reading `getUsj()` while it is
-    // pending routes through `$settledParaNodes`, which re-tokenizes the ENTIRE paragraph
+    // pending routes through `$settledParaScope`, which re-tokenizes the ENTIRE paragraph
     // fragment — including the `\nd` span — via the same Tier-2 tokenizer the previous pin
     // exercises directly. A plain text edit elsewhere would not reliably create pended state at
     // all (MarkerEditPlugin only pends marker-shaped edits), which would let `getUsj()` take its

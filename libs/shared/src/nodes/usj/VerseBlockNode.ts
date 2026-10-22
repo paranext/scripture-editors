@@ -12,6 +12,7 @@
 
 import {
   $applyNodeReplacement,
+  createState,
   ElementNode,
   LexicalNode,
   LexicalUpdateJSON,
@@ -21,6 +22,15 @@ import {
   Spread,
 } from "lexical";
 import { parseVerseRange } from "./node.utils.js";
+
+/**
+ * On a paragraph fragment in the block verse layout: the index, among the root children the
+ * grouping started from, of the paragraph it was cut from. Fragments of one paragraph share it; a
+ * unit without it is a whole source of its own.
+ */
+export const verseBlockSourceState = createState("verseBlockSource", {
+  parse: (value) => (typeof value === "number" ? value : undefined),
+});
 
 export const VERSE_BLOCK_TYPE = "verse-block";
 export const VERSE_BLOCK_VERSION = 1;

@@ -28,9 +28,18 @@
  * for the same caret-departure settle.
  */
 
-import { TERMINATED_MARKER_IN_TEXT_REGEX } from "./markerName.pattern";
+import {
+  BARE_OPENER_REGEX,
+  BYTES_READ_WITH_MARKER_REGEX,
+  TERMINATED_MARKER_IN_TEXT_REGEX,
+} from "./markerName.pattern";
 import { $requestTier2ForNode, $settleScopeForNode } from "./tier2Rebuild.utils";
-import { $noteCallerTextTransform, MarkerEditContext } from "./markerEditTier1.utils";
+import {
+  $moveLeadingSpaceOntoLeadingAttribute,
+  $noteCallerTextTransform,
+  $noteOfCallerText,
+  MarkerEditContext,
+} from "./markerEditTier1.utils";
 import {
   $getRoot,
   $getSelection,
@@ -44,27 +53,32 @@ import {
 import {
   $caretHoldsRunSite,
   $charClosingGlyph,
-  $hasCaretHeldSeparatorGap,
+  $hasUnsettledSeparatorGap,
   $isAttributeRunNode,
   $isCanonicalMarkerNode,
   $isCanonicalUnmatchedNode,
   $isChapterNode,
   $isCharNode,
-  $isImmutableTableNode,
   $isImmutableUnmatchedNode,
+  $isInLiteralOnlyBlock,
   $isMarkerNode,
+  $isTypedMarkNode,
   $isUnknownNode,
   $isVerseNode,
+  $openerSeparatorGapFollowingBytes,
   $ownerOfRunPiece,
   $runDiverges,
   $runEntirelyAbsent,
   $verseOfAttributeSourceText,
+  CharNode,
   DisplayRunDescriptor,
   displayRunDescriptor,
   displayRunDescriptors,
+  getEditableCallerText,
   getVisibleOpenMarkerText,
   textTypeState,
   milestoneEjectionPending,
+  NBSP,
 } from "shared";
 
 /**
@@ -116,28 +130,50 @@ function $displayRunValueAtRest(node: TextNode): boolean {
   );
 }
 
+/** The char span `node` is content of: its parent, read through any annotation marks. */
+function $spanOfContentText(node: LexicalNode): CharNode | undefined {
+  let parent = node.getParent();
+  while ($isTypedMarkNode(parent)) parent = parent.getParent();
+  return $isCharNode(parent) ? parent : undefined;
+}
+
 /**
- * Whether `node` sits inside a block whose text the tokenizer keeps literal — an opaque
- * UnknownNode block (sidebar, periph, figure, …) or a table. These are the degradation-property
- * contexts `$rebuildParas` refuses to re-tokenize (the paragraph guard rails and
- * `$requestTier2ForNode`'s opaque-block bail), so a divergence there can never settle. Both the
- * backslash path and the `//` optbreak path below skip such nodes: pending a literal the engine
- * will never rebuild would only leave a stuck key.
+ * Move the bytes the user just typed in front of a char opener's separator that read with the
+ * marker — name bytes, a closer's `*`, a next marker's `\` — into the opening glyph. A caret at the
+ * opener's boundary can resolve to the start of the content text, and typing there puts `x⍽grace`
+ * after `\w` — bytes that read `\wx grace` on screen, exactly as `x` typed at the end of the glyph
+ * does. Moving them makes the two one edit, which settles as what it spells: the glyph pends, and
+ * its settle renames the span and its closer in place (or re-tokenizes a `\w*` closer or a `\w\`).
+ * Left in front of the separator, a `\` would take the separator off its glyph and spell a
+ * different marker with it in the unformatted view, where a data no-break space is written `~`.
  *
- * Chapters and books USED to sit in this list, and both entries were purely circular: nothing
- * about their bytes is literal-by-policy — they were excluded only because no scope rebuilt them.
- * `$rebuildChapter` and `$rebuildBook` (tier2Rebuild.utils.ts) are those scopes now, so a
- * chapter's display bytes and the `\id` line's content pend and settle like any paragraph's.
+ * Decided by where the caret is, not by the bytes alone: only the run from the start of the text
+ * up to the collapsed caret moves, and only when the separator follows it. Deleting the separator
+ * in front of an authored no-break space leaves the same shape of bytes (`Lord⍽God`) with the caret
+ * at their start, and that gap re-tokenizes like any other.
  *
- * Tables stay because no rebuild scope owns one. Their cells hold ordinary `TextNode`s, so this
- * transform does run on them, and a cell whose text contains `//` (a URL, say — the tokenizer
- * reads `//` as an optbreak wherever it appears) would otherwise pend a key nothing can ever
- * settle, leaving it to re-arm the idle timer for the rest of the session.
+ * Mutating: call inside `editor.update()`.
+ *
+ * @returns Whether the bytes moved.
  */
-function $inLiteralOnlyBlock(node: LexicalNode): boolean {
-  for (let parent = node.getParent(); parent; parent = parent.getParent())
-    if ($isUnknownNode(parent) || $isImmutableTableNode(parent)) return true;
-  return false;
+function $movePushedNameIntoGlyph(node: TextNode, span: CharNode): boolean {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const { anchor } = selection;
+  if (anchor.key !== node.getKey() || anchor.type !== "text") return false;
+  const glyph = span.getFirstChild();
+  if (!$isMarkerNode(glyph) || glyph.getMarkerSyntax() !== "opening") return false;
+  let afterGlyph = glyph.getNextSibling();
+  while ($isTypedMarkNode(afterGlyph)) afterGlyph = afterGlyph.getFirstChild();
+  if (!node.is(afterGlyph) || !BARE_OPENER_REGEX.test(glyph.getTextContent())) return false;
+  const text = node.getTextContent();
+  const name = text.slice(0, anchor.offset);
+  if (!BYTES_READ_WITH_MARKER_REGEX.test(name) || text[anchor.offset] !== NBSP) return false;
+  const glyphText = glyph.getTextContent() + name;
+  node.setTextContent(text.slice(name.length));
+  glyph.setTextContent(glyphText);
+  glyph.select(glyphText.length, glyphText.length);
+  return true;
 }
 
 /**
@@ -186,6 +222,9 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
   // reach the literal machinery below; unhandled ones (a deleted flanking separator, backslash
   // bytes) fall through with today's behavior untouched.
   if ($noteCallerTextTransform(node, context)) return;
+  // Whitespace typed in front of the text after a verse number or a caller is that marker's
+  // separator run, as typing at its end makes it.
+  if ($moveLeadingSpaceOntoLeadingAttribute(node)) return;
   // Attribute runs (every registered kind alike) pend and never re-tokenize from here: their
   // bytes legitimately contain arbitrary characters, so neither the backslash check below nor the
   // termination regex further down means anything for them — a `\`-free edit is just as much a
@@ -202,6 +241,13 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
     // with nothing to settle also clears any stale pend of its own.
     if ($displayRunValueAtRest(node)) context.pendingKeys.delete(node.getKey());
     else context.pendingKeys.add(node.getKey());
+    return;
+  }
+  // Name bytes, `*` or `\\` typed in front of a char opener's separator belong to the opener's
+  // glyph, and nothing else here applies to them.
+  const pushedSpan = $spanOfContentText(node);
+  if (pushedSpan && $movePushedNameIntoGlyph(node, pushedSpan)) {
+    context.pendingKeys.delete(node.getKey());
     return;
   }
   if (!text.includes("\\")) {
@@ -226,7 +272,7 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
     // Pend so caret departure routes it through `$rebuildParas`, which re-tokenizes `//` into an
     // optbreak while keeping the significant flanking spaces byte-exact. Skip the literal-only
     // blocks the tokenizer never re-tokenizes — a settle there could never happen.
-    else if (text.includes("//") && !$inLiteralOnlyBlock(node))
+    else if (text.includes("//") && !$isInLiteralOnlyBlock(node))
       context.pendingKeys.add(node.getKey());
     // A value typed into an empty `\va`/`\vp` SOURCE span is a pending attribute edit for the verse
     // the span rides on: no backslash or pipe ever lands, so without pending here the key is
@@ -243,19 +289,23 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
     // pend; departure's chapter-scoped rebuild re-tokenizes `\c` and `\ca` together (attrCapture
     // folds, or refuses at the fixed point for an unfoldable span).
     else if ($isChapterNode($settleScopeForNode(node))) context.pendingKeys.add(node.getKey());
-    else {
-      // Deleting a char opener's NBSP separator OUT OF ITS PREFIX position is a leaf-only edit:
-      // the span's own element transform (the plugin's CharNode pend) does not run for it, so
-      // without reporting the gap from the text side here nothing ever pends the span — the
-      // deletion neither healed nor renamed, and the byte silently resurrected from node state
-      // on the next save. Pend the OWNING SPAN's key (the same key the element-side pend uses);
-      // departure settles it through the tokenize-identity routing. The standalone-spacer
-      // deletion shape structurally dirties the span and never needs this arm.
-      const parent = node.getParent();
-      if ($isCharNode(parent) && $hasCaretHeldSeparatorGap(parent))
-        context.pendingKeys.add(parent.getKey());
-      context.pendingKeys.delete(node.getKey());
-    }
+    else context.pendingKeys.delete(node.getKey());
+    // Deleting a char opener's NBSP separator out of its prefix position, or typing over it, is a
+    // leaf-only edit: the span's own element transform (the plugin's CharNode pend and the
+    // separator sync) does not run for it, so the gap is decided from the text side here or never
+    // — the screen would keep `\wxgrace` while the writer resurrects the separator on the next
+    // save. Checked after every arm above, since a gap is independent of what else the text holds
+    // (`|…`, `//`). The tokenize-identity rule decides: a gap the caret still holds, or whose
+    // bytes read differently without the separator, pends the OWNING SPAN's key (the key the
+    // element-side pend uses) for departure to re-tokenize — graced while the caret stays in the
+    // span, so the user can keep typing the new name. Any other gap heals in place now: dirtying
+    // the span hands it to the separator sync's one registration home (CharNodePlugin), which
+    // heals exactly as it does when the span itself is edited. In a block no settle scope
+    // re-tokenizes (a table cell) no gap renames, so only a caret-held one pends there, and the
+    // settle heals it in place.
+    const span = $spanOfContentText(node);
+    if (span && $hasUnsettledSeparatorGap(span)) context.pendingKeys.add(span.getKey());
+    else if (span && $openerSeparatorGapFollowingBytes(span) !== undefined) span.markDirty();
     return;
   }
   // The para-prefix trailing-space node is NOT exempt: it only
@@ -268,7 +318,7 @@ export function $textNodeTier2Transform(node: TextNode, context: MarkerEditConte
   // Note content routes to the note-scoped rebuild (`$rebuildNoteContent`) via
   // `$requestTier2ForNode`, and the `\id` line's content to `$rebuildBook`, so neither is skipped
   // here; opaque unknown blocks and tables keep literal text (degradation property).
-  if ($inLiteralOnlyBlock(node)) return;
+  if ($isInLiteralOnlyBlock(node)) return;
   // Only the USER'S TYPED RUN can terminate a marker (the type-through corruption class): with
   // the caret mid-word ("li|ke"), typing `\` yields
   // "li\ke …", and the word remainder's own following space made `\ke ` look terminated —
@@ -413,6 +463,15 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
           context.pendingKeys.add(node.getKey());
         return;
       }
+      // An expanded note's caller text that is not its caller's spelling is one waiting for its
+      // next keystroke (a caller deleted, then retyped) — the caller-text transform's pend. The
+      // departure puts it back unless it has become a caller word again.
+      const callerNote = $noteOfCallerText(node);
+      if (callerNote) {
+        if (node.getTextContent() !== getEditableCallerText(callerNote.getCaller()))
+          context.pendingKeys.add(node.getKey());
+        return;
+      }
       const text = node.getTextContent();
       // Four literal shapes pend, mirroring the transform's TextNode branches: backslash runs
       // (terminated or not), pipe bytes at an attribute site (the pipe branch), `//` optbreak
@@ -436,7 +495,10 @@ export function $rependPendShapedNodes(context: MarkerEditContext): void {
     if ($isCharNode(node)) {
       // A caret-held separator gap and a caret-held attribute-run divergence — the CharNode
       // transform's pend conditions (MarkerEditPlugin.tsx) — are both covered by the shared loop
-      // above.
+      // above. A gap whose bytes read differently without the separator pends wherever the caret
+      // is, the mirror of the text transform's gap arm: a redone type-over restores `\wxgrace`
+      // with no transform to report it.
+      if ($hasUnsettledSeparatorGap(node)) context.pendingKeys.add(node.getKey());
       node.getChildren().forEach(visit);
       return;
     }

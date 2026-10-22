@@ -1,6 +1,6 @@
 /** Marker node used when displaying USFM */
 
-import { closingMarkerText, openingMarkerText } from "../usj/node.utils.js";
+import { closingMarkerText, openingMarkerText } from "../usj/markerText.utils.js";
 import {
   $applyNodeReplacement,
   EditorConfig,

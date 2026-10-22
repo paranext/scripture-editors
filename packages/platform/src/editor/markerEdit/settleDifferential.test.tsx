@@ -15,9 +15,10 @@
  * leave the document PENDING (asserted, so a shape that resolves inline fails loudly instead of
  * passing vacuously).
  */
+import { displayAnnotated } from "./displayAnnotations.test-helpers";
 import { $pendGlyphEdit } from "./markerEdit.test-helpers";
 import { COMMIT_PENDING_MARKERS_COMMAND, MarkerEditPlugin } from "./MarkerEditPlugin";
-import { Tier2Context } from "./tier2Rebuild.utils";
+import { $rebuildParas, Tier2Context } from "./tier2Rebuild.utils";
 import { $settledUsj } from "./virtualSettle.utils";
 import editorUsjAdaptor, {
   initialize as initializeDeserialize,
@@ -29,7 +30,14 @@ import {
 } from "../adaptors/usj-editor.adaptor";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
-import { $getRoot, $isTextNode, LexicalEditor, TextNode } from "lexical";
+import {
+  $createRangeSelection,
+  $getRoot,
+  $setSelection,
+  $isTextNode,
+  LexicalEditor,
+  TextNode,
+} from "lexical";
 import {
   $chapterGlyphTextNode,
   $isChapterNode,
@@ -37,6 +45,9 @@ import {
   $isMarkerNode,
   $isNoteNode,
   $isParaNode,
+  $isUnknownNode,
+  $wrapSelectionInTypedMarkNode,
+  COMMENT_MARK_TYPE,
   getMarker as bundledGetMarker,
   getPendedDisplayOwners,
   NBSP,
@@ -145,6 +156,18 @@ function $typeLiteralPending(needle: string, literal: string): void {
   const text = $textContaining(needle);
   text.setTextContent(literal);
   text.select(0, 0);
+}
+
+/** Wrap a comment mark over `word`, which must sit in one text node — the shape `CommentPlugin`
+ * creates, and the one mark type the settled USJ carries (as a milestone pair), so a settle that
+ * drops or misplaces it shows up in the document both halves are compared on. */
+function $commentOver(word: string, id: string): void {
+  const text = $textContaining(word);
+  const start = text.getTextContent().indexOf(word);
+  const selection = $createRangeSelection();
+  selection.anchor.set(text.getKey(), start, "text");
+  selection.focus.set(text.getKey(), start + word.length, "text");
+  $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, id);
 }
 
 /** A doc with two `\p` paragraphs, the first carrying `first` (defaults to a verse + body). */
@@ -280,7 +303,7 @@ const differentialShapes: DifferentialShape[] = [
   },
   {
     // A typed char literal INSIDE an expanded note's content: the note-content rebuild
-    // (`$rebuildNoteContent`) and its serialized mirror (`$settledNoteContent`) must tokenize the
+    // (`$rebuildNoteContent`) and its serialized mirror (`$settledNoteScope`) must tokenize the
     // typed span identically, inside the note's separate re-tokenization scope.
     name: "char literal typed inside an expanded note's content",
     expectSettled: (settled) => {
@@ -348,6 +371,54 @@ const differentialShapes: DifferentialShape[] = [
     usj: twoParaUsj([`one${NBSP}two`]),
     $edit: () => $pendGlyphEdit($paraGlyph(0), "\\q1"),
   },
+  ...(["standard", "unformatted"] as const).flatMap((view): DifferentialShape[] => [
+    {
+      // A name byte typed in front of a char span's separator renames the span in place, closer
+      // with it — and the name ends at the separator, never running on into the content.
+      name: `${view}: name byte typed in front of a span's separator`,
+      expectSettled: (settled) => {
+        expect(bytes(settled)).toContain('{"type":"char","marker":"wja","content":["b"]}');
+      },
+      view,
+      usj: twoParaUsj(["x ", { type: "char", marker: "wj", content: ["b"] }, " y"]),
+      $edit: () => {
+        const content = $textContaining("b");
+        content.setTextContent(`a${NBSP}b`);
+        content.select(1, 1);
+      },
+    },
+    ...[
+      ["wj", true],
+      ["wx", true],
+      ["wj", false],
+      ["wx", false],
+    ].map(
+      ([renamed, withComment]): DifferentialShape => ({
+        // The same kind of rename beside a typed literal that re-tokenizes the paragraph: the
+        // paragraph is rebuilt around the renamed span (preserved whole when the new name is one
+        // the stylesheet does not declare), and a comment on the span's text stays on it.
+        name: `${view}: \\w renamed to \\${renamed} beside a pending literal${withComment ? ", with a comment on its text" : ""}`,
+        expectSettled: (settled) => {
+          expect(bytes(settled)).toContain(`"marker":"${renamed}"`);
+          expect(bytes(settled)).not.toContain('"unmatched"');
+          if (withComment) expect(bytes(settled)).toContain('"sid":"c1"');
+        },
+        view,
+        usj: twoParaUsj(["x ", { type: "char", marker: "w", content: ["grace"] }, " y"]),
+        $edit: () => {
+          if (withComment) $commentOver("grace", "c1");
+          const glyph = $getRoot()
+            .getAllTextNodes()
+            .find((node) => $isMarkerNode(node) && node.getTextContent() === "\\w");
+          if (!glyph) throw new Error("expected the span's opening glyph");
+          $pendGlyphEdit(glyph, `\\${renamed}`);
+          // Caret-less, as an abandoned edit leaves it: an unterminated literal stays pending.
+          $textContaining(" y").setTextContent(" y \\zz");
+          $setSelection(null);
+        },
+      }),
+    ),
+  ]),
   {
     // A nested (`\+`) char literal typed inside a char span: nesting resolution runs inside the
     // paragraph scope, and both halves must produce the same nested-span structure.
@@ -369,6 +440,123 @@ const differentialShapes: DifferentialShape[] = [
       if (!text) throw new Error("expected the span's content text");
       text.setTextContent(`${NBSP}li \\+nd g\\+nd*ht`);
       text.select(0, 0);
+    },
+  },
+  {
+    // A comment over a word in the paragraph a literal is pending in. The mark is transparent to
+    // re-tokenization, so each half has to carry it across its own rebuild explicitly.
+    name: "comment mark in a paragraph a typed literal settles",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"nd"');
+      expect(bytes(settled)).toContain('"c1"');
+    },
+    view: "standard",
+    usj: twoParaUsj(["alpha bravo charlie"]),
+    $edit: () => {
+      $commentOver("bravo", "c1");
+      $typeLiteralPending(" charlie", " charlie \\nd LORD\\nd*");
+    },
+  },
+  {
+    name: "comment mark in an expanded note's content a typed literal settles",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"bd"');
+      expect(bytes(settled)).toContain('"c1"');
+    },
+    view: "standard-expanded",
+    usj: noteUsj([{ type: "char", marker: "fr", content: ["1.1"] }, "alpha bravo charlie"]),
+    $edit: () => {
+      $commentOver("bravo", "c1");
+      $typeLiteralPending(" charlie", " charlie \\bd body\\bd*");
+    },
+  },
+  {
+    // A comment whose first covered byte is a preserved note: the note crosses the rebuild whole,
+    // so the mark is re-extended over it by node identity rather than by bytes.
+    name: "comment mark beginning on a note in a paragraph a typed literal settles",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"nd"');
+      expect(bytes(settled)).toContain('"c1"');
+    },
+    view: "standard",
+    usj: twoParaUsj([
+      "alpha ",
+      {
+        type: "note",
+        marker: "f",
+        caller: "+",
+        content: [{ type: "char", marker: "fr", content: ["1.1"] }, "note body"],
+      },
+      "bravo charlie",
+    ]),
+    $edit: () => {
+      const alpha = $textContaining("alpha");
+      const bravo = $textContaining("bravo");
+      const selection = $createRangeSelection();
+      selection.anchor.set(alpha.getKey(), alpha.getTextContentSize(), "text");
+      selection.focus.set(bravo.getKey(), "bravo".length, "text");
+      $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+      $typeLiteralPending(" charlie", " charlie \\nd LORD\\nd*");
+    },
+  },
+  {
+    // A comment past a footnote typed as plain text: live, the literal spells every one of its
+    // bytes, while the settled note is one preserved node — so each half has to line the two up to
+    // carry the comment onto the same word rather than drop it.
+    name: "comment mark after a typed footnote literal",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"f"');
+      expect(bytes(settled)).toContain('{"type":"ms","marker":"zmsc-s","sid":"c1"},"charlie"');
+    },
+    view: "standard",
+    usj: twoParaUsj(["alpha bravo charlie"]),
+    $edit: () => {
+      $commentOver("charlie", "c1");
+      $typeLiteralPending("alpha bravo ", "alpha \\f + \\ft note text\\f* bravo ");
+    },
+  },
+  {
+    name: "comment mark after a typed footnote literal, notes expanded",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"f"');
+      expect(bytes(settled)).toContain('{"type":"ms","marker":"zmsc-s","sid":"c1"},"charlie"');
+    },
+    view: "standard-expanded",
+    usj: twoParaUsj(["alpha bravo charlie"]),
+    $edit: () => {
+      $commentOver("charlie", "c1");
+      $typeLiteralPending("alpha bravo ", "alpha \\f + \\ft note text\\f* bravo ");
+    },
+  },
+  {
+    // The comment's two ends sit on either side of the literal, so the settled note lands between
+    // its milestones.
+    name: "comment mark spanning a typed footnote literal",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toMatch(
+        /"zmsc-s","sid":"c1"\},"bravo ",\{"type":"note".*\}," charlie",\{"type":"ms","marker":"zmsc-e"/,
+      );
+    },
+    view: "standard",
+    usj: twoParaUsj(["alpha bravo charlie delta"]),
+    $edit: () => {
+      $commentOver("bravo charlie", "c1");
+      $typeLiteralPending("bravo charlie", "bravo \\f + \\ft note text\\f* charlie");
+    },
+  },
+  {
+    // A note-content scope's own typed literal that settles into a preserved node: an endnote
+    // typed inside a footnote's content tokenizes into a note nested in the note.
+    name: "comment mark after a typed note literal in an expanded note's content",
+    expectSettled: (settled) => {
+      expect(bytes(settled)).toContain('"marker":"fe"');
+      expect(bytes(settled)).toContain('{"type":"ms","marker":"zmsc-s","sid":"c1"},"charlie"');
+    },
+    view: "standard-expanded",
+    usj: noteUsj([{ type: "char", marker: "fr", content: ["1.1"] }, "alpha bravo charlie"]),
+    $edit: () => {
+      $commentOver("charlie", "c1");
+      $typeLiteralPending("alpha bravo ", "alpha \\fe + \\ft x\\fe* bravo ");
     },
   },
 ];
@@ -428,4 +616,153 @@ describe("differential settle — virtual mirror equals commit-then-read", () =>
       expectSettled(live);
     });
   }
+});
+
+describe("differential settle — a comment inside a typed footnote literal", () => {
+  /**
+   * Type a footnote literal over the first paragraph's text with a comment over `word` inside
+   * it, then settle the paragraph both ways.
+   *
+   * A comment inside a literal splits the literal's text, and the engine settles a split literal
+   * the moment it sees it, so this shape never sits pending in a running editor. With no engine
+   * mounted it stays put, and both settles can be handed the same tree directly.
+   */
+  async function settleBothWays(view: keyof typeof VIEWS, word: string) {
+    const viewOptions = VIEWS[view];
+    const context: Tier2Context = { viewOptions, getMarker: bundledGetMarker };
+    initializeSerialize(undefined, undefined);
+    reset();
+    const state = serializeEditorState(twoParaUsj(["alpha bravo charlie"]), viewOptions);
+    const { editor } = await baseTestEnvironment(JSON.stringify({ root: state.root }));
+    let pendedKey = "";
+    editor.update(
+      () => {
+        const text = $textContaining("alpha bravo charlie");
+        text.setTextContent("alpha \\f + \\ft note text\\f* charlie");
+        pendedKey = text.getKey();
+        $commentOver(word, "c1");
+      },
+      { discrete: true },
+    );
+
+    const serialized = editor.getEditorState().toJSON();
+    const mirror = editor
+      .getEditorState()
+      .read(() => $settledUsj(serialized, new Set([pendedKey]), context));
+    editor.update(
+      () => {
+        const para = $getRoot().getChildren().find($isParaNode);
+        if (!para) throw new Error("expected a ParaNode");
+        expect($rebuildParas([para], context)).toBe(true);
+      },
+      { discrete: true },
+    );
+    return { mirror, live: usjOf(editor, viewOptions), editor };
+  }
+
+  it.each(["standard", "standard-expanded"] as const)(
+    "lands a comment on the literal's note content on the same content in the new note [%s]",
+    async (view) => {
+      const { mirror, live } = await settleBothWays(view, "note");
+
+      expect(JSON.stringify(mirror)).toBe(JSON.stringify(live));
+      expect(bytes(live)).toContain(
+        '"content":[{"type":"ms","marker":"zmsc-s","sid":"c1"},"note",{"type":"ms","marker":"zmsc-e","eid":"c1"}," text"]',
+      );
+    },
+  );
+
+  it.each(["standard", "standard-expanded"] as const)(
+    "carries a comment on the literal's caller onto the note's caller, never into its USJ [%s]",
+    async (view) => {
+      const { mirror, live, editor } = await settleBothWays(view, "+");
+
+      expect(JSON.stringify(mirror)).toBe(JSON.stringify(live));
+      expect(bytes(live)).toContain('"type":"note","marker":"f","caller":"+"');
+      expect(bytes(live)).not.toContain('"c1"');
+      // The typed `+` is kept as the note's caller, so the caller holds the comment itself: the
+      // collapsed view's caller decorator whole (it displays the note's caller), the expanded
+      // view's editable caller text.
+      expect(displayAnnotated(editor)).toEqual({ c1: ["+"] });
+    },
+  );
+});
+
+describe("differential settle — an emptied optbreak settling beside a typed literal", () => {
+  /**
+   * Empty the first paragraph's optbreak and type `literal` over ` bravo `, with comments over
+   * `head`, `alpha` and `charlie`, then settle both ways.
+   *
+   * The read-only settle splices the husk out of its output and rebuilds the paragraph without
+   * it, while the live fragment it captured the comments over still spells the husk's placeholder.
+   * The engine removes an emptied husk as soon as the caret leaves it and settles a typed literal
+   * as soon as the caret leaves THAT, so a running editor holds only one of the two pending at a
+   * time; with no engine mounted both stay pending, and the mutating half is the engine's own
+   * order — the husk removed, then the paragraph rebuilt.
+   */
+  async function settleBothWays(literal: string) {
+    const viewOptions = VIEWS.standard;
+    const context: Tier2Context = { viewOptions, getMarker: bundledGetMarker };
+    initializeSerialize(undefined, undefined);
+    reset();
+    const state = serializeEditorState(
+      twoParaUsj(["head ", { type: "optbreak" }, " alpha bravo charlie"]),
+      viewOptions,
+    );
+    const { editor } = await baseTestEnvironment(JSON.stringify({ root: state.root }));
+    const pended = new Set<string>();
+    editor.update(
+      () => {
+        $commentOver("head", "c0");
+        $commentOver("alpha", "c1");
+        $commentOver("charlie", "c2");
+        const husk = $getRoot().getChildren().find($isParaNode)?.getChildren().find($isUnknownNode);
+        if (!husk) throw new Error("expected the optbreak");
+        husk.getChildren().forEach((child) => child.remove());
+        pended.add(husk.getKey());
+        const text = $textContaining(" bravo ");
+        text.setTextContent(literal);
+        pended.add(text.getKey());
+      },
+      { discrete: true },
+    );
+
+    const serialized = editor.getEditorState().toJSON();
+    const mirror = editor.getEditorState().read(() => $settledUsj(serialized, pended, context));
+    editor.update(
+      () => {
+        $getRoot().getChildren().find($isParaNode)?.getChildren().find($isUnknownNode)?.remove();
+        const para = $getRoot().getChildren().find($isParaNode);
+        if (!para) throw new Error("expected a ParaNode");
+        expect($rebuildParas([para], context)).toBe(true);
+      },
+      { discrete: true },
+    );
+    return { mirror, live: usjOf(editor, viewOptions) };
+  }
+
+  /** Each comment's start milestone sits right in front of its word. */
+  function expectCommentsOnTheirWords(settled: Usj | undefined): void {
+    const para = bytes(settled?.content?.[2]);
+    expect(para).not.toContain('"optbreak"');
+    expect(para).toContain('{"type":"ms","marker":"zmsc-s","sid":"c0"},"head"');
+    expect(para).toContain('{"type":"ms","marker":"zmsc-s","sid":"c1"},"alpha"');
+    expect(para).toContain('{"type":"ms","marker":"zmsc-s","sid":"c2"},"charlie"');
+  }
+
+  it("carries comments before and after a typed footnote literal", async () => {
+    const { mirror, live } = await settleBothWays(" bravo \\f + \\ft note text\\f* ");
+
+    expect(bytes(live)).toContain('"marker":"f"');
+    expectCommentsOnTheirWords(live);
+    expect(JSON.stringify(mirror)).toBe(JSON.stringify(live));
+  });
+
+  it("carries comments before and after a typed char literal", async () => {
+    const { mirror, live } = await settleBothWays(" bravo \\nd x\\nd* ");
+
+    expect(bytes(live)).toContain('"marker":"nd"');
+    expectCommentsOnTheirWords(live);
+    expect(JSON.stringify(mirror)).toBe(JSON.stringify(live));
+  });
 });

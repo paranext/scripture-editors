@@ -1,43 +1,51 @@
-import type { MarkerObject } from "./usj.model.js";
+import type { Usj } from "./usj.model.js";
 import { usjToUsxString } from "./usj-to-usx.js";
 import { usxStringToUsj } from "./usx-to-usj.js";
 
 /**
- * Pins that a marker with no name survives the USX->USJ->USX round trip.
- *
- * A bare backslash in USFM (`\ 2`) is a marker whose name is empty: ParatextData reads it as
- * `<para style="">` and writes that back as `\ 2`, and Paratext 9 shows and saves those bytes as
- * they are. An empty `style` is therefore the author's own byte, not a missing one. Read as absent,
- * the paragraph came into the editor with no marker, which shows it as `\p`, and the next save wrote
- * `\p 2` over the author's `\ 2`.
+ * A marker with no name is a real shape: ParatextData reads `\p \ df` as a paragraph whose style is
+ * empty (`<para style="" status="unknown">df</para>`). The empty name is the marker the file has,
+ * not a missing one, so it round-trips as `marker: ""` — never as the default paragraph, and never
+ * as a leftover `style` attribute beside some other marker.
  */
-describe("a nameless marker survives the round trip", () => {
-  const usxOf = (body: string) => `<usx version="3.1">${body}</usx>`;
+describe("a nameless marker round-trips", () => {
+  const namelessParaUsx =
+    '<usx version="3.1"><book code="GEN" style="id" /><para style="" status="unknown">df</para></usx>';
+  const namelessParaUsj: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN" },
+      { type: "para", marker: "", content: ["df"] },
+    ],
+  };
 
   it("reads an empty style as an empty marker", () => {
-    expect(usxStringToUsj(usxOf('<para style="" status="unknown">2</para>')).content).toEqual([
-      { type: "para", marker: "", content: ["2"] },
-    ]);
+    expect(usxStringToUsj(namelessParaUsx)).toEqual(namelessParaUsj);
   });
 
   it("reads an empty paragraph with an empty style as an empty marker", () => {
-    expect(usxStringToUsj(usxOf('<para style="" />')).content).toEqual([
+    expect(usxStringToUsj('<usx version="3.1"><para style="" /></usx>').content).toEqual([
       { type: "para", marker: "" },
     ]);
   });
 
   it("writes an empty marker as an empty style", () => {
-    const content: MarkerObject[] = [{ type: "para", marker: "", content: ["2"] }];
-    const usx = usjToUsxString({ type: "USJ", version: "3.1", content });
-    expect(usx).toContain('<para style="">2</para>');
-    expect(usxStringToUsj(usx).content).toEqual(content);
+    const usx = usjToUsxString(namelessParaUsj);
+    expect(usx).toContain('<para style="">df</para>');
+    expect(usxStringToUsj(usx)).toEqual(namelessParaUsj);
   });
 
-  it("still omits a style for an element that has no marker at all", () => {
-    const usx = usjToUsxString({ type: "USJ", version: "3.1", content: ["text"] });
-    expect(usx).not.toContain("style");
-    expect(usxStringToUsj(usxOf("<para>2</para>")).content).toEqual([
-      { type: "para", content: ["2"] },
+  it("keeps the empty style through USX to USJ and back", () => {
+    const usx = usjToUsxString(usxStringToUsj(namelessParaUsx));
+    expect(usx).toContain('<para style="">df</para>');
+  });
+
+  it("still gives an element with no style no marker", () => {
+    const usj = usxStringToUsj('<usx version="3.1"><para style="p">a<optbreak />b</para></usx>');
+    expect(usj.content).toEqual([
+      { type: "para", marker: "p", content: ["a", { type: "optbreak" }, "b"] },
     ]);
+    expect(usjToUsxString(usj)).toContain("<optbreak/>");
   });
 });

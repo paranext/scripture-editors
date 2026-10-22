@@ -25,6 +25,8 @@ import {
 import {
   $chapterNodeTransform,
   $markerNodeTransform,
+  $restoreRemovedNoteCaller,
+  $keepProtectedNoteCloser,
   $resolvePendingMarkers,
   $unmatchedNodeTransform,
   $verseNodeTransform,
@@ -92,10 +94,12 @@ import {
   AttributeRunNode,
   ChapterNode,
   CharNode,
+  APP_PLACED_CARET_COMMAND,
   CURSOR_CHANGE_TAG,
-  DELTA_CHANGE_TAG,
   displayRunDescriptor,
   DisplayRunOwnerRef,
+  ensurePendedDisplayOwnersCurrent,
+  getApplyingUpdateSource,
   getMarker as bundledGetMarker,
   ImmutableTypedTextNode,
   ImmutableUnmatchedNode,
@@ -294,14 +298,15 @@ function registerDestroyedOwnerPend(editor: LexicalEditor, context: MarkerEditCo
   // HISTORIC (undo/redo) commits re-pend by re-scanning the RESTORED state directly
   // ($rependPendShapedNodes) — reacting to their destroyed-node diff here as well would just
   // duplicate that work against a state the restore itself, not a user edit, produced. A
-  // DELTA_CHANGE_TAG commit applies a remote collab update, not a local deletion. An owner
-  // destroyed in the SAME commit (a whole-construct deletion, or a Tier-2 splice that replaces
+  // collaborator's applied update ({@link getApplyingUpdateSource}) is not a local deletion. An
+  // owner destroyed in the SAME commit (a whole-construct deletion, or a Tier-2 splice that replaces
   // the owner outright) needs no pend — there is nothing left to settle.
   const $pendOwnersOfDestroyed = (
     mutations: Map<NodeKey, NodeMutation>,
     payload: { updateTags: Set<string>; prevEditorState: EditorState },
   ) => {
-    if (payload.updateTags.has(HISTORIC_TAG) || payload.updateTags.has(DELTA_CHANGE_TAG)) return;
+    if (payload.updateTags.has(HISTORIC_TAG) || getApplyingUpdateSource(editor) === "remote")
+      return;
     const destroyedRuns: DisplayRunOwnerRef[] = [];
     payload.prevEditorState.read(() => {
       for (const [key, mutation] of mutations) {
@@ -706,7 +711,19 @@ export function MarkerEditPlugin({
     // own transforms below. The driver lives below the engine in the module graph and cannot
     // import it directly, but must still leave a pended owner's run alone instead of resurrecting
     // a deletion the engine has not settled yet.
-    const unregisterPended = registerPendedDisplayOwners(editor, context.pendingKeys);
+    //
+    // The re-derivation a history restore needs is published with it, so any listener that reads
+    // the set for a historic commit can bring it current first, whichever listener runs first.
+    const unregisterPended = registerPendedDisplayOwners(
+      editor,
+      context.pendingKeys,
+      (restoredState) => {
+        // Stale keys are cleared first — they describe the pre-restore document, and a leftover
+        // key pointing at a now-canonical node would drive a pointless refused rebuild later.
+        context.pendingKeys.clear();
+        restoredState.read(() => $rependPendShapedNodes(context));
+      },
+    );
     // Tracks the caret's node key as of the most recent commit — keyed off the selection FOCUS
     // (the live cursor end, so it stays correct even for a backward range selection), updated
     // synchronously by the update listener below (which never lags, unlike command handlers
@@ -725,7 +742,11 @@ export function MarkerEditPlugin({
     // (a mouse click is user intent just like a keystroke — a keydown-only clear would leave the
     // window open across mouse-only interaction).
     let appPlacedCaret = false;
-    // Anchor of the most recent commit (tagged or not) — the tagged-branch "did this commit move
+    // Set by APP_PLACED_CARET_COMMAND inside the update that moved the caret, and consumed by the
+    // update listener for that update's commit — the caret-only counterpart of CURSOR_CHANGE_TAG,
+    // which cannot mark a caret-only commit without also marking the user's next one.
+    let caretPlacedByApp = false;
+    // Anchor of the most recent commit (app-placed or not) — the app-placed branch "did this commit move
     // the caret" comparison. Distinct from lastAnchorKey, which deliberately ignores tagged/
     // app-placed moves (it feeds the BLUR except-the-user's-node fallback).
     let lastCommitAnchorKey: NodeKey | undefined;
@@ -1021,6 +1042,8 @@ export function MarkerEditPlugin({
       editor.registerNodeTransform(NoteNode, (node) => {
         if (editor.isComposing()) return;
         $noteDeletionTransform(node, context);
+        $restoreRemovedNoteCaller(node, context);
+        $keepProtectedNoteCloser(node);
         // Self-healing `\cat` category run + the grace/pend pairing, exactly the shape the
         // MilestoneNode transform above uses: a NoteNode exists in every markerMode, so the cat
         // sync is registered HERE, gated by this whole plugin's markerMode-"editable" check —
@@ -1462,6 +1485,14 @@ export function MarkerEditPlugin({
         COMMAND_PRIORITY_LOW,
       ),
       editor.registerCommand(
+        APP_PLACED_CARET_COMMAND,
+        () => {
+          caretPlacedByApp = true;
+          return false;
+        },
+        COMMAND_PRIORITY_LOW,
+      ),
+      editor.registerCommand(
         BLUR_COMMAND,
         () => {
           // Suspended by the host. While suspended we cannot tell the surface's own focus steal
@@ -1511,13 +1542,15 @@ export function MarkerEditPlugin({
         COMMAND_PRIORITY_LOW,
       ),
       editor.registerUpdateListener(({ editorState, tags }) => {
+        const isAppPlacedMove = caretPlacedByApp || tags.has(CURSOR_CHANGE_TAG);
+        caretPlacedByApp = false;
         context.splitExpected.current = false;
         context.wholeParaDeleteExpected?.clear();
         context.collapsedDeleteCaretParas?.clear();
         context.rebuildAttempted.clear();
         // Typing path: ScriptureReferencePlugin's async scrRef echo re-enters
-        // `$moveCursorToVerseStart` and yanks the caret to the para/verse start via
-        // `editor.update(..., { tag: CURSOR_CHANGE_TAG })` ~90-190ms after a keystroke (timeline:
+        // `$moveCursorToVerseStart` and yanks the caret to the para/verse start in an update that
+        // dispatches APP_PLACED_CARET_COMMAND ~90-190ms after a keystroke (timeline:
         // `\` lands, caret sits in the pending literal, then the caret is pulled
         // to the `\s1` glyph start). That is a PROGRAMMATIC cursor move, NOT a user caret departure,
         // so it must not update the tracked anchor nor queue resolution — otherwise the just-typed
@@ -1527,7 +1560,7 @@ export function MarkerEditPlugin({
         // never leaves the editor there; the cross-frame-blur null path is a separate, click-only
         // actor handled by the BLUR handler's lastAnchorKey fallback above.
         //
-        // The tag only rides on the yank commit itself; the runtime smoke proved a FOLLOW-ON untagged
+        // The signal marks only the yank commit itself; the runtime smoke proved a FOLLOW-ON unmarked
         // commit then resolves the pending. So mark the caret app-placed here and keep suppressing
         // resolution (below) until the user's next keystroke or mouse click clears the flag — not
         // just for this one commit.
@@ -1535,8 +1568,8 @@ export function MarkerEditPlugin({
           const selection = $getSelection();
           return $isRangeSelection(selection) ? selection.focus.key : undefined;
         });
-        // "Did THIS commit move the caret to a different node" — tracked per commit (tagged or
-        // not) so the tagged-branch comparison below is never stale. NOT read from
+        // "Did THIS commit move the caret to a different node" — tracked per commit (app-placed or
+        // not) so the app-placed branch comparison below is never stale. NOT read from
         // prevEditorState inside this listener: entering another state's read() here taints
         // Lexical's active-state bookkeeping mid-commit and stalls the deferred resolution's
         // microtask (observed as departure settles never firing in jsdom — same frozen-state
@@ -1558,11 +1591,9 @@ export function MarkerEditPlugin({
           // and caret departure would settle NOTHING, leaving it literal forever (reviving only
           // when typed inside). Re-derive the pend set from the restored bytes with a strictly
           // READ-ONLY scan: keys land in the plain pendingKeys Set, no node is mutated, so this
-          // commit produces no history entry and the undo/redo stacks stay intact. Stale keys
-          // are cleared first — they describe the pre-restore document, and a leftover key
-          // pointing at a now-canonical node would drive a pointless refused rebuild later.
-          context.pendingKeys.clear();
-          editorState.read(() => $rependPendShapedNodes(context));
+          // commit produces no history entry and the undo/redo stacks stay intact. A no-op when
+          // another listener already brought the set current for this commit.
+          ensurePendedDisplayOwnersCurrent(editor, editorState, tags);
           // The restored caret is app-placed (history put it there, not a fresh user gesture),
           // and a historic restore is NOT a departure: resolving now — or on any follow-on
           // bookkeeping commit — would re-settle the just-undone literal immediately, making
@@ -1575,9 +1606,9 @@ export function MarkerEditPlugin({
           if (anchorKey !== undefined) lastAnchorKey = anchorKey;
           return;
         }
-        if (tags.has(CURSOR_CHANGE_TAG)) {
-          // Narrowing: arm the suppression window only when the tagged commit
-          // actually MOVED the caret to a different node — an app-placed yank. Tagged commits
+        if (isAppPlacedMove) {
+          // Narrowing: arm the suppression window only when the app-placed commit
+          // actually MOVED the caret to a different node — an app-placed yank. App-placed commits
           // that leave the anchor where it was (or carry no selection) are bookkeeping, not
           // yanks; arming on them re-opened the window after every echo cycle and, combined with
           // the mouse-only-clear residual, could freeze departure settling indefinitely.

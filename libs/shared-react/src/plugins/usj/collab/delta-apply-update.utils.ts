@@ -1756,8 +1756,9 @@ function $createPara(paraAttributes: OTParaAttribute, viewOptions: ViewOptions) 
   if (viewOptions.markerMode === "editable") {
     para.append($createMarkerNode(style), $createMarkerTrailingSeparator());
   } else if (viewOptions.markerMode === "visible" || viewOptions.hasGutterParaMarkers) {
-    // A gutter glyph is a non-selectable aid, so it must carry the flag the caret guard keys on —
-    // a paragraph arriving from a peer has to be as unclickable as one the load adaptor built.
+    // A gutter glyph is never a caret position, so it must carry the flag the caret guard and the
+    // marker selection key on — a paragraph arriving from a peer has to behave like one the load
+    // adaptor built.
     // markerMode "visible" renders the same node kind INLINE, where the flag must stay off.
     const glyph = openingMarkerText(style) + NBSP;
     para.append(

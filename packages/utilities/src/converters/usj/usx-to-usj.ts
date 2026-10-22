@@ -54,8 +54,8 @@ function convertUsxRecurse<T extends Usj | MarkerObject = Usj>(
     }
   }
 
-  // Present, not truthy: an empty style is a nameless marker (`\ 2` in USFM), which ParatextData
-  // reads as `style=""` and writes back as the same bytes.
+  // An empty style is a marker with no name (ParatextData reads `\p \ df` as
+  // `<para style="">`), not a missing one, so it is kept as `marker: ""`.
   if (attribs.style !== undefined) {
     marker = attribs.style;
     delete attribs.style;

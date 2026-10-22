@@ -98,6 +98,7 @@ import {
   SerializedTypedMarkNode,
   SerializedUnknownNode,
   SerializedVerseNode,
+  UNMERGEABLE_TEXT_DETAIL,
   STARTING_MS_COMMENT_MARKER,
   ImmutableTableCellNode,
   ImmutableTableCellMarker,
@@ -702,10 +703,11 @@ function createNote(
   const isCollapsed = isUnclosed ? false : isCollapsedNoteMode(_viewOptions?.noteMode);
   const unknownAttributes = getUnknownAttributes(markerObject, NOTE_MARKER_OBJECT_PROPS);
 
-  // The note's shell — its opening glyph and its caller — is atomic when the host governs those
-  // two through its own UI (see ViewOptions.isNoteShellEditable). Lexical's `token` mode is the
-  // same treatment a COLLAPSED caller already gets: the caret steps over it whole and typing
-  // cannot land inside it, so the slot cannot diverge from the note's own state.
+  // The note's shell — its glyphs and its caller — is atomic when the host governs the marker and
+  // the caller through its own UI (see ViewOptions.isNoteShellEditable). Lexical's `token` mode is
+  // the same treatment a COLLAPSED caller already gets: the caret steps over it whole and typing
+  // cannot land inside it, so the slot cannot diverge from the note's own state. The closer is
+  // part of the shell: typed into, it would read as another marker and leave the note unclosed.
   const shellMode: TextModeType = _viewOptions?.isNoteShellEditable === false ? "token" : "normal";
 
   let openingMarkerNode: SerializedTextNode | SerializedImmutableTypedTextNode | undefined;
@@ -713,7 +715,7 @@ function createNote(
   if (_viewOptions?.markerMode === "editable") {
     openingMarkerNode = createMarker(marker, "opening", false, shellMode);
     // An unclosed note has no closer to display.
-    if (!isUnclosed) closingMarkerNode = createMarker(marker, "closing");
+    if (!isUnclosed) closingMarkerNode = createMarker(marker, "closing", false, shellMode);
   } else if (_viewOptions?.markerMode === "visible") {
     openingMarkerNode = createImmutableTypedText("marker", openingMarkerText(marker) + " ");
     if (!isUnclosed)
@@ -724,7 +726,10 @@ function createNote(
   if (openingMarkerNode) children.push(openingMarkerNode);
   // Expanded layout whenever the note is expanded (either noteMode expanded OR unclosed).
   if (_viewOptions?.markerMode === "editable" && !isCollapsed) {
+    // Unmergeable, or Lexical folds content text that starts right after it into the caller on
+    // the first edit, and the caller then saves as content.
     callerNode = createText(getEditableCallerText(caller), undefined, shellMode);
+    callerNode.detail = UNMERGEABLE_TEXT_DETAIL;
     children.push(callerNode);
     // The category's `\cat` display run rides directly after the caller — the position
     // `\f + \cat People\cat*` puts the span in the file, and the position the note-scoped
@@ -923,9 +928,9 @@ function createText(
  * A read-only glyph run.
  *
  * `isGutterMarker` marks a marker glyph the view renders in the GUTTER rather than inline among the
- * words — the fact that makes it unclickable ({@link gutterMarkerState}, shared). It is a property
- * of the glyph, not of the mode: the same node class renders both flavors, and a document can carry
- * both at once. This is the serialized twin of `$createGutterMarkerNode`.
+ * words — the fact that makes it never a caret position ({@link gutterMarkerState}, shared). It is
+ * a property of the glyph, not of the mode: the same node class renders both flavors, and a
+ * document can carry both at once. This is the serialized twin of `$createGutterMarkerNode`.
  */
 function createImmutableTypedText(
   textType: string,

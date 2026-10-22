@@ -190,6 +190,12 @@ describe("EditorRef.highlightNote", () => {
     // which strips `children`, so the cleaner EditorRefPlugin-child handle isn't reachable — read
     // the editor off the mounted DOM.
     const lexical = getEmbeddedLexicalEditor(container);
+    // Mount leaves deferred work behind (the scrRef caret placement runs a few microtasks after
+    // load), and its commit must not be counted against `highlightNote`. Let a macrotask pass so it
+    // lands before the listener goes on.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     onUsjChange.mockClear();
     let commits = 0;
     const unregister = lexical.registerUpdateListener(() => {

@@ -234,11 +234,16 @@ ${USX_FOOTER}`,
 ${USX_FOOTER}`,
   },
   {
-    // Paragraph leading-space display rule: a paragraph whose first content text starts
-    // with a single leading space. Standard view displays that space as NBSP; the reverse
-    // adaptor inverts it back (and normalizeSpaceRuns leaves a lone space alone), so the pair
-    // round-trips. The other three modes carry the leading space through untouched.
+    // Paragraph leading-space display rule: a paragraph whose first content text starts with a
+    // single leading space. Standard view displays that space as NBSP so it stays visible while
+    // editing, but saves none of a paragraph's leading spaces: Paratext 9 skips whitespace after a
+    // paragraph marker's separator, so ParatextData never loads this shape and the identity does
+    // not hold there. The other modes carry the leading space through untouched.
     name: "paragraph-leading space (display rule)",
     usx: book(`<para style="p"> Leading space precedes this text.</para>`),
+    skipModes: [
+      `${STANDARD_VIEW_MODE}: a paragraph's leading spaces are not saved`,
+      "standard-expanded: a paragraph's leading spaces are not saved",
+    ],
   },
 ];

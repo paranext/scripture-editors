@@ -29,9 +29,10 @@ import {
   VERSE_BLOCK_TYPE,
   usfmMarkers,
   VERSE_BLOCK_VERSION,
+  verseBlockSourceState,
 } from "shared";
 import { isSomeSerializedVerseNode, SomeSerializedVerseNode } from "shared-react";
-import { SerializedLexicalNode } from "lexical";
+import { NODE_STATE_KEY, SerializedLexicalNode } from "lexical";
 
 const SEMANTIC_DIVISION_MARKER = /^sd\d*$/;
 
@@ -90,7 +91,7 @@ export function groupVersesIntoBlocks(
    * lines is collected whole. */
   let activeBlock: SerializedVerseBlockNode | undefined;
 
-  for (const child of children) {
+  for (const [sourceIndex, child] of children.entries()) {
     // Chrome is a boundary - an open verse never crosses a chapter marker.
     if (isSerializedBookNode(child) || isSomeSerializedChapterNode(child)) {
       activeBlock = undefined;
@@ -138,7 +139,7 @@ export function groupVersesIntoBlocks(
     }
 
     splitIntoRuns(child.children, logger).forEach((run) => {
-      const fragment = createFragment(child, run.nodes);
+      const fragment = createFragment(child, run.nodes, sourceIndex);
 
       if (!run.verse) {
         // Content before this paragraph's first verse: either the open verse continuing onto a new
@@ -229,17 +230,23 @@ function containsVerse(node: SerializedLexicalNode): boolean {
 }
 
 /**
- * A copy of the paragraph holding only the given run. Spreads the source rather than listing
- * fields, so an implied paragraph stays implied - it has no `marker`, and rebuilding it as a real
- * paragraph would put a `\p` in the document that the source USJ never had.
+ * A copy of the paragraph holding only the given run, stamped with the paragraph it came from so
+ * positions can be mapped back to the USJ (`verseBlockSourceState`). Spreads the source rather than
+ * listing fields, so an implied paragraph stays implied - it has no `marker`, and rebuilding it as a
+ * real paragraph would put a `\p` in the document that the source USJ never had.
  */
 function createFragment(
   para: SomeSerializedParaNode,
   nodes: SerializedLexicalNode[],
+  sourceIndex: number,
 ): SomeSerializedParaNode | undefined {
   if (nodes.length === 0) return undefined;
 
-  return { ...para, children: nodes };
+  return {
+    ...para,
+    children: nodes,
+    [NODE_STATE_KEY]: { ...para[NODE_STATE_KEY], [verseBlockSourceState.key]: sourceIndex },
+  };
 }
 
 /** An empty block carrying the verse's number; the range it covers is derived from that number. */

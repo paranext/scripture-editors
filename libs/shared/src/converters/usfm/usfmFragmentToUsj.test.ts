@@ -1,12 +1,14 @@
 import {
   usfmFragmentToUsjContent,
   defaultMarkerAttribute,
+  PRESERVED_NODE_PLACEHOLDER,
   milestoneDefaultAttribute,
   regularizeSpaces,
 } from "./usfmFragmentToUsj.js";
 import { NBSP } from "../../nodes/usj/node-constants.js";
 import { defaultStyleInfo } from "../../utils/usfm/defaultStyleInfo.js";
 import { createMarkerLookup, StyleInfo } from "../../utils/usfm/styleInfo.js";
+import { MarkerContent, MarkerObject } from "@eten-tech-foundation/scripture-utilities";
 
 describe("usfmFragmentToUsjContent — core", () => {
   it("tokenizes a plain paragraph", () => {
@@ -229,6 +231,51 @@ describe("usfmFragmentToUsjContent — verse, chapter, note, milestone, attribut
         ],
       },
     ]);
+  });
+
+  // ParatextData reads a note's caller as the next word after the marker (`GetNextWord`), which
+  // stops at a `\\`, and writes what it found — an empty string when there is none
+  // (UsxUsfmParserSink.StartNote writes `caller=""`).
+  it.each([
+    [
+      "a closed footnote whose content starts with a marker",
+      "\\p a\\f \\fr 1.1 \\ft note\\f* b",
+      [
+        "a",
+        {
+          type: "note",
+          marker: "f",
+          caller: "",
+          content: [
+            { type: "char", marker: "fr", content: ["1.1 "], closed: "false" },
+            { type: "char", marker: "ft", content: ["note"], closed: "false" },
+          ],
+        },
+        " b",
+      ],
+    ],
+    [
+      "an empty closed footnote",
+      "\\p a\\f \\f* b",
+      ["a", { type: "note", marker: "f", caller: "" }, " b"],
+    ],
+    [
+      "an unclosed cross reference the next note closes",
+      "\\p a\\x \\f + \\ft note\\f* b",
+      [
+        "a",
+        { type: "note", marker: "x", caller: "", closed: "false" },
+        {
+          type: "note",
+          marker: "f",
+          caller: "+",
+          content: [{ type: "char", marker: "ft", content: ["note"], closed: "false" }],
+        },
+        " b",
+      ],
+    ],
+  ])("leaves the caller empty, as ParatextData does, for %s", (_name, usfm, content) => {
+    expect(usfmFragmentToUsjContent(usfm)).toEqual([{ type: "para", marker: "p", content }]);
   });
 
   it("marks an unterminated note closed=false", () => {
@@ -532,6 +579,97 @@ describe("usfmFragmentToUsjContent — verse, chapter, note, milestone, attribut
         { type: "chapter", marker: "c", number: "1", altnumber: "1 ca", pubnumber: "1 cp" },
         { type: "para", marker: "p", content: ["body"] },
       ]);
+    });
+
+    // ParatextData folds each attribute marker ONCE, in order: UsfmParser's Chapter case asks for
+    // one `\ca` and then one `\cp` (UsfmParser.cs:320-321), its Verse case one `\va` then one
+    // `\vp` (:338-339), and FindOtherVerseOrChapterNumber (:548-576) consumes only the tokens
+    // directly in front of it. A second span is left for the parser to process as an ordinary
+    // marker — its bytes stay in the document.
+    it.each([
+      [
+        "a second \\ca stays a char span",
+        "\\c 1 \\ca 2\\ca*\\ca 3\\ca*",
+        [
+          { type: "chapter", marker: "c", number: "1", altnumber: "2" },
+          { type: "char", marker: "ca", content: ["3"] },
+        ],
+      ],
+      [
+        "a second \\cp stays a paragraph",
+        "\\c 1 \\cp A\\cp B",
+        [
+          { type: "chapter", marker: "c", number: "1", pubnumber: "A" },
+          { type: "para", marker: "cp", content: ["B"] },
+        ],
+      ],
+      [
+        "a second \\cp whose text is `|*` stays a paragraph",
+        "\\c 1 \\cp A\\cp|*",
+        [
+          { type: "chapter", marker: "c", number: "1", pubnumber: "A" },
+          { type: "para", marker: "cp", content: ["|*"] },
+        ],
+      ],
+      [
+        "a \\cp after an empty one stays a paragraph",
+        "\\c 1\n\\cp \n\\cp A\n\\p b",
+        [
+          { type: "chapter", marker: "c", number: "1" },
+          { type: "para", marker: "cp" },
+          { type: "para", marker: "cp", content: ["A"] },
+          { type: "para", marker: "p", content: ["b"] },
+        ],
+      ],
+      [
+        "a second \\va stays a char span",
+        "\\p \\v 1 \\va 2\\va*\\va 3\\va*",
+        [
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "verse", marker: "v", number: "1", altnumber: "2" },
+              { type: "char", marker: "va", content: ["3"] },
+            ],
+          },
+        ],
+      ],
+      [
+        "a \\va after a folded \\vp stays a char span",
+        "\\p \\v 1 \\vp A\\vp*\\va 2\\va*",
+        [
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              { type: "verse", marker: "v", number: "1", pubnumber: "A" },
+              { type: "char", marker: "va", content: ["2"] },
+            ],
+          },
+        ],
+      ],
+      [
+        "a second \\cat stays a char span in the note",
+        "\\p \\f + \\cat a\\cat*\\cat b\\cat*\\f*",
+        [
+          {
+            type: "para",
+            marker: "p",
+            content: [
+              {
+                type: "note",
+                marker: "f",
+                caller: "+",
+                category: "a",
+                content: [{ type: "char", marker: "cat", content: ["b"] }],
+              },
+            ],
+          },
+        ],
+      ],
+    ])("folds each attribute marker once, in order: %s", (_name, usfm, expected) => {
+      expect(usfmFragmentToUsjContent(usfm)).toEqual(expected);
     });
 
     it("keeps a non-adjacent \\ca standalone (its own char marker)", () => {
@@ -1677,6 +1815,82 @@ describe("PT9 unknown-marker handling", () => {
   });
 });
 
+describe("a bare backslash opening a nameless paragraph's fragment is its marker", () => {
+  const nameless = { opensNamelessParagraph: true };
+
+  it("reads `\\ df` as a paragraph whose marker is the empty name (ParatextData 9.6)", () => {
+    expect(usfmFragmentToUsjContent("\\ df", nameless)).toEqual([
+      { type: "para", marker: "", content: ["df"] },
+    ]);
+  });
+
+  it("reads a lone backslash as an empty nameless paragraph, shaped as a lone `\\p` is", () => {
+    expect(usfmFragmentToUsjContent("\\", nameless)).toEqual([{ type: "para", marker: "" }]);
+    expect(usfmFragmentToUsjContent("\\p")).toEqual([{ type: "para", marker: "p" }]);
+  });
+
+  it("reads a backslash right after the opening one as the paragraph's text", () => {
+    // The marker name stops at the second `\` — the same place it stops after `\p` in `\p\ df`.
+    expect(usfmFragmentToUsjContent("\\\\ df", nameless)).toEqual([
+      { type: "para", marker: "", content: ["\\ df"] },
+    ]);
+  });
+
+  it("ends at the next paragraph marker like any other paragraph", () => {
+    expect(usfmFragmentToUsjContent("\\ one \\q1 two", nameless)).toEqual([
+      { type: "para", marker: "", content: ["one "] },
+      { type: "para", marker: "q1", content: ["two"] },
+    ]);
+  });
+
+  it("reads it after leading whitespace, which opens a paragraph of its own as it would before `\\p`", () => {
+    expect(usfmFragmentToUsjContent(" \\ df", nameless)).toEqual([
+      { type: "para", marker: "p", content: [" "] },
+      { type: "para", marker: "", content: ["df"] },
+    ]);
+    expect(usfmFragmentToUsjContent(" \\p df")).toEqual([
+      { type: "para", marker: "p", content: [" "] },
+      { type: "para", marker: "p", content: ["df"] },
+    ]);
+  });
+
+  it("keeps a bare backslash after text literal", () => {
+    expect(usfmFragmentToUsjContent("x\\ df", nameless)).toEqual([
+      { type: "para", marker: "p", content: ["x\\ df"] },
+    ]);
+    expect(usfmFragmentToUsjContent("\\ one \\ two", nameless)).toEqual([
+      { type: "para", marker: "", content: ["one \\ two"] },
+    ]);
+  });
+
+  it("keeps a bare backslash before an attribute bar or a preserved node literal", () => {
+    expect(usfmFragmentToUsjContent("\\|x", nameless)).toEqual([
+      { type: "para", marker: "p", content: ["\\|x"] },
+    ]);
+    expect(usfmFragmentToUsjContent(`\\${PRESERVED_NODE_PLACEHOLDER}`, nameless)).toEqual([
+      { type: "para", marker: "p", content: [`\\${PRESERVED_NODE_PLACEHOLDER}`] },
+    ]);
+  });
+
+  it("keeps a bare backslash literal in a fragment no nameless paragraph opens", () => {
+    // ParatextData 9.6 reads a bare backslash at ANY token start as a nameless marker, but a `\`
+    // left by deleting a marker's name, or typed right after one, is text the user has not named
+    // yet.
+    expect(usfmFragmentToUsjContent("\\ df")).toEqual([
+      { type: "para", marker: "p", content: ["\\ df"] },
+    ]);
+    expect(usfmFragmentToUsjContent("\\p \\ df", nameless)).toEqual([
+      { type: "para", marker: "p", content: ["\\ df"] },
+    ]);
+  });
+
+  it("keeps a bare backslash opening note content literal", () => {
+    expect(usfmFragmentToUsjContent("\\ df", { ...nameless, isNoteContext: true })).toEqual([
+      { type: "para", marker: "p", content: ["\\ df"] },
+    ]);
+  });
+});
+
 describe("default-attribute lookups (shared with attribute display)", () => {
   it("char defaults match PT9 ≤3.0", () => {
     expect(defaultMarkerAttribute("w")).toBe("lemma");
@@ -1942,6 +2156,115 @@ describe("usfmFragmentToUsjContent — figures parse without a project styleshee
   });
 });
 
+describe("table cells under the default stylesheet (cell markers are Character styles)", () => {
+  // ParatextData (UsfmParser.IsCell): a cell is a CHARACTER-typed `th…`/`tc…` token inside an open
+  // row; its range form (`\tc1-2`) resolves to its base marker's style (ScrStylesheet.IsCellRange).
+  const getMarker = createMarkerLookup(defaultStyleInfo);
+  const cell = (marker: string, align: string, text: string, colspan?: string) => ({
+    type: "table:cell",
+    marker,
+    align,
+    ...(colspan ? { colspan } : {}),
+    content: [text],
+  });
+  const row = (...cells: unknown[]) => ({
+    type: "table:row",
+    marker: "tr",
+    content: cells,
+  });
+
+  it("builds header, body, aligned, and spanned cells", () => {
+    expect(
+      usfmFragmentToUsjContent(
+        "\\tr \\th1 A\\thr2 B\\tr \\tc1 C\\tcr2 D\\tr \\tcc1 E\\tc2 F\\tr \\thr1 G\\tc2-3 H\\tr \\tc1-2 I",
+        { getMarker },
+      ),
+    ).toEqual([
+      {
+        type: "table",
+        content: [
+          row(cell("th1", "start", "A"), cell("thr2", "end", "B")),
+          row(cell("tc1", "start", "C"), cell("tcr2", "end", "D")),
+          row(cell("tcc1", "center", "E"), cell("tc2", "start", "F")),
+          row(cell("thr1", "end", "G"), cell("tc2", "start", "H", "2")),
+          row(cell("tc1", "start", "I", "2")),
+        ],
+      },
+    ]);
+  });
+
+  it("builds the cells a paragraph's typed row carries", () => {
+    expect(usfmFragmentToUsjContent("\\p In the \\tr \\tc1 a \\tc2 b", { getMarker })).toEqual([
+      { type: "para", marker: "p", content: ["In the "] },
+      { type: "table", content: [row(cell("tc1", "start", "a "), cell("tc2", "start", "b"))] },
+    ]);
+  });
+
+  it("closes a char span open in a cell at the next cell", () => {
+    expect(usfmFragmentToUsjContent("\\tr \\tc1 a \\w w\\tc2 b", { getMarker })).toEqual([
+      {
+        type: "table",
+        content: [
+          row(
+            {
+              type: "table:cell",
+              marker: "tc1",
+              align: "start",
+              content: ["a ", { type: "char", marker: "w", content: ["w"], closed: "false" }],
+            },
+            cell("tc2", "start", "b"),
+          ),
+        ],
+      },
+    ]);
+  });
+
+  it("keeps a cell marker with no open row a character span, as ParatextData does", () => {
+    expect(usfmFragmentToUsjContent("\\p x \\tc1 y", { getMarker })).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: ["x ", { type: "char", marker: "tc1", content: ["y"], closed: "false" }],
+      },
+    ]);
+  });
+
+  it("ends the table at a cell name the sheet does not declare", () => {
+    expect(usfmFragmentToUsjContent("\\tr \\tc1 a\\tc13 x", { getMarker })).toEqual([
+      { type: "table", content: [row(cell("tc1", "start", "a"))] },
+      { type: "para", marker: "tc13", content: ["x"] },
+    ]);
+  });
+
+  it("keeps a +-nested cell-named marker an ordinary nested char, not a second cell", () => {
+    // ParatextData's IsCell test excludes a nested token by construction — nesting is itself a
+    // `+`-prefixed CHARACTER-marker feature, and IsCell only ever sees the base (non-nested) name.
+    expect(
+      usfmFragmentToUsjContent("\\tr \\tc1 a \\nd b \\+tc2 c\\+tc2*\\nd* d", { getMarker }),
+    ).toEqual([
+      {
+        type: "table",
+        content: [
+          row({
+            type: "table:cell",
+            marker: "tc1",
+            align: "start",
+            content: [
+              "a ",
+              {
+                type: "char",
+                marker: "nd",
+                content: ["b ", { type: "char", marker: "tc2", content: ["c"] }],
+              },
+              " d",
+            ],
+          }),
+        ],
+      },
+    ]);
+  });
+});
+
 describe("usfmFragmentToUsjContent — peripheral divisions (\\periph)", () => {
   const PERIPH_USJ = {
     type: "periph",
@@ -2104,5 +2427,118 @@ describe("usfmFragmentToUsjContent — peripheral divisions (\\periph)", () => {
       },
       { type: "para", marker: "mt1", content: ["The Title"] },
     ]);
+  });
+});
+
+describe("usfmFragmentToUsjContent — a preserved-node placeholder reads as the marker it stands for", () => {
+  // A preserved node's own USFM starts with `\`, so ParatextData reads its bytes as the start of a
+  // marker: whatever word was being read in front of it ends there, and a note or verse marker ends
+  // the note before it. The placeholder must parse the same way the node's own bytes do.
+  const PLACEHOLDER = "\uFFFC";
+  const footnote = "\\f + \\ft note\\f*";
+
+  /** `content` with every item `isPreserved` picks spelled as a placeholder, adjacent text joined —
+   * what the same bytes parse to when that node is handed over as a placeholder instead. */
+  function withPlaceholders(
+    content: MarkerContent[],
+    isPreserved: (item: MarkerObject) => boolean,
+  ): MarkerContent[] {
+    const result: MarkerContent[] = [];
+    for (const item of content) {
+      const next =
+        typeof item === "string"
+          ? item
+          : isPreserved(item)
+            ? PLACEHOLDER
+            : item.content
+              ? { ...item, content: withPlaceholders(item.content, isPreserved) }
+              : item;
+      const last = result[result.length - 1];
+      if (typeof next === "string" && typeof last === "string")
+        result[result.length - 1] = last + next;
+      else result.push(next);
+    }
+    return result;
+  }
+  const isFootnote = (item: MarkerObject) => item.type === "note" && item.marker === "f";
+
+  it("ends a note's caller word, and the note it stands for closes the note before it", () => {
+    const real = usfmFragmentToUsjContent(`\\p \\x a${footnote} b`);
+
+    expect(
+      usfmFragmentToUsjContent(`\\p \\x a${PLACEHOLDER} b`, { placeholders: ["note"] }),
+    ).toEqual(withPlaceholders(real, isFootnote));
+    expect(real).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "note", marker: "x", caller: "a", closed: "false" },
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note"], closed: "false" }],
+          },
+          " b",
+        ],
+      },
+    ]);
+  });
+
+  it("leaves the caller empty when a placeholder follows the note marker's separator", () => {
+    const real = usfmFragmentToUsjContent(`\\p \\x ${footnote} b`);
+
+    expect(
+      usfmFragmentToUsjContent(`\\p \\x ${PLACEHOLDER} b`, { placeholders: ["note"] }),
+    ).toEqual(withPlaceholders(real, isFootnote));
+    // ParatextData reads the caller with `GetNextWord`, finds no word before the `\\f`, and writes
+    // `caller=""` (UsxUsfmParserSink.StartNote); the `\\f` then closes the `\\x`.
+    expect(real).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          { type: "note", marker: "x", caller: "", closed: "false" },
+          {
+            type: "note",
+            marker: "f",
+            caller: "+",
+            content: [{ type: "char", marker: "ft", content: ["note"], closed: "false" }],
+          },
+          " b",
+        ],
+      },
+    ]);
+  });
+
+  it("ends a verse number", () => {
+    expect(
+      usfmFragmentToUsjContent(`\\p \\v 1${PLACEHOLDER} b`, { placeholders: ["note"] }),
+    ).toEqual(withPlaceholders(usfmFragmentToUsjContent(`\\p \\v 1${footnote} b`), isFootnote));
+  });
+
+  it("ends a marker name", () => {
+    const isMilestone = (item: MarkerObject) => item.type === "ms";
+
+    expect(usfmFragmentToUsjContent(`\\p \\wj${PLACEHOLDER} b\\wj*`)).toEqual(
+      withPlaceholders(usfmFragmentToUsjContent("\\p \\wj\\qt-s\\* b\\wj*"), isMilestone),
+    );
+  });
+
+  it("closes an open note when it stands for a verse", () => {
+    const isVerse = (item: MarkerObject) => item.type === "verse";
+
+    expect(
+      usfmFragmentToUsjContent(`\\p \\f + \\ft a ${PLACEHOLDER}b`, { placeholders: ["verse"] }),
+    ).toEqual(withPlaceholders(usfmFragmentToUsjContent("\\p \\f + \\ft a \\v 2 b"), isVerse));
+  });
+
+  it("stays inside an open note when it stands for anything else", () => {
+    const isMilestone = (item: MarkerObject) => item.type === "ms";
+
+    expect(usfmFragmentToUsjContent(`\\p \\f + \\ft a ${PLACEHOLDER}b\\f*`)).toEqual(
+      withPlaceholders(usfmFragmentToUsjContent("\\p \\f + \\ft a \\qt-s\\*b\\f*"), isMilestone),
+    );
   });
 });

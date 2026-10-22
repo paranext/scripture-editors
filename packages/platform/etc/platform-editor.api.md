@@ -144,6 +144,7 @@ export interface EditorOptions {
 export interface EditorProps<TLogger extends LoggerBasic> {
     defaultUsj?: Usj;
     logger?: TLogger;
+    onParaMarkerMenuRequest?: () => void;
     onScrRefChange?: (scrRef: SerializedVerseRef) => void;
     onSelectionChange?: (selection: SelectionRange | undefined) => void;
     onStateChange?: (input: StateChangeSnapshot) => void;
@@ -167,6 +168,7 @@ export interface EditorRef {
     extendCharacterMarker(marker: string, conflictingMarkers?: readonly string[]): boolean;
     focus(): void;
     formatPara(blockMarker: string): void;
+    getAnnotationRanges(type: string, id: string): Range[];
     getElementByKey(nodeKey: string): HTMLElement | undefined;
     getMarkerMenuContext(): (MarkerMenuContext & {
         anchorRect?: {
@@ -180,6 +182,7 @@ export interface EditorRef {
     getNoteKey(noteIndex: number): string | undefined;
     getNoteOps(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
     getOpsAfterNote(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
+    getSelectedParaMarker(): string | undefined;
     getSelection(): SelectionRange | undefined;
     getUsj(): Usj | undefined;
     highlightNote(noteKeyOrIndex: string | number | undefined): void;

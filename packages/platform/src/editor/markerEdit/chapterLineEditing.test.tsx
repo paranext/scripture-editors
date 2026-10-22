@@ -202,8 +202,9 @@ async function onChapterLine(
 describe("deleting from the chapter line into the text", () => {
   // What every gesture below must save: the chapter marker gone with its bytes, and the rest of
   // verse 1 kept, in its own paragraph. The marker itself is a writer concern — Paratext refuses a
-  // later chapter without one, and the host puts it back on save.
-  const REST_OF_VERSE_1: MarkerContent = { type: "para", marker: "p", content: [" two"] };
+  // later chapter without one, and the host puts it back on save. The space left in front of the
+  // rest of the verse is not saved, as ParatextData does not keep a paragraph's leading space.
+  const REST_OF_VERSE_1: MarkerContent = { type: "para", marker: "p", content: ["two"] };
 
   it.each([
     ["Delete", () => keyDown("Delete")],
