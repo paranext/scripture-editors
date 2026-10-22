@@ -4,6 +4,7 @@
  * the caret sits inside it. Without side effects means the editor still shows the pending edit
  * afterwards — reading the document must never settle it under the user.
  */
+import { contentPath } from "./positions/positions.test-helpers";
 import {
   expectTier2FixedPoint,
   mountExpandedNoteEditor,
@@ -253,6 +254,78 @@ describe("settled getUsj — uniform settling", () => {
     );
     expect(verse?.sid).toBe("GEN 1:1");
   });
+
+  it("reports the incoming document after an annotation commit, and loads it", async () => {
+    const next = twoParaUsj(["replacement text"]);
+    const { ref, lexical } = await mountStandardViewEditor(twoParaUsj(["original text"]));
+    await act(async () => {
+      ref.current?.setAnnotation(
+        {
+          start: { jsonPath: contentPath([2, 0]), offset: 0 },
+          end: { jsonPath: contentPath([2, 0]), offset: 4 },
+        },
+        "test",
+        "a1",
+      );
+      await Promise.resolve();
+    });
+
+    let immediate: Usj | undefined;
+    await act(async () => {
+      ref.current?.setUsj(next);
+      immediate = ref.current?.getUsj();
+    });
+
+    expect(JSON.stringify(immediate)).toContain("replacement text");
+    expect(JSON.stringify(ref.current?.getUsj())).toContain("replacement text");
+    expect(lexical.getEditorState().read(() => $getRoot().getTextContent())).toContain(
+      "replacement text",
+    );
+  });
+});
+
+describe("settled getUsj — a second \\cp beside a chapter keeps its bytes", () => {
+  it("settles `\\cp A\\cp|*` as pubnumber `A` and a `\\cp` paragraph holding `|*`", async () => {
+    // A `|` typed into the closer of the `\cp A\cp*` beside a chapter spells a second `\cp`.
+    // ParatextData folds only the first `\cp` into the chapter (UsfmParser.cs:321) and keeps the
+    // second as an ordinary paragraph; the `A` must not be lost to the second one.
+    const usj: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "cp", content: ["A"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    };
+    const { ref, lexical } = await mountStandardViewEditor(usj);
+    await act(async () => {
+      lexical.update(() => {
+        const closer = $getRoot()
+          .getAllTextNodes()
+          .find((node) => $isMarkerNode(node) && node.getTextContent() === "\\cp*");
+        if (!closer) throw new Error("expected the \\cp closer");
+        closer.setTextContent("\\cp|*");
+        closer.select(4, 4);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const pending = ref.current?.getUsj();
+    expect(pending?.content.slice(1, 3)).toEqual([
+      { type: "chapter", marker: "c", number: "1", pubnumber: "A" },
+      { type: "para", marker: "cp", content: ["|*"] },
+    ]);
+
+    await act(async () => {
+      lexical.update(() => $textContaining("depart here").select(0, 0));
+      await Promise.resolve();
+    });
+    act(() => lexical.getRootElement()?.blur());
+    act(() => ref.current?.commitPendingMarkerEdits());
+    expect(ref.current?.getUsj()).toEqual(pending);
+  });
 });
 
 /** One pending-edit shape: how to create it, from a document the harness loads. */
@@ -399,6 +472,100 @@ const pendingShapes: PendingShape[] = [
     },
   },
   {
+    // A CLOSED span's opener renamed: the settle renames the closer with it, so `getUsj()` while
+    // pending must too — re-tokenizing `\wx grace\w*` would instead leave the old closer
+    // unmatched.
+    name: "closed char span's opening glyph renamed",
+    usj: twoParaUsj(["start ", { type: "char", marker: "w", content: ["grace"] }, " end"]),
+    $edit: () => {
+      const glyph = $textContaining("grace").getPreviousSibling();
+      if (!$isMarkerNode(glyph)) throw new Error("expected the span's opening glyph");
+      glyph.setTextContent("\\wj");
+      glyph.select(3, 3);
+    },
+  },
+  {
+    // The same screen bytes with the typed name byte at the start of the content instead, in
+    // front of the separator — the span renames the same way.
+    name: "name byte typed in front of a closed char span's separator",
+    usj: twoParaUsj(["start ", { type: "char", marker: "w", content: ["grace"] }, " end"]),
+    $edit: () => {
+      const content = $textContaining("grace");
+      content.setTextContent(`j${NBSP}grace`);
+      content.select(1, 1);
+    },
+  },
+  {
+    name: "closed char span's opener renamed to an unknown marker",
+    usj: twoParaUsj(["start ", { type: "char", marker: "w", content: ["grace"] }, " end"]),
+    $edit: () => {
+      const content = $textContaining("grace");
+      content.setTextContent(`x${NBSP}grace`);
+      content.select(1, 1);
+    },
+  },
+  ...["wj", "wx"].map(
+    (renamed): PendingShape => ({
+      // Two pends in one paragraph, as an undo restores them: the live settle renames the span in
+      // place (closer with it) and renames the paragraph, so the settled read must too, rather
+      // than re-tokenizing the paragraph over the span's old closer.
+      name: `char span renamed to \\${renamed} beside a pending paragraph rename`,
+      usj: twoParaUsj(["start ", { type: "char", marker: "w", content: ["grace"] }, " end"]),
+      $edit: () => {
+        const glyph = $textContaining("grace").getPreviousSibling();
+        if (!$isMarkerNode(glyph)) throw new Error("expected the span's opening glyph");
+        glyph.setTextContent(`\\${renamed}`);
+        $reportDestroyedDisplayOwner(glyph);
+        const paraGlyph = $paraGlyph(0);
+        paraGlyph.setTextContent("\\q1");
+        $reportDestroyedDisplayOwner(paraGlyph);
+      },
+    }),
+  ),
+  ...["wj", "wx"].map(
+    (renamed): PendingShape => ({
+      // A span's opener renamed beside a literal that re-tokenizes the same paragraph and was
+      // pended FIRST: the live settle renames the span in place before it re-tokenizes, whichever
+      // key it reaches first, so the rebuild reads the renamed closer.
+      name: `char span renamed to \\${renamed} after a pending literal`,
+      usj: twoParaUsj(["start ", { type: "char", marker: "w", content: ["grace"] }, " end"]),
+      $edit: () => {
+        const tail = $textContaining(" end");
+        tail.setTextContent(" end \\zz");
+        $reportDestroyedDisplayOwner(tail);
+        const glyph = $textContaining("grace").getPreviousSibling();
+        if (!$isMarkerNode(glyph)) throw new Error("expected the span's opening glyph");
+        glyph.setTextContent(`\\${renamed}`);
+        $reportDestroyedDisplayOwner(glyph);
+      },
+    }),
+  ),
+  {
+    // A `\ca` span beside its chapter, renamed while its value is also being edited: both pends
+    // settle in the chapter's scope, and the rename applies before the region re-tokenizes.
+    name: "\\ca span beside its chapter renamed while its value is edited",
+    usj: {
+      type: "USJ",
+      version: "3.1",
+      content: [
+        { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+        { type: "chapter", marker: "c", number: "1" },
+        { type: "char", marker: "ca", content: ["3"] },
+        { type: "para", marker: "p", content: ["depart here"] },
+      ],
+    },
+    $edit: () => {
+      const span = $getRoot().getChildren().find($isCharNode);
+      const glyph = span?.getFirstChild();
+      const value = glyph?.getNextSibling();
+      if (!$isMarkerNode(glyph) || !$isTextNode(value)) throw new Error("expected the \\ca span");
+      value.setTextContent(`${value.getTextContent()}4`);
+      $reportDestroyedDisplayOwner(value);
+      glyph.setTextContent("\\cax");
+      $reportDestroyedDisplayOwner(glyph);
+    },
+  },
+  {
     name: "half-typed attribute run appended to a char span",
     usj: twoParaUsj(["start ", { type: "char", marker: "nd", content: ["name"] }, " end"]),
     $edit: () => $textContaining("name").setTextContent(" name|stuf"),
@@ -496,7 +663,7 @@ const pendingShapes: PendingShape[] = [
   {
     // The gap this shape pins: a NOTE's own opening-glyph rename is applied by the real settle
     // through `$applyOpenerRename`'s `$isNoteNode(parent)` branch (markerEditTier1.utils.ts), but
-    // `$settledNoteContent` (virtualSettle.utils.ts) only ever rebuilds a note's CONTENT — the
+    // `$settledNoteScope` (virtualSettle.utils.ts) only ever rebuilds a note's CONTENT — the
     // note's own glyphs sit outside that fragment — so before the fix the virtual half leaves the
     // note's `marker` field stale while the real half moves it.
     name: "note's own opening glyph renamed to a valid marker",
@@ -512,7 +679,7 @@ const pendingShapes: PendingShape[] = [
   },
   {
     // Both halves must fold the edited `\ca` value back onto the chapter's `altnumber` — the
-    // chapter settle scope's virtual mirror ($settledChapter) against the real $rebuildChapter.
+    // chapter settle scope's virtual mirror ($settledChapterScope) against the real $rebuildChapter.
     name: "chapter alternate-number run value edited",
     usj: chapterCaUsj(),
     $edit: () => {

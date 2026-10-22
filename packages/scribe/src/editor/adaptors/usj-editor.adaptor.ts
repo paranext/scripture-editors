@@ -80,6 +80,7 @@ import {
   TypedMarkNode,
   UNKNOWN_MARKER_OBJECT_PROPS,
   UNKNOWN_VERSION,
+  UNMERGEABLE_TEXT_DETAIL,
   UnknownNode,
   unmatchedGlyphText,
   VERSE_MARKER,
@@ -408,7 +409,10 @@ function createNote(
   const caller = markerObject.caller ?? "*";
   let callerNode: SerializedImmutableNoteCallerNode | SerializedTextNode;
   if (_viewOptions?.markerMode === "editable") {
+    // Unmergeable, or Lexical folds content text that starts right after it into the caller on
+    // the first edit, and the caller then saves as content.
     callerNode = createText(getEditableCallerText(caller));
+    callerNode.detail = UNMERGEABLE_TEXT_DETAIL;
   } else {
     callerNode = createNoteCaller(caller, childNodes);
   }

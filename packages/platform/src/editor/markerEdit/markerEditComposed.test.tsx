@@ -126,7 +126,10 @@ async function selectionComposedEnvironment($initialEditorState: () => void) {
   return baseTestEnvironment(
     $initialEditorState,
     <>
-      <OnSelectionChangePlugin onChange={() => undefined} />
+      <OnSelectionChangePlugin
+        onChange={() => undefined}
+        viewOptions={getViewOptions(STANDARD_VIEW_MODE)}
+      />
       <MarkerEditPlugin viewOptions={getViewOptions(STANDARD_VIEW_MODE)} />
     </>,
   );
@@ -222,7 +225,10 @@ describe("MarkerEditPlugin + CharNodePlugin composed (separator deletion settles
     return baseTestEnvironment(
       $initialEditorState,
       <>
-        <OnSelectionChangePlugin onChange={() => undefined} />
+        <OnSelectionChangePlugin
+          onChange={() => undefined}
+          viewOptions={getViewOptions(STANDARD_VIEW_MODE)}
+        />
         <MarkerEditPlugin viewOptions={getViewOptions(STANDARD_VIEW_MODE)} />
         <CharNodePlugin />
       </>,

@@ -16,14 +16,14 @@
  * to gate. If either job ever returns behind a provenance check, these pins are the first thing
  * that should go red.
  *
- * The remote legs SIMULATE the apply — a DELTA_CHANGE_TAG-tagged discrete update mutating nodes
- * directly — rather than routing ops through `$applyUpdate`: in Standard view, `getEditorDelta`
+ * The remote legs SIMULATE the apply — a DELTA_CHANGE_TAG-tagged discrete update, marked as a
+ * remote apply (`markApplyingUpdate`), mutating nodes directly — rather than routing ops through `$applyUpdate`: in Standard view, `getEditorDelta`
  * emits document-space coordinates (display bytes excluded) while `$applyUpdate`'s retain
  * traversal walks display space (para-marker prefixes, editable verse nodes, and char-span glyph
  * bytes all count differently), so a retain computed from the document's own delta lands offset
  * from its target. That divergence is Invariant II's exact complaint and belongs to the
  * coordinates track; these pins are about what the TRANSFORMS do to remote content once it lands,
- * which the tag plus a direct mutation reproduces faithfully.
+ * which the mark and tag plus a direct mutation reproduce faithfully.
  */
 
 import { serializedState, viewOptions } from "./markerEdit.test-helpers";
@@ -50,6 +50,8 @@ import {
   $isParaNode,
   DELTA_CHANGE_TAG,
   getMarker as bundledGetMarker,
+  markApplyingUpdate,
+  NBSP,
   ParaNode,
 } from "shared";
 import { CharNodePlugin, TextSpacingPlugin } from "shared-react";
@@ -115,6 +117,20 @@ function currentUsj(editor: LexicalEditor) {
   return deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
 }
 
+/** The text a root block shows after its marker glyph and separator, NBSPs read as spaces. */
+function paraText(editor: LexicalEditor, rootIndex: number): string {
+  return editor.getEditorState().read(() => {
+    const block = $getRoot().getChildAtIndex(rootIndex);
+    if (!$isParaNode(block)) throw new Error("expected a paragraph");
+    return block
+      .getChildren()
+      .slice(2)
+      .map((node) => node.getTextContent())
+      .join("")
+      .replaceAll(NBSP, " ");
+  });
+}
+
 function $contentParas(): ParaNode[] {
   return $getRoot().getChildren().filter($isParaNode);
 }
@@ -126,17 +142,22 @@ function pasteEvent(plain: string): ClipboardEvent {
   } as unknown as ClipboardEvent;
 }
 
-/** Run `$mutate` the way a remote collab apply runs: one discrete update carrying
- * DELTA_CHANGE_TAG. */
+/** Run `$mutate` the way `Editor.applyUpdate` runs a remote apply: one discrete update carrying
+ * DELTA_CHANGE_TAG, committed while the editor is marked as applying a remote update. */
 async function applyRemote(editor: LexicalEditor, $mutate: () => void) {
   await act(async () => {
-    editor.update(
-      () => {
-        $addUpdateTag(DELTA_CHANGE_TAG);
-        $mutate();
-      },
-      { discrete: true },
-    );
+    markApplyingUpdate(editor, "remote");
+    try {
+      editor.update(
+        () => {
+          $addUpdateTag(DELTA_CHANGE_TAG);
+          $mutate();
+        },
+        { discrete: true },
+      );
+    } finally {
+      markApplyingUpdate(editor, undefined);
+    }
   });
 }
 
@@ -179,10 +200,11 @@ describe("source whitespace preservation (rebuild / collab apply / paste)", () =
     await applyRemote(editor, () => {
       $getRoot().getChildren().filter($isParaNode)[1].append($createTextNode(" "));
     });
-    const usj = currentUsj(editor);
-    // The collaborator's space is document content; healing it away would silently fork the
-    // two replicas.
-    expect(usj?.content?.[1]).toEqual({ type: "para", marker: "p", content: [" "] });
+    // Healing the collaborator's space away would silently fork the two replicas, so it stays in
+    // the tree. A paragraph's leading spaces are not content (Paratext 9 skips whitespace after a
+    // paragraph marker's separator), so the saved paragraph is empty.
+    expect(paraText(editor, 1)).toBe(" ");
+    expect(currentUsj(editor)?.content?.[1]).toEqual({ type: "para", marker: "p" });
   });
 
   it("keeps a pasted run's trailing space", async () => {
@@ -213,7 +235,8 @@ describe("source whitespace preservation (rebuild / collab apply / paste)", () =
     await act(async () => {
       editor.dispatchCommand(PASTE_COMMAND, pasteEvent(" "));
     });
-    const usj = currentUsj(editor);
-    expect(usj?.content?.[3]).toEqual({ type: "para", marker: "p", content: [" "] });
+    // Kept on screen; not saved, as a paragraph's leading spaces are not content.
+    expect(paraText(editor, 3)).toBe(" ");
+    expect(currentUsj(editor)?.content?.[3]).toEqual({ type: "para", marker: "p" });
   });
 });

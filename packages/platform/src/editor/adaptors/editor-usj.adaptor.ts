@@ -21,13 +21,17 @@ import {
   BookNode,
   ChapterNode,
   CharNode,
+  collapseSpaceRuns,
   COMMENT_MARK_TYPE,
   ENDING_MS_COMMENT_MARKER,
   getEditableCallerText,
   ImmutableChapterNode,
   ImmutableTypedTextNode,
   ImmutableUnmatchedNode,
+  isSerializedCharNode,
   isSerializedImpliedParaNode,
+  isSerializedMarkerNode,
+  isSerializedTextNode,
   isSerializedTypedMarkNode,
   isCursorPlaceholderOnly,
   LoggerBasic,
@@ -46,7 +50,6 @@ import {
   SerializedCharNode,
   SerializedImmutableChapterNode,
   SerializedImmutableUnmatchedNode,
-  SerializedImpliedParaNode,
   SerializedMilestoneNode,
   SerializedNoteNode,
   SerializedParaNode,
@@ -64,8 +67,10 @@ import {
   TABLE_ROW_TYPE,
   TABLE_TYPE,
   TypedMarkNode,
+  typedCallerBytes,
   UnknownNode,
   UNMATCHED_TAG_NAME,
+  UNMERGEABLE_TEXT_DETAIL,
   isSerializedVerseBlockNode,
   VerseBlockNode,
   VerseNode,
@@ -77,7 +82,7 @@ import {
   SerializedImmutableVerseNode,
   ViewOptions,
 } from "shared-react";
-import { displayTextToUsj, normalizeSpaceRuns } from "../markerEdit/whitespaceDisplay.utils";
+import { displayTextToUsj } from "../markerEdit/whitespaceDisplay.utils";
 
 interface EditorUsjAdaptor {
   initialize: typeof initialize;
@@ -161,8 +166,7 @@ export function deserializeSerializedEditorState(
     return;
   }
 
-  const children = removeImpliedParasRecurse(rootChildren);
-  const content = recurseNodes(children, viewOptions);
+  const content = recurseRootNodes(rootChildren, viewOptions);
   if (!content) return;
 
   const usj: Usj = { type: USJ_TYPE, version: USJ_VERSION, content };
@@ -236,23 +240,11 @@ function createVerseMarker(node: SerializedImmutableVerseNode | SerializedVerseN
 function createCharMarker(
   node: SerializedCharNode,
   content: MarkerContent[] | undefined,
-  viewOptions: ViewOptions | undefined,
 ): MarkerObject {
   const { type, marker: nodeMarker, unknownAttributes } = node;
   const marker = nodeMarker === "" ? undefined : nodeMarker;
-  // Remove the structural NBSP separator at the span's START only. The strip mirrors the ADD:
-  // the forward adaptor (`createChar`) prepends the separator only in markerMode "editable", and
-  // solely to the first child — never to text following a nested closer (the `ht` in
-  // `\wj li\+nd g\+nd*ht\wj*`) — so the strip is gated and positional to match. In the
-  // non-editable modes (Formatted's "hidden", Markers' "visible") nothing added a separator, so a
-  // leading NBSP there is the author's own `~` and must survive; a leading NBSP on any LATER
-  // string is authored data in every mode. In standard view this separator is stripped earlier,
-  // before whitespace inversion, so a real leading NBSP in the data isn't misread as the
-  // separator here (see the `recurseNodes` TextNode branch).
-  if (viewOptions?.markerMode === "editable" && !isStandardView(viewOptions) && content) {
-    const [first] = content;
-    if (typeof first === "string" && first.startsWith(NBSP)) content[0] = first.slice(1);
-  }
+  // The structural NBSP separator at the span's start is stripped in `recurseNodes`, from the
+  // text node right after the opening glyph — positionally, so an authored leading `~` survives.
   return removeUndefinedProperties({
     type,
     marker,
@@ -306,25 +298,63 @@ function createTableCellMarker(
 }
 
 /**
- * Standard view's space-run collapse (see {@link normalizeSpaceRuns}) across the seam between a
- * note's caller and its content. The USFM writer puts one space after the caller, so content that
- * starts with plain spaces (`\f +  text`, a space typed after an expanded note's caller) makes a
- * run that no single text node holds; Paratext 9 collapses it to `\f + text` on reformat, as it
- * does any other run. An NBSP is not a space run and stays. Not for a note with a category: its
- * `\cat …\cat*` is written between the caller and the content, so a space at the start of the
- * content follows `\cat*` and is the note's own (`\f + \cat things\cat* \fr …`).
+ * Drops the plain spaces Standard view's serialization does not keep at the start of a container's
+ * content, where the USFM writer has already put one separator space in front of them:
  *
- * @param content - The note's serialized content.
+ * - A paragraph's content, under any paragraph marker or in the root's implied paragraph. Paratext
+ *   9's tokenizer skips all whitespace after a paragraph marker's separator, so they are not
+ *   content (`\p  \w a\w*` reads as `\p \w a\w*`): a space left at a paragraph's start — typed
+ *   there, or a deleted char marker's separator — is shown while editing and not saved. The
+ *   logical position model drops the same spaces (`$getLogicalContentItems` in `shared`), and the
+ *   same ones after a verse number ({@link dropSpacesAfterVerseNumbers}).
+ * - A note's content, after its caller: content that starts with plain spaces (`\f +  text`, a
+ *   space typed after an expanded note's caller) makes a run with the caller's separator that no
+ *   single text node holds; Paratext 9 collapses it to `\f + text` on reformat, as it does any
+ *   other run. Not for a note with a category: its `\cat …\cat*` is written between the caller and
+ *   the content, so a space at the start of the content follows `\cat*` and is the note's own
+ *   (`\f + \cat things\cat* \fr …`).
+ *
+ * Only a first item that is a string loses anything. An NBSP is data (`~`), not a space, and stays.
+ *
+ * @param content - The container's serialized content.
  * @returns `content` without leading plain spaces in its first string, dropping a string that held
  *   nothing else.
  */
-function collapseSpacesAfterCaller(
-  content: MarkerContent[] | undefined,
-): MarkerContent[] | undefined {
+function dropLeadingSpaces(content: MarkerContent[] | undefined): MarkerContent[] | undefined {
   const first = content?.[0];
   if (!content || typeof first !== "string" || !first.startsWith(" ")) return content;
   const trimmed = first.replace(/^ +/, "");
   return trimmed ? [trimmed, ...content.slice(1)] : content.slice(1);
+}
+
+/**
+ * Drops the plain spaces a text right after a verse number starts with, in Standard view: the USFM
+ * writer follows the verse number with a separator space, and Paratext 9 skips all whitespace
+ * after a verse number (`\v 2  x` reads as `\v 2 x`), so they are not content. A text holding
+ * nothing else goes. Not after a verse with a `\va` or `\vp`: the text follows that marker's
+ * closing marker, so its spaces are content (`\v 1 \vp 1a\vp* text`). The logical position model
+ * drops the same spaces (`$getLogicalContentItems` in `shared`).
+ *
+ * @param content - A container's serialized content.
+ * @returns `content` with those spaces dropped.
+ */
+function dropSpacesAfterVerseNumbers(content: MarkerContent[]): MarkerContent[] {
+  return content.flatMap((item, index) => {
+    const previous = content[index - 1];
+    if (typeof item !== "string" || !endsInVerseNumber(previous)) return [item];
+    const trimmed = item.replace(/^ +/, "");
+    return trimmed ? [trimmed] : [];
+  });
+}
+
+/** Whether `item` is a verse whose number is the last thing its USFM writes — no `\va` or `\vp`. */
+function endsInVerseNumber(item: MarkerContent | undefined): boolean {
+  return (
+    typeof item === "object" &&
+    item.type === VerseNode.getType() &&
+    item.altnumber === undefined &&
+    item.pubnumber === undefined
+  );
 }
 
 function createNoteMarker(
@@ -398,6 +428,14 @@ function combineTextContentOrAdd(markers: MarkerContent[], textContent: string) 
 }
 
 /**
+ * Whether `node` is a mark that carries comment IDs, so a comment ending in front of it continues
+ * into it. A mark of any other annotation type (a Find highlight) says nothing about comments.
+ */
+function isSerializedCommentMarkNode(node: SerializedLexicalNode | null | undefined): boolean {
+  return isSerializedTypedMarkNode(node) && node.typedIDs[COMMENT_MARK_TYPE] !== undefined;
+}
+
+/**
  * Strip the mark and insert its children enclosed in milestone mark markers.
  * @param childMarkers - Children of the mark.
  * @param ids - Comment IDs from the current mark.
@@ -453,7 +491,7 @@ function replaceMarkWithMilestones(
     });
     markers.push(milestone);
   }
-  const isLastEnd = !nextNode || !isSerializedTypedMarkNode(nextNode);
+  const isLastEnd = !isSerializedCommentMarkNode(nextNode);
   if (isLastEnd) {
     ids.forEach((eid) => {
       const milestone = createMilestoneMarker({
@@ -467,14 +505,157 @@ function replaceMarkWithMilestones(
   }
 }
 
+/**
+ * Whether the node at `nodes[index]` sits immediately after an opening glyph that is `enclosingChar`'s
+ * OWN opener, or a nested child span's own opener sitting loose among `enclosingChar`'s children —
+ * the serialized twin of `$charSeparatorPrefixLength` (markerSeparators.utils.ts), whose own
+ * classifier is `$charGlyphNestedValue` (nestedGlyphs.utils.ts). The previous sibling is read
+ * through a `TypedMarkNode` on both sides exactly as the live predicate does: if it IS a mark, its
+ * deepest last descendant stands in for it (a mark that ends right before this node hides the glyph
+ * as its last child); if `nodes[index]` itself has no earlier sibling because `nodes` is a mark's
+ * own unwrapped children, `precedingSibling` — threaded in from the enclosing call exactly like
+ * `enclosingChar` — carries the search outward, ascending through as many mark levels as the live
+ * predicate's `previous ??= child.getPreviousSibling()` loop does.
+ *
+ * An opening glyph found this way is not always `enclosingChar`'s own: a milestone's display run
+ * (`\qt-s` … `\*`) can sit loose among a char span's children too (`$charGlyphNestedValue`'s third
+ * case), and its NBSP is never a structural separator. Matching `previous`'s marker against
+ * `enclosingChar`'s own marker, or against a nested child CharNode's, is what tells the two apart.
+ */
+function precedesOpeningCharGlyph(
+  nodes: SerializedLexicalNode[],
+  index: number,
+  precedingSibling: SerializedLexicalNode | undefined,
+  enclosingChar: SerializedCharNode | undefined,
+): boolean {
+  if (!enclosingChar) return false;
+  let previous = index > 0 ? nodes[index - 1] : precedingSibling;
+  while (previous && isSerializedTypedMarkNode(previous)) {
+    const { children } = previous;
+    previous = children.length > 0 ? children[children.length - 1] : undefined;
+  }
+  if (!isSerializedMarkerNode(previous) || previous.markerSyntax !== "opening") return false;
+  if (previous.marker === enclosingChar.marker) return true;
+  return enclosingChar.children.some(
+    (child) => isSerializedCharNode(child) && child.marker === previous.marker,
+  );
+}
+
+/**
+ * Whether the lone-NBSP text `nodes[index]` is content an annotation mark split off — the
+ * serialized twin of `$isNbspContentAtMark` (node.utils.ts), which says why: a direct child of a
+ * mark (`inMark`) or a direct sibling of one, untagged, not where a char opener's separator sits,
+ * and, inside a char span, not the span's only content.
+ */
+function isNbspContentAtMark(
+  nodes: SerializedLexicalNode[],
+  index: number,
+  precedingSibling: SerializedLexicalNode | undefined,
+  enclosingChar: SerializedCharNode | undefined,
+  inMark: boolean,
+): boolean {
+  const node = nodes[index];
+  if (!isSerializedTextNode(node) || node.text !== NBSP) return false;
+  const atMark =
+    inMark ||
+    isSerializedTypedMarkNode(nodes[index - 1]) ||
+    isSerializedTypedMarkNode(nodes[index + 1]);
+  if (!atMark) return false;
+  if (node[NODE_STATE_KEY]?.textType !== undefined) return false;
+  if (precedesOpeningCharGlyph(nodes, index, precedingSibling, enclosingChar)) return false;
+  return !enclosingChar || hasOtherCharContent(enclosingChar.children, node);
+}
+
+/** Whether `children` (a char span's, read through marks) hold content besides `except`: the
+ * serialized twin of `$hasOtherCharContent` (node.utils.ts). */
+function hasOtherCharContent(
+  children: SerializedLexicalNode[],
+  except: SerializedTextNode,
+): boolean {
+  return children.some((child) => {
+    if (child === except) return false;
+    if (isSerializedTypedMarkNode(child)) return hasOtherCharContent(child.children, except);
+    if (isSerializedMarkerNode(child)) return false;
+    if (isSerializedTextNode(child))
+      return (
+        child[NODE_STATE_KEY]?.textType === undefined &&
+        child.text !== "" &&
+        child.text !== NBSP &&
+        !isCursorPlaceholderOnly(child.text)
+      );
+    return "children" in child && child.type !== AttributeRunNode.getType();
+  });
+}
+
+/** The serialized twin of `$throughMarks` (attributeDisplay.utils.ts): an annotation mark is
+ * presentation this export splices away, so a slot identified by its position among its parent's
+ * children has to see through one. */
+function serializedThroughMarks(
+  node: SerializedLexicalNode | undefined,
+): SerializedLexicalNode | undefined {
+  let current = node;
+  while (isSerializedTypedMarkNode(current)) current = current.children[0];
+  return current;
+}
+
+/** A note's editable caller text, and the caller it stands for. */
+interface CallerSlot {
+  node: SerializedTextNode;
+  caller: string;
+}
+
+/**
+ * The one child of `noteChildren` that renders a note's EDITABLE caller, if any — the serialized
+ * twin of `$noteEditableCallerNode` (attributeDisplay.utils.ts): skip the leading opening
+ * `marker` nodes, look through any annotation mark at that position, and the next child is the
+ * caller slot when it is a serialized plain text node whose text equals
+ * `getEditableCallerText(caller)`. A `marker` candidate there (an absent-caller shape, opening
+ * glyph immediately followed by closing glyph) never carries that text, so failing the type check
+ * first is equivalent to the live predicate's `$isTextNode` guard followed by the same text
+ * comparison.
+ *
+ * It is also the slot while its bytes are damaged, waiting as the user typed them while the caret
+ * is at it (the marker-edit engine's `$noteCallerTextTransform`): the unmergeable text the note
+ * builders make for the caller and nothing else. The note still has its caller then, and the
+ * caret's departure will put the text back, so it is read the way that departure leaves it.
+ */
+function noteCallerSlotNode(
+  noteChildren: SerializedLexicalNode[],
+  caller: string,
+): CallerSlot | undefined {
+  let index = 0;
+  while (index < noteChildren.length) {
+    const child = noteChildren[index];
+    if (!isSerializedMarkerNode(child) || child.markerSyntax !== "opening") break;
+    index++;
+  }
+  const candidate = serializedThroughMarks(noteChildren[index]);
+  if (!isSerializedTextNode(candidate)) return undefined;
+  if (candidate.text === getEditableCallerText(caller)) return { node: candidate, caller };
+  // `detail` is Lexical's bit field, and the flag is one bit of it.
+  const isUnmergeable = Math.floor(candidate.detail / UNMERGEABLE_TEXT_DETAIL) % 2 === 1;
+  return isUnmergeable ? { node: candidate, caller } : undefined;
+}
+
 // Keep this function's content semantics in sync with `$getLogicalContentItems` in
 // `libs/shared/src/nodes/usj/node.utils.ts` — the logical content model mirrors which nodes
 // this export skips, splices (TypedMarkNodes), and coalesces into single text strings.
 function recurseNodes(
   nodes: SerializedLexicalNode[],
   viewOptions: ViewOptions | undefined,
-  noteCaller?: string,
-  isCharChild = false,
+  // Identity, not text: the one node `noteCallerSlotNode` picked out as a note's editable
+  // caller, threaded down so the TextNode case below can drop that exact node and no other —
+  // never re-derived by comparing text, or content that coincidentally matches the caller's
+  // rendered text anywhere else in the note would be dropped too.
+  callerSlot?: CallerSlot,
+  // The char span `nodes` are the (unwrapped, through marks) direct children of, or `undefined`
+  // outside any char span — see `precedesOpeningCharGlyph`.
+  enclosingChar?: SerializedCharNode,
+  // The effective previous sibling for `nodes[0]`, when `nodes` is a TypedMarkNode's own
+  // unwrapped children — see `precedesOpeningCharGlyph`.
+  precedingSibling?: SerializedLexicalNode,
+  // Whether `nodes` are a TypedMarkNode's own children — see `isNbspContentAtMark`.
+  inMark = false,
 ): MarkerContent[] | undefined {
   const markers: MarkerContent[] = [];
   let childMarkers: MarkerContent[] | undefined;
@@ -517,19 +698,19 @@ function recurseNodes(
         markers.push(
           createCharMarker(
             serializedCharNode,
-            recurseNodes(serializedCharNode.children, viewOptions, undefined, true),
-            viewOptions,
+            recurseNodes(serializedCharNode.children, viewOptions, undefined, serializedCharNode),
           ),
         );
         break;
-      case ParaNode.getType():
+      case ParaNode.getType(): {
+        let paraContent = recurseNodes(serializedParaNode.children, viewOptions);
+        if (isStandardView(viewOptions)) paraContent = dropLeadingSpaces(paraContent);
+        // A paragraph that held only spaces has no content, as one that held nothing has none.
         markers.push(
-          createParaMarker(
-            serializedParaNode,
-            recurseNodes(serializedParaNode.children, viewOptions),
-          ),
+          createParaMarker(serializedParaNode, paraContent?.length ? paraContent : undefined),
         );
         break;
+      }
       case ImmutableTableNode.getType():
         markers.push(
           createTableMarker(
@@ -558,13 +739,13 @@ function recurseNodes(
         const noteContent = recurseNodes(
           serializedNoteNode.children,
           viewOptions,
-          serializedNoteNode.caller,
+          noteCallerSlotNode(serializedNoteNode.children, serializedNoteNode.caller),
         );
         markers.push(
           createNoteMarker(
             serializedNoteNode,
             isStandardView(viewOptions) && serializedNoteNode.category === undefined
-              ? collapseSpacesAfterCaller(noteContent)
+              ? dropLeadingSpaces(noteContent)
               : noteContent,
           ),
         );
@@ -588,21 +769,28 @@ function recurseNodes(
         break;
       case TypedMarkNode.getType():
         // An annotation mark is presentation the splice below strips, so its children serialize
-        // exactly as if they were direct children here — the note-caller and char-child context
-        // must survive the re-entry, or a mark wrapping a char span's first text hides the
-        // structural NBSP from the strip (a fabricated leading space in the file) and a mark
-        // wrapping a note's caller text emits the caller as content.
+        // exactly as if they were direct children here — the char-child context must survive the
+        // re-entry, or a mark wrapping a char span's first text hides the structural NBSP from
+        // the strip (a fabricated leading space in the file). `callerSlot` survives the re-entry
+        // for the same reason: `noteCallerSlotNode` looks through a mark at the caller position,
+        // so the anchored node can be nested inside one, and the drop below has to reach it or
+        // the caller's display bytes are fabricated into the note's saved content.
         childMarkers = recurseNodes(
           serializedMarkNode.children,
           viewOptions,
-          noteCaller,
-          isCharChild,
+          callerSlot,
+          enclosingChar,
+          index > 0 ? nodes[index - 1] : precedingSibling,
+          true,
         );
         if (childMarkers) {
           const commentIDs = serializedMarkNode.typedIDs[COMMENT_MARK_TYPE];
           if (commentIDs) {
-            replaceMarkWithMilestones(childMarkers, commentIDs, pids, nodes[index + 1], markers);
-            pids = commentIDs;
+            const nextNode = nodes[index + 1];
+            replaceMarkWithMilestones(childMarkers, commentIDs, pids, nextNode, markers);
+            // A mark with no mark after it has already ended every comment it carries, so none of
+            // them is open for the next comment mark to end.
+            pids = isSerializedCommentMarkNode(nextNode) ? commentIDs : [];
           } else {
             // Strip the mark and insert its children.
             const firstChild = childMarkers.shift();
@@ -618,6 +806,14 @@ function recurseNodes(
         markers.push(createMilestoneMarker(node as SerializedMilestoneNode));
         break;
       case TextNode.getType():
+        if (callerSlot && node === callerSlot.node) {
+          // The caller's own bytes are the note's caller; bytes typed into a damaged caller text
+          // are the content the departure moves them to (`noteCallerSlotNode`).
+          let typed = typedCallerBytes(callerSlot.node.text, callerSlot.caller);
+          if (isStandardView(viewOptions)) typed = displayTextToUsj(collapseSpaceRuns(typed));
+          if (typed) combineTextContentOrAdd(markers, typed);
+          break;
+        }
         if (
           serializedTextNode.text &&
           // Drop a bare caret host (EmptyVerseCaretGuardPlugin). A legitimate ZWSP inside real text
@@ -626,33 +822,47 @@ function recurseNodes(
           // A byte test, not (only) the separator state tag, and deliberately so: a lone-NBSP
           // text node stands in for THREE presentation shapes — the tagged separators the
           // forward adaptor builds, the empty-char placeholder, and an orphaned structural
-          // prefix a split or deletion strands in its own (untagged) node. The known cost is
-          // that a CONTENT string which is exactly one NBSP is dropped too; fixing that needs
-          // a per-context story for the untagged shapes, not a tag test alone. The forward
-          // side keeps its own output clear of the ambiguity: `createPara` leaves a
-          // spaces-only paragraph-leading string plain instead of rewriting a lone " " into
-          // exactly this shape, so in standard view only an authored lone-NBSP data string
-          // (displayed as `~`, never as a bare NBSP node) is at stake — leaving the drop to
-          // genuinely structural nodes.
-          serializedTextNode.text !== NBSP &&
-          !serializedTextNode.text.startsWith(NODE_ATTRIBUTE_PREFIX) &&
+          // prefix a split or deletion strands in its own (untagged) node. The one content shape
+          // told apart is a no-break space an annotation mark split off content text, inside the
+          // mark or beside it (`isNbspContentAtMark`). Any other CONTENT string which is exactly
+          // one NBSP is dropped too; fixing that needs a per-context story for the untagged
+          // shapes, not a tag test alone. The forward side keeps its own output clear of the
+          // ambiguity: `createPara` leaves a spaces-only paragraph-leading string plain instead
+          // of rewriting a lone " " into exactly this shape, so in standard view only an
+          // authored lone-NBSP data string (displayed as `~`, never as a bare NBSP node) is at
+          // stake — leaving the drop to genuinely structural nodes.
+          (serializedTextNode.text !== NBSP ||
+            isNbspContentAtMark(nodes, index, precedingSibling, enclosingChar, inMark)) &&
+          // The untagged NBSP-`|` form of milestone attribute text. Text right after a char span's
+          // opening glyph is never that: its NBSP is the span's separator, and a `|…` after it is
+          // content the attribute grammar left literal (`\w |lemma="g"grace\w*` — Paratext 9
+          // parses attributes only when the whole `|…` tail before the closer matches), so it is
+          // kept like any other content text.
+          !(
+            serializedTextNode.text.startsWith(NODE_ATTRIBUTE_PREFIX) &&
+            !precedesOpeningCharGlyph(nodes, index, precedingSibling, enclosingChar)
+          ) &&
           // Char-span attribute display runs (bare `|…`, no NBSP prefix — see
           // usj-editor.adaptor's `addCharAttributes`) carry no NBSP prefix to strip against, so
           // the prefix check above can't catch them; the textType state tag is the only signal.
-          serializedTextNode[NODE_STATE_KEY]?.textType !== "attribute" &&
-          // An EMPTY caller still has its slot (the two separators Paratext 9 leaves where a
-          // deleted caller was), so the test is for a note context, not for a caller value.
-          (noteCaller === undefined ||
-            serializedTextNode.text !== getEditableCallerText(noteCaller))
+          serializedTextNode[NODE_STATE_KEY]?.textType !== "attribute"
         ) {
           let text = createTextMarker(serializedTextNode);
-          // Standard view stores display text; invert and normalize on serialization. A
-          // char marker's leading NBSP separator (added by the forward adaptor's `createChar`)
-          // must be stripped before inversion so it isn't misread as a collapsed space run.
-          if (isStandardView(viewOptions)) {
-            if (isCharChild && text.startsWith(NBSP)) text = text.slice(1);
-            text = normalizeSpaceRuns(displayTextToUsj(text));
-          }
+          // A char marker's leading NBSP separator (added by the forward adaptor's `createChar`
+          // in markerMode "editable") is stripped from the one text that hosts it: the text right
+          // after the opening glyph. Positional, never "the span's first string starts with
+          // NBSP": once a mark splits the separator off into its own (dropped) node, the span's
+          // first string is the author's own `~`, which must survive. In Standard view the strip
+          // also has to come before whitespace inversion, so the separator isn't misread as a
+          // collapsed space run.
+          if (
+            viewOptions?.markerMode === "editable" &&
+            precedesOpeningCharGlyph(nodes, index, precedingSibling, enclosingChar) &&
+            text.startsWith(NBSP)
+          )
+            text = text.slice(1);
+          // Standard view stores display text; collapse space runs and invert on serialization.
+          if (isStandardView(viewOptions)) text = displayTextToUsj(collapseSpaceRuns(text));
           combineTextContentOrAdd(markers, text);
         }
         break;
@@ -677,24 +887,51 @@ function recurseNodes(
         _logger?.error(`Unexpected node type '${node.type}'!`);
     }
   });
+  const content = isStandardView(viewOptions) ? dropSpacesAfterVerseNumbers(markers) : markers;
   // Ensure empty arrays are removed.
-  return markers && markers.length > 0 ? markers : undefined;
+  return content.length > 0 ? content : undefined;
 }
 
 /**
- * Remove implied paras.
- * @param nodes - serialized nodes.
- * @returns nodes with all implied paras removed.
+ * {@link recurseNodes} over the root's children, splicing each implied paragraph's content into the
+ * root's in its place — an implied paragraph has no USJ object of its own. Its content is still a
+ * paragraph's, so in Standard view it loses its leading spaces as any paragraph's does
+ * ({@link dropLeadingSpaces}) — except after a chapter with a `\ca` or `\cp`, whose closing marker
+ * or text the content follows instead.
+ * @param nodes - The root's serialized children.
+ * @param viewOptions - The view options the editor state was built for.
+ * @returns the root's USJ content, or `undefined` when there is none.
  */
-function removeImpliedParasRecurse(nodes: SerializedLexicalNode[]): SerializedLexicalNode[] {
-  const impliedParaIndex = nodes.findIndex((node) => isSerializedImpliedParaNode(node));
-  if (impliedParaIndex >= 0) {
-    const nodesBefore = nodes.slice(0, impliedParaIndex);
-    const nodesFromImpliedPara = (nodes[impliedParaIndex] as SerializedImpliedParaNode).children;
-    const nodesAfter = removeImpliedParasRecurse(nodes.slice(impliedParaIndex + 1));
-    nodes = [...nodesBefore, ...nodesFromImpliedPara, ...nodesAfter];
+function recurseRootNodes(
+  nodes: SerializedLexicalNode[],
+  viewOptions: ViewOptions | undefined,
+): MarkerContent[] | undefined {
+  const content: MarkerContent[] = [];
+  let blocks: SerializedLexicalNode[] = [];
+  const flushBlocks = () => {
+    content.push(...(recurseNodes(blocks, viewOptions) ?? []));
+    blocks = [];
+  };
+  for (const node of nodes) {
+    if (!isSerializedImpliedParaNode(node)) {
+      blocks.push(node);
+      continue;
+    }
+    flushBlocks();
+    let impliedContent = recurseNodes(node.children, viewOptions);
+    const previous = content.at(-1);
+    const followsChapterAttribute =
+      typeof previous === "object" &&
+      previous.type === ChapterNode.getType() &&
+      (previous.altnumber !== undefined || previous.pubnumber !== undefined);
+    if (isStandardView(viewOptions) && !followsChapterAttribute)
+      impliedContent = dropLeadingSpaces(impliedContent);
+    impliedContent?.forEach((item) =>
+      typeof item === "string" ? combineTextContentOrAdd(content, item) : content.push(item),
+    );
   }
-  return nodes;
+  flushBlocks();
+  return content.length > 0 ? content : undefined;
 }
 
 const editorUsjAdaptor: EditorUsjAdaptor = {

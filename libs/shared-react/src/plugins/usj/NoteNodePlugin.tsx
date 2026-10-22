@@ -11,6 +11,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $createRangeSelection,
+  $createTextNode,
   $getNodeByKey,
   $getSelection,
   $isRangeSelection,
@@ -26,9 +27,9 @@ import {
 } from "lexical";
 import { useEffect, useRef } from "react";
 import {
+  $createMarkerTrailingSeparator,
   $findFirstAncestorNoteNode,
   $getNoteCallerPreviewText,
-  $createMarkerTrailingSeparator,
   $isCharNode,
   $isMarkerNode,
   $isMarkerTrailingSeparator,
@@ -138,7 +139,7 @@ function useNoteNode(
       editor.registerNodeTransform(CharNode, $noteCharNodeTransform),
       editor.registerNodeTransform(TextNode, $noteTextNodeTransform),
 
-      // Ensure NBSP after caller.
+      // Ensure a separator after the caller.
       editor.registerNodeTransform(ImmutableNoteCallerNode, $noteCallerNodeTransform),
 
       // Re-generate all note callers when a note is removed.
@@ -204,8 +205,42 @@ function $noteNodeTransform(node: NoteNode, viewOptions: ViewOptions | undefined
 }
 
 /**
+ * Ensures the engine's tagged separator follows `node` (a note's caller or top-level CharNode). A
+ * bare lone NBSP already in that slot is a separator without its tag, so it is replaced by a tagged
+ * one: untagged, typing at its end would land inside it and the NBSP would be saved as content.
+ * Anything else in that slot (content text, the closing glyph) keeps its bytes, and the separator
+ * goes in front of it.
+ */
+function $ensureNoteSeparatorAfter(node: LexicalNode): void {
+  const next = node.getNextSibling();
+  if ($isMarkerTrailingSeparator(next)) return;
+  if ($isTextNode(next) && !$isMarkerNode(next) && next.getTextContent() === NBSP)
+    next.replace($createMarkerTrailingSeparator());
+  else node.insertAfter($createMarkerTrailingSeparator());
+}
+
+/**
+ * Resets a tagged note separator's changed text back to exactly one NBSP. Text added to the
+ * separator is the user's, so it is kept as content right after the separator, with the caret at
+ * its end. A separator carries no data, so content on either side of it saves the same bytes.
+ */
+function $restoreNoteSeparator(separator: TextNode): void {
+  const text = separator.getTextContent();
+  const at = text.indexOf(NBSP);
+  const added = at < 0 ? text : text.slice(0, at) + text.slice(at + 1);
+  separator.setTextContent(NBSP);
+  if (!added) {
+    separator.selectEnd();
+    return;
+  }
+  const content = $createTextNode(added);
+  separator.insertAfter(content);
+  content.selectEnd();
+}
+
+/**
  * Changes in NoteNode children text are updated in the NoteNodeCaller preview text.
- * Also ensure NBSP after each note top-level node.
+ * Also ensure a separator after each note top-level CharNode.
  * @param node - CharNode thats needs its preview text updated.
  */
 function $noteCharNodeTransform(node: CharNode): void {
@@ -217,40 +252,12 @@ function $noteCharNodeTransform(node: CharNode): void {
   const previewText = $getNoteCallerPreviewText(children);
   if (noteCaller.getPreviewText() !== previewText) noteCaller.setPreviewText(previewText);
 
-  $ensureSpacerAfter(node);
-}
-
-/** Whether the caret (either end of the selection) is in `node`. */
-function $holdsCaret(node: TextNode): boolean {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection)) return false;
-  const key = node.getKey();
-  return selection.anchor.key === key || selection.focus.key === key;
-}
-
-/**
- * Ensure the NBSP spacer the note's layout puts after each of its top-level nodes follows `node`.
- *
- * Only a spacer is ever reset to NBSP. Text directly in the note that is NOT a spacer is the note's
- * own content - text written directly in the note rather than in a `\ft`-style run, as a note
- * editor's apply delivers it - and gets a spacer inserted after it instead. Text the caret is in is
- * left to {@link $noteTextNodeTransform}, which decides whether it is typing into the collapsed note.
- */
-function $ensureSpacerAfter(node: LexicalNode): void {
-  const next = node.getNextSibling();
-  if ($isTextNode(next) && !$isMarkerNode(next)) {
-    if (next.getTextContent() === NBSP || $holdsCaret(next)) return;
-    if ($isMarkerTrailingSeparator(next)) {
-      next.setTextContent(NBSP);
-      return;
-    }
-  }
-  node.insertAfter($createMarkerTrailingSeparator());
+  $ensureNoteSeparatorAfter(node);
 }
 
 /**
  * Changes in NoteNode children text are updated in the NoteNodeCaller preview text.
- * Also ensure NBSP after each note top-level CharNode isn't modified.
+ * Also restore a note separator whose text was changed, keeping any added text as content.
  * Also remove 'empty' placeholder in CharNode inside NoteNode once other text content is added.
  * @param node - TextNode thats needs its preview text updated.
  */
@@ -260,17 +267,12 @@ function $noteTextNodeTransform(node: TextNode): void {
   const noteCaller = children?.find((child) => $isImmutableNoteCallerNode(child));
   if (!$isTextNode(node) || !$isNoteNode(noteNode) || !noteCaller || !children) return;
 
-  // Typing into a collapsed note's spacer, or into text the caret is in directly in the note, is
-  // refused: the note's content is hidden, so nothing typed there would be seen. Text directly in
-  // the note that no one is typing in is the note's own content (see `$ensureSpacerAfter`).
+  // A tagged separator is display, so its text is restored. Every other text directly inside the
+  // note is its content (such as the space between a cross reference's `\xo` and `\xt` spans),
+  // which serializes as written, so it is never rewritten.
   const parent = node.getParent();
-  const isSpacerOrTyping = $isMarkerTrailingSeparator(node) || $holdsCaret(node);
-  if (!$isMarkerNode(node) && $isNoteNode(parent) && isSpacerOrTyping) {
-    if (node.getTextContent() !== NBSP) {
-      node.setTextContent(NBSP);
-      node.selectEnd();
-    }
-  }
+  if ($isNoteNode(parent) && $isMarkerTrailingSeparator(node) && node.getTextContent() !== NBSP)
+    $restoreNoteSeparator(node);
 
   if ($isCharNode(parent) && parent.getChildrenSize() === 1) {
     const text = node.getTextContent();
@@ -285,13 +287,13 @@ function $noteTextNodeTransform(node: TextNode): void {
 }
 
 /**
- * Ensure NBSP after caller.
- * @param node - TextNode thats needs its preview text updated.
+ * Ensure a separator after the caller.
+ * @param node - The note caller that needs a separator after it.
  */
 function $noteCallerNodeTransform(node: ImmutableNoteCallerNode): void {
   if (!$isImmutableNoteCallerNode(node)) return;
 
-  $ensureSpacerAfter(node);
+  $ensureNoteSeparatorAfter(node);
 }
 
 /**

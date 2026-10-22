@@ -3276,7 +3276,7 @@ describe("$splitParagraphWithMarker — a selection reaching into a note's own c
         $createBookLine(
           "GEN",
           $createTextNode("Genesis "),
-          nd.append($createMarkerNode("nd"), $createTextNode("Lord God"), closer),
+          nd.append($createMarkerNode("nd"), $createTextNode(`${NBSP}Lord God`), closer),
           note,
         ),
       );

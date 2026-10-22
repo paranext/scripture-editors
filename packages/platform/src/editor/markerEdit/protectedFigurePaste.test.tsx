@@ -402,9 +402,10 @@ describe("the byte rules a structure-protected paste keeps", () => {
   });
 
   it("decodes a Paratext 9 clipboard's `usfm:` comment into a real note", async () => {
-    // P9's `text/plain` for this clipboard is the caller glyph `a`. Under the old decline the
-    // sanitizer's html import inserted that glyph as literal text and the note was lost — in the
-    // protected mode only, since an unprotected paste already decoded it.
+    // P9's `text/plain` for this clipboard is the caller glyph `a`. In protected mode, falling
+    // through to the sanitizer's default html import instead of decoding it here would insert that
+    // glyph as literal text and lose the note; an unprotected paste is not at risk, since it
+    // already decodes it correctly.
     const { usj, display } = await pasteInto("protected", {
       "text/plain": "a",
       "text/html": PARATEXT_9_NOTE_HTML,

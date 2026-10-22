@@ -15,6 +15,7 @@ import {
   $hasAncestor,
   $isRangeSelection,
   $isTextNode,
+  KEY_DOWN_COMMAND,
   LexicalEditor,
   SELECTION_CHANGE_COMMAND,
   TextNode,
@@ -108,11 +109,20 @@ describe("ArrowNavigationPlugin: a collapsed note that ends an unclosed char spa
     await pressKey(editor, "ArrowRight");
     await dispatchSelectionChange(editor);
 
-    // Read where the press itself lands. What happens once the host it leaves is taken away is the
-    // guard's business, pinned with it.
-    await pressKey(editor, "ArrowLeft");
+    // Read where the press itself lands; what happens once the host it leaves is taken away is the
+    // guard's business, pinned with it. The press and the read therefore share one task, with no
+    // `await` between them: the press's DOM selection write queues a `selectionchange` that jsdom
+    // delivers on a timer, and when that runs first, the guard's removal commit makes Lexical focus
+    // this never-focused editor, jsdom's `focus()` collapses the DOM selection to the editor's
+    // start, and the caret follows it there.
+    act(() => {
+      editor.dispatchCommand(
+        KEY_DOWN_COMMAND,
+        new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }),
+      );
+    });
 
-    editor.getEditorState().read(() => {
+    editor.read(() => {
       const selection = $getSelection();
       if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
       const anchorNode = selection.anchor.getNode();

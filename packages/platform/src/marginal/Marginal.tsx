@@ -53,7 +53,11 @@ export interface MarginalProps<TLogger extends LoggerBasic> extends Omit<
 > {
   /** Callback function when comments have changed. */
   onCommentChange?: (comments: Comments | undefined) => void;
-  /** Callback function when USJ Scripture data has changed. */
+  /**
+   * Callback function when USJ Scripture data has changed. Called as
+   * {@link EditorProps.onUsjChange} is, with `usj` SETTLED and `ops` and `insertedNodeKey` LIVE,
+   * plus the current comments.
+   */
   onUsjChange?: (
     usj: Usj,
     comments: Comments | undefined,
@@ -164,6 +168,9 @@ const Marginal = forwardRef(function Marginal<TLogger extends LoggerBasic>(
     getSelection() {
       return editorRef.current?.getSelection();
     },
+    getSelectedParaMarker() {
+      return editorRef.current?.getSelectedParaMarker();
+    },
     setSelection(selection) {
       editorRef.current?.setSelection(selection);
     },
@@ -192,6 +199,9 @@ const Marginal = forwardRef(function Marginal<TLogger extends LoggerBasic>(
     },
     removeAnnotation(type, id) {
       editorRef.current?.removeAnnotation(type, id);
+    },
+    getAnnotationRanges(type, id) {
+      return editorRef.current?.getAnnotationRanges(type, id) ?? [];
     },
     formatPara(blockMarker) {
       editorRef.current?.formatPara(blockMarker);
