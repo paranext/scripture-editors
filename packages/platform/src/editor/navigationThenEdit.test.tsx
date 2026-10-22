@@ -31,7 +31,7 @@ const twoVerseUsj: Usj = {
 
 describe("an edit right after the host navigates the editor", () => {
   // jsdom's document selection outlives a test's editor, and a row that starts with the previous
-  // row's stale selection no longer sees a navigation tag leak onto the next edit. Each row starts
+  // row's stale selection cannot see a navigation tag leak onto the next edit. Each row starts
   // from no selection, as a freshly opened editor does.
   beforeEach(() => {
     document.getSelection()?.removeAllRanges();
