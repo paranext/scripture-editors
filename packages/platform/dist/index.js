@@ -21436,17 +21436,14 @@ function Iw(e) {
   const t = M();
   if (!E(t) || !t.isCollapsed())
     return;
-  const { anchor: n } = t;
-  if (n.type !== "text")
+  const n = e.getRootElement(), r = n?.ownerDocument.defaultView?.getSelection(), i = r?.anchorNode;
+  if (!r?.isCollapsed || !i || !n?.contains(i))
     return;
-  const r = e.getRootElement(), i = r?.ownerDocument.defaultView?.getSelection(), s = i?.anchorNode;
-  if (!i?.isCollapsed || !s || s.nodeType !== Node.TEXT_NODE || !r?.contains(s))
+  const { anchor: s } = t;
+  if (s.type === "text" && i === Rw(e.getElementByKey(s.key)) && r.anchorOffset === s.offset)
     return;
-  const o = Rw(e.getElementByKey(n.key));
-  if (s === o && i.anchorOffset === n.offset)
-    return;
-  const a = hl(i, e);
-  a && $t(a);
+  const o = hl(r, e);
+  o && (o.anchor.key === s.key && o.anchor.offset === s.offset && o.anchor.type === s.type || $t(o));
 }
 function Lw() {
   const [e] = Ee();
