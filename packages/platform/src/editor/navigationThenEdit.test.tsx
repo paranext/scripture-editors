@@ -3,7 +3,7 @@
  * move must not cost the user's next edit its `onUsjChange`: the host schedules its saves from that
  * callback, so a single edit made right after a navigation, and then left, would never be saved.
  */
-import { mountStandardViewEditor } from "./settledGetUsj.test-helpers";
+import { EDITING_VIEWS, mountInView } from "./editorViews.test-helpers";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { $getRoot, COMMAND_PRIORITY_LOW } from "lexical";
@@ -30,9 +30,15 @@ const twoVerseUsj: Usj = {
 };
 
 describe("an edit right after the host navigates the editor", () => {
-  it("reaches onUsjChange", async () => {
+  // jsdom's document selection outlives a test's editor, and a row that starts with the previous
+  // row's stale selection no longer sees a navigation tag leak onto the next edit. Each row starts
+  // from no selection, as a freshly opened editor does.
+  beforeEach(() => {
+    document.getSelection()?.removeAllRanges();
+  });
+  it.each(EDITING_VIEWS)("reaches onUsjChange ($name)", async ({ view }) => {
     const onUsjChange = vi.fn();
-    const mounted = await mountStandardViewEditor(twoVerseUsj, {
+    const mounted = await mountInView(twoVerseUsj, view, {
       onUsjChange,
       scrRef: { book: "GEN", chapterNum: 1, verseNum: 1 },
       onScrRefChange: vi.fn(),
