@@ -13,6 +13,7 @@ export * from "./EditablePlugin";
 export * from "./EmptyNoteCaretGuardPlugin";
 export * from "./editorUpdate.utils";
 export * from "./EmptyVerseCaretGuardPlugin";
+export * from "./KeyDownCaretSyncPlugin";
 export * from "./LoadStatePlugin";
 export * from "./NoteCallerHighlightPlugin";
 export * from "./NoteNodePlugin";

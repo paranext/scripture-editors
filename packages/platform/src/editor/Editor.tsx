@@ -169,6 +169,7 @@ import {
   EditableMarkerMenuHarness,
   EditablePlugin,
   EmptyVerseCaretGuardPlugin,
+  KeyDownCaretSyncPlugin,
   getDefaultViewOptions,
   getInsertedNodeKey,
   getViewClassList,
@@ -1911,6 +1912,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     // recreate it. The key never changes for the inline layouts, which leave `verseLayout` unset.
     <LexicalComposer key={viewOptions.verseLayout ?? "inline"} initialConfig={initialConfig}>
       <EditablePlugin isEditable={!effectiveIsReadonly} />
+      {/* First among the critical-priority key handlers, so each of them sees the caret the user
+          can see. */}
+      <KeyDownCaretSyncPlugin />
       <div className="editor-container">
         {hasExternalUI ? (
           <StateChangePlugin onStateChange={handleStateChange} />
