@@ -34,18 +34,14 @@ import {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,
 } from "../editor-usj.adaptor";
-import { EDITING_VIEW_CONFIGS } from "../../editorViews.test-helpers";
-import { expectEveryTextBearingNodeRendered } from "./corpusRendering.test-helpers";
-import { MarkerEditPlugin } from "../../markerEdit/MarkerEditPlugin";
+import { EDITING_VIEW_CONFIGS, mountInView } from "../../editorViews.test-helpers";
+import {
+  expectEveryTextBearingNodeRendered,
+  runEveryTransform,
+} from "./corpusRendering.test-helpers";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
-import { act } from "@testing-library/react";
-import { $getRoot, $isElementNode, LexicalNode } from "lexical";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CharNodePlugin, TextSpacingPlugin } from "shared-react";
-// Reaching inside only for tests.
-// eslint-disable-next-line @nx/enforce-module-boundaries
-import { baseTestEnvironment } from "../../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 
 // Vitest's module transform does not preserve a usable `import.meta.url`, so locate the vendored
 // corpus relative to the working directory — the platform project root under nx, the repo root
@@ -114,12 +110,6 @@ describe("testUSFM corpus editor round-trip (USJ -> editor state -> USJ)", () =>
   }
 });
 
-/** Marks `node` and every descendant dirty, so each one's registered transforms run. */
-function $markSubtreeDirty(node: LexicalNode): void {
-  node.markDirty();
-  if ($isElementNode(node)) node.getChildren().forEach($markSubtreeDirty);
-}
-
 /**
  * The TRANSFORM leg over the same rich fixtures — the other half of the seam.
  *
@@ -128,13 +118,10 @@ function $markSubtreeDirty(node: LexicalNode): void {
  * dirty nodes, so a transform that fabricates or deletes content does so on the user's first edit
  * to a region — invisible to the adaptor leg above, which passes cleanly on every fixture here.
  *
- * `markDirty()` rather than a real edit keeps any diff attributable to the transforms alone.
+ * `markDirty()` rather than a real edit keeps any diff attributable to the transforms alone. The
+ * editor is the real `Editor`, so each view runs the transforms it actually registers.
  */
 describe("testUSFM corpus transform fixed point (USJ -> editor state -> dirty -> USJ)", () => {
-  beforeEach(() => {
-    initializeSerialize(undefined, undefined);
-  });
-
   for (const name of FIXTURES) {
     for (const { label, viewOptions } of EDITING_VIEW_CONFIGS) {
       const testKey = `${name} [${label}]`;
@@ -142,34 +129,12 @@ describe("testUSFM corpus transform fixed point (USJ -> editor state -> dirty ->
       const run = known ? it.fails : it;
       run(`${testKey}${known ? ` (known failure: ${known})` : ""}`, async () => {
         const usj = readOracle(name);
-        reset();
-        initializeDeserialize(undefined);
+        const { lexical } = await mountInView(usj, viewOptions);
+        expectEveryTextBearingNodeRendered(lexical, `${testKey} after load`);
 
-        const state = serializeEditorState(usj, viewOptions);
-        const { editor } = await baseTestEnvironment(
-          JSON.stringify({ root: state.root }),
-          <>
-            <CharNodePlugin />
-            <MarkerEditPlugin viewOptions={viewOptions} />
-            <TextSpacingPlugin />
-          </>,
-        );
-        expectEveryTextBearingNodeRendered(editor, `${testKey} after load`);
+        const afterTransforms = await runEveryTransform(lexical, viewOptions);
 
-        await act(async () => {
-          editor.update(
-            () => {
-              $getRoot().getChildren().forEach($markSubtreeDirty);
-            },
-            { discrete: true },
-          );
-        });
-        expectEveryTextBearingNodeRendered(editor, `${testKey} after the dirty pass`);
-
-        const afterTransforms = deserializeSerializedEditorState(
-          editor.getEditorState().toJSON(),
-          viewOptions,
-        );
+        expectEveryTextBearingNodeRendered(lexical, `${testKey} after the dirty pass`);
         expect(afterTransforms?.content).toEqual(usj.content);
       });
     }

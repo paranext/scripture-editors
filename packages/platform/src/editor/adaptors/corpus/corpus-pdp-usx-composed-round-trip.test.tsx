@@ -37,10 +37,8 @@
  * paranext-core; see that directory's README.
  */
 
-import Editor from "../../Editor";
-import { flushQueuedEvents } from "../../editor-test.utils";
-import { deserializeEditorState } from "../editor-usj.adaptor";
-import { EDITING_VIEW_CONFIGS } from "../../editorViews.test-helpers";
+import { EDITING_VIEW_CONFIGS, mountInView } from "../../editorViews.test-helpers";
+import { runEveryTransform } from "./corpusRendering.test-helpers";
 import {
   MarkerContent,
   MarkerObject,
@@ -48,12 +46,8 @@ import {
   usjToUsxString,
   usxStringToUsj,
 } from "@eten-tech-foundation/scripture-utilities";
-import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
-import { act, render } from "@testing-library/react";
-import { $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createRef } from "react";
 import { ViewOptions } from "shared-react";
 
 // Vitest's module transform does not preserve a usable `import.meta.url`, so locate the vendored
@@ -215,30 +209,11 @@ function lineDiff(expected: string[], actual: string[]): string[] {
 // Editor
 // ---------------------------------------------------------------------------------------------
 
-/** Marks `node` and every descendant dirty, so each one's registered transforms run. */
-function $markSubtreeDirty(node: LexicalNode): void {
-  node.markDirty();
-  if ($isElementNode(node)) node.getChildren().forEach($markSubtreeDirty);
-}
-
 /** Load `usj` into a mounted `Editor` under `view`, run every transform once, and read the
  * document back the way `Editor` reads it on a local change. */
-async function throughEditor(usj: Usj, view: ViewOptions | undefined): Promise<Usj | undefined> {
-  const lexicalRef = createRef<LexicalEditor>();
-  await act(async () => {
-    render(
-      <Editor defaultUsj={usj} options={{ view }}>
-        <EditorRefPlugin editorRef={lexicalRef} />
-      </Editor>,
-    );
-  });
-  const lexical = lexicalRef.current;
-  if (!lexical) throw new Error("lexical editor was not captured");
-  await act(async () => {
-    lexical.update(() => $getRoot().getChildren().forEach($markSubtreeDirty), { discrete: true });
-  });
-  await flushQueuedEvents();
-  return deserializeEditorState(lexical.getEditorState(), view);
+async function throughEditor(usj: Usj, view: ViewOptions): Promise<Usj | undefined> {
+  const { lexical } = await mountInView(usj, view);
+  return runEveryTransform(lexical, view);
 }
 
 // ---------------------------------------------------------------------------------------------
