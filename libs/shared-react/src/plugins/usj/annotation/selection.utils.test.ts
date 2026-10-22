@@ -9,24 +9,49 @@ import {
   ImmutableVerseNode,
 } from "../../../nodes/usj/ImmutableVerseNode";
 import { SelectionRange, AnnotationRange } from "./selection.model";
-import { $getRangeFromUsjSelection, $getUsjSelectionFromEditor } from "./selection.utils";
+import type {
+  UsjDocumentLocation,
+  UsjPropertyValueLocation,
+} from "@eten-tech-foundation/scripture-utilities";
+import { $createImmutableNoteCallerNode } from "../../../nodes/usj/ImmutableNoteCallerNode";
+import { usjReactNodes } from "../../../nodes/usj";
+import { STANDARD_VIEW_MODE, UNFORMATTED_VIEW_MODE } from "../../../views/view-mode.model";
+import { getViewOptions } from "../../../views/view-options.utils";
+import {
+  $getLocationFromNode,
+  $getNodeFromLocation,
+  $getRangeFromUsjSelection,
+  $getUsjSelectionFromEditor,
+} from "./selection.utils";
 import {
   $createLineBreakNode,
   $createTextNode,
+  $getNodeByKey,
   $getRoot,
   $setState,
+  ElementNode,
+  LexicalNode,
   LineBreakNode,
   TextNode,
 } from "lexical";
 import {
+  $createBookNode,
   $createChapterNode,
   $createCharNode,
   $createImmutableChapterNode,
   $createImmutableTypedTextNode,
+  $createImmutableUnmatchedNode,
+  $createAttributeRunNode,
+  $isAttributeRunNode,
+  AttributeRunNode,
+  $createImpliedParaNode,
+  $createMarkerTrailingSeparator,
   $createMarkerNode,
   $createMilestoneNode,
+  $createNoteNode,
   $createParaNode,
   $createTypedMarkNode,
+  $createUnknownNode,
   $createVerseBlockNode,
   $createVerseNode,
   ChapterNode,
@@ -34,9 +59,12 @@ import {
   closingMarkerText,
   ImmutableChapterNode,
   ImmutableTypedTextNode,
+  ImmutableUnmatchedNode,
+  ImpliedParaNode,
   MarkerNode,
   MilestoneNode,
   NBSP,
+  NoteNode,
   openingMarkerText,
   ParaNode,
   textTypeState,
@@ -59,7 +87,7 @@ describe("$getRangeFromUsjSelection", () => {
         const usjSelection: SelectionRange = {
           start: { jsonPath: "$.content[0].content[0]", offset: 5 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(t1.getKey());
@@ -82,7 +110,7 @@ describe("$getRangeFromUsjSelection", () => {
           start: { jsonPath: "$.content[0].content[0]", offset: 0 },
           end: { jsonPath: "$.content[0].content[0]", offset: 5 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(t1.getKey());
@@ -105,7 +133,7 @@ describe("$getRangeFromUsjSelection", () => {
           start: { jsonPath: "$.content[0].content[0]", offset: 6 },
           end: { jsonPath: "$.content[0].content[0]", offset: 11 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(t1.getKey());
@@ -129,7 +157,7 @@ describe("$getRangeFromUsjSelection", () => {
           start: { jsonPath: "$.content[0].content[0]", offset: 5 },
           end: { jsonPath: "$.content[1].content[0]", offset: 6 },
         };
-        const editorSelection = $getRangeFromUsjSelection(annotation);
+        const editorSelection = $getRangeFromUsjSelection(annotation, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(t1.getKey());
@@ -148,7 +176,7 @@ describe("$getRangeFromUsjSelection", () => {
         const usjSelection: SelectionRange = {
           start: { jsonPath: "$.content[99].content[0]", offset: 0 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         expect(editorSelection).toBeUndefined();
       });
@@ -169,7 +197,7 @@ describe("$getRangeFromUsjSelection", () => {
         const usjSelection: SelectionRange = {
           start: { jsonPath: "$.content[0].content[0]", offset: 7 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(t1.getKey());
@@ -180,16 +208,19 @@ describe("$getRangeFromUsjSelection", () => {
   });
 
   describe("UsjMarkerLocation", () => {
-    it("should return undefined when element has no children", () => {
+    it("should position in front of an element that has no glyph and no children", () => {
       const { editor } = createBasicTestEnvironment([ParaNode], () => {
         $getRoot().append($createParaNode());
       });
 
       editor.getEditorState().read(() => {
         const usjSelection: SelectionRange = { start: { jsonPath: "$.content[0]" } };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
-        expect(editorSelection).toBeUndefined();
+        if (!editorSelection) throw new Error("Expected editorSelection to be defined");
+        expect(editorSelection.anchor.key).toBe($getRoot().getKey());
+        expect(editorSelection.anchor.offset).toBe(0);
+        expect(editorSelection.isCollapsed()).toBe(true);
       });
     });
 
@@ -202,7 +233,7 @@ describe("$getRangeFromUsjSelection", () => {
 
       editor.getEditorState().read(() => {
         const usjSelection: SelectionRange = { start: { jsonPath: "$.content[0]" } };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(markerNode.getKey());
@@ -225,7 +256,7 @@ describe("$getRangeFromUsjSelection", () => {
 
       editor.getEditorState().read(() => {
         const usjSelection: SelectionRange = { start: { jsonPath: "$.content[0]" } };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         // Visible markers normalize to the parent element at the marker's index.
@@ -244,7 +275,7 @@ describe("$getRangeFromUsjSelection", () => {
 
       editor.getEditorState().read(() => {
         const usjSelection: SelectionRange = { start: { jsonPath: "$.content[0]" } };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(t1.getKey());
@@ -272,7 +303,7 @@ describe("$getRangeFromUsjSelection", () => {
 
       editor.getEditorState().read(() => {
         const usjSelection: SelectionRange = { start: { jsonPath: "$.content[0].content[1]" } };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(markerNode.getKey());
@@ -303,7 +334,7 @@ describe("$getRangeFromUsjSelection", () => {
 
       editor.getEditorState().read(() => {
         const usjSelection: SelectionRange = { start: { jsonPath: "$.content[0].content[1]" } };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         // Visible markers normalize to the parent element at the marker's index.
@@ -327,7 +358,7 @@ describe("$getRangeFromUsjSelection", () => {
 
       editor.getEditorState().read(() => {
         const usjSelection: SelectionRange = { start: { jsonPath: "$.content[0].content[1]" } };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(t2.getKey());
@@ -359,7 +390,7 @@ describe("$getRangeFromUsjSelection", () => {
         const usjSelection: SelectionRange = {
           start: { jsonPath: "$.content[0].content[1]", closingMarkerOffset: 2 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(closingMarker.getKey());
@@ -392,7 +423,7 @@ describe("$getRangeFromUsjSelection", () => {
         const usjSelection: SelectionRange = {
           start: { jsonPath: "$.content[0].content[1]", closingMarkerOffset: 2 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         // Visible markers normalize to the parent element at the marker's index.
@@ -418,7 +449,7 @@ describe("$getRangeFromUsjSelection", () => {
         const usjSelection: SelectionRange = {
           start: { jsonPath: "$.content[0].content[1]", closingMarkerOffset: 2 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(t2.getKey());
@@ -440,7 +471,7 @@ describe("$getRangeFromUsjSelection", () => {
         const usjSelection: SelectionRange = {
           start: { jsonPath: "$.content[0].marker", propertyOffset: 2 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(markerNode.getKey());
@@ -466,7 +497,7 @@ describe("$getRangeFromUsjSelection", () => {
         const usjSelection: SelectionRange = {
           start: { jsonPath: "$.content[0].marker", propertyOffset: 2 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         // Visible markers normalize to the parent element at the marker's index.
@@ -487,7 +518,7 @@ describe("$getRangeFromUsjSelection", () => {
         const usjSelection: SelectionRange = {
           start: { jsonPath: "$.content[0].marker", propertyOffset: 1 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(t1.getKey());
@@ -516,7 +547,7 @@ describe("$getRangeFromUsjSelection", () => {
             keyOffset: 0,
           },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(chText.getKey());
@@ -543,7 +574,7 @@ describe("$getRangeFromUsjSelection", () => {
             keyOffset: 0,
           },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(para.getKey());
@@ -570,7 +601,7 @@ describe("$getRangeFromUsjSelection", () => {
             keyOffset: 0,
           },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(para.getKey());
@@ -598,7 +629,7 @@ describe("$getRangeFromUsjSelection", () => {
             keyName: "altnumber",
           },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(chText.getKey());
@@ -624,7 +655,7 @@ describe("$getRangeFromUsjSelection", () => {
             keyName: "altnumber",
           },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(para.getKey());
@@ -650,7 +681,7 @@ describe("$getRangeFromUsjSelection", () => {
             keyName: "altnumber",
           },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(para.getKey());
@@ -679,7 +710,7 @@ describe("$getRangeFromUsjSelection", () => {
             keyClosingMarkerOffset: 2,
           },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(chText.getKey());
@@ -706,7 +737,7 @@ describe("$getRangeFromUsjSelection", () => {
             keyClosingMarkerOffset: 2,
           },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(para.getKey());
@@ -733,7 +764,7 @@ describe("$getRangeFromUsjSelection", () => {
             keyClosingMarkerOffset: 2,
           },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         expect(editorSelection.anchor.key).toBe(para.getKey());
@@ -762,7 +793,7 @@ describe("$getRangeFromUsjSelection", () => {
           start: { jsonPath: "$.content[0]" },
           end: { jsonPath: "$.content[0].content[0]", offset: 0 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
         // Start with para jsonPath should position at beginning of paragraph
@@ -774,7 +805,7 @@ describe("$getRangeFromUsjSelection", () => {
       });
     });
 
-    it("should handle selection from inside the marker to text (visible markers)", () => {
+    it("should resolve the older container-and-index start past the marker glyph (visible markers)", () => {
       let t1: TextNode;
       const { editor } = createBasicTestEnvironment([ParaNode, ImmutableTypedTextNode], () => {
         t1 = $createTextNode("nor sit in the seat");
@@ -787,22 +818,495 @@ describe("$getRangeFromUsjSelection", () => {
       });
 
       editor.getEditorState().read(() => {
-        // Location with jsonPath pointing to para but with offset (from editor selection)
-        // This is what you get when selecting "\q2 " in the editor
+        // The older container-and-index spelling of a gap: index 0 is the gap in front of the
+        // paragraph's first content item, which is past the "\q2 " glyph.
         const usjSelection: SelectionRange = {
           start: { jsonPath: "$.content[0]", offset: 0 },
           end: { jsonPath: "$.content[0].content[0]", offset: 0 },
         };
-        const editorSelection = $getRangeFromUsjSelection(usjSelection);
+        const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
         if (!editorSelection) throw new Error("Expected editorSelection to be defined");
-        // Start with element jsonPath + offset should position at beginning of paragraph
-        const para = t1.getParent();
-        expect(editorSelection.anchor.key).toBe(para?.getKey());
+        expect(editorSelection.anchor.key).toBe(t1.getKey());
         expect(editorSelection.anchor.offset).toBe(0);
         expect(editorSelection.focus.key).toBe(t1.getKey());
         expect(editorSelection.focus.offset).toBe(0);
       });
+    });
+  });
+});
+
+describe("$getNodeFromLocation for bytes the view does not display", () => {
+  it("resolves a milestone's closer to beside the milestone when no glyph displays it", () => {
+    let para: ParaNode;
+    const { editor } = createBasicTestEnvironment([ParaNode, MilestoneNode], () => {
+      para = $createParaNode();
+      $getRoot().append(
+        para.append(
+          $createTextNode("said"),
+          $createMilestoneNode("qt-e", undefined, "q1"),
+          $createTextNode(" done"),
+        ),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      const closer = { jsonPath: "$.content[0].content[1]" } as const;
+      expect($getNodeFromLocation({ ...closer, closingMarkerOffset: 0 }, undefined)).toEqual([
+        para,
+        1,
+      ]);
+      expect($getNodeFromLocation({ ...closer, closingMarkerOffset: 2 }, undefined)).toEqual([
+        para,
+        2,
+      ]);
+    });
+  });
+
+  it("resolves an undisplayed attribute value at the end of the element's content", () => {
+    let grace: TextNode;
+    const { editor } = createBasicTestEnvironment([ParaNode, CharNode], () => {
+      grace = $createTextNode("grace");
+      $getRoot().append(
+        $createParaNode().append($createTextNode("In the "), $createCharNode("w").append(grace)),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getNodeFromLocation(
+          { jsonPath: "$.content[0].content[1]['lemma']", propertyOffset: 0 },
+          undefined,
+        ),
+      ).toEqual([grace, 5]);
+    });
+  });
+
+  /** `\p In the \w grace<run>\w*` with editable markers; `run` is the attribute run's text, if any. */
+  function createWordSpan(run?: string) {
+    const nodes: { grace?: TextNode; run?: TextNode } = {};
+    const { editor } = createBasicTestEnvironment([ParaNode, CharNode, MarkerNode], () => {
+      nodes.grace = $createTextNode("grace");
+      const char = $createCharNode("w").append($createMarkerNode("w", "opening"), nodes.grace);
+      if (run !== undefined) {
+        nodes.run = $createTextNode(run);
+        $setState(nodes.run, textTypeState, "attribute");
+        char.append(nodes.run);
+      }
+      char.append($createMarkerNode("w", "closing"));
+      $getRoot().append(
+        $createParaNode().append(
+          $createMarkerNode("p", "opening"),
+          $createTextNode("In the "),
+          char,
+        ),
+      );
+    });
+    return { editor, nodes };
+  }
+
+  it.each<[string, string | undefined]>([
+    ["the closer", undefined],
+    ["the attribute run and the closer", "|grace"],
+  ])("resolves an attribute key no byte spells in front of %s", (_name, run) => {
+    const { editor, nodes } = createWordSpan(run);
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getNodeFromLocation(
+          { jsonPath: "$.content[0].content[1]", keyName: "strong", keyOffset: 0 },
+          undefined,
+        ),
+      ).toEqual([nodes.grace, 5]);
+    });
+  });
+
+  it("resolves an undisplayed attribute of an empty span in front of its placeholder", () => {
+    let placeholder: TextNode;
+    const { editor } = createBasicTestEnvironment([...usjReactNodes], () => {
+      placeholder = $createTextNode(NBSP);
+      $getRoot().append(
+        $createParaNode().append(
+          $createTextNode("see "),
+          $createCharNode("jmp").append(
+            $createImmutableTypedTextNode("marker", "\\jmp "),
+            placeholder,
+            $createImmutableTypedTextNode("attribute", '|link-href="x"'),
+            $createImmutableTypedTextNode("marker", "\\jmp*"),
+          ),
+        ),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getNodeFromLocation(
+          { jsonPath: "$.content[0].content[1]['link-href']", propertyOffset: 1 },
+          undefined,
+        ),
+      ).toEqual([placeholder, 0]);
+    });
+  });
+
+  it("resolves a default attribute's unspelled key at its value's start in the run", () => {
+    const { editor, nodes } = createWordSpan("|grace");
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getNodeFromLocation(
+          { jsonPath: "$.content[0].content[1]", keyName: "lemma", keyOffset: 0 },
+          undefined,
+        ),
+      ).toEqual([nodes.run, 1]);
+    });
+  });
+});
+
+/** The live node an environment's setup callback created, by the key it recorded. */
+function $requireNode<T extends LexicalNode>(key: string): T {
+  const node = $getNodeByKey<T>(key);
+  if (!node) throw new Error(`no node with key ${key}`);
+  return node;
+}
+
+describe("$getLocationFromNode behind a verse's trailing separator", () => {
+  /** `\p <before>\v N <after>`, the verse wrapped in an annotation mark that ends with it when
+   * `marked`; returns the verse's key. */
+  function createVerse(
+    number: string,
+    before: string,
+    after: string,
+    { marked = false, nextParagraph = false } = {},
+  ) {
+    let verseKey = "";
+    const { editor } = createBasicTestEnvironment(
+      [TypedMarkNode, ParaNode, VerseNode, MarkerNode],
+      () => {
+        const verse = $createVerseNode(number, `\\v ${number} `);
+        verseKey = verse.getKey();
+        const para = $createParaNode("p").append($createMarkerNode("p", "opening"));
+        if (before) para.append($createTextNode(before));
+        para.append(marked ? $createTypedMarkNode({ spelling: ["s1"] }).append(verse) : verse);
+        if (after) para.append($createTextNode(after));
+        $getRoot().append(para);
+        if (nextParagraph)
+          $getRoot().append(
+            $createParaNode("q1").append($createMarkerNode("q1", "opening"), $createTextNode("y")),
+          );
+      },
+    );
+    return { editor, verseKey };
+  }
+
+  it.each([
+    ["with nothing around the verse", false],
+    ["when an annotation mark ends with the verse", true],
+  ])("reports the verse text's first byte %s", (_name, marked) => {
+    const { editor, verseKey } = createVerse("1", "", "God said", { marked });
+
+    editor.getEditorState().read(() => {
+      const verse = $requireNode<VerseNode>(verseKey);
+      expect($getLocationFromNode(verse, verse.getTextContentSize(), undefined)).toEqual({
+        jsonPath: "$.content[0].content[1]",
+        offset: 0,
+      });
+    });
+  });
+
+  it("reports a verse ending a paragraph that is not the last as that paragraph's newline", () => {
+    const { editor, verseKey } = createVerse("2", "x", "", { nextParagraph: true });
+
+    editor.getEditorState().read(() => {
+      const verse = $requireNode<VerseNode>(verseKey);
+      expect($getLocationFromNode(verse, verse.getTextContentSize(), undefined)).toEqual({
+        jsonPath: "$.content[0].content[1]['number']",
+        propertyOffset: 1,
+      });
+    });
+  });
+
+  // USFM writes no separator after the last line's number either, only the final newline.
+  it("reports the number's end for a verse ending the document", () => {
+    const { editor, verseKey } = createVerse("2", "x", "");
+
+    editor.getEditorState().read(() => {
+      const verse = $requireNode<VerseNode>(verseKey);
+      expect($getLocationFromNode(verse, verse.getTextContentSize(), undefined)).toEqual({
+        jsonPath: "$.content[0].content[1]['number']",
+        propertyOffset: 1,
+      });
+    });
+  });
+});
+
+describe("$getLocationFromNode in front of an attribute display run", () => {
+  /** `\p \v 1 \va 1a\va* In the`, the verse and its `\va` run inside an annotation mark when
+   * `marked`; returns the key of the element whose child the run is. */
+  function createVerseAltnumber(marked: boolean) {
+    let containerKey = "";
+    const { editor } = createBasicTestEnvironment(
+      [TypedMarkNode, ParaNode, VerseNode, MarkerNode, AttributeRunNode],
+      () => {
+        const value = $createTextNode(" 1a");
+        $setState(value, textTypeState, "attribute");
+        const run = $createAttributeRunNode("va").append(
+          $createMarkerNode("va", "opening"),
+          value,
+          $createMarkerNode("va", "closing"),
+        );
+        const verse = $createVerseNode("1", "\\v 1 ");
+        const para = $createParaNode("p").append($createMarkerNode("p", "opening"));
+        if (marked) {
+          const mark = $createTypedMarkNode({ spelling: ["s1"] }).append(verse, run);
+          containerKey = mark.getKey();
+          para.append(mark);
+        } else {
+          containerKey = para.getKey();
+          para.append(verse, run);
+        }
+        $getRoot().append(para.append($createTextNode("In the")));
+      },
+    );
+    return { editor, containerKey };
+  }
+
+  it.each([
+    ["an element point", false],
+    ["a boundary between an annotation mark's children", true],
+  ])("reports %s in front of a verse's \\va run as the run's first byte", (_name, marked) => {
+    const { editor, containerKey } = createVerseAltnumber(marked);
+
+    editor.getEditorState().read(() => {
+      const container = $requireNode<ElementNode>(containerKey);
+      const run = container.getChildren().find($isAttributeRunNode);
+      if (!run) throw new Error("expected the \\va run");
+      expect($getLocationFromNode(container, run.getIndexWithinParent(), undefined)).toEqual({
+        jsonPath: "$.content[0].content[0]",
+        keyName: "altnumber",
+      });
+    });
+  });
+});
+
+describe("an unmatched marker's bytes", () => {
+  /** `\p x \* y` with editable markers; returns the unmatched marker's key. */
+  function createUnmatched() {
+    let unmatchedKey = "";
+    const { editor } = createBasicTestEnvironment(
+      [ParaNode, MarkerNode, ImmutableUnmatchedNode],
+      () => {
+        const unmatched = $createImmutableUnmatchedNode("*");
+        unmatchedKey = unmatched.getKey();
+        $getRoot().append(
+          $createParaNode("p").append(
+            $createMarkerNode("p", "opening"),
+            $createTextNode("x "),
+            unmatched,
+            $createTextNode(" y"),
+          ),
+        );
+      },
+    );
+    return { editor, unmatchedKey };
+  }
+
+  it.each<[number, UsjDocumentLocation]>([
+    [0, { jsonPath: "$.content[0].content[1]" }],
+    [1, { jsonPath: "$.content[0].content[1]['marker']", propertyOffset: 0 }],
+  ])("reports a caret at offset %i as the byte it is in front of", (offset, location) => {
+    const { editor, unmatchedKey } = createUnmatched();
+
+    editor.getEditorState().read(() => {
+      expect($getLocationFromNode($requireNode(unmatchedKey), offset, undefined)).toEqual(location);
+    });
+  });
+
+  it.each<[UsjDocumentLocation, number]>([
+    [{ jsonPath: "$.content[0].content[1]" }, 0],
+    [{ jsonPath: "$.content[0].content[1]['marker']", propertyOffset: 0 }, 1],
+  ])("resolves %j into the unmatched marker's own text", (location, offset) => {
+    const { editor, unmatchedKey } = createUnmatched();
+
+    editor.getEditorState().read(() => {
+      expect($getNodeFromLocation(location, undefined)).toEqual([
+        $requireNode(unmatchedKey),
+        offset,
+      ]);
+    });
+  });
+});
+
+describe("$getNodeFromLocation for the properties USFM spells before the content", () => {
+  it.each<[string, UsjPropertyValueLocation]>([
+    ["a book's code", { jsonPath: "$.content[0]['code']", propertyOffset: 1 }],
+    ["a note's caller", { jsonPath: "$.content[1].content[0]['caller']", propertyOffset: 1 }],
+    ["a note's category", { jsonPath: "$.content[1].content[0]['category']", propertyOffset: 1 }],
+  ])("resolves %s the view does not display at the element's start", (_name, location) => {
+    const nodes: { book?: TextNode; note?: NoteNode } = {};
+    const { editor } = createBasicTestEnvironment([...usjReactNodes], () => {
+      nodes.book = $createTextNode("Genesis");
+      nodes.note = $createNoteNode("f", "+", false, "things").append(
+        $createCharNode("ft").append($createTextNode("body")),
+      );
+      $getRoot().append(
+        $createBookNode("GEN").append(nodes.book),
+        $createParaNode().append(nodes.note, $createTextNode(" after")),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      const expected = location.jsonPath.startsWith("$.content[0]")
+        ? [nodes.book, 0]
+        : [nodes.note, 0];
+      expect($getNodeFromLocation(location, undefined)).toEqual(expected);
+    });
+  });
+
+  it("resolves a caller offset past what a collapsed caller shows to the end of it", () => {
+    let caller: LexicalNode;
+    const { editor } = createBasicTestEnvironment([...usjReactNodes], () => {
+      caller = $createImmutableNoteCallerNode("+", "body");
+      $getRoot().append(
+        $createParaNode().append(
+          $createNoteNode("f", "+", true).append(
+            caller,
+            $createCharNode("ft").append($createTextNode("body")),
+          ),
+        ),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      expect(
+        $getNodeFromLocation(
+          { jsonPath: "$.content[0].content[0]['caller']", propertyOffset: 2 },
+          undefined,
+        ),
+      ).toEqual([caller, 1]);
+    });
+  });
+
+  it("resolves a milestone's undisplayed attribute key in front of it, where its value resolves", () => {
+    let para: ParaNode;
+    const { editor } = createBasicTestEnvironment([ParaNode, MilestoneNode], () => {
+      para = $createParaNode();
+      $getRoot().append(
+        para.append(
+          $createTextNode("Then "),
+          $createMilestoneNode("qt-s", "q1", undefined, { who: "Pilate" }),
+          $createTextNode("said"),
+        ),
+      );
+    });
+
+    editor.getEditorState().read(() => {
+      const milestone = "$.content[0].content[1]";
+      expect(
+        $getNodeFromLocation({ jsonPath: milestone, keyName: "who", keyOffset: 0 }, undefined),
+      ).toEqual([para, 1]);
+      const range = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: milestone, keyName: "who", keyOffset: 0 },
+          end: { jsonPath: `${milestone}['who']`, propertyOffset: 0 },
+        },
+        undefined,
+        { forAnnotation: true },
+      );
+      expect(range?.isBackward()).toBe(false);
+      expect(range?.isCollapsed()).toBe(true);
+    });
+  });
+});
+
+describe("$getRangeFromUsjSelection for an annotation", () => {
+  /** `\p See \fig cap|src="a b.jpg" size="col"\fig* after` with the figure's attribute bytes read-only. */
+  function createFigure() {
+    const nodes: { figure?: ElementNode; attributes?: LexicalNode; after?: TextNode } = {};
+    const { editor } = createBasicTestEnvironment([...usjReactNodes], () => {
+      nodes.attributes = $createImmutableTypedTextNode("attribute", '|src="a b.jpg" size="col"');
+      nodes.figure = $createUnknownNode("figure", "fig", { file: "a b.jpg", size: "col" }).append(
+        $createImmutableTypedTextNode("marker", "\\fig "),
+        $createTextNode("cap"),
+        nodes.attributes,
+        $createImmutableTypedTextNode("marker", "\\fig*"),
+      );
+      nodes.after = $createTextNode(" after");
+      $getRoot().append(
+        $createParaNode().append(
+          $createMarkerNode("p", "opening"),
+          $createTextNode("See "),
+          nodes.figure,
+          nodes.after,
+        ),
+      );
+    });
+    return { editor, nodes };
+  }
+  const file = "$.content[0].content[1]['file']";
+
+  it("holds a read-only decorator for a range naming only a space inside it", () => {
+    const { editor, nodes } = createFigure();
+
+    editor.getEditorState().read(() => {
+      const range = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: file, propertyOffset: 1 },
+          end: { jsonPath: file, propertyOffset: 2 },
+        },
+        undefined,
+        { forAnnotation: true },
+      );
+      const index = nodes.attributes?.getIndexWithinParent();
+      expect(range?.anchor.key).toBe(nodes.figure?.getKey());
+      expect(range?.anchor.offset).toBe(index);
+      expect(range?.focus.key).toBe(nodes.figure?.getKey());
+      expect(range?.focus.offset).toBe((index ?? 0) + 1);
+    });
+  });
+
+  it("keeps a reversed range's direction and takes the decorator its earlier end is inside", () => {
+    const { editor, nodes } = createFigure();
+
+    editor.getEditorState().read(() => {
+      const range = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: "$.content[0].content[2]", offset: 2 },
+          end: { jsonPath: file, propertyOffset: 1 },
+        },
+        undefined,
+        { forAnnotation: true },
+      );
+      expect(range?.isBackward()).toBe(true);
+      expect(range?.anchor.key).toBe(nodes.after?.getKey());
+      expect(range?.anchor.offset).toBe(2);
+      expect(range?.focus.key).toBe(nodes.figure?.getKey());
+      expect(range?.focus.offset).toBe(nodes.attributes?.getIndexWithinParent());
+    });
+  });
+});
+
+describe("$getRangeFromUsjSelection for a range ending at a closer", () => {
+  it("ends in front of an empty span's placeholder when read-only glyphs frame it", () => {
+    let char: CharNode;
+    const { editor } = createBasicTestEnvironment([...usjReactNodes], () => {
+      char = $createCharNode("wj").append(
+        $createImmutableTypedTextNode("marker", "\\wj "),
+        $createTextNode(NBSP),
+        $createImmutableTypedTextNode("marker", "\\wj*"),
+      );
+      $getRoot().append($createParaNode().append($createTextNode("here: "), char));
+    });
+
+    editor.getEditorState().read(() => {
+      const range = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: "$.content[0].content[0]", offset: 5 },
+          end: { jsonPath: "$.content[0].content[1]", closingMarkerOffset: 0 },
+        },
+        undefined,
+      );
+      expect(range?.focus.key).toBe(char.getKey());
+      expect(range?.focus.offset).toBe(1);
     });
   });
 });
@@ -816,7 +1320,7 @@ describe("$getRangeFromUsjSelection with annotations (PT-3835)", () => {
         start: { jsonPath: "$.content[0].content[0]", offset: 2 }, // in "the "
         end: { jsonPath: "$.content[0].content[0]", offset: 9 }, // in " who stands"
       };
-      const editorSelection = $getRangeFromUsjSelection(usjSelection);
+      const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
 
       if (!editorSelection) throw new Error("Expected editorSelection to be defined");
       expect(editorSelection.anchor.key).toBe(t1.getKey());
@@ -830,9 +1334,12 @@ describe("$getRangeFromUsjSelection with annotations (PT-3835)", () => {
     const { editor, t2 } = buildAnnotatedEnvironment();
 
     editor.getEditorState().read(() => {
-      const editorSelection = $getRangeFromUsjSelection({
-        start: { jsonPath: "$.content[0].content[0]", offset: 5 },
-      });
+      const editorSelection = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: "$.content[0].content[0]", offset: 5 },
+        },
+        undefined,
+      );
 
       if (!editorSelection) throw new Error("Expected editorSelection to be defined");
       expect(editorSelection.anchor.key).toBe(t2.getKey());
@@ -860,9 +1367,12 @@ describe("$getRangeFromUsjSelection with annotations (PT-3835)", () => {
 
     editor.getEditorState().read(() => {
       // The char's inner text: index 1 must NOT be shifted by the annotation.
-      const charSelection = $getRangeFromUsjSelection({
-        start: { jsonPath: "$.content[0].content[1].content[0]", offset: 2 },
-      });
+      const charSelection = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: "$.content[0].content[1].content[0]", offset: 2 },
+        },
+        undefined,
+      );
       if (!charSelection) throw new Error("Expected charSelection to be defined");
       // Non-null assertion is safe: charText is assigned during the test setup callback.
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -870,9 +1380,12 @@ describe("$getRangeFromUsjSelection with annotations (PT-3835)", () => {
       expect(charSelection.anchor.offset).toBe(2);
 
       // Trailing text at logical index 2.
-      const tailSelection = $getRangeFromUsjSelection({
-        start: { jsonPath: "$.content[0].content[2]", offset: 1 },
-      });
+      const tailSelection = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: "$.content[0].content[2]", offset: 1 },
+        },
+        undefined,
+      );
       if (!tailSelection) throw new Error("Expected tailSelection to be defined");
       // Non-null assertion is safe: tailText is assigned during the test setup callback.
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -898,9 +1411,12 @@ describe("$getRangeFromUsjSelection with annotations (PT-3835)", () => {
     });
 
     editor.getEditorState().read(() => {
-      const editorSelection = $getRangeFromUsjSelection({
-        start: { jsonPath: "$.content[0].content[0]", offset: 3 }, // "abcdef" → in "cd"
-      });
+      const editorSelection = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: "$.content[0].content[0]", offset: 3 }, // "abcdef" → in "cd"
+        },
+        undefined,
+      );
       if (!editorSelection) throw new Error("Expected editorSelection to be defined");
       // Non-null assertion is safe: overlapText is assigned during the test setup callback.
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -918,7 +1434,7 @@ describe("$getUsjSelectionFromEditor", () => {
       });
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         expect(usjSelection).toBeUndefined();
       });
@@ -935,7 +1451,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, t1!, 5);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
@@ -961,7 +1477,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, t1!, 0);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
@@ -983,7 +1499,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, t1!, 0, t1!, 5);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
@@ -1021,7 +1537,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, verseText!, 0);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
@@ -1058,7 +1574,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, milestoneText!, 0);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
@@ -1080,7 +1596,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, t1!, 8, t1!, 3);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
@@ -1107,7 +1623,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, t1!, 5, t2!, 6);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
@@ -1134,7 +1650,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, t1!, 3, t1!, 9);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         // Coalesced-USJ coordinates: the TypedMarkNode is invisible in exported USJ, so the
@@ -1169,15 +1685,12 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, markNode!, 0);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         // USJ content: [0]="ab", [1]=char, [2]="cd" — the boundary before the mark's content is
-        // logical index 1 (after "ab", before the char).
-        expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0]",
-          offset: 1,
-        });
+        // the gap in front of the char, which is the char's own location.
+        expect(usjSelection.start).toEqual({ jsonPath: "$.content[0].content[1]" });
         expect(usjSelection.end).toBeUndefined();
       });
     });
@@ -1197,15 +1710,157 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, markNode!, 1);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
-        // The boundary after the mark's content is logical index 2 (before "cd").
-        expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0]",
-          offset: 2,
-        });
+        // The boundary after the mark's content is the start of "cd".
+        expect(usjSelection.start).toEqual({ jsonPath: "$.content[0].content[2]", offset: 0 });
         expect(usjSelection.end).toBeUndefined();
+      });
+    });
+
+    it("should report an element point inside a mark at the non-text child it names", () => {
+      // The mark spans a verse, so the verse sits between two of the mark's children rather than at
+      // either edge: the point in front of it is the verse's own location, not the mark's edge.
+      let markNode: TypedMarkNode;
+      const { editor } = createBasicTestEnvironment(
+        [ParaNode, TypedMarkNode, ImmutableVerseNode],
+        () => {
+          markNode = $createTypedMarkNode({ testType: ["testId"] }).append(
+            $createTextNode("commented start "),
+            $createImmutableVerseNode("3"),
+            $createTextNode("commented end"),
+          );
+          $getRoot().append(
+            $createParaNode().append(
+              $createImmutableVerseNode("2"),
+              $createTextNode("In the beginning "),
+              markNode,
+              $createTextNode(" rest of three"),
+            ),
+          );
+        },
+      );
+      // Non-null assertion is safe: markNode is assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, markNode!, 1);
+
+      editor.getEditorState().read(() => {
+        // USJ content: [0]=verse 2, [1]="In the beginning commented start ", [2]=verse 3,
+        // [3]="commented end rest of three".
+        expect($getUsjSelectionFromEditor(undefined)?.start).toEqual({
+          jsonPath: "$.content[0].content[2]",
+        });
+      });
+    });
+
+    it("should report an element point inside a mark at the start of the text child it names", () => {
+      let markNode: TypedMarkNode;
+      const { editor } = createBasicTestEnvironment(
+        [ParaNode, TypedMarkNode, ImmutableVerseNode],
+        () => {
+          markNode = $createTypedMarkNode({ testType: ["testId"] }).append(
+            $createTextNode("commented start "),
+            $createImmutableVerseNode("3"),
+            $createTextNode("commented end"),
+          );
+          $getRoot().append(
+            $createParaNode().append($createTextNode("In the beginning "), markNode),
+          );
+        },
+      );
+      // Non-null assertion is safe: markNode is assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, markNode!, 2);
+
+      editor.getEditorState().read(() => {
+        // USJ content: [0]="In the beginning commented start ", [1]=verse 3, [2]="commented end".
+        expect($getUsjSelectionFromEditor(undefined)?.start).toEqual({
+          jsonPath: "$.content[0].content[2]",
+          offset: 0,
+        });
+      });
+    });
+
+    it("should report an interior mark point with no content after it at the mark's back edge", () => {
+      let markNode: TypedMarkNode;
+      const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode], () => {
+        markNode = $createTypedMarkNode({ testType: ["testId"] }).append(
+          $createTextNode("abc"),
+          $createLineBreakNode(),
+        );
+        $getRoot().append($createParaNode().append(markNode, $createTextNode("def")));
+      });
+      // Non-null assertion is safe: markNode is assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, markNode!, 1);
+
+      editor.getEditorState().read(() => {
+        // The line break is presentation, so the point is past "abc": the para's one text item is
+        // "abcdef".
+        expect($getUsjSelectionFromEditor(undefined)?.start).toEqual({
+          jsonPath: "$.content[0].content[0]",
+          offset: "abc".length,
+        });
+      });
+    });
+
+    it("should skip a nested mark holding only presentation when naming an interior mark point", () => {
+      let markNode: TypedMarkNode;
+      const { editor } = createBasicTestEnvironment(
+        [ParaNode, TypedMarkNode, ImmutableVerseNode],
+        () => {
+          markNode = $createTypedMarkNode({ testType: ["testId"] }).append(
+            $createTextNode("abc"),
+            $createTypedMarkNode({ testType: ["otherId"] }).append(
+              $createMarkerTrailingSeparator(),
+            ),
+            $createImmutableVerseNode("3"),
+          );
+          $getRoot().append($createParaNode().append(markNode, $createTextNode("def")));
+        },
+      );
+      // Non-null assertion is safe: markNode is assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, markNode!, 1);
+
+      editor.getEditorState().read(() => {
+        // USJ content: [0]="abc", [1]=verse 3, [2]="def".
+        expect($getUsjSelectionFromEditor(undefined)?.start).toEqual({
+          jsonPath: "$.content[0].content[1]",
+        });
+      });
+    });
+
+    it("should report both ends of a backward selection from a mark that opens on presentation text", () => {
+      // A mark whose first child is display-only text (a marker's trailing separator): the point
+      // in front of that text is the point in front of the mark, never the mark's own front again.
+      let separator: TextNode;
+      let first: TextNode;
+      const { editor } = createBasicTestEnvironment([ParaNode, TypedMarkNode], () => {
+        first = $createTextNode("alpha charlie");
+        separator = $createMarkerTrailingSeparator();
+        $getRoot().append(
+          $createParaNode().append(first),
+          $createParaNode().append(
+            $createTypedMarkNode({ testType: ["testId"] }).append(
+              separator,
+              $createTextNode("depart"),
+            ),
+            $createTextNode(" here"),
+          ),
+        );
+      });
+      // Anchor in the second paragraph, focus in the first: the selection runs backward.
+      // Non-null assertions are safe: both nodes are assigned during the test setup callback.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      updateSelection(editor, separator!, 0, first!, "alpha ".length);
+
+      editor.getEditorState().read(() => {
+        expect($getUsjSelectionFromEditor(undefined)).toEqual({
+          start: { jsonPath: "$.content[0].content[0]", offset: "alpha ".length },
+          end: { jsonPath: "$.content[1].content[0]", offset: 0 },
+        });
       });
     });
 
@@ -1224,13 +1879,11 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, paraNode!, 0, textNode!, 0);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
-        expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0]",
-          offset: 0,
-        });
+        // The gap in front of the verse is the verse's own location.
+        expect(usjSelection.start).toEqual({ jsonPath: "$.content[0].content[0]" });
         expect(usjSelection.end).toEqual({
           jsonPath: "$.content[0].content[1]",
           offset: 0,
@@ -1262,13 +1915,11 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, paraNode!, 1, textNode!, 0);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
-        expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0]",
-          offset: 0,
-        });
+        // The gap in front of the verse is the verse's own location.
+        expect(usjSelection.start).toEqual({ jsonPath: "$.content[0].content[0]" });
         expect(usjSelection.end).toEqual({
           jsonPath: "$.content[0].content[1]",
           offset: 0,
@@ -1301,7 +1952,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, char!, 0, char!, 2);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({ jsonPath: "$.content[0].content[0]" });
@@ -1328,7 +1979,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, para!, 0);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({ jsonPath: "$.content[0]" });
@@ -1351,7 +2002,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, para!, 0, t1!, 0);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({ jsonPath: "$.content[0]" });
@@ -1372,7 +2023,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, markerNode!, 0);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
@@ -1408,7 +2059,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, msOpeningMarker!, 0);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
@@ -1431,16 +2082,46 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, markerNode!, 1);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0].marker",
+          jsonPath: "$.content[0]['marker']",
           propertyOffset: 0,
         });
         expect(usjSelection.end).toBeUndefined();
       });
     });
+
+    it.each([
+      ["p", 1],
+      ["", 0],
+    ])(
+      "should emit the marker's end after an empty paragraph's glyph and separator (marker %j)",
+      (marker, propertyOffset) => {
+        let separator: TextNode;
+        const { editor } = createBasicTestEnvironment([ParaNode, MarkerNode], () => {
+          separator = $createTextNode(NBSP);
+          $setState(separator, textTypeState, "marker-trailing-space");
+          $getRoot().append(
+            $createParaNode(marker).append($createMarkerNode(marker, "opening"), separator),
+            $createParaNode().append($createMarkerNode("p", "opening"), $createTextNode("Hi")),
+          );
+        });
+        // Non-null assertion is safe: separator is assigned during the test setup callback.
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        updateSelection(editor, separator!, 1);
+
+        editor.getEditorState().read(() => {
+          // A nameless paragraph's `\` still spells its (empty) marker, so the place after it is
+          // that marker's end, as it is for any other empty paragraph.
+          expect($getUsjSelectionFromEditor(undefined)?.start).toEqual({
+            jsonPath: "$.content[0]['marker']",
+            propertyOffset,
+          });
+        });
+      },
+    );
 
     it("should ignore non-content nodes when counting content indexes for property in editable ms", () => {
       let msOpeningMarker: MarkerNode;
@@ -1468,11 +2149,11 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, msOpeningMarker!, 1);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
-          jsonPath: "$.content[0].content[1].marker",
+          jsonPath: "$.content[0].content[1]['marker']",
           propertyOffset: 0,
         });
         expect(usjSelection.end).toBeUndefined();
@@ -1498,7 +2179,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, closingMarker!, 1);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
@@ -1535,7 +2216,7 @@ describe("$getUsjSelectionFromEditor", () => {
       updateSelection(editor, msClosingMarker!, 1);
 
       editor.getEditorState().read(() => {
-        const usjSelection = $getUsjSelectionFromEditor();
+        const usjSelection = $getUsjSelectionFromEditor(undefined);
 
         if (!usjSelection) throw new Error("Expected usjSelection to be defined");
         expect(usjSelection.start).toEqual({
@@ -1557,7 +2238,7 @@ describe("$getUsjSelectionFromEditor with annotations (PT-3835)", () => {
     updateSelection(editor, t3, 1, t3, 4); // "who" within " who stands"
 
     editor.getEditorState().read(() => {
-      expect($getUsjSelectionFromEditor()).toEqual({
+      expect($getUsjSelectionFromEditor(undefined)).toEqual({
         start: { jsonPath: "$.content[0].content[0]", offset: 8 },
         end: { jsonPath: "$.content[0].content[0]", offset: 11 },
       });
@@ -1569,7 +2250,7 @@ describe("$getUsjSelectionFromEditor with annotations (PT-3835)", () => {
     updateSelection(editor, t2, 0, t2, 3); // "man"
 
     editor.getEditorState().read(() => {
-      expect($getUsjSelectionFromEditor()).toEqual({
+      expect($getUsjSelectionFromEditor(undefined)).toEqual({
         start: { jsonPath: "$.content[0].content[0]", offset: 4 },
         end: { jsonPath: "$.content[0].content[0]", offset: 7 },
       });
@@ -1588,13 +2269,13 @@ describe("$getUsjSelectionFromEditor with annotations (PT-3835)", () => {
     updateSelection(plainEditor, plain!, 8, plain!, 11);
     let expected: SelectionRange | undefined;
     plainEditor.getEditorState().read(() => {
-      expected = $getUsjSelectionFromEditor();
+      expected = $getUsjSelectionFromEditor(undefined);
     });
 
     const { editor, t3 } = buildAnnotatedEnvironment();
     updateSelection(editor, t3, 1, t3, 4); // same "who" range
     editor.getEditorState().read(() => {
-      expect($getUsjSelectionFromEditor()).toEqual(expected);
+      expect($getUsjSelectionFromEditor(undefined)).toEqual(expected);
     });
   });
 });
@@ -1630,11 +2311,11 @@ describe("round-trip conversion", () => {
 
     editor.getEditorState().read(() => {
       // Get the USJ selection from the editor
-      const usjSelection = $getUsjSelectionFromEditor();
+      const usjSelection = $getUsjSelectionFromEditor(undefined);
       if (!usjSelection) throw new Error("Expected usjSelection to be defined");
 
       // Convert back to an editor selection
-      const editorSelection = $getRangeFromUsjSelection(usjSelection);
+      const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
       if (!editorSelection) throw new Error("Expected editorSelection to be defined");
 
       // Verify it matches the original
@@ -1656,10 +2337,10 @@ describe("round-trip conversion", () => {
     updateSelection(editor, markerNode!, 0);
 
     editor.getEditorState().read(() => {
-      const usjSelection = $getUsjSelectionFromEditor();
+      const usjSelection = $getUsjSelectionFromEditor(undefined);
       if (!usjSelection) throw new Error("Expected usjSelection to be defined");
 
-      const editorSelection = $getRangeFromUsjSelection(usjSelection);
+      const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
       if (!editorSelection) throw new Error("Expected editorSelection to be defined");
 
       expect(editorSelection.anchor.key).toBe(markerNode.getKey());
@@ -1684,10 +2365,10 @@ describe("round-trip conversion", () => {
     updateSelection(editor, closingMarker!, 2);
 
     editor.getEditorState().read(() => {
-      const usjSelection = $getUsjSelectionFromEditor();
+      const usjSelection = $getUsjSelectionFromEditor(undefined);
       if (!usjSelection) throw new Error("Expected usjSelection to be defined");
 
-      const editorSelection = $getRangeFromUsjSelection(usjSelection);
+      const editorSelection = $getRangeFromUsjSelection(usjSelection, undefined);
       if (!editorSelection) throw new Error("Expected editorSelection to be defined");
 
       expect(editorSelection.anchor.key).toBe(closingMarker.getKey());
@@ -1696,9 +2377,10 @@ describe("round-trip conversion", () => {
   });
 });
 
-// USJ locations are indexes into the source USJ's content. The block verse layout splits any
-// paragraph that spans verses into one fragment per verse, so those indexes no longer describe the
-// source document and a location taken from this tree would be confidently wrong.
+// The block verse layout splits any paragraph that spans verses into one fragment per verse, so
+// its tree's content indexes are not the USJ's on their own - both selection functions translate
+// through them (`blockVerseLocations.utils`) first, and this pins that a verse block reports and
+// accepts the same locations the inline layout does.
 describe("block verse layout", () => {
   const blockVerseNodes = [VerseBlockNode, ParaNode, ImmutableVerseNode, TextNode];
 
@@ -1720,27 +2402,161 @@ describe("block verse layout", () => {
     return editor;
   }
 
-  it("reports no location for a caret inside a verse block", () => {
-    const editor = createChapter(true);
+  it("reports the same location for a caret inside a verse block as the inline layout does", () => {
+    const inline = createChapter(false);
+    const block = createChapter(true);
 
-    expect(editor.getEditorState().read($getUsjSelectionFromEditor)).toBeUndefined();
-  });
-
-  // The control: the same caret in the same content resolves normally when it is not in a block,
-  // so the test above is about the layout and not about the caret being missing.
-  it("reports a location for the same caret in the inline layout", () => {
-    const editor = createChapter(false);
-
-    expect(editor.getEditorState().read($getUsjSelectionFromEditor)).toBeDefined();
-  });
-
-  it("refuses to resolve a USJ location back to a range in a verse block document", () => {
-    const editor = createChapter(true);
-
-    const range = editor
+    const inlineLocation = inline
       .getEditorState()
-      .read(() => $getRangeFromUsjSelection({ start: { jsonPath: "$.content[0]", offset: 0 } }));
+      .read(() => $getUsjSelectionFromEditor(undefined));
+    const blockLocation = block.getEditorState().read(() => $getUsjSelectionFromEditor(undefined));
 
-    expect(range).toBeUndefined();
+    expect(inlineLocation).toBeDefined();
+    expect(blockLocation).toEqual(inlineLocation);
+  });
+
+  it("resolves a USJ location back to the same range in a verse block document as inline", () => {
+    const inline = createChapter(false);
+    const block = createChapter(true);
+    const location: SelectionRange = { start: { jsonPath: "$.content[0].content[1]", offset: 1 } };
+
+    const inlineRange = inline
+      .getEditorState()
+      .read(() => $getRangeFromUsjSelection(location, undefined));
+    const blockRange = block
+      .getEditorState()
+      .read(() => $getRangeFromUsjSelection(location, undefined));
+    if (!inlineRange || !blockRange) throw new Error("expected both ranges to resolve");
+
+    const inlineText = inline
+      .getEditorState()
+      .read(() => $getNodeByKey(inlineRange.anchor.key)?.getTextContent());
+    const blockText = block
+      .getEditorState()
+      .read(() => $getNodeByKey(blockRange.anchor.key)?.getTextContent());
+    expect(blockText).toBe(inlineText);
+    expect(blockRange.anchor.offset).toBe(inlineRange.anchor.offset);
+  });
+});
+
+describe("space runs where serialization collapses them", () => {
+  const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
+  const unformattedViewOptions = getViewOptions(UNFORMATTED_VIEW_MODE);
+
+  /** "a", a three-space run shown as NBSPs, then "b": the exporter emits "a b". */
+  function createRunParagraph() {
+    let text: TextNode | undefined;
+    const { editor } = createBasicTestEnvironment([ParaNode], () => {
+      text = $createTextNode(`a${NBSP}${NBSP}${NBSP}b`);
+      $getRoot().append($createParaNode().append(text));
+    });
+    if (!text) throw new Error("expected the paragraph text to be created");
+    return { editor, text };
+  }
+
+  it("resolves a settled offset past a run to the live character it names", () => {
+    const { editor, text } = createRunParagraph();
+
+    const anchor = editor.getEditorState().read(() => {
+      const range = $getRangeFromUsjSelection(
+        { start: { jsonPath: "$.content[0].content[0]", offset: 2 } },
+        standardViewOptions,
+      );
+      return range && { key: range.anchor.key, offset: range.anchor.offset };
+    });
+
+    expect(anchor).toEqual({ key: text.getKey(), offset: 4 });
+  });
+
+  it("reports a live caret past a run in settled offsets", () => {
+    const { editor, text } = createRunParagraph();
+    updateSelection(editor, text, 5);
+
+    const reported = editor
+      .getEditorState()
+      .read(() => $getUsjSelectionFromEditor(standardViewOptions));
+
+    expect(reported).toEqual({ start: { jsonPath: "$.content[0].content[0]", offset: 3 } });
+  });
+
+  it("keeps every character where serialization does not collapse runs", () => {
+    const { editor, text } = createRunParagraph();
+    updateSelection(editor, text, 5);
+
+    const reported = editor
+      .getEditorState()
+      .read(() => $getUsjSelectionFromEditor(unformattedViewOptions));
+
+    expect(reported).toEqual({ start: { jsonPath: "$.content[0].content[0]", offset: 5 } });
+  });
+});
+
+describe("positions around a root-level implied paragraph", () => {
+  const unformattedViewOptions = getViewOptions(UNFORMATTED_VIEW_MODE);
+  // Content before a document's first paragraph loads inside an ImpliedParaNode, which the
+  // editor→USJ conversion splices into the root:
+  //
+  //   Lexical root: ImpliedPara[verse 1, "orphan text ", Mark[Char nd "LORD"]], Para["later"]
+  //   USJ content:  [verse, "orphan text ", char, para]
+  function build() {
+    let implied: ImpliedParaNode | undefined;
+    let orphan: TextNode | undefined;
+    let mark: TypedMarkNode | undefined;
+    let later: TextNode | undefined;
+    const { editor } = createBasicTestEnvironment(
+      [ParaNode, VerseNode, CharNode, TypedMarkNode, ImpliedParaNode],
+      () => {
+        orphan = $createTextNode("orphan text ");
+        mark = $createTypedMarkNode({ spelling: ["s1"] }).append(
+          $createCharNode("nd").append($createTextNode("LORD")),
+        );
+        later = $createTextNode("later");
+        implied = $createImpliedParaNode().append($createVerseNode("1"), orphan, mark);
+        $getRoot().append(implied, $createParaNode().append(later));
+      },
+    );
+    if (!implied || !orphan || !mark || !later) throw new Error("fixture not built");
+    return { editor, implied, orphan, mark, later };
+  }
+
+  it("addresses text after it at the USJ index the paragraph actually has", () => {
+    const { editor, later } = build();
+    editor.getEditorState().read(() => {
+      const location = { jsonPath: "$.content[3].content[0]", offset: 3 } as const;
+      expect($getLocationFromNode(later, 3, unformattedViewOptions)).toEqual(location);
+      const [node, offset] = $getNodeFromLocation(location, unformattedViewOptions);
+      expect([node?.getKey(), offset]).toEqual([later.getKey(), 3]);
+    });
+  });
+
+  it("addresses text inside it as root content", () => {
+    const { editor, orphan } = build();
+    editor.getEditorState().read(() => {
+      const location = { jsonPath: "$.content[1]", offset: 2 } as const;
+      expect($getLocationFromNode(orphan, 2, unformattedViewOptions)).toEqual(location);
+      const [node, offset] = $getNodeFromLocation(location, unformattedViewOptions);
+      expect([node?.getKey(), offset]).toEqual([orphan.getKey(), 2]);
+    });
+  });
+
+  it("reports an element point on it among the root's items, and still resolves a root boundary inside it", () => {
+    const { editor, implied, orphan, mark } = build();
+    editor.getEditorState().read(() => {
+      // In front of the orphan text (its first character), and in front of the mark wrapping the
+      // char (the char's own location).
+      expect($getLocationFromNode(implied, 1, unformattedViewOptions)).toEqual({
+        jsonPath: "$.content[1]",
+        offset: 0,
+      });
+      expect($getLocationFromNode(mark, 0, unformattedViewOptions)).toEqual({
+        jsonPath: "$.content[2]",
+      });
+      // The older root-and-index spelling of that first gap resolves to the same caret.
+      const [node, offset] = $getNodeFromLocation(
+        { jsonPath: "$", offset: 1 },
+        unformattedViewOptions,
+      );
+      expect([node?.getKey(), offset]).toEqual([orphan.getKey(), 0]);
+    });
   });
 });

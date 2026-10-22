@@ -104,16 +104,21 @@ export interface EditorRef {
    */
   pastePlainText(): void;
   /**
-   * Get USJ Scripture data — always SETTLED, whatever the screen currently shows mid-edit. In
-   * editable marker modes a marker rename, a typed marker literal, or an edited display run stays
-   * pending in the document until the caret departs; this returns the document those bytes MEAN
-   * (the same re-tokenization a departure settle performs), computed without touching the editor,
-   * so the user's edit stays pending on screen and their caret and undo history are untouched.
-   * Settling is uniform: a half-typed `|stuf` settles to literal content, because that is what
-   * those bytes mean to anything that parses them. While anything is pending, this settled
-   * structure can differ from the LIVE tree {@link EditorRef.getSelection}'s `jsonPath` addresses —
-   * do not resolve a live-selection `jsonPath` against a `getUsj()` snapshot without accounting for
-   * that.
+   * Get USJ Scripture data.
+   *
+   * @remarks
+   * **Settled**: this is the settled document itself — pending marker edits count as already
+   * settled. In editable marker modes a marker rename, a typed marker literal, or an edited
+   * display run stays pending in the document until the caret departs; this returns the document
+   * those bytes MEAN (the same re-tokenization a departure settle performs), computed without
+   * touching the editor, so the user's edit stays pending on screen and their caret and undo
+   * history are untouched. Settling is uniform: a half-typed `|stuf` settles to literal content,
+   * because that is what those bytes mean to anything that parses them.
+   *
+   * Annotations are never part of it; a comment's `zmsc` milestones cover only the text it holds,
+   * never display bytes (an attribute value is a string, and a glyph or verse number has no place
+   * for a milestone). A host that needs such an annotation again after `setUsj` re-applies it from
+   * its own anchor.
    */
   getUsj(): Usj | undefined;
   /**
@@ -121,7 +126,9 @@ export interface EditorRef {
    * so the screen shows the finished structure. NOT required before reading the USJ to save —
    * {@link EditorRef.getUsj} already returns settled output — so a host that only needs canonical
    * USJ should not call this at all: it mutates the document, which pushes a history entry and can
-   * re-settle content the user just undid.
+   * re-settle content the user just undid. Positions ({@link EditorRef.getSelection},
+   * {@link EditorRef.setSelection}, {@link EditorRef.setAnnotation}) never require it either — they
+   * already resolve against the settled document automatically.
    *
    * Two carve-outs: while the app-placed-caret suppression window is armed (the caret was placed
    * by a programmatic scrRef move or an undo/redo restore, with no user gesture since), NOTHING
@@ -209,8 +216,9 @@ export interface EditorRef {
    * Declares in-progress input that an in-editor command surface (e.g. the marker palette) will
    * consume or discard — analogous to an IME composition string. While declared,
    * {@link EditorRef.getUsj} excludes these bytes from its settled output: the containing paragraph
-   * settles as if they were absent. Editor state, on-screen content, `onUsjChange`, and OT deltas
-   * are untouched. One declaration at a time; calling again replaces it; `undefined` clears it.
+   * settles as if they were absent, and so does the `usj` a later `onUsjChange` carries. Editor
+   * state, on-screen content, and OT deltas are untouched. One declaration at a time; calling
+   * again replaces it; `undefined` clears it.
    *
    * The declaration is ADVISORY. It is anchored to the text node the caret sits in when declared,
    * and re-verified against the live caret at every `getUsj()`: it is ignored whenever it does not
@@ -229,10 +237,17 @@ export interface EditorRef {
    * EXPERIMENTAL: Apply Operational Transform delta update.
    *
    * @remarks
-   * Delta ops address content by its position in the USJ, which the block verse layout
-   * (`ViewOptions.verseLayout: "block"`) regroups, so they cannot be applied there. A `"remote"`
-   * update is reported through the logger and dropped rather than thrown, so a collaborator's op
-   * loop is not torn down; refresh such a view by handing it new USJ instead.
+   * **Live**: refers to the editor's current tree as displayed, including marker text the user is
+   * still typing that has not settled yet — delta ops address content by its position in that live
+   * tree. In the block verse layout (`ViewOptions.verseLayout: "block"`), which regroups verses
+   * into blocks, the live position no longer matches the source USJ's, so ops cannot be applied
+   * there. A `"remote"` update is reported through the logger and dropped rather than thrown, so a
+   * collaborator's op loop is not torn down; refresh such a view by handing it new USJ instead.
+   *
+   * Called inside an update of this editor (an `update` callback, a command handler, or an update
+   * listener such as `onUsjChange`), the apply commits once that update finishes, so it is not yet
+   * reflected when this call returns; its `onUsjChange` comes when it commits, with these ops and
+   * `source`.
    *
    * @throws Will throw an error if the editor uses the block verse layout and `source` is
    *   `"local"`.
@@ -241,8 +256,10 @@ export interface EditorRef {
   /**
    * EXPERIMENTAL: Replace an embed Operational Transform delta.
    *
-   * @remarks Embed nodes are treated as atomic units. These include chapter nodes, verse nodes,
-   *   milestone nodes, note nodes, and unmatched nodes.
+   * @remarks
+   * **Live**: refers to the editor's current tree as displayed, including marker text the user is
+   * still typing that has not settled yet. Embed nodes are treated as atomic units. These include
+   * chapter nodes, verse nodes, milestone nodes, note nodes, and unmatched nodes.
    *
    * @param embedNodeKey - The editor key of the embed node to replace.
    * @param insertEmbedOps - The delta operations that insert the new embed node. Any operations
@@ -254,15 +271,32 @@ export interface EditorRef {
    * Get the selection location or range.
    *
    * @remarks
-   * Always returns `undefined` in the block verse layout (`ViewOptions.verseLayout: "block"`):
-   * it splits a paragraph spanning verses across their blocks, so the editor's content indexes no
-   * longer match the source USJ's and no location can be expressed. The editor reports this once
-   * through its logger.
+   * **Settled**: positions and indexes refer to the document `getUsj()` returns at that moment —
+   * pending marker edits count as already settled. While a marker edit is pending (Standard
+   * view's marker-editing engine) the editor translates between the settled document and the live
+   * tree automatically; when nothing is pending the two are identical.
    *
-   * @returns the selection location or range, or `undefined` if there is no selection. The
-   *   json-path in the selection assumes no comment Milestone nodes are present in the USJ, and
-   *   addresses the LIVE tree, not {@link EditorRef.getUsj}'s settled output — while anything is
-   *   pending, resolving it against a `getUsj()` snapshot can land on shifted or stale content.
+   * A position names the byte in front of which it sits, and maps through whatever contains that
+   * byte on its own side. Where one side has bytes the other lacks, the position in front of them
+   * snaps LEFT to the nearest byte both sides share, and the position just past them is exact —
+   * one aligner serves both directions, and each end of a range resolves on its own. A caret behind
+   * a verse number's (or a note caller's) trailing space reports the first byte after it — a
+   * verse's text at offset 0, the next marker — since that space has no position of its own.
+   * Outbound, every real caret has a location: this returns `undefined` only when there is no text
+   * selection, never because a position could not be translated. Typed bytes a pending edit holds that the
+   * settled document carries as an attribute — a typed `\cat …\cat*` becomes a note's `category`,
+   * a typed figure's `|src="…"` its `file` — are reported as that attribute's location. With
+   * `|lemma="grace"` pending (settles to `|grace`), the settled value start
+   * (`['lemma'] propertyOffset 0`) lands at the start of the VALUE — before `grace` — because the
+   * position sits in front of `grace`, and `grace` is a byte both sides carry. A caret with no
+   * text beside it — in front of a marker, in an empty paragraph, at the end of the document — is
+   * reported as the one location its USFM position has (see `UsjDocumentLocation`), never as a
+   * container plus a content index; {@link EditorRef.setSelection} still accepts that older shape.
+   *
+   * @returns the selection location or range, or `undefined` only when there is no text selection
+   *   (none, or a selected paragraph marker — see {@link EditorRef.getSelectedParaMarker}) — never
+   *   because a position could not be expressed. The json-path in the selection assumes no
+   *   comment Milestone nodes are present in the USJ.
    */
   getSelection(): SelectionRange | undefined;
   /**
@@ -289,8 +323,12 @@ export interface EditorRef {
    * Set the selection location or range.
    *
    * @remarks
-   * Does nothing in the block verse layout, for the reason given on
-   * {@link EditorRef.getSelection}.
+   * **Settled**: positions and indexes refer to the document `getUsj()` returns at that moment —
+   * pending marker edits count as already settled. See {@link EditorRef.getSelection} for the
+   * full mapping contract. Inbound, this refuses (and logs the refusal) ONLY a location that
+   * names nothing in the settled document at all; anything else not representable snaps LEFT the
+   * same as outbound, each end of a range on its own. A position basis the live tree has moved on
+   * from is rebuilt (and the rebuild logged as an error), never refused.
    *
    * @param selection - A selection location or range. The json-path in the selection assumes no
    *   comment Milestone nodes are present in the USJ.
@@ -300,9 +338,73 @@ export interface EditorRef {
    * Set an ephemeral annotation with optional event callbacks.
    *
    * @remarks
-   * Does nothing in the block verse layout (`ViewOptions.verseLayout: "block"`): an annotation is
-   * addressed by USJ location, which that layout cannot express - see
-   * {@link EditorRef.getSelection}. The failure is reported through the logger.
+   * **Settled**: positions and indexes refer to the document `getUsj()` returns at that moment —
+   * pending marker edits count as already settled. See {@link EditorRef.getSelection} for the
+   * full mapping contract, including the inbound refusal rule.
+   *
+   * A range may cover display bytes as well as text: a marker glyph, a verse or chapter number, a
+   * note caller, or an attribute run's text (`|lemma="grace"`, `\va 3\va*`, a milestone's
+   * `|who="Pilate"`). Text is wrapped in a `<mark>`; display bytes keep their own element and hold
+   * the annotation themselves. Setting an annotation never changes the document, a position, or
+   * what `getSelection` reports.
+   *
+   * Painting is exact: an annotation paints the bytes it holds, plus the whitespace the editor
+   * shows between two of them in one paragraph (a marker's separator, a verse number's trailing
+   * space) — never whitespace at its edges, and never the rest of a display byte it holds only part
+   * of. A display byte painted over all of its text gets the same class names a `<mark>` gets
+   * (`<typedMark>-<type>`, `<typedMarkOverlap>-<type>` where two ids of a type overlap,
+   * `annotationId-<id>`) plus `display-annotation`. A part of one is painted with a CSS Custom
+   * Highlight instead, which the editor styles from the same class rules: it copies the
+   * properties a highlight can paint (`background-color`, `color`, a `text-decoration` that draws
+   * a line, `text-shadow`) and otherwise draws a bottom border as an underline. Other properties
+   * and `:hover` rules apply only to elements, and the rules must not depend on ancestors inside
+   * the editable content. Where the browser has no highlight API, a display byte is painted whole.
+   * Find painted annotations with {@link EditorRef.getAnnotationRanges}, not by class.
+   *
+   * A read-only glyph, verse number or chapter number (the views without editable markers) holds
+   * and paints exactly the part of what it shows that the range names. A range that names only
+   * bytes such a glyph stands for without showing them (a verse's `\va` where markers are hidden)
+   * holds the annotation on it but paints nothing, and gets no click or hover; its `onRemove` text
+   * is the bytes it holds (`12a`).
+   *
+   * Display bytes keep the annotation through an edit the way text does: a hold follows the bytes
+   * it holds (a collaborator renumbering `\v 12` to `\v 13` keeps a hold on `1`), and is dropped,
+   * reporting `"destroyed"`, once none of them is left (a hold on `2`). A hold on bytes a glyph
+   * does not show follows those bytes the same way. A change only in how a glyph draws the same
+   * bytes (a hidden caller `-` shown as `*` while its note is collapsed, a caller CSS draws) keeps
+   * the hold and reports nothing: it is held whole while its bytes are not drawn, and exactly
+   * again once they are, whatever else is set on it meanwhile.
+   *
+   * The annotation holds exactly the bytes the range names. A range into part of a char span, note
+   * or figure holds only the part it names: the span's own text is marked piece by piece and its
+   * marker glyphs hold the annotation; a span the range covers whole is marked whole. A collapsed
+   * range holds nothing. The whitespace a marker or number ends in is never held — a separator and
+   * a carrier's own edge whitespace are excepted the same way, whether the range passes over them
+   * or ends exactly there. A char span's opening or closing glyph can end up holding the annotation
+   * on its own this way — as a display byte, not inside the `<mark>` that holds its content — from
+   * a range starting exactly on the glyph, or from any settle of the span's paragraph; since
+   * `getUsj()` carries no annotation state for a display byte, a save and reload then keeps the
+   * content `<mark>`'s bytes but loses the glyph's own highlighting.
+   *
+   * A collapsed note's content, all of it hidden behind its caller, holds what a range names there
+   * without showing it, as Paratext 9 shows no annotation inside a closed note: the caller holds
+   * the annotation only when the range names the caller itself. A note's category the view does
+   * not display names nothing, so a range inside it holds nothing.
+   *
+   * `onRemove`: each `<mark>` reports its own removal when it goes away — one call per `<mark>`,
+   * whatever else still holds the annotation — and only once: a `<mark>` an undo brings back stays
+   * quiet when it goes again. Beyond that, the annotation's last holder — a `<mark>` or a display
+   * byte — leaving the document without any `<mark>` having reported the annotation's removal since
+   * it was set fires ONE more report, through its display bytes: `"removed"` when
+   * `removeAnnotation` or setting the same id again takes it away, `"destroyed"` when it drops out
+   * of the document (an edit, a collaborator's edit, or a settle that discards those bytes). That
+   * report's text is every `<mark>`'s and carrier's text joined in document order when they all
+   * leave in the same edit; holders lost across separate edits leave only the text of the
+   * piece(s) still present at the last one. A collapsed note caller's text is the note's caller.
+   * Undo, redo, and a `setUsj` reload report nothing; setting the id again starts a fresh reporting
+   * cycle for it. An `onRemove` that throws — in a `<mark>`'s own report or in the one more
+   * report — does not stop the edit or call that removed the annotation, or the other reports: the
+   * error is handed to the editor's error handler, which rethrows it, in a later microtask.
    *
    * @param selection - An annotation range containing the start and end location. The json-path
    *   in an annotation location assumes no comment Milestone nodes are present in the USJ.
@@ -328,6 +430,11 @@ export interface EditorRef {
    * @deprecated Pass a callbacks object instead. This positional form is preserved for backward
    *   compatibility and will be removed in a future release.
    *
+   * @remarks **Settled**: positions and indexes refer to the document `getUsj()` returns at that
+   *   moment — pending marker edits count as already settled. See {@link EditorRef.getSelection}
+   *   for the full mapping contract. See {@link EditorRef.setAnnotation} for the display-byte
+   *   carrier and removal-semantics contract.
+   *
    * @param selection - An annotation range containing the start and end location.
    * @param type - Type of the annotation.
    * @param id - ID of the annotation.
@@ -342,11 +449,25 @@ export interface EditorRef {
     onRemove?: TypedMarkOnRemove,
   ): void;
   /**
-   * Remove an ephemeral annotation.
+   * Remove an ephemeral annotation. Removes it from text and display bytes alike.
    * @param type - Type of the annotation.
    * @param id - ID of the annotation.
    */
   removeAnnotation(type: string, id: string): void;
+  /**
+   * DOM ranges over everything an annotation paints: each `<mark>` that holds its text, each
+   * display byte it holds (only the part it holds), and the whitespace painted between them — in
+   * document order, empty when nothing paints it. Measure, scroll to or hit-test an annotation with
+   * these; an element lookup by its `annotationId-<id>` class misses the display bytes painted
+   * with a highlight.
+   *
+   * @remarks **Live**: the ranges are over the editor's current DOM, including marker text the
+   *   user is still typing; take them again after the next edit.
+   * @param type - Type of the annotation.
+   * @param id - ID of the annotation.
+   * @experimental This member is unstable and may change shape or disappear without notice.
+   */
+  getAnnotationRanges(type: string, id: string): Range[];
   /**
    * Format the paragraph at the current cursor position — or the paragraph whose marker is
    * selected (see {@link EditorRef.getSelectedParaMarker}) — with the given block marker. A
@@ -355,7 +476,13 @@ export interface EditorRef {
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
    */
   formatPara(blockMarker: string): void;
-  /** Get the editor element for the given node key, if any. */
+  /**
+   * Get the editor element for the given node key, if any.
+   *
+   * @remarks **Live**: refers to the editor's current tree as displayed, including marker text
+   *   the user is still typing that has not settled yet — `nodeKey` names a node in that tree
+   *   directly.
+   */
   getElementByKey(nodeKey: string): HTMLElement | undefined;
   /**
    * Remove a character marker from the current editor selection, keeping its text content.
@@ -505,8 +632,9 @@ export interface EditorRef {
    * built-in marker menu. Works with both collapsed (insertion point) and range selections.
    *
    * @param marker - A USFM marker string, e.g. `"wj"`, `"p"`, `"f"`, `"v"`, `"c"`.
-   * @returns the freshly-inserted note's true Lexical node key when `marker` is a note marker
-   *   (e.g. `"f"`, `"x"`, `"fe"`); `undefined` for every other marker kind.
+   * @returns **Live**: the freshly-inserted note's node key in the editor's current tree (a true
+   *   Lexical key) when `marker` is a note marker (e.g. `"f"`, `"x"`, `"fe"`); `undefined` for
+   *   every other marker kind.
    * @throws Will throw an error if the editor is in readonly mode.
    * @throws Will throw an error if the `scrRef` prop was not provided to the editor.
    * @throws Will throw an error if the marker is not a supported para, char, note, chapter, or
@@ -547,9 +675,9 @@ export interface EditorRef {
    * @throws Will throw an error if `item.kind` is not `"closeTag"` and `item.marker` is not a
    *   supported para, char, note, chapter, or verse marker.
    *
-   * @returns the created note's TRUE Lexical node key when the applied item inserted a note
-   *   (hosts use it to track the note-editing session — the same contract as
-   *   {@link EditorRef.insertMarker}); `undefined` for every other item kind.
+   * @returns **Live**: the created note's node key in the editor's current tree (a true Lexical
+   *   key) when the applied item inserted a note (hosts use it to track the note-editing session —
+   *   the same contract as {@link EditorRef.insertMarker}); `undefined` for every other item kind.
    * @see {@link EditorRef.splitParagraphWithMarker} for the Enter-menu apply step.
    */
   applyMarkerMenuSelection(
@@ -637,8 +765,9 @@ export interface EditorRef {
    * Insert a note at the specified selection, e.g. footnote, cross-reference, endnote.
    * @param marker - The marker type for the note.
    * @param caller - Optional note caller to override the default for the given marker.
-   * @param selection - Optional selection range where the note should be inserted. By default it
-   *   will use the current selection in the editor.
+   * @param selection - **Settled**: expressed against the document `getUsj()` returns at that
+   *   moment — pending marker edits count as already settled (see {@link EditorRef.getSelection}
+   *   for the full mapping contract). Optional; defaults to the current selection in the editor.
    * @throws Will throw an error if the marker is not a valid note marker.
    * @throws Will throw an error if the editor is in readonly mode or uses the block verse layout
    *   (`ViewOptions.verseLayout: "block"`), which is read-only by construction.
@@ -649,8 +778,19 @@ export interface EditorRef {
   insertNote(marker: string, caller?: string, selection?: SelectionRange): void;
   /**
    * EXPERIMENTAL: Select the note by editor key or at the given index in the editor, if any.
-   * @param noteKeyOrIndex - The note key or index, e.g. index=1 would select the second note in the
-   *   editor.
+   *
+   * @remarks
+   * A `noteKeyOrIndex` key — **Live**: refers to the editor's current tree as displayed; it names
+   * a node in that tree directly. A `noteKeyOrIndex` index — **Settled**: refers to the document
+   * `getUsj()` returns at that moment — pending marker edits count as already settled; it counts
+   * the notes of that document, in order (e.g. index=1 selects the second one), so a note still
+   * pending as a typed literal counts too — selecting it puts a collapsed caret at the literal's
+   * own `\`, since it is not a note yet in the live tree. Because of this, `getNoteOps(i)` and
+   * `selectNote(i)` can name DIFFERENT notes while a whole note literal is pending: `getNoteOps`
+   * always counts the LIVE notes, `selectNote`'s index counts the SETTLED ones.
+   *
+   * @param noteKeyOrIndex - The note key (LIVE) or index (SETTLED), e.g. index=1 would select the
+   *   second note of the settled document.
    */
   selectNote(noteKeyOrIndex: string | number): void;
   /**
@@ -721,6 +861,15 @@ export interface EditorRef {
   ): void;
   /**
    * EXPERIMENTAL: Get the note operations by editor key or at the given index in the editor, if any.
+   *
+   * @remarks
+   * Both a `noteKeyOrIndex` key and an index — **Live**: refer to the editor's current tree as
+   * displayed, including marker text the user is still typing that has not settled yet; the index
+   * counts the notes of that tree, not the settled document, so its ops round-trip into
+   * {@link EditorRef.replaceEmbedUpdate} against the same tree they were read from. See
+   * {@link EditorRef.selectNote} for how this can name a different note than a `selectNote` call
+   * with the same index while a whole note literal is pending.
+   *
    * @param noteKeyOrIndex - The note key or index, e.g. index=1 would get the second note in the
    *   editor.
    */
@@ -818,9 +967,31 @@ export interface EditorProps<TLogger extends LoggerBasic> {
   scrRef?: SerializedVerseRef;
   /** Callback function when the Scripture reference has changed. */
   onScrRefChange?: (scrRef: SerializedVerseRef) => void;
-  /** Callback function when the cursor selection changes. */
+  /**
+   * Callback function when the cursor selection changes.
+   *
+   * @remarks
+   * **Settled**: the `selection` passed refers to the document `getUsj()` returns at that moment —
+   * pending marker edits count as already settled; see {@link EditorRef.getSelection} for the full
+   * mapping contract. It is `undefined` only when there is no selection, as it is for
+   * `getSelection`.
+   */
   onSelectionChange?: (selection: SelectionRange | undefined) => void;
-  /** Callback function when USJ Scripture data has changed. */
+  /**
+   * Callback function when USJ Scripture data has changed. Called synchronously, once per commit
+   * that changes the settled document or carries delta ops, in commit order. A commit that does
+   * neither calls nothing, and neither does a selection-only, annotation, or cursor change; the
+   * block verse layout, being read-only, never calls it.
+   *
+   * - `usj` — **Settled**: the document `getUsj()` returns at that moment — pending marker edits
+   *   count as already settled; this is what a host saves.
+   * - `ops` — **Live**: refers to the editor's current tree as displayed, including marker text
+   *   the user is still typing that has not settled yet; the change's delta ops in the live
+   *   document's delta coordinates, absent when the change moved no delta (a marker glyph or
+   *   attribute text edited, or its undo).
+   * - `insertedNodeKey` — **Live**: refers to the editor's current tree as displayed; the editor
+   *   key of a node the change inserted into it.
+   */
   onUsjChange?: (usj: Usj, ops?: DeltaOp[], source?: DeltaSource, insertedNodeKey?: string) => void;
   /** Callback function when state changes. */
   onStateChange?: ({ canUndo, canRedo, blockMarker, contextMarker }: StateChangeSnapshot) => void;

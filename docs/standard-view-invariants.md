@@ -177,6 +177,21 @@ host's session, since the apply still replaces the note node.
 Consequence for tests: asserting that the mode is `token` proves nothing about whether the shell is
 protected. Assert what the DOCUMENT does under a keystroke.
 
+### Annotations never restructure display bytes
+
+An annotation covers content text with a `TypedMarkNode` and covers display bytes — marker glyphs,
+attribute-run text, a verse, a note caller, a chapter glyph, read-only glyph decorators — by state
+held on the node itself (`displayAnnotationsState`, `libs/shared/src/nodes/features/`). A display
+node is never moved into a mark and never split by one: display runs are found by position and read
+as single nodes, so either would read as the run being deleted, and the sync would rebuild or remove
+it. Separators hold nothing — they have no position of their own. The settle carries both
+representations by bytes: kept or re-spelled bytes carry their annotation to the settled
+counterpart, discarded bytes drop it. `getUsj()` carries no display-byte annotation.
+
+The wrap measures coverage by caret order: an inline element moves into a mark only when the range
+covers it whole; otherwise its text is split and its glyphs hold the annotation. The wrap tags its
+update (`TYPED_MARK_WRAP_TAG`) so no transform takes the text it splits for typed text.
+
 ### The `\id` line is content, not a header
 
 `\id` is a `BookNode` at document root, not a `ParaNode` — but Paratext 9 treats the text after the
@@ -296,6 +311,90 @@ implementation:
 - **Typing the named form of a default attribute settles to the collapsed form in the editor**, with
   no file round-trip: `\w thing|lemma="gloss"\w*` settles to `\w thing|gloss\w*`.
 
+### A position has one spelling
+
+Every USFM position has exactly ONE canonical `UsjDocumentLocation`, and the editor emits that one —
+`getSelection`, `onSelectionChange`, and anything else built on `$getLocationFromNode` — with one
+allowed alias (below). USJ gives `offset` a meaning only on text, so a caret with no text beside it
+is never a container plus a content index (`{ jsonPath: "$.content[2]", offset: 0 }`) and never the
+root plus one (`{ jsonPath: "$", offset: 3 }`). The host's `UsjReaderWriter`
+(`usfmVerseLocationToUsjDocumentLocation`) is the oracle:
+
+1. A gap in front of a marker object is that marker's location, `{ jsonPath: <item> }` — at its
+   backslash.
+2. The character after a token that has no other home — the space after a marker name, a line's
+   newline — is addressed on that token at its length: text `offset: length`, `['marker']`
+   `propertyOffset: marker.length` (the caret inside an empty `\b`), `closingMarkerOffset` at the
+   closer's length (a paragraph ending in a note is `\f*` at 3). A verse or chapter ending a line is
+   its `['number']` at the number's length, or its last attribute marker (`\va*`, `\vp*`, `\ca*`,
+   `\cp`).
+3. The end of the document is one past the final newline, on the last token: rule 2's form plus one
+   (`['marker']` `propertyOffset: 2` after a final empty `\b`; text `offset: length + 1`).
+4. A root point between two blocks is the start of the next block.
+
+The end of a span's content is where its closer starts (`closingMarkerOffset: 0`), or, as the
+allowed alias, the end of its last text run (`offset: length`); a span with no closer
+(`closed="false"` note content, a table cell) ends where whatever follows it starts. One shape has no distinct answer: an `optbreak` ending a line, where `UsjReaderWriter` gives every byte
+after it — the newline and the document end included — the optbreak's own marker location.
+
+**The one alias.** A caret held at the end of a text run in front of a marker or a closer is reported
+as that text's `offset: length`, not as the marker's location or the closer's `closingMarkerOffset:
+0` (the same USFM position). Both spellings are accepted back. Compare positions through
+`usjDocumentLocationToUsfmVerseRefVerseLocation`, never by the shape of the location.
+
+The editor keeps ACCEPTING the older spellings a host may still hand it: a container and an index is
+resolved as the location of that gap, and the settled-position layer restates a root index like any
+other top-level index. The rules live in `$boundaryLocation` and its helpers in
+`libs/shared-react/src/plugins/usj/annotation/selection.utils.ts`; while a block is pending, the
+document end is spelled on the SETTLED last token (`$settledDocumentEnd` in
+`packages/platform/src/editor/positions/settledPositions.utils.ts`).
+
+**Every caret has a location, pending edit or not.** A position names the byte in front of which
+it sits, and maps through whatever contains that byte on its own side. Where one side has bytes the
+other lacks, the position in front of them snaps LEFT to the nearest byte both sides share, and the
+position just past them is exact — one aligner
+(`packages/platform/src/editor/markerEdit/usfmByteAlignment.utils.ts`) serves BOTH directions, each
+end of a range resolved on its own; there is no separate outbound-snap/inbound-refuse split.
+
+- **Outbound** (`getSelection`, `onSelectionChange`) never answers `undefined` for a real caret —
+  `undefined` means there is no selection. Typed bytes the settle carries as an attribute map
+  exactly (a typed `\cat x\cat*` is the note's `category`, a figure's `|src="…"` its `file`), by
+  `UsjReaderWriter`'s locations. So does an attribute the settle moves: a repeated name keeps its
+  first slot with its last value, and every attribute that survives maps byte for byte wherever it
+  lands, while the overridden duplicate's bytes snap LEFT. Bytes with no settled counterpart at
+  all — a typed literal the settle spells differently from how it was typed — snap LEFT to the
+  nearest translatable position at or before them, the same rule a USFM byte with no USJ
+  representation follows.
+- **Inbound** (`setSelection`, `setAnnotation`, `insertNote`) refuses (and logs the refusal) ONLY a
+  host location that names nothing in the settled document at all. A location inside a scope the
+  editor can pair only in part is not a whole-scope refusal — it snaps LEFT the same as outbound. A
+  position basis the live tree has moved on from is rebuilt, and the rebuild logged as an error,
+  never refused.
+
+**`onUsjChange`'s `usj` payload is a SETTLED, synchronous snapshot.** It equals `getUsj()` at the
+moment of emission, fires synchronously within the commit's own listener pass, once per commit that
+changes the settled document or carries delta ops, in commit order — including once, not twice,
+after a `setUsj` reload. A commit that does neither emits nothing, and so does a selection-only
+commit or one tagged as an annotation, cursor, or selection change. The block verse layout emits
+nothing: it is read-only. `ops` stay a LIVE view of the same commit.
+
+**Notes are counted in the SETTLED document.** `selectNote(index)` counts and selects against
+`getUsj()`'s notes; a note still pending as a typed literal gets the caret placed at the literal's
+`\`, not at a note index that does not exist yet. `getNoteOps` stays LIVE for both key and index, so
+`getNoteOps(i)` and `selectNote(i)` can legitimately name different notes while a whole note literal
+is pending.
+
+**A typed table cell settles as `table:cell` under ParatextData parity.** The settle applies
+`UsfmParser.IsCell`'s own rule: a Character-typed or undeclared cell-named marker inside an open row
+is a cell; the same marker `+`-nested under another marker is never a cell; with no open row, it is
+an ordinary character marker. The position and note-counting rules above apply to a settled cell the
+same as to any other settled content.
+
+Recorded as-is, not position defects: `\c 2 made` settles to a chapter followed by a bare root
+string `"made"` — ParatextData produces the same USJ from that input. The settle keeps the space
+before a typed `\c`, `\tr`, `\esb` or `\esbe` that ParatextData trims on save; positions count only
+non-whitespace bytes, so the kept space never moves one.
+
 ---
 
 ## 3. What applying a marker DOES to the document
@@ -333,6 +432,12 @@ The host owns which KEY does what (see its half); this repo owns the resulting d
 after a settle the screen keeps both spaces while the file gets one, indefinitely. That is a real,
 permanent screen-vs-file divergence, ratified anyway: it models Paratext 9's `RegularizeSpaces`, and
 normalizing the display instead would delete a byte under the user's caret.
+
+Positions do not diverge with it. The logical content model drops a displayed run's extra spaces
+from its coordinates exactly where serialization drops them, from one shared definition
+(`collapsedSpaceRunRanges` in `libs/shared/src/nodes/usj/spaceRuns.utils.ts`), so a settled offset
+past the run still names the character the host expects. That makes the position layer
+view-dependent: every position function takes the editor's view options.
 
 **This is a one-off and must not be generalized.** It is the single place where the answer to "the
 screen and the file disagree" is "leave it". Every other divergence is a defect. If a new case looks

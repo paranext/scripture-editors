@@ -279,7 +279,7 @@ describe("typed characterization (baseline): typing at the end of a char span's 
         marker: "p",
         content: [{ type: "char", marker: "nd", who: "hi", sid: "things", content: ["asdf"] }],
       },
-      { type: "para", marker: "p", content: [" body"] },
+      { type: "para", marker: "p", content: ["body"] },
     ]);
   });
 });
@@ -578,7 +578,7 @@ describe("marker-bearing payload: literal value text, no strip — and what the 
       },
       { type: "chapter", marker: "c", number: "5" },
       { type: "unmatched", marker: "nd*" },
-      { type: "para", marker: "p", content: [" body"] },
+      { type: "para", marker: "p", content: ["body"] },
     ]);
     expect(usjOf(pasted.editor)).toEqual(usjOf(typed.editor));
   });

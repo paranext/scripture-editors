@@ -16,7 +16,7 @@ import {
   DeleteDirection,
   HiddenRun,
 } from "./hiddenContentDelete.utils";
-import { $narrowSelectionOutOfShell } from "./NoteShellCaretGuardPlugin";
+import { $confineRangeToProtectedNote } from "./NoteShellCaretGuardPlugin";
 import { $selectionReachesIntoOpaqueBlock, isEditingKey } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
@@ -722,7 +722,7 @@ function $removeRange(snapshot: RangeSnapshot): void {
  */
 function $narrowEditRange(selection: RangeSelection): void {
   $narrowSelectionPastBookPrefix(selection);
-  $narrowSelectionOutOfShell(selection);
+  $confineRangeToProtectedNote(selection);
 }
 
 /** Mutating: call inside `editor.update()`. Removes the hidden constructs still attached. */

@@ -35,7 +35,7 @@ describe("OnSelectionChangePlugin (no-flush regression, frozen-commit crash clas
         textB = $createTextNode("Second node");
         $getRoot().append($createParaNode().append(textA), $createParaNode().append(textB));
       },
-      <OnSelectionChangePlugin onChange={onChange} />,
+      <OnSelectionChangePlugin onChange={onChange} viewOptions={undefined} />,
     );
 
     // Establish and fully commit an initial selection: caret at the start of textA. This is the

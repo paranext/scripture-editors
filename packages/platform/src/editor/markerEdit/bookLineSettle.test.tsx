@@ -687,14 +687,20 @@ describe("where the `\\id` line's bytes end the line", () => {
     { name: "a `\\p` ended by a ZWSP", bytes: "\\p\u200Bmore", line: [], next: ["more"] },
     { name: "a `\\p` ended by a pipe", bytes: "\\p|x", line: [], next: ["|x"] },
   ])("$name", ({ bytes, line, next }) => {
-    const { lineContent, followingBlocks } = tokenizedBookLine(bytes, bundledGetMarker);
+    const { lineContent, followingBlocks } = tokenizedBookLine(
+      { text: bytes, spans: [], sentinels: [] },
+      bundledGetMarker,
+    );
 
     expect(lineContent).toEqual(line);
     expect(followingBlocks).toEqual([{ type: "para", marker: "p", content: next }]);
   });
 
   it("keeps a closing `\\p*` in the line: it is a different marker, not the author's `\\p`", () => {
-    const { lineContent, followingBlocks } = tokenizedBookLine("\\p*x", bundledGetMarker);
+    const { lineContent, followingBlocks } = tokenizedBookLine(
+      { text: "\\p*x", spans: [], sentinels: [] },
+      bundledGetMarker,
+    );
 
     expect(lineContent).toEqual([{ type: "unmatched", marker: "p*" }, "x"]);
     expect(followingBlocks).toEqual([]);

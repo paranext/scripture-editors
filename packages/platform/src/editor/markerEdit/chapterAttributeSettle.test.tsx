@@ -49,6 +49,7 @@ import {
   NBSP,
 } from "shared";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { getViewOptions, ViewOptions } from "shared-react";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
@@ -89,13 +90,13 @@ function chapterUsj(chapterExtras: { [key: string]: string } = {}): Usj {
   };
 }
 
-async function renderChapterEditor(usj: Usj) {
+async function renderChapterEditor(usj: Usj, view: ViewOptions = viewOptions) {
   initializeSerialize(undefined, undefined);
   reset();
-  const state = serializeEditorState(usj, viewOptions);
+  const state = serializeEditorState(usj, view);
   return baseTestEnvironment(
     JSON.stringify({ root: state.root }),
-    <MarkerEditPlugin viewOptions={viewOptions} />,
+    <MarkerEditPlugin viewOptions={view} />,
   );
 }
 
@@ -1142,6 +1143,34 @@ describe("typed \\ca literal in the chapter-adjacent implied paragraph", () => {
           .getChildren()
           .map((child) => child.getType()),
       ).toEqual(["book", "chapter", "implied-para", "para"]);
+    });
+  });
+});
+
+describe("the chapter settle in the unformatted view", () => {
+  // Content text keeps a no-break space as data in this view, but the chapter's own text is glyph
+  // bytes: its no-break space is the separator after `\c`, and must reach the tokenizer as one.
+  const unformatted = requireDefined(getViewOptions("unformatted"), "unformatted view missing");
+
+  it("editing the \\ca value settles onto altnumber on caret departure", async () => {
+    const { editor } = await renderChapterEditor(chapterUsj({ altnumber: "2" }), unformatted);
+
+    await act(async () =>
+      editor.update(() => {
+        const value = requireDefined(
+          $chapterAltnumberRunPieces($findChapter()).value,
+          "ca value not found",
+        );
+        value.setTextContent(value.getTextContent().replace("2", "3"));
+        value.select(value.getTextContentSize(), value.getTextContentSize());
+      }),
+    );
+    await act(async () => editor.update(() => $textOutsideChapter().select(0, 0)));
+
+    editor.getEditorState().read(() => {
+      const chapter = $findChapter();
+      expect(chapter.getNumber()).toBe("1");
+      expect(chapter.getAltnumber()).toBe("3");
     });
   });
 });

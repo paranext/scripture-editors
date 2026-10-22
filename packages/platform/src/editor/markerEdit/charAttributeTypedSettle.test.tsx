@@ -17,6 +17,8 @@
  */
 
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
+import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { requireDefined, viewOptions } from "./markerEdit.test-helpers";
 import { initialize as initializeSerialize, reset } from "../adaptors/usj-editor.adaptor";
 import editorUsjAdaptor, {
@@ -268,6 +270,30 @@ describe("typed char attribute text settles into real attribute state", () => {
     expectSettlesLikeTokenizer(editor, `\\p \\nd text|stuff="thing" more="bits"\\nd*`);
   });
 
+  it("settles a byte typed in front of an existing run as content, on screen and in the file", async () => {
+    // The caret at the run's start can type into the run itself. The bytes then read
+    // `\w gracex|g\w*` on screen; the text moved from the run's node into the content's is a real
+    // change, so the settle must not take the rebuild for a no-op and leave `x` unsaved.
+    let seed!: Seed;
+    const { editor } = await appStackEnvironment(
+      () => (seed = $seedSpan("w", "grace", { lemma: "g" }, "|g")),
+    );
+    const run = requireDefined(seed.run, "seeded run missing");
+    await act(async () =>
+      editor.update(() => {
+        run.setTextContent("x|g");
+        run.select(1, 1);
+      }),
+    );
+    await depart(editor, seed.other);
+
+    editor.getEditorState().read(() => {
+      expect($charAttributeDisplayNode($onlySpan())?.getTextContent()).toBe("|g");
+      expect($onlySpan().getTextContent()).toBe(`\\w${NBSP}gracex|g\\w*`);
+    });
+    expectSettlesLikeTokenizer(editor, `\\p \\w gracex|g\\w*`);
+  });
+
   it("leaves the bytes as CONTENT on an UNCLOSED span, matching the tokenizer", async () => {
     // Not the reported bug, and the distinction is worth a pin: with no closing marker there is no
     // attribute position, so `|stuff="thing"` is literal text. The tokenizer says so, and a settle
@@ -397,3 +423,127 @@ describe("typing a closing marker keeps the span's default attribute", () => {
     expectSettlesLikeTokenizer(editor, `\\p \\w grace|G5485\\w*`);
   });
 });
+
+describe.each(["standard", "unformatted"])(
+  "a byte typed in front of a span's separator (%s view)",
+  (view) => {
+    it("stays in front of the content, and the separator stays a separator", async () => {
+      // `|` typed with the caret between `\w` and its separator: the attribute section starts the
+      // span's content, and the separator in front of it is not part of the lemma's value.
+      const mounted = await mountInView(
+        twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"]),
+        oracleView(view),
+      );
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const content = $textContaining("grace");
+          content.setTextContent(`|${NBSP}grace`);
+          content.select(1, 1);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const char = mounted.ref.current?.getUsj()?.content[2];
+      const span = typeof char === "object" ? char.content?.[1] : undefined;
+      expect(span).toMatchObject({ type: "char", marker: "w", lemma: "grace" });
+      mounted.unmount();
+    });
+
+    it("leaves a `\\ca` value as typed when a space goes in front of its separator", async () => {
+      // `\ca 3\ca*` beside its chapter, a space typed between `\ca` and its separator: the value
+      // folds onto the chapter as `3`, with no separator byte in it.
+      const mounted = await mountInView(
+        {
+          type: "USJ",
+          version: "3.1",
+          content: [
+            { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+            { type: "chapter", marker: "c", number: "1" },
+            { type: "char", marker: "ca", content: ["3"] },
+            { type: "para", marker: "p", content: ["depart here"] },
+          ],
+        },
+        oracleView(view),
+      );
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const value = $textContaining("3");
+          value.setTextContent(` ${NBSP}3`);
+          value.select(1, 1);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(mounted.ref.current?.getUsj()?.content[1]).toMatchObject({
+        type: "chapter",
+        altnumber: "3",
+      });
+      mounted.unmount();
+    });
+  },
+);
+
+describe.each(["standard", "unformatted"])(
+  "a byte typed at the boundary between an opening glyph and its separator (%s view)",
+  (view) => {
+    // The caret between `\w` and its separator can sit at the glyph's end or at the front of the
+    // content text, and a selection listener moves the second onto the first before the next
+    // keystroke. The two look the same on screen, so a byte typed at either saves the same file.
+    // `|` and a space go behind the separator; `*` and `\` read with the marker in front of them.
+    const usj = twoParaUsj(["a ", { type: "char", marker: "w", content: ["grace"] }, " b"]);
+    it.each([
+      ["|", ["a ", { type: "char", marker: "w", lemma: "grace" }, " b"]],
+      [" ", ["a ", { type: "char", marker: "w", content: [" grace"] }, " b"]],
+      [
+        "*",
+        [
+          "a ",
+          { type: "unmatched", marker: "w*" },
+          " grace",
+          { type: "unmatched", marker: "w*" },
+          " b",
+        ],
+      ],
+      ["\\", ["a ", { type: "char", marker: "w", content: ["\\ grace"] }, " b"]],
+    ])(
+      "%j saves the same at the glyph's end and in front of the separator",
+      async (byte, saved) => {
+        const results: unknown[] = [];
+        for (const caret of ["glyph end", "content front"]) {
+          const mounted = await mountInView(usj, oracleView(view));
+          // Place the caret, then type: two updates, as a user's click and keystroke are.
+          await act(async () => {
+            mounted.lexical.update(() => $textContaining("grace").select(0, 0));
+            await Promise.resolve();
+          });
+          await act(async () => {
+            mounted.lexical.update(() => {
+              if (caret === "content front") {
+                const content = $textContaining("grace");
+                content.setTextContent(byte + content.getTextContent());
+                content.select(1, 1);
+                return;
+              }
+              const selection = $getSelection();
+              if (!$isRangeSelection(selection)) throw new Error("no caret");
+              selection.insertText(byte);
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+          });
+          await act(async () => {
+            mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
+            mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
+            await Promise.resolve();
+            await Promise.resolve();
+          });
+          act(() => mounted.ref.current?.commitPendingMarkerEdits());
+          const para = mounted.ref.current?.getUsj()?.content[2];
+          results.push(typeof para === "object" ? para.content : undefined);
+          mounted.unmount();
+        }
+        expect(results).toEqual([saved, saved]);
+      },
+    );
+  },
+);

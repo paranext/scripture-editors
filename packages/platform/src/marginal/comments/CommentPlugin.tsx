@@ -22,6 +22,7 @@ import { mergeRegister, registerNestedElementResolver } from "@lexical/utils";
 import {
   $getNodeByKey,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $isTextNode,
   CLEAR_EDITOR_COMMAND,
@@ -44,14 +45,18 @@ import { createPortal } from "react-dom";
 
 import {
   $createTypedMarkNode,
-  $getMarkIDs,
   $isTypedMarkNode,
-  $unwrapTypedMarkNode,
   $wrapSelectionInTypedMarkNode,
   COMMENT_MARK_TYPE,
   LoggerBasic,
   TypedMarkNode,
 } from "shared";
+import { DisplayAnnotationIndex, useDisplayAnnotationIndex } from "shared-react";
+import {
+  $commentIdsAt,
+  $removeCommentAnnotation,
+  $selectFirstCommentCarrier,
+} from "./commentAnnotations.utils";
 import {
   CommentBase,
   Comments,
@@ -515,6 +520,7 @@ function CommentsPanelList({
   activeIDs,
   comments,
   deleteCommentOrThread,
+  displayIndex,
   listRef,
   submitAddComment,
   markNodeMap,
@@ -522,6 +528,7 @@ function CommentsPanelList({
   activeIDs: string[];
   comments: Comments;
   deleteCommentOrThread: (commentOrThread: CommentBase | Thread, thread?: Thread) => void;
+  displayIndex: DisplayAnnotationIndex;
   listRef: { current: null | HTMLUListElement };
   markNodeMap: Map<string, Set<NodeKey>>;
   submitAddComment: (
@@ -559,13 +566,15 @@ function CommentsPanelList({
       {comments.map((commentOrThread) => {
         const id = commentOrThread.id;
         if (commentOrThread.type === "thread") {
+          const alreadyActive = activeIDs !== null && activeIDs.indexOf(id) !== -1;
+          // A mark holds the id: move the caret to its start. Held only on display bytes (a
+          // verse number, a glyph, a decorator): move it to the start of the first carrier
+          // instead, in document order, since there is no mark to start from.
           const handleClickThread = () => {
+            if (alreadyActive) return;
             const markNodeKeys = markNodeMap.get(id);
-            if (
-              markNodeKeys !== undefined &&
-              (activeIDs === null || activeIDs.indexOf(id) === -1)
-            ) {
-              const activeElement = document.activeElement;
+            const activeElement = document.activeElement;
+            if (markNodeKeys !== undefined) {
               // Move selection to the start of the mark, so that we
               // update the UI with the selected thread.
               editor.update(
@@ -585,15 +594,35 @@ function CommentsPanelList({
                   },
                 },
               );
+              return;
             }
+            const carrierKeys = displayIndex.keysFor(COMMENT_MARK_TYPE, id);
+            if (carrierKeys.size === 0) return;
+            editor.update(
+              () => {
+                $selectFirstCommentCarrier(id, carrierKeys);
+              },
+              {
+                onUpdate() {
+                  if (activeElement !== null) {
+                    (activeElement as HTMLElement).focus();
+                  }
+                },
+              },
+            );
           };
 
+          // "interactive"/"active" are read during render, like `markNodeMap`: a carrier change
+          // shows on the panel's next render, which every comment-store and selection change
+          // triggers.
           return (
             <li
               key={id}
               onClick={handleClickThread}
               className={`CommentPlugin_CommentsPanel_List_Thread ${
-                markNodeMap.has(id) ? "interactive" : ""
+                markNodeMap.has(id) || displayIndex.keysFor(COMMENT_MARK_TYPE, id).size > 0
+                  ? "interactive"
+                  : ""
               } ${activeIDs.indexOf(id) === -1 ? "" : "active"}`}
             >
               <div className="CommentPlugin_CommentsPanel_List_Thread_QuoteBox">
@@ -658,10 +687,12 @@ function CommentsPanel({
   comments,
   submitAddComment,
   markNodeMap,
+  displayIndex,
 }: {
   activeIDs: string[];
   comments: Comments;
   deleteCommentOrThread: (commentOrThread: CommentBase | Thread, thread?: Thread) => void;
+  displayIndex: DisplayAnnotationIndex;
   markNodeMap: Map<string, Set<NodeKey>>;
   submitAddComment: (
     commentOrThread: CommentBase | Thread,
@@ -682,6 +713,7 @@ function CommentsPanel({
           activeIDs={activeIDs}
           comments={comments}
           deleteCommentOrThread={deleteCommentOrThread}
+          displayIndex={displayIndex}
           listRef={listRef}
           submitAddComment={submitAddComment}
           markNodeMap={markNodeMap}
@@ -724,6 +756,7 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
   const markNodeMap = useMemo<Map<string, Set<NodeKey>>>(() => {
     return new Map();
   }, []);
+  const displayIndex = useDisplayAnnotationIndex(editor);
   const [activeAnchorKey, setActiveAnchorKey] = useState<NodeKey | null>();
   const [activeIDs, setActiveIDs] = useState<string[]>([]);
   const [showCommentInput, setShowCommentInput] = useState(false);
@@ -760,28 +793,21 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
         commentStore.addComment(markedComment, thread, index);
       } else {
         commentStore.deleteCommentOrThread(comment);
-        // Remove ids from associated marks
+        // Remove ids from associated marks and display bytes
         const id = thread !== undefined ? thread.id : comment.id;
         const markNodeKeys = markNodeMap.get(id);
-        if (markNodeKeys !== undefined) {
+        const displayKeys = displayIndex.keysFor(COMMENT_MARK_TYPE, id);
+        if ((markNodeKeys !== undefined && markNodeKeys.size > 0) || displayKeys.size > 0) {
           // Do async to avoid causing a React infinite loop
           setTimeout(() => {
             editor.update(() => {
-              for (const key of markNodeKeys) {
-                const node: TypedMarkNode | null = $getNodeByKey(key);
-                if ($isTypedMarkNode(node)) {
-                  node.deleteID(COMMENT_MARK_TYPE, id);
-                  if (node.hasNoIDsForEveryType()) {
-                    $unwrapTypedMarkNode(node);
-                  }
-                }
-              }
+              $removeCommentAnnotation(id, markNodeKeys ?? [], displayKeys);
             });
           });
         }
       }
     },
-    [commentStore, editor, markNodeMap],
+    [commentStore, displayIndex, editor, markNodeMap],
   );
 
   const submitAddComment = useCallback(
@@ -795,6 +821,9 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
       if (isInlineComment) {
         editor.update(() => {
           if ($isRangeSelection(selection)) {
+            // A comment on display bytes alone (a verse number, a glyph, an attribute value) is
+            // allowed, but getUsj() carries no zmsc for display bytes, so a reload leaves its
+            // thread without an anchor.
             $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, commentOrThread.id);
           }
         });
@@ -808,19 +837,26 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
     const changedElems: HTMLElement[] = [];
     let showCommentsTimeoutId: number | undefined;
 
+    const showComments = () => {
+      showCommentsTimeoutId = window.setTimeout(() => {
+        setShowComments(true);
+      }, 0);
+    };
     for (const id of activeIDs) {
-      const keys = markNodeMap.get(id);
-      if (keys !== undefined) {
-        for (const key of keys) {
-          const elem = editor.getElementByKey(key);
-          if (elem !== null) {
-            elem.classList.add("selected");
-            changedElems.push(elem);
-            showCommentsTimeoutId = window.setTimeout(() => {
-              setShowComments(true);
-            }, 0);
-          }
+      const keys = markNodeMap.get(id) ?? [];
+      for (const key of keys) {
+        const elem = editor.getElementByKey(key);
+        if (elem !== null) {
+          elem.classList.add("selected");
+          changedElems.push(elem);
+          showComments();
         }
+      }
+      // Display bytes may hold the comment over only part of their text, so the index paints the
+      // state on exactly that part.
+      if (displayIndex.keysFor(COMMENT_MARK_TYPE, id).size > 0) {
+        displayIndex.setStateClass(COMMENT_MARK_TYPE, id, "selected", true);
+        showComments();
       }
     }
 
@@ -831,8 +867,10 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
       for (const changedElem of changedElems) {
         changedElem.classList.remove("selected");
       }
+      for (const id of activeIDs)
+        displayIndex.setStateClass(COMMENT_MARK_TYPE, id, "selected", false);
     };
-  }, [activeIDs, editor, markNodeMap]);
+  }, [activeIDs, displayIndex, editor, markNodeMap]);
 
   useEffect(() => {
     if (!editor.hasNodes([TypedMarkNode]))
@@ -903,18 +941,35 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
           let hasAnchorKey = false;
 
           if ($isRangeSelection(selection)) {
-            const anchorNode = selection.anchor.getNode();
+            const { anchor } = selection;
+            const anchorNode = anchor.getNode();
 
             if ($isTextNode(anchorNode)) {
-              const commentIDs =
-                $getMarkIDs(anchorNode, COMMENT_MARK_TYPE, selection.anchor.offset) ?? [];
-              if (commentIDs !== null) {
-                setActiveIDs(commentIDs);
-                hasActiveIds = true;
-              }
+              const commentIDs = $commentIdsAt(anchorNode, anchor.offset);
+              setActiveIDs(commentIDs);
+              hasActiveIds = true;
               if (!selection.isCollapsed()) {
                 setActiveAnchorKey(anchorNode.getKey());
                 hasAnchorKey = true;
+              }
+            } else if (anchor.type === "element" && $isElementNode(anchorNode)) {
+              // An element point sits between two children; a carrier on either side (the caret
+              // directly in front of, or just after, one) can hold an id no text point names. The
+              // child BEFORE the caret is read at its own text length — the caret sits at its END,
+              // not its start — while a decorator has no text of its own, so 0 is its only offset.
+              const children = anchorNode.getChildren();
+              const commentIDs = new Set<string>();
+              for (const [child, isBefore] of [
+                [children[anchor.offset - 1], true],
+                [children[anchor.offset], false],
+              ] as const) {
+                if (!child) continue;
+                const offset = isBefore && $isTextNode(child) ? child.getTextContentSize() : 0;
+                $commentIdsAt(child, offset).forEach((commentID) => commentIDs.add(commentID));
+              }
+              if (commentIDs.size > 0) {
+                setActiveIDs([...commentIDs]);
+                hasActiveIds = true;
               }
             }
           }
@@ -991,6 +1046,7 @@ export default function CommentPlugin<TLogger extends LoggerBasic>({
             deleteCommentOrThread={deleteCommentOrThread}
             activeIDs={activeIDs}
             markNodeMap={markNodeMap}
+            displayIndex={displayIndex}
           />,
           commentContainerRef?.current ?? document.body,
         )}

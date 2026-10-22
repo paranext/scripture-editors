@@ -731,11 +731,11 @@ describe("text/html carries the same USFM bytes as text/plain", () => {
   });
 
   it("round-trips a note caller through an html-ONLY paste of this editor's own copy", async () => {
-    // The gap this closes: a real Ctrl+V always carries `text/plain`, but a clipboard intermediary
-    // that keeps only `text/html` used to strip a collapsed note's caller (the export carried it as
-    // an attribute, so the decoded text had `\f \fr …` with nothing where the caller belonged, and
-    // the paste rewrote it to the generated `+`). Dropping `text/plain` AND the lexical flavor from
-    // the payload is what forces the html carrier to answer on its own.
+    // A real Ctrl+V always carries `text/plain`, but a clipboard intermediary that keeps only
+    // `text/html` must still recover a collapsed note's caller from it: the export carries the
+    // caller as an attribute, so a decode that missed it would leave `\f \fr …` with nothing where
+    // the caller belonged and the paste would rewrite it to the generated `+`. Dropping
+    // `text/plain` AND the lexical flavor from the payload here forces exactly that path.
     initializeDeserialize(undefined);
     const usj = noteUsj("-");
     const { editor: sourceEditor } = await renderUsjEditor(usj);

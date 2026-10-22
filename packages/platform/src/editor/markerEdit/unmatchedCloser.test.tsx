@@ -15,7 +15,9 @@ import {
 } from "./markerEdit.test-helpers";
 import { $dfs } from "@lexical/utils";
 import { act } from "@testing-library/react";
-import { $createTextNode, $getRoot, $isTextNode, $setState } from "lexical";
+import { $createTextNode, $getRoot, $isTextNode, $setState, CLICK_COMMAND } from "lexical";
+import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import {
   $createCharNode,
   $createImmutableUnmatchedNode,
@@ -28,6 +30,7 @@ import {
   ImmutableUnmatchedNode,
   NBSP,
   textTypeState,
+  usfmFragmentToUsjContent,
 } from "shared";
 
 function $firstPara() {
@@ -222,3 +225,52 @@ describe("an unmatched closer is editable text", () => {
     });
   });
 });
+
+describe.each(["standard", "unformatted"])(
+  "an unmatched marker's bytes typed into (%s view)",
+  (view) => {
+    it("saves the marker the bytes spell, not the one the node was made from", async () => {
+      // `\qt-s\*` with the closer's `\` deleted settles at once into an unmatched `\qt-s*`; `x`
+      // typed into it then shows `\qt-sx*`, so the file gets that unmatched marker too.
+      const mounted = await mountInView(
+        twoParaUsj(["a ", { type: "ms", marker: "qt-s" }, "b"]),
+        oracleView(view),
+      );
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const closer = $getRoot()
+            .getAllTextNodes()
+            .find((text) => text.getTextContent() === "\\*");
+          if (!closer) throw new Error("no milestone closer");
+          closer.setTextContent("*");
+          closer.select(0, 0);
+        });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const unmatched = $dfs($getRoot())
+            .map(({ node }) => node)
+            .find($isImmutableUnmatchedNode);
+          if (!unmatched) throw new Error("the milestone did not settle as an unmatched marker");
+          unmatched.setTextContent("\\qt-sx*");
+          unmatched.select(5, 5);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const pending = mounted.ref.current?.getUsj()?.content[2];
+      await act(async () => {
+        mounted.lexical.dispatchCommand(CLICK_COMMAND, new MouseEvent("click"));
+        mounted.lexical.update(() => $textContaining("depart here").select(1, 1));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      act(() => mounted.ref.current?.commitPendingMarkerEdits());
+      const settled = mounted.ref.current?.getUsj()?.content[2];
+      expect(settled).toEqual(usfmFragmentToUsjContent("\\p a \\qt-sx*b")[0]);
+      expect(pending).toEqual(settled);
+      mounted.unmount();
+    });
+  },
+);

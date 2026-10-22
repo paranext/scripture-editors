@@ -183,7 +183,7 @@ describe("$settledUsj — paragraph scopes", () => {
 
     // Rename BOTH paragraphs' glyphs in place and leave both pending — so both scopes land in
     // the engine's live pended-owner set, proving the refusal below is a per-scope decision made
-    // inside `$settledParaNodes`, not a short-circuit that abandons the whole document.
+    // inside `$settledParaScope`, not a short-circuit that abandons the whole document.
     await act(async () => {
       editor.update(() => {
         const [firstPara, secondPara] = $getRoot().getChildren().filter($isParaNode);
@@ -232,7 +232,7 @@ describe("$settledUsj — paragraph scopes", () => {
     // deleted (pends the UnknownNode via $pendOwnersOfDestroyed, displayRunOwner.utils.ts's
     // $ownerOfRunPiece), and a bare rename on the paragraph's own prefix glyph (Tier 1's
     // unconditional "stays pending" shape). The rename routes this paragraph through
-    // $settledParaNodes, which rebuilds it from the LIVE tree — where the husk is STILL physically
+    // $settledParaScope, which rebuilds it from the LIVE tree — where the husk is STILL physically
     // attached, since this settle never mutates the editor.
     await act(async () => {
       editor.update(() => {
@@ -484,8 +484,8 @@ describe("$settledUsj — expanded note scopes", () => {
       const callerNode = $createTextNode(getEditableCallerText("+"));
       // An implicitly-closed char span (no closing MarkerNode child, matching the
       // `closed="false"` footnote-content convention elsewhere in this test suite) — its own
-      // opening glyph gets renamed below, mirroring the settling note test, except this time the
-      // enclosing note stays collapsed, so the rename must never reach the tokenizer.
+      // opening glyph gets a nesting `+` typed below, an edit only a re-tokenization can apply,
+      // except this time the enclosing note stays collapsed, so it must never reach the tokenizer.
       const boldChar = $createCharNode("bd");
       boldChar.append($createMarkerNode("bd"), $createTextNode(`${NBSP}bold text`));
       note.append($createMarkerNode("f"), callerNode, boldChar, $createMarkerNode("f", "closing"));
@@ -501,11 +501,13 @@ describe("$settledUsj — expanded note scopes", () => {
       $getRoot().append(refusingPara, settlingPara);
     });
 
-    // Rename the char span's opening glyph inside the collapsed note, and the unrelated
+    // Nest the char span's opening glyph inside the collapsed note, and rename the unrelated
     // paragraph's own opening glyph, in the SAME update — both bare (no trailing space), which
     // Tier 1 unconditionally pends without ever needing a live caret/selection. Both scopes land
     // in the engine's live pended-owner set, proving the refusal below is a per-scope decision
-    // made inside `$settledNoteContent`, not a short-circuit that abandons the whole document.
+    // made inside `$settledNoteScope`, not a short-circuit that abandons the whole document. (A
+    // plain rename such as `\it` would not do: Tier 1 renames a span in place wherever it sits,
+    // collapsed note or not, so both settles apply it.)
     await act(async () => {
       editor.update(() => {
         const [refusingPara, settlingPara] = $getRoot().getChildren().filter($isParaNode);
@@ -515,7 +517,7 @@ describe("$settledUsj — expanded note scopes", () => {
         if (!boldChar) throw new Error("expected a char span inside the note");
         const boldGlyph = boldChar.getFirstChild();
         if (!$isMarkerNode(boldGlyph)) throw new Error("expected the char span's opening glyph");
-        $pendGlyphEdit(boldGlyph, "\\it");
+        $pendGlyphEdit(boldGlyph, "\\+bd");
 
         const settlingGlyph = settlingPara?.getFirstChild();
         if (!$isMarkerNode(settlingGlyph)) throw new Error("expected settlingPara's prefix glyph");
@@ -634,7 +636,7 @@ describe("$settledUsj — expanded note scopes", () => {
 
     // Two INDEPENDENT pends INSIDE THE SAME NOTE, in the SAME update: the husk's own token
     // deleted, and a bare rename on an unrelated char span's opening glyph living in the same
-    // note's content — the shape that routes the note through $settledNoteContent, which
+    // note's content — the shape that routes the note through $settledNoteScope, which
     // rebuilds it from the LIVE tree, where the husk is STILL physically attached.
     await act(async () => {
       editor.update(() => {
@@ -704,7 +706,7 @@ describe("$settledUsj — expanded note scopes", () => {
     });
 
     // A single, bare rename on the char span AFTER the sentinel — the ONLY pend in this update,
-    // routing the note through $settledNoteContent alone (no co-settling husk this time).
+    // routing the note through $settledNoteScope alone (no co-settling husk this time).
     await act(async () => {
       editor.update(() => {
         const para = $getRoot().getChildren().find($isParaNode);
@@ -776,7 +778,7 @@ describe("$settledUsj — expanded note scopes", () => {
 
     // Half-type over the char span's plain content, and rename an UNRELATED paragraph's own
     // opening glyph, in the SAME update — both bare/pending, proving the refusal below is a
-    // per-scope decision made inside `$settledNoteContent`, not a short-circuit that abandons the
+    // per-scope decision made inside `$settledNoteScope`, not a short-circuit that abandons the
     // whole document (mirroring the collapsed-note refusal test above). Appends onto the existing
     // text (leaving its own leading structural NBSP untouched), not a wholesale overwrite — see
     // the fixture's own doc comment for why that distinction matters here.

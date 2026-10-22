@@ -14,6 +14,7 @@ import {
 } from "./react-test.utils";
 import { act } from "@testing-library/react";
 import {
+  $createRangeSelection,
   $createTextNode,
   $getRoot,
   $isTextNode,
@@ -41,11 +42,13 @@ import {
   $isUnknownNode,
   $isVisibleMarkerNode,
   $verseAttributeRunPieces,
+  $wrapSelectionInTypedMarkNode,
   displayRunDescriptor,
   NBSP,
   openingMarkerText,
   ParaNode,
   textTypeState,
+  TYPED_MARK_WRAP_TAG,
   UnknownNode,
   VerseNode,
 } from "shared";
@@ -150,7 +153,7 @@ describe("TextSpacingPlugin", () => {
       // survives, because the caret then simply stays inside the leftover text node.
       $expectSelectionToBe(para, 1);
       // [verse 1, verse 2] — no exporter-visible content item for the now-empty verse.
-      expect($getLogicalContentItems(para)).toHaveLength(2);
+      expect($getLogicalContentItems(para, false)).toHaveLength(2);
       expect(para.getTextContent()).toBe("");
     });
   });
@@ -188,9 +191,12 @@ describe("TextSpacingPlugin", () => {
 
     editor.getEditorState().read(() => {
       // Logical index 2 is the tail text in core's shape; it must be the tail text here too.
-      const range = $getRangeFromUsjSelection({
-        start: { jsonPath: "$.content[0].content[2]", offset: 1 },
-      });
+      const range = $getRangeFromUsjSelection(
+        {
+          start: { jsonPath: "$.content[0].content[2]", offset: 1 },
+        },
+        undefined,
+      );
       if (!range) throw new Error("Expected the USJ selection to resolve");
       // `tailText` is assigned in the setup callback above.
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -428,7 +434,7 @@ describe("TextSpacingPlugin", () => {
       // [verse 1, verse 2] — the empty verse contributes no content item. Asserted on logical
       // content items rather than children so this stays invariant to whether Lexical has yet
       // garbage-collected the emptied text node.
-      expect($getLogicalContentItems(para)).toHaveLength(2);
+      expect($getLogicalContentItems(para, false)).toHaveLength(2);
       expect(para.getTextContent()).toBe("");
     });
   });
@@ -486,6 +492,108 @@ describe("TextSpacingPlugin", () => {
       const unknown = para.getFirstChild();
       if (!$isUnknownNode(unknown)) throw new Error("Expected an UnknownNode");
       expect(unknown.getTextContent()).toBe("a caption");
+    });
+  });
+
+  it("keeps a mark wrap's split-off sibling inside a pre-existing UnknownNode; the same split without the tag is still moved out", async () => {
+    /** Splits the pre-existing figure's `"caption"` text after its first letter and wraps the
+     * first piece in a mark, the shape `$wrapSelectionInTypedMarkNode` itself leaves behind: a
+     * plain `TextNode` ("aption") that is a new sibling inside the `UnknownNode`, never typed
+     * text. Runs in an update carrying `tag` (or no tag) and returns what the figure and its
+     * parent look like afterwards. */
+    async function splitAndMarkFirstPiece(tag?: string): Promise<{
+      figureText: string;
+      paraChildCount: number;
+    }> {
+      let unknownNode: UnknownNode;
+      const { editor } = await testEnvironment(() => {
+        unknownNode = $createUnknownNode("figure", "fig").append($createTextNode("caption"));
+        $getRoot().append($createParaNode().append(unknownNode, $createImmutableVerseNode("1")));
+      });
+
+      await act(async () => {
+        editor.update(
+          () => {
+            const para = $getRoot().getFirstChild();
+            if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+            const unknown = para.getFirstChild();
+            if (!$isUnknownNode(unknown)) throw new Error("Expected an UnknownNode");
+            const original = unknown.getFirstChild();
+            if (!$isTextNode(original)) throw new Error("Expected a TextNode");
+            const [head] = original.splitText(1); // "c" (this node) / "aption" (new sibling).
+            const mark = $createTypedMarkNode();
+            mark.addID("test", "m1");
+            head.insertBefore(mark);
+            mark.append(head); // "aption" stays a plain sibling in the UnknownNode.
+          },
+          tag ? { tag } : undefined,
+        );
+      });
+
+      return editor.getEditorState().read(() => {
+        const para = $getRoot().getFirstChild();
+        if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+        const unknown = para.getFirstChild();
+        if (!$isUnknownNode(unknown)) throw new Error("Expected an UnknownNode");
+        return { figureText: unknown.getTextContent(), paraChildCount: para.getChildren().length };
+      });
+    }
+
+    const tagged = await splitAndMarkFirstPiece(TYPED_MARK_WRAP_TAG);
+    expect(tagged.figureText).toBe("caption");
+    expect(tagged.paraChildCount).toBe(2); // [UnknownNode, VerseNode] — "aption" stayed.
+
+    const untagged = await splitAndMarkFirstPiece();
+    expect(untagged.figureText).toBe("c");
+    expect(untagged.paraChildCount).toBe(3); // [UnknownNode, TextNode("aption"), VerseNode]
+  });
+
+  it("a wrap call covering no byte does not leave its tag for the next commit's real typing", async () => {
+    let unknownNode: UnknownNode;
+    let elsewhereText: TextNode;
+    const { editor } = await testEnvironment(() => {
+      elsewhereText = $createTextNode("elsewhere");
+      unknownNode = $createUnknownNode("figure", "fig"); // Pre-existing, empty — no caption yet.
+      $getRoot().append(
+        $createParaNode().append(elsewhereText),
+        $createParaNode().append(unknownNode, $createImmutableVerseNode("1")),
+      );
+    });
+
+    // A zero-width range on unrelated text: nothing for the wrap to split or move. The commit
+    // still goes through because `$setSelection` leaves the selection dirty, even though no node
+    // is.
+    await act(async () => {
+      editor.update(() => {
+        const selection = $createRangeSelection();
+        selection.anchor.set(elsewhereText.getKey(), 0, "text");
+        selection.focus.set(elsewhereText.getKey(), 0, "text");
+        $setSelection(selection);
+        $wrapSelectionInTypedMarkNode(selection, "test", "m1");
+      });
+    });
+
+    // A later, separate commit plants the figure's first caption text — a genuinely new node
+    // with no existing sibling to land beside, the shape `$textNodeInUnknownTransform`'s
+    // `wasNodeCreated` check exists for.
+    await act(async () => {
+      editor.update(() => {
+        unknownNode.append($createTextNode("d"));
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      const para = $getRoot().getChildAtIndex(1);
+      if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
+      // Handled exactly as it would be without the earlier wrap call: [UnknownNode (still
+      // empty), TextNode("d "), VerseNode].
+      expect(para.getChildren()).toHaveLength(3);
+      const typedTextNode = para.getChildAtIndex(1);
+      if (!$isTextNode(typedTextNode)) throw new Error("Expected a TextNode");
+      expect(typedTextNode.getTextContent()).toBe("d ");
+      const originalUnknownNode = para.getChildAtIndex(0);
+      expect(originalUnknownNode?.getKey()).toBe(unknownNode.getKey());
+      expect(originalUnknownNode?.getTextContent()).toBe("");
     });
   });
 
@@ -738,7 +846,7 @@ describe("TextSpacingPlugin", () => {
       const para = $getRoot().getFirstChild();
       if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
       // [verse 1, "the beginning ", verse 2] — space coalesced into the run, no index shift.
-      expect($getLogicalContentItems(para)).toHaveLength(3);
+      expect($getLogicalContentItems(para, false)).toHaveLength(3);
       expect(para.getTextContent()).toBe("the beginning ");
     });
   });
@@ -769,11 +877,65 @@ describe("TextSpacingPlugin", () => {
       if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
       // [verse 1, "text ", char, " ", verse 2] — the structural space is its own content item,
       // exactly as canonical USJ from Paratext has it.
-      const items = $getLogicalContentItems(para);
+      const items = $getLogicalContentItems(para, false);
       expect(items).toHaveLength(5);
       expect(items[3].type).toBe("text");
     });
   });
+
+  it("should not space annotated text before a VerseNode, as it does not space bare text there", async () => {
+    // A VerseNode is the verse of the views that show marker text, where text abutting a verse is
+    // left as the source has it; the annotation wrapper must not change that.
+    const { editor } = await testEnvironment(() => {
+      $getRoot().append(
+        $createParaNode().append(
+          $createTextNode("the "),
+          $createTypedMarkNode({ t: ["1"] }).append($createTextNode("beginning")),
+          $createVerseNode("2", `\\v 2${NBSP}`),
+          $createTextNode("God said"),
+        ),
+      );
+      $getRoot().append(
+        $createParaNode().append(
+          $createTextNode("the beginning"),
+          $createVerseNode("2", `\\v 2${NBSP}`),
+          $createTextNode("God said"),
+        ),
+      );
+    });
+
+    await act(async () => editor.update(() => undefined));
+
+    editor.getEditorState().read(() => {
+      const [annotated, bare] = $getRoot().getChildren();
+      expect(annotated.getTextContent()).toBe(`the beginning\\v 2${NBSP}God said`);
+      expect(bare.getTextContent()).toBe(`the beginning\\v 2${NBSP}God said`);
+    });
+  });
+
+  it.each<[string, () => LexicalNode, string]>([
+    ["VerseNode", () => $createVerseNode("2", `\\v 2${NBSP}`), `foo\\v 2${NBSP}`],
+    ["ImmutableVerseNode", () => $createImmutableVerseNode("2"), "foo "],
+  ])(
+    "should settle a %s inside an annotation wrapper instead of looping",
+    async (_label, $verse, expected) => {
+      // The verse's own predecessor is the wrapped text, so once a space is inserted in front of
+      // the verse it is that space the next pass sees.
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append(
+          $createParaNode().append(
+            $createTypedMarkNode({ t: ["1"] }).append($createTextNode("foo"), $verse()),
+          ),
+        );
+      });
+
+      await act(async () => editor.update(() => undefined));
+
+      editor.getEditorState().read(() => {
+        expect($getRoot().getFirstChildOrThrow().getTextContent()).toBe(expected);
+      });
+    },
+  );
 
   it("should not insert a space before a verse for an empty annotation wrapper", async () => {
     // An empty TypedMarkNode resolves to no content, so no structural space belongs after it —
@@ -796,7 +958,7 @@ describe("TextSpacingPlugin", () => {
       const para = $getRoot().getFirstChild();
       if (!$isParaNode(para)) throw new Error("Expected a ParaNode");
       // [verse 1, "a ", verse 2] — no double space, no extra content item.
-      expect($getLogicalContentItems(para)).toHaveLength(3);
+      expect($getLogicalContentItems(para, false)).toHaveLength(3);
       expect(para.getTextContent()).toBe("a ");
     });
   });

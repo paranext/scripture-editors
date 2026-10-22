@@ -1,3 +1,5 @@
+import { ViewOptions } from "../../../views/view-options.utils";
+import { useDisplayAnnotationIndex } from "./displayAnnotations.index";
 import { AnnotationRange } from "./selection.model";
 import { $getRangeFromUsjSelection } from "./selection.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -5,11 +7,17 @@ import { mergeRegister, registerNestedElementResolver } from "@lexical/utils";
 import { $getNodeByKey, LexicalEditor, NodeKey } from "lexical";
 import { ForwardedRef, forwardRef, useEffect, useImperativeHandle, useMemo } from "react";
 import {
+  $coveredDisplayText,
   $createTypedMarkNode,
+  $displayAnnotationsOf,
   $isTypedMarkNode,
-  $unwrapTypedMarkNode,
+  $removeDisplayAnnotation,
+  $removeTypedMarkId,
   $wrapSelectionInTypedMarkNode,
   ANNOTATION_CHANGE_TAG,
+  DecoratorHold,
+  deleteDisplayAnnotationRegistration,
+  getDisplayAnnotationRegistration,
   LoggerBasic,
   TypedIDs,
   TypedMarkNode,
@@ -31,6 +39,9 @@ export interface AnnotationRef {
     onMouseLeave?: TypedMarkOnMouseLeave,
   ): void;
   removeAnnotation(type: string, id: string): void;
+  /** DOM ranges over everything `type`/`id` paints, in document order (see
+   * `DisplayAnnotationIndex.rangesFor`). */
+  getAnnotationRanges(type: string, id: string): Range[];
 }
 
 function getTypeIDMapKey(type: string, id: string): string {
@@ -131,7 +142,14 @@ function useAnnotations(editor: LexicalEditor, markNodeMap: Map<string, Set<Node
 }
 
 export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger extends LoggerBasic>(
-  { logger }: { logger?: TLogger },
+  {
+    logger,
+    viewOptions,
+  }: {
+    logger?: TLogger;
+    /** The editor's view options, which decide how its text maps to USJ offsets. */
+    viewOptions: ViewOptions | undefined;
+  },
   ref: ForwardedRef<AnnotationRef>,
 ) {
   const [editor] = useLexicalComposerContext();
@@ -139,26 +157,49 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
     return new Map();
   }, []);
   useAnnotations(editor, markNodeMap);
+  const displayIndex = useDisplayAnnotationIndex(editor);
 
   /**
-   * Removes all mark nodes associated with the given type/id pair.
+   * Removes every mark and every display-byte range for the type/id pair. Each mark reports its
+   * removal itself (`deleteID`, one call per mark); an annotation no mark holds reports it here,
+   * once — unless the host has already heard of its removal since it was last set (a mark that
+   * held it reported its own deletion).
    *
-   * @param type - Annotation type to remove.
-   * @param id - Annotation ID to remove.
-   * @param nodeKeys - Optional set of known node keys for this type/id. When omitted, keys are
-   *   computed from the shared mark node map.
+   * @param nodeKeys - The caller's own snapshot of the mark keys, when it already has one (from
+   *   `markNodeMap`); omitted, this looks the keys up itself.
    */
-  const $removeMarkNodesForTypeID = (type: string, id: string, nodeKeys?: Set<NodeKey>) => {
-    const keys = Array.from(nodeKeys ?? markNodeMap.get(getTypeIDMapKey(type, id)) ?? []);
-    if (keys.length === 0) return;
-
-    for (const key of keys) {
-      const node: TypedMarkNode | null = $getNodeByKey(key);
-      if ($isTypedMarkNode(node)) {
-        node.deleteID(type, id);
-        if (node.hasNoIDsForEveryType()) {
-          $unwrapTypedMarkNode(node);
-        }
+  const $removeAnnotationNodes = (type: string, id: string, nodeKeys?: Set<NodeKey>) => {
+    const markKeys = Array.from(nodeKeys ?? markNodeMap.get(getTypeIDMapKey(type, id)) ?? []);
+    const markCount = $removeTypedMarkId(type, id, markKeys);
+    const covered: string[] = [];
+    for (const key of Array.from(displayIndex.keysFor(type, id))) {
+      const node = $getNodeByKey(key);
+      if (!node) continue;
+      const held = $displayAnnotationsOf(node).filter(
+        (annotation) => annotation.type === type && annotation.id === id,
+      );
+      if ($removeDisplayAnnotation(node, type, id))
+        covered.push(...held.map((annotation) => $coveredDisplayText(node, annotation)));
+    }
+    const registration = getDisplayAnnotationRegistration(editor, type, id);
+    deleteDisplayAnnotationRegistration(editor, type, id);
+    // Without this, a host's removeAnnotation on an annotation held only on display bytes would
+    // report nothing, and core would never call the extension's interactionCommand.
+    if (
+      covered.length > 0 &&
+      registration &&
+      markCount === 0 &&
+      !displayIndex.hasReported(type, id)
+    ) {
+      displayIndex.noteReported(type, id);
+      try {
+        registration.onRemove?.(type, id, "removed", covered.join(""));
+      } catch (error) {
+        // Thrown here, a host's error would make Lexical discard this removal. The editor's error
+        // handler gets it once the update is done instead.
+        queueMicrotask(() =>
+          editor._onError(error instanceof Error ? error : new Error(String(error))),
+        );
       }
     }
   };
@@ -181,23 +222,41 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
 
       editor.update(
         () => {
-          // Apply the annotation to the selected range.
-          const editorSelection = $getRangeFromUsjSelection(selection);
+          // Apply the annotation to the selected range. This first resolution only decides whether
+          // there is a range to annotate; nothing is touched when there is not.
+          const editorSelection = $getRangeFromUsjSelection(selection, viewOptions, {
+            forAnnotation: true,
+            decoratorHolds: new Map<NodeKey, DecoratorHold>(),
+          });
           if (editorSelection === undefined) {
             logger?.error("Failed to find start or end node of the annotation.");
             return;
           }
 
-          $removeMarkNodesForTypeID(type, id);
+          $removeAnnotationNodes(type, id);
+          displayIndex.noteSet(type, id);
+
+          // Removing the id's old marks re-indexes the tree, so the range resolved above can no
+          // longer be trusted: resolve it again against the tree as it now stands.
+          const freshDecoratorHolds = new Map<NodeKey, DecoratorHold>();
+          const freshSelection = $getRangeFromUsjSelection(selection, viewOptions, {
+            forAnnotation: true,
+            decoratorHolds: freshDecoratorHolds,
+          });
+          if (freshSelection === undefined) {
+            logger?.error("Failed to find start or end node of the annotation.");
+            return;
+          }
 
           $wrapSelectionInTypedMarkNode(
-            editorSelection,
+            freshSelection,
             type,
             id,
             onClick,
             onRemove,
             onMouseEnter,
             onMouseLeave,
+            { decoratorHolds: freshDecoratorHolds },
           );
         },
         { tag: ANNOTATION_CHANGE_TAG },
@@ -212,14 +271,19 @@ export const AnnotationPlugin = forwardRef(function AnnotationPlugin<TLogger ext
         );
 
       const markNodeKeys = markNodeMap.get(getTypeIDMapKey(type, id));
-      if (markNodeKeys === undefined || markNodeKeys.size === 0) return;
+      const noMarks = markNodeKeys === undefined || markNodeKeys.size === 0;
+      if (noMarks && displayIndex.keysFor(type, id).size === 0) return;
 
       editor.update(
         () => {
-          $removeMarkNodesForTypeID(type, id, markNodeKeys);
+          $removeAnnotationNodes(type, id, markNodeKeys);
         },
         { tag: ANNOTATION_CHANGE_TAG },
       );
+    },
+
+    getAnnotationRanges(type, id) {
+      return displayIndex.rangesFor(type, id);
     },
   }));
 

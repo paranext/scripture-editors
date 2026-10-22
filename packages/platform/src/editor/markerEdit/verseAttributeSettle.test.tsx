@@ -20,10 +20,12 @@ import {
 import { $rebuildParas, Tier2Context } from "./tier2Rebuild.utils";
 import { act } from "@testing-library/react";
 import {
+  $addUpdateTag,
   $createRangeSelection,
   $createTextNode,
   $getRoot,
   $getSelection,
+  $hasUpdateTag,
   $isRangeSelection,
   $isTextNode,
   $setSelection,
@@ -43,8 +45,10 @@ import {
   $isParaNode,
   $isVerseNode,
   $verseAttributeRunPieces,
+  DELTA_CHANGE_TAG,
   getMarker as bundledGetMarker,
   getVisibleOpenMarkerText,
+  markApplyingUpdate,
   NBSP,
   textTypeState,
 } from "shared";
@@ -1192,5 +1196,77 @@ describe("verse \\va/\\vp deletion settles (does not resurrect)", () => {
         false,
       );
     });
+  });
+});
+
+describe("a \\va value deletion on the commit after an applied update that moved only the caret", () => {
+  it("still pends the verse from the engine's destroyed-owner listener", async () => {
+    const { editor } = await testEnvironmentWithSpacing(() => {
+      const verse = $createVerseNode(
+        "1",
+        getVisibleOpenMarkerText("v", "1"),
+        undefined,
+        "2",
+        undefined,
+      );
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $createTextNode(NBSP),
+          verse,
+          $createTextNode("In the beginning"),
+        ),
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $createTextNode(NBSP),
+          $createTextNode("body"),
+        ),
+      );
+      $appendVerseAttributeRun(verse, "va", "2");
+    });
+    const $firstVerse = () =>
+      requireDefined(
+        $getRoot().getChildren().filter($isParaNode)[0].getChildren().find($isVerseNode),
+        "verse missing",
+      );
+    const $bodyTextNode = () => {
+      const body = $getRoot().getChildren().filter($isParaNode)[1].getLastChild();
+      if (!$isTextNode(body)) throw new Error("body text node missing");
+      return body;
+    };
+    // A collaborator's apply whose ops the tree already reflects commits only the caret, so
+    // Lexical keeps its tag on the editor for the next commit.
+    markApplyingUpdate(editor, "remote");
+    try {
+      act(() =>
+        editor.update(
+          () => {
+            $addUpdateTag(DELTA_CHANGE_TAG);
+            $bodyTextNode().select(1, 1);
+          },
+          { discrete: true },
+        ),
+      );
+    } finally {
+      markApplyingUpdate(editor, undefined);
+    }
+
+    // The user deletes the `\va` value with the caret elsewhere. Removing a piece inside the wrapper
+    // neither dirties the verse nor leaves a shape the engine pends from the tree alone, so the
+    // pend below comes only from the engine's destroyed-owner listener.
+    let isTagCarriedOver = false;
+    act(() =>
+      editor.update(
+        () => {
+          isTagCarriedOver = $hasUpdateTag(DELTA_CHANGE_TAG);
+          $verseAttributeRunPieces($firstVerse(), "va").value?.remove();
+          $bodyTextNode().select(0, 0);
+        },
+        { discrete: true },
+      ),
+    );
+
+    expect(isTagCarriedOver).toBe(true);
+    editor.read(() => expect($isDisplayOwnerPended($firstVerse())).toBe(true));
   });
 });

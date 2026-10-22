@@ -128,6 +128,15 @@ function renameFigureFileToSrc(attributes: UnknownAttributes): UnknownAttributes
 }
 
 /**
+ * The USJ name of the attribute an `UnknownNode` of kind `tag` displays under `usfmName` — the
+ * inverse of the rename its display applies ({@link unknownDisplayParts}): a figure's `src` bytes
+ * are its USJ `file` attribute. Every other name is the same in both.
+ */
+export function unknownUsjAttributeName(tag: string, usfmName: string): string {
+  return tag === "figure" && usfmName === FIGURE_SRC_ATTRIBUTE ? FIGURE_FILE_ATTRIBUTE : usfmName;
+}
+
+/**
  * The cell's opening marker with its span suffix re-encoded from `colspan`. Exported because a
  * cell's display bytes are built by `ImmutableTableCellNode`'s own adaptor path (the kind stopped
  * being an `UnknownNode`), and both builders must spell a spanning cell the same way. The tokenizer

@@ -1,0 +1,5 @@
+{
+  "unclosed note (standard+protectedNoteShell view)": {
+    "marker \"\\\\ft\"@2 type \"*\" [outside the note]": "By design, not a defect: a closer typed into an unclosed note closes the note there, and what followed it moves after the note in the popover's paragraph. The popover's host takes that text out of the note editor (`EditorRef.getOpsAfterNote`/`takeOpsAfterNote`) and puts it after the note in its own document, so saving the note alone does not lose it; this check sees the text outside the note before the host takes it."
+  }
+}

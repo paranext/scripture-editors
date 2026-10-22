@@ -155,7 +155,7 @@ const Editor = forwardRef(function Editor(
       }
     },
     getSelection() {
-      return editorRef.current?.read(() => $getUsjSelectionFromEditor());
+      return editorRef.current?.read(() => $getUsjSelectionFromEditor(viewOptions));
     },
     setSelection(_selection: SelectionRange) {
       // Implementation needed - will be added later
@@ -225,7 +225,7 @@ const Editor = forwardRef(function Editor(
           `\` and `/` - only guards the non-editable views (mirrors
           packages/platform/src/editor/Editor.tsx). */}
       {viewOptions?.markerMode !== "editable" && <CommandMenuPlugin />}
-      <OnSelectionChangePlugin onChange={onSelectionChange} />
+      <OnSelectionChangePlugin onChange={onSelectionChange} viewOptions={viewOptions} />
       <ParaNodePlugin />
       <TextDirectionPlugin textDirection="auto" />
       <TextSpacingPlugin />
