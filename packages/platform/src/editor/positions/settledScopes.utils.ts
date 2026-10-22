@@ -162,10 +162,12 @@ function $buildScopeFragment(
   }
   if (kind === "chapter") {
     const chapter = nodes.find($isChapterNode);
-    if (!chapter) return undefined;
     // The settled side of a chapter scope can hold more than the chapter and the `\ca`/`\cp`
     // nodes beside it: a span that no longer folds can settle as a paragraph of its own
     // (`\ca3\ca*`), which the chapter's own builder does not read, so its bytes would be missing.
+    // It can also hold no chapter at all, once the line's bytes stop reading as a chapter marker
+    // (`\ 2`, `\sc 2`) and settle as what they now are.
+    if (!chapter) return $buildSettledRootFragment(nodes, tier2.getMarker, tier2.viewOptions);
     const region = new Set([chapter, ...$chapterAdjacentAttributeNodes(chapter)].map(keyOf));
     return nodes.every((node) => region.has(node.getKey()))
       ? $buildChapterFragment(chapter, tier2.getMarker, tier2.viewOptions)

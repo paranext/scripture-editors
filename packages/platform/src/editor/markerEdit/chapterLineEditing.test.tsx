@@ -977,3 +977,60 @@ describe("text typed ahead of a chapter marker", () => {
     expect(ref.current?.getUsj()?.content).toEqual(["x", CHAPTER_2, VERSE_1_PARA, POETRY_PARA]);
   });
 });
+
+describe("the caret on a chapter line that is no longer a chapter", () => {
+  // Once a chapter line's bytes stop reading as a chapter marker (`\ 2` after its `c` is deleted,
+  // `\sc 2` after an `s` is typed into it), the line saves as what it now is. The caret is
+  // reported in that saved document, at its exact place in the line, so a host that replaces the
+  // document can put it back there.
+  async function deleteTheC(lexical: LexicalEditor): Promise<void> {
+    await act(async () =>
+      lexical.update(() => {
+        $glyph().select(1, 2);
+        lexical.dispatchCommand(KEY_DOWN_COMMAND, keyDown("Delete"));
+      }),
+    );
+  }
+
+  async function caretInGlyph(lexical: LexicalEditor, offset: number): Promise<void> {
+    await act(async () => lexical.update(() => $glyph().select(offset, offset)));
+  }
+
+  const NAMELESS_2: MarkerContent = { type: "para", marker: "", content: ["2"] };
+
+  it.each([
+    ["right after the backslash", 1, { jsonPath: "$.content[0]['marker']", propertyOffset: 0 }],
+    ["in front of the number", 2, { jsonPath: "$.content[0].content[0]", offset: 0 }],
+    ["right after the number", 3, { jsonPath: "$.content[0].content[0]", offset: 1 }],
+  ])("`\\ 2` with the caret %s", async (_label, offset, location) => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await deleteTheC(lexical);
+    await caretInGlyph(lexical, offset);
+
+    expect(ref.current?.getUsj()?.content[0]).toEqual(NAMELESS_2);
+    expect(ref.current?.getSelection()).toEqual({ start: location });
+  });
+
+  it("`\\ 2y` with the caret after the typed letter", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await deleteTheC(lexical);
+    await caretInGlyph(lexical, 3);
+    await typeText(lexical, "y");
+
+    expect(ref.current?.getUsj()?.content[0]).toEqual({ ...NAMELESS_2, content: ["2y"] });
+    expect(ref.current?.getSelection()).toEqual({
+      start: { jsonPath: "$.content[0].content[0]", offset: 2 },
+    });
+  });
+
+  it("`\\sc 2` with the caret between the s and the c", async () => {
+    const { ref, lexical } = await mountStandardViewEditor(chapterDoc);
+    await caretInGlyph(lexical, 1);
+    await typeText(lexical, "s");
+
+    expect(ref.current?.getUsj()?.content[0]).toMatchObject({ marker: "sc" });
+    expect(ref.current?.getSelection()).toEqual({
+      start: { jsonPath: "$.content[0]['marker']", propertyOffset: 1 },
+    });
+  });
+});
