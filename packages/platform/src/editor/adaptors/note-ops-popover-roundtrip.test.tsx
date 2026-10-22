@@ -3,18 +3,27 @@
  * CONTENT only (canonical, glyph-free — same shape as non-editable modes), and
  * `$applyUpdate` re-materializes the exact well-formed note shape the USJ adaptor builds.
  *
- * This drives the REAL FootnoteEditor popover flow end-to-end: a host `Editorial` in
- * Standard view (markerMode "editable", noteMode "collapsed") sources a note op via
- * `getNoteOps`, a popover `Editorial` (same options + noteMode "expanded", exactly as the
- * FootnoteEditor memo produces them) receives it via `applyUpdate`, and the popover Save
- * path writes it back into the host via `replaceEmbedUpdate`. The acceptance property is
- * IDEMPOTENCE: ops→apply→ops is a fixed point, the serialized USJ deep-equals the source,
- * and a subsequent `$rebuildNoteContent` neither refuses (sentinel mismatch) nor changes
- * anything (fixed point).
+ * This drives the REAL FootnoteEditor popover flow end-to-end: a host `Editorial` in each view a
+ * user edits Scripture in sources a note op via `getNoteOps`, a popover `Editorial` (the host's
+ * options as the FootnoteEditor memo turns them into its own — `footnotePopoverView`) receives it
+ * via `applyUpdate`, and the popover Save path writes it back into the host via
+ * `replaceEmbedUpdate`. The acceptance property is IDEMPOTENCE: ops→apply→ops is a fixed point and
+ * the serialized USJ deep-equals the source. Over an editable-marker host, a subsequent
+ * `$rebuildNoteContent` must also neither refuse (sentinel mismatch) nor change anything (fixed
+ * point); with markers hidden the marker-edit engine that rebuild belongs to is off.
  */
 import { $rebuildNoteContent, Tier2Context } from "../markerEdit/tier2Rebuild.utils";
 import Editorial from "../../Editorial";
 import { EditorOptions, EditorRef } from "../editor.model";
+import {
+  EDITING_VIEWS,
+  EditingViewName,
+  editorView,
+  footnotePopoverView,
+  forEachView,
+  knownFailureRunner,
+} from "../editorViews.test-helpers";
+import { optionsInView } from "../noteEditorRef.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act, render } from "@testing-library/react";
 import { deepEqual } from "fast-equals";
@@ -43,32 +52,28 @@ import {
   LoggerBasic,
   NoteNode,
 } from "shared";
-import { DeltaOp, DeltaOpInsertNoteEmbed, getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
+import { DeltaOp, DeltaOpInsertNoteEmbed, ViewOptions } from "shared-react";
 
 function requireDefined<T>(value: T | undefined | null, message: string): T {
   if (value === undefined || value === null) throw new Error(message);
   return value;
 }
 
-const hostView = requireDefined(getViewOptions(STANDARD_VIEW_MODE), "standard view options");
+const standardHostView = editorView("standard");
 
-const hostOptions: EditorOptions = {
-  hasSpellCheck: false,
-  markerMenuTrigger: "\\",
-  view: hostView,
-  hasExternalUI: true,
-};
-
-// Options exactly as FootnoteEditor's memo produces them (spread + noteMode override + the
-// scaffold paragraph's marker prefix suppressed). Keeping `showParaMarkerPrefixes: false` here
-// also makes this suite the byte-identity proof for that option: the ops/USJ fixed points below
-// hold with no prefix rendered, so suppressing the display prefix changes nothing about what the
-// popover Save path writes.
-const popoverOptions: EditorOptions = {
-  ...hostOptions,
-  contextMenu: undefined,
-  view: { ...hostView, noteMode: "expanded", showParaMarkerPrefixes: false },
-};
+/**
+ * The popover's options over a host in `hostView`, exactly as FootnoteEditor's memo produces them
+ * (`footnotePopoverView`). Its `showParaMarkerPrefixes: false` also makes this suite the
+ * byte-identity proof for that option: the ops/USJ fixed points below hold with no prefix rendered,
+ * so suppressing the display prefix changes nothing about what the popover Save path writes.
+ */
+function popoverOptionsOver(hostView: ViewOptions): EditorOptions {
+  return {
+    ...optionsInView(hostView),
+    contextMenu: undefined,
+    view: footnotePopoverView(hostView),
+  };
+}
 
 /** The popover's default document (FootnoteEditor's `PARAGRAPH_USJ`). */
 const PARAGRAPH_USJ: Usj = { type: "USJ", version: "3.1", content: [{ type: "para" }] };
@@ -228,13 +233,20 @@ function noteDescendants(note: NoteNode): LexicalNode[] {
   return out;
 }
 
-/** Assert the note is the well-formed editable shape: one glyph per span, no unmatched nodes. */
-function expectWellFormedEditableNote(lexical: LexicalEditor, noteIndex: number) {
+/**
+ * Assert the note is well formed for `view`: no unmatched nodes, and with editable markers one
+ * glyph per span; with markers hidden, no glyph at all.
+ */
+function expectWellFormedNote(lexical: LexicalEditor, noteIndex: number, view: ViewOptions) {
   lexical.getEditorState().read(() => {
     const note = requireDefined($findNotes()[noteIndex], `note ${noteIndex} not found`);
     const descendants = noteDescendants(note);
     // No ImmutableUnmatchedNode materialized from a stray closing-glyph text op.
     expect(descendants.filter($isImmutableUnmatchedNode)).toEqual([]);
+    if (view.markerMode !== "editable") {
+      expect(descendants.filter($isMarkerNode)).toEqual([]);
+      return;
+    }
     // Each char span carries exactly ONE opening MarkerNode glyph (no doubling).
     descendants.filter($isCharNode).forEach((char) => {
       const glyphs = char
@@ -289,11 +301,12 @@ function findUsjNotes(usj: Usj): MarkerObject[] {
 }
 
 async function roundtripNote(
+  hostView: ViewOptions,
   noteIndex: number,
   sourceNoteUsj: MarkerObject,
   sourceUsj = sampleUsj,
 ) {
-  const host = await renderEditor(hostOptions, sourceUsj);
+  const host = await renderEditor(optionsInView(hostView), sourceUsj);
 
   // Guard: the host USJ adaptors round-trip the source note losslessly on their own.
   const hostUsj = requireDefined(host.editorRef.getUsj(), "host USJ");
@@ -306,12 +319,12 @@ async function roundtripNote(
   expect(hostNoteOps).toHaveLength(1);
 
   // Popover leg: applyUpdate materializes the note (the FootnoteEditor load path).
-  const popover = await renderEditor(popoverOptions, PARAGRAPH_USJ);
+  const popover = await renderEditor(popoverOptionsOver(hostView), PARAGRAPH_USJ);
   await act(async () => {
     popover.editorRef.applyUpdate([hostNoteOps[0]]);
   });
 
-  expectWellFormedEditableNote(popover.lexical, 0);
+  expectWellFormedNote(popover.lexical, 0, footnotePopoverView(hostView));
 
   // Idempotence at the op level: popover ops deep-equal the host ops.
   const popoverNoteOps = requireDefined(popover.editorRef.getNoteOps(0), "popover note ops");
@@ -324,11 +337,16 @@ async function roundtripNote(
   return { host, popover, hostNoteOps, popoverNoteOps };
 }
 
-/** `$rebuildNoteContent` on the popover note must be a no-op fixed point (not a refusal). */
-async function expectRebuildFixedPoint(popover: { lexical: LexicalEditor }) {
+/**
+ * `$rebuildNoteContent` on the popover note must be a no-op fixed point (not a refusal). Only over
+ * an editable-marker host: the rebuild is the marker-edit engine's, which is off when markers are
+ * hidden.
+ */
+async function expectRebuildFixedPoint(popover: { lexical: LexicalEditor }, hostView: ViewOptions) {
+  if (hostView.markerMode !== "editable") return;
   const { messages, logger } = makeLogger();
   const context: Tier2Context = {
-    viewOptions: requireDefined(popoverOptions.view, "popover view options"),
+    viewOptions: footnotePopoverView(hostView),
     getMarker: bundledGetMarker,
     logger,
   };
@@ -396,220 +414,304 @@ function fpCharEntries(noteUsj: MarkerObject): MarkerObject[] {
   );
 }
 
-describe("popover note ops round-trip (canonical glyph-free contract)", () => {
-  it("is idempotent for a standard-view note with \\fr/\\ft spans and a \\fv verse-ref char", async () => {
-    const { popover } = await roundtripNote(0, closedNoteUsj);
-    await expectRebuildFixedPoint(popover);
-  }, 30000);
+/**
+ * Enter inside note content is the `\fp` break only in the marker-edit engine, which is off when
+ * markers are hidden. Over a hidden-marker host the popover's Enter is Lexical's own: it splits the
+ * scaffolding paragraph after the note and parks the caret there, outside the note, so what the
+ * user types next is outside the note and the popover's Save, which writes only the note op, drops
+ * it. paranext-core's FootnoteEditor claims Enter only over an editable-marker host, and only with
+ * the caret outside the note, so nothing upstream of the editor catches it either.
+ */
+const ENTER_LEAVES_THE_NOTE =
+  "Enter splits the popover's scaffolding paragraph after the note (the \\fp break is MarkerEditPlugin's, off with hidden markers), so the next keystrokes land outside the note and Save drops them";
 
-  it('is idempotent for an unclosed note (closed="false")', async () => {
-    const { popover } = await roundtripNote(1, unclosedNoteUsj);
+/** Rows keyed `<host view>: <row>`; see {@link ENTER_LEAVES_THE_NOTE}. */
+const KNOWN_FAILURES: { [key in `${EditingViewName}: ${string}`]?: string } = {
+  "formatted: typed after Enter": ENTER_LEAVES_THE_NOTE,
+  "paragraph-structure: typed after Enter": ENTER_LEAVES_THE_NOTE,
+  "formatted: engine-created \\fp": ENTER_LEAVES_THE_NOTE,
+  "paragraph-structure: engine-created \\fp": ENTER_LEAVES_THE_NOTE,
+};
 
-    // An unterminated note has no closer glyph in the popover either.
-    popover.lexical.getEditorState().read(() => {
-      const note = requireDefined($findNotes()[0], "popover note");
-      expect(
-        note
-          .getChildren()
-          .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing"),
-      ).toBe(false);
-    });
-    await expectRebuildFixedPoint(popover);
-  }, 30000);
+const runRow = knownFailureRunner(
+  KNOWN_FAILURES,
+  EDITING_VIEWS.flatMap(({ name }) =>
+    ["typed after Enter", "engine-created \\fp"].map((row) => `${name}: ${row}`),
+  ),
+);
 
-  // A nested span materialized from the FIRST op of a run takes the same shape as one nested
-  // mid-run: its glyphs inside it. Built with them outside, the editor's marker engine re-reads the
-  // run's bytes and the nested span is gone, so a note that opens with `\+nd LORD\+nd*` lost it.
-  it.each([
-    {
-      name: "a closed run that opens with a nested span",
-      run: {
-        type: "char",
-        marker: "ft",
-        content: [{ type: "char", marker: "nd", content: ["LORD"] }, " said"],
-      },
-    },
-    {
-      name: "an unclosed run that opens with a nested span",
-      run: {
-        type: "char",
-        marker: "ft",
-        content: [{ type: "char", marker: "nd", content: ["LORD"] }, " said"],
-        closed: "false",
-      } as ClosableMarkerObject,
-    },
-    {
-      name: "a closed run with a nested span mid-run",
-      run: {
-        type: "char",
-        marker: "ft",
-        content: ["the ", { type: "char", marker: "nd", content: ["LORD"] }, " said"],
-      },
-    },
-    {
-      name: "a run that is only a nested span",
-      run: {
-        type: "char",
-        marker: "ft",
-        content: [{ type: "char", marker: "nd", content: ["LORD"] }],
-      },
-    },
-  ] satisfies { name: string; run: MarkerObject }[])("is idempotent for $name", async ({ run }) => {
-    const noteUsj: MarkerObject = { type: "note", marker: "f", caller: "+", content: [run] };
-    const hostUsj: Usj = {
-      ...sampleUsj,
-      content: [
-        ...sampleUsj.content.slice(0, 2),
-        {
-          type: "para",
-          marker: "p",
-          content: [{ type: "verse", marker: "v", number: "1" }, "first ", noteUsj, "end"],
+/** The note's text, every string in it concatenated in document order. */
+function noteText(note: MarkerObject): string {
+  return (note.content ?? [])
+    .map((item) => (typeof item === "string" ? item : noteText(item)))
+    .join("");
+}
+
+forEachView(EDITING_VIEWS, ({ name, view: hostView }) => {
+  describe("popover note ops round-trip (canonical glyph-free contract)", () => {
+    it("is idempotent for a note with \\fr/\\ft spans and a \\fv verse-ref char", async () => {
+      const { popover } = await roundtripNote(hostView, 0, closedNoteUsj);
+      await expectRebuildFixedPoint(popover, hostView);
+    }, 30000);
+
+    it('is idempotent for an unclosed note (closed="false")', async () => {
+      const { popover } = await roundtripNote(hostView, 1, unclosedNoteUsj);
+
+      // An unterminated note has no closer glyph in the popover either.
+      popover.lexical.getEditorState().read(() => {
+        const note = requireDefined($findNotes()[0], "popover note");
+        expect(
+          note
+            .getChildren()
+            .some((child) => $isMarkerNode(child) && child.getMarkerSyntax() === "closing"),
+        ).toBe(false);
+      });
+      await expectRebuildFixedPoint(popover, hostView);
+    }, 30000);
+
+    // A nested span materialized from the FIRST op of a run takes the same shape as one nested
+    // mid-run: its glyphs inside it. Built with them outside, the editor's marker engine re-reads the
+    // run's bytes and the nested span is gone, so a note that opens with `\+nd LORD\+nd*` lost it.
+    it.each([
+      {
+        name: "a closed run that opens with a nested span",
+        run: {
+          type: "char",
+          marker: "ft",
+          content: [{ type: "char", marker: "nd", content: ["LORD"] }, " said"],
         },
-      ],
-    };
+      },
+      {
+        name: "an unclosed run that opens with a nested span",
+        run: {
+          type: "char",
+          marker: "ft",
+          content: [{ type: "char", marker: "nd", content: ["LORD"] }, " said"],
+          closed: "false",
+        } as ClosableMarkerObject,
+      },
+      {
+        name: "a closed run with a nested span mid-run",
+        run: {
+          type: "char",
+          marker: "ft",
+          content: ["the ", { type: "char", marker: "nd", content: ["LORD"] }, " said"],
+        },
+      },
+      {
+        name: "a run that is only a nested span",
+        run: {
+          type: "char",
+          marker: "ft",
+          content: [{ type: "char", marker: "nd", content: ["LORD"] }],
+        },
+      },
+    ] satisfies { name: string; run: MarkerObject }[])(
+      "is idempotent for $name",
+      async ({ run }) => {
+        const noteUsj: MarkerObject = { type: "note", marker: "f", caller: "+", content: [run] };
+        const hostUsj: Usj = {
+          ...sampleUsj,
+          content: [
+            ...sampleUsj.content.slice(0, 2),
+            {
+              type: "para",
+              marker: "p",
+              content: [{ type: "verse", marker: "v", number: "1" }, "first ", noteUsj, "end"],
+            },
+          ],
+        };
 
-    await roundtripNote(0, noteUsj, hostUsj);
+        await roundtripNote(hostView, 0, noteUsj, hostUsj);
+      },
+    );
+
+    it("writes a clean note back into the host via replaceEmbedUpdate (popover Save path)", async () => {
+      const { host, popover } = await roundtripNote(hostView, 0, closedNoteUsj);
+
+      // Mutate the popover note BEFORE saving (mirrors the in-app QA: type into the \ft span),
+      // so the assertion below can only be satisfied by a write that actually happened — an
+      // unmodified save would leave the host indistinguishable from its pre-save state.
+      const sentinel = "task14-review-sentinel";
+      await act(async () => {
+        popover.lexical.update(() => {
+          const note = requireDefined($findNotes()[0], "popover note");
+          const ftChar = note
+            .getChildren()
+            .filter($isCharNode)
+            .find((char) => char.getMarker() === "ft");
+          const contentText = requireDefined(ftChar, "popover ft char")
+            .getChildren()
+            .filter($isTextNode)
+            .find((child) => !$isMarkerNode(child));
+          requireDefined(contentText, "popover ft content text").setTextContent(
+            `${requireDefined(contentText, "popover ft content text").getTextContent()}${sentinel}`,
+          );
+        });
+      });
+      const popoverNoteOps = requireDefined(popover.editorRef.getNoteOps(0), "popover note ops");
+      expect(JSON.stringify(popoverNoteOps)).toContain(sentinel);
+
+      const hostNoteKey = host.lexical.getEditorState().read(() => {
+        return requireDefined($findNotes()[0], "host note").getKey();
+      });
+      const preSaveNoteCount = host.lexical.getEditorState().read(() => $findNotes().length);
+      const preSaveUsj = requireDefined(host.editorRef.getUsj(), "host USJ before save");
+      await act(async () => {
+        host.editorRef.replaceEmbedUpdate(hostNoteKey, popoverNoteOps);
+      });
+
+      // Contract-owned invariants: the sentinel-carrying note WAS written into the host, its
+      // USJ deep-equals the popover's serialized note, and every note in the host document is
+      // CLEAN — no doubled glyphs, no unmatched nodes.
+      const popoverUsj = requireDefined(popover.editorRef.getUsj(), "popover USJ after edit");
+      const popoverNoteUsj = requireDefined(findUsjNotes(popoverUsj)[0], "popover note USJ");
+      expect(JSON.stringify(popoverNoteUsj)).toContain(sentinel);
+
+      const hostUsj = requireDefined(host.editorRef.getUsj(), "host USJ after save");
+      const hostNotes = findUsjNotes(hostUsj);
+      const writtenNote = hostNotes.find((note) => JSON.stringify(note).includes(sentinel));
+      expect(writtenNote).toBeDefined();
+      expect(deepEqual(writtenNote, popoverNoteUsj)).toBe(true);
+
+      const noteCount = host.lexical.getEditorState().read(() => $findNotes().length);
+      for (let i = 0; i < noteCount; i++) expectWellFormedNote(host.lexical, i, hostView);
+
+      // Replace POSITION: `$getReplaceEmbedOps` computes its retain in "apply"
+      // coordinates — the coordinate system `$applyUpdate`'s insert/delete traversals use,
+      // where an editable chapter is an opaque embed (1 unit, glyph text child not counted).
+      // The replacement therefore lands exactly where the old note was:
+      // - the note count is unchanged (old note deleted, new note inserted — not appended);
+      expect(noteCount).toBe(preSaveNoteCount);
+      // - the sentinel note sits AT the original note's position (note index 0);
+      expect(JSON.stringify(hostNotes[0])).toContain(sentinel);
+      // - and the whole document deep-equals the pre-save document with ONLY note 0 swapped
+      //   for the popover's note — no character eaten from adjacent text, nothing displaced.
+      const expectedUsj = JSON.parse(JSON.stringify(preSaveUsj)) as Usj;
+      expect(replaceUsjNote(expectedUsj, 0, popoverNoteUsj)).toBe(true);
+      expect(hostUsj).toEqual(expectedUsj);
+    }, 30000);
+
+    it("is idempotent for a note with two adjacent \\fp paragraphs (spans stay separate)", async () => {
+      const { host, popover, popoverNoteOps } = await roundtripNote(hostView, 2, twoFpNoteUsj);
+      await expectRebuildFixedPoint(popover, hostView);
+
+      // Save WITHOUT edits (open the popover, hit Save): the host must still hold the exact
+      // source note — two `\fp` paragraphs, not one merged span.
+      const hostNoteKey = host.lexical
+        .getEditorState()
+        .read(() => requireDefined($findNotes()[2], "host two-fp note").getKey());
+      await act(async () => {
+        host.editorRef.replaceEmbedUpdate(hostNoteKey, popoverNoteOps);
+      });
+      const hostUsj = requireDefined(host.editorRef.getUsj(), "host USJ after no-edit save");
+      expect(findUsjNotes(hostUsj)[2]).toEqual(twoFpNoteUsj);
+    }, 30000);
+
+    runRow(`${name}: engine-created \\fp`)(
+      "keeps two engine-created \\fp paragraphs separate through the popover save path",
+      async () => {
+        const { host, popover } = await roundtripNote(hostView, 0, closedNoteUsj);
+
+        // Create two footnote paragraphs the way a user does in the popover: Enter (the `\fp`
+        // break), type; Enter, type.
+        await act(async () => {
+          popover.lexical.update(() => $selectEndOfFtContent(), { discrete: true });
+        });
+        await typeFpParagraph(popover, "second paragraph");
+        await typeFpParagraph(popover, "third paragraph");
+
+        // The popover TREE holds two separate `\fp` spans (in-editor combining exempts `\fp`)…
+        popover.lexical.getEditorState().read(() => {
+          const note = requireDefined($findNotes()[0], "popover note");
+          const fpSpans = note
+            .getChildren()
+            .filter($isCharNode)
+            .filter((char) => char.getMarker() === "fp");
+          expect(fpSpans).toHaveLength(2);
+        });
+
+        // …and so do the ops the popover Save path sends to the host.
+        const popoverNoteOps = requireDefined(
+          popover.editorRef.getNoteOps(0),
+          "popover note ops",
+        ) as DeltaOpInsertNoteEmbed[];
+        const contentsOps = requireDefined(
+          popoverNoteOps[0]?.insert.note?.contents?.ops,
+          "popover note contents ops",
+        );
+        expect(contentsOps.filter(isFpContentOp)).toHaveLength(2);
+
+        const hostNoteKey = host.lexical
+          .getEditorState()
+          .read(() => requireDefined($findNotes()[0], "host note").getKey());
+        await act(async () => {
+          host.editorRef.replaceEmbedUpdate(hostNoteKey, popoverNoteOps);
+        });
+
+        // The USJ the host serializes for the save path must still hold TWO `\fp` char entries —
+        // PT9 keeps them separate paragraphs; merging collapses them into one.
+        const hostUsj = requireDefined(host.editorRef.getUsj(), "host USJ after save");
+        const noteUsj = requireDefined(findUsjNotes(hostUsj)[0], "host note USJ");
+        expect(fpCharEntries(noteUsj).map((entry) => entry.content)).toEqual([
+          ["second paragraph"],
+          ["third paragraph"],
+        ]);
+      },
+      30000,
+    );
   });
 
-  it("writes a clean note back into the host via replaceEmbedUpdate (popover Save path)", async () => {
-    const { host, popover } = await roundtripNote(0, closedNoteUsj);
-
-    // Mutate the popover note BEFORE saving (mirrors the in-app QA: type into the \ft span),
-    // so the assertion below can only be satisfied by a write that actually happened — an
-    // unmodified save would leave the host indistinguishable from its pre-save state.
-    const sentinel = "task14-review-sentinel";
-    await act(async () => {
-      popover.lexical.update(() => {
-        const note = requireDefined($findNotes()[0], "popover note");
-        const ftChar = note
-          .getChildren()
-          .filter($isCharNode)
-          .find((char) => char.getMarker() === "ft");
-        const contentText = requireDefined(ftChar, "popover ft char")
-          .getChildren()
-          .filter($isTextNode)
-          .find((child) => !$isMarkerNode(child));
-        requireDefined(contentText, "popover ft content text").setTextContent(
-          `${requireDefined(contentText, "popover ft content text").getTextContent()}${sentinel}`,
-        );
+  describe("Enter inside the popover's note content", () => {
+    /** Enter at the end of the `\ft` content, then `typed` at the caret it leaves. */
+    async function enterThenType(
+      popover: { lexical: LexicalEditor },
+      typed: string,
+    ): Promise<void> {
+      await act(async () => {
+        popover.lexical.update(() => $selectEndOfFtContent(), { discrete: true });
       });
-    });
-    const popoverNoteOps = requireDefined(popover.editorRef.getNoteOps(0), "popover note ops");
-    expect(JSON.stringify(popoverNoteOps)).toContain(sentinel);
+      await typeFpParagraph(popover, typed);
+    }
 
-    const hostNoteKey = host.lexical.getEditorState().read(() => {
-      return requireDefined($findNotes()[0], "host note").getKey();
-    });
-    const preSaveNoteCount = host.lexical.getEditorState().read(() => $findNotes().length);
-    const preSaveUsj = requireDefined(host.editorRef.getUsj(), "host USJ before save");
-    await act(async () => {
-      host.editorRef.replaceEmbedUpdate(hostNoteKey, popoverNoteOps);
-    });
+    it("keeps the note whole: one note, nothing it held lost", async () => {
+      const { popover } = await roundtripNote(hostView, 0, closedNoteUsj);
+      await act(async () => {
+        popover.lexical.update(() => $selectEndOfFtContent(), { discrete: true });
+      });
+      await act(async () => {
+        popover.lexical.dispatchCommand(KEY_ENTER_COMMAND, null);
+      });
 
-    // Contract-owned invariants: the sentinel-carrying note WAS written into the host, its
-    // USJ deep-equals the popover's serialized note, and every note in the host document is
-    // CLEAN — no doubled glyphs, no unmatched nodes.
-    const popoverUsj = requireDefined(popover.editorRef.getUsj(), "popover USJ after edit");
-    const popoverNoteUsj = requireDefined(findUsjNotes(popoverUsj)[0], "popover note USJ");
-    expect(JSON.stringify(popoverNoteUsj)).toContain(sentinel);
+      const notes = findUsjNotes(requireDefined(popover.editorRef.getUsj(), "popover USJ"));
+      expect(notes).toHaveLength(1);
+      expect(notes[0]).toMatchObject({ marker: "f", caller: "+" });
+      expect(noteText(notes[0])).toBe(noteText(closedNoteUsj));
+    }, 30000);
 
-    const hostUsj = requireDefined(host.editorRef.getUsj(), "host USJ after save");
-    const hostNotes = findUsjNotes(hostUsj);
-    const writtenNote = hostNotes.find((note) => JSON.stringify(note).includes(sentinel));
-    expect(writtenNote).toBeDefined();
-    expect(deepEqual(writtenNote, popoverNoteUsj)).toBe(true);
+    runRow(`${name}: typed after Enter`)(
+      "saves what is typed after Enter as part of the note",
+      async () => {
+        const { popover } = await roundtripNote(hostView, 0, closedNoteUsj);
+        const typed = "typed after Enter";
+        await enterThenType(popover, typed);
 
-    const noteCount = host.lexical.getEditorState().read(() => $findNotes().length);
-    for (let i = 0; i < noteCount; i++) expectWellFormedEditableNote(host.lexical, i);
-
-    // Replace POSITION: `$getReplaceEmbedOps` computes its retain in "apply"
-    // coordinates — the coordinate system `$applyUpdate`'s insert/delete traversals use,
-    // where an editable chapter is an opaque embed (1 unit, glyph text child not counted).
-    // The replacement therefore lands exactly where the old note was:
-    // - the note count is unchanged (old note deleted, new note inserted — not appended);
-    expect(noteCount).toBe(preSaveNoteCount);
-    // - the sentinel note sits AT the original note's position (note index 0);
-    expect(JSON.stringify(hostNotes[0])).toContain(sentinel);
-    // - and the whole document deep-equals the pre-save document with ONLY note 0 swapped
-    //   for the popover's note — no character eaten from adjacent text, nothing displaced.
-    const expectedUsj = JSON.parse(JSON.stringify(preSaveUsj)) as Usj;
-    expect(replaceUsjNote(expectedUsj, 0, popoverNoteUsj)).toBe(true);
-    expect(hostUsj).toEqual(expectedUsj);
-  }, 30000);
-
-  it("is idempotent for a note with two adjacent \\fp paragraphs (spans stay separate)", async () => {
-    const { host, popover, popoverNoteOps } = await roundtripNote(2, twoFpNoteUsj);
-    await expectRebuildFixedPoint(popover);
-
-    // Save WITHOUT edits (open the popover, hit Save): the host must still hold the exact
-    // source note — two `\fp` paragraphs, not one merged span.
-    const hostNoteKey = host.lexical
-      .getEditorState()
-      .read(() => requireDefined($findNotes()[2], "host two-fp note").getKey());
-    await act(async () => {
-      host.editorRef.replaceEmbedUpdate(hostNoteKey, popoverNoteOps);
-    });
-    const hostUsj = requireDefined(host.editorRef.getUsj(), "host USJ after no-edit save");
-    expect(findUsjNotes(hostUsj)[2]).toEqual(twoFpNoteUsj);
-  }, 30000);
-
-  it("keeps two engine-created \\fp paragraphs separate through the popover save path", async () => {
-    const { host, popover } = await roundtripNote(0, closedNoteUsj);
-
-    // Create two footnote paragraphs the way a user does in the popover: Enter (the `\fp`
-    // break), type; Enter, type.
-    await act(async () => {
-      popover.lexical.update(() => $selectEndOfFtContent(), { discrete: true });
-    });
-    await typeFpParagraph(popover, "second paragraph");
-    await typeFpParagraph(popover, "third paragraph");
-
-    // The popover TREE holds two separate `\fp` spans (in-editor combining exempts `\fp`)…
-    popover.lexical.getEditorState().read(() => {
-      const note = requireDefined($findNotes()[0], "popover note");
-      const fpSpans = note
-        .getChildren()
-        .filter($isCharNode)
-        .filter((char) => char.getMarker() === "fp");
-      expect(fpSpans).toHaveLength(2);
-    });
-
-    // …and so do the ops the popover Save path sends to the host.
-    const popoverNoteOps = requireDefined(
-      popover.editorRef.getNoteOps(0),
-      "popover note ops",
-    ) as DeltaOpInsertNoteEmbed[];
-    const contentsOps = requireDefined(
-      popoverNoteOps[0]?.insert.note?.contents?.ops,
-      "popover note contents ops",
+        // What the popover's Save writes: its first note op, which must carry the keystrokes.
+        const ops = requireDefined(popover.editorRef.getNoteOps(0), "popover note ops");
+        expect(JSON.stringify(ops)).toContain(typed);
+        // Nothing outside the note, where Save would drop it.
+        expect(popover.editorRef.getUsj()?.content).toHaveLength(1);
+      },
+      30000,
     );
-    expect(contentsOps.filter(isFpContentOp)).toHaveLength(2);
-
-    const hostNoteKey = host.lexical
-      .getEditorState()
-      .read(() => requireDefined($findNotes()[0], "host note").getKey());
-    await act(async () => {
-      host.editorRef.replaceEmbedUpdate(hostNoteKey, popoverNoteOps);
-    });
-
-    // The USJ the host serializes for the save path must still hold TWO `\fp` char entries —
-    // PT9 keeps them separate paragraphs; merging collapses them into one.
-    const hostUsj = requireDefined(host.editorRef.getUsj(), "host USJ after save");
-    const noteUsj = requireDefined(findUsjNotes(hostUsj)[0], "host note USJ");
-    expect(fpCharEntries(noteUsj).map((entry) => entry.content)).toEqual([
-      ["second paragraph"],
-      ["third paragraph"],
-    ]);
-  }, 30000);
+  });
 });
 
 describe("the popover's protected note shell", () => {
   // The popover's own view: the host's, expanded, with the note's marker and caller governed by its
   // dropdowns rather than typed (FootnoteEditor's `isNoteShellEditable: false`).
-  const protectedPopoverOptions: EditorOptions = {
-    ...popoverOptions,
-    view: { ...requireDefined(popoverOptions.view, "popover view"), isNoteShellEditable: false },
-  };
+  const protectedPopoverOptions = popoverOptionsOver(standardHostView);
+  const hostOptions = optionsInView(standardHostView);
 
   it.each([1, 2])(
     "saves one closed note, keystroke included, when the caret lands inside the closer at %i",

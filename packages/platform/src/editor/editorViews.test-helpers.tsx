@@ -194,10 +194,13 @@ export function forEachView<Name extends string>(
   for (const entry of views) describe(`in ${entry.name} view`, () => register(entry));
 }
 
+/** Registers one test, the way `it` does. */
+export type TestRegistrar = (name: string, fn: () => unknown, timeout?: number) => void;
+
 /**
- * The runner a row registers with: `it.fails` for a row listed in `knownFailures` (keyed by the
- * row's key, each value naming the mechanism), `it` otherwise. A listed row that starts passing
- * fails, so a fix has to delete its entry.
+ * The registrar a row registers with: `it.fails` for a row listed in `knownFailures` (keyed by the
+ * row's key, each value naming the mechanism, which is appended to the test's name), `it`
+ * otherwise. A listed row that starts passing fails, so a fix has to delete its entry.
  *
  * `validKeys` is every key the suite generates; an entry naming none of them throws at
  * registration, so a renamed or removed row cannot leave a stale entry behind.
@@ -205,11 +208,18 @@ export function forEachView<Name extends string>(
 export function knownFailureRunner(
   knownFailures: { readonly [key: string]: string },
   validKeys: readonly string[],
-): (key: string) => typeof it | typeof it.fails {
+): (key: string) => TestRegistrar {
   const valid = new Set(validKeys);
   const stale = Object.keys(knownFailures).filter((key) => !valid.has(key));
   if (stale.length > 0) throw new Error(`known failures name no row: ${stale.join(", ")}`);
-  return (key) => (knownFailures[key] ? it.fails : it);
+  return (key) => {
+    if (!valid.has(key)) throw new Error(`row key ${key} is not among the suite's keys`);
+    const reason = knownFailures[key];
+    return (name, fn, timeout) => {
+      if (reason) it.fails(`${name} (known failure: ${reason})`, fn, timeout);
+      else it(name, fn, timeout);
+    };
+  };
 }
 
 /** The editor's host-facing change-notification callback type. */
