@@ -426,7 +426,7 @@ const ENTER_LEAVES_THE_NOTE =
   "Enter splits the popover's scaffolding paragraph after the note (the \\fp break is MarkerEditPlugin's, off with hidden markers), so the next keystrokes land outside the note and Save drops them";
 
 /** Rows keyed `<host view>: <row>`; see {@link ENTER_LEAVES_THE_NOTE}. */
-const KNOWN_FAILURES: { [key in `${EditingViewName}: ${string}`]?: string } = {
+const KNOWN_FAILURES: { [key: `${EditingViewName}: ${string}`]: string } = {
   "formatted: typed after Enter": ENTER_LEAVES_THE_NOTE,
   "paragraph-structure: typed after Enter": ENTER_LEAVES_THE_NOTE,
   "formatted: engine-created \\fp": ENTER_LEAVES_THE_NOTE,

@@ -1299,7 +1299,8 @@ function savedParaTexts(usj: Usj | undefined): string[] {
 
 /** Presses Delete as a real DOM keydown on the editor root, as a user's gesture arrives. */
 async function pressDeleteKey(editor: LexicalEditor): Promise<void> {
-  const rootElement = requireDefined(editor.getRootElement(), "editor root");
+  const rootElement = editor.getRootElement();
+  if (!rootElement) throw new Error("editor root");
   await act(async () => {
     rootElement.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }),
