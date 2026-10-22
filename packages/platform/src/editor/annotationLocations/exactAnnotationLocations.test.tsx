@@ -233,6 +233,7 @@ describe("an annotation inside a figure caption", () => {
   it.each<[string, string]>([
     ["standard", "[immutable-typed-text]c"],
     ["formatted", "c"],
+    ["paragraph-structure", "c"],
   ])("leaves the caption in the figure (%s)", async (name, expectedHeld) => {
     const mounted = await mountInView(richUsj, oracleView(name));
     const before = mounted.ref.current?.getUsj();
@@ -247,27 +248,30 @@ describe("an annotation inside a figure caption", () => {
     expect(held).toBe(expectedHeld);
   });
 
-  it.each(["standard", "formatted"])("survives undo and redo (%s)", async (name) => {
-    const mounted = await mountInView(richUsj, oracleView(name));
-    const before = mounted.ref.current?.getUsj();
+  it.each(["standard", "formatted", "paragraph-structure"])(
+    "survives undo and redo (%s)",
+    async (name) => {
+      const mounted = await mountInView(richUsj, oracleView(name));
+      const before = mounted.ref.current?.getUsj();
 
-    await act(async () => {
-      mounted.ref.current?.setAnnotation(intoCaptionRange, ORACLE_TYPE, "cap");
-      await Promise.resolve();
-    });
+      await act(async () => {
+        mounted.ref.current?.setAnnotation(intoCaptionRange, ORACLE_TYPE, "cap");
+        await Promise.resolve();
+      });
 
-    await act(async () => {
-      mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined);
-    });
-    expect(mounted.ref.current?.getUsj()).toEqual(before);
+      await act(async () => {
+        mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
 
-    await act(async () => {
-      mounted.lexical.dispatchCommand(REDO_COMMAND, undefined);
-    });
-    expect(mounted.ref.current?.getUsj()).toEqual(before);
-  });
+      await act(async () => {
+        mounted.lexical.dispatchCommand(REDO_COMMAND, undefined);
+      });
+      expect(mounted.ref.current?.getUsj()).toEqual(before);
+    },
+  );
 
-  it.each(["standard", "formatted"])(
+  it.each(["standard", "formatted", "paragraph-structure"])(
     "keeps the caption when a comment is made inside it (%s)",
     async (name) => {
       const mounted = await mountInView(richUsj, oracleView(name));
@@ -316,7 +320,7 @@ describe("an annotation over a no-break space the text itself contains", () => {
     },
   );
 
-  it.each(["unformatted", "visible", "formatted", "hidden+expanded"])(
+  it.each(["unformatted", "visible", "formatted", "paragraph-structure", "hidden+expanded"])(
     "holds one inside a char span and saves it unchanged (%s)",
     async (name) => {
       const wordUsj = twoParaUsj([
@@ -1067,7 +1071,7 @@ describe("the labels around a mark on a note's text between its spans", () => {
     return $byteNodes().map(([node, offset]) => locKey($byteLoc(node, offset, false, view)));
   }
 
-  it.each(["standard", "visible", "visible+collapsed", "formatted"])(
+  it.each(["standard", "visible", "visible+collapsed", "formatted", "paragraph-structure"])(
     "stay where they were when a range ends at that text's end (%s)",
     async (name) => {
       const mounted = await mountInView(crossrefUsj, oracleView(name));

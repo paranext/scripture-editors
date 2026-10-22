@@ -36,6 +36,7 @@ import {
   initialize as initializeDeserialize,
 } from "../adaptors/editor-usj.adaptor";
 import { EditorRef } from "../editor.model";
+import { EDITING_VIEWS, mountInView } from "../editorViews.test-helpers";
 import { mountStandardViewEditor, requireStandardViewOptions } from "../settledGetUsj.test-helpers";
 import { requireDefined } from "./markerEdit.test-helpers";
 import { MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -43,6 +44,7 @@ import { act } from "@testing-library/react";
 import { $getRoot, LexicalEditor, REDO_COMMAND, UNDO_COMMAND } from "lexical";
 import { RefObject } from "react";
 import { $isMarkerNode, $isParaNode } from "shared";
+import { ViewOptions } from "shared-react";
 
 const viewOptions = requireStandardViewOptions();
 
@@ -96,9 +98,9 @@ const plainUsj: Usj = {
 };
 
 /** The editor's USJ through the editor→USJ adaptor — the tree leg. */
-function treeUsj(lexical: LexicalEditor): Usj | undefined {
+function treeUsj(lexical: LexicalEditor, view: ViewOptions = viewOptions): Usj | undefined {
   initializeDeserialize(undefined);
-  return deserializeSerializedEditorState(lexical.getEditorState().toJSON(), viewOptions);
+  return deserializeSerializedEditorState(lexical.getEditorState().toJSON(), view);
 }
 
 /** Stable serialization of a leg's output, for byte-for-byte comparison. */
@@ -177,6 +179,7 @@ async function pressAndRecord(
   notified: Usj[],
   command: typeof UNDO_COMMAND,
   count: number,
+  view: ViewOptions = viewOptions,
 ): Promise<Press[]> {
   const presses: Press[] = [];
   for (let i = 0; i < count; i++) {
@@ -185,7 +188,7 @@ async function pressAndRecord(
     await press(lexical, command);
     presses.push({
       saved: bytes(ref.current?.getUsj()),
-      tree: bytes(treeUsj(lexical)),
+      tree: bytes(treeUsj(lexical, view)),
       notifications: notified.length - before,
     });
   }
@@ -355,41 +358,44 @@ describe("an undo reaches the file the same way typing does", () => {
     assertEveryDocumentChangeWasNotified(retagged, undos);
   });
 
-  it("undoing and redoing a plain text edit reaches the file — the control that was never broken", async () => {
-    // Ordinary text is real document content, so its undo produces genuine delta ops and always
-    // notified. Kept as a control so a future change that fixes the display-byte class by
-    // breaking the ordinary one fails here.
-    const notified: Usj[] = [];
-    const { ref, lexical } = await mountStandardViewEditor(plainUsj, {
-      onUsjChange: (usj) => notified.push(usj),
-    });
-
-    const preEditSaved = bytes(ref.current?.getUsj());
-
-    await act(async () => {
-      lexical.update(() => {
-        const node = requireDefined(
-          $getRoot()
-            .getAllTextNodes()
-            .find((textNode) => textNode.getTextContent().includes("hello world")),
-          "text node not found",
-        );
-        node.setTextContent("hello brave world");
-        node.select(5, 5);
+  it.each(EDITING_VIEWS)(
+    "undoing and redoing a plain text edit reaches the file — the control that was never broken ($name)",
+    async ({ view }) => {
+      // Ordinary text is real document content, so its undo produces genuine delta ops and always
+      // notified. Kept as a control so a future change that fixes the display-byte class by
+      // breaking the ordinary one fails here.
+      const notified: Usj[] = [];
+      const { ref, lexical } = await mountInView(plainUsj, view, {
+        onUsjChange: (usj) => notified.push(usj),
       });
-      await Promise.resolve();
-    });
-    await flush();
-    const edited = { saved: bytes(ref.current?.getUsj()), tree: bytes(treeUsj(lexical)) };
-    expect(edited.saved).not.toBe(preEditSaved);
 
-    const undos = await pressAndRecord(lexical, ref, notified, UNDO_COMMAND, 2);
-    expect(bytes(ref.current?.getUsj())).toBe(preEditSaved);
-    assertEveryDocumentChangeWasNotified(edited, undos);
-    const undone = { saved: bytes(ref.current?.getUsj()), tree: bytes(treeUsj(lexical)) };
+      const preEditSaved = bytes(ref.current?.getUsj());
 
-    const redos = await pressAndRecord(lexical, ref, notified, REDO_COMMAND, 2);
-    expect(bytes(ref.current?.getUsj())).toBe(edited.saved);
-    assertEveryDocumentChangeWasNotified(undone, redos);
-  });
+      await act(async () => {
+        lexical.update(() => {
+          const node = requireDefined(
+            $getRoot()
+              .getAllTextNodes()
+              .find((textNode) => textNode.getTextContent().includes("hello world")),
+            "text node not found",
+          );
+          node.setTextContent("hello brave world");
+          node.select(5, 5);
+        });
+        await Promise.resolve();
+      });
+      await flush();
+      const edited = { saved: bytes(ref.current?.getUsj()), tree: bytes(treeUsj(lexical, view)) };
+      expect(edited.saved).not.toBe(preEditSaved);
+
+      const undos = await pressAndRecord(lexical, ref, notified, UNDO_COMMAND, 2, view);
+      expect(bytes(ref.current?.getUsj())).toBe(preEditSaved);
+      assertEveryDocumentChangeWasNotified(edited, undos);
+      const undone = { saved: bytes(ref.current?.getUsj()), tree: bytes(treeUsj(lexical, view)) };
+
+      const redos = await pressAndRecord(lexical, ref, notified, REDO_COMMAND, 2, view);
+      expect(bytes(ref.current?.getUsj())).toBe(edited.saved);
+      assertEveryDocumentChangeWasNotified(undone, redos);
+    },
+  );
 });
