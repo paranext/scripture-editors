@@ -31,6 +31,7 @@ import {
   reset as resetSerialize,
 } from "../adaptors/usj-editor.adaptor";
 import { MarkerEditPlugin } from "./MarkerEditPlugin";
+import { EDITING_VIEWS, forEachView, mountInView } from "../editorViews.test-helpers";
 // Reaching inside only for tests (same pattern as markerEdit.test-helpers).
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import {
@@ -1270,6 +1271,72 @@ describe("user deletes a paragraph's entire visible representation", () => {
           .getTextContent()
           .charAt(selection.anchor.offset - 1),
       ).toBe("x");
+    });
+  });
+});
+
+/** `\id`, `\c 1`, then a paragraph per entry of `texts`. */
+function parasUsj(texts: string[]): Usj {
+  return {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+      { type: "chapter", marker: "c", number: "1" },
+      ...texts.map((text): MarkerObject => ({ type: "para", marker: "p", content: [text] })),
+    ],
+  };
+}
+
+/** Every paragraph's text in `usj`, in document order, empty paragraphs left out. */
+function savedParaTexts(usj: Usj | undefined): string[] {
+  return (usj?.content ?? []).flatMap((item) => {
+    if (typeof item !== "object" || item.type !== "para") return [];
+    const text = (item.content ?? []).filter((c) => typeof c === "string").join("");
+    return text ? [text] : [];
+  });
+}
+
+/** Presses Delete as a real DOM keydown on the editor root, as a user's gesture arrives. */
+async function pressDeleteKey(editor: LexicalEditor): Promise<void> {
+  const rootElement = requireDefined(editor.getRootElement(), "editor root");
+  await act(async () => {
+    rootElement.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }),
+    );
+  });
+}
+
+// The real editor in each editing view, judged on the document it saves: whatever a view does
+// with the paragraph a deletion empties, the content the selection did not cover survives.
+forEachView(EDITING_VIEWS, ({ view }) => {
+  describe("deleting a paragraph's text, in the saved document", () => {
+    it("removes that text and keeps its neighbours' content", async () => {
+      const { ref, lexical } = await mountInView(parasUsj(["first", "middle", "last"]), view);
+      await act(async () => {
+        ref.current?.setSelection({
+          start: { jsonPath: "$.content[3].content[0]", offset: 0 },
+          end: { jsonPath: "$.content[3].content[0]", offset: "middle".length },
+        });
+      });
+
+      await pressDeleteKey(lexical);
+
+      expect(savedParaTexts(ref.current?.getUsj())).toEqual(["first", "last"]);
+    });
+
+    it("joins what is left on either side of a deletion across a paragraph boundary", async () => {
+      const { ref, lexical } = await mountInView(parasUsj(["first", "middle", "last"]), view);
+      await act(async () => {
+        ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[0]", offset: "fir".length },
+          end: { jsonPath: "$.content[3].content[0]", offset: "mid".length },
+        });
+      });
+
+      await pressDeleteKey(lexical);
+
+      expect(savedParaTexts(ref.current?.getUsj())).toEqual(["firdle", "last"]);
     });
   });
 });
