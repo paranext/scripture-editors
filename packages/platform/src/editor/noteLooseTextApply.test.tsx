@@ -6,7 +6,14 @@
  * Losing it is worse than one dropped edit: the apply still replaces the note node, so the key a
  * note editor holds for its note stops resolving and every later apply from it is dropped too.
  */
-import { note, noteKeys, renderEditor, requireDefined } from "./noteEditorRef.test-helpers";
+import { EDITING_VIEWS, forEachView } from "./editorViews.test-helpers";
+import {
+  note,
+  noteKeys,
+  optionsInView,
+  renderEditor,
+  requireDefined,
+} from "./noteEditorRef.test-helpers";
 import { DeltaOp } from "shared-react";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -48,117 +55,119 @@ function onlyNoteContent(usj: Usj | undefined): MarkerContent[] | undefined {
 
 const ftRun = (text: string): DeltaOp => ({ insert: text, attributes: { char: { style: "ft" } } });
 
-describe("applying a note with text written directly in it", () => {
-  it.each([
-    ["before its first run", [{ insert: "x" }, ftRun("a")], ["x", "a"]],
-    ["after its last run", [ftRun("a"), { insert: "x" }], ["a", "x"]],
-    ["with no run at all", [{ insert: "x" }], ["x"]],
-  ] as const)("keeps the text %s", async (_label, contentOps, expectedText) => {
-    const reported: (string | undefined)[] = [];
-    const { editorRef, lexical } = await renderEditor(
-      oneNoteUsj,
-      undefined,
-      undefined,
-      (_usj, _ops, _source, insertedNodeKey) => reported.push(insertedNodeKey),
-    );
-    const [key] = noteKeys(lexical);
-    const ops = requireDefined(editorRef.getNoteOps(key), "note ops");
-
-    await act(async () => {
-      editorRef.replaceEmbedUpdate(key, noteOpWithContents(ops, [...contentOps]));
-    });
-
-    const content = onlyNoteContent(editorRef.getUsj());
-    const texts = (content ?? []).map((item) =>
-      typeof item === "string" ? item : item.content?.join(""),
-    );
-    expect(texts).toEqual(expectedText);
-    // The host follows the note to its new key through the change it is told about.
-    const newKey = reported.at(-1);
-    expect(newKey).toBeDefined();
-    expect(editorRef.getNoteIndex(requireDefined(newKey, "new key"))).toBe(0);
-  });
-
-  it("keeps later applies from the same note editor landing", async () => {
-    const reported: (string | undefined)[] = [];
-    const { editorRef, lexical } = await renderEditor(
-      oneNoteUsj,
-      undefined,
-      undefined,
-      (_usj, _ops, _source, insertedNodeKey) => reported.push(insertedNodeKey),
-    );
-    const [key] = noteKeys(lexical);
-    const ops = requireDefined(editorRef.getNoteOps(key), "note ops");
-
-    await act(async () => {
-      editorRef.replaceEmbedUpdate(key, noteOpWithContents(ops, [{ insert: "x" }, ftRun("a")]));
-    });
-    const nextKey = requireDefined(reported.at(-1), "key after the first apply");
-    await act(async () => {
-      editorRef.replaceEmbedUpdate(
-        nextKey,
-        noteOpWithContents(ops, [{ insert: "xy" }, ftRun("a")]),
+forEachView(EDITING_VIEWS, ({ view }) => {
+  describe("applying a note with text written directly in it", () => {
+    it.each([
+      ["before its first run", [{ insert: "x" }, ftRun("a")], ["x", "a"]],
+      ["after its last run", [ftRun("a"), { insert: "x" }], ["a", "x"]],
+      ["with no run at all", [{ insert: "x" }], ["x"]],
+    ] as const)("keeps the text %s", async (_label, contentOps, expectedText) => {
+      const reported: (string | undefined)[] = [];
+      const { editorRef, lexical } = await renderEditor(
+        oneNoteUsj,
+        optionsInView(view),
+        undefined,
+        (_usj, _ops, _source, insertedNodeKey) => reported.push(insertedNodeKey),
       );
+      const [key] = noteKeys(lexical);
+      const ops = requireDefined(editorRef.getNoteOps(key), "note ops");
+
+      await act(async () => {
+        editorRef.replaceEmbedUpdate(key, noteOpWithContents(ops, [...contentOps]));
+      });
+
+      const content = onlyNoteContent(editorRef.getUsj());
+      const texts = (content ?? []).map((item) =>
+        typeof item === "string" ? item : item.content?.join(""),
+      );
+      expect(texts).toEqual(expectedText);
+      // The host follows the note to its new key through the change it is told about.
+      const newKey = reported.at(-1);
+      expect(newKey).toBeDefined();
+      expect(editorRef.getNoteIndex(requireDefined(newKey, "new key"))).toBe(0);
     });
 
-    expect(onlyNoteContent(editorRef.getUsj())?.[0]).toBe("xy");
+    it("keeps later applies from the same note editor landing", async () => {
+      const reported: (string | undefined)[] = [];
+      const { editorRef, lexical } = await renderEditor(
+        oneNoteUsj,
+        optionsInView(view),
+        undefined,
+        (_usj, _ops, _source, insertedNodeKey) => reported.push(insertedNodeKey),
+      );
+      const [key] = noteKeys(lexical);
+      const ops = requireDefined(editorRef.getNoteOps(key), "note ops");
+
+      await act(async () => {
+        editorRef.replaceEmbedUpdate(key, noteOpWithContents(ops, [{ insert: "x" }, ftRun("a")]));
+      });
+      const nextKey = requireDefined(reported.at(-1), "key after the first apply");
+      await act(async () => {
+        editorRef.replaceEmbedUpdate(
+          nextKey,
+          noteOpWithContents(ops, [{ insert: "xy" }, ftRun("a")]),
+        );
+      });
+
+      expect(onlyNoteContent(editorRef.getUsj())?.[0]).toBe("xy");
+    });
   });
-});
 
-describe("applying an edit to an unclosed note", () => {
-  const unclosedUsj: Usj = {
-    ...oneNoteUsj,
-    content: [
-      oneNoteUsj.content[0],
-      oneNoteUsj.content[1],
-      {
-        type: "para",
-        marker: "p",
-        content: [
-          { type: "verse", marker: "v", number: "1" },
-          "first ",
-          {
-            type: "note",
-            marker: "f",
-            caller: "+",
-            closed: "false",
-            content: [{ type: "char", marker: "ft", content: ["alpha"] }],
-          } as MarkerObject,
-        ],
-      },
-    ],
-  };
+  describe("applying an edit to an unclosed note", () => {
+    const unclosedUsj: Usj = {
+      ...oneNoteUsj,
+      content: [
+        oneNoteUsj.content[0],
+        oneNoteUsj.content[1],
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            { type: "verse", marker: "v", number: "1" },
+            "first ",
+            {
+              type: "note",
+              marker: "f",
+              caller: "+",
+              closed: "false",
+              content: [{ type: "char", marker: "ft", content: ["alpha"] }],
+            } as MarkerObject,
+          ],
+        },
+      ],
+    };
 
-  it("keeps it unclosed and shown in the text, where it is edited too", async () => {
-    const reported: (string | undefined)[] = [];
-    const { editorRef, lexical } = await renderEditor(
-      unclosedUsj,
-      undefined,
-      undefined,
-      (_usj, _ops, _source, insertedNodeKey) => reported.push(insertedNodeKey),
-    );
-    const [key] = noteKeys(lexical);
-    const ops = requireDefined(editorRef.getNoteOps(key), "note ops");
+    it("keeps it unclosed and shown in the text, where it is edited too", async () => {
+      const reported: (string | undefined)[] = [];
+      const { editorRef, lexical } = await renderEditor(
+        unclosedUsj,
+        optionsInView(view),
+        undefined,
+        (_usj, _ops, _source, insertedNodeKey) => reported.push(insertedNodeKey),
+      );
+      const [key] = noteKeys(lexical);
+      const ops = requireDefined(editorRef.getNoteOps(key), "note ops");
 
-    await act(async () => {
-      editorRef.replaceEmbedUpdate(key, noteOpWithContents(ops, [ftRun("alpha beta")]));
+      await act(async () => {
+        editorRef.replaceEmbedUpdate(key, noteOpWithContents(ops, [ftRun("alpha beta")]));
+      });
+
+      const para = editorRef.getUsj()?.content[2];
+      const note =
+        typeof para === "object"
+          ? para.content?.find(
+              (item): item is MarkerObject => typeof item === "object" && item.type === "note",
+            )
+          : undefined;
+      expect(note).toMatchObject({
+        closed: "false",
+        content: [{ type: "char", marker: "ft", content: ["alpha beta"] }],
+      });
+      const newKey = requireDefined(reported.at(-1), "key after the apply");
+      const isCollapsed = lexical
+        .getEditorState()
+        .read(() => $getNodeByKey<NoteNode>(newKey)?.getIsCollapsed());
+      expect(isCollapsed).toBe(false);
     });
-
-    const para = editorRef.getUsj()?.content[2];
-    const note =
-      typeof para === "object"
-        ? para.content?.find(
-            (item): item is MarkerObject => typeof item === "object" && item.type === "note",
-          )
-        : undefined;
-    expect(note).toMatchObject({
-      closed: "false",
-      content: [{ type: "char", marker: "ft", content: ["alpha beta"] }],
-    });
-    const newKey = requireDefined(reported.at(-1), "key after the apply");
-    const isCollapsed = lexical
-      .getEditorState()
-      .read(() => $getNodeByKey<NoteNode>(newKey)?.getIsCollapsed());
-    expect(isCollapsed).toBe(false);
   });
 });
