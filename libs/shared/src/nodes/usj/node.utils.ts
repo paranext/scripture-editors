@@ -17,6 +17,7 @@ import {
   $setSelection,
   $setState,
   BaseSelection,
+  createState,
   ElementNode,
   LexicalEditor,
   LexicalNode,
@@ -1133,10 +1134,9 @@ export function $typedNoteCallerRange(
  * line breaks, marker scaffolding (editable and visible), marker-trailing-space or
  * attribute text (as a plain TextNode or as an opaque block's folded ImmutableTypedTextNode
  * display run, e.g. an UnknownNode's `\cat` byte display), attribute display-run wrappers,
- * either shape of a note's caller, everything an editable chapter displays, and empty or
- * NBSP-only spacer text (which the editor→USJ conversion drops as well; ideally the USJ→editor
- * conversion would create such spacers as presentation-typed text nodes instead — follow-up
- * work).
+ * either shape of a note's caller, everything an editable chapter displays, empty text, and a
+ * lone-NBSP text in one of the engine's display slots ({@link $isLoneNbspContent}) — all of which
+ * the editor→USJ conversion drops as well.
  *
  * The answer depends on WHERE the node is attached, not on the node alone: a plain TextNode is
  * presentation when it sits in a note's caller slot or under a chapter, and content anywhere else.
@@ -1183,12 +1183,75 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
     if (textType === MARKER_TRAILING_SPACE_TEXT_TYPE || textType === "attribute") return true;
 
     const text = node.getTextContent();
-    // "" / NBSP are presentation-only; a bare cursor host (EmptyVerseCaretGuardPlugin) likewise
-    // carries no content, so it must not shift annotation content indexes while it rests.
+    // "" is presentation-only, and so is a lone NBSP in a display slot; a bare cursor host
+    // (EmptyVerseCaretGuardPlugin) likewise carries no content, so it must not shift annotation
+    // content indexes while it rests.
     if (text === "" || isCursorPlaceholderOnly(text)) return true;
-    if (text === NBSP) return !$isNbspContentAtMark(node);
+    if (text === NBSP) return !$isLoneNbspContent(node);
   }
   return false;
+}
+
+/**
+ * Marks a text that is exactly one NBSP as the author's own `~`, where a forward conversion builds
+ * it in a slot that would otherwise read as the engine's: the first content of a char span in the
+ * marker modes without a separator after the opener ("visible" and "hidden"), which is also where
+ * an empty span's placeholder sits. Only the USJ→editor adaptor's `createChar`
+ * (usj-editor.adaptor.ts, platform) sets it, on the SERIALIZED node; {@link $isLoneNbspContent}
+ * and its serialized twin read it.
+ */
+export const authoredNbspState = createState("isAuthoredNbsp", {
+  parse: (value) => value === true,
+});
+
+/**
+ * Whether `node`, a text that is exactly one NBSP, is content rather than one of the engine's
+ * lone-NBSP display nodes. The display nodes all sit in a few slots, and those are what this
+ * tests, so that a `~` anywhere else — a paragraph's whole content, between two spans, after a
+ * note, inside a note — is content in every view:
+ *
+ * - right after an editable marker glyph: a separator a split stranded, the spacer in front of a
+ *   span's leading nested element, an empty span's placeholder, and a paragraph's or note's
+ *   separator that lost its tag;
+ * - right after a read-only glyph inside a char span (markerMode "visible"): the placeholder;
+ * - first in a char span or note: the placeholder where a span has no glyphs, and the spacer that
+ *   followed an opening glyph the user deleted;
+ * - in a note with a collapsed caller, after the caller or a span: a separator `NoteNodePlugin`
+ *   has yet to tag;
+ * - inside an attribute display run.
+ *
+ * A tagged or token-mode node is never content. In or beside an annotation mark,
+ * {@link $isNbspContentAtMark} decides. An author's `~` that the USJ→editor adaptor builds in one
+ * of those slots carries {@link authoredNbspState}, so it is content there too. The editor→USJ
+ * conversion (`editor-usj.adaptor.ts`) keeps exactly these as content, by the same rule on
+ * serialized nodes.
+ *
+ * Read-only: call inside `editor.getEditorState().read(...)` or an update.
+ */
+export function $isLoneNbspContent(node: TextNode): boolean {
+  if (node.getTextContent() !== NBSP) return false;
+  const parent = node.getParent();
+  const previous = node.getPreviousSibling();
+  if (
+    $isTypedMarkNode(parent) ||
+    $isTypedMarkNode(previous) ||
+    $isTypedMarkNode(node.getNextSibling())
+  )
+    return $isNbspContentAtMark(node);
+  if (node.getMode() !== "normal" || $getState(node, textTypeState) !== undefined) return false;
+  if ($getState(node, authoredNbspState)) return true;
+  if ($isAttributeRunNode(parent)) return false;
+  if (!previous) return !$isCharNode(parent) && !$isNoteNode(parent);
+  if ($isMarkerNode(previous)) return false;
+  if ($isCharNode(parent)) return !$isVisibleMarkerNode(previous);
+  if ($isNoteNode(parent) && parent.getChildren().some($isImmutableNoteCallerNode))
+    return !$isImmutableNoteCallerNode(previous) && !$isCharNode(previous);
+  return true;
+}
+
+/** Whether `node` is a collapsed note's caller (shared-react's `ImmutableNoteCallerNode`). */
+function $isImmutableNoteCallerNode(node: LexicalNode | null | undefined): boolean {
+  return node?.getType() === IMMUTABLE_NOTE_CALLER_NODE_TYPE;
 }
 
 /**

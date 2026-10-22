@@ -18,6 +18,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  authoredNbspState,
   ATTRIBUTE_RUN_VERSION,
   AttributeRunKind,
   AttributeRunNode,
@@ -452,6 +453,12 @@ function createChar(
     const [firstChild] = childNodes;
     if (isSerializedTextNode(firstChild)) firstChild.text = NBSP + firstChild.text;
     else if (firstChild) childNodes.unshift(createText(NBSP));
+  } else {
+    // Without a separator, an author's `~` leading the span is a lone NBSP in the empty span's
+    // placeholder slot, so it says it is the author's.
+    const [firstChild] = childNodes;
+    if (isSerializedTextNode(firstChild) && firstChild.text === NBSP)
+      firstChild[NODE_STATE_KEY] = { ...firstChild[NODE_STATE_KEY], [authoredNbspState.key]: true };
   }
   if (childNodes.length === 0) childNodes.push(createText(EMPTY_CHAR_PLACEHOLDER_TEXT));
   // A char span nested inside another char span carries the `+` prefix in its editable glyphs
@@ -547,9 +554,8 @@ function createPara(
         !isSerializedMarkerNode(node) && !(isSerializedTextNode(node) && node.text === NBSP),
     );
     // A spaces-only first string stays plain: rewriting a lone " " would leave a node that IS
-    // exactly one NBSP, byte-identical to the engine's untagged structural spacers, which the
-    // reverse adaptor drops — deleting the authored space from the file on save. (Only the
-    // lone-" " string can produce that shape — a longer run is already all-NBSP from the display
+    // exactly one NBSP, the shape of the engine's untagged display nodes. (Only the lone-" "
+    // string can produce that shape — a longer run is already all-NBSP from the display
     // mapping — but any spaces-only string gains nothing from the rewrite, so skip them all.)
     if (isSerializedTextNode(firstContent) && !/^ +$/.test(firstContent.text))
       firstContent.text = firstContent.text.replace(/^ +/, (lead) => NBSP.repeat(lead.length));

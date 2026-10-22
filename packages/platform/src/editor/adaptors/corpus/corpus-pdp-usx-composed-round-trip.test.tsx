@@ -54,7 +54,7 @@ import { $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRef } from "react";
-import { FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE, ViewOptions } from "shared-react";
+import { ViewOptions } from "shared-react";
 
 // Vitest's module transform does not preserve a usable `import.meta.url`, so locate the vendored
 // captures relative to the working directory — the platform project root under nx, the repo root
@@ -255,15 +255,6 @@ interface LegDivergences {
   composed?: string[];
 }
 
-/** The same {@link KNOWN_DIVERGENCES} entry for `capture` in each of `labels`. */
-function inViews(
-  capture: string,
-  labels: string[],
-  entry: LegDivergences & { reason: string },
-): { [testKey: string]: LegDivergences & { reason: string } } {
-  return Object.fromEntries(labels.map((label) => [`${capture} [${label}]`, entry]));
-}
-
 /**
  * Captures KNOWN to diverge, pinned at their current divergence so a change in either direction
  * fails: a new loss on an already-listed capture shows up as a changed list, and a fix shows up as
@@ -271,18 +262,7 @@ function inViews(
  * `"<capture> [converter]"` or `"<capture> [<view label>]"`. Each entry names the mechanism, the
  * leg it is in, and the work that owns it. A divergence that is not listed fails its test.
  */
-const KNOWN_DIVERGENCES: { [testKey: string]: LegDivergences & { reason: string } } = {
-  // `\v 6` and the `\p ~` paragraph after it: a content string that is exactly one NBSP — the
-  // whole content of `\nd ~\nd*` (@56) and of `\p ~` (@65) — is dropped by the reverse adaptor's
-  // lone-NBSP byte test (`editor-usj.adaptor.ts`, `recurseNodes`), already at load. Outside
-  // Standard view the editor has no display mapping to tell a data NBSP from a structural one.
-  // Known, PT-4391; the drop is pinned for constructed USJ in `constructed-usj-round-trip.test.ts`.
-  ...inViews("testUSFM-2SA-4-ch4.usx", [FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE], {
-    reason: "authored lone NBSP dropped outside Standard view (PT-4391)",
-    editor: ['@56 - "\\u00a0"', '@65 - "\\u00a0"'],
-    composed: ['@56 - "\\u00a0"', '@65 - "\\u00a0"'],
-  }),
-};
+const KNOWN_DIVERGENCES: { [testKey: string]: LegDivergences & { reason: string } } = {};
 
 /** Every test key this file generates, so an entry naming no test is caught as stale. */
 const TEST_KEYS = new Set(

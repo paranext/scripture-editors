@@ -92,7 +92,7 @@ import {
   $isVerseNode,
   isSerializedVerseNode,
   $isMarkerTrailingSeparator,
-  $isNbspContentAtMark,
+  $isLoneNbspContent,
   $isTypedMarkNode,
   $milestoneAttributeRunPieces,
   $verseAttributeRunPieces,
@@ -308,10 +308,9 @@ export function tokenizeFragment(
  *   byte. It is spelled `~` — the tokenizer's input convention (`usjText` maps `~` back to NBSP,
  *   PT9 UsfmParser) — so a settle that rewrites the paragraph round-trips it instead of
  *   corrupting it to a plain space. Two structural shapes still flatten to " " even here: a node
- *   that is EXACTLY one NBSP (the engine-owned spacer / empty-char placeholder shape, which
- *   serialization also treats as structural — the lone-NBSP byte test in editor-usj.adaptor.ts)
- *   unless it is a no-break space an annotation mark split off content (`isNbspContent`, from
- *   `$isNbspContentAtMark`), and the one structural leading NBSP fused onto a char span's first
+ *   that is EXACTLY one NBSP in one of the engine's display slots (a spacer, separator or
+ *   empty-char placeholder — `isNbspContent`, from `$isLoneNbspContent`, the rule serialization
+ *   keeps content by), and the one structural leading NBSP fused onto a char span's first
  *   content child (`structuralLead` — the twin of the conversion's positional separator strip,
  *   `precedesOpeningCharGlyph` in editor-usj.adaptor.ts). When that first content child has LOST
  *   its separator, its leading bytes run on as the opener's marker name, and the name ends at the
@@ -1374,7 +1373,7 @@ function $appendNodesFragment(
               $textNodeFragmentText(node),
               viewOptions,
               structuralLead,
-              $isNbspContentAtMark(node),
+              $isLoneNbspContent(node),
             ),
       );
     } else if ($isElementNode(node)) {

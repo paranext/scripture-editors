@@ -657,6 +657,70 @@ describe("an annotation over a no-break space the text itself contains", () => {
     },
   );
 
+  it.each(placeholderViews)(
+    "leaves no NBSP behind when text typed into an empty span is deleted (%s)",
+    async (name) => {
+      const mounted = await mountInView(emptySpanUsj, oracleView(name));
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const placeholder = $placeholder();
+          if (!$isTextNode(placeholder)) throw new Error("expected text");
+          placeholder.select(1, 1).insertText("a");
+        });
+        await Promise.resolve();
+      });
+      expect(savedSpanContent(mounted)).toEqual(["a"]);
+
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const text = $onlyCharNode()
+            .getChildren()
+            .find((child) => $isTextNode(child) && child.getTextContent() === "a");
+          if (!$isTextNode(text)) throw new Error("expected the typed text");
+          text.select(0, 1).removeText();
+        });
+        await Promise.resolve();
+      });
+
+      const para = mounted.ref.current?.getUsj()?.content?.[2];
+      expect(JSON.stringify(para)).not.toContain(NBSP);
+    },
+  );
+
+  /** `\p x \wj ~\wj* y`: a span whose whole content is the author's own no-break space. */
+  const tildeSpanUsj: Usj = twoParaUsj([
+    "x ",
+    { type: "char", marker: "wj", content: [NBSP] },
+    " y",
+  ]);
+
+  it.each(["standard", "unformatted", ...placeholderViews])(
+    "keeps a span whose whole content is `~` (%s)",
+    async (name) => {
+      const mounted = await mountInView(tildeSpanUsj, oracleView(name));
+
+      expect(savedSpanContent(mounted)).toEqual([NBSP]);
+    },
+  );
+
+  it.each(placeholderViews)(
+    "keeps a span's whole-content `~` when text is typed after it (%s)",
+    async (name) => {
+      const mounted = await mountInView(tildeSpanUsj, oracleView(name));
+
+      await act(async () => {
+        mounted.lexical.update(() => {
+          const tilde = $placeholder();
+          if (!$isTextNode(tilde)) throw new Error("expected text");
+          tilde.select(1, 1).insertText("a");
+        });
+        await Promise.resolve();
+      });
+
+      expect(savedSpanContent(mounted)).toEqual([`${NBSP}a`]);
+    },
+  );
+
   it("keeps it through a settle elsewhere in the paragraph (unformatted)", async () => {
     const mounted = await mountInView(tildeUsj, oracleView("unformatted"));
     await act(async () => {

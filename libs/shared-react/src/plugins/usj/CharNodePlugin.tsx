@@ -22,6 +22,7 @@ import {
   $syncDisplayRun,
   $syncNestedGlyphs,
   $syncOpenerSeparators,
+  authoredNbspState,
   charIdState,
   CharNode,
   displayRunDescriptor,
@@ -317,7 +318,8 @@ function $heldContentBeforeUpdate(key: NodeKey): boolean {
 /**
  * The key of the placeholder text the char span `key` held in the editor's last committed state,
  * when that text was all it held besides read-only glyphs; `null` when the span held anything else,
- * and `undefined` when the span did not exist there.
+ * and `undefined` when the span did not exist there. A lone NBSP marked as the author's own `~`
+ * ({@link authoredNbspState}) is content, not a placeholder.
  */
 function $placeholderKeyBeforeUpdate(key: NodeKey): NodeKey | null | undefined {
   return $getEditor()
@@ -329,7 +331,8 @@ function $placeholderKeyBeforeUpdate(key: NodeKey): NodeKey | null | undefined {
       const [only] = content;
       return content.length === 1 &&
         $isTextNode(only) &&
-        only.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT
+        only.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT &&
+        !$getState(only, authoredNbspState)
         ? only.getKey()
         : null;
     });

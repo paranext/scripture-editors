@@ -78,20 +78,10 @@ const FIXTURES = [
  * branch every track builds on stays green, and fails once the defect is gone. Each entry is a
  * specification of a defect: the named track deletes its entry as part of its fix.
  */
-const KNOWN_FAILURES: { [fixtureName: string]: string } = {
-  // `\nd ~\nd*` and `\p ~` in verse 6: a content string that is exactly one NBSP is dropped by the
-  // reverse adaptor's lone-NBSP byte test outside Standard view, which has no display mapping to
-  // tell a data NBSP from a structural one.
-  "testUSFM-2SA-4.usj [formatted]": "lone NBSP dropped outside Standard view (PT-4391)",
-  "testUSFM-2SA-4.usj [paragraph-structure]": "lone NBSP dropped outside Standard view (PT-4391)",
-};
+const KNOWN_FAILURES: { [fixtureName: string]: string } = {};
 
 /** The same contract as {@link KNOWN_FAILURES}, for the transform leg below. */
-const KNOWN_TRANSFORM_FAILURES: { [fixtureName: string]: string } = {
-  // The adaptor leg's lone-NBSP drop, seen again through the transform leg.
-  "testUSFM-2SA-4.usj [formatted]": "lone NBSP dropped outside Standard view (PT-4391)",
-  "testUSFM-2SA-4.usj [paragraph-structure]": "lone NBSP dropped outside Standard view (PT-4391)",
-};
+const KNOWN_TRANSFORM_FAILURES: { [fixtureName: string]: string } = {};
 
 function readOracle(name: string): Usj {
   if (!CORPUS_DIR) throw new Error("testUsfmCorpus fixture directory not found from cwd");

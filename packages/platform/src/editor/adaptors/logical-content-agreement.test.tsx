@@ -114,7 +114,8 @@ const cases: AgreementCase[] = [
     expected: [{ kind: "text", text: "content" }],
   },
   {
-    name: "an NBSP-only spacer between char spans is dropped",
+    // A lone NBSP outside the engine's display slots is the author's `~`, however it is spelled.
+    name: "a `~` between char spans is a content string of its own",
     $build: () => {
       $getRoot().append(
         $createParaNode("p").append(
@@ -124,13 +125,12 @@ const cases: AgreementCase[] = [
         ),
       );
     },
-    expected: [{ kind: "char" }, { kind: "char" }],
+    expected: [{ kind: "char" }, { kind: "text", text: NBSP }, { kind: "char" }],
   },
   {
-    // Formats differ around the spacer only to defeat Lexical's adjacent-simple-text merge (see
-    // the first case); the spacer itself must be dropped by BOTH projections and the run must
-    // coalesce across it.
-    name: "an NBSP-only spacer inside a text run is dropped and the run coalesces across it",
+    // Formats differ around the `~` only to defeat Lexical's adjacent-simple-text merge (see the
+    // first case); the run must coalesce across it with the byte kept.
+    name: "a `~` inside a text run joins the run",
     $build: () => {
       $getRoot().append(
         $createParaNode("p").append(
@@ -140,7 +140,36 @@ const cases: AgreementCase[] = [
         ),
       );
     },
-    expected: [{ kind: "text", text: "firstsecond" }],
+    expected: [{ kind: "text", text: `first${NBSP}second` }],
+  },
+  {
+    name: "a `~` right after the paragraph's tagged separator is content",
+    $build: () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $createMarkerTrailingSeparator(),
+          $createTextNode(NBSP),
+          $createVerseNode("1", getVisibleOpenMarkerText("v", "1")),
+        ),
+      );
+    },
+    expected: [{ kind: "text", text: NBSP }, { kind: "verse" }],
+  },
+  {
+    // The paragraph separator with its tag lost: still display, because it sits right after the
+    // glyph.
+    name: "a lone NBSP right after the paragraph glyph is display",
+    $build: () => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $createTextNode(NBSP),
+          $createTextNode("text").toggleFormat("bold"),
+        ),
+      );
+    },
+    expected: [{ kind: "text", text: "text" }],
   },
   {
     // VerseNode IS a TextNode subclass in editable mode, so this also pins the

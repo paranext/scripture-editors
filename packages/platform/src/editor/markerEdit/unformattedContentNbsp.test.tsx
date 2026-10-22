@@ -154,6 +154,41 @@ describe("unformatted view: content NBSP across a settle", () => {
     expect(usjText).toContain('"marker":"wj"');
   });
 
+  it("preserves a `~` that is a whole content string, between two spans", async () => {
+    const $span = (marker: string, text: string) =>
+      $createCharNode(marker).append(
+        $createMarkerNode(marker),
+        $createTextNode(`${NBSP}${text}`),
+        $createMarkerNode(marker, "closing"),
+      );
+    const { editor } = await unformattedTestEnvironment(() => {
+      $getRoot().append(
+        $createParaNode("p").append(
+          $createMarkerNode("p"),
+          $span("w", "a"),
+          $createTextNode(NBSP),
+          $span("w", "b"),
+          $createTextNode(" tail"),
+        ),
+      );
+    });
+    await act(async () =>
+      editor.update(() => {
+        const text = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === " tail");
+        text?.setTextContent(" tail \\wj glow\\wj* end");
+      }),
+    );
+    const para = usjOf(editor)?.content[0] as MarkerObject;
+    expect(para.content?.slice(0, 3)).toEqual([
+      { type: "char", marker: "w", content: ["a"] },
+      NBSP,
+      { type: "char", marker: "w", content: ["b"] },
+    ]);
+    expect(JSON.stringify(para.content)).toContain('"marker":"wj"');
+  });
+
   it("read-only settle (getUsj while pending) and the live settle agree on the NBSP byte", async () => {
     let glyph!: ReturnType<typeof $createMarkerNode>;
     const { editor } = await unformattedTestEnvironment(() => {
