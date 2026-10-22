@@ -1,4 +1,5 @@
-import { corpusFixtures, ROUND_TRIP_VIEW_CONFIGS } from "./corpus-data";
+import { ROUND_TRIP_VIEW_CONFIGS } from "../../editorViews.test-helpers";
+import { corpusFixtures } from "./corpus-data";
 import {
   initialize as initializeSerialize,
   reset,

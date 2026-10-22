@@ -18,7 +18,7 @@
  * divergence: pin it in {@link KNOWN_DIVERGENCES} (current behavior, mechanism named) rather than
  * deleting the fixture or loosening the general assertion.
  */
-import { ROUND_TRIP_VIEW_CONFIGS } from "./corpus-data";
+import { ROUND_TRIP_VIEW_CONFIGS } from "../../editorViews.test-helpers";
 import {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,

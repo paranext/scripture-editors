@@ -1,12 +1,5 @@
 import { NBSP } from "shared";
-import {
-  FORMATTED_VIEW_MODE,
-  getViewOptions,
-  PARAGRAPH_STRUCTURE_VIEW_MODE,
-  STANDARD_VIEW_MODE,
-  UNFORMATTED_VIEW_MODE,
-  ViewOptions,
-} from "shared-react";
+import { STANDARD_VIEW_MODE } from "shared-react";
 
 /**
  * Round-trip corpus for Standard view.
@@ -21,40 +14,6 @@ import {
  * `<para>`'s content on a single line and author its inner spaces
  * deliberately.
  */
-
-const standardViewOptions = getViewOptions(STANDARD_VIEW_MODE);
-if (!standardViewOptions) throw new Error("standard view options not found");
-
-/**
- * The view configurations every adaptor round-trip suite runs each fixture in: the named view
- * modes, plus standard view with expanded notes — the combination that made getViewMode return
- * undefined and silently disabled the standard-view whitespace machinery. The label doubles as the
- * `skipModes` key prefix (`<label>: <reason>`).
- */
-export const ROUND_TRIP_VIEW_CONFIGS: { label: string; viewOptions: ViewOptions | undefined }[] = [
-  { label: STANDARD_VIEW_MODE, viewOptions: standardViewOptions },
-  { label: FORMATTED_VIEW_MODE, viewOptions: getViewOptions(FORMATTED_VIEW_MODE) },
-  { label: UNFORMATTED_VIEW_MODE, viewOptions: getViewOptions(UNFORMATTED_VIEW_MODE) },
-  {
-    label: PARAGRAPH_STRUCTURE_VIEW_MODE,
-    viewOptions: getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE),
-  },
-  { label: "standard-expanded", viewOptions: { ...standardViewOptions, noteMode: "expanded" } },
-];
-
-/**
- * The subset of {@link ROUND_TRIP_VIEW_CONFIGS} a user edits Scripture in — Standard, formatted,
- * and paragraph-structure (Simple mode's default) — for the suites that mount an editor per view
- * and so cannot afford the whole matrix. Same labels, so a key written for one suite reads the same
- * in the others.
- */
-export const EDITING_VIEW_CONFIGS: { label: string; viewOptions: ViewOptions }[] =
-  ROUND_TRIP_VIEW_CONFIGS.flatMap(({ label, viewOptions }) => {
-    if (![STANDARD_VIEW_MODE, FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE].includes(label))
-      return [];
-    if (!viewOptions) throw new Error(`${label} view options not found`);
-    return [{ label, viewOptions }];
-  });
 
 export interface CorpusFixture {
   /** Unique fixture name, used as the test name. */
@@ -257,7 +216,7 @@ ${USX_FOOTER}`,
     usx: book(`<para style="p"> Leading space precedes this text.</para>`),
     skipModes: [
       `${STANDARD_VIEW_MODE}: a paragraph's leading spaces are not saved`,
-      "standard-expanded: a paragraph's leading spaces are not saved",
+      "standard+expandedNotes: a paragraph's leading spaces are not saved",
     ],
   },
 ];

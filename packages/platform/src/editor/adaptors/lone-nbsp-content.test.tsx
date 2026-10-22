@@ -7,7 +7,7 @@
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { createBasicTestEnvironment } from "../../../../../libs/shared/src/nodes/usj/test.utils";
-import { ROUND_TRIP_VIEW_CONFIGS } from "./corpus/corpus-data";
+import { ROUND_TRIP_VIEW_CONFIGS } from "../editorViews.test-helpers";
 import editorUsjAdaptor, { initialize as initializeDeserialize } from "./editor-usj.adaptor";
 import {
   initialize as initializeSerialize,

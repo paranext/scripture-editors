@@ -34,7 +34,7 @@ import {
   deserializeSerializedEditorState,
   initialize as initializeDeserialize,
 } from "../editor-usj.adaptor";
-import { EDITING_VIEW_CONFIGS } from "./corpus-data";
+import { EDITING_VIEW_CONFIGS } from "../../editorViews.test-helpers";
 import { expectEveryTextBearingNodeRendered } from "./corpusRendering.test-helpers";
 import { MarkerEditPlugin } from "../../markerEdit/MarkerEditPlugin";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";

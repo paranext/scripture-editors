@@ -32,7 +32,8 @@
  * the fixture matrix does not multiply by an editor mount for views nobody edits in.
  */
 
-import { corpusFixtures, EDITING_VIEW_CONFIGS } from "./corpus-data";
+import { EDITING_VIEW_CONFIGS } from "../../editorViews.test-helpers";
+import { corpusFixtures } from "./corpus-data";
 import { expectEveryTextBearingNodeRendered } from "./corpusRendering.test-helpers";
 import {
   initialize as initializeSerialize,

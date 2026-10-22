@@ -3,18 +3,19 @@
  * caret points in document order with their outbound labels, and read which bytes hold an
  * annotation. Plus the two hand-made corpora the default suite runs.
  */
-// Side-effect import: the `Range` rect and focus shims the mounted editor needs under jsdom.
-import "../settledGetUsj.test-helpers";
-import Editor from "../Editor";
-import { EditorRef } from "../editor.model";
+import {
+  EDITOR_VIEWS,
+  editorView,
+  MountedEditor,
+  mountInView,
+  NamedView,
+} from "../editorViews.test-helpers";
 import {
   MarkerContent,
   MarkerObject,
   Usj,
   UsjDocumentLocation,
 } from "@eten-tech-foundation/scripture-utilities";
-import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
-import { act, render } from "@testing-library/react";
 import {
   $getRoot,
   $isDecoratorNode,
@@ -23,7 +24,6 @@ import {
   LexicalEditor,
   LexicalNode,
 } from "lexical";
-import { createRef, ReactElement, RefObject } from "react";
 import {
   $charSeparatorPrefixLength,
   $displayAnnotationsOf,
@@ -31,94 +31,25 @@ import {
   $isMarkerNode,
   $isMarkerTrailingSeparator,
   $isTypedMarkNode,
-  LoggerBasic,
   NBSP,
 } from "shared";
-import {
-  $getLocationFromNode,
-  annotationHighlightClassNames,
-  getViewOptions,
-  STANDARD_VIEW_MODE,
-  ViewOptions,
-} from "shared-react";
+import { $getLocationFromNode, annotationHighlightClassNames, ViewOptions } from "shared-react";
 
 /** The annotation type the oracle passes to `setAnnotation`. */
 export const ORACLE_TYPE = "oracle";
 /** What the Editor stores {@link ORACLE_TYPE} as on marks and carriers. */
 export const HELD_TYPE = `external-${ORACLE_TYPE}`;
 
-export interface MountedInView {
-  ref: RefObject<EditorRef | null>;
-  lexical: LexicalEditor;
-  unmount: () => void;
-  /** Every `error` and `warn` the Editor's logger received, prefixed `E ` or `W `. */
-  logs: string[];
-}
+/** A mounted editor, as {@link mountInView} returns it. */
+export type MountedInView = MountedEditor;
 
-/** Mounts `usj` in the real `Editor` with `view`, collecting what its logger reports. */
-export async function mountInView(usj: Usj, view: ViewOptions): Promise<MountedInView> {
-  const ref = createRef<EditorRef>();
-  const lexicalRef = createRef<LexicalEditor>();
-  const logs: string[] = [];
-  const logger: LoggerBasic = {
-    error: (...params: unknown[]) => logs.push(`E ${params.map(String).join(" ")}`),
-    warn: (...params: unknown[]) => logs.push(`W ${params.map(String).join(" ")}`),
-    info: () => undefined,
-    debug: () => undefined,
-  };
-  const ui: ReactElement = (
-    <Editor ref={ref} defaultUsj={usj} options={{ view }} logger={logger}>
-      <EditorRefPlugin editorRef={lexicalRef} />
-    </Editor>
-  );
-  let unmount: (() => void) | undefined;
-  await act(async () => {
-    ({ unmount } = render(ui));
-  });
-  if (!lexicalRef.current || !unmount) throw new Error("mount failed");
-  return { ref, lexical: lexicalRef.current, unmount, logs };
-}
-
-function requireViewOptions(mode: string): ViewOptions {
-  const options = getViewOptions(mode);
-  if (!options) throw new Error(`no view options for ${mode}`);
-  return options;
-}
-
-const standard = requireViewOptions(STANDARD_VIEW_MODE);
-
-/** The views the oracle runs, by name. */
-export const ORACLE_VIEWS: { name: string; view: ViewOptions }[] = [
-  { name: "standard", view: standard },
-  { name: "standard+expandedNotes", view: { ...standard, noteMode: "expanded" } },
-  { name: "unformatted", view: requireViewOptions("unformatted") },
-  {
-    name: "visible",
-    view: {
-      markerMode: "visible",
-      noteMode: "expanded",
-      hasSpacing: false,
-      isFormattedFont: false,
-    },
-  },
-  {
-    name: "visible+collapsed",
-    view: { markerMode: "visible", noteMode: "collapsed", hasSpacing: true, isFormattedFont: true },
-  },
-  { name: "formatted", view: requireViewOptions("formatted") },
-  { name: "paragraph-structure", view: requireViewOptions("paragraph-structure") },
-  {
-    name: "hidden+expanded",
-    view: { markerMode: "hidden", noteMode: "expanded", hasSpacing: false, isFormattedFont: false },
-  },
-];
+/** The views the oracle runs, by name: every view in the registry. */
+export const ORACLE_VIEWS: readonly NamedView[] = EDITOR_VIEWS;
 
 /** The {@link ORACLE_VIEWS} entry called `name`. */
-export function oracleView(name: string): ViewOptions {
-  const found = ORACLE_VIEWS.find((entry) => entry.name === name);
-  if (!found) throw new Error(`unknown oracle view: ${name}`);
-  return found.view;
-}
+export const oracleView = editorView;
+
+export { mountInView };
 
 /** A location as one stable string: its path, then its other fields sorted by name. */
 export function locKey(location: UsjDocumentLocation | undefined): string {

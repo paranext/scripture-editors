@@ -40,7 +40,7 @@
 import Editor from "../../Editor";
 import { flushQueuedEvents } from "../../editor-test.utils";
 import { deserializeEditorState } from "../editor-usj.adaptor";
-import { EDITING_VIEW_CONFIGS } from "./corpus-data";
+import { EDITING_VIEW_CONFIGS } from "../../editorViews.test-helpers";
 import {
   MarkerContent,
   MarkerObject,
