@@ -1,11 +1,11 @@
 /**
  * A key acts on the caret the user can see. The browser moves the caret itself for most keys and
  * reports the move to Lexical only through `selectionchange`, which it fires asynchronously; a key
- * pressed before that event is handled reads the position Lexical held BEFORE the move. Pressing
- * Home then ArrowRight quickly on a chapter line jumped to the next paragraph: the arrow handler saw
- * the caret still at the end of the line. Each test leaves Lexical's selection behind the DOM's, as
- * that race does (jsdom fires no `selectionchange` for a selection set from script), and presses a
- * key through the DOM, as the browser delivers it.
+ * pressed before that event is handled would read the position Lexical held BEFORE the move: Home
+ * then ArrowRight pressed quickly on a chapter line would hop to the next paragraph, because the
+ * arrow handler would see the caret still at the end of the line. Each test leaves Lexical's
+ * selection behind the DOM's, as that race does (jsdom fires no `selectionchange` for a selection
+ * set from script), and presses a key through the DOM, as the browser delivers it.
  */
 import { mountStandardViewEditor } from "./settledGetUsj.test-helpers";
 import { requireDefined } from "./markerEdit/markerEdit.test-helpers";

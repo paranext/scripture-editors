@@ -21,12 +21,12 @@ function domTextNodeOf(element: Node | null | undefined): Node | undefined {
  * Brings Lexical's caret up to the DOM's when the browser has moved it and Lexical has not heard yet.
  *
  * The browser moves the caret itself for most keys and tells Lexical only through `selectionchange`,
- * which it fires asynchronously, so a key pressed before that event is handled reads where the
- * caret WAS: Home then ArrowRight on a chapter line hopped to the next paragraph, because the arrow
- * handler still saw the caret at the end of the line. Only a collapsed caret in text that the DOM
- * has moved to a different text position is replaced: where the DOM's caret is exactly where
- * Lexical's renders, Lexical's is kept, since several Lexical positions can render at one DOM
- * position and the editor chooses among them on purpose.
+ * which it fires asynchronously, so a key pressed before that event is handled would act on where
+ * the caret WAS: Home then ArrowRight pressed quickly on a chapter line would hop to the next
+ * paragraph, because the arrow handler would still see the caret at the end of the line. Only a
+ * collapsed caret in text that the DOM has moved to a different text position is replaced: where
+ * the DOM's caret is exactly where Lexical's renders, Lexical's is kept, since several Lexical
+ * positions can render at one DOM position and the editor chooses among them on purpose.
  *
  * Mutating: call inside `editor.update()` or a command listener.
  */
