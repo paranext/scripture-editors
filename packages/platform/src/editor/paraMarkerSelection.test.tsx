@@ -582,13 +582,19 @@ describe("Backspace/Delete on a selected paragraph marker", () => {
   const view = getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE);
 
   it.each(["Backspace", "Delete"])(
-    "%s merges the paragraph into the previous one, and a single undo restores the document",
+    "%s, pressed twice, merges the paragraph into the previous one, and a single undo restores the document",
     async (key) => {
       const { ref, lexical } = await mountParagraphStructure({
         options: { view, structureProtectionMode: "guarded" },
       });
       const before = ref.current?.getUsj();
       await clickElement(glyphElementOf(lexical, "li2"));
+
+      // The first press only arms the merge: nothing changes and the marker stays selected.
+      await pressKeyOn(lexical, { key });
+      await flushQueuedEvents();
+      expect(ref.current?.getUsj()).toEqual(before);
+      expect(ref.current?.getSelectedParaMarker()).toBeDefined();
 
       await pressKeyOn(lexical, { key });
       await flushQueuedEvents();

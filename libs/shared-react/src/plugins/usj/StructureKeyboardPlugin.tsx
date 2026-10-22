@@ -1,6 +1,7 @@
 import {
   $isArmedSelection,
   $mergeParaIntoPrevious,
+  $paraDeleteEffect,
   $placeCaretAtEnd,
   $sanitizeNodesForProtectedStructure,
   $selectionContainsVerseMarker,
@@ -37,9 +38,12 @@ import {
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { $isSomeVerseNode } from "../../nodes/usj";
-import { $isSomeParaNode } from "shared";
+import { $getSelectedParaMarkerPara, $isSomeParaNode } from "shared";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
+
+/** Class on an armed paragraph's element while a two-step paragraph delete is pending. */
+export const PARA_MERGE_ARMED_CLASS_NAME = "para-merge-armed";
 
 /**
  * Governs structural keystrokes (Backspace/Delete/Enter/typing) at verse- and paragraph-marker
@@ -51,11 +55,16 @@ import { StructureProtectionMode } from "./structure-protection.model";
  * Registers a KEY_DOWN handler at COMMAND_PRIORITY_HIGH, mirroring ArrowNavigationPlugin, and
  * the CUT refusal at COMMAND_PRIORITY_CRITICAL so it outranks the handlers that perform a cut.
  *
+ * A paragraph merge (Backspace at a paragraph's start, Delete at the end of the one before, or
+ * either on a selected gutter marker) is two-step too: the first press arms it, the second merges.
+ *
  * The armed state is published to the DOM (rather than rendered here) so the host app owns the
  * user-facing hint: the root element carries the `verse-delete-armed` class plus
  * `data-verse-delete-intent` (`deleteBackward` | `deleteForward`) and `data-verse-delete-kind`
- * (`verse` | `selection`), and the armed marker carries the `verse-selected` class. The host can
- * observe these to render a localized tooltip (see paranext-core's VerseDeleteTooltipOverlay).
+ * (`verse` | `selection`, or for a paragraph what the second press does: `joinPreviousPara` |
+ * `joinNextPara` | `removeEmptyPara`). An armed verse marker carries the `verse-selected` class, and
+ * an armed paragraph's element {@link PARA_MERGE_ARMED_CLASS_NAME}. The host can observe these to
+ * render a localized tooltip (see paranext-core's TwoStepDeleteTooltipOverlay).
  *
  * @param structureProtectionMode - `"off"` (e.g. the Power interface mode): the plugin registers
  *   no handlers and editing is fully native — no blocking, no two-step delete, no armed state.
@@ -145,13 +154,27 @@ export function StructureKeyboardPlugin({
           const ns = $createNodeSelection();
           ns.add(target.node.getKey());
           $setSelection(ns);
+          setArmedState({ key: target.node.getKey(), kind: target.kind, intent });
         } else {
-          const range = $createRangeSelection();
-          range.anchor.set(target.node.getKey(), 0, "element");
-          range.focus.set(target.node.getKey(), target.node.getChildrenSize(), "element");
-          $setSelection(range);
+          // A selected gutter marker already shows which paragraph goes, so it stays selected;
+          // removing it joins its paragraph to the one before, whichever key was pressed.
+          const isMarkerSelected = !!$getSelectedParaMarkerPara(selection);
+          if (!isMarkerSelected) {
+            const range = $createRangeSelection();
+            range.anchor.set(target.node.getKey(), 0, "element");
+            range.focus.set(target.node.getKey(), target.node.getChildrenSize(), "element");
+            $setSelection(range);
+          }
+          setArmedState({
+            key: target.node.getKey(),
+            kind: target.kind,
+            intent,
+            paraEffect: $paraDeleteEffect(
+              target.node,
+              isMarkerSelected ? "deleteBackward" : intent,
+            ),
+          });
         }
-        setArmedState({ key: target.node.getKey(), kind: target.kind, intent });
         event?.preventDefault();
         return true;
       }
@@ -201,6 +224,9 @@ export function StructureKeyboardPlugin({
       // Lexical only reconstructs known node types, but this also clears the taint flow).
       const safeHtml = DOMPurify.sanitize(html);
       const dom = new DOMParser().parseFromString(safeHtml, "text/html");
+      // A marker glyph (a heading's gutter marker, copied along with its text) is presentation,
+      // not content. Parsed back, it would arrive as plain `\s1 ` text, and saved, as a marker.
+      dom.querySelectorAll('[data-text-type="marker"]').forEach((glyph) => glyph.remove());
       const sanitized = $sanitizeNodesForProtectedStructure($generateNodesFromDOM(editor, dom));
       // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
       const selection = $getSelection();
@@ -287,24 +313,26 @@ export function StructureKeyboardPlugin({
   }, [editor, structureProtectionMode, setArmedState]);
 
   // Publish the armed state onto the editor root: the class gates the CSS blink to armed markers,
-  // and the data attributes let the host app render a localized destructive hint. `para` merges
-  // expose no hint kind (verse-marker scope), matching the previous no-tooltip behavior.
+  // and the data attributes let the host app render a localized destructive hint. An armed
+  // paragraph's element also gets PARA_MERGE_ARMED_CLASS_NAME, which the hint anchors to.
   useEffect(() => {
     const root = editor.getRootElement();
     if (!root) return;
-    const showHint = !!armed && armed.kind !== "para";
     root.classList.toggle("verse-delete-armed", !!armed);
-    if (showHint) {
+    if (armed) {
       root.setAttribute("data-verse-delete-intent", armed.intent);
-      root.setAttribute("data-verse-delete-kind", armed.kind);
+      root.setAttribute("data-verse-delete-kind", armed.paraEffect ?? armed.kind);
     } else {
       root.removeAttribute("data-verse-delete-intent");
       root.removeAttribute("data-verse-delete-kind");
     }
+    const armedPara = armed?.kind === "para" ? editor.getElementByKey(armed.key) : undefined;
+    armedPara?.classList.add(PARA_MERGE_ARMED_CLASS_NAME);
     return () => {
       root.classList.remove("verse-delete-armed");
       root.removeAttribute("data-verse-delete-intent");
       root.removeAttribute("data-verse-delete-kind");
+      armedPara?.classList.remove(PARA_MERGE_ARMED_CLASS_NAME);
     };
   }, [editor, armed]);
 

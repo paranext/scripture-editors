@@ -8,11 +8,13 @@ import {
   $isRangeSelection,
   $isTextNode,
   BaseSelection,
+  ElementNode,
   LexicalNode,
   NodeKey,
 } from "lexical";
 import {
   $getSelectableParaMarker,
+  $getSelectedParaMarkerPara,
   $isGutterMarkerNode,
   $isMarkerTrailingSeparator,
   $isParaLikeNode,
@@ -56,12 +58,20 @@ export function isSamePoint(point: PointSnapshot, snapshot: PointSnapshot): bool
   );
 }
 
+/**
+ * What an armed paragraph delete will do, which the host names in its hint: join the paragraph to
+ * the one before it, pull the next paragraph up into the current one, or remove an empty paragraph.
+ */
+export type ParaDeleteEffect = "joinPreviousPara" | "joinNextPara" | "removeEmptyPara";
+
 /** A pending two-step delete: the armed target's kind + the intent that armed it. */
 export interface ArmedDelete {
   kind: "verse" | "para" | "selection";
   intent: "deleteBackward" | "deleteForward";
   /** verse/para: the target node's key. selection: the first verse marker key in the range. */
   key: NodeKey;
+  /** para only: what the second press will do. */
+  paraEffect?: ParaDeleteEffect;
   /** selection only: the armed range's endpoints. */
   anchor?: PointSnapshot;
   focus?: PointSnapshot;
@@ -291,11 +301,19 @@ export function $shouldBlockStructuralEdit(selection: BaseSelection, intent: Edi
  * Backward: the adjacent verse, else the current paragraph (when a previous block exists).
  * Forward: the adjacent verse, else the NEXT paragraph (when a next block exists) — the block
  * whose marker the merge removes.
+ * A selected gutter marker (either direction): its paragraph, when there is one before it to merge
+ * into.
  */
 export function $structuralDeleteTarget(
   selection: BaseSelection,
   intent: EditIntent,
 ): DeleteTarget | undefined {
+  const markerPara = $getSelectedParaMarkerPara(selection);
+  if (markerPara) {
+    return $isParaLikeNode(markerPara.getPreviousSibling())
+      ? { kind: "para", node: markerPara }
+      : undefined;
+  }
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
   if (intent === "deleteBackward") {
     const verse = $adjacentVerseMarker(selection, "backward");
@@ -330,6 +348,8 @@ export function $isArmedSelection(selection: BaseSelection | null, armed: ArmedD
     if (!armed.anchor || !armed.focus) return false;
     return isSamePoint(selection.anchor, armed.anchor) && isSamePoint(selection.focus, armed.focus);
   }
+  // A paragraph armed from its selected gutter marker stays armed while the marker stays selected.
+  if ($getSelectedParaMarkerPara(selection)?.getKey() === armed.key) return true;
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
   const anchorPara = $getParaAncestor(selection.anchor.getNode());
   const focusPara = $getParaAncestor(selection.focus.getNode());
@@ -339,6 +359,31 @@ export function $isArmedSelection(selection: BaseSelection | null, armed: ArmedD
     !!focusPara &&
     focusPara.getKey() === armed.key
   );
+}
+
+/** True when `para` has nothing but its own marker prefix (a gutter marker, say), or nothing. */
+export function $isParaEmpty(para: ElementNode): boolean {
+  return para
+    .getChildren()
+    .every(
+      (child) =>
+        $isGutterMarkerNode(child) ||
+        $isSynthesizedMarkerNode(child) ||
+        $isMarkerTrailingSeparator(child),
+    );
+}
+
+/**
+ * What the second press of an armed paragraph delete will do to `para`, the paragraph the merge
+ * removes: the current one for a Backspace (or a selected gutter marker), the next one for a
+ * Delete.
+ */
+export function $paraDeleteEffect(
+  para: ElementNode,
+  intent: "deleteBackward" | "deleteForward",
+): ParaDeleteEffect {
+  if ($isParaEmpty(para)) return "removeEmptyPara";
+  return intent === "deleteForward" ? "joinNextPara" : "joinPreviousPara";
 }
 
 /** Collapses the caret to the end of `node` (end of its text for a TextNode). */

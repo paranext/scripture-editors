@@ -9,7 +9,9 @@ import {
   $caretAtParaEnd,
   $caretAtParaStart,
   $isArmedSelection,
+  $isParaEmpty,
   $mergeParaIntoPrevious,
+  $paraDeleteEffect,
   $sanitizeNodesForProtectedStructure,
   $selectionContainsVerseMarker,
   $selectionSpansBlockBoundary,
@@ -686,6 +688,43 @@ describe("$mergeParaIntoPrevious", () => {
       expect($isMarkerNode(anchor.getNode()) || $isMarkerTrailingSeparator(anchor.getNode())).toBe(
         false,
       );
+    });
+  });
+});
+
+describe("$isParaEmpty", () => {
+  it("is true for a paragraph with nothing but its gutter marker, or with no children", async () => {
+    const { editor } = await baseTestEnvironment();
+    await sutUpdate(editor, () => {
+      expect($isParaEmpty($createParaNode("s1").append($createGutterMarkerNode("\\s1 ")))).toBe(
+        true,
+      );
+      expect($isParaEmpty($createParaNode("p"))).toBe(true);
+    });
+  });
+
+  it("is false once the paragraph has text after its marker", async () => {
+    const { editor } = await baseTestEnvironment();
+    await sutUpdate(editor, () => {
+      const para = $createParaNode("s1").append(
+        $createGutterMarkerNode("\\s1 "),
+        $createTextNode("Heading"),
+      );
+      expect($isParaEmpty(para)).toBe(false);
+    });
+  });
+});
+
+describe("$paraDeleteEffect", () => {
+  it("names a Backspace merge, a Delete merge and an empty paragraph's removal", async () => {
+    const { editor } = await baseTestEnvironment();
+    await sutUpdate(editor, () => {
+      const full = $createParaNode("p").append($createTextNode("second"));
+      const empty = $createParaNode("p").append($createGutterMarkerNode("\\p "));
+      expect($paraDeleteEffect(full, "deleteBackward")).toBe("joinPreviousPara");
+      expect($paraDeleteEffect(full, "deleteForward")).toBe("joinNextPara");
+      expect($paraDeleteEffect(empty, "deleteBackward")).toBe("removeEmptyPara");
+      expect($paraDeleteEffect(empty, "deleteForward")).toBe("removeEmptyPara");
     });
   });
 });

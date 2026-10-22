@@ -48,6 +48,7 @@ import {
   $getSelectedParaMarker,
   $getSelectedParaMarkerPara,
   $isGutterMarkerNode,
+  $isParaLikeNode,
   $isSomeParaNode,
   $placeCaretAtBoundary,
   $selectParaMarker,
@@ -101,7 +102,8 @@ const TARGETED_INPUT_TYPES = new Set([
  *   start of the text of a paragraph with no leading verse) merges its paragraph into the one
  *   before (`$mergeParaIntoPrevious`) — a no-op with nothing before it, and refused under
  *   `"protected"`, as `StructureKeyboardPlugin` refuses the same merge from a caret. Under
- *   `"guarded"`, selecting the marker is the arming step, so one press merges.
+ *   `"guarded"`, it is `StructureKeyboardPlugin`'s two-step delete, as from a caret: the first
+ *   press arms the merge and keeps the marker selected, the second merges.
  * - Pointer and clipboard: a click elsewhere, or a cut, copy or paste after the browser's selection
  *   moved elsewhere, uses that selection; otherwise paste lands at the content start and cut, copy
  *   and drag-start are refused (the glyph is not content). A drop lands at its drop point, and is
@@ -159,6 +161,12 @@ export function ParaMarkerSelectionPlugin({
     const $removeMarker = (para: SomeParaNode) => {
       if (structureProtectionModeRef.current !== "protected") $mergeParaIntoPrevious(para);
     };
+
+    // Under "guarded", a merge that would happen is left to `StructureKeyboardPlugin`'s two-step
+    // delete, which arms it on the first press and performs it on the second.
+    const $isTwoStepRemoval = (para: SomeParaNode) =>
+      structureProtectionModeRef.current === "guarded" &&
+      $isParaLikeNode(para.getPreviousSibling());
 
     /**
      * Adopts the browser's selection when it has moved off the glyph — a right-click on other text,
@@ -249,6 +257,7 @@ export function ParaMarkerSelectionPlugin({
           return true;
         case "Backspace":
         case "Delete":
+          if ($isTwoStepRemoval(para)) return false;
           event.preventDefault();
           $removeMarker(para);
           return true;
@@ -274,6 +283,7 @@ export function ParaMarkerSelectionPlugin({
       if (!editor.isEditable()) return false;
       const markerPara = $getActivePara();
       if (markerPara) {
+        if ($isTwoStepRemoval(markerPara)) return false;
         $removeMarker(markerPara);
         return true;
       }
@@ -294,7 +304,9 @@ export function ParaMarkerSelectionPlugin({
       const { inputType } = event;
       if (inputType.startsWith("delete")) {
         event.preventDefault();
-        $removeMarker(para);
+        if ($isTwoStepRemoval(para))
+          editor.dispatchCommand(DELETE_CHARACTER_COMMAND, inputType.includes("Backward"));
+        else $removeMarker(para);
         return true;
       }
       // A virtual keyboard's Enter, which names no key: the same request a hardware Enter makes.

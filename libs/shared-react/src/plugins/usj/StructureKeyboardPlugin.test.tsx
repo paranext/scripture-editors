@@ -19,6 +19,7 @@ import {
   $getSelection,
   $isNodeSelection,
   $setSelection,
+  LexicalEditor,
   LexicalNode,
   TextNode,
   COMMAND_PRIORITY_LOW,
@@ -234,6 +235,10 @@ const VERSE_HTML =
   '<p data-marker="p" class="para">' +
   '<span data-marker="v" data-number="2" class="verse">2</span>pasted</p>';
 
+/** What Lexical's copy writes for a triple-clicked `\s1` heading: its gutter marker, then its words. */
+const COPIED_HEADING_HTML =
+  '<span data-text-type="marker" class="marker">\\s1&nbsp;</span><span>Heading</span>';
+
 describe("StructureKeyboardPlugin — paste/drop payload sanitization", () => {
   it("strips a verse marker from pasted HTML, inserting text only, when protected", async () => {
     let t1: TextNode;
@@ -256,6 +261,26 @@ describe("StructureKeyboardPlugin — paste/drop payload sanitization", () => {
       const hasVerse = para.getChildren().some((n: LexicalNode) => n instanceof ImmutableVerseNode);
       expect(hasVerse).toBe(false); // verse marker stripped
       expect($getRoot().getTextContent()).toContain("pasted"); // text kept
+    });
+  });
+
+  it("drops a copied heading's gutter marker from pasted HTML, inserting its words only, when protected", async () => {
+    let t1: TextNode;
+    const { editor } = await protectedEnvironment(() => {
+      t1 = $createTextNode("hello world");
+      $getRoot().append($createParaNode("p").append(t1));
+    });
+    updateSelection(editor, t1!, 6);
+
+    await act(async () => {
+      editor.update(() => {
+        editor.dispatchCommand(PASTE_COMMAND, htmlPasteEvent(COPIED_HEADING_HTML));
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildrenSize()).toBe(1);
+      expect($getRoot().getTextContent()).toBe("hello Headingworld");
     });
   });
 
@@ -919,8 +944,12 @@ describe("StructureKeyboardPlugin — per-edit undo/redo for a run of verse dele
 
 // The plugin renders no UI; it publishes the armed state to the editor root so the host app can
 // render a localized hint (see paranext-core's VerseDeleteTooltipOverlay). These assert that
-// DOM contract: `data-verse-delete-intent` + `data-verse-delete-kind`, set only for hint-worthy
-// (verse / selection) arms and cleared otherwise.
+// DOM contract: `data-verse-delete-intent` + `data-verse-delete-kind` for every arm, cleared
+// otherwise, plus `para-merge-armed` on an armed paragraph's element.
+function armedParaElements(editor: LexicalEditor): Element[] {
+  return Array.from(editor.getRootElement()?.querySelectorAll(".para-merge-armed") ?? []);
+}
+
 describe("StructureKeyboardPlugin — armed DOM signals for the host hint", () => {
   it("Backspace-armed verse marks intent=deleteBackward, kind=verse", async () => {
     let t1: TextNode;
@@ -952,20 +981,74 @@ describe("StructureKeyboardPlugin — armed DOM signals for the host hint", () =
     expect(root?.getAttribute("data-verse-delete-kind")).toBe("selection");
   });
 
-  it("paragraph-merge arm sets no hint attributes (verse-marker scope only)", async () => {
+  it("Backspace-armed paragraph merge marks kind=joinPreviousPara on the merging paragraph", async () => {
+    let second: ParaNode;
     let t2: TextNode;
     const { editor } = await guardedEnvironment(() => {
       t2 = $createTextNode("second");
-      $getRoot().append(
-        $createParaNode("p").append($createTextNode("first")),
-        $createParaNode("p").append(t2),
-      );
+      second = $createParaNode("p").append(t2);
+      $getRoot().append($createParaNode("p").append($createTextNode("first")), second);
     });
     updateSelection(editor, t2!, 0); // caret at start of the second paragraph
 
     await pressKey(editor, "Backspace", 0); // arm the paragraph merge
     const root = editor.getRootElement();
-    expect(root?.getAttribute("data-verse-delete-intent")).toBeNull();
+    expect(root?.getAttribute("data-verse-delete-intent")).toBe("deleteBackward");
+    expect(root?.getAttribute("data-verse-delete-kind")).toBe("joinPreviousPara");
+    expect(armedParaElements(editor)).toEqual([editor.getElementByKey(second!.getKey())]);
+  });
+
+  it("Delete-armed paragraph merge marks kind=joinNextPara on the next paragraph", async () => {
+    let t1: TextNode;
+    let second: ParaNode;
+    const { editor } = await guardedEnvironment(() => {
+      t1 = $createTextNode("first");
+      second = $createParaNode("p").append($createTextNode("second"));
+      $getRoot().append($createParaNode("p").append(t1), second);
+    });
+    updateSelection(editor, t1!, 5); // caret at end of the first paragraph
+
+    await pressKey(editor, "Delete", 0);
+    const root = editor.getRootElement();
+    expect(root?.getAttribute("data-verse-delete-intent")).toBe("deleteForward");
+    expect(root?.getAttribute("data-verse-delete-kind")).toBe("joinNextPara");
+    expect(armedParaElements(editor)).toEqual([editor.getElementByKey(second!.getKey())]);
+  });
+
+  it("an armed empty paragraph marks kind=removeEmptyPara", async () => {
+    let empty: ParaNode;
+    const { editor } = await guardedEnvironment(() => {
+      empty = $createParaNode("p").append($createGutterMarkerNode("\\p "));
+      $getRoot().append($createParaNode("p").append($createTextNode("first")), empty);
+    });
+    updateSelection(editor, empty!, 1); // caret just past the empty paragraph's gutter marker
+
+    await pressKey(editor, "Backspace", 0);
+    expect(editor.getRootElement()?.getAttribute("data-verse-delete-kind")).toBe("removeEmptyPara");
+
+    await pressKey(editor, "Backspace", 0);
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildrenSize()).toBe(1);
+      expect($getRoot().getTextContent()).toBe("first");
+    });
+  });
+
+  it("clears para-merge-armed and the hint when the arm is cancelled", async () => {
+    let t1: TextNode;
+    let t2: TextNode;
+    const { editor } = await guardedEnvironment(() => {
+      t1 = $createTextNode("first");
+      t2 = $createTextNode("second");
+      $getRoot().append($createParaNode("p").append(t1), $createParaNode("p").append(t2));
+    });
+    updateSelection(editor, t2!, 0);
+    await pressKey(editor, "Backspace", 0);
+    expect(armedParaElements(editor)).toHaveLength(1);
+
+    updateSelection(editor, t1!, 2); // move the caret away
+
+    const root = editor.getRootElement();
+    expect(armedParaElements(editor)).toHaveLength(0);
     expect(root?.getAttribute("data-verse-delete-kind")).toBeNull();
   });
 
