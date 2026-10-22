@@ -28,6 +28,7 @@ import {
   displayRunDescriptor,
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   NBSP,
+  textTypeState,
 } from "shared";
 
 /** Combine adjacent CharNodes with the same attributes. */
@@ -59,7 +60,7 @@ function useCharNode(editor: LexicalEditor) {
       editor.registerNodeTransform(CharNode, (node) =>
         $syncDisplayRun(displayRunDescriptor("char"), node),
       ),
-      editor.registerNodeTransform(TextNode, $charTextNodeTransform),
+      editor.registerNodeTransform(TextNode, $dropFilledCharPlaceholder),
     );
   }, [editor]);
 }
@@ -175,8 +176,7 @@ function $charNodeTransform(node: CharNode): void {
     if ($rendersOwnGlyphs(nextNode)) {
       if ($mergeIntoFollowingGlyphSpan(node, nextNode)) return;
     } else {
-      node.append(...nextNode.getChildren());
-      nextNode.remove();
+      $combineGlyphlessSpans(node, nextNode);
     }
   }
 
@@ -190,10 +190,91 @@ function $charNodeTransform(node: CharNode): void {
     if ($rendersOwnGlyphs(prevNode)) {
       $mergeIntoPrecedingGlyphSpan(node, prevNode);
     } else {
-      prevNode.append(...node.getChildren());
-      node.remove();
+      $combineGlyphlessSpans(prevNode, node);
     }
   }
+}
+
+/**
+ * Combine glyph-less `following` into `preceding`, the same-attribute glyph-less span right before
+ * it. An empty span's placeholder ({@link $emptySpanPlaceholder}) is only a caret host, so it is
+ * never carried into content: wherever it landed — after a nested span, or merged into the text
+ * before it — it would read as content and be saved as an NBSP nobody wrote. The empty side gives
+ * up its children instead (read-only glyphs included), and a caret on its placeholder moves to the
+ * seam between the two spans' content.
+ */
+function $combineGlyphlessSpans(preceding: CharNode, following: CharNode): void {
+  if ($emptySpanPlaceholder(following)) {
+    $moveSelectionOutOf(following, () => $contentEdgePoint(preceding, "end"));
+    following.remove();
+    return;
+  }
+  const children = following.getChildren();
+  let keep = preceding.getChildrenSize();
+  if ($emptySpanPlaceholder(preceding)) {
+    $moveSelectionOutOf(preceding, () => $contentEdgePoint(following, "start"));
+    keep = 0;
+  }
+  // One splice, not a clear and an append: a span emptied on the way is removed with its children.
+  preceding.splice(keep, preceding.getChildrenSize() - keep, children);
+  following.remove();
+}
+
+/**
+ * The placeholder text of `span` when that is all the span holds besides read-only glyphs: an
+ * untagged plain text that is exactly the placeholder byte and that the author did not write
+ * ({@link authoredNbspState}). `undefined` for a span holding anything else.
+ */
+function $emptySpanPlaceholder(span: CharNode): TextNode | undefined {
+  const content = span.getChildren().filter((child) => !$isDecoratorNode(child));
+  const [only] = content;
+  return content.length === 1 &&
+    $isTextNode(only) &&
+    only.getType() === TextNode.getType() &&
+    only.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT &&
+    $getState(only, textTypeState) === undefined &&
+    !$getState(only, authoredNbspState)
+    ? only
+    : undefined;
+}
+
+/** A selection point's target: a text offset, or a child index in an element. */
+interface PointTarget {
+  key: NodeKey;
+  offset: number;
+  type: "text" | "element";
+}
+
+/**
+ * Where `span`'s content starts or ends: an offset in its first or last content text, or the child
+ * index beside a content element, read-only glyphs skipped.
+ */
+function $contentEdgePoint(span: CharNode, edge: "start" | "end"): PointTarget {
+  const children = span.getChildren();
+  const content = children.filter((child) => !$isDecoratorNode(child));
+  const child = edge === "start" ? content[0] : content.at(-1);
+  if ($isTextNode(child))
+    return {
+      key: child.getKey(),
+      offset: edge === "start" ? 0 : child.getTextContentSize(),
+      type: "text",
+    };
+  if (!child) return { key: span.getKey(), offset: 0, type: "element" };
+  const index = child.getIndexWithinParent();
+  return { key: span.getKey(), offset: edge === "start" ? index : index + 1, type: "element" };
+}
+
+/** Moves each range-selection point inside `node` to `$target()`, leaving any other point be. */
+function $moveSelectionOutOf(node: CharNode, $target: () => PointTarget): void {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return;
+  const points = [selection.anchor, selection.focus].filter((point) => {
+    const pointNode = $getNodeByKey(point.key);
+    return pointNode !== null && (pointNode.is(node) || node.isParentOf(pointNode));
+  });
+  if (points.length === 0) return;
+  const { key, offset, type } = $target();
+  points.forEach((point) => point.set(key, offset, type));
 }
 
 /** Placeholder texts this update already dropped a byte from. Lexical re-runs a transform on a node
@@ -218,7 +299,7 @@ const placeholderDroppedThisUpdate = new WeakSet<TextNode>();
  * the editor→USJ conversion strips.
  * @param node - TextNode that might hold a placeholder.
  */
-function $charTextNodeTransform(node: TextNode): void {
+export function $dropFilledCharPlaceholder(node: TextNode): void {
   const parent = node.getParent();
   if (!$isCharNode(parent) || $rendersOwnGlyphs(parent)) return;
   if (placeholderDroppedThisUpdate.has(node)) return;
@@ -318,8 +399,7 @@ function $heldContentBeforeUpdate(key: NodeKey): boolean {
 /**
  * The key of the placeholder text the char span `key` held in the editor's last committed state,
  * when that text was all it held besides read-only glyphs; `null` when the span held anything else,
- * and `undefined` when the span did not exist there. A lone NBSP marked as the author's own `~`
- * ({@link authoredNbspState}) is content, not a placeholder.
+ * and `undefined` when the span did not exist there ({@link $emptySpanPlaceholder}).
  */
 function $placeholderKeyBeforeUpdate(key: NodeKey): NodeKey | null | undefined {
   return $getEditor()
@@ -327,13 +407,6 @@ function $placeholderKeyBeforeUpdate(key: NodeKey): NodeKey | null | undefined {
     .read(() => {
       const previous = $getNodeByKey(key);
       if (!$isCharNode(previous)) return undefined;
-      const content = previous.getChildren().filter((child) => !$isDecoratorNode(child));
-      const [only] = content;
-      return content.length === 1 &&
-        $isTextNode(only) &&
-        only.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT &&
-        !$getState(only, authoredNbspState)
-        ? only.getKey()
-        : null;
+      return $emptySpanPlaceholder(previous)?.getKey() ?? null;
     });
 }

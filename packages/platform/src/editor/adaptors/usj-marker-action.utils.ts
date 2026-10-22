@@ -37,6 +37,7 @@ import {
   $liftOutOfCharStack,
   $normalizeSelectionOutOfGlyphText,
   $setCharNodeMarker,
+  authoredNbspState,
   CharNode,
   createLexicalUsjNode,
   defaultStyleInfo,
@@ -1076,7 +1077,9 @@ export function $removeCharacterMarkerAtSelection(
  * Synthesized marker children (`markerMode: "editable"` / `"visible"`) are stripped first so no
  * literal `\nd` / `\nd*` text is left behind, and in `"editable"` mode the NBSP that
  * `usj-editor.adaptor.ts` prepends to each text child for rendering is trimmed. A `CharNode`
- * holding nothing but the empty-char placeholder is removed outright rather than unwrapped.
+ * holding nothing but the empty-char placeholder is removed outright rather than unwrapped; one
+ * holding the author's lone `~` in that shape ({@link authoredNbspState}) is unwrapped like any
+ * other content.
  *
  * @param charNode - The `CharNode` to remove.
  * @param viewOptions - View options, used to decide what counts as synthesized content.
@@ -1090,9 +1093,13 @@ function $removeCharNodeKeepingContent(
   });
 
   // Checked before the NBSP trim below: the placeholder IS an NBSP, and the adaptor does not
-  // prepend a second one to it.
+  // prepend a second one to it. An author's `~` held the same way is content, and is unwrapped.
   const remainingChildren = charNode.getChildren();
-  if (remainingChildren.length === 0 || charNode.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT) {
+  if (
+    remainingChildren.length === 0 ||
+    (charNode.getTextContent() === EMPTY_CHAR_PLACEHOLDER_TEXT &&
+      !charNode.getAllTextNodes().some((text) => $getState(text, authoredNbspState)))
+  ) {
     charNode.remove();
     return;
   }
