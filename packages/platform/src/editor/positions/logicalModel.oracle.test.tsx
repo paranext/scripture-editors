@@ -12,6 +12,7 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 import editorUsjAdaptor from "../adaptors/editor-usj.adaptor";
+import { editorView } from "../editorViews.test-helpers";
 import { serializedState } from "../markerEdit/markerEdit.test-helpers";
 import { displayTextToUsj } from "../markerEdit/whitespaceDisplay.utils";
 import { MarkerContent, Usj, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
@@ -143,6 +144,12 @@ const modes: { name: string; viewOptions: ViewOptions; hasSeparators: boolean }[
   { name: "visible", viewOptions: generatorViewOptions("visible"), hasSeparators: false },
   { name: "hidden", viewOptions: generatorViewOptions("hidden"), hasSeparators: false },
   { name: "standard", viewOptions: standardViewOptions, hasSeparators: true },
+  { name: "formatted", viewOptions: editorView("formatted"), hasSeparators: false },
+  {
+    name: "paragraph-structure",
+    viewOptions: editorView("paragraph-structure"),
+    hasSeparators: false,
+  },
 ];
 
 /**
