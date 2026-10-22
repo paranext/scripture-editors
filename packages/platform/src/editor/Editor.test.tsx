@@ -7,6 +7,7 @@ import { MarkerMenuItem } from "./markerMenu/markerItemSource";
 import Editorial from "../Editorial";
 import usjEditorAdaptor from "./adaptors/usj-editor.adaptor";
 import { flushQueuedEvents } from "./editor-test.utils";
+import { EDITING_VIEWS, knownFailureRunner } from "./editorViews.test-helpers";
 import {
   $selectionToUsfmText,
   usfmToClipboardHtml,
@@ -57,7 +58,7 @@ import {
   openingMarkerText,
   StyleInfo,
 } from "shared";
-import { getViewOptions, STANDARD_VIEW_MODE } from "shared-react";
+import { getViewOptions, STANDARD_VIEW_MODE, ViewOptions } from "shared-react";
 import { vi } from "vitest";
 
 /** USJ with book PSA for Editor sync effect test (clone of usjGen1v1 with book code changed) */
@@ -441,6 +442,7 @@ async function mountEditorForUndo(config: {
   usj: Usj;
   scrRef: SerializedVerseRef;
   structureProtectionMode: EditorOptions["structureProtectionMode"];
+  view: ViewOptions;
 }): Promise<{
   ref: RefObject<EditorRef | null>;
   lexicalEditor: LexicalEditor;
@@ -451,7 +453,7 @@ async function mountEditorForUndo(config: {
     defaultUsj: config.usj,
     scrRef: config.scrRef,
     onScrRefChange: vi.fn(),
-    options: { structureProtectionMode: config.structureProtectionMode },
+    options: { structureProtectionMode: config.structureProtectionMode, view: config.view },
     children: <GrabEditor onEditor={(e) => (editor = e)} />,
   });
   await flushQueuedEvents();
@@ -733,38 +735,42 @@ describe("undo after a verse-spanning delete (PT-4102 regression)", () => {
   // ScriptureReferencePlugin's verse mutation listener dispatched SELECTION_CHANGE_COMMAND
   // synchronously mid-commit, corrupting the history stack. A single deletion must be a single
   // undoable step that a single undo fully restores.
-  it("restores the deleted text and verse marker with a single undo", async () => {
-    const { ref, lexicalEditor, originalUsj } = await mountEditorForUndo({
-      usj: usjWithVerseInParagraphMiddle,
-      scrRef: { book: "GEN", chapterNum: 1, verseNum: 1 },
-      structureProtectionMode: "guarded",
-    });
-
-    // Select "pha " + verse marker + "Bra" — a range that spans the verse marker.
-    await act(async () => {
-      getEditorRef(ref).setSelection({
-        start: { jsonPath: "$.content[2].content[0]", offset: 2 },
-        end: { jsonPath: "$.content[2].content[2]", offset: 3 },
+  it.each(EDITING_VIEWS)(
+    "restores the deleted text and verse marker with a single undo ($name)",
+    async ({ view }) => {
+      const { ref, lexicalEditor, originalUsj } = await mountEditorForUndo({
+        usj: usjWithVerseInParagraphMiddle,
+        scrRef: { book: "GEN", chapterNum: 1, verseNum: 1 },
+        structureProtectionMode: "guarded",
+        view,
       });
-    });
 
-    // Guarded two-step delete: the first Delete arms the range, the second removes it.
-    await pressDeleteKey(lexicalEditor);
-    await pressDeleteKey(lexicalEditor);
-    await flushQueuedEvents();
+      // Select "pha " + verse marker + "Bra" — a range that spans the verse marker.
+      await act(async () => {
+        getEditorRef(ref).setSelection({
+          start: { jsonPath: "$.content[2].content[0]", offset: 2 },
+          end: { jsonPath: "$.content[2].content[2]", offset: 3 },
+        });
+      });
 
-    // Precondition: the range (verse marker + surrounding text) was actually deleted.
-    const afterDelete = JSON.stringify(getEditorRef(ref).getUsj());
-    expect(afterDelete).not.toContain('"number":"2"');
-    expect(afterDelete).not.toContain("Alpha ");
+      // Guarded two-step delete: the first Delete arms the range, the second removes it.
+      await pressDeleteKey(lexicalEditor);
+      await pressDeleteKey(lexicalEditor);
+      await flushQueuedEvents();
 
-    await act(async () => {
-      getEditorRef(ref).undo();
-    });
-    await flushQueuedEvents();
+      // Precondition: the range (verse marker + surrounding text) was actually deleted.
+      const afterDelete = JSON.stringify(getEditorRef(ref).getUsj());
+      expect(afterDelete).not.toContain('"number":"2"');
+      expect(afterDelete).not.toContain("Alpha ");
 
-    expect(getEditorRef(ref).getUsj()).toEqual(originalUsj);
-  });
+      await act(async () => {
+        getEditorRef(ref).undo();
+      });
+      await flushQueuedEvents();
+
+      expect(getEditorRef(ref).getUsj()).toEqual(originalUsj);
+    },
+  );
 });
 
 /** Mark 1 with verses 6-8 inside one paragraph — the PT-4125 repro shape. Verse 6 exists so the
@@ -801,38 +807,42 @@ describe("undo after a native verse delete (PT-4125 regression)", () => {
   // We delete a range, not a collapsed-caret backspace: the collapsed path routes through Lexical's
   // deleteCharacter, which needs domSelection.modify (unimplemented in jsdom). A range delete drives
   // the same verse-destruction -> mutation-listener -> history path.
-  it("restores both deleted verse markers with a single undo (Mark 1:7-8 scenario)", async () => {
-    const { ref, lexicalEditor, originalUsj } = await mountEditorForUndo({
-      usj: usjWithTwoAdjacentVerses,
-      scrRef: { book: "MRK", chapterNum: 1, verseNum: 6 },
-      structureProtectionMode: "off",
-    });
-
-    // Select from the end of "Six " through the start of "Eight " — spans both verse markers (7
-    // and 8) plus the text of verse 7, while the selection starts inside the referenced verse 6.
-    await act(async () => {
-      getEditorRef(ref).setSelection({
-        start: { jsonPath: "$.content[2].content[1]", offset: "Six ".length },
-        end: { jsonPath: "$.content[2].content[5]", offset: 0 },
+  it.each(EDITING_VIEWS)(
+    "restores both deleted verse markers with a single undo (Mark 1:7-8 scenario, $name)",
+    async ({ view }) => {
+      const { ref, lexicalEditor, originalUsj } = await mountEditorForUndo({
+        usj: usjWithTwoAdjacentVerses,
+        scrRef: { book: "MRK", chapterNum: 1, verseNum: 6 },
+        structureProtectionMode: "off",
+        view,
       });
-    });
 
-    await pressDeleteKey(lexicalEditor);
-    await flushQueuedEvents();
+      // Select from the end of "Six " through the start of "Eight " — spans both verse markers (7
+      // and 8) plus the text of verse 7, while the selection starts inside the referenced verse 6.
+      await act(async () => {
+        getEditorRef(ref).setSelection({
+          start: { jsonPath: "$.content[2].content[1]", offset: "Six ".length },
+          end: { jsonPath: "$.content[2].content[5]", offset: 0 },
+        });
+      });
 
-    // Precondition: both verse markers and the text between them were actually deleted.
-    const afterDelete = JSON.stringify(getEditorRef(ref).getUsj());
-    expect(afterDelete).not.toContain('"number":"7"');
-    expect(afterDelete).not.toContain('"number":"8"');
-    expect(afterDelete).not.toContain("Seven ");
+      await pressDeleteKey(lexicalEditor);
+      await flushQueuedEvents();
 
-    await act(async () => {
-      getEditorRef(ref).undo();
-    });
-    await flushQueuedEvents();
+      // Precondition: both verse markers and the text between them were actually deleted.
+      const afterDelete = JSON.stringify(getEditorRef(ref).getUsj());
+      expect(afterDelete).not.toContain('"number":"7"');
+      expect(afterDelete).not.toContain('"number":"8"');
+      expect(afterDelete).not.toContain("Seven ");
 
-    expect(getEditorRef(ref).getUsj()).toEqual(originalUsj);
-  });
+      await act(async () => {
+        getEditorRef(ref).undo();
+      });
+      await flushQueuedEvents();
+
+      expect(getEditorRef(ref).getUsj()).toEqual(originalUsj);
+    },
+  );
 });
 
 const usjWithCharMarker: Usj = {
@@ -980,15 +990,13 @@ describe("removeCharacterMarker through the editor ref", () => {
     expect(JSON.stringify(para.content)).not.toContain('"char"');
     expect(para.content?.join("")).toBe("the Lord said");
   });
-});
 
-describe("replaceCharacterMarker through the editor ref", () => {
-  it("changes the marker in the exported USJ, preserving the content", async () => {
+  it.each(EDITING_VIEWS)("removes the marker, keeping its content ($name)", async ({ view }) => {
     const ref = createRef<EditorRef>();
     let editor: LexicalEditor | undefined;
     await act(async () => {
       render(
-        <Editor ref={ref} defaultUsj={usjWithCharMarker}>
+        <Editor ref={ref} defaultUsj={usjWithCharMarker} options={{ view }}>
           <GrabEditor onEditor={(e) => (editor = e)} />
         </Editor>,
       );
@@ -998,24 +1006,57 @@ describe("replaceCharacterMarker through the editor ref", () => {
     const editorRef = ref.current;
 
     await selectCharNodeContent(editor);
-    let didReplace = false;
+    let didRemove = false;
     await act(async () => {
-      didReplace = editorRef.replaceCharacterMarker("bd", "nd");
+      didRemove = editorRef.removeCharacterMarker("nd");
     });
     await flushQueuedEvents();
 
-    expect(didReplace).toBe(true);
-
+    expect(didRemove).toBe(true);
     const para = editorRef.getUsj()?.content[2];
     if (typeof para !== "object" || !("content" in para))
       throw new Error("para is not a USJ para node");
-    const serialized = JSON.stringify(para.content);
-    expect(serialized).toContain('"marker":"bd"');
-    expect(serialized).not.toContain('"marker":"nd"');
-    expect(serialized).toContain('"Lord"');
+    expect(para.content).toEqual(["the Lord said"]);
   });
+});
 
-  // The default marker mode above renders no marker text, so it cannot see the synthesized-marker
+describe("replaceCharacterMarker through the editor ref", () => {
+  it.each(EDITING_VIEWS)(
+    "changes the marker in the exported USJ, preserving the content ($name)",
+    async ({ view }) => {
+      const ref = createRef<EditorRef>();
+      let editor: LexicalEditor | undefined;
+      await act(async () => {
+        render(
+          <Editor ref={ref} defaultUsj={usjWithCharMarker} options={{ view }}>
+            <GrabEditor onEditor={(e) => (editor = e)} />
+          </Editor>,
+        );
+      });
+      await flushQueuedEvents();
+      if (!ref.current || !editor) throw new Error("EditorRef did not mount");
+      const editorRef = ref.current;
+
+      await selectCharNodeContent(editor);
+      let didReplace = false;
+      await act(async () => {
+        didReplace = editorRef.replaceCharacterMarker("bd", "nd");
+      });
+      await flushQueuedEvents();
+
+      expect(didReplace).toBe(true);
+
+      const para = editorRef.getUsj()?.content[2];
+      if (typeof para !== "object" || !("content" in para))
+        throw new Error("para is not a USJ para node");
+      const serialized = JSON.stringify(para.content);
+      expect(serialized).toContain('"marker":"bd"');
+      expect(serialized).not.toContain('"marker":"nd"');
+      expect(serialized).toContain('"Lord"');
+    },
+  );
+
+  // The rows above assert only the exported USJ, so they cannot see the synthesized-marker
   // retargeting `$setCharNodeMarker` does — the part of the change that `markerMode: "editable"` is
   // the whole point of. Every test that does cover it runs against hand-built node trees, so this
   // drives it end to end over a tree the real USJ adaptor produced, through `Editor.tsx`'s wiring.
@@ -1142,159 +1183,183 @@ describe("replaceCharacterMarker through the editor ref", () => {
   });
 });
 
-describe("extendCharacterMarker through the editor ref", () => {
-  it("covers the whole selection with one marker, not a nested pair", async () => {
-    const ref = createRef<EditorRef>();
-    let editor: LexicalEditor | undefined;
-    await act(async () => {
-      render(
-        <Editor ref={ref} defaultUsj={usjWithPartialCharMarker}>
-          <GrabEditor onEditor={(e) => (editor = e)} />
-        </Editor>,
-      );
+/**
+ * Rows of the extend suite below known to fail, keyed `<view>: <row>`. Both are Standard view only:
+ * the same calls produce the documented result in formatted and paragraph-structure.
+ */
+const EXTEND_KNOWN_FAILURES: { [key: string]: string } = {
+  "standard: coalesce":
+    "the new \\bd run lands beside the existing \\bd span instead of merging into it, so the paragraph saves as two adjacent \\bd spans",
+  "standard: conflict":
+    "after the conflicting \\nd is removed the \\bd wrap never runs, yet the call reports true: the text is left with no character style at all",
+};
+const runExtendRow = knownFailureRunner(
+  EXTEND_KNOWN_FAILURES,
+  EDITING_VIEWS.flatMap(({ name }) => [`${name}: coalesce`, `${name}: conflict`]),
+);
+
+describe.each(EDITING_VIEWS)(
+  "extendCharacterMarker through the editor ref ($name)",
+  ({ name, view }) => {
+    it("covers the whole selection with one marker, not a nested pair", async () => {
+      const ref = createRef<EditorRef>();
+      let editor: LexicalEditor | undefined;
+      await act(async () => {
+        render(
+          <Editor ref={ref} defaultUsj={usjWithPartialCharMarker} options={{ view }}>
+            <GrabEditor onEditor={(e) => (editor = e)} />
+          </Editor>,
+        );
+      });
+      await flushQueuedEvents();
+      if (!ref.current || !editor) throw new Error("EditorRef did not mount");
+      const lexicalEditor = editor;
+      const editorRef = ref.current;
+
+      await selectWholePara(lexicalEditor);
+      let didExtend = false;
+      await act(async () => {
+        didExtend = editorRef.extendCharacterMarker("bd");
+      });
+      await flushQueuedEvents();
+
+      expect(didExtend).toBe(true);
+
+      // The whole point of the ticket: a naive wrap over this selection yields
+      // `\bd kolo \bd Mulu\bd*\bd*`. `$charNodeTransform` merges the new run into the existing one,
+      // so exactly one `char` node comes out and nothing is nested inside it.
+      const para = editorRef.getUsj()?.content[2];
+      if (typeof para !== "object" || !("content" in para))
+        throw new Error("para is not a USJ para node");
+      expect(para.content?.length).toBe(1);
+      const [charContent] = para.content ?? [];
+      if (typeof charContent !== "object" || !("marker" in charContent))
+        throw new Error("charContent is not a USJ char node");
+      expect(charContent.marker).toBe("bd");
+      expect(charContent.content).toEqual(["kolo Mulu"]);
     });
-    await flushQueuedEvents();
-    if (!ref.current || !editor) throw new Error("EditorRef did not mount");
-    const lexicalEditor = editor;
-    const editorRef = ref.current;
 
-    await selectWholePara(lexicalEditor);
-    let didExtend = false;
-    await act(async () => {
-      didExtend = editorRef.extendCharacterMarker("bd");
-    });
-    await flushQueuedEvents();
-
-    expect(didExtend).toBe(true);
-
-    // The whole point of the ticket: a naive wrap over this selection yields
-    // `\bd kolo \bd Mulu\bd*\bd*`. `$charNodeTransform` merges the new run into the existing one,
-    // so exactly one `char` node comes out and nothing is nested inside it.
-    const para = editorRef.getUsj()?.content[2];
-    if (typeof para !== "object" || !("content" in para))
-      throw new Error("para is not a USJ para node");
-    expect(para.content?.length).toBe(1);
-    const [charContent] = para.content ?? [];
-    if (typeof charContent !== "object" || !("marker" in charContent))
-      throw new Error("charContent is not a USJ char node");
-    expect(charContent.marker).toBe("bd");
-    expect(charContent.content).toEqual(["kolo Mulu"]);
-  });
-
-  it("coalesces several separate runs in the selection into one", async () => {
-    const usjWithTwoRuns: Usj = {
-      type: "USJ",
-      version: "3.1",
-      content: [
-        { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
-        { type: "chapter", marker: "c", number: "1" },
-        {
-          type: "para",
-          marker: "p",
+    runExtendRow(`${name}: coalesce`)(
+      "coalesces several separate runs in the selection into one",
+      async () => {
+        const usjWithTwoRuns: Usj = {
+          type: "USJ",
+          version: "3.1",
           content: [
-            { type: "char", marker: "bd", content: ["kolo"] },
-            " ana ",
-            { type: "char", marker: "bd", content: ["Mulu"] },
+            { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+            { type: "chapter", marker: "c", number: "1" },
+            {
+              type: "para",
+              marker: "p",
+              content: [
+                { type: "char", marker: "bd", content: ["kolo"] },
+                " ana ",
+                { type: "char", marker: "bd", content: ["Mulu"] },
+              ],
+            },
           ],
-        },
-      ],
-    };
-    const ref = createRef<EditorRef>();
-    let editor: LexicalEditor | undefined;
-    await act(async () => {
-      render(
-        <Editor ref={ref} defaultUsj={usjWithTwoRuns}>
-          <GrabEditor onEditor={(e) => (editor = e)} />
-        </Editor>,
-      );
+        };
+        const ref = createRef<EditorRef>();
+        let editor: LexicalEditor | undefined;
+        await act(async () => {
+          render(
+            <Editor ref={ref} defaultUsj={usjWithTwoRuns} options={{ view }}>
+              <GrabEditor onEditor={(e) => (editor = e)} />
+            </Editor>,
+          );
+        });
+        await flushQueuedEvents();
+        if (!ref.current || !editor) throw new Error("EditorRef did not mount");
+        const lexicalEditor = editor;
+        const editorRef = ref.current;
+
+        await selectWholePara(lexicalEditor);
+        await act(async () => {
+          editorRef.extendCharacterMarker("bd");
+        });
+        await flushQueuedEvents();
+
+        const para = editorRef.getUsj()?.content[2];
+        if (typeof para !== "object" || !("content" in para))
+          throw new Error("para is not a USJ para node");
+        expect(para.content?.length).toBe(1);
+        const [charContent] = para.content ?? [];
+        if (typeof charContent !== "object" || !("marker" in charContent))
+          throw new Error("charContent is not a USJ char node");
+        expect(charContent.marker).toBe("bd");
+        expect(charContent.content).toEqual(["kolo ana Mulu"]);
+      },
+    );
+
+    it("is a no-op on an already fully covered selection", async () => {
+      const ref = createRef<EditorRef>();
+      let editor: LexicalEditor | undefined;
+      await act(async () => {
+        render(
+          <Editor ref={ref} defaultUsj={usjWithCharMarker} options={{ view }}>
+            <GrabEditor onEditor={(e) => (editor = e)} />
+          </Editor>,
+        );
+      });
+      await flushQueuedEvents();
+      if (!ref.current || !editor) throw new Error("EditorRef did not mount");
+      const lexicalEditor = editor;
+      const editorRef = ref.current;
+
+      const before = JSON.stringify(editorRef.getUsj());
+      await selectCharNodeContent(lexicalEditor);
+      let didExtend = false;
+      await act(async () => {
+        didExtend = editorRef.extendCharacterMarker("nd");
+      });
+      await flushQueuedEvents();
+
+      expect(didExtend).toBe(false);
+      expect(JSON.stringify(editorRef.getUsj())).toBe(before);
     });
-    await flushQueuedEvents();
-    if (!ref.current || !editor) throw new Error("EditorRef did not mount");
-    const lexicalEditor = editor;
-    const editorRef = ref.current;
 
-    await selectWholePara(lexicalEditor);
-    await act(async () => {
-      editorRef.extendCharacterMarker("bd");
-    });
-    await flushQueuedEvents();
+    runExtendRow(`${name}: conflict`)(
+      "removes a conflicting marker passed through the ref before extending",
+      async () => {
+        const ref = createRef<EditorRef>();
+        let editor: LexicalEditor | undefined;
+        await act(async () => {
+          render(
+            <Editor ref={ref} defaultUsj={usjWithCharMarker} options={{ view }}>
+              <GrabEditor onEditor={(e) => (editor = e)} />
+            </Editor>,
+          );
+        });
+        await flushQueuedEvents();
+        if (!ref.current || !editor) throw new Error("EditorRef did not mount");
+        const lexicalEditor = editor;
+        const editorRef = ref.current;
 
-    const para = editorRef.getUsj()?.content[2];
-    if (typeof para !== "object" || !("content" in para))
-      throw new Error("para is not a USJ para node");
-    expect(para.content?.length).toBe(1);
-    const [charContent] = para.content ?? [];
-    if (typeof charContent !== "object" || !("marker" in charContent))
-      throw new Error("charContent is not a USJ char node");
-    expect(charContent.marker).toBe("bd");
-    expect(charContent.content).toEqual(["kolo ana Mulu"]);
-  });
+        await selectCharNodeContent(lexicalEditor);
+        let didExtend = false;
+        await act(async () => {
+          // The unit suite covers the conflict logic itself; what this pins down is that the caller's
+          // list survives the `EditorRef` boundary at all — `Editor.tsx` validates every entry and
+          // forwards the array, and nothing else proves that forwarding happens.
+          didExtend = editorRef.extendCharacterMarker("bd", ["nd"]);
+        });
+        await flushQueuedEvents();
 
-  it("is a no-op on an already fully covered selection", async () => {
-    const ref = createRef<EditorRef>();
-    let editor: LexicalEditor | undefined;
-    await act(async () => {
-      render(
-        <Editor ref={ref} defaultUsj={usjWithCharMarker}>
-          <GrabEditor onEditor={(e) => (editor = e)} />
-        </Editor>,
-      );
-    });
-    await flushQueuedEvents();
-    if (!ref.current || !editor) throw new Error("EditorRef did not mount");
-    const lexicalEditor = editor;
-    const editorRef = ref.current;
+        expect(didExtend).toBe(true);
 
-    const before = JSON.stringify(editorRef.getUsj());
-    await selectCharNodeContent(lexicalEditor);
-    let didExtend = false;
-    await act(async () => {
-      didExtend = editorRef.extendCharacterMarker("nd");
-    });
-    await flushQueuedEvents();
-
-    expect(didExtend).toBe(false);
-    expect(JSON.stringify(editorRef.getUsj())).toBe(before);
-  });
-
-  it("removes a conflicting marker passed through the ref before extending", async () => {
-    const ref = createRef<EditorRef>();
-    let editor: LexicalEditor | undefined;
-    await act(async () => {
-      render(
-        <Editor ref={ref} defaultUsj={usjWithCharMarker}>
-          <GrabEditor onEditor={(e) => (editor = e)} />
-        </Editor>,
-      );
-    });
-    await flushQueuedEvents();
-    if (!ref.current || !editor) throw new Error("EditorRef did not mount");
-    const lexicalEditor = editor;
-    const editorRef = ref.current;
-
-    await selectCharNodeContent(lexicalEditor);
-    let didExtend = false;
-    await act(async () => {
-      // The unit suite covers the conflict logic itself; what this pins down is that the caller's
-      // list survives the `EditorRef` boundary at all — `Editor.tsx` validates every entry and
-      // forwards the array, and nothing else proves that forwarding happens.
-      didExtend = editorRef.extendCharacterMarker("bd", ["nd"]);
-    });
-    await flushQueuedEvents();
-
-    expect(didExtend).toBe(true);
-
-    // `\nd` is gone rather than nested inside `\bd`, and the surrounding plain text is untouched.
-    const para = editorRef.getUsj()?.content[2];
-    if (typeof para !== "object" || !("content" in para))
-      throw new Error("para is not a USJ para node");
-    expect(para.content).toEqual([
-      "the ",
-      { type: "char", marker: "bd", content: ["Lord"] },
-      " said",
-    ]);
-  });
-});
+        // `\nd` is gone rather than nested inside `\bd`, and the surrounding plain text is untouched.
+        const para = editorRef.getUsj()?.content[2];
+        if (typeof para !== "object" || !("content" in para))
+          throw new Error("para is not a USJ para node");
+        expect(para.content).toEqual([
+          "the ",
+          { type: "char", marker: "bd", content: ["Lord"] },
+          " said",
+        ]);
+      },
+    );
+  },
+);
 
 const blankUsj: Usj = {
   type: "USJ",
