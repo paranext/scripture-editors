@@ -78,6 +78,26 @@ describe("a key pressed before Lexical has caught up with the caret", () => {
     expect(lexicalCaret(lexical)).toEqual({ inChapter: true, offset: 0 });
   });
 
+  // After Home the browser can put its caret on the element, at the boundary before the text.
+  it("ArrowRight with the DOM's caret on the chapter line's element stays on the line", async () => {
+    const { lexical } = await mountStandardViewEditor(doc);
+    await caretsDisagree(lexical, 5, 0);
+    const glyphElement = requireDefined(
+      lexical.getEditorState().read(() => lexical.getElementByKey($glyph().getKey())) ?? undefined,
+      "no glyph element",
+    );
+    requireDefined(document.getSelection() ?? undefined, "no DOM selection").setBaseAndExtent(
+      glyphElement,
+      0,
+      glyphElement,
+      0,
+    );
+
+    await pressKeyThroughDom(lexical, "ArrowRight");
+
+    expect(lexicalCaret(lexical)).toEqual({ inChapter: true, offset: 0 });
+  });
+
   it("leaves a caret alone that is where the DOM's is", async () => {
     const { lexical } = await mountStandardViewEditor(doc);
     await caretsDisagree(lexical, 2, 2);

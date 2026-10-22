@@ -23,27 +23,38 @@ function domTextNodeOf(element: Node | null | undefined): Node | undefined {
  * The browser moves the caret itself for most keys and tells Lexical only through `selectionchange`,
  * which it fires asynchronously, so a key pressed before that event is handled would act on where
  * the caret WAS: Home then ArrowRight pressed quickly on a chapter line would hop to the next
- * paragraph, because the arrow handler would still see the caret at the end of the line. Only a
- * collapsed caret in text that the DOM has moved to a different text position is replaced: where
- * the DOM's caret is exactly where Lexical's renders, Lexical's is kept, since several Lexical
- * positions can render at one DOM position and the editor chooses among them on purpose.
+ * paragraph, because the arrow handler would still see the caret at the end of the line. A collapsed
+ * caret is replaced only when the DOM's is somewhere else: where the DOM's caret is exactly where
+ * Lexical's renders, or reads back as the position Lexical holds, Lexical's is kept, since several
+ * Lexical positions can render at one DOM position and the editor chooses among them on purpose.
  *
  * Mutating: call inside `editor.update()` or a command listener.
  */
 export function $syncCaretFromDom(editor: LexicalEditor): void {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
-  const { anchor } = selection;
-  if (anchor.type !== "text") return;
   const rootElement = editor.getRootElement();
   const domSelection = rootElement?.ownerDocument.defaultView?.getSelection();
   const domAnchor = domSelection?.anchorNode;
-  if (!domSelection?.isCollapsed || !domAnchor || domAnchor.nodeType !== Node.TEXT_NODE) return;
-  if (!rootElement?.contains(domAnchor)) return;
-  const lexicalDomText = domTextNodeOf(editor.getElementByKey(anchor.key));
-  if (domAnchor === lexicalDomText && domSelection.anchorOffset === anchor.offset) return;
+  if (!domSelection?.isCollapsed || !domAnchor || !rootElement?.contains(domAnchor)) return;
+  const { anchor } = selection;
+  // Where Lexical rendered its caret, the DOM's is still there: nothing has moved it.
+  if (
+    anchor.type === "text" &&
+    domAnchor === domTextNodeOf(editor.getElementByKey(anchor.key)) &&
+    domSelection.anchorOffset === anchor.offset
+  )
+    return;
   const fromDom = $createRangeSelectionFromDom(domSelection, editor);
-  if (fromDom) $setSelection(fromDom);
+  if (!fromDom) return;
+  // The DOM's caret read back as the position Lexical already holds is the same caret.
+  if (
+    fromDom.anchor.key === anchor.key &&
+    fromDom.anchor.offset === anchor.offset &&
+    fromDom.anchor.type === anchor.type
+  )
+    return;
+  $setSelection(fromDom);
 }
 
 /**
