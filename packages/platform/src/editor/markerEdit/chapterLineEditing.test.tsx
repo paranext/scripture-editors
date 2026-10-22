@@ -41,6 +41,7 @@ import {
   $chapterGlyphTextNode,
   $chapterPubnumberRunPieces,
   $isChapterNode,
+  $isTypedMarkNode,
   ChapterNode,
   getVisibleOpenMarkerText,
   NBSP,
@@ -1020,6 +1021,63 @@ describe("the caret on a chapter line that is no longer a chapter", () => {
     expect(ref.current?.getUsj()?.content[0]).toEqual({ ...NAMELESS_2, content: ["2y"] });
     expect(ref.current?.getSelection()).toEqual({
       start: { jsonPath: "$.content[0].content[0]", offset: 2 },
+    });
+  });
+
+  // In chapter 1 a paragraph can come before the chapter line, and text typed ahead of the marker
+  // joins the end of it, as the save and the reload put it.
+  describe("with a paragraph before the chapter line", () => {
+    const TITLE: MarkerContent = { type: "para", marker: "mt1", content: ["Ruth"] };
+    const CHAPTER_1: MarkerContent = { type: "chapter", marker: "c", number: "1" };
+    const titledDoc: Usj = {
+      type: "USJ",
+      version: "3.1",
+      content: [TITLE, CHAPTER_1, VERSE_1_PARA],
+    };
+
+    async function typeAheadOfTheMarker(lexical: LexicalEditor): Promise<void> {
+      await caretInGlyph(lexical, 0);
+      await typeText(lexical, "X");
+    }
+
+    it("reports a caret after the typed text in the paragraph it joins", async () => {
+      const { ref, lexical } = await mountStandardViewEditor(titledDoc);
+      await typeAheadOfTheMarker(lexical);
+
+      expect(ref.current?.getUsj()?.content.slice(0, 2)).toEqual([
+        { ...TITLE, content: ["Ruth X"] },
+        CHAPTER_1,
+      ]);
+      expect(ref.current?.getSelection()).toEqual({
+        start: { jsonPath: "$.content[1]" },
+      });
+    });
+
+    it("places a host's annotation on the paragraph after the chapter at its own index", async () => {
+      const { ref, lexical } = await mountStandardViewEditor(titledDoc);
+      await typeAheadOfTheMarker(lexical);
+
+      // `one` in verse 1, which is `$.content[2]` in the document the host reads.
+      await act(async () => {
+        ref.current?.setAnnotation(
+          {
+            start: { jsonPath: "$.content[2].content[1]", offset: 0 },
+            end: { jsonPath: "$.content[2].content[1]", offset: 3 },
+          },
+          "test",
+          "1",
+        );
+        await Promise.resolve();
+      });
+
+      expect(
+        lexical.getEditorState().read(() =>
+          $getRoot()
+            .getAllTextNodes()
+            .filter((node) => $isTypedMarkNode(node.getParent()))
+            .map((node) => node.getTextContent()),
+        ),
+      ).toEqual(["one"]);
     });
   });
 

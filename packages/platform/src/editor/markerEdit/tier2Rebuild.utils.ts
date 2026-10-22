@@ -2583,6 +2583,30 @@ export function $exportSubtree(node: LexicalNode): SerializedLexicalNode {
   return json;
 }
 
+/**
+ * The bytes the nodes a chapter scope settled into spell, read back the way the rest of the settle
+ * reads them: through the chapter's own builder when they are the chapter and the `\\ca`/`\\cp` nodes
+ * beside it, and as any settled root content otherwise — text typed ahead of the marker settles
+ * as a line of its own, a `\\ca` that no longer folds as a paragraph of its own, and bytes that stop
+ * reading as a chapter marker (`\\ 2`, `\\sc 2`) as no chapter at all.
+ *
+ * Read-only: call inside `editor.update()` or an editor-state read.
+ */
+export function $settledChapterScopeFragment(
+  nodes: readonly LexicalNode[],
+  getMarkerFn: MarkerLookup,
+  viewOptions: ViewOptions | undefined,
+): FragmentAccumulator | undefined {
+  const chapter = nodes.find($isChapterNode);
+  if (!chapter) return $buildSettledRootFragment(nodes, getMarkerFn, viewOptions);
+  const region = new Set(
+    [chapter, ...$chapterAdjacentAttributeNodes(chapter)].map((node) => node.getKey()),
+  );
+  return nodes.every((node) => region.has(node.getKey()))
+    ? $buildChapterFragment(chapter, getMarkerFn, viewOptions)
+    : $buildSettledRootFragment(nodes, getMarkerFn, viewOptions);
+}
+
 /** What a read-only settle's rebuilt nodes stand in for: whole paragraphs, a chapter and its
  * adjacent region, a note's content, or the `\id` line (the book holding the line's content, then
  * the blocks after it) — which decides how their bytes are read back. */
@@ -2663,9 +2687,7 @@ export function $carryMarksIntoSerialized(
         const nodes = holder.getChildren();
         if (kind === "paras") return $spansForNodes(nodes, getMarkerFn, viewOptions);
         if (kind === "chapter")
-          return $isChapterNode(nodes[0])
-            ? $buildChapterFragment(nodes[0], getMarkerFn, viewOptions)
-            : undefined;
+          return $settledChapterScopeFragment(nodes, getMarkerFn, viewOptions);
         if (kind === "bookLine") {
           const [book, ...followingBlocks] = nodes;
           return $isBookNode(book)
@@ -4046,8 +4068,7 @@ function isChapterContent(item: MarkerContent | undefined): item is MarkerConten
  * itself has no content children for a `UsjDocumentLocation` to land in, but the adjacent
  * `\ca`/`\cp` spans and `\cp` paragraph in the region do, and a span that does not fold keeps its
  * content. A mark whose bytes DO fold onto the chapter lands in its attribute run's glyph bytes and
- * is dropped, as a mark over bytes that became a marker is anywhere. When the region no longer
- * settles to a chapter, no mark is carried. The signature reads a mark
+ * is dropped, as a mark over bytes that became a marker is anywhere. The signature reads a mark
  * transparently, so a region whose only difference is a mark reports a fixed point and is left
  * exactly as it stands.
  */
@@ -4145,11 +4166,8 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
   region.forEach((node) => node.remove());
   // Before the caret restore, so the caret resolves against the final tree — mirror
   // `$rebuildParas`.
-  const [newChapter] = newNodes;
   $restoreMarkByteRanges(markRanges, () =>
-    $isChapterNode(newChapter)
-      ? $buildChapterFragment(newChapter, getMarkerFn, viewOptions)
-      : undefined,
+    $settledChapterScopeFragment(newNodes, getMarkerFn, viewOptions),
   );
   $restoreSelectionAtOffset(newNodes, caret, anchorInRegion, getMarkerFn, viewOptions);
   $joinLeadingLineToPreviousParagraph(newNodes.at(0));

@@ -1244,6 +1244,47 @@ describe("a comment mark in a chapter's settle region", () => {
     });
     expect(pending).toEqual(settled);
   });
+
+  // The region settles to more than the chapter, or to no chapter at all, once its bytes change
+  // around the marker; the mark on the text beside it is carried all the same.
+  it.each([
+    ["text typed ahead of the marker", "X\\c 2"],
+    ["the marker's `c` deleted", "\\ 2"],
+  ])("survives %s, and getUsj() while pending agrees", async (_label, glyphEdit) => {
+    const mounted = await mountStandardViewEditor({
+      ...unfoldedCaUsj,
+      content: unfoldedCaUsj.content
+        .slice(1)
+        .map((item) =>
+          typeof item === "object" && item.type === "chapter" ? { ...item, number: "2" } : item,
+        ),
+    });
+    await act(async () => {
+      mounted.lexical.update(() => {
+        const text = $textContaining("alt");
+        const start = text.getTextContent().indexOf("alt");
+        const selection = $createRangeSelection();
+        selection.anchor.set(text.getKey(), start, "text");
+        selection.focus.set(text.getKey(), start + "alt".length, "text");
+        $wrapSelectionInTypedMarkNode(selection, COMMENT_MARK_TYPE, "c1");
+        const chapter = $getRoot().getChildren().find($isChapterNode);
+        const glyph = chapter && $chapterGlyphTextNode(chapter);
+        if (!glyph) throw new Error("expected the chapter glyph text");
+        $pendGlyphEdit(glyph, glyphEdit);
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const pending = mounted.ref.current?.getUsj();
+
+    settleByBlurAndCommit(mounted);
+    const settled = mounted.ref.current?.getUsj();
+
+    expect(annotatedText(mounted.lexical)).toEqual(["alt"]);
+    expect(annotatedIDs(mounted.lexical)).toEqual([{ [COMMENT_MARK_TYPE]: ["c1"] }]);
+    expect(JSON.stringify(settled)).toContain('{"type":"ms","marker":"zmsc-s","sid":"c1"},"alt"');
+    expect(pending).toEqual(settled);
+  });
 });
 
 /**
