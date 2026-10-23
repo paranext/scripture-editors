@@ -169,6 +169,7 @@ import {
   EditableMarkerMenuHarness,
   EditablePlugin,
   EmptyVerseCaretGuardPlugin,
+  KeyDownCaretSyncPlugin,
   getDefaultViewOptions,
   getInsertedNodeKey,
   getViewClassList,
@@ -1112,8 +1113,17 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       });
       transientInputRef.current = { input, nodeKey: liveKey ?? lastKnownCaretRef.current?.key };
     },
-    setUsj(incomingUsj) {
-      if (!deepEqual(editedUsjRef.current, incomingUsj)) {
+    setUsj(incomingUsj, options) {
+      // While a marker edit is pending the editor holds two documents: the SETTLED one on screen,
+      // and `editedUsjRef`, the node state from before the edit. Either one means there is nothing
+      // to load: the settled one is already on screen, and a host re-sending the pre-edit one must
+      // not throw the edit in progress away (with the caret and the undo history). A host that
+      // means to correct the screen forces the load, because its correction can equal the pre-edit
+      // document: backspace a chapter's number out of its glyph and `editedUsjRef` still says
+      // `\c 2`, the very document a host putting that number back sends.
+      const isAlreadyHeld =
+        deepEqual(editedUsjRef.current, incomingUsj) || deepEqual(readSettledUsj(), incomingUsj);
+      if (options?.force || !isAlreadyHeld) {
         editedUsjRef.current = incomingUsj;
         // The loaded tree is the outgoing document until the reload commits, so neither a stale
         // flag nor a memoized read of that tree may overwrite or outrank the incoming document.
@@ -1904,6 +1914,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     // recreate it. The key never changes for the inline layouts, which leave `verseLayout` unset.
     <LexicalComposer key={viewOptions.verseLayout ?? "inline"} initialConfig={initialConfig}>
       <EditablePlugin isEditable={!effectiveIsReadonly} />
+      {/* First among the critical-priority key handlers, so each of them sees the caret the user
+          can see. */}
+      <KeyDownCaretSyncPlugin />
       <div className="editor-container">
         {hasExternalUI ? (
           <StateChangePlugin onStateChange={handleStateChange} />

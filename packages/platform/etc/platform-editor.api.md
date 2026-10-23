@@ -218,7 +218,7 @@ export interface EditorRef {
     setMarkerSettleSuspended(suspended: boolean): void;
     setSelection(selection: SelectionRange): void;
     setTransientInput(input: TransientInput | undefined): void;
-    setUsj(usj: Usj): void;
+    setUsj(usj: Usj, options?: SetUsjOptions): void;
     splitParagraphWithMarker(marker: string): void;
     takeOpsAfterNote(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
     toolbarEndRef: RefObject<HTMLElement | null> | null;
@@ -542,6 +542,11 @@ export const PARAGRAPH_STRUCTURE_VIEW_MODE = "paragraph-structure";
 export interface SelectionRange {
     end?: UsjDocumentLocation;
     start: UsjDocumentLocation;
+}
+
+// @public
+export interface SetUsjOptions {
+    force?: boolean;
 }
 
 // @public

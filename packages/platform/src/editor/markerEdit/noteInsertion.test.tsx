@@ -621,7 +621,9 @@ describe("note insertion where a note cannot live", () => {
       expect(countNotes(ref.current?.getUsj())).toBe(0);
     });
 
-    it("refuses a footnote inserted through insertMarker", async () => {
+    it("puts a footnote inserted through insertMarker after the chapter line, where it is saved", async () => {
+      // `insertMarker` takes a caret on the chapter line to where content after the chapter number
+      // goes (chapterLineEditing.test.tsx pins each shape), so the note is never inside the chapter.
       const { ref, lexical } = await mountStandardViewEditor(lineUsj, {
         scrRef: { book: "GEN", chapterNum: 1, verseNum: 1 },
       });
@@ -632,8 +634,11 @@ describe("note insertion where a note cannot live", () => {
         await Promise.resolve();
       });
 
-      expect(countNotes(lexical.getEditorState().toJSON())).toBe(0);
-      expect(countNotes(ref.current?.getUsj())).toBe(0);
+      const usj = ref.current?.getUsj();
+      expect(countNotes(usj)).toBe(1);
+      expect(countNotes(lexical.getEditorState().toJSON())).toBe(1);
+      expect(usj?.content[1]).toEqual({ type: "chapter", marker: "c", number: "1" });
+      expect((usj?.content[2] as MarkerObject | undefined)?.type).toBe("note");
     });
   });
 

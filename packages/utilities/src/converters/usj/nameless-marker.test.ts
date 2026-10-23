@@ -24,6 +24,12 @@ describe("a nameless marker round-trips", () => {
     expect(usxStringToUsj(namelessParaUsx)).toEqual(namelessParaUsj);
   });
 
+  it("reads an empty paragraph with an empty style as an empty marker", () => {
+    expect(usxStringToUsj('<usx version="3.1"><para style="" /></usx>').content).toEqual([
+      { type: "para", marker: "" },
+    ]);
+  });
+
   it("writes an empty marker as an empty style", () => {
     const usx = usjToUsxString(namelessParaUsj);
     expect(usx).toContain('<para style="">df</para>');

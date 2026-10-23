@@ -15,6 +15,7 @@ export * from "./editorUpdate.utils";
 export * from "./EmptyVerseCaretGuardPlugin";
 export * from "./hidden-content-delete.model";
 export * from "./HiddenContentDeleteGuardPlugin";
+export * from "./KeyDownCaretSyncPlugin";
 export * from "./LoadStatePlugin";
 export * from "./NoteCallerHighlightPlugin";
 export * from "./NoteNodePlugin";
