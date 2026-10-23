@@ -245,7 +245,7 @@ describe("typed characters at verse boundaries", () => {
 });
 
 describe("typed space at the char opener separator", () => {
-  it("lands as content behind the separator, on screen and in the file", async () => {
+  it("lands behind the separator on screen, and is not saved", async () => {
     let opener: MarkerNode;
     const { editor } = await mount(() => {
       const char = $createCharNode("nd");
@@ -273,10 +273,11 @@ describe("typed space at the char opener separator", () => {
       // Two whitespace bytes between the opener and "Lord": the separator and the typed space.
       expect(chars[0].getTextContent()).toBe(`\\nd${NBSP} Lord\\nd*`);
     });
-    // Data side: the separator is structural, the typed space is content.
+    // Data side: the separator is structural, and Paratext 9 skips the whitespace after an opener,
+    // so the typed space is not saved either.
     const para = currentParaUsj(editor);
     const span = typeof para === "object" ? para.content?.[1] : undefined;
-    expect(typeof span === "object" && span.content).toEqual([" Lord"]);
+    expect(typeof span === "object" && span.content).toEqual(["Lord"]);
   });
 });
 

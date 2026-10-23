@@ -1346,7 +1346,7 @@ describe("Editor Node Utilities", () => {
       });
     });
 
-    it("collapses a run after a char span's separator without counting the separator in it", () => {
+    it("drops the spaces after a char span's separator, as after a paragraph marker", () => {
       let singleSpace: TextNode;
       let run: TextNode;
       const { editor } = createBasicTestEnvironment(nodes, () => {
@@ -1372,23 +1372,25 @@ describe("Editor Node Utilities", () => {
         const [nd, wj] = singleSpace.getParentOrThrow().getParentOrThrow().getChildren();
         if (!$isCharNode(nd) || !$isCharNode(wj)) throw new Error("Expected two char spans");
 
-        // The separator and the content's own leading space are not a run: the separator goes
-        // before serialization collapses anything.
+        // The separator goes before serialization drops anything, and the spaces after it are
+        // dropped as the spaces after a paragraph marker are (Paratext 9 skips all whitespace
+        // after an opening marker), so the content starts at its first word.
         const [ndItem] = $getLogicalContentItems(nd, true);
         if (ndItem?.type !== "text") throw new Error("Expected a text item");
-        expect(ndItem.length).toBe(" LORD".length);
-        expect($getLogicalTextLocation(singleSpace, 2, true)?.offset).toBe(1);
+        expect(ndItem.length).toBe("LORD".length);
+        expect($getLogicalTextLocation(singleSpace, 2, true)?.offset).toBe(0);
+        expect($getLogicalTextLocation(singleSpace, 3, true)?.offset).toBe(1);
 
-        // Content that starts with a run keeps the run's first space after the separator.
+        // However many spaces follow the separator, none of them is content.
         const [wjItem] = $getLogicalContentItems(wj, true);
         if (wjItem?.type !== "text") throw new Error("Expected a text item");
-        expect(wjItem.length).toBe(" God".length);
+        expect(wjItem.length).toBe("God".length);
         expect(
           [0, 1, 2, 3, 4].map((offset) => $getLogicalTextLocation(run, offset, true)?.offset),
-        ).toEqual([0, 0, 1, 1, 2]);
-        expect([0, 1, 4].map((offset) => $getTextNodeAtLogicalOffset(wjItem, offset))).toEqual([
-          [run, 1],
+        ).toEqual([0, 0, 0, 0, 1]);
+        expect([0, 1, 3].map((offset) => $getTextNodeAtLogicalOffset(wjItem, offset))).toEqual([
           [run, 3],
+          [run, 4],
           [run, 6],
         ]);
       });

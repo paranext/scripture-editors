@@ -746,11 +746,11 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       if (!roundTripped) throw new Error("Expected a round-tripped USJ");
 
       const note = findNote(roundTripped);
-      // Both occurrences survive. The loose one loses only its leading space: Standard view
-      // collapses the space run it makes with the separator the writer puts after the caller.
+      // Both occurrences survive. Each loses only its leading space, which follows a separator
+      // the writer puts in front of it: the caller's for the loose one, `\ft`'s for the other.
       expect(note?.content).toEqual([
         callerLookalike.trimStart(),
-        { type: "char", marker: "ft", content: [callerLookalike] },
+        { type: "char", marker: "ft", content: [callerLookalike.trimStart()] },
       ]);
     });
 
