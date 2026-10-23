@@ -23,7 +23,14 @@ import {
   LexicalNode,
   TextNode,
 } from "lexical";
-import { $isMarkerNode, $isMarkerTrailingSeparator, $isVerseNode, NBSP } from "shared";
+import {
+  $isCharNode,
+  $isMarkerNode,
+  $isMarkerTrailingSeparator,
+  $isVerseNode,
+  CharNode,
+  NBSP,
+} from "shared";
 
 function usjWith(block: Usj["content"][number]): Usj {
   return {
@@ -218,6 +225,53 @@ describe("getUsj() drops a paragraph's leading spaces (Standard view)", () => {
     const { ref } = await mountStandardViewEditor(usj);
 
     expect(ref.current?.getUsj()?.content[2]).toBe(" after ca");
+  });
+});
+
+/** The text of the span with `marker` in the edited block: the separator NBSP and its content. */
+function $spanContentText(marker: string): TextNode {
+  const node = $textNodes($getRoot().getChildren()[2]).find(
+    (candidate) =>
+      !$isMarkerNode(candidate) &&
+      $isCharNode(candidate.getParent()) &&
+      (candidate.getParent() as CharNode).getMarker() === marker,
+  );
+  if (!node) throw new Error(`no content text in a \\${marker} span`);
+  return node;
+}
+
+describe("getUsj() drops a char span's leading spaces (Standard view)", () => {
+  it("saves a span holding only spaces as an empty span, as Paratext 9 saves it", async () => {
+    // A selected space wrapped in `\nd`: Paratext 9 skips all whitespace after an opener, so
+    // `one\nd  \nd*two` saves as `one\nd \nd*two` and the words join in the file.
+    const { ref, lexical } = await mountStandardViewEditor(
+      paraUsj(["one", { type: "char", marker: "nd", content: [" "] }, "two"]),
+    );
+
+    expect(lexical.getEditorState().read(() => $spanContentText("nd").getTextContent())).toBe(
+      `${NBSP} `,
+    );
+    expect(ref.current?.getUsj()?.content[2]).toEqual({
+      type: "para",
+      marker: "p",
+      content: ["one", { type: "char", marker: "nd" }, "two"],
+    });
+  });
+
+  it.each([
+    ["a span that starts with one", [`${NBSP}lead`]],
+    ["a span holding only one", [NBSP]],
+  ])("keeps a leading no-break space, which is data, in %s", async (_name, content) => {
+    const usj = paraUsj(["a ", { type: "char", marker: "nd", content }, " b"]);
+    const { ref, lexical } = await mountStandardViewEditor(usj);
+    expect(ref.current?.getUsj()?.content[2]).toEqual(usj.content[2]);
+
+    // A space typed after the separator, in front of the no-break space, is dropped; the
+    // no-break space is not.
+    await placeCaret(lexical, () => $spanContentText("nd"), 1);
+    await typeSpaces(lexical, 1);
+
+    expect(ref.current?.getUsj()?.content[2]).toEqual(usj.content[2]);
   });
 });
 

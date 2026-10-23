@@ -1459,14 +1459,14 @@ describe("$applyMarkerMenuSelection", () => {
      * trailing-space transform's own lone-space pins because what it exercises is the WRAP
      * primitive's span shape; the transform half is already pinned in `TextSpacingPlugin.test.tsx`
      * in both aftermath shapes. Driven on the full harness so the trailing-space transform is
-     * live — a selected space is real content, and neither the wrap nor the transform may delete
-     * it or add a byte beside it.
+     * live — the selected space stays on screen inside the span, and neither the wrap nor the
+     * transform may delete it or add a byte beside it.
      *
-     * The wrap primitive once broke this shape: `$moveLeadingSpaceToPreviousNode`
-     * (`../adaptors/usj-marker-action.utils.ts`) moved a wrapped node's leading space out to the
-     * previous sibling unconditionally, so a selection that IS the space emptied the node and an
-     * empty `\nd \nd*` pair reached the file while the apply silently did nothing. The guard that
-     * declines the move when the space is the node's entire content is what keeps this green.
+     * `$moveLeadingSpaceToPreviousNode` (`../adaptors/usj-marker-action.utils.ts`) declines to move
+     * a wrapped node's leading space out to the previous sibling when the space is the node's
+     * entire content; moving it would empty the span on screen, so the apply would show nothing
+     * happening. The file is another matter: Paratext 9 reads no content in a span holding only
+     * spaces, so the span saves empty, as Paratext 9 saves it.
      */
     it("wraps a whitespace-only selection into a span holding exactly that space", async () => {
       let text: TextNode;
@@ -1507,8 +1507,9 @@ describe("$applyMarkerMenuSelection", () => {
         expect(content?.getTextContent()).toBe(`${NBSP} `);
       });
 
-      // Nothing deleted, nothing fabricated: the space moved inside the span and the words on
-      // either side abut it exactly as before.
+      // Nothing fabricated, and saved as Paratext 9 saves it: the screen keeps the space inside
+      // the span, but a space right after an opener's separator is no content to Paratext 9
+      // (`\nd  \nd*` saves as `\nd \nd*`), so the span saves empty and the words join in the file.
       expect(deserializeEditorState(editor.getEditorState(), viewOptions)).toEqual({
         type: "USJ",
         version: "3.1",
@@ -1516,7 +1517,7 @@ describe("$applyMarkerMenuSelection", () => {
           {
             type: "para",
             marker: "p",
-            content: ["one", { type: "char", marker: "nd", content: [" "] }, "two"],
+            content: ["one", { type: "char", marker: "nd" }, "two"],
           },
         ],
       });
