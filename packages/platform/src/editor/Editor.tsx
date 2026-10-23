@@ -178,6 +178,7 @@ import {
   LoadStatePlugin,
   NoteCallerHighlightHandle,
   NoteCallerHighlightPlugin,
+  NoteEnterGuardPlugin,
   NoteNodePlugin,
   NoteShellCaretGuardPlugin,
   OnSelectionChangePlugin,
@@ -2004,6 +2005,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <EmptyNoteCaretGuardPlugin />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
+          {/* Enter has no meaning inside a note outside Standard view (its `\fp` break is
+              MarkerEditPlugin's); left alone it splits the note's paragraph and strands the caret. */}
+          <NoteEnterGuardPlugin isEnabled={viewOptions?.markerMode !== "editable"} />
           <HiddenContentDeleteGuardPlugin
             isEnabled={viewOptions?.markerMode !== "editable"}
             structureProtectionMode={structureProtectionMode}

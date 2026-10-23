@@ -17,11 +17,9 @@ import Editorial from "../../Editorial";
 import { EditorOptions, EditorRef } from "../editor.model";
 import {
   EDITING_VIEWS,
-  EditingViewName,
   editorView,
   footnotePopoverView,
   forEachView,
-  knownFailureRunner,
 } from "../editorViews.test-helpers";
 import { optionsInView } from "../noteEditorRef.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -34,6 +32,8 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  INSERT_LINE_BREAK_COMMAND,
+  INSERT_PARAGRAPH_COMMAND,
   KEY_ENTER_COMMAND,
   LexicalEditor,
   LexicalNode,
@@ -414,32 +414,6 @@ function fpCharEntries(noteUsj: MarkerObject): MarkerObject[] {
   );
 }
 
-/**
- * Enter inside note content is the `\fp` break only in the marker-edit engine, which is off when
- * markers are hidden. Over a hidden-marker host the popover's Enter is Lexical's own: it splits the
- * scaffolding paragraph after the note and parks the caret there, outside the note, so what the
- * user types next is outside the note and the popover's Save, which writes only the note op, drops
- * it. paranext-core's FootnoteEditor claims Enter only over an editable-marker host, and only with
- * the caret outside the note, so nothing upstream of the editor catches it either.
- */
-const ENTER_LEAVES_THE_NOTE =
-  "Enter splits the popover's scaffolding paragraph after the note (the \\fp break is MarkerEditPlugin's, off with hidden markers), so the next keystrokes land outside the note and Save drops them";
-
-/** Rows keyed `<host view>: <row>`; see {@link ENTER_LEAVES_THE_NOTE}. */
-const KNOWN_FAILURES: { [key: `${EditingViewName}: ${string}`]: string } = {
-  "formatted: typed after Enter": ENTER_LEAVES_THE_NOTE,
-  "paragraph-structure: typed after Enter": ENTER_LEAVES_THE_NOTE,
-  "formatted: engine-created \\fp": ENTER_LEAVES_THE_NOTE,
-  "paragraph-structure: engine-created \\fp": ENTER_LEAVES_THE_NOTE,
-};
-
-const runRow = knownFailureRunner(
-  KNOWN_FAILURES,
-  EDITING_VIEWS.flatMap(({ name }) =>
-    ["typed after Enter", "engine-created \\fp"].map((row) => `${name}: ${row}`),
-  ),
-);
-
 /** The note's text, every string in it concatenated in document order. */
 function noteText(note: MarkerObject): string {
   return (note.content ?? [])
@@ -608,7 +582,8 @@ forEachView(EDITING_VIEWS, ({ name, view: hostView }) => {
       expect(findUsjNotes(hostUsj)[2]).toEqual(twoFpNoteUsj);
     }, 30000);
 
-    runRow(`${name}: engine-created \\fp`)(
+    // Only Standard view has an `\fp` break to create; elsewhere Enter in a note does nothing.
+    it.runIf(name === "standard")(
       "keeps two engine-created \\fp paragraphs separate through the popover save path",
       async () => {
         const { host, popover } = await roundtripNote(hostView, 0, closedNoteUsj);
@@ -689,21 +664,69 @@ forEachView(EDITING_VIEWS, ({ name, view: hostView }) => {
       expect(noteText(notes[0])).toBe(noteText(closedNoteUsj));
     }, 30000);
 
-    runRow(`${name}: typed after Enter`)(
-      "saves what is typed after Enter as part of the note",
-      async () => {
-        const { popover } = await roundtripNote(hostView, 0, closedNoteUsj);
-        const typed = "typed after Enter";
-        await enterThenType(popover, typed);
+    it("saves what is typed after Enter as part of the note", async () => {
+      const { popover } = await roundtripNote(hostView, 0, closedNoteUsj);
+      const typed = "typed after Enter";
+      await enterThenType(popover, typed);
 
-        // What the popover's Save writes: its first note op, which must carry the keystrokes.
-        const ops = requireDefined(popover.editorRef.getNoteOps(0), "popover note ops");
-        expect(JSON.stringify(ops)).toContain(typed);
-        // Nothing outside the note, where Save would drop it.
-        expect(popover.editorRef.getUsj()?.content).toHaveLength(1);
-      },
-      30000,
-    );
+      // What the popover's Save writes: its first note op, which must carry the keystrokes.
+      const ops = requireDefined(popover.editorRef.getNoteOps(0), "popover note ops");
+      expect(JSON.stringify(ops)).toContain(typed);
+      // Nothing outside the note, where Save would drop it.
+      expect(popover.editorRef.getUsj()?.content).toHaveLength(1);
+    }, 30000);
+
+    describe.runIf(name !== "standard")("where Enter has no meaning in a note", () => {
+      async function setUp() {
+        const { popover } = await roundtripNote(hostView, 0, closedNoteUsj);
+        await act(async () => {
+          popover.lexical.update(() => $selectEndOfFtContent(), { discrete: true });
+        });
+        return popover;
+      }
+
+      it("does nothing on Enter: no \\fp, no split, the note keeps its text", async () => {
+        const popover = await setUp();
+        const before = JSON.stringify(popover.editorRef.getUsj());
+        await act(async () => {
+          popover.lexical.dispatchCommand(KEY_ENTER_COMMAND, null);
+        });
+        expect(JSON.stringify(popover.editorRef.getUsj())).toBe(before);
+        expect(
+          fpCharEntries(
+            requireDefined(
+              findUsjNotes(requireDefined(popover.editorRef.getUsj(), "USJ"))[0],
+              "note",
+            ),
+          ),
+        ).toHaveLength(0);
+      }, 30000);
+
+      it.each([
+        ["INSERT_PARAGRAPH_COMMAND", INSERT_PARAGRAPH_COMMAND],
+        ["INSERT_LINE_BREAK_COMMAND", INSERT_LINE_BREAK_COMMAND],
+      ] as const)(
+        "swallows a direct dispatch of %s",
+        async (_label, command) => {
+          const popover = await setUp();
+          const before = JSON.stringify(popover.editorRef.getUsj());
+          await act(async () => {
+            popover.lexical.dispatchCommand(command, undefined);
+          });
+          expect(JSON.stringify(popover.editorRef.getUsj())).toBe(before);
+          // The caret is still in the note: what is typed next is saved with it.
+          await act(async () => {
+            popover.lexical.update(() => {
+              const selection = $getSelection();
+              if ($isRangeSelection(selection)) selection.insertText("still inside");
+            });
+          });
+          const ops = requireDefined(popover.editorRef.getNoteOps(0), "popover note ops");
+          expect(JSON.stringify(ops)).toContain("still inside");
+        },
+        30000,
+      );
+    });
   });
 });
 
