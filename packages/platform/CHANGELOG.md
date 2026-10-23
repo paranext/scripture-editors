@@ -111,7 +111,8 @@ refused. The public surface grew substantially; nothing was removed.
 - **Paragraphs the editor creates in the paragraph-structure view get their gutter marker.** An
   Enter split or a multi-line paste used to create a paragraph with no marker glyph, which the
   marker-prefix guard then reset to `\p`; the new paragraph now keeps its marker (an Enter in a `\li2`
-  makes another `\li2`) and shows it in the gutter, where it can be selected.
+  makes another `\li2`) and shows it in the gutter, where it can be selected. Like a split in any
+  other view, it drops the space the split leaves at its start.
 - **Backspace at the start of a line with no verse number merges it into the paragraph before**, in
   the paragraph-structure view, as removing its selected marker does. It used to delete the line's
   gutter glyph and reset its marker to `\p`. `"guarded"` asks for a second press, and
