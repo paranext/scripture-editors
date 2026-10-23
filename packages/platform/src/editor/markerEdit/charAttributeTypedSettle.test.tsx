@@ -490,10 +490,19 @@ describe.each(["standard", "unformatted"])(
     // content text, and a selection listener moves the second onto the first before the next
     // keystroke. The two look the same on screen, so a byte typed at either saves the same file.
     // `|` and a space go behind the separator; `*` and `\` read with the marker in front of them.
+    // Standard view does not save the space (Paratext 9 skips whitespace after an opener);
+    // unformatted keeps whitespace as typed.
     const usj = twoParaUsj(["a ", { type: "char", marker: "w", content: ["grace"] }, " b"]);
     it.each([
       ["|", ["a ", { type: "char", marker: "w", lemma: "grace" }, " b"]],
-      [" ", ["a ", { type: "char", marker: "w", content: [" grace"] }, " b"]],
+      [
+        " ",
+        [
+          "a ",
+          { type: "char", marker: "w", content: [view === "standard" ? "grace" : " grace"] },
+          " b",
+        ],
+      ],
       [
         "*",
         [

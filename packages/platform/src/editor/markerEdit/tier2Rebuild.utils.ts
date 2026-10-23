@@ -3989,7 +3989,7 @@ function areSerializedTextsMergeable(
 }
 
 /** A plain serialized space, the node `$createTextNode(" ")` exports. */
-const SERIALIZED_SPACE = {
+export const SERIALIZED_SPACE = {
   type: "text",
   version: 1,
   detail: 0,

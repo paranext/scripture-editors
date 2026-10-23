@@ -337,9 +337,10 @@ describe("typing over a span's separator", () => {
     expectScreenIsSaved(mounted, "wxgrace");
   });
 
-  it("heals the separator back in front of a space typed over it, keeping the space", async () => {
+  it("heals the separator back in front of a space typed over it, keeping the space on screen", async () => {
     // `\w grace` reads the same with the space as the separator, so the NBSP is restored in place
-    // and the typed space stays content: the screen shows `\w⍽ grace`, the writer `\w  grace`.
+    // and the typed space stays on screen: `\w⍽ grace`. The file does not get it — Paratext 9 skips
+    // whitespace after an opener — so the writer writes `\w agrace`.
     const mounted = await mountStandardViewEditor(wordUsj("w"));
     await selectIn(mounted.lexical, "grace", 0, 1);
     await typeChars(mounted.lexical, " a");
@@ -352,12 +353,15 @@ describe("typing over a span's separator", () => {
     const settled = mounted.ref.current?.getUsj();
     expect(paraOf(settled, "p").content).toEqual([
       "In the ",
-      { type: "char", marker: "w", content: [" agrace"] },
+      { type: "char", marker: "w", content: ["agrace"] },
       " of God",
     ]);
     expect(settled).toEqual(pending);
     expect(spanText()).toBe(`${NBSP} agrace`);
-    expectScreenIsSaved(mounted, "p");
+    // The screen keeps the dropped space, as it keeps one typed at a paragraph's start.
+    expect(screenBytes(mounted.lexical, () => $paraWithMarker("p")).replace("  ", " ")).toBe(
+      usfmOf(paraOf(mounted.ref.current?.getUsj(), "p")),
+    );
   });
 
   it("heals the separator back when a `|` is typed over it, and settles the `|…` it starts", async () => {
