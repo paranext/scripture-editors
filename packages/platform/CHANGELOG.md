@@ -70,6 +70,17 @@ refused. The public surface grew substantially; nothing was removed.
 - **Ctrl+Space removes character formatting from the selection.** On macOS this is ⌃Space rather than
   ⌘Space, which is Spotlight. It can collide with the macOS input-source switcher and with some IME
   on/off toggles; the handler declines while a composition is active.
+- `EditorOptions.onHiddenContentDelete`, with the types `HiddenContentDeleteHandler`,
+  `HiddenContentDeleteRequest`, `HiddenContentDeleteDecision`, `HiddenContentDeleteAction` and
+  `HiddenContentItem`: asks before an edit removes content the view does not show (a figure, a
+  sidebar, `\periph`, ...), which is hidden in every view whose `markerMode` is not `"editable"`.
+  Left native, such an edit can empty a figure's caption, merge a paragraph into a hidden sidebar
+  or dissolve the sidebar into it, all unseen. With the option set, a delete that reaches hidden
+  content, and any edit over a selection holding some, waits for the answer. `"delete"` lets the
+  edit remove it, and a delete that stops at a paragraph's edge never merges or dissolves a
+  paragraph; `"keep"` moves a caret past it or cancels the edit, as the request's `canSkip` says,
+  so a host can label its choice to match. Dragging a selection that holds such content is
+  refused, and so is cutting one while `copyLimit` is set.
 - **A paragraph's marker can be selected** in the paragraph-structure view (`hasGutterParaMarkers`):
   click it in the gutter. Arrow keys do not stop on a marker; arrow movement is unchanged.
   - The row is highlighted (`psc-para-marker-selected`), and the editor root's

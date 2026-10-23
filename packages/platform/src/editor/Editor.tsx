@@ -172,6 +172,7 @@ import {
   getDefaultViewOptions,
   getInsertedNodeKey,
   getViewClassList,
+  HiddenContentDeleteGuardPlugin,
   isBlockVerseLayout,
   LoadStatePlugin,
   NoteCallerHighlightHandle,
@@ -458,6 +459,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   const {
     isReadonly = false,
     structureProtectionMode = "off",
+    onHiddenContentDelete,
     hasExternalUI = false,
     hasSpellCheck = false,
     textDirection = "ltr",
@@ -1989,6 +1991,13 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <EmptyNoteCaretGuardPlugin />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
+          <HiddenContentDeleteGuardPlugin
+            isEnabled={viewOptions?.markerMode !== "editable"}
+            structureProtectionMode={structureProtectionMode}
+            copyLimit={copyLimit}
+            onHiddenContentDelete={onHiddenContentDelete}
+            logger={stableLogger}
+          />
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects
               depend on it, so a host handing over a fresh-but-equivalent logger object each
               render would re-register their command listeners at the END of Lexical's

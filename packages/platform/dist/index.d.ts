@@ -267,6 +267,14 @@ export declare interface EditorOptions {
    * Defaults to "off".
    */
   structureProtectionMode?: StructureProtectionMode;
+  /**
+   * Asks the user before an edit removes content the view hides: figures, sidebars, `\periph` and
+   * other constructs the editor carries unmodeled, hidden whenever `view.markerMode` is not
+   * `"editable"`. Deletes that reach one, and any edit over a selection holding one, wait for the
+   * answer (see {@link HiddenContentDeleteHandler}). Dragging such a selection, or cutting it while
+   * {@link EditorOptions.copyLimit} is set, is refused. Unset, editing is native.
+   */
+  onHiddenContentDelete?: HiddenContentDeleteHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */
   hasExternalUI?: boolean;
   /** Is the editor enabled for spell checking. */
@@ -1439,6 +1447,69 @@ export declare function getViewOptions(viewMode?: string | undefined): ViewOptio
  * @public
  */
 export declare const HIDDEN_NOTE_CALLER = "-";
+
+/**
+ * What the user did that would remove hidden content.
+ * - `"deleteBackward"` / `"deleteForward"`: Backspace / Delete (or a word or line chord of either)
+ *   with a collapsed caret.
+ * - `"replaceSelection"`: deleting, typing over, pressing Enter over, pasting over, or cutting a
+ *   selection.
+ *
+ * More actions may be added; a host that branches on this should handle values it does not know.
+ */
+export declare type HiddenContentDeleteAction =
+  | "deleteBackward"
+  | "deleteForward"
+  | "replaceSelection";
+
+/**
+ * The user's answer.
+ * - `"delete"`: go ahead and remove the hidden content along with the edit. A delete that stops at
+ *   a paragraph's edge removes only the hidden content there: it never merges the paragraph into a
+ *   hidden block, or dissolves one into the paragraph.
+ * - `"keep"`: keep it. The caret moves past it when the request's `canSkip` is `true`; otherwise
+ *   the edit is cancelled.
+ */
+export declare type HiddenContentDeleteDecision = "delete" | "keep";
+
+/**
+ * Asks the user whether an edit may remove content the current view does not show (a figure, a
+ * sidebar, ...).
+ *
+ * The editor holds the edit until this settles and refuses typing, deleting, pasting and cutting
+ * meanwhile, so it must settle: a modal dialog whose every way out answers is the intended shape.
+ * Until it does, editing stays held. A rejected promise, a thrown error, and any answer other than
+ * `"delete"` count as `"keep"`. It is called after the keystroke's own dispatch has finished, so
+ * it may call back into the editor.
+ *
+ * The answer is dropped, and nothing changed, if what the edit covers changed, the selection moved
+ * or the editor became read-only while the host was asking.
+ */
+export declare type HiddenContentDeleteHandler = (
+  request: HiddenContentDeleteRequest,
+) => HiddenContentDeleteDecision | Promise<HiddenContentDeleteDecision>;
+
+/** Passed to {@link HiddenContentDeleteHandler} when an edit would remove hidden content. */
+export declare interface HiddenContentDeleteRequest {
+  /** Each hidden construct the edit would remove, in document order. Never empty. */
+  readonly items: readonly HiddenContentItem[];
+  /** What the user did. */
+  readonly action: HiddenContentDeleteAction;
+  /**
+   * Whether `"keep"` moves the caret past the hidden content, leaving the user free to keep going.
+   * When `false`, `"keep"` cancels the edit and the caret stays where it was. `true` only for a
+   * caret delete whose sole hidden content is the run at the caret, with somewhere past it to go.
+   */
+  readonly canSkip: boolean;
+}
+
+/** One construct the current view cannot show, which an edit is about to remove. */
+export declare interface HiddenContentItem {
+  /** The construct's USJ type, e.g. `"figure"`, `"sidebar"`, `"periph"`. */
+  readonly tag: string;
+  /** The construct's USFM marker without the backslash, e.g. `"fig"`, `"esb"`, when it has one. */
+  readonly marker?: string;
+}
 
 /**
  * Whether the view options select the block verse layout.
