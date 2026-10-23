@@ -15,6 +15,7 @@ import {
   ContextMenuOptionConfig,
   DeltaOp,
   DeltaSource,
+  HiddenContentDeleteHandler,
   SelectionRange,
   StateChangeSnapshot,
   StructureProtectionMode,
@@ -53,6 +54,27 @@ export interface CommitTypedMarkerOptions {
    * lands.
    */
   trailingSpace?: boolean;
+}
+
+/**
+ * EXPERIMENTAL: Options for {@link EditorRef.setUsj}.
+ *
+ * @public
+ */
+export interface SetUsjOptions {
+  /**
+   * EXPERIMENTAL: Load the document even when the editor already holds it. Defaults to `false`.
+   *
+   * Pass `true` to correct what is on screen while a marker edit may be in progress. The editor
+   * keeps two versions of its document while such an edit is in progress: what is on screen, and
+   * its own record from before the edit. A document equal to that record is skipped by default,
+   * which keeps the edit from being thrown away by a host that re-sends the text as it was. The
+   * same test skips a correction that happens to put back what the edit removed, such as a chapter
+   * number the user backspaced away, so a host making that correction forces it. A forced load
+   * replaces the edit in progress, and, like any load, takes the caret and the undo history with
+   * it.
+   */
+  force?: boolean;
 }
 
 /**
@@ -230,8 +252,17 @@ export interface EditorRef {
    * it implicitly.
    */
   setTransientInput(input: TransientInput | undefined): void;
-  /** Set the USJ Scripture data. */
-  setUsj(usj: Usj): void;
+  /**
+   * Set the USJ Scripture data, replacing the editor's content.
+   *
+   * Does nothing when `usj` is a document the editor already holds, so the caret and the undo
+   * history survive: the document {@link EditorRef.getUsj} returns now (what is on screen), or,
+   * while a marker edit is in progress, the editor's own record from before that edit — so a host
+   * re-sending the text as it was does not throw the edit away. Pass `options.force` to load it
+   * regardless (see {@link SetUsjOptions.force}). `options` is EXPERIMENTAL
+   * (see {@link SetUsjOptions}).
+   */
+  setUsj(usj: Usj, options?: SetUsjOptions): void;
   /**
    * EXPERIMENTAL: Apply Operational Transform delta update.
    *
@@ -1031,6 +1062,14 @@ export interface EditorOptions {
    * Defaults to "off".
    */
   structureProtectionMode?: StructureProtectionMode;
+  /**
+   * Asks the user before an edit removes content the view hides: figures, sidebars, `\periph` and
+   * other constructs the editor carries unmodeled, hidden whenever `view.markerMode` is not
+   * `"editable"`. Deletes that reach one, and any edit over a selection holding one, wait for the
+   * answer (see {@link HiddenContentDeleteHandler}). Dragging such a selection, or cutting it while
+   * {@link EditorOptions.copyLimit} is set, is refused. Unset, editing is native.
+   */
+  onHiddenContentDelete?: HiddenContentDeleteHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */
   hasExternalUI?: boolean;
   /** Is the editor enabled for spell checking. */

@@ -11,7 +11,6 @@
  */
 
 import {
-  $buildChapterFragment,
   $buildImpliedParaFragment,
   $buildNodesFragment,
   $buildNoteFragment,
@@ -19,6 +18,8 @@ import {
   $buildSettledRootFragment,
   $chapterAdjacentAttributeNodes,
   $exportSubtree,
+  $settledChapterScopeFragment,
+  joinSerializedLeadingLineToPreviousParagraph,
   cutFragment,
   serializedMarkerGlyphText,
   FragmentAccumulator,
@@ -72,7 +73,6 @@ import {
 import {
   $getLogicalContentItems,
   BookNode,
-  $isChapterNode,
   $isImpliedParaNode,
   $isMarkerNode,
   $isNoteNode,
@@ -143,9 +143,6 @@ interface SettledTopIndex {
  * the live nodes and over the scratch editor's root children, so the two sides' bytes are
  * comparable by construction — except where a paragraph's typed block marker settled into a
  * chapter, table, sidebar or other non-paragraph root child, which only the settled side has. */
-function keyOf(node: LexicalNode): NodeKey {
-  return node.getKey();
-}
 
 function $buildScopeFragment(
   kind: SettleScopePlan["kind"],
@@ -160,17 +157,8 @@ function $buildScopeFragment(
       ? $buildParaScopeFragment(nodes, tier2.getMarker, tier2.viewOptions)
       : $buildSettledRootFragment(nodes, tier2.getMarker, tier2.viewOptions);
   }
-  if (kind === "chapter") {
-    const chapter = nodes.find($isChapterNode);
-    if (!chapter) return undefined;
-    // The settled side of a chapter scope can hold more than the chapter and the `\ca`/`\cp`
-    // nodes beside it: a span that no longer folds can settle as a paragraph of its own
-    // (`\ca3\ca*`), which the chapter's own builder does not read, so its bytes would be missing.
-    const region = new Set([chapter, ...$chapterAdjacentAttributeNodes(chapter)].map(keyOf));
-    return nodes.every((node) => region.has(node.getKey()))
-      ? $buildChapterFragment(chapter, tier2.getMarker, tier2.viewOptions)
-      : $buildSettledRootFragment(nodes, tier2.getMarker, tier2.viewOptions);
-  }
+  if (kind === "chapter")
+    return $settledChapterScopeFragment(nodes, tier2.getMarker, tier2.viewOptions);
   const note = nodes.find($isNoteNode);
   return note && $buildNoteFragment(note, tier2.getMarker, tier2.viewOptions)?.out;
 }
@@ -666,7 +654,11 @@ function $planForBook(
 }
 
 /** The chapter scope's plan, over the whole region the chapter rebuild replaces (the chapter plus
- * the adjacent first-class `\ca`/`\cp` nodes `$buildChapterFragment` reads). */
+ * the adjacent first-class `\ca`/`\cp` nodes `$buildChapterFragment` reads).
+ *
+ * A markerless line the region settles into first joins the paragraph before the chapter, as the
+ * settle and `getUsj()` both put it (`joinSerializedLeadingLineToPreviousParagraph`). That
+ * paragraph is then part of the plan on both sides, so the items after it keep their indexes. */
 function $planForChapter(
   chapter: ChapterNode,
   built: FragmentAccumulator | undefined,
@@ -674,13 +666,37 @@ function $planForChapter(
   context: SettledPositionContext,
   transient: TransientLiteral | undefined,
 ): SettleScopePlan | undefined {
-  const { liveFragment, liveCut } = $cutLiveFragment(built, transient);
   const rebuilt = $settledChapterScope(chapter, context.tier2, transient, scopes.charOpenerRenames);
   if (!rebuilt) return undefined;
-  const liveNodes = [chapter, ...$chapterAdjacentAttributeNodes(chapter)];
+  const region = [chapter, ...$chapterAdjacentAttributeNodes(chapter)];
+  const previous = chapter.getPreviousSibling();
+  const isPreviousPending = [...scopes.paraScopes.values()].some((paras) =>
+    paras.some((para) => para.is(previous)),
+  );
+  if (($isParaNode(previous) || $isImpliedParaNode(previous)) && !isPreviousPending) {
+    const withPrevious = [$exportSubtree(previous), ...rebuilt];
+    joinSerializedLeadingLineToPreviousParagraph(withPrevious, 1);
+    if (withPrevious.length === rebuilt.length) {
+      const liveNodes = [previous, ...region];
+      const { liveFragment, liveCut } = $cutLiveFragment(
+        $settledChapterScopeFragment(liveNodes, context.tier2.getMarker, context.tier2.viewOptions),
+        transient,
+      );
+      return $planFrom(
+        "chapter",
+        liveNodes,
+        liveFragment,
+        liveCut,
+        withPrevious,
+        undefined,
+        context,
+      );
+    }
+  }
+  const { liveFragment, liveCut } = $cutLiveFragment(built, transient);
   // A chapter region with any preserved node at all is refused outright by `$buildChapterFragment`,
   // so a chapter scope has no preserved runs to pair.
-  return $planFrom("chapter", liveNodes, liveFragment, liveCut, rebuilt, undefined, context);
+  return $planFrom("chapter", region, liveFragment, liveCut, rebuilt, undefined, context);
 }
 
 /** The plan for a paragraph whose only pending change is an emptied optbreak husk — nothing

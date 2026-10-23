@@ -19,6 +19,7 @@ import {
   EditorRef,
   GENERATOR_NOTE_CALLER,
   getDefaultViewMode,
+  HiddenContentDeleteHandler,
   getViewOptions,
   isBlockVerseLayout,
   HIDDEN_NOTE_CALLER,
@@ -59,6 +60,15 @@ interface Annotations {
 const isTesting = process.env.NODE_ENV === "testing";
 const webUsj = usxStringToUsj(isTesting ? WEB_PSA_USX : WEB_PSA_CH1_USX);
 const editorUsj = webUsj; // isTesting ? webUsj : usj2Sa;
+
+/** Asks with the browser's own dialog before an edit removes content the view does not show. */
+const confirmHiddenContentDelete: HiddenContentDeleteHandler = ({ items }) => {
+  const names = items.map(({ tag, marker }) => (marker ? `\\${marker}` : tag)).join(", ");
+  return window.confirm(`This would delete content this view does not show (${names}). Delete it?`)
+    ? "delete"
+    : "keep";
+};
+
 const defaultScrRef: SerializedVerseRef = { book: "PSA", chapterNum: 1, verseNum: 1 };
 // Word "man" inside first q1 of PSA 1:1.
 const annotationRange1: AnnotationRange = {
@@ -228,9 +238,10 @@ export default function App() {
             view: viewOptions,
             nodes: nodeOptions,
             markerSettleDelayMs,
+            onHiddenContentDelete: confirmHiddenContentDelete,
             debug,
           }
-        : { hasExternalUI, debug },
+        : { hasExternalUI, onHiddenContentDelete: confirmHiddenContentDelete, debug },
     [
       isOptionsDefined,
       effectiveIsReadonly,
