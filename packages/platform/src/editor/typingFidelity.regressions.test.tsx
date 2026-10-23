@@ -50,3 +50,64 @@ forEachView(EDITING_VIEWS, ({ view }) => {
     });
   });
 });
+
+/** `\id`, `\c 1`, an empty `\b`, then `\p text`. */
+const BLANK_LINE_THEN_PARAGRAPH: Usj = {
+  type: "USJ",
+  version: "3.1",
+  content: [
+    { type: "book", marker: "id", code: "GEN", content: ["GEN"] },
+    { type: "chapter", marker: "c", number: "1" },
+    { type: "para", marker: "b" },
+    { type: "para", marker: "p", content: ["text"] },
+  ],
+};
+
+/** The editing views whose markers are hidden: a caret at a paragraph's text start is past no
+ * marker glyph. */
+const HIDDEN_MARKER_VIEWS = EDITING_VIEWS.filter(({ name }) => name !== "standard");
+
+/** The paragraphs after the chapter, each as its marker and its text. */
+function paragraphsAfterChapter(usj: Usj | undefined): { marker?: string; text: string }[] {
+  return (usj?.content ?? []).slice(2).map((item) => ({
+    marker: typeof item === "object" ? item.marker : undefined,
+    text: typeof item === "object" ? (item.content ?? []).join("") : item,
+  }));
+}
+
+forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
+  // The joined paragraph keeps the blank line's marker, as joining any two paragraphs keeps the
+  // first one's; what matters here is that no text is lost.
+  describe("joining a paragraph with an empty blank line before it", () => {
+    it("Backspace at the paragraph's start keeps its text", async () => {
+      const mounted = await mountInView(BLANK_LINE_THEN_PARAGRAPH, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[3].content[0]", offset: 0 },
+        });
+      });
+
+      expect(await press(mounted, "Backspace")).toEqual([]);
+
+      expect(paragraphsAfterChapter(mounted.ref.current?.getUsj())).toEqual([
+        { marker: "b", text: "text" },
+      ]);
+    });
+
+    it("typing over a range from the blank line into the paragraph keeps the rest", async () => {
+      const mounted = await mountInView(BLANK_LINE_THEN_PARAGRAPH, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2]", offset: 0 },
+          end: { jsonPath: "$.content[3].content[0]", offset: 1 },
+        });
+      });
+
+      expect(await press(mounted, "x", "x")).toEqual([]);
+
+      expect(paragraphsAfterChapter(mounted.ref.current?.getUsj())).toEqual([
+        { marker: "b", text: "xext" },
+      ]);
+    });
+  });
+});
