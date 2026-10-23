@@ -323,9 +323,10 @@ function createTableCellMarker(
  *   same ones after a verse number ({@link dropSpacesAfterVerseNumbers}).
  * - A char span's content, after its opener's separator, for the same reason: Paratext 9 skips all
  *   whitespace after any opening marker (`\nd  things\nd*` reads and saves as `\nd things\nd*`),
- *   so a space typed right after the opener is shown while editing and not saved. Not a span that
- *   holds nothing but spaces: that space is the span's whole content (a selected space wrapped in
- *   a span), and dropping it here would join the words on either side.
+ *   so a space typed right after the opener is shown while editing and not saved. A span holding
+ *   nothing but spaces (a selected space wrapped in a span) is empty to Paratext 9 too
+ *   (`\nd  \nd*` saves as `\nd \nd*`, joining the words on either side in the file), so it
+ *   saves as an empty span.
  * - A note's content, after its caller: content that starts with plain spaces (`\f +  text`, a
  *   space typed after an expanded note's caller) makes a run with the caller's separator that no
  *   single text node holds; Paratext 9 collapses it to `\f + text` on reformat, as it does any
@@ -339,11 +340,6 @@ function createTableCellMarker(
  * @returns `content` without leading plain spaces in its first string, dropping a string that held
  *   nothing else.
  */
-/** Whether `content` is nothing but plain-space strings. */
-function holdsOnlySpaces(content: MarkerContent[] | undefined): boolean {
-  return !!content?.every((item) => typeof item === "string" && /^ *$/.test(item));
-}
-
 function dropLeadingSpaces(content: MarkerContent[] | undefined): MarkerContent[] | undefined {
   const first = content?.[0];
   if (!content || typeof first !== "string" || !first.startsWith(" ")) return content;
@@ -763,9 +759,11 @@ function recurseNodes(
           false,
           serializedCharNode,
         );
-        if (isStandardView(viewOptions) && !holdsOnlySpaces(charContent))
-          charContent = dropLeadingSpaces(charContent);
-        markers.push(createCharMarker(serializedCharNode, charContent));
+        if (isStandardView(viewOptions)) charContent = dropLeadingSpaces(charContent);
+        // A span that held only spaces has no content, as one that held nothing has none.
+        markers.push(
+          createCharMarker(serializedCharNode, charContent?.length ? charContent : undefined),
+        );
         break;
       }
       case ParaNode.getType(): {

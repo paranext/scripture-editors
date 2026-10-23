@@ -1434,8 +1434,7 @@ function $startsAfterSeparator(implied: ImpliedParaNode): boolean {
  *
  * - at the start of a paragraph's content — under any paragraph marker, and in the root's implied
  *   paragraph after a chapter;
- * - at the start of a char span's content, after its opener's separator, unless the span holds
- *   nothing but spaces;
+ * - at the start of a char span's content, after its opener's separator;
  * - right after a verse number.
  *
  * A text holding nothing but such spaces is no item.
@@ -1493,14 +1492,9 @@ function $getLogicalItemShapes(
   if (!collapsesSpaceRuns) return shapes;
 
   // A char span's content starts after its opener's separator, which Paratext 9 skips whitespace
-  // after just as it does after a paragraph marker's — unless spaces are all the span holds, which
-  // serialization keeps as the span's content.
-  if (
-    $isParaNode(parent) ||
-    ($isCharNode(parent) &&
-      !shapes.every((shape) => shape.type === "text" && $holdsOnlySpaces(shape.nodes)))
-  )
-    paragraphStarts.push(0);
+  // after just as it does after a paragraph marker's — a span holding only spaces included, which
+  // it reads as empty (`\nd  \nd*` saves as `\nd \nd*`).
+  if ($isParaNode(parent) || $isCharNode(parent)) paragraphStarts.push(0);
   return shapes.filter((shape, index) => {
     if (shape.type !== "text") return true;
     const previous = shapes[index - 1];
