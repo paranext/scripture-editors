@@ -343,9 +343,8 @@ export function $shouldBlockStructuralEdit(selection: BaseSelection, intent: Edi
       // With no previous block there is nothing to merge into, but a gutter glyph would still be
       // deleted (and restored at once, leaving an empty undo step) — so refuse that start too.
       return (
-        ($caretAtParaStart(selection) &&
-          ($hasNeighborBlock(selection, "backward") ||
-            !!$getGutterParaWithCaretAtStart(selection))) ||
+        !!$getGutterParaWithCaretAtStart(selection) ||
+        ($caretAtParaStart(selection) && $hasNeighborBlock(selection, "backward")) ||
         $caretAdjacentToVerseMarker(selection, "backward")
       );
     case "deleteForward":
