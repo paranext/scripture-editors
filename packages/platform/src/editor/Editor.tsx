@@ -354,8 +354,8 @@ function $getOpsAfterNote(noteNode: NoteNode): DeltaOp[] {
  * `\id` line) its book path so the two cannot drift. `$setBlocksType` moves each affected block's
  * children into a fresh `ParaNode` carrying the new marker state; it has no notion that a marker
  * glyph is content it should rewrite, so it moves the OLD marker's visible prefix over unchanged —
- * `$applyParaMarker` re-runs over every affected paragraph afterward to bring the glyph (editable
- * marker mode) back into agreement with the new marker.
+ * `$applyParaMarker` re-runs over every affected paragraph afterward to bring the glyph (an editable
+ * marker, or a visible or gutter glyph) back into agreement with the new marker.
  *
  * Mutating: call inside `editor.update()`, with `selection` the live RangeSelection to retag.
  */
