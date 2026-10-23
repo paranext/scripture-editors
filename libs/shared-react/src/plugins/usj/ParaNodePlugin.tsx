@@ -1,6 +1,6 @@
 import { $removeLeadingSpace, wasNodeCreated } from "../../nodes/usj/node-react.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getNodeByKey, LexicalEditor } from "lexical";
+import { $getNodeByKey, $isElementNode, LexicalEditor } from "lexical";
 import { useEffect } from "react";
 import { $isParaNode, ParaNode } from "shared";
 
@@ -32,7 +32,15 @@ function useParaNode(editor: LexicalEditor) {
  * @param node - ParaNode thats needs updating.
  */
 function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
-  if (wasNodeCreated(editor, node.getKey())) $removeLeadingSpace(node.getFirstChild());
+  if (wasNodeCreated(editor, node.getKey())) {
+    $removeLeadingSpace(node.getFirstChild());
+    // Lexical's history folds an update whose only dirty leaf is a text that kept its text into
+    // the previous undo step. A paragraph break in front of a char span or a note is such an
+    // update (only the text before the break is touched), so the new paragraph's first leaf is
+    // marked too, and Undo takes the break back on its own.
+    const first = node.getFirstDescendant();
+    if (first && !$isElementNode(first)) first.markDirty();
+  }
 
   if (!$isParaNode(node) || node.getMarker() !== "b" || node.isEmpty()) return;
 

@@ -4,8 +4,9 @@
  */
 import { EDITING_VIEWS, forEachView, mountInView } from "./editorViews.test-helpers";
 import { installSelectionModify, press } from "./typingFidelityOracle.test-helpers";
-import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
+import { ContentJsonPath, MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
+import { UNDO_COMMAND } from "lexical";
 import { describe, expect, it } from "vitest";
 
 installSelectionModify();
@@ -108,6 +109,32 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
       expect(paragraphsAfterChapter(mounted.ref.current?.getUsj())).toEqual([
         { marker: "b", text: "xext" },
       ]);
+    });
+  });
+});
+
+forEachView(EDITING_VIEWS, ({ view }) => {
+  describe("Undo after Enter in front of a char span or a note", () => {
+    const bold: MarkerContent = { type: "char", marker: "nd", content: ["bold"] };
+    it.each<[string, MarkerContent[], ContentJsonPath, number]>([
+      ["a char span", ["a ", bold], "$.content[2].content[1].content[0]", 0],
+      ["a note", ["a ", NOTE], "$.content[2].content[0]", 2],
+    ])("brings back the one paragraph (%s)", async (_, content, jsonPath, offset) => {
+      const usj = oneParaUsj(content);
+      const mounted = await mountInView(usj, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath, offset },
+        });
+      });
+      expect(await press(mounted, "Enter")).toEqual([]);
+      expect(mounted.ref.current?.getUsj()?.content).toHaveLength(4);
+
+      await act(async () => {
+        mounted.lexical.dispatchCommand(UNDO_COMMAND, undefined);
+      });
+
+      expect(mounted.ref.current?.getUsj()).toEqual(usj);
     });
   });
 });
