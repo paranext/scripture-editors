@@ -9,6 +9,7 @@ import {
   $isDecoratorNode,
   $isRangeSelection,
   $isTextNode,
+  $setState,
   LexicalEditor,
   NodeKey,
   TextNode,
@@ -365,7 +366,9 @@ function $isCaretAtStartOf(node: TextNode): boolean {
 }
 
 /** Removes the byte at `index` from `node`. A selection point in `node` keeps its user byte; any
- * other selection is left exactly where it is. */
+ * other selection is left exactly where it is. A no-break space left in `node` is the user's (a `~`
+ * typed into the empty span), so it is marked theirs ({@link authoredNbspState}): alone, it would
+ * otherwise read as the placeholder again and be saved as nothing. */
 function $dropPlaceholderByte(node: TextNode, index: number): void {
   const selection = $getSelection();
   const points = $isRangeSelection(selection)
@@ -377,6 +380,7 @@ function $dropPlaceholderByte(node: TextNode, index: number): void {
   const text = node.getTextContent();
   const writable = node.setTextContent(text.slice(0, index) + text.slice(index + 1));
   placeholderDroppedThisUpdate.add(writable);
+  if (writable.getTextContent().includes(NBSP)) $setState(writable, authoredNbspState, true);
   points.forEach((point, i) => {
     const offset = offsets[i];
     point.set(writable.getKey(), offset > index ? offset - 1 : offset, "text");

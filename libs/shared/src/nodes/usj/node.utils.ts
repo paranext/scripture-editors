@@ -1193,12 +1193,14 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
 }
 
 /**
- * Marks a text that is exactly one NBSP as the author's own `~`, where a forward conversion builds
- * it in a slot that would otherwise read as the engine's: the first content of a char span in the
- * marker modes without a separator after the opener ("visible" and "hidden"), which is also where
- * an empty span's placeholder sits. Only the USJ→editor adaptor's `createChar`
- * (usj-editor.adaptor.ts, platform) sets it, on the SERIALIZED node; {@link $isLoneNbspContent}
- * and its serialized twin read it.
+ * Marks a text holding an NBSP as the author's, so that once the text is that NBSP alone it reads
+ * as the author's own `~` in a slot that would otherwise read as the engine's: the first content
+ * of a char span in the marker modes without a separator after the opener ("visible" and
+ * "hidden"), which is also where an empty span's placeholder sits. Lexical keeps a node's state
+ * through edits of its text and copies it to both halves of a split, so a `~` the user strands by
+ * deleting the text around it keeps the mark. The USJ→editor adaptor's `createChar`
+ * (usj-editor.adaptor.ts, platform) sets it on the SERIALIZED node, and `CharNodePlugin` on an
+ * NBSP typed into an empty span; {@link $isLoneNbspContent} and its serialized twin read it.
  */
 export const authoredNbspState = createState("isAuthoredNbsp", {
   parse: (value) => value === true,

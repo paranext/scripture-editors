@@ -2,11 +2,13 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import {
   $createRangeSelectionFromDom,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $setSelection,
   COMMAND_PRIORITY_CRITICAL,
   KEY_DOWN_COMMAND,
   LexicalEditor,
+  PointType,
 } from "lexical";
 import { useEffect } from "react";
 
@@ -15,6 +17,22 @@ function domTextNodeOf(element: Node | null | undefined): Node | undefined {
   let node: Node | null | undefined = element;
   while (node && node.nodeType !== Node.TEXT_NODE) node = node.firstChild;
   return node ?? undefined;
+}
+
+/** Whether the DOM selection's anchor is where Lexical renders the element caret `point`. */
+function $isDomPointOfElementCaret(
+  editor: LexicalEditor,
+  point: PointType,
+  domSelection: Selection,
+): boolean {
+  const node = point.getNode();
+  const element = editor.getElementByKey(point.key);
+  if (!$isElementNode(node) || !element) return false;
+  const slot = node.getDOMSlot(element);
+  return (
+    domSelection.anchorNode === slot.element &&
+    domSelection.anchorOffset === point.offset + slot.getFirstChildOffset()
+  );
 }
 
 /**
@@ -45,6 +63,10 @@ export function $syncCaretFromDom(editor: LexicalEditor): void {
     domSelection.anchorOffset === anchor.offset
   )
     return;
+  // The same for an element caret, rendered at its child index in the element's DOM slot. Read
+  // back, that DOM position resolves INTO the child after it: an element caret between a char span
+  // and a collapsed note would become a caret inside the note, where Backspace removes nothing.
+  if (anchor.type === "element" && $isDomPointOfElementCaret(editor, anchor, domSelection)) return;
   const fromDom = $createRangeSelectionFromDom(domSelection, editor);
   if (!fromDom) return;
   // The DOM's caret read back as the position Lexical already holds is the same caret.
