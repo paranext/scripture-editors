@@ -97,6 +97,12 @@ refused. The public surface grew substantially; nothing was removed.
 
 ### Changed
 
+- **The editor hands back every document at the USJ `version` it was given.** `getUsj()`,
+  `onUsjChange` and every settled read report the `version` of `defaultUsj` or of the latest
+  `setUsj` document (`USJ_VERSION` when it has none), instead of always `USJ_VERSION`, so a host
+  that writes the USJ back with `usjToUsxString` gets the version its source served. A `setUsj`
+  whose document differs only in `version` reloads, as any other differing document does. Loading
+  a document whose version is not `USJ_VERSION` no longer logs a warning.
 - **Paragraphs the editor creates in the paragraph-structure view get their gutter marker.** An
   Enter split or a multi-line paste used to create a paragraph with no marker glyph, which the
   marker-prefix guard then reset to `\p`; the new paragraph now keeps its marker (an Enter in a `\li2`

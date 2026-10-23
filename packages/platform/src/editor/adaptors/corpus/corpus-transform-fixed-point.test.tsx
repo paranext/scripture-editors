@@ -66,7 +66,7 @@ describe("corpus transform fixed point (USJ -> editor state -> dirty -> USJ)", (
           const { lexical } = await mountInView(usj, viewOptions);
           expectEveryTextBearingNodeRendered(lexical, `${testKey} after load`);
 
-          const afterTransforms = await runEveryTransform(lexical, viewOptions);
+          const afterTransforms = await runEveryTransform(lexical, viewOptions, usj.version);
 
           expectEveryTextBearingNodeRendered(lexical, `${testKey} after the dirty pass`);
           expect(afterTransforms).toEqual(usj);

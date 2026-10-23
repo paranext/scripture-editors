@@ -4,7 +4,6 @@ import {
   MarkerContent,
   MarkerObject,
   USJ_TYPE,
-  USJ_VERSION,
   Usj,
 } from "@eten-tech-foundation/scripture-utilities";
 import {
@@ -217,7 +216,8 @@ export function reset(callerCountValue = 0) {
  *
  * Invariant: `deserializeSerializedEditorState` (editor-usj.adaptor.ts) must invert this EXACTLY
  * — usj → serialize → deserialize is the identity in every supported view configuration — which
- * is the round-trip guarantee the corpus suites pin (adaptors/corpus/).
+ * is the round-trip guarantee the corpus suites pin (adaptors/corpus/). `usj.version` is not
+ * part of the tree: the reverse adaptor is handed the version to stamp, so any version loads.
  *
  * Reads module state set by {@link initialize}/{@link reset}; call those first on a fresh load.
  */
@@ -231,10 +231,6 @@ export function serializeEditorState(
   if (usj) {
     if (usj.type !== USJ_TYPE)
       _logger?.warn(`This USJ type '${usj.type}' didn't match the expected type '${USJ_TYPE}'.`);
-    if (usj.version !== USJ_VERSION)
-      _logger?.warn(
-        `This USJ version '${usj.version}' didn't match the expected version '${USJ_VERSION}'.`,
-      );
 
     if (usj.content.length > 0) {
       children = insertImpliedParasRecurse(recurseNodes(usj.content));

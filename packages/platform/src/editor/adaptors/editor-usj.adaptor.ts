@@ -118,23 +118,33 @@ function isStandardView(viewOptions: ViewOptions | undefined): boolean {
 
 /**
  * The REVERSE adaptor over a live `EditorState`: serializes it and delegates to
- * {@link deserializeSerializedEditorState}. An empty editor state short-circuits to `EMPTY_USJ`.
+ * {@link deserializeSerializedEditorState}. An empty editor state short-circuits to an empty
+ * document at `version`.
  */
 export function deserializeEditorState(
   editorState: EditorState,
   viewOptions?: ViewOptions,
+  version: string = USJ_VERSION,
 ): Usj | undefined {
-  if (editorState.isEmpty()) return EMPTY_USJ;
+  if (editorState.isEmpty()) return emptyUsj(version);
 
-  return deserializeSerializedEditorState(editorState.toJSON(), viewOptions);
+  return deserializeSerializedEditorState(editorState.toJSON(), viewOptions, version);
+}
+
+/** An empty document at `version` — `EMPTY_USJ` itself at its own version. */
+function emptyUsj(version: string): Usj {
+  return version === EMPTY_USJ.version ? EMPTY_USJ : { type: USJ_TYPE, version, content: [] };
 }
 
 /**
  * The REVERSE adaptor: reads the DOCUMENT back out of a serialized editor state that was built
  * for `viewOptions`, stripping everything the forward adaptor added for display (marker glyphs
  * and their NBSP separators, display runs, note-layout scaffolding) and inverting the
- * standard-view whitespace mapping — so only DATA reaches the returned USJ (emitted at
- * `USJ_VERSION`).
+ * standard-view whitespace mapping — so only DATA reaches the returned USJ.
+ *
+ * The tree carries no USJ version, so the returned document is stamped `version`: the caller
+ * passes the version of the document the tree was loaded from (`Editor` remembers it), so a
+ * document leaves the editor at the version it arrived at.
  *
  * Invariant: must invert `serializeEditorState` (usj-editor.adaptor.ts) exactly — the round-trip
  * identity the corpus suites pin (adaptors/corpus/). Its output over a settled state is what
@@ -144,6 +154,7 @@ export function deserializeEditorState(
 export function deserializeSerializedEditorState(
   serializedEditorState: SerializedEditorState,
   viewOptions?: ViewOptions,
+  version: string = USJ_VERSION,
 ): Usj | undefined {
   if (!serializedEditorState.root || !serializedEditorState.root.children) return;
 
@@ -154,7 +165,7 @@ export function deserializeSerializedEditorState(
     isSerializedImpliedParaNode(rootChildren[0]) &&
     (!rootChildren[0].children || rootChildren[0].children.length === 0)
   )
-    return EMPTY_USJ;
+    return emptyUsj(version);
 
   // The block verse layout splits a paragraph that spans verses across their blocks, so this tree
   // no longer describes the source USJ's paragraphs. Report and give up rather than emit USJ that
@@ -172,7 +183,7 @@ export function deserializeSerializedEditorState(
   const content = recurseRootNodes(rootChildren, viewOptions);
   if (!content) return;
 
-  const usj: Usj = { type: USJ_TYPE, version: USJ_VERSION, content };
+  const usj: Usj = { type: USJ_TYPE, version, content };
   return usj;
 }
 

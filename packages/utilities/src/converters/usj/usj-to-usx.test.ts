@@ -13,7 +13,7 @@ import {
   usxWithUnknownItems,
 } from "./converter-test.data.js";
 import { usjToUsxString } from "./usj-to-usx.js";
-import { EMPTY_USJ } from "./usj.model.js";
+import { EMPTY_USJ, Usj } from "./usj.model.js";
 import { usxStringToUsj } from "./usx-to-usj.js";
 import { EMPTY_USX, USX_VERSION } from "./usx.model.js";
 
@@ -80,37 +80,35 @@ describe("USJ to USX Converter", () => {
     expect(usj).toEqual(usjEph1v1Whitespace);
   });
 
-  describe("usxVersion option", () => {
-    it("should stamp the root with the requested USX version", () => {
-      const usx = usjToUsxString(usjGen1v1, { usxVersion: "3.0" });
+  describe("version", () => {
+    it("should stamp the root with the USJ's own version", () => {
+      const usx = usjToUsxString({ ...usjGen1v1, version: "3.0" });
       expect(usx.startsWith('<usx version="3.0">')).toBe(true);
     });
 
     it("should change nothing but the version stamp", () => {
-      const defaultUsx = usjToUsxString(usjGen1v1);
-      const usx = usjToUsxString(usjGen1v1, { usxVersion: "3.0" });
+      const usx = usjToUsxString({ ...usjGen1v1, version: "3.0" });
       expect(usx).toEqual(
-        defaultUsx.replace(`<usx version="${USX_VERSION}">`, '<usx version="3.0">'),
+        usjToUsxString(usjGen1v1).replace(`<usx version="${USX_VERSION}">`, '<usx version="3.0">'),
       );
     });
 
-    it("should stamp an empty document with the requested USX version", () => {
-      expect(usjToUsxString(EMPTY_USJ, { usxVersion: "3.0" })).toEqual('<usx version="3.0"/>');
+    it("should stamp an empty document with its own version", () => {
+      expect(usjToUsxString({ ...EMPTY_USJ, version: "3.0" })).toEqual('<usx version="3.0"/>');
     });
 
-    it("should stamp USX_VERSION when the option is omitted", () => {
-      const usx = usjToUsxString(usjGen1v1, {});
-      expect(usx).toEqual(usjToUsxString(usjGen1v1));
+    it("should stamp USX_VERSION when the USJ carries no version", () => {
+      const unversioned = { type: usjGen1v1.type, content: usjGen1v1.content } as Usj;
+      const usx = usjToUsxString(unversioned);
       expect(usx.startsWith(`<usx version="${USX_VERSION}">`)).toBe(true);
     });
 
-    it("should let a caller restore the source USX version across a round trip", () => {
+    it.each(["3.0", "3.1"])("should round-trip a version %s source USX exactly", (version) => {
       const sourceUsx = removeXmlWhitespace(usxGen1v1).replace(
         `<usx version="${USX_VERSION}">`,
-        '<usx version="3.0">',
+        `<usx version="${version}">`,
       );
-      const usx = usjToUsxString(usxStringToUsj(sourceUsx), { usxVersion: "3.0" });
-      expect(usx).toEqual(sourceUsx);
+      expect(usjToUsxString(usxStringToUsj(sourceUsx))).toEqual(sourceUsx);
     });
   });
 });

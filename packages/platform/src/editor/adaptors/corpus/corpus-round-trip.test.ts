@@ -53,7 +53,11 @@ describe("corpus round-trip (USJ -> editor state -> USJ)", () => {
         reset();
         initializeDeserialize(undefined);
         const editorState = serializeEditorState(usj, viewOptions);
-        const roundTripped = deserializeSerializedEditorState(editorState, viewOptions);
+        const roundTripped = deserializeSerializedEditorState(
+          editorState,
+          viewOptions,
+          usj.version,
+        );
         expect(roundTripped).toEqual(usj);
       });
     }

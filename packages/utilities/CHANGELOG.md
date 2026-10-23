@@ -15,14 +15,22 @@ this package's publish today — `Publish Scribe Package` publishes only `packag
 - `MarkerObject.closed` — an optional marker attribute carrying a character span's explicit
   `closed="false"` state, so a span the author has not closed survives a USJ round trip instead of
   being silently normalized to closed.
-- `usjToUsxString(usj, { usxVersion })` — an optional `UsjToUsxOptions` argument whose `usxVersion`
-  sets the root `<usx version>` attribute. USJ's own `version` is the USJ format version, so a USX
-  round trip cannot recover the source USX version on its own; a caller that must hand USX back at
-  the version it was served passes that version here. Omitting it stamps `USX_VERSION` as before,
-  byte for byte.
 
 ### Changed
 
+- **`Usj.version` is now typed `string`** instead of the literal `typeof USJ_VERSION` (`"3.1"`).
+  This is a public type change: a document can legitimately be any version (Paratext 9.5 serves
+  3.0), and the converters now carry it. Code that assigned a non-3.1 version through a
+  `as typeof USJ_VERSION` cast no longer needs the cast; code that relied on the literal type to
+  narrow `version` to `"3.1"` must compare at run time instead. `USJ_VERSION` and `EMPTY_USJ` are
+  unchanged.
+- **`usxStringToUsj` keeps the source version.** The USJ `version` is the root `<usx version>` the
+  USX declares (USX, USJ and USFM share one version numbering); a USX that declares none, or an
+  empty one, gets `USJ_VERSION`. Previously every result was stamped `USJ_VERSION`. **Consumers
+  reading 3.0 USX now get `version: "3.0"`.**
+- **`usjToUsxString` writes the USJ's own `version`** on the root `<usx>`, falling back to
+  `USX_VERSION` only when the USJ has none. Previously it always wrote `USX_VERSION`. Together with
+  the change above, a USX → USJ → USX round trip now returns the version it started at.
 - **`usxStringToUsj` keeps whitespace-only text.** A USX text node consisting only of whitespace is
   now retained as document text unless it contains a line break; previously any text that trimmed to
   the empty string was dropped (with a narrow exception for a single space between siblings). USFM

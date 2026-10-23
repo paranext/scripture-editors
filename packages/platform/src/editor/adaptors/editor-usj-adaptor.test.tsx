@@ -126,6 +126,30 @@ describe("Editor USJ Adaptor", () => {
     expect(usj).toEqual(usjGen1v1);
   });
 
+  it("should stamp the version it is given", () => {
+    const editorState = editor.parseEditorState(editorStateGen1v1);
+
+    const usj = editorUsjAdaptor.deserializeEditorState(editorState, undefined, "3.0");
+
+    expect(usj).toEqual({ ...usjGen1v1, version: "3.0" });
+  });
+
+  it("should stamp the version it is given on an empty document", () => {
+    const editorState = editor.parseEditorState(editorStateEmpty);
+
+    const usj = editorUsjAdaptor.deserializeEditorState(editorState, undefined, "3.0");
+
+    expect(usj).toEqual({ ...EMPTY_USJ, version: "3.0" });
+  });
+
+  it("should stamp the version it is given on a lone empty implied para", () => {
+    initializeSerialize(undefined, undefined);
+    reset();
+    const usj = deserializeSerializedEditorState(serializeEditorState(undefined), undefined, "3.0");
+
+    expect(usj).toEqual({ ...EMPTY_USJ, version: "3.0" });
+  });
+
   it("should convert to USJ from Lexical editor state JSON with an empty implied para", () => {
     const editorState = editor.parseEditorState(editorStateGen1v1ImpliedParaEmpty);
 
@@ -519,6 +543,7 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
     const roundTripped = deserializeSerializedEditorState(
       state,
       getViewOptions(STANDARD_VIEW_MODE),
+      usj.version,
     );
     // Exact equality, not just a substring: the outer span's own glyph-adjacent separator
     // ("LORD", right after the opening glyph) is still stripped, and the byte after the nested
