@@ -9,6 +9,7 @@ import {
   $isDecoratorNode,
   $isRangeSelection,
   $isTextNode,
+  $setState,
   LexicalEditor,
   NodeKey,
   TextNode,
@@ -61,6 +62,7 @@ function useCharNode(editor: LexicalEditor) {
         $syncDisplayRun(displayRunDescriptor("char"), node),
       ),
       editor.registerNodeTransform(TextNode, $dropFilledCharPlaceholder),
+      editor.registerNodeTransform(TextNode, $keepRemainingNbsp),
     );
   }, [editor]);
 }
@@ -322,6 +324,26 @@ export function $dropFilledCharPlaceholder(node: TextNode): void {
   if (placeholderKey !== node.getKey()) return;
   const index = $placeholderIndex(node, text);
   if (index !== undefined) $dropPlaceholderByte(node, index);
+}
+
+/**
+ * Marks a lone no-break space that an edit left as a glyph-less span's text as the author's own `~`.
+ *
+ * Where a span renders no glyphs, its lone NBSP is also the caret host an EMPTY span holds
+ * ({@link $emptySpanPlaceholder}), and the editor→USJ conversion drops that one. A text node that
+ * held more than that in the last committed state is not an empty span's placeholder: the edit
+ * removed text around the author's NBSP (a cut or delete ending just before `trail~`'s `~`), so
+ * the NBSP is content and is tagged as such, the way the USJ→editor adaptor tags one it loads.
+ * @param node - TextNode that might be such a remainder.
+ */
+function $keepRemainingNbsp(node: TextNode): void {
+  if (node.getTextContent() !== EMPTY_CHAR_PLACEHOLDER_TEXT) return;
+  const parent = node.getParent();
+  if (!$isCharNode(parent) || $rendersOwnGlyphs(parent)) return;
+  if (node.getType() !== TextNode.getType() || node.getMode() !== "normal") return;
+  if ($getState(node, textTypeState) !== undefined || $getState(node, authoredNbspState)) return;
+  if (!$heldContentBeforeUpdate(node.getKey())) return;
+  $setState(node, authoredNbspState, true);
 }
 
 /**

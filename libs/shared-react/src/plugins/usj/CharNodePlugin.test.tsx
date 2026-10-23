@@ -9,6 +9,7 @@ import {
   $getState,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   $setState,
   TextNode,
 } from "lexical";
@@ -576,6 +577,60 @@ describe("CharNodePlugin", () => {
 
     editor.getEditorState().read(() => {
       expect($getRoot().getTextContent()).toBe(`${NBSP}xy`);
+    });
+  });
+
+  describe("a no-break space an edit leaves as a span's only text", () => {
+    // Without glyphs, a span's lone NBSP is also what an EMPTY span holds as its caret host, and
+    // the save drops that one. A span whose other text was just removed is not empty: the NBSP that
+    // is left is the author's, and it has to survive the save.
+    async function $spanAfterRemoving(start: number, end: number) {
+      let text!: TextNode;
+      const { editor } = await testEnvironment(() => {
+        text = $createTextNode(`trail${NBSP}`);
+        $getRoot().append(
+          $createParaNode().append(
+            $createTextNode("Before "),
+            $createCharNode("nd").append(text),
+            $createTextNode(" after."),
+          ),
+        );
+      });
+      await act(async () => {
+        editor.update(() => {
+          const selection = $createRangeSelection();
+          selection.anchor.set(text.getKey(), start, "text");
+          selection.focus.set(text.getKey(), end, "text");
+          $setSelection(selection);
+          selection.removeText();
+        });
+      });
+      return { editor, text };
+    }
+
+    it("marks the NBSP left after the text in front of it is removed as the author's", async () => {
+      const { editor, text } = await $spanAfterRemoving(0, 5);
+
+      editor.getEditorState().read(() => {
+        const remaining = text.getLatest();
+        expect(remaining.getTextContent()).toBe(NBSP);
+        expect($getState(remaining, authoredNbspState)).toBe(true);
+      });
+    });
+
+    it("leaves an empty span's own placeholder untagged", async () => {
+      let placeholder!: TextNode;
+      const { editor } = await testEnvironment(() => {
+        placeholder = $createTextNode(NBSP);
+        $getRoot().append($createParaNode().append($createCharNode("nd").append(placeholder)));
+      });
+      await act(async () => {
+        editor.update(() => placeholder.markDirty());
+      });
+
+      editor.getEditorState().read(() => {
+        expect($getState(placeholder.getLatest(), authoredNbspState)).toBe(false);
+      });
     });
   });
 
