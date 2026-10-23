@@ -17,6 +17,11 @@ interface Attribs {
 /**
  * Converts a USX string to a USJ object.
  *
+ * The USJ `version` is the root `<usx version>` the USX declares, so a document comes back out of
+ * `usjToUsxString` at the version it went in at. USX, USJ and USFM share one version
+ * numbering, so no translation is needed. A USX that declares no version (or an empty one) gets
+ * {@link USJ_VERSION}.
+ *
  * @param usxString - The USX string to convert.
  * @returns The converted USJ object.
  *
@@ -33,7 +38,7 @@ export function usxDomToUsj(inputUsxDom: Element | null): Usj {
     ? convertUsxRecurse(inputUsxDom)
     : [{ content: [] as MarkerContent[] } as Usj];
   outputJson.type = USJ_TYPE;
-  outputJson.version = USJ_VERSION;
+  outputJson.version = inputUsxDom?.getAttribute("version") || USJ_VERSION;
   return outputJson;
 }
 

@@ -57,6 +57,7 @@ import {
   ContentJsonPath,
   MarkerContent,
   Usj,
+  USJ_VERSION,
   usjJsonPathFromIndexes,
 } from "@eten-tech-foundation/scripture-utilities";
 import { InitialConfigType, LexicalComposer } from "@lexical/react/LexicalComposer";
@@ -413,6 +414,10 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   const noteCallerHighlightRef = useRef<NoteCallerHighlightHandle | null>(null);
   const toolbarEndRef = useRef<HTMLDivElement>(null);
   const editedUsjRef = useRef(defaultUsj);
+  // The version of the document the editor was last handed (`defaultUsj`, then each `setUsj`).
+  // The tree carries no version, so every USJ the editor builds from it is stamped with this one:
+  // a document leaves at the version it arrived at.
+  const documentVersionRef = useRef(defaultUsj?.version || USJ_VERSION);
   // Set when a commit may have moved the tree without the change listener refreshing
   // `editedUsjRef` (see `handleCommit`); the next settled read re-serializes instead of trusting it.
   const isEditedUsjStaleRef = useRef(false);
@@ -714,7 +719,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
      */
     const refreshEditedUsjIfStale = () => {
       if (!isEditedUsjStaleRef.current) return;
-      const fresh = editorUsjAdaptor.deserializeEditorState(editor.getEditorState(), viewOptions);
+      const fresh = editorUsjAdaptor.deserializeEditorState(
+        editor.getEditorState(),
+        viewOptions,
+        documentVersionRef.current,
+      );
       if (!fresh) return;
       editedUsjRef.current = fresh;
       isEditedUsjStaleRef.current = false;
@@ -752,6 +761,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         { viewOptions, getMarker: markerLookup, logger: stableLogger },
         transientInput,
         lastKnownCaret,
+        documentVersionRef.current,
       ),
     );
     if (settled) {
@@ -981,7 +991,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           unregisterTagRelease?.();
           if (!holdsFocus) clearStaleDomSelection(editor);
           const editorState = editor.getEditorState();
-          const newUsj = editorUsjAdaptor.deserializeEditorState(editorState, viewOptions);
+          const newUsj = editorUsjAdaptor.deserializeEditorState(
+            editorState,
+            viewOptions,
+            documentVersionRef.current,
+          );
           if (!newUsj) return;
           const isEdited = !deepEqual(editedUsjRef.current, newUsj);
           if (isEdited) editedUsjRef.current = newUsj;
@@ -1126,6 +1140,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
         deepEqual(editedUsjRef.current, incomingUsj) || deepEqual(readSettledUsj(), incomingUsj);
       if (options?.force || !isAlreadyHeld) {
         editedUsjRef.current = incomingUsj;
+        documentVersionRef.current = incomingUsj.version || USJ_VERSION;
         // The loaded tree is the outgoing document until the reload commits, so neither a stale
         // flag nor a memoized read of that tree may overwrite or outrank the incoming document.
         isEditedUsjStaleRef.current = false;
@@ -1828,7 +1843,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       const inputs = commitInputsRef.current;
       const loaded =
         !inputs.isBlockVerse &&
-        editorUsjAdaptor.deserializeEditorState(editorState, inputs.viewOptions);
+        editorUsjAdaptor.deserializeEditorState(
+          editorState,
+          inputs.viewOptions,
+          documentVersionRef.current,
+        );
       if (loaded) editedUsjRef.current = loaded;
       lastNotifiedUsjRef.current = editedUsjRef.current;
       return;
@@ -1872,7 +1891,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     // into a new paragraph node, so the one dirty leaf reads the same, the delta is a lone retain
     // (or nothing, at the document's start), and only a fresh serialization shows the new marker.
     if (!isSkippedForOps) {
-      const treeUsj = editorUsjAdaptor.deserializeEditorState(editorState, inputs.viewOptions);
+      const treeUsj = editorUsjAdaptor.deserializeEditorState(
+        editorState,
+        inputs.viewOptions,
+        documentVersionRef.current,
+      );
       if (treeUsj) editedUsjRef.current = treeUsj;
     }
 

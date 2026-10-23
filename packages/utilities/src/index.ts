@@ -22,7 +22,6 @@ export {
   isUsjTextContentLocation,
 } from "./converters/usj/usj-document-location.utils.js";
 export { usjToUsxString } from "./converters/usj/usj-to-usx.js";
-export type { UsjToUsxOptions } from "./converters/usj/usj-to-usx.js";
 export {
   EMPTY_USJ,
   MARKER_OBJECT_PROPS,

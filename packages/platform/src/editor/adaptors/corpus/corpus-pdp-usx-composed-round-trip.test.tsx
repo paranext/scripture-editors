@@ -68,15 +68,6 @@ function readCapture(name: string): string {
   return readFileSync(join(PDP_USX_DIR, name), "utf8");
 }
 
-/** The `version` the served USX declares, handed back to `usjToUsxString` so it round-trips. */
-function usxVersionOf(usx: string): string {
-  const version = new DOMParser()
-    .parseFromString(usx, "text/xml")
-    .documentElement?.getAttribute("version");
-  if (!version) throw new Error("capture declares no USX version");
-  return version;
-}
-
 /**
  * `text` as a JSON string literal with every non-ASCII space-like character escaped, so a dump
  * shows a NBSP or a zero-width space as `\u00a0`/`\u200b` instead of as a look-alike space.
@@ -213,7 +204,7 @@ function lineDiff(expected: string[], actual: string[]): string[] {
  * document back the way `Editor` reads it on a local change. */
 async function throughEditor(usj: Usj, view: ViewOptions): Promise<Usj | undefined> {
   const { lexical } = await mountInView(usj, view);
-  return runEveryTransform(lexical, view);
+  return runEveryTransform(lexical, view, usj.version);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -280,7 +271,7 @@ describe("provider USX captures: converter legs (USX -> USJ -> USX)", () => {
     const testKey = `${name} [converter]`;
     it(`${testKey}${suffixFor(testKey)}`, () => {
       const usx = readCapture(name);
-      const usxOut = usjToUsxString(usxStringToUsj(usx), { usxVersion: usxVersionOf(usx) });
+      const usxOut = usjToUsxString(usxStringToUsj(usx));
       expectLeg(testKey, "converter", lineDiff(canonicalUsxLines(usx), canonicalUsxLines(usxOut)));
     });
   }
@@ -295,7 +286,7 @@ describe("provider USX captures: composed round trip through the editor", () => 
         const usjIn = usxStringToUsj(usx);
         const usjOut = await throughEditor(usjIn, viewOptions);
         if (!usjOut) throw new Error("the editor exported no USJ");
-        const usxOut = usjToUsxString(usjOut, { usxVersion: usxVersionOf(usx) });
+        const usxOut = usjToUsxString(usjOut);
         expectLeg(testKey, "editor", lineDiff(canonicalUsjLines(usjIn), canonicalUsjLines(usjOut)));
         expectLeg(testKey, "composed", lineDiff(canonicalUsxLines(usx), canonicalUsxLines(usxOut)));
       });

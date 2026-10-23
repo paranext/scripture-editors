@@ -1576,6 +1576,9 @@ export function $applySettledBookScope(
  * `lastKnownCaret` is `Editor.tsx`'s remembered last-observed collapsed caret, used only as
  * `$verifiedTransientLiteral`'s fallback when the live selection is absent (see its own doc
  * comment for the exact race this closes).
+ *
+ * `version` is the USJ version to stamp on the result: the version of the document the editor was
+ * loaded with, so a settled read reports the same version as every other read.
  */
 export function $settledUsj(
   serializedState: SerializedEditorState,
@@ -1583,6 +1586,7 @@ export function $settledUsj(
   context: Tier2Context,
   transientInput?: AnchoredTransientInput,
   lastKnownCaret?: LastKnownCaret,
+  version?: string,
 ): Usj | undefined {
   const transient = $verifiedTransientLiteral(transientInput, lastKnownCaret);
   if (pendedKeys.size === 0 && !transient) return undefined;
@@ -1721,5 +1725,5 @@ export function $settledUsj(
     spliceHusk(site.siblings, index);
   }
 
-  return deserializeSerializedEditorState(serializedState, context.viewOptions);
+  return deserializeSerializedEditorState(serializedState, context.viewOptions, version);
 }

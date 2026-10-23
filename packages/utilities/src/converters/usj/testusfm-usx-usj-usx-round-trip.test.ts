@@ -37,15 +37,6 @@ function readCapture(name: string): string {
   return readFileSync(join(PDP_USX_DIR, name), "utf8");
 }
 
-/** The `version` the capture declares, handed back to `usjToUsxString` so it round-trips. */
-function usxVersionOf(usx: string): string {
-  const version = new DOMParser()
-    .parseFromString(usx, "text/xml")
-    .documentElement?.getAttribute("version");
-  if (!version) throw new Error("capture declares no USX version");
-  return version;
-}
-
 /**
  * `text` as a JSON string literal with every non-ASCII space-like character escaped, so a diff
  * shows a NBSP or a zero-width space as an escape instead of as a look-alike space.
@@ -118,7 +109,7 @@ describe("pdp-usx corpus round trip (USX -> USJ -> USX)", () => {
 
   it.each(CAPTURES)("%s", (name) => {
     const usx = readCapture(name);
-    const usxOut = usjToUsxString(usxStringToUsj(usx), { usxVersion: usxVersionOf(usx) });
+    const usxOut = usjToUsxString(usxStringToUsj(usx));
     expect(canonicalUsxLines(usxOut)).toEqual(canonicalUsxLines(usx));
   });
 });

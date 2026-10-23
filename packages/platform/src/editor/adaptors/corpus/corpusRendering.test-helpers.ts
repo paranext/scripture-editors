@@ -83,15 +83,16 @@ function $markSubtreeDirty(node: LexicalNode): void {
  * The document is read back with the adaptor `Editor` runs on every local change
  * (`deserializeEditorState` over the whole tree), NOT through `getUsj()`: until the first edit
  * `getUsj()` returns the USJ it was handed, unchanged, so reading it would compare the input with
- * itself.
+ * itself. `version` is the mounted document's version, which `Editor` hands that adaptor too.
  */
 export async function runEveryTransform(
   lexical: LexicalEditor,
   view: ViewOptions,
+  version: string,
 ): Promise<Usj | undefined> {
   await act(async () => {
     lexical.update(() => $getRoot().getChildren().forEach($markSubtreeDirty), { discrete: true });
   });
   await flushQueuedEvents();
-  return deserializeEditorState(lexical.getEditorState(), view);
+  return deserializeEditorState(lexical.getEditorState(), view, version);
 }

@@ -77,7 +77,7 @@ describe("whitespace-only text nodes (USX -> USJ)", () => {
   it.each(cases)("USX -> USJ -> USX round-trips $name byte-faithfully", ({ usxInner }) => {
     const usj = usxStringToUsj(wrap(usxInner));
     const back = usjToUsxString(usj);
-    expect(back).toBe(`<usx version="3.1"><para style="p">${usxInner}</para></usx>`);
+    expect(back).toBe(wrap(usxInner));
   });
 
   // The user-visible shape: a note whose category folded to an attribute, leaving the space

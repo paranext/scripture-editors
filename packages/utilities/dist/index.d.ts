@@ -285,8 +285,12 @@ export declare type PropertyJsonPath =
 export declare interface Usj {
   /** The USJ spec type */
   type: typeof USJ_TYPE;
-  /** The USJ spec version */
-  version: typeof USJ_VERSION;
+  /**
+   * The USJ spec version of this document, e.g. `"3.0"` or `"3.1"` — the same numbering as USX
+   * and USFM. A document converted from USX keeps the version that USX declared.
+   * {@link USJ_VERSION} is the newest version this package targets, not the only one allowed.
+   */
+  version: string;
   /** The JSON representation of scripture contents from USFM/USX */
   content: MarkerContent[];
 }
@@ -604,32 +608,18 @@ export declare interface UsjTextContentLocation {
 }
 
 /**
- * Options for {@link usjToUsxString}.
- *
- * @public
- */
-export declare interface UsjToUsxOptions {
-  /**
-   * The `version` attribute to stamp on the root `<usx>` element. Defaults to {@link USX_VERSION}.
-   *
-   * A USJ document cannot supply this itself: its `version` is the USJ format version, which
-   * `usxStringToUsj` always sets to `USJ_VERSION` whatever version the source USX declared. A
-   * caller that must hand USX back to a system expecting a particular version (for example, the
-   * version that system served) passes it here.
-   */
-  usxVersion?: string;
-}
-
-/**
  * Converts a USJ object to a USX string.
  *
+ * The root `<usx version>` is the USJ's own `version` (USX, USJ and USFM share one version
+ * numbering), so USX read by `usxStringToUsj` is written back at the version it declared.
+ * A USJ with no `version` is written at {@link USX_VERSION}.
+ *
  * @param usj - The USJ object to convert
- * @param options - Conversion options; see {@link UsjToUsxOptions}.
  * @returns The converted USX string.
  *
  * @public
  */
-export declare function usjToUsxString(usj: Usj, options?: UsjToUsxOptions): string;
+export declare function usjToUsxString(usj: Usj): string;
 
 /**
  * The USX spec type
@@ -645,6 +635,11 @@ export declare const USX_VERSION = "3.1";
 
 /**
  * Converts a USX string to a USJ object.
+ *
+ * The USJ `version` is the root `<usx version>` the USX declares, so a document comes back out of
+ * `usjToUsxString` at the version it went in at. USX, USJ and USFM share one version
+ * numbering, so no translation is needed. A USX that declares no version (or an empty one) gets
+ * {@link USJ_VERSION}.
  *
  * @param usxString - The USX string to convert.
  * @returns The converted USJ object.

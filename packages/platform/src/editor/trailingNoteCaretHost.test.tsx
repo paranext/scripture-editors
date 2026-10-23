@@ -213,7 +213,11 @@ describe("the caret host past a trailing note, with the production transforms mo
     // artifact of the harness — and did, intermittently — rather than a property of the guard. What
     // the transforms must not do is leave a mark, and the serialized document is where either
     // failure would show: a fabricated trailing space, or a swallowed placeholder, changes it.
-    const after = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
+    const after = deserializeSerializedEditorState(
+      editor.getEditorState().toJSON(),
+      viewOptions,
+      usj.version,
+    );
     expect(after).toEqual(usj);
   });
 
@@ -238,7 +242,11 @@ describe("the caret host past a trailing note, with the production transforms mo
       );
     });
 
-    const after = deserializeSerializedEditorState(editor.getEditorState().toJSON(), viewOptions);
+    const after = deserializeSerializedEditorState(
+      editor.getEditorState().toJSON(),
+      viewOptions,
+      usj.version,
+    );
     expect(after).toEqual(usj);
     expect(JSON.stringify(after)).not.toContain(CURSOR_PLACEHOLDER_CHAR);
   });
