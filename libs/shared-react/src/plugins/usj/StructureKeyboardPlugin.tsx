@@ -259,11 +259,14 @@ export function StructureKeyboardPlugin({
       if (structureProtectionMode === "protected") {
         const selection = $getSelection();
         if (!selection) return false;
-        const restore = $isRangeSelection(selection) ? $snapshotRange(selection) : undefined;
         // In front of a line's glyph (where ArrowRight from the line before leaves the caret), a
         // forward delete is judged — and, if allowed, run by Lexical's own handler — from just past
         // it, so it removes the line's first character instead of the glyph.
-        if (!isBackward && $isRangeSelection(selection)) $moveCaretPastGutterGlyph(selection);
+        let restore: (() => void) | undefined;
+        if (!isBackward && $isRangeSelection(selection)) {
+          const snapshot = $snapshotRange(selection);
+          if ($moveCaretPastGutterGlyph(selection)) restore = snapshot;
+        }
         if (!$shouldBlockStructuralEdit(selection, intent)) return false;
         restore?.();
         return true;
@@ -287,6 +290,8 @@ export function StructureKeyboardPlugin({
     //
     // Registered at HIGH alongside OpaqueBlockGuardPlugin's refusal of the same commands, so it
     // stands aside for an opaque block itself rather than relying on mount order to lose that tie.
+    // That guard sees only the caret, so a range the extension carries INTO an opaque block (a
+    // word delete just past a figure, landing in its caption) is refused here.
     const $guardExtendingDelete =
       (granularity: "word" | "lineboundary") =>
       (isBackward: boolean): boolean => {
@@ -314,7 +319,7 @@ export function StructureKeyboardPlugin({
         }
 
         // A range is removed as it stands, so it is judged as it stands (Rule 1).
-        if ($shouldBlockStructuralEdit(selection, intent)) {
+        if ($selectionReachesIntoOpaqueBlock() || $shouldBlockStructuralEdit(selection, intent)) {
           restore();
           return true;
         }

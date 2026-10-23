@@ -86,6 +86,18 @@ const lockedUsj: Usj = {
   ],
 };
 
+/** `lockedUsj` with `marker`'s paragraph loaded already empty. */
+function lockedUsjWithEmpty(marker: string): Usj {
+  return {
+    ...lockedUsj,
+    content: lockedUsj.content.map((node) =>
+      typeof node === "object" && node.type === "para" && node.marker === marker
+        ? { type: "para", marker, content: [] }
+        : node,
+    ),
+  };
+}
+
 interface Mounted {
   ref: RefObject<EditorRef | null>;
   lexical: LexicalEditor;
@@ -326,14 +338,7 @@ describe("structure protection refuses a delete that would remove a paragraph's 
 
   it("Backspace in a heading whose text has been deleted", async () => {
     // Loaded already empty, so deleting the text is not itself an undo step before the key.
-    const mounted = await mountLocked({
-      ...lockedUsj,
-      content: lockedUsj.content.map((node) =>
-        typeof node === "object" && node.type === "para" && node.marker === "s1"
-          ? { type: "para", marker: "s1", content: [] }
-          : node,
-      ),
-    });
+    const mounted = await mountLocked(lockedUsjWithEmpty("s1"));
     await update(mounted.lexical, () => {
       $paraOf("s1").selectEnd();
     });
@@ -360,14 +365,7 @@ describe("structure protection refuses a delete that would remove a paragraph's 
   });
 
   it("a forward delete in front of an empty line's glyph", async () => {
-    const mounted = await mountLocked({
-      ...lockedUsj,
-      content: lockedUsj.content.map((node) =>
-        typeof node === "object" && node.type === "para" && node.marker === "s1"
-          ? { type: "para", marker: "s1", content: [] }
-          : node,
-      ),
-    });
+    const mounted = await mountLocked(lockedUsjWithEmpty("s1"));
     await update(mounted.lexical, () => {
       $paraOf("s1").select(0, 0);
     });
@@ -490,6 +488,41 @@ describe("structure protection refuses a delete that would remove a paragraph's 
     await placeCaret(mounted.lexical, "s1", 0);
 
     await expectRefused(mounted, "s1", () => pressKey(mounted.lexical, "Backspace"));
+  });
+
+  it("a backward word delete whose extension reaches into a figure's caption", async () => {
+    const mounted = await mountLocked({
+      type: "USJ",
+      version: "3.1",
+      content: [
+        {
+          type: "para",
+          marker: "p",
+          content: [
+            "Before ",
+            { type: "figure", marker: "fig", file: "a.jpg", size: "col", content: ["My caption"] },
+            " after",
+          ],
+        },
+        { type: "para", marker: "q2", content: [POETRY_TEXT] },
+      ],
+    } as unknown as Usj);
+    await placeCaret(mounted.lexical, "p", 1); // " |after", just past the figure
+
+    // The caret is outside the figure, but the word extension lands inside its caption.
+    await withExtensionLandingAt(
+      mounted.lexical,
+      ["extend", true, "word"],
+      (selection) => {
+        const caption = $getRoot()
+          .getAllTextNodes()
+          .find((node) => node.getTextContent() === "My caption");
+        if (!caption) throw new Error("no caption text");
+        selection.focus.set(caption.getKey(), 3, "text");
+      },
+      () =>
+        expectRefused(mounted, "p", () => dispatch(mounted.lexical, DELETE_WORD_COMMAND, true)),
+    );
   });
 });
 
