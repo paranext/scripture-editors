@@ -454,11 +454,13 @@ function createChar(
     if (isSerializedTextNode(firstChild)) firstChild.text = NBSP + firstChild.text;
     else if (firstChild) childNodes.unshift(createText(NBSP));
   } else {
-    // Without a separator, an author's `~` leading the span is a lone NBSP in the empty span's
-    // placeholder slot, so it says it is the author's.
-    const [firstChild] = childNodes;
-    if (isSerializedTextNode(firstChild) && firstChild.text === NBSP)
-      firstChild[NODE_STATE_KEY] = { ...firstChild[NODE_STATE_KEY], [authoredNbspState.key]: true };
+    // Without a separator, an author's `~` left alone in the span is a lone NBSP in the empty
+    // span's placeholder slot, so every text of the span holding one says it is the author's: the
+    // mark stays with the text through the edits that strand its `~` (deleting the rest of it, or
+    // the span content before it).
+    for (const child of childNodes)
+      if (isSerializedTextNode(child) && child.text.includes(NBSP))
+        child[NODE_STATE_KEY] = { ...child[NODE_STATE_KEY], [authoredNbspState.key]: true };
   }
   if (childNodes.length === 0) childNodes.push(createText(EMPTY_CHAR_PLACEHOLDER_TEXT));
   // A char span nested inside another char span carries the `+` prefix in its editable glyphs

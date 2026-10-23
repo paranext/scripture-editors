@@ -2,11 +2,12 @@
  * Keystrokes the typing-fidelity oracle (typingFidelityOracle.test-helpers.tsx) found changing
  * more than they typed, each pinned as the gesture a user makes, in every view a user edits in.
  */
-import { EDITING_VIEWS, forEachView, mountInView } from "./editorViews.test-helpers";
+import { EDITING_VIEWS, editorView, forEachView, mountInView } from "./editorViews.test-helpers";
 import { installSelectionModify, press } from "./typingFidelityOracle.test-helpers";
 import { ContentJsonPath, MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
 import { UNDO_COMMAND } from "lexical";
+import { NBSP } from "shared";
 import { describe, expect, it } from "vitest";
 
 installSelectionModify();
@@ -138,3 +139,63 @@ forEachView(EDITING_VIEWS, ({ view }) => {
     });
   });
 });
+
+/** The editing views, and the visible-marker view whose spans have no separator either. */
+const NBSP_VIEWS = [...EDITING_VIEWS, { name: "visible", view: editorView("visible") }];
+
+/** `\p a \nd <content>\nd* b`. */
+function spanUsj(content: MarkerContent[]): Usj {
+  return oneParaUsj(["a ", { type: "char", marker: "nd", content }, " b"]);
+}
+
+forEachView(NBSP_VIEWS, ({ view }) => {
+  describe("an author's no-break space left alone in a span", () => {
+    it("is saved when the text after it is deleted", async () => {
+      const mounted = await mountInView(spanUsj([`${NBSP}x`]), view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[1].content[0]", offset: 2 },
+        });
+      });
+
+      expect(await press(mounted, "Backspace")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()).toEqual(spanUsj([NBSP]));
+    });
+
+    it("is saved when the text before it is deleted", async () => {
+      const mounted = await mountInView(spanUsj([`x${NBSP}`]), view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[1].content[0]", offset: 1 },
+        });
+      });
+
+      expect(await press(mounted, "Backspace")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()).toEqual(spanUsj([NBSP]));
+    });
+  });
+});
+
+// Standard view shows a typed space run with no-break spaces so it stays visible, and saves an NBSP
+// typed there as a space; these views save what is typed.
+forEachView(
+  NBSP_VIEWS.filter(({ name }) => name !== "standard"),
+  ({ view }) => {
+    describe("a no-break space typed into an empty span", () => {
+      it("is saved", async () => {
+        const mounted = await mountInView(spanUsj([]), view);
+        await act(async () => {
+          mounted.ref.current?.setSelection({
+            start: { jsonPath: "$.content[2].content[1]", offset: 0 },
+          });
+        });
+
+        expect(await press(mounted, NBSP, NBSP)).toEqual([]);
+
+        expect(mounted.ref.current?.getUsj()).toEqual(spanUsj([NBSP]));
+      });
+    });
+  },
+);
