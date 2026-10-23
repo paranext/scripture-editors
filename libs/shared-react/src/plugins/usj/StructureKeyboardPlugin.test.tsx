@@ -762,10 +762,9 @@ describe("StructureKeyboardPlugin — two-step delete for range selections with 
     });
   });
 
-  // The armed range is deleted straight off the keystroke, not through DELETE_CHARACTER_COMMAND, so
-  // the prefix guard's own narrowing never sees it: a range starting before the `\id` line's
-  // immutable prefix (Ctrl+A normalizes to exactly that) must be narrowed here too, or the fire
-  // deletes the glyph along with the content.
+  // The fire narrows the armed range itself before deleting it, rather than relying on the prefix
+  // guard being mounted: a range starting before the `\id` line's immutable prefix (Ctrl+A
+  // normalizes to exactly that) would otherwise lose the glyph along with the content.
   it("second Backspace keeps the \\id line's prefix when the armed range starts before it", async () => {
     let book: BookNode;
     let t2: TextNode;

@@ -28,6 +28,15 @@ import {
   SomeParaNode,
 } from "shared";
 
+/**
+ * Update tag for a delete the user has already confirmed: `StructureKeyboardPlugin`'s own fire of an
+ * armed selection delete, and a delete replayed after the user answered a question about it (the
+ * hidden-content guard's). Under `"guarded"` protection a `DELETE_CHARACTER_COMMAND` dispatched in an
+ * update carrying it goes ahead rather than arming the two-step delete again. Add it with
+ * `$addUpdateTag` inside the update that dispatches the delete.
+ */
+export const CONFIRMED_DELETE_TAG = "confirmed-delete";
+
 /** Editing operations that can alter block structure. */
 export type EditIntent = "insertParagraph" | "deleteBackward" | "deleteForward" | "insertText";
 
@@ -41,6 +50,13 @@ export interface PointSnapshot {
   key: NodeKey;
   offset: number;
   type: "text" | "element";
+}
+
+/** Whether `point` (a live selection point, or another snapshot) is the one `snapshot` recorded. */
+export function isSamePoint(point: PointSnapshot, snapshot: PointSnapshot): boolean {
+  return (
+    point.key === snapshot.key && point.offset === snapshot.offset && point.type === snapshot.type
+  );
 }
 
 /** A pending two-step delete: the armed target's kind + the intent that armed it. */
@@ -366,15 +382,7 @@ export function $isArmedSelection(selection: BaseSelection | null, armed: ArmedD
   if (armed.kind === "selection") {
     if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
     if (!armed.anchor || !armed.focus) return false;
-    const { anchor, focus } = selection;
-    return (
-      anchor.key === armed.anchor.key &&
-      anchor.offset === armed.anchor.offset &&
-      anchor.type === armed.anchor.type &&
-      focus.key === armed.focus.key &&
-      focus.offset === armed.focus.offset &&
-      focus.type === armed.focus.type
-    );
+    return isSamePoint(selection.anchor, armed.anchor) && isSamePoint(selection.focus, armed.focus);
   }
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
   const anchorPara = $getParaAncestor(selection.anchor.getNode());

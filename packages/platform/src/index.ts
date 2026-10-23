@@ -64,6 +64,7 @@ export type {
   EditorOptions,
   EditorProps,
   EditorRef,
+  SetUsjOptions,
   TransientInput,
 } from "./editor/editor.model";
 export type { UsjCssOptions } from "./editor/generateUsjCss";
@@ -93,6 +94,11 @@ export type {
   DeltaOpInsertNoteEmbed,
   DeltaSource,
   FilterAndRankItems,
+  HiddenContentDeleteAction,
+  HiddenContentDeleteDecision,
+  HiddenContentDeleteHandler,
+  HiddenContentDeleteRequest,
+  HiddenContentItem,
   Item,
   MarkerMode,
   NoteCallerOnClick,

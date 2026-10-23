@@ -345,8 +345,13 @@ function $protectedNoteTouchedBy(selection: RangeSelection): NoteNode | undefine
  * it, unwrapping the note; taking the whole shell into the range would still let that edit remove
  * it. Confining keeps the edit to the content the note lets the user change. It is also what
  * select-all means in a note editor: all the note's text, never its marker, caller, or closer.
+ *
+ * Mutating (it moves `selection`'s points): call inside `editor.update()` or a command handler.
+ * Exported for a handler that acts on a range ahead of this plugin's own confining.
+ *
+ * @returns Whether the range was moved.
  */
-function $confineRangeToProtectedNote(selection: RangeSelection): boolean {
+export function $confineRangeToProtectedNote(selection: RangeSelection): boolean {
   const note = $protectedNoteTouchedBy(selection);
   if (!note) return false;
   const start = $shellTrailingEdge(note);

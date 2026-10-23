@@ -134,6 +134,7 @@ export interface EditorOptions {
     markerMenuTrigger?: string;
     markerSettleDelayMs?: number;
     nodes?: UsjNodeOptions;
+    onHiddenContentDelete?: HiddenContentDeleteHandler;
     structureProtectionMode?: StructureProtectionMode;
     styleInfo?: StyleInfo;
     textDirection?: TextDirection;
@@ -217,7 +218,7 @@ export interface EditorRef {
     setMarkerSettleSuspended(suspended: boolean): void;
     setSelection(selection: SelectionRange): void;
     setTransientInput(input: TransientInput | undefined): void;
-    setUsj(usj: Usj): void;
+    setUsj(usj: Usj, options?: SetUsjOptions): void;
     splitParagraphWithMarker(marker: string): void;
     takeOpsAfterNote(noteKeyOrIndex: string | number): DeltaOp[] | undefined;
     toolbarEndRef: RefObject<HTMLElement | null> | null;
@@ -273,6 +274,28 @@ export function getViewOptions(viewMode?: string | undefined): ViewOptions | und
 
 // @public
 export const HIDDEN_NOTE_CALLER = "-";
+
+// @public
+export type HiddenContentDeleteAction = "deleteBackward" | "deleteForward" | "replaceSelection";
+
+// @public
+export type HiddenContentDeleteDecision = "delete" | "keep";
+
+// @public
+export type HiddenContentDeleteHandler = (request: HiddenContentDeleteRequest) => HiddenContentDeleteDecision | Promise<HiddenContentDeleteDecision>;
+
+// @public
+export interface HiddenContentDeleteRequest {
+    readonly action: HiddenContentDeleteAction;
+    readonly canSkip: boolean;
+    readonly items: readonly HiddenContentItem[];
+}
+
+// @public
+export interface HiddenContentItem {
+    readonly marker?: string;
+    readonly tag: string;
+}
 
 // @public
 export function isBlockVerseLayout(viewOptions: ViewOptions | undefined): boolean;
@@ -519,6 +542,11 @@ export const PARAGRAPH_STRUCTURE_VIEW_MODE = "paragraph-structure";
 export interface SelectionRange {
     end?: UsjDocumentLocation;
     start: UsjDocumentLocation;
+}
+
+// @public
+export interface SetUsjOptions {
+    force?: boolean;
 }
 
 // @public

@@ -10,6 +10,7 @@ import {
   $shouldBlockStructuralEdit,
   $structuralDeleteTarget,
   ArmedDelete,
+  CONFIRMED_DELETE_TAG,
   keyDownToIntent,
 } from "./structureKeyboard.utils";
 import { $generateNodesFromDOM } from "@lexical/html";
@@ -17,10 +18,12 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import DOMPurify from "dompurify";
 import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
+  $addUpdateTag,
   $createNodeSelection,
   $createRangeSelection,
   $getNodeByKey,
   $getSelection,
+  $hasUpdateTag,
   $isRangeSelection,
   $isTextNode,
   $setSelection,
@@ -141,11 +144,15 @@ export function StructureKeyboardPlugin({
             else parent?.selectStart();
           }
         } else if (armed.kind === "selection") {
+          // Deletes the whole range, verse included, through the command every selection delete
+          // reaches, so the guards on one judge this one too (the question before hidden content
+          // goes, among them). Tagged as confirmed, so this plugin's own command handler lets it
+          // through rather than arming again. A range that starts before the `\id` line's prefix
+          // is kept off the glyph here as well, so this fire never relies on the prefix guard.
           if ($isRangeSelection(selection)) {
-            // Straight off the keystroke, so the prefix guard's DELETE_CHARACTER_COMMAND narrowing
-            // never runs — keep a range that starts before the `\id` line's prefix off the glyph.
             $narrowSelectionPastBookPrefix(selection);
-            selection.removeText(); // deletes the whole range, verse included
+            $addUpdateTag(CONFIRMED_DELETE_TAG);
+            editor.dispatchCommand(DELETE_CHARACTER_COMMAND, intent === "deleteBackward");
           }
         } else if ($isSomeParaNode(node)) {
           // Only paragraphs merge into paragraphs; never merge some other ElementNode.
@@ -251,8 +258,10 @@ export function StructureKeyboardPlugin({
 
     // A delete that arrives with no Backspace/Delete keydown (macOS Ctrl+H / Ctrl+D map to none,
     // and a programmatic dispatch has none) gets the answer that keydown would have: refused under
-    // "protected", armed and then fired under "guarded". After a keydown this plugin claimed, no
-    // delete command follows; after one it let through, this finds nothing to arm either.
+    // "protected", armed and then fired under "guarded". After a keydown this plugin claimed, the
+    // only delete command that follows is its own fire, tagged as confirmed; after one it let
+    // through, this finds nothing to arm either. A delete replayed once the user confirmed it
+    // carries the same tag, and goes ahead under "guarded".
     const $handleDeleteCharacter = (isBackward: boolean): boolean => {
       if (!editor.isEditable()) return false;
       const intent = isBackward ? "deleteBackward" : "deleteForward";
@@ -271,6 +280,7 @@ export function StructureKeyboardPlugin({
         restore?.();
         return true;
       }
+      if ($hasUpdateTag(CONFIRMED_DELETE_TAG)) return false;
       return $handleTwoStepDelete(intent, undefined);
     };
 
