@@ -199,3 +199,103 @@ forEachView(
     });
   },
 );
+
+/** `\p a \nd one \+wj two\+wj* three\nd* b`. */
+const NESTED_SPAN: Usj = oneParaUsj([
+  "a ",
+  {
+    type: "char",
+    marker: "nd",
+    content: ["one ", { type: "char", marker: "wj", content: ["two"] }, " three"],
+  },
+  " b",
+]);
+
+/** The path of the text "two" in {@link NESTED_SPAN}. */
+const NESTED_TWO = "$.content[2].content[1].content[1].content[0]";
+
+forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
+  describe("a range from inside a nested span to outside it", () => {
+    it("typed over within the enclosing span takes only the selected text", async () => {
+      const mounted = await mountInView(NESTED_SPAN, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: NESTED_TWO, offset: 2 },
+          end: { jsonPath: "$.content[2].content[1].content[2]", offset: 1 },
+        });
+      });
+
+      expect(await press(mounted, "x", "x")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: [
+          "a ",
+          {
+            type: "char",
+            marker: "nd",
+            content: ["one ", { type: "char", marker: "wj", content: ["twx"] }, "three"],
+          },
+          " b",
+        ],
+      });
+    });
+
+    it("deleted into the text after the enclosing span leaves that text outside it", async () => {
+      const mounted = await mountInView(NESTED_SPAN, view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: NESTED_TWO, offset: 2 },
+          end: { jsonPath: "$.content[2].content[2]", offset: 1 },
+        });
+      });
+
+      expect(await press(mounted, "Backspace")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: [
+          "a ",
+          {
+            type: "char",
+            marker: "nd",
+            content: ["one ", { type: "char", marker: "wj", content: ["tw"] }],
+          },
+          "b",
+        ],
+      });
+    });
+  });
+});
+
+forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
+  describe("a range across a collapsed note", () => {
+    it("typed over keeps the typed text and the text after the range", async () => {
+      const usj = oneParaUsj(["a", NOTE, " b"]);
+      usj.content.push({ type: "para", marker: "p", content: ["next"] });
+      const mounted = await mountInView(usj, view);
+      // A click after the `a`, then a Shift-click into the text after the note.
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+        });
+      });
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+          end: { jsonPath: "$.content[2].content[2]", offset: 1 },
+        });
+      });
+
+      expect(await press(mounted, "x", "x")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: ["axb"],
+      });
+    });
+  });
+});

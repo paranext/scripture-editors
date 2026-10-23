@@ -27,6 +27,7 @@ import {
 import { $getMarkerMenuContext } from "./markerMenu/markerMenuContext.utils";
 import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
 import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
+import { InlineRangeEditPlugin } from "./InlineRangeEditPlugin";
 import {
   COMMIT_PENDING_MARKERS_COMMAND,
   MarkerEditPlugin,
@@ -1989,6 +1990,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
           <EmptyNoteCaretGuardPlugin />
           <EmptyVerseCaretGuardPlugin />
           <EscapeKeyPlugin />
+          {viewOptions?.markerMode === "hidden" && <InlineRangeEditPlugin />}
           {/* Both take `stableLogger`, never the raw `logger` prop: their registration effects
               depend on it, so a host handing over a fresh-but-equivalent logger object each
               render would re-register their command listeners at the END of Lexical's
