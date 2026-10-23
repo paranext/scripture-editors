@@ -186,8 +186,11 @@ function useNoteNode(
 function $noteNodeTransform(node: NoteNode, viewOptions: ViewOptions | undefined): void {
   const nodeChildren = node.getChildren();
   const hasNoteCaller = nodeChildren.some((child) => $isImmutableNoteCallerNode(child));
-  if (!hasNoteCaller && viewOptions?.markerMode !== "editable" && node.getCaller() !== "")
+  if (!hasNoteCaller && viewOptions?.markerMode !== "editable" && node.getCaller() !== "") {
+    // A removed note has no place to move its stray first child to.
     node.remove();
+    return;
+  }
 
   if (nodeChildren.length > 0) {
     const firstChild = nodeChildren[0];
