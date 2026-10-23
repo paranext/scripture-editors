@@ -327,3 +327,54 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
     });
   });
 });
+
+forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
+  describe("a no-break space typed into a span, then left alone in it", () => {
+    it("is saved as the span's content", async () => {
+      const span: MarkerContent = { type: "char", marker: "nd", content: ["ab"] };
+      const mounted = await mountInView(oneParaUsj(["a ", span, " b"]), view);
+      const spanText = "$.content[2].content[1].content[0]";
+      await act(async () => {
+        mounted.ref.current?.setSelection({ start: { jsonPath: spanText, offset: 2 } });
+      });
+      expect(await press(mounted, NBSP, NBSP)).toEqual([]);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: spanText, offset: 0 },
+          end: { jsonPath: spanText, offset: 2 },
+        });
+      });
+
+      expect(await press(mounted, "Backspace")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content[2]).toEqual({
+        type: "para",
+        marker: "p",
+        content: ["a ", { ...span, content: [NBSP] }, " b"],
+      });
+    });
+  });
+});
+
+forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
+  describe("Enter in front of a span's last no-break space", () => {
+    // The break moves the `~` into a new text node, one the document never held, so only the mark
+    // it carries from the load says it is the author's.
+    it("keeps the `~` as the new paragraph's span content", async () => {
+      const span: MarkerContent = { type: "char", marker: "nd", content: [`ab${NBSP}`] };
+      const mounted = await mountInView(oneParaUsj([span]), view);
+      await act(async () => {
+        mounted.ref.current?.setSelection({
+          start: { jsonPath: "$.content[2].content[0].content[0]", offset: 2 },
+        });
+      });
+
+      expect(await press(mounted, "Enter")).toEqual([]);
+
+      expect(mounted.ref.current?.getUsj()?.content.slice(2)).toEqual([
+        { type: "para", marker: "p", content: [{ ...span, content: ["ab"] }] },
+        { type: "para", marker: "p", content: [{ ...span, content: [NBSP] }] },
+      ]);
+    });
+  });
+});

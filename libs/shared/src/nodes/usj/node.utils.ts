@@ -1198,9 +1198,16 @@ export function $shouldIgnoreNodeForContentIndexes(node: LexicalNode | null | un
  * of a char span in the marker modes without a separator after the opener ("visible" and
  * "hidden"), which is also where an empty span's placeholder sits. Lexical keeps a node's state
  * through edits of its text and copies it to both halves of a split, so a `~` the user strands by
- * deleting the text around it keeps the mark. The USJ→editor adaptor's `createChar`
- * (usj-editor.adaptor.ts, platform) sets it on the SERIALIZED node, and `CharNodePlugin` on an
- * NBSP typed into an empty span; {@link $isLoneNbspContent} and its serialized twin read it.
+ * deleting the text around it keeps the mark. The rule is one: a lone NBSP there is the author's
+ * unless it is an empty span's placeholder. Three places set the mark to keep it:
+ * - the USJ→editor adaptor's `createChar` (usj-editor.adaptor.ts, platform), on every SERIALIZED
+ *   text of the span holding an NBSP, so a loaded `~` keeps its mark through any later edit,
+ *   splits included;
+ * - `CharNodePlugin`, on an NBSP typed into an empty span;
+ * - `CharNodePlugin`, on a lone NBSP an edit leaves in a text that held more: an NBSP typed or
+ *   pasted into existing text was never loaded, so only this catches it once it is stranded.
+ *
+ * {@link $isLoneNbspContent} and its serialized twin read it.
  */
 export const authoredNbspState = createState("isAuthoredNbsp", {
   parse: (value) => value === true,
