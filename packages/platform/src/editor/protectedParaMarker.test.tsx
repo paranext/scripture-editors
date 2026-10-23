@@ -21,6 +21,7 @@ import {
   $getSelection,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   CUT_COMMAND,
   DELETE_CHARACTER_COMMAND,
@@ -32,7 +33,14 @@ import {
   RangeSelection,
 } from "lexical";
 import { createRef, RefObject } from "react";
-import { $isGutterMarkerNode, $isParaNode, NBSP, openingMarkerText, ParaNode } from "shared";
+import {
+  $isGutterMarkerNode,
+  $isParaNode,
+  BookNode,
+  NBSP,
+  openingMarkerText,
+  ParaNode,
+} from "shared";
 import { getViewOptions, PARAGRAPH_STRUCTURE_VIEW_MODE } from "shared-react";
 import { vi } from "vitest";
 
@@ -117,6 +125,9 @@ async function mountLocked(usj: Usj = lockedUsj): Promise<Mounted> {
   return { ref, lexical, canUndo: () => canUndo };
 }
 
+/** A paragraph named by its marker (the first, if several share it) or by how its text ends. */
+type ParaTarget = string | { endingWith: string };
+
 /** The paragraph with `marker` (the first, if several share it). Read-only: call inside a read. */
 function $paraOf(marker: string): ParaNode {
   const para = $getRoot()
@@ -126,10 +137,10 @@ function $paraOf(marker: string): ParaNode {
   return para;
 }
 
-/** The key of `marker`'s gutter glyph, or undefined when its first child is not one. */
-function glyphKeyOf(lexical: LexicalEditor, marker: string): NodeKey | undefined {
+/** The key of `target`'s gutter glyph, or undefined when its first child is not one. */
+function glyphKeyOf(lexical: LexicalEditor, target: ParaTarget): NodeKey | undefined {
   return lexical.getEditorState().read(() => {
-    const first = $paraOf(marker).getFirstChild();
+    const first = $paraFor(target).getFirstChild();
     return $isGutterMarkerNode(first) ? first.getKey() : undefined;
   });
 }
@@ -177,17 +188,22 @@ function $paraEndingWith(text: string): ParaNode {
   return para;
 }
 
+/** The paragraph `target` names. Read-only: call inside a read. */
+function $paraFor(target: ParaTarget): ParaNode {
+  return typeof target === "string" ? $paraOf(target) : $paraEndingWith(target.endingWith);
+}
+
 /**
- * Puts a collapsed caret at `offset` (`"end"` for its end) in the last text node of `marker`'s
- * first paragraph, or of the paragraph `{ endingWith }` names.
+ * Puts a collapsed caret at `offset` (`"end"` for its end) in the last text node of the paragraph
+ * `target` names.
  */
 async function placeCaret(
   lexical: LexicalEditor,
-  marker: string | { endingWith: string },
+  target: ParaTarget,
   offset: number | "end",
 ): Promise<void> {
   await update(lexical, () => {
-    const para = typeof marker === "string" ? $paraOf(marker) : $paraEndingWith(marker.endingWith);
+    const para = $paraFor(target);
     const text = para.getLastChild();
     if (!$isTextNode(text)) throw new Error("no text to put the caret in");
     const at = offset === "end" ? text.getTextContentSize() : offset;
@@ -223,24 +239,32 @@ async function pressKey(lexical: LexicalEditor, key: string): Promise<void> {
   await flushQueuedEvents();
 }
 
+type ModifyArgs = Parameters<RangeSelection["modify"]>;
+
 /**
- * Runs `gesture` with `RangeSelection.modify` reproducing where Chromium's line-boundary extension
- * lands (jsdom has no `Selection.modify`). `RangeSelection` is a type-only export, so its prototype
- * is reached through an instance.
+ * Runs `gesture` with `RangeSelection.modify` reproducing where Chromium's extension lands (jsdom
+ * has no `Selection.modify`), and checks the gesture asked for exactly the `expected` extension — a
+ * stub that ignored its arguments would accept a "move" or the wrong granularity as readily.
+ * `RangeSelection` is a type-only export, so its prototype is reached through an instance.
  */
-async function withLineExtensionLandingAt(
+async function withExtensionLandingAt(
   lexical: LexicalEditor,
+  expected: ModifyArgs,
   $landing: (selection: RangeSelection) => void,
   gesture: () => Promise<void>,
 ): Promise<void> {
   const proto = lexical
     .getEditorState()
     .read(() => Object.getPrototypeOf($createRangeSelection()) as RangeSelection);
-  const modifySpy = vi.spyOn(proto, "modify").mockImplementation(function (this: RangeSelection) {
-    $landing(this);
-  });
+  const modifySpy = vi
+    .spyOn(proto, "modify")
+    .mockImplementation(function (this: RangeSelection, ...args: ModifyArgs) {
+      expect(args).toEqual(expected);
+      $landing(this);
+    });
   try {
     await gesture();
+    expect(modifySpy).toHaveBeenCalled();
   } finally {
     modifySpy.mockRestore();
   }
@@ -262,11 +286,11 @@ function caretOf(lexical: LexicalEditor): string {
  */
 async function expectRefused(
   { ref, lexical, canUndo }: Mounted,
-  marker: string,
+  target: ParaTarget,
   gesture: () => Promise<void>,
 ): Promise<void> {
   const before = ref.current?.getUsj();
-  const glyphBefore = glyphKeyOf(lexical, marker);
+  const glyphBefore = glyphKeyOf(lexical, target);
   const caretBefore = caretOf(lexical);
   expect(glyphBefore).toBeDefined();
 
@@ -275,7 +299,7 @@ async function expectRefused(
   await gesture();
 
   expect(ref.current?.getUsj()).toEqual(before);
-  expect(glyphKeyOf(lexical, marker)).toBe(glyphBefore);
+  expect(glyphKeyOf(lexical, target)).toBe(glyphBefore);
   expect(caretOf(lexical)).toBe(caretBefore);
   expect(canUndo()).toBe(false);
 }
@@ -335,17 +359,24 @@ describe("structure protection refuses a delete that would remove a paragraph's 
     );
   });
 
-  it("a forward delete in front of a line's glyph", async () => {
-    const mounted = await mountLocked();
+  it("a forward delete in front of an empty line's glyph", async () => {
+    const mounted = await mountLocked({
+      ...lockedUsj,
+      content: lockedUsj.content.map((node) =>
+        typeof node === "object" && node.type === "para" && node.marker === "s1"
+          ? { type: "para", marker: "s1", content: [] }
+          : node,
+      ),
+    });
     await update(mounted.lexical, () => {
-      $paraOf("q2").select(0, 0);
+      $paraOf("s1").select(0, 0);
     });
 
-    await expectRefused(mounted, "q2", () => pressKey(mounted.lexical, "Delete"));
+    await expectRefused(mounted, "s1", () => pressKey(mounted.lexical, "Delete"));
   });
 
-  // Lexical's own extension runs unstubbed here: at a paragraph's end its block walk reaches into
-  // the next block from the model alone, with no `Selection.modify` (which jsdom lacks) needed.
+  // Both are refused by the caret check before any extension: at a line's end, the next block is
+  // all a forward line delete could reach.
   it("a forward line delete (macOS ⌃K) at the end of the line before", async () => {
     const mounted = await mountLocked();
     await placeCaret(mounted.lexical, "q1", "end");
@@ -355,9 +386,61 @@ describe("structure protection refuses a delete that would remove a paragraph's 
 
   it("a forward line delete (macOS ⌃K) at the end of the line before a chapter", async () => {
     const mounted = await mountLocked();
-    await placeCaret(mounted.lexical, { endingWith: "Closing text" }, "end");
+    const closing = { endingWith: "Closing text" };
+    await placeCaret(mounted.lexical, closing, "end");
 
-    await expectRefused(mounted, "q2", () => dispatch(mounted.lexical, DELETE_LINE_COMMAND, false));
+    await expectRefused(mounted, closing, () =>
+      dispatch(mounted.lexical, DELETE_LINE_COMMAND, false),
+    );
+  });
+
+  it("Backspace over a range that reaches just past a chapter marker", async () => {
+    const mounted = await mountLocked();
+    const closing = { endingWith: "Closing text" };
+    // Shift+ArrowRight at the end of "Closing text": a range from the line's end to just past
+    // `\c 2` — no paragraph but this one, so only the chapter itself marks it as structural.
+    await update(mounted.lexical, () => {
+      const text = $paraFor(closing).getLastChild();
+      if (!$isTextNode(text)) throw new Error("no closing text");
+      const selection = $createRangeSelection();
+      const size = text.getTextContentSize();
+      selection.anchor.set(text.getKey(), size, "text");
+      const chapterIndex = $paraFor(closing).getIndexWithinParent() + 1;
+      selection.focus.set("root", chapterIndex + 1, "element");
+      $setSelection(selection);
+    });
+
+    await expectRefused(mounted, closing, () => pressKey(mounted.lexical, "Backspace"));
+  });
+
+  it("a forward line delete (macOS ⌃K) at the end of the `\\id` line", async () => {
+    const mounted = await mountLocked();
+    await update(mounted.lexical, () => {
+      $getRoot().getFirstChildOrThrow<BookNode>().selectEnd();
+    });
+    const before = mounted.ref.current?.getUsj();
+
+    await dispatch(mounted.lexical, DELETE_LINE_COMMAND, false);
+    await dispatch(mounted.lexical, DELETE_WORD_COMMAND, false);
+
+    expect(mounted.ref.current?.getUsj()).toEqual(before);
+    expect(mounted.canUndo()).toBe(false);
+  });
+
+  it("a backward word delete over a range that covers only a line's glyph", async () => {
+    const mounted = await mountLocked();
+    // Shift+ArrowLeft from the start of the line's text: the range covers the glyph and nothing else.
+    await update(mounted.lexical, () => {
+      const para = $paraOf("q2");
+      const text = para.getLastChild();
+      if (!$isTextNode(text)) throw new Error("no line text");
+      const selection = $createRangeSelection();
+      selection.anchor.set(text.getKey(), 0, "text");
+      selection.focus.set(para.getKey(), 0, "element");
+      $setSelection(selection);
+    });
+
+    await expectRefused(mounted, "q2", () => dispatch(mounted.lexical, DELETE_WORD_COMMAND, true));
   });
 
   it("a backward word delete that reaches back over a line's verse", async () => {
@@ -365,8 +448,9 @@ describe("structure protection refuses a delete that would remove a paragraph's 
     await placeCaret(mounted.lexical, "q1", 1); // "B|lessed is the man"
 
     // The word extension steps back over the verse's span to the line's own start.
-    await withLineExtensionLandingAt(
+    await withExtensionLandingAt(
       mounted.lexical,
+      ["extend", true, "word"],
       (selection) => {
         selection.focus.set($paraOf("q1").getKey(), 0, "element");
       },
@@ -381,8 +465,9 @@ describe("structure protection refuses a delete that would remove a paragraph's 
 
     // The line starts with the verse's contenteditable=false span, so Chromium's extension lands
     // at the end of the previous paragraph's text — measured in real Chrome.
-    await withLineExtensionLandingAt(
+    await withExtensionLandingAt(
       mounted.lexical,
+      ["extend", true, "lineboundary"],
       (selection) => {
         const previous = $paraOf("s1").getLastChild();
         if (!$isTextNode(previous)) throw new Error("no heading text");
@@ -415,8 +500,9 @@ describe("structure protection keeps the marker when a line's text is edited", (
     const glyphBefore = glyphKeyOf(lexical, "q2");
 
     // With no verse in the way, the extension stops at the line's own start, in front of the glyph.
-    await withLineExtensionLandingAt(
+    await withExtensionLandingAt(
       lexical,
+      ["extend", true, "lineboundary"],
       (selection) => {
         selection.focus.set($paraOf("q2").getKey(), 0, "element");
       },
@@ -426,6 +512,56 @@ describe("structure protection keeps the marker when a line's text is edited", (
     expect(savedParaMarkers(ref)).toEqual(ALL_MARKERS);
     expect(savedContentOf(ref, "q2")).toEqual([" on the path of sinners,"]);
     expect(glyphKeyOf(lexical, "q2")).toBe(glyphBefore); // removed around, not deleted and rebuilt
+  });
+
+  it("Delete in front of a line's glyph deletes the text's first character", async () => {
+    const { ref, lexical } = await mountLocked();
+    // Where ArrowRight from the end of the line before leaves the caret.
+    await update(lexical, () => {
+      $paraOf("q2").select(0, 0);
+    });
+    const glyphBefore = glyphKeyOf(lexical, "q2");
+
+    // Lexical's own delete extends by one character from wherever the caret now is — past the
+    // glyph, so over the text's "n".
+    await withExtensionLandingAt(
+      lexical,
+      ["extend", false, "character"],
+      (selection) => {
+        const text = $paraOf("q2").getLastChild();
+        if (!$isTextNode(text)) throw new Error("no line text");
+        expect(selection.anchor.key).toBe(text.getKey());
+        selection.focus.set(text.getKey(), selection.anchor.offset + 1, "text");
+      },
+      () => pressKey(lexical, "Delete"),
+    );
+
+    expect(savedParaMarkers(ref)).toEqual(ALL_MARKERS);
+    expect(savedContentOf(ref, "q2")).toEqual([POETRY_TEXT.slice(1)]);
+    expect(glyphKeyOf(lexical, "q2")).toBe(glyphBefore);
+  });
+
+  it("a forward line delete (macOS ⌃K) in front of a line's glyph removes the line's text", async () => {
+    const { ref, lexical } = await mountLocked();
+    await update(lexical, () => {
+      $paraOf("q2").select(0, 0);
+    });
+    const glyphBefore = glyphKeyOf(lexical, "q2");
+
+    await withExtensionLandingAt(
+      lexical,
+      ["extend", false, "lineboundary"],
+      (selection) => {
+        const text = $paraOf("q2").getLastChild();
+        if (!$isTextNode(text)) throw new Error("no line text");
+        selection.focus.set(text.getKey(), text.getTextContentSize(), "text");
+      },
+      () => dispatch(lexical, DELETE_LINE_COMMAND, false),
+    );
+
+    expect(savedParaMarkers(ref)).toEqual(ALL_MARKERS);
+    expect(savedContentOf(ref, "q2")).toEqual([]);
+    expect(glyphKeyOf(lexical, "q2")).toBe(glyphBefore);
   });
 
   it("Backspace over a triple-clicked line removes its text", async () => {

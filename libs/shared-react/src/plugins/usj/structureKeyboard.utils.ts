@@ -10,6 +10,7 @@ import {
   BaseSelection,
   LexicalNode,
   NodeKey,
+  PointType,
   RangeSelection,
 } from "lexical";
 import {
@@ -119,6 +120,9 @@ function $getParaAncestor(node: LexicalNode | null | undefined): LexicalNode | u
 /**
  * True when the selection covers more than one paragraph block, or covers a chapter marker — a
  * root-level block of its own that no paragraph contains, so the paragraph count alone misses it.
+ *
+ * Read-only: safe in any read — `editor.getEditorState().read()`, an `editor.update()`, or a
+ * command handler.
  */
 export function $selectionSpansBlockBoundary(selection: BaseSelection): boolean {
   if (!$isRangeSelection(selection)) return false;
@@ -141,26 +145,35 @@ export function $selectionSpansBlockBoundary(selection: BaseSelection): boolean 
  */
 export function $narrowSelectionPastGutterGlyph(selection: RangeSelection): void {
   if (selection.isCollapsed()) return;
-  const point = selection.isBackward() ? selection.focus : selection.anchor;
+  $movePointPastGutterGlyph(selection.isBackward() ? selection.focus : selection.anchor);
+}
+
+/**
+ * Moves a COLLAPSED caret at `(para, 0)` — in front of its paragraph's gutter glyph, where an arrow
+ * key from the line before leaves it — to the content boundary just past the glyph, so a forward
+ * delete from it removes the line's first character rather than the glyph (which
+ * `ParaMarkerPrefixGuardPlugin` would rebuild as a new node, an edit with nothing to show for it).
+ *
+ * Mutating: call inside `editor.update()` (a command listener already runs inside one).
+ *
+ * @returns Whether the caret was moved.
+ */
+export function $moveCaretPastGutterGlyph(selection: RangeSelection): boolean {
+  if (!selection.isCollapsed() || !$movePointPastGutterGlyph(selection.anchor)) return false;
+  const { key, offset, type } = selection.anchor;
+  selection.focus.set(key, offset, type);
+  return true;
+}
+
+/** Moves `point` off `(para, 0)` in front of a gutter glyph to just past it; true if it moved. */
+function $movePointPastGutterGlyph(point: PointType): boolean {
   const para = point.getNode();
-  if (point.type !== "element" || point.offset !== 0 || !$isParaNode(para)) return;
-  if (!$isGutterMarkerNode(para.getFirstChild())) return;
+  if (point.type !== "element" || point.offset !== 0 || !$isParaNode(para)) return false;
+  if (!$isGutterMarkerNode(para.getFirstChild())) return false;
   const host = $caretHostAtBoundary(para, 1);
   if (host) point.set(host.getKey(), 0, "text");
   else point.set(para.getKey(), 1, "element");
-}
-
-/** True when a collapsed caret sits in front of its paragraph's gutter glyph, `(para, 0)`. */
-function $caretInFrontOfGutterGlyph(selection: BaseSelection): boolean {
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const { anchor } = selection;
-  const para = anchor.getNode();
-  return (
-    anchor.type === "element" &&
-    anchor.offset === 0 &&
-    $isParaNode(para) &&
-    $isGutterMarkerNode(para.getFirstChild())
-  );
+  return true;
 }
 
 /**
@@ -338,9 +351,7 @@ export function $shouldBlockStructuralEdit(selection: BaseSelection, intent: Edi
     case "deleteForward":
       return (
         ($caretAtParaEnd(selection) && $hasNeighborBlock(selection, "forward")) ||
-        $caretAdjacentToVerseMarker(selection, "forward") ||
-        // In front of the glyph, a forward delete would remove it (to be rebuilt as a new node).
-        $caretInFrontOfGutterGlyph(selection)
+        $caretAdjacentToVerseMarker(selection, "forward")
       );
     case "insertText":
       return false;

@@ -2,6 +2,7 @@ import {
   $isArmedSelection,
   $isUnmergeableParaStart,
   $mergeParaIntoPrevious,
+  $moveCaretPastGutterGlyph,
   $narrowSelectionPastGutterGlyph,
   $paraDeleteEffect,
   $placeCaretAtEnd,
@@ -40,6 +41,7 @@ import {
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
   PASTE_COMMAND,
+  RangeSelection,
 } from "lexical";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { $isSomeVerseNode } from "../../nodes/usj";
@@ -51,6 +53,7 @@ import {
   $selectParaMarker,
   MARKER_TEXT_TYPE,
 } from "shared";
+import { $selectionReachesIntoOpaqueBlock } from "./OpaqueBlockGuardPlugin";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 
@@ -64,6 +67,19 @@ export const PARA_MERGE_ARMED_CLASS_NAME = "para-merge-armed";
 const MARKER_TEXT_LEFT_PROPERTY = "--para-merge-armed-text-left";
 /** How wide an armed gutter marker's text is, without its trailing space. */
 const MARKER_TEXT_WIDTH_PROPERTY = "--para-merge-armed-text-width";
+ * Records a range selection's endpoints and returns a function that puts them back, so a refused
+ * delete leaves the caret where it was even after the delete moved it to judge it.
+ *
+ * Mutating (the returned function): call inside `editor.update()`.
+ */
+function $snapshotRange(selection: RangeSelection): () => void {
+  const { anchor, focus } = selection;
+  const saved = [anchor, focus].map(({ key, offset, type }) => ({ key, offset, type }));
+  return () => {
+    anchor.set(saved[0].key, saved[0].offset, saved[0].type);
+    focus.set(saved[1].key, saved[1].offset, saved[1].type);
+  };
+}
 
 /**
  * Governs structural keystrokes (Backspace/Delete/Enter/typing) at verse- and paragraph-marker
@@ -74,6 +90,9 @@ const MARKER_TEXT_WIDTH_PROPERTY = "--para-merge-armed-text-width";
  * In `"off"` mode, no handlers are registered and editing is fully native.
  * Registers a KEY_DOWN handler at COMMAND_PRIORITY_HIGH, mirroring ArrowNavigationPlugin, and
  * the CUT refusal at COMMAND_PRIORITY_CRITICAL so it outranks the handlers that perform a cut.
+ * Under `"protected"`, it also performs word and line deletes itself (DELETE_WORD_COMMAND /
+ * DELETE_LINE_COMMAND at COMMAND_PRIORITY_HIGH), since only the extended range shows what they
+ * would remove.
  *
  * A paragraph merge (Backspace at a paragraph's start, Delete at the end of the one before, or
  * either on a selected gutter marker) is two-step too: the first press marks the marker it
@@ -309,7 +328,15 @@ export function StructureKeyboardPlugin({
       const intent = isBackward ? "deleteBackward" : "deleteForward";
       if (structureProtectionMode === "protected") {
         const selection = $getSelection();
-        return !!selection && $shouldBlockStructuralEdit(selection, intent);
+        if (!selection) return false;
+        const restore = $isRangeSelection(selection) ? $snapshotRange(selection) : undefined;
+        // In front of a line's glyph (where ArrowRight from the line before leaves the caret), a
+        // forward delete is judged — and, if allowed, run by Lexical's own handler — from just past
+        // it, so it removes the line's first character instead of the glyph.
+        if (!isBackward && $isRangeSelection(selection)) $moveCaretPastGutterGlyph(selection);
+        if (!$shouldBlockStructuralEdit(selection, intent)) return false;
+        restore?.();
+        return true;
       }
       if ($hasUpdateTag(CONFIRMED_DELETE_TAG)) return false;
       return $handleTwoStepDelete(intent, undefined);
@@ -323,34 +350,52 @@ export function StructureKeyboardPlugin({
     // `$clampLineDeletionPastBookPrefix` does: extend ONCE, judge that range, then remove exactly it
     // or refuse. Handing back to Lexical's own deleteWord/deleteLine instead would extend a second
     // time from a re-seated caret, which on a wrapped line can reach somewhere other than what was
-    // judged. The `\id` line is left to its own prefix guards.
+    // judged. Whatever range is removed is first narrowed past the display glyphs it starts in
+    // front of (the `\id` prefix, a line's gutter glyph), and a range of nothing but glyphs is
+    // refused rather than deleted and rebuilt. A caret on the `\id` line gets the same caret check,
+    // then its extension is left to `$clampLineDeletionPastBookPrefix`, which clamps it past the
+    // prefix but does not judge structure.
+    //
+    // Registered at HIGH alongside OpaqueBlockGuardPlugin's refusal of the same commands, so it
+    // stands aside for an opaque block itself rather than relying on mount order to lose that tie.
     const $guardExtendingDelete =
       (granularity: "word" | "lineboundary") =>
       (isBackward: boolean): boolean => {
         if (structureProtectionMode !== "protected" || !editor.isEditable()) return false;
+        if ($selectionReachesIntoOpaqueBlock()) return false;
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
         const intent = isBackward ? "deleteBackward" : "deleteForward";
-        // A range is removed as it stands, so it is judged as it stands (Rule 1).
-        if (!selection.isCollapsed()) return $shouldBlockStructuralEdit(selection, intent);
-        if ($findMatchingParent(selection.anchor.getNode(), $isBookNode)) return false;
-        if ($shouldBlockStructuralEdit(selection, intent)) return true;
+        const restore = $snapshotRange(selection);
 
-        const { key, offset, type } = selection.anchor;
-        selection.modify("extend", isBackward, granularity);
         if (selection.isCollapsed()) {
-          // Nothing to extend into: Lexical's own fallback deletes one character, which the
-          // caret check above already allowed.
-          selection.deleteCharacter(isBackward);
-          return true;
+          if (!isBackward) $moveCaretPastGutterGlyph(selection);
+          if ($shouldBlockStructuralEdit(selection, intent)) {
+            restore();
+            return true;
+          }
+          if ($findMatchingParent(selection.anchor.getNode(), $isBookNode)) return false;
+          selection.modify("extend", isBackward, granularity);
+          if (selection.isCollapsed()) {
+            // Nothing to extend into: Lexical's own fallback deletes one character, which the
+            // caret check above already allowed.
+            selection.deleteCharacter(isBackward);
+            return true;
+          }
         }
+
+        // A range is removed as it stands, so it is judged as it stands (Rule 1).
         if ($shouldBlockStructuralEdit(selection, intent)) {
-          selection.anchor.set(key, offset, type);
-          selection.focus.set(key, offset, type);
+          restore();
           return true;
         }
+        $narrowSelectionPastBookPrefix(selection);
         $narrowSelectionPastGutterGlyph(selection);
-        if (!selection.isCollapsed()) selection.removeText();
+        if (selection.isCollapsed()) {
+          restore();
+          return true;
+        }
+        selection.removeText();
         return true;
       };
 
