@@ -15,6 +15,7 @@ import {
   ContextMenuOptionConfig,
   DeltaOp,
   DeltaSource,
+  HiddenContentDeleteHandler,
   SelectionRange,
   StateChangeSnapshot,
   StructureProtectionMode,
@@ -1061,6 +1062,14 @@ export interface EditorOptions {
    * Defaults to "off".
    */
   structureProtectionMode?: StructureProtectionMode;
+  /**
+   * Asks the user before an edit removes content the view hides: figures, sidebars, `\periph` and
+   * other constructs the editor carries unmodeled, hidden whenever `view.markerMode` is not
+   * `"editable"`. Deletes that reach one, and any edit over a selection holding one, wait for the
+   * answer (see {@link HiddenContentDeleteHandler}). Dragging such a selection, or cutting it while
+   * {@link EditorOptions.copyLimit} is set, is refused. Unset, editing is native.
+   */
+  onHiddenContentDelete?: HiddenContentDeleteHandler;
   /** Does the editor have external UI controls so disable the built-in toolbar and marker menu. */
   hasExternalUI?: boolean;
   /** Is the editor enabled for spell checking. */

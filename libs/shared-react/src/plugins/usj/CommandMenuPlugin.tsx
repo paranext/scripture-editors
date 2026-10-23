@@ -5,6 +5,16 @@ import { useEffect } from "react";
 import { LoggerBasic } from "shared";
 
 /**
+ * Whether `text` holds a character {@link CommandMenuPlugin} keeps out of the document: a backslash
+ * or forward slash, either of which opens a marker command.
+ *
+ * @param text - Typed, pasted or dropped text.
+ */
+export function hasCommandCharacter(text: string): boolean {
+  return text.includes("\\") || text.includes("/");
+}
+
+/**
  * This plugin prevents the backslash or forward slash key from being typed, or pasted or dragged.
  * @returns `null`. This plugin has no DOM presence.
  */
@@ -30,7 +40,7 @@ export function CommandMenuPlugin({ logger }: { logger?: LoggerBasic }): null {
         PASTE_COMMAND,
         (event: ClipboardEvent) => {
           const text = event.clipboardData?.getData("text/plain");
-          if (!text || (!text.includes("\\") && !text.includes("/"))) return false;
+          if (!text || !hasCommandCharacter(text)) return false;
 
           logger?.info("CommandMenuPlugin: paste containing backslash or forward slash ignored.");
           event.preventDefault();
@@ -44,7 +54,7 @@ export function CommandMenuPlugin({ logger }: { logger?: LoggerBasic }): null {
         DROP_COMMAND,
         (event: DragEvent) => {
           const text = event.dataTransfer?.getData("text/plain");
-          if (!text || (!text.includes("\\") && !text.includes("/"))) return false;
+          if (!text || !hasCommandCharacter(text)) return false;
 
           logger?.info("CommandMenuPlugin: drag containing backslash or forward slash ignored.");
           event.preventDefault();
