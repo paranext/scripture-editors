@@ -2,6 +2,7 @@ import {
   $isArmedSelection,
   $isUnmergeableParaStart,
   $mergeParaIntoPrevious,
+  $narrowSelectionPastGutterGlyph,
   $paraDeleteEffect,
   $placeCaretAtEnd,
   $sanitizeNodesForProtectedStructure,
@@ -18,7 +19,7 @@ import {
 import { $generateNodesFromDOM } from "@lexical/html";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import DOMPurify from "dompurify";
-import { mergeRegister } from "@lexical/utils";
+import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
   $addUpdateTag,
   $createNodeSelection,
@@ -33,6 +34,8 @@ import {
   CONTROLLED_TEXT_INSERTION_COMMAND,
   CUT_COMMAND,
   DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
   DRAGSTART_COMMAND,
   DROP_COMMAND,
   KEY_DOWN_COMMAND,
@@ -43,6 +46,7 @@ import { $isSomeVerseNode } from "../../nodes/usj";
 import {
   $getSelectableParaMarker,
   $getSelectedParaMarkerPara,
+  $isBookNode,
   $isSomeParaNode,
   $selectParaMarker,
   MARKER_TEXT_TYPE,
@@ -311,6 +315,45 @@ export function StructureKeyboardPlugin({
       return $handleTwoStepDelete(intent, undefined);
     };
 
+    // A word or line delete (Alt/Ctrl+Backspace, Cmd+Backspace, macOS Ctrl+K) EXTENDS the selection
+    // before removing it, so the keydown check above — which sees only the caret — never sees what
+    // it is about to delete: Cmd+Backspace on a line that starts with a verse reaches back across
+    // the verse into the previous paragraph, and Ctrl+K at a line's end pulls the next paragraph up.
+    // Under "protected", this does the whole delete itself, the way the `\id` line's
+    // `$clampLineDeletionPastBookPrefix` does: extend ONCE, judge that range, then remove exactly it
+    // or refuse. Handing back to Lexical's own deleteWord/deleteLine instead would extend a second
+    // time from a re-seated caret, which on a wrapped line can reach somewhere other than what was
+    // judged. The `\id` line is left to its own prefix guards.
+    const $guardExtendingDelete =
+      (granularity: "word" | "lineboundary") =>
+      (isBackward: boolean): boolean => {
+        if (structureProtectionMode !== "protected" || !editor.isEditable()) return false;
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return false;
+        const intent = isBackward ? "deleteBackward" : "deleteForward";
+        // A range is removed as it stands, so it is judged as it stands (Rule 1).
+        if (!selection.isCollapsed()) return $shouldBlockStructuralEdit(selection, intent);
+        if ($findMatchingParent(selection.anchor.getNode(), $isBookNode)) return false;
+        if ($shouldBlockStructuralEdit(selection, intent)) return true;
+
+        const { key, offset, type } = selection.anchor;
+        selection.modify("extend", isBackward, granularity);
+        if (selection.isCollapsed()) {
+          // Nothing to extend into: Lexical's own fallback deletes one character, which the
+          // caret check above already allowed.
+          selection.deleteCharacter(isBackward);
+          return true;
+        }
+        if ($shouldBlockStructuralEdit(selection, intent)) {
+          selection.anchor.set(key, offset, type);
+          selection.focus.set(key, offset, type);
+          return true;
+        }
+        $narrowSelectionPastGutterGlyph(selection);
+        if (!selection.isCollapsed()) selection.removeText();
+        return true;
+      };
+
     // Drop the latch as soon as the live selection no longer encodes the armed target
     // (arrow key, click, typing, etc.). Reads only; never mutates the editor.
     const clearStaleLatch = () => {
@@ -326,6 +369,16 @@ export function StructureKeyboardPlugin({
       editor.registerCommand(
         DELETE_CHARACTER_COMMAND,
         $handleDeleteCharacter,
+        COMMAND_PRIORITY_HIGH,
+      ),
+      editor.registerCommand(
+        DELETE_WORD_COMMAND,
+        $guardExtendingDelete("word"),
+        COMMAND_PRIORITY_HIGH,
+      ),
+      editor.registerCommand(
+        DELETE_LINE_COMMAND,
+        $guardExtendingDelete("lineboundary"),
         COMMAND_PRIORITY_HIGH,
       ),
       // CUT at CRITICAL, unlike KEY_DOWN above: a refusal has to outrank the actor it refuses,
