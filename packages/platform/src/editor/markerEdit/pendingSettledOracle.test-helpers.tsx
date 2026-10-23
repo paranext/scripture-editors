@@ -138,7 +138,7 @@ function chapterSideUsj(beside: MarkerContent): Usj {
 
 /** The documents the oracle edits; the root child after the chapter is the one edited — the
  * first body paragraph, or a `\ca`/`\cp` span beside the chapter. */
-const CORPUS: { name: string; usj: Usj }[] = [
+export const KEYSTROKE_CORPUS: { name: string; usj: Usj }[] = [
   {
     name: "closed char span",
     usj: twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"]),
@@ -255,7 +255,7 @@ const CORPUS: { name: string; usj: Usj }[] = [
  * view shows a line break before every verse, which is not a byte of the document.
  */
 const UNFORMATTED_CORPUS: { name: string; usj: Usj }[] = [
-  ...CORPUS,
+  ...KEYSTROKE_CORPUS,
   {
     name: "text touching a following verse",
     usj: twoParaUsj([
@@ -301,7 +301,7 @@ export const PROTECTED_NOTE_SHELL_VIEW = "standard+protectedNoteShell";
  * to protect, so only the note rows — the corpus's, and one whose content span runs on to the
  * note's closer, as ParatextData writes footnote text. */
 const PROTECTED_NOTE_SHELL_CORPUS: { name: string; usj: Usj }[] = [
-  ...CORPUS.filter(
+  ...KEYSTROKE_CORPUS.filter(
     ({ name }) =>
       name === "note" || name === "note with an empty caller" || name === "unclosed note",
   ),
@@ -324,7 +324,7 @@ const PROTECTED_NOTE_SHELL_CORPUS: { name: string; usj: Usj }[] = [
 function corpusFor(view: string): { name: string; usj: Usj }[] {
   if (view === PROTECTED_NOTE_SHELL_VIEW) return PROTECTED_NOTE_SHELL_CORPUS;
   if (view === "unformatted") return UNFORMATTED_CORPUS;
-  return CORPUS;
+  return KEYSTROKE_CORPUS;
 }
 
 /** The view options the oracle runs `view` in: an `ORACLE_VIEWS` name, or
