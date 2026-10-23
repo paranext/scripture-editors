@@ -351,6 +351,14 @@ export function HiddenContentDeleteGuardPlugin({
         granularity === "character" || run?.placement === "block"
           ? undefined
           : $deleteExtent(editor, selection, direction, granularity);
+      // Protected structure judges a word or line delete by the range it extends to, and refuses
+      // one that reaches a verse or another block; asking first would remove that range on
+      // "delete" without its say.
+      if (extent?.range && structureProtectionModeRef.current === "protected") {
+        const range = $rangeFrom(extent.range);
+        const intent = direction === "backward" ? "deleteBackward" : "deleteForward";
+        if (range && $shouldBlockStructuralEdit(range, intent)) return false;
+      }
       const hidden = $inDocumentOrder([...(run?.nodes ?? []), ...(extent?.hidden ?? [])]);
       if (hidden.length === 0) return false;
       const keys = hidden.map((node) => node.getKey());
@@ -439,11 +447,10 @@ export function HiddenContentDeleteGuardPlugin({
       refusedWhilePending((isBackward: boolean): boolean => {
         const selection = $judgedSelection();
         if (!selection) return false;
-        // Protected structure refuses a character delete it would refuse at the keystroke, so the
-        // question would be asked for nothing. It registers no word, line or Enter handler, so those
-        // are still asked about.
+        // Protected structure refuses a delete it would refuse at the keystroke, so the question
+        // would be asked for nothing. A word or line delete it allows from the caret is judged
+        // again by its extent (see `$holdCaretDelete`).
         if (
-          command === DELETE_CHARACTER_COMMAND &&
           structureProtectionModeRef.current === "protected" &&
           $shouldBlockStructuralEdit(selection, isBackward ? "deleteBackward" : "deleteForward")
         )
