@@ -105,12 +105,12 @@ export function $displayWhitespaceTransform(node: TextNode): void {
  * Whether `node`, an untagged text that is exactly one NBSP, is what is left of a displayed space
  * run — two spaces between two elements (char spans, notes, milestones) display as two NBSPs, and a
  * backspace leaves one — rather than one of the engine's structural lone-NBSP nodes. Content NBSP
- * displays as `~`, so in content a lone NBSP is one or the other, and the editor→USJ conversion
- * drops every lone NBSP as structural: left as it is, the space would be lost from the file while
- * the screen still shows it. A plain space is the shape the same single space loads as. This holds
- * at every depth — in a paragraph, inside a char span, and directly inside an expanded note.
+ * displays as `~`, so in content a lone NBSP is one or the other. A plain space is the shape the
+ * same single space loads as, so it goes back to one. This holds at every depth — in a paragraph,
+ * inside a char span, and directly inside an expanded note.
  *
- * Every structural lone NBSP sits where this says no:
+ * Every structural lone NBSP sits where this says no — in Standard view, a superset of the display
+ * slots `$isLoneNbspContent` (node.utils.ts) rules out:
  *
  * - right after a marker glyph: an empty span's placeholder (`EMPTY_CHAR_PLACEHOLDER_TEXT`), the
  *   spacer in front of a span's leading nested element, a separator a split stranded, and a

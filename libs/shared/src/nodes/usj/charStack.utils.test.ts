@@ -6,10 +6,18 @@ import {
 } from "./charStack.utils.js";
 import { $createCharNode, $isCharNode, CharNode } from "./CharNode.js";
 import { NBSP } from "./node-constants.js";
+import { authoredNbspState } from "./node.utils.js";
 import { $createParaNode } from "./ParaNode.js";
 import { createBasicTestEnvironment } from "./test.utils.js";
 import { $createMarkerNode } from "../features/MarkerNode.js";
-import { $createTextNode, $getRoot, ElementNode, LexicalEditor, TextNode } from "lexical";
+import {
+  $createTextNode,
+  $getRoot,
+  $setState,
+  ElementNode,
+  LexicalEditor,
+  TextNode,
+} from "lexical";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -86,6 +94,47 @@ describe("$isCharContentEmpty", () => {
         );
         $getRoot().append($createParaNode("p").append(span));
         expect($isCharContentEmpty(span)).toBe(false);
+      },
+      { discrete: true },
+    );
+  });
+
+  it("is false for a span whose content is the author's `~` after the separator", () => {
+    const { editor } = createBasicTestEnvironment();
+    editor.update(
+      () => {
+        const span = $createCharNode("nd").append(
+          $createMarkerNode("nd"),
+          $createTextNode(`${NBSP}${NBSP}`),
+          $createMarkerNode("nd", "closing"),
+        );
+        $getRoot().append($createParaNode("p").append(span));
+        expect($isCharContentEmpty(span)).toBe(false);
+      },
+      { discrete: true },
+    );
+  });
+
+  it("is false for a glyph-less span whose content is the author's `~`", () => {
+    const { editor } = createBasicTestEnvironment();
+    editor.update(
+      () => {
+        const tilde = $setState($createTextNode(NBSP), authoredNbspState, true);
+        const span = $createCharNode("nd").append(tilde);
+        $getRoot().append($createParaNode("p").append(span));
+        expect($isCharContentEmpty(span)).toBe(false);
+      },
+      { discrete: true },
+    );
+  });
+
+  it("is true for a glyph-less span holding only its placeholder", () => {
+    const { editor } = createBasicTestEnvironment();
+    editor.update(
+      () => {
+        const span = $createCharNode("nd").append($createTextNode(NBSP));
+        $getRoot().append($createParaNode("p").append(span));
+        expect($isCharContentEmpty(span)).toBe(true);
       },
       { discrete: true },
     );

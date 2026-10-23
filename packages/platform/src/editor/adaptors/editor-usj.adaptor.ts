@@ -18,6 +18,7 @@ import {
 } from "lexical";
 import {
   AttributeRunNode,
+  authoredNbspState,
   BookNode,
   ChapterNode,
   CharNode,
@@ -31,6 +32,8 @@ import {
   isSerializedCharNode,
   isSerializedImpliedParaNode,
   isSerializedMarkerNode,
+  isSerializedNoteNode,
+  isSerializedSynthesizedMarkerNode,
   isSerializedTextNode,
   isSerializedTypedMarkNode,
   isCursorPlaceholderOnly,
@@ -115,23 +118,33 @@ function isStandardView(viewOptions: ViewOptions | undefined): boolean {
 
 /**
  * The REVERSE adaptor over a live `EditorState`: serializes it and delegates to
- * {@link deserializeSerializedEditorState}. An empty editor state short-circuits to `EMPTY_USJ`.
+ * {@link deserializeSerializedEditorState}. An empty editor state short-circuits to an empty
+ * document at `version`.
  */
 export function deserializeEditorState(
   editorState: EditorState,
   viewOptions?: ViewOptions,
+  version: string = USJ_VERSION,
 ): Usj | undefined {
-  if (editorState.isEmpty()) return EMPTY_USJ;
+  if (editorState.isEmpty()) return emptyUsj(version);
 
-  return deserializeSerializedEditorState(editorState.toJSON(), viewOptions);
+  return deserializeSerializedEditorState(editorState.toJSON(), viewOptions, version);
+}
+
+/** An empty document at `version` — `EMPTY_USJ` itself at its own version. */
+function emptyUsj(version: string): Usj {
+  return version === EMPTY_USJ.version ? EMPTY_USJ : { type: USJ_TYPE, version, content: [] };
 }
 
 /**
  * The REVERSE adaptor: reads the DOCUMENT back out of a serialized editor state that was built
  * for `viewOptions`, stripping everything the forward adaptor added for display (marker glyphs
  * and their NBSP separators, display runs, note-layout scaffolding) and inverting the
- * standard-view whitespace mapping — so only DATA reaches the returned USJ (emitted at
- * `USJ_VERSION`).
+ * standard-view whitespace mapping — so only DATA reaches the returned USJ.
+ *
+ * The tree carries no USJ version, so the returned document is stamped `version`: the caller
+ * passes the version of the document the tree was loaded from (`Editor` remembers it), so a
+ * document leaves the editor at the version it arrived at.
  *
  * Invariant: must invert `serializeEditorState` (usj-editor.adaptor.ts) exactly — the round-trip
  * identity the corpus suites pin (adaptors/corpus/). Its output over a settled state is what
@@ -141,6 +154,7 @@ export function deserializeEditorState(
 export function deserializeSerializedEditorState(
   serializedEditorState: SerializedEditorState,
   viewOptions?: ViewOptions,
+  version: string = USJ_VERSION,
 ): Usj | undefined {
   if (!serializedEditorState.root || !serializedEditorState.root.children) return;
 
@@ -151,7 +165,7 @@ export function deserializeSerializedEditorState(
     isSerializedImpliedParaNode(rootChildren[0]) &&
     (!rootChildren[0].children || rootChildren[0].children.length === 0)
   )
-    return EMPTY_USJ;
+    return emptyUsj(version);
 
   // The block verse layout splits a paragraph that spans verses across their blocks, so this tree
   // no longer describes the source USJ's paragraphs. Report and give up rather than emit USJ that
@@ -169,7 +183,7 @@ export function deserializeSerializedEditorState(
   const content = recurseRootNodes(rootChildren, viewOptions);
   if (!content) return;
 
-  const usj: Usj = { type: USJ_TYPE, version: USJ_VERSION, content };
+  const usj: Usj = { type: USJ_TYPE, version, content };
   return usj;
 }
 
@@ -307,6 +321,12 @@ function createTableCellMarker(
  *   there, or a deleted char marker's separator — is shown while editing and not saved. The
  *   logical position model drops the same spaces (`$getLogicalContentItems` in `shared`), and the
  *   same ones after a verse number ({@link dropSpacesAfterVerseNumbers}).
+ * - A char span's content, after its opener's separator, for the same reason: Paratext 9 skips all
+ *   whitespace after any opening marker (`\nd  things\nd*` reads and saves as `\nd things\nd*`),
+ *   so a space typed right after the opener is shown while editing and not saved. A span holding
+ *   nothing but spaces (a selected space wrapped in a span) is empty to Paratext 9 too
+ *   (`\nd  \nd*` saves as `\nd \nd*`, joining the words on either side in the file), so it
+ *   saves as an empty span.
  * - A note's content, after its caller: content that starts with plain spaces (`\f +  text`, a
  *   space typed after an expanded note's caller) makes a run with the caller's separator that no
  *   single text node holds; Paratext 9 collapses it to `\f + text` on reformat, as it does any
@@ -587,6 +607,39 @@ function hasOtherCharContent(
   });
 }
 
+/**
+ * Whether the lone-NBSP text `nodes[index]` is content rather than one of the engine's lone-NBSP
+ * display nodes — the serialized twin of `$isLoneNbspContent` (node.utils.ts), which lists the
+ * display slots this rules out. `parent` is the node `nodes` are the children of, when that is a
+ * char span or a note; in or beside a mark, {@link isNbspContentAtMark} decides, as it does live.
+ */
+function isLoneNbspContent(
+  nodes: SerializedLexicalNode[],
+  index: number,
+  parent: SerializedLexicalNode | undefined,
+  precedingSibling: SerializedLexicalNode | undefined,
+  enclosingChar: SerializedCharNode | undefined,
+  inMark: boolean,
+): boolean {
+  const node = nodes[index];
+  if (!isSerializedTextNode(node) || node.text !== NBSP) return false;
+  const previous = index > 0 ? nodes[index - 1] : undefined;
+  if (inMark || isSerializedTypedMarkNode(previous) || isSerializedTypedMarkNode(nodes[index + 1]))
+    return isNbspContentAtMark(nodes, index, precedingSibling, enclosingChar, inMark);
+  const state = node[NODE_STATE_KEY];
+  if (node.mode !== "normal" || state?.textType !== undefined) return false;
+  if (state?.[authoredNbspState.key] === true) return true;
+  if (!previous) return !isSerializedCharNode(parent) && !isSerializedNoteNode(parent);
+  if (isSerializedMarkerNode(previous)) return false;
+  if (isSerializedCharNode(parent)) return !isSerializedSynthesizedMarkerNode(previous);
+  if (
+    isSerializedNoteNode(parent) &&
+    parent.children.some((child) => child.type === ImmutableNoteCallerNode.getType())
+  )
+    return previous.type !== ImmutableNoteCallerNode.getType() && !isSerializedCharNode(previous);
+  return true;
+}
+
 /** The serialized twin of `$throughMarks` (attributeDisplay.utils.ts): an annotation mark is
  * presentation this export splices away, so a slot identified by its position among its parent's
  * children has to see through one. */
@@ -656,6 +709,8 @@ function recurseNodes(
   precedingSibling?: SerializedLexicalNode,
   // Whether `nodes` are a TypedMarkNode's own children — see `isNbspContentAtMark`.
   inMark = false,
+  // The char span or note `nodes` are the direct children of — see `isLoneNbspContent`.
+  parent?: SerializedCharNode | SerializedNoteNode,
 ): MarkerContent[] | undefined {
   const markers: MarkerContent[] = [];
   let childMarkers: MarkerContent[] | undefined;
@@ -694,14 +749,23 @@ function recurseNodes(
       case VerseNode.getType():
         markers.push(createVerseMarker(node as SerializedImmutableVerseNode | SerializedVerseNode));
         break;
-      case CharNode.getType():
+      case CharNode.getType(): {
+        let charContent = recurseNodes(
+          serializedCharNode.children,
+          viewOptions,
+          undefined,
+          serializedCharNode,
+          undefined,
+          false,
+          serializedCharNode,
+        );
+        if (isStandardView(viewOptions)) charContent = dropLeadingSpaces(charContent);
+        // A span that held only spaces has no content, as one that held nothing has none.
         markers.push(
-          createCharMarker(
-            serializedCharNode,
-            recurseNodes(serializedCharNode.children, viewOptions, undefined, serializedCharNode),
-          ),
+          createCharMarker(serializedCharNode, charContent?.length ? charContent : undefined),
         );
         break;
+      }
       case ParaNode.getType(): {
         let paraContent = recurseNodes(serializedParaNode.children, viewOptions);
         if (isStandardView(viewOptions)) paraContent = dropLeadingSpaces(paraContent);
@@ -740,6 +804,10 @@ function recurseNodes(
           serializedNoteNode.children,
           viewOptions,
           noteCallerSlotNode(serializedNoteNode.children, serializedNoteNode.caller),
+          undefined,
+          undefined,
+          false,
+          serializedNoteNode,
         );
         markers.push(
           createNoteMarker(
@@ -819,20 +887,11 @@ function recurseNodes(
           // Drop a bare caret host (EmptyVerseCaretGuardPlugin). A legitimate ZWSP inside real text
           // (Thai/Khmer line breaks) is not placeholder-only, so it still passes and is preserved.
           !isCursorPlaceholderOnly(serializedTextNode.text) &&
-          // A byte test, not (only) the separator state tag, and deliberately so: a lone-NBSP
-          // text node stands in for THREE presentation shapes — the tagged separators the
-          // forward adaptor builds, the empty-char placeholder, and an orphaned structural
-          // prefix a split or deletion strands in its own (untagged) node. The one content shape
-          // told apart is a no-break space an annotation mark split off content text, inside the
-          // mark or beside it (`isNbspContentAtMark`). Any other CONTENT string which is exactly
-          // one NBSP is dropped too; fixing that needs a per-context story for the untagged
-          // shapes, not a tag test alone. The forward side keeps its own output clear of the
-          // ambiguity: `createPara` leaves a spaces-only paragraph-leading string plain instead
-          // of rewriting a lone " " into exactly this shape, so in standard view only an
-          // authored lone-NBSP data string (displayed as `~`, never as a bare NBSP node) is at
-          // stake — leaving the drop to genuinely structural nodes.
+          // A lone-NBSP text is also what the engine's separators, spacers and empty-span
+          // placeholder look like, untagged ones included, so it is content only outside their
+          // slots (`isLoneNbspContent`).
           (serializedTextNode.text !== NBSP ||
-            isNbspContentAtMark(nodes, index, precedingSibling, enclosingChar, inMark)) &&
+            isLoneNbspContent(nodes, index, parent, precedingSibling, enclosingChar, inMark)) &&
           // The untagged NBSP-`|` form of milestone attribute text. Text right after a char span's
           // opening glyph is never that: its NBSP is the span's separator, and a `|…` after it is
           // content the attribute grammar left literal (`\w |lemma="g"grace\w*` — Paratext 9

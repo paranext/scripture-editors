@@ -4,6 +4,7 @@ import {
   pasteSelection,
   pasteSelectionAsPlainText,
   registerEmptyCopyGuard,
+  registerInlineProsePaste,
 } from "./clipboard.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { IS_APPLE, mergeRegister } from "@lexical/utils";
@@ -34,6 +35,7 @@ export function ClipboardPlugin(): null {
       // Every copy/cut this plugin's shortcuts synthesize — and every one the context menu or an
       // editor ref synthesizes against the same editor — passes through this guard.
       registerEmptyCopyGuard(editor),
+      registerInlineProsePaste(editor),
       editor.registerRootListener(
         (rootElement: HTMLElement | null, prevRootElement: HTMLElement | null) => {
           if (prevRootElement !== null) {

@@ -79,7 +79,7 @@ export type PropertyJsonPath = "" | `$.${string}` | `$['${string}']` | `$.conten
 export interface Usj {
     content: MarkerContent[];
     type: typeof USJ_TYPE;
-    version: typeof USJ_VERSION;
+    version: string;
 }
 
 // @public

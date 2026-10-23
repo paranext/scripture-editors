@@ -9,6 +9,7 @@ import {
   $getState,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   $setState,
   TextNode,
 } from "lexical";
@@ -21,6 +22,7 @@ import {
   $isCharNode,
   $isMarkerNode,
   $isParaNode,
+  authoredNbspState,
   charIdState,
   CharNode,
   displayRunDescriptor,
@@ -552,6 +554,184 @@ describe("CharNodePlugin", () => {
           .getChildren()
           .map((p) => p.getTextContent()),
       ).toEqual(["ab", `${NBSP}cd`]);
+    });
+  });
+
+  it("keeps the author's `~` that is a span's whole content when text is typed after it", async () => {
+    let tilde!: TextNode;
+    const { editor } = await testEnvironment(() => {
+      tilde = $setState($createTextNode(NBSP), authoredNbspState, true);
+      $getRoot().append($createParaNode().append($createCharNode("nd").append(tilde)));
+    });
+
+    await act(async () => {
+      editor.update(() => tilde.select(1, 1));
+    });
+    await act(async () => {
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+        selection.insertText("xy");
+      });
+    });
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toBe(`${NBSP}xy`);
+    });
+  });
+
+  describe("a no-break space an edit leaves as a span's only text", () => {
+    // Without glyphs, a span's lone NBSP is also what an EMPTY span holds as its caret host, and
+    // the save drops that one. A span whose other text was just removed is not empty: the NBSP that
+    // is left is the author's, and it has to survive the save.
+    async function $spanAfterRemoving(start: number, end: number) {
+      let text!: TextNode;
+      const { editor } = await testEnvironment(() => {
+        text = $createTextNode(`trail${NBSP}`);
+        $getRoot().append(
+          $createParaNode().append(
+            $createTextNode("Before "),
+            $createCharNode("nd").append(text),
+            $createTextNode(" after."),
+          ),
+        );
+      });
+      await act(async () => {
+        editor.update(() => {
+          const selection = $createRangeSelection();
+          selection.anchor.set(text.getKey(), start, "text");
+          selection.focus.set(text.getKey(), end, "text");
+          $setSelection(selection);
+          selection.removeText();
+        });
+      });
+      return { editor, text };
+    }
+
+    it("marks the NBSP left after the text in front of it is removed as the author's", async () => {
+      const { editor, text } = await $spanAfterRemoving(0, 5);
+
+      editor.getEditorState().read(() => {
+        const remaining = text.getLatest();
+        expect(remaining.getTextContent()).toBe(NBSP);
+        expect($getState(remaining, authoredNbspState)).toBe(true);
+      });
+    });
+
+    it("leaves an empty span's own placeholder untagged", async () => {
+      let placeholder!: TextNode;
+      const { editor } = await testEnvironment(() => {
+        placeholder = $createTextNode(NBSP);
+        $getRoot().append($createParaNode().append($createCharNode("nd").append(placeholder)));
+      });
+      await act(async () => {
+        editor.update(() => placeholder.markDirty());
+      });
+
+      editor.getEditorState().read(() => {
+        expect($getState(placeholder.getLatest(), authoredNbspState)).toBe(false);
+      });
+    });
+  });
+
+  describe("an empty span's placeholder when same-attribute spans combine", () => {
+    /** Each paragraph child's text, and for a span each of its children's. */
+    function $shape(): unknown[] {
+      return $getRoot()
+        .getFirstChildOrThrow<ParaNode>()
+        .getChildren()
+        .map((child) =>
+          $isCharNode(child)
+            ? child.getChildren().map((grandchild) => grandchild.getTextContent())
+            : child.getTextContent(),
+        );
+    }
+    const $authored = () => $setState($createTextNode(NBSP), authoredNbspState, true);
+
+    it.each([
+      {
+        name: "is dropped after a span ending in a nested span",
+        $build: () => [
+          $createCharNode("nd").append(
+            $createTextNode("x "),
+            $createCharNode("w").append($createTextNode("y")),
+          ),
+          $createCharNode("nd").append($createTextNode(NBSP)),
+        ],
+        expected: [["x ", "y"]],
+      },
+      {
+        name: "is dropped after a span ending in text",
+        $build: () => [
+          $createCharNode("nd").append($createTextNode("x")),
+          $createCharNode("nd").append($createTextNode(NBSP)),
+        ],
+        expected: [["x"]],
+      },
+      {
+        name: "is dropped after the author's `~`",
+        $build: () => [
+          $createCharNode("nd").append($authored()),
+          $createCharNode("nd").append($createTextNode(NBSP)),
+        ],
+        expected: [[NBSP]],
+      },
+      {
+        name: "is dropped before the author's `~`",
+        $build: () => [
+          $createCharNode("nd").append($createTextNode(NBSP)),
+          $createCharNode("nd").append($authored()),
+        ],
+        expected: [[NBSP]],
+      },
+      {
+        name: "stays, once, when both spans are empty",
+        $build: () => [
+          $createCharNode("nd").append($createTextNode(NBSP)),
+          $createCharNode("nd").append($createTextNode(NBSP)),
+        ],
+        expected: [[NBSP]],
+      },
+    ])("$name", async ({ $build, expected }) => {
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append($createParaNode().append(...$build()));
+      });
+
+      editor.getEditorState().read(() => {
+        expect($shape()).toEqual(expected);
+      });
+    });
+
+    it("moves a caret on the dropped placeholder to the end of the span it joins", async () => {
+      let empty!: CharNode;
+      const { editor } = await testEnvironment(() => {
+        $getRoot().append(
+          $createParaNode().append(
+            $createCharNode("nd").append($createTextNode("x")),
+            $createTextNode(" b"),
+          ),
+        );
+      });
+
+      await act(async () => {
+        editor.update(() => {
+          const placeholder = $createTextNode(NBSP);
+          empty = $createCharNode("nd").append(placeholder);
+          $getRoot().getFirstChildOrThrow<ParaNode>().getFirstChildOrThrow().insertAfter(empty);
+          placeholder.select(1, 1);
+        });
+      });
+      await act(async () => {
+        editor.update(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("expected a range selection");
+          selection.insertText("z");
+        });
+      });
+
+      editor.getEditorState().read(() => {
+        expect($shape()).toEqual([["xz"], " b"]);
+      });
     });
   });
 

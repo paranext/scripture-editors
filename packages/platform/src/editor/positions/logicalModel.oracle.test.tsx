@@ -12,6 +12,7 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { baseTestEnvironment } from "../../../../../libs/shared-react/src/plugins/usj/react-test.utils";
 import editorUsjAdaptor from "../adaptors/editor-usj.adaptor";
+import { editorView } from "../editorViews.test-helpers";
 import { serializedState } from "../markerEdit/markerEdit.test-helpers";
 import { displayTextToUsj } from "../markerEdit/whitespaceDisplay.utils";
 import { MarkerContent, Usj, usxStringToUsj } from "@eten-tech-foundation/scripture-utilities";
@@ -143,6 +144,12 @@ const modes: { name: string; viewOptions: ViewOptions; hasSeparators: boolean }[
   { name: "visible", viewOptions: generatorViewOptions("visible"), hasSeparators: false },
   { name: "hidden", viewOptions: generatorViewOptions("hidden"), hasSeparators: false },
   { name: "standard", viewOptions: standardViewOptions, hasSeparators: true },
+  { name: "formatted", viewOptions: editorView("formatted"), hasSeparators: false },
+  {
+    name: "paragraph-structure",
+    viewOptions: editorView("paragraph-structure"),
+    hasSeparators: false,
+  },
 ];
 
 /**
@@ -426,11 +433,22 @@ function $hasNumberAttribute(node: LexicalNode | null | undefined): boolean {
   );
 }
 
+/** Whether every item is text whose content (past any lead) is nothing but display spaces. */
+function holdsOnlyDisplaySpaces(items: LogicalContentItem[]): boolean {
+  return items.every(
+    (item) =>
+      item.type === "text" &&
+      item.segments.every((segment) =>
+        /^[ \u00A0]*$/.test(segment.node.getTextContent().slice(segment.lead)),
+      ),
+  );
+}
+
 /**
  * Whether `items[index]` follows a marker's separator: it starts a paragraph's content — a
  * paragraph's first item, or the root's first item from an implied paragraph (whose content the
- * exporter splices into the root) not after a chapter's `\ca`/`\cp` — or it follows a verse
- * number with no `\va`/`\vp`.
+ * exporter splices into the root) not after a chapter's `\ca`/`\cp` — it starts a char span's
+ * content, or it follows a verse number with no `\va`/`\vp`.
  */
 function $followsSeparator(
   parent: ElementNode,
@@ -445,6 +463,8 @@ function $followsSeparator(
   )
     return true;
   if ($isParaNode(parent)) return index === 0;
+  // A char span's content follows its opener's separator, unless spaces are all it holds.
+  if ($isCharNode(parent)) return index === 0 && !holdsOnlyDisplaySpaces(items);
   const paragraph = $paragraphOf(firstNodeOf(items[index]));
   if (!$isImpliedParaNode(paragraph) || $hasNumberAttribute(paragraph.getPreviousSibling()))
     return false;

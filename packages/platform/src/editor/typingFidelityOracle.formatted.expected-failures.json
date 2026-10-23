@@ -1,0 +1,16 @@
+{
+  "testUSFM-1SA-1.usj": {
+    "Backspace at letter|edge span-end: ignored": "Backspace with the caret at the paragraph's end, after the span its last text is in (an element caret), removes nothing here, while the same key with the caret in the span's text works. No content is changed. Typing-fidelity finding T-16."
+  },
+  "testUSFM-2SA-2.usj": {
+    "Backspace at verse|verse: Redo does not re-apply the keystroke": "Undo after a deletion or a break next to an empty verse restores the document exactly, but Redo then has nothing to re-apply (verified by hand on `\\p a \\v 2\\v 3\\v 4`); likely a non-historic commit after the undo (the empty-verse caret host or spacing) clearing the redo stack. No data is lost. Typing-fidelity finding T-11.",
+    "Enter at verse|verse: Redo does not re-apply the keystroke": "Undo after a deletion or a break next to an empty verse restores the document exactly, but Redo then has nothing to re-apply (verified by hand on `\\p a \\v 2\\v 3\\v 4`); likely a non-historic commit after the undo (the empty-verse caret host or spacing) clearing the redo stack. No data is lost. Typing-fidelity finding T-11."
+  },
+  "testUSFM-2SA-3-corrected.usj": {
+    "Backspace at verse|verse: Redo does not re-apply the keystroke": "Undo after a deletion or a break next to an empty verse restores the document exactly, but Redo then has nothing to re-apply (verified by hand on `\\p a \\v 2\\v 3\\v 4`); likely a non-historic commit after the undo (the empty-verse caret host or spacing) clearing the redo stack. No data is lost. Typing-fidelity finding T-11.",
+    "Enter at verse|verse: Redo does not re-apply the keystroke": "Undo after a deletion or a break next to an empty verse restores the document exactly, but Redo then has nothing to re-apply (verified by hand on `\\p a \\v 2\\v 3\\v 4`); likely a non-historic commit after the undo (the empty-verse caret host or spacing) clearing the redo stack. No data is lost. Typing-fidelity finding T-11."
+  },
+  "web-matthew-5-section-header.usj": {
+    "Enter at edge|letter span-start: Undo does not restore the document": "Enter in front of a char span at a paragraph's start dirties only the span's unchanged text, which Lexical's history folds into the previous undo step (its single-unchanged-leaf merge rule); the ParaNodePlugin mark that keeps the break its own step does not reach this shape in this chapter. Typing-fidelity finding T-12."
+  }
+}

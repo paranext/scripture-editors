@@ -126,6 +126,30 @@ describe("Editor USJ Adaptor", () => {
     expect(usj).toEqual(usjGen1v1);
   });
 
+  it("should stamp the version it is given", () => {
+    const editorState = editor.parseEditorState(editorStateGen1v1);
+
+    const usj = editorUsjAdaptor.deserializeEditorState(editorState, undefined, "3.0");
+
+    expect(usj).toEqual({ ...usjGen1v1, version: "3.0" });
+  });
+
+  it("should stamp the version it is given on an empty document", () => {
+    const editorState = editor.parseEditorState(editorStateEmpty);
+
+    const usj = editorUsjAdaptor.deserializeEditorState(editorState, undefined, "3.0");
+
+    expect(usj).toEqual({ ...EMPTY_USJ, version: "3.0" });
+  });
+
+  it("should stamp the version it is given on a lone empty implied para", () => {
+    initializeSerialize(undefined, undefined);
+    reset();
+    const usj = deserializeSerializedEditorState(serializeEditorState(undefined), undefined, "3.0");
+
+    expect(usj).toEqual({ ...EMPTY_USJ, version: "3.0" });
+  });
+
   it("should convert to USJ from Lexical editor state JSON with an empty implied para", () => {
     const editorState = editor.parseEditorState(editorStateGen1v1ImpliedParaEmpty);
 
@@ -519,6 +543,7 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
     const roundTripped = deserializeSerializedEditorState(
       state,
       getViewOptions(STANDARD_VIEW_MODE),
+      usj.version,
     );
     // Exact equality, not just a substring: the outer span's own glyph-adjacent separator
     // ("LORD", right after the opening glyph) is still stripped, and the byte after the nested
@@ -746,11 +771,11 @@ describe("Editor USJ Adaptor — caret-host placeholder", () => {
       if (!roundTripped) throw new Error("Expected a round-tripped USJ");
 
       const note = findNote(roundTripped);
-      // Both occurrences survive. The loose one loses only its leading space: Standard view
-      // collapses the space run it makes with the separator the writer puts after the caller.
+      // Both occurrences survive. Each loses only its leading space, which follows a separator
+      // the writer puts in front of it: the caller's for the loose one, `\ft`'s for the other.
       expect(note?.content).toEqual([
         callerLookalike.trimStart(),
-        { type: "char", marker: "ft", content: [callerLookalike] },
+        { type: "char", marker: "ft", content: [callerLookalike.trimStart()] },
       ]);
     });
 
@@ -1473,9 +1498,7 @@ describe("Note caller index vs the USJ note walk", () => {
   });
 
   // A paragraph-leading whitespace-only content string is where the standard-view display
-  // mapping and the reverse adaptor's lone-NBSP structural-spacer drop can meet: a lone " "
-  // rewritten to display NBSP becomes byte-identical to the engine's untagged spacers, so it
-  // was swallowed on save. Each variant pins the exact round trip.
+  // mapping and the reverse adaptor's lone-NBSP rule meet. Each variant pins the exact round trip.
   describe("paragraph-leading whitespace-only content string round trip", () => {
     function roundTripLeading(lead: string, viewMode: string): MarkerContent[] | undefined {
       const usj: Usj = {
@@ -1530,13 +1553,9 @@ describe("Note caller index vs the USJ note walk", () => {
       ]);
     });
 
-    // Known cost of the reverse adaptor's lone-NBSP byte test (documented at the test itself in
-    // editor-usj.adaptor.ts): outside standard view there is no display mapping to disguise a
-    // data NBSP, so a content string that is EXACTLY one NBSP is indistinguishable from an
-    // untagged structural spacer and is dropped. Pinned as-is: fixing it needs a per-context
-    // story for the untagged spacer shapes, not a byte-test tweak.
-    it("formatted view: drops a lone leading data NBSP (byte-test cost, pinned)", () => {
+    it("formatted view: preserves a lone leading data NBSP", () => {
       expect(roundTripLeading(NBSP, FORMATTED_VIEW_MODE)).toEqual([
+        NBSP,
         { type: "verse", marker: "v", number: "1" },
         "in the days",
       ]);

@@ -67,11 +67,9 @@ describe("testUSFM corpus round trip (USJ -> USX -> USJ)", () => {
   it.each(FIXTURES)("%s", (name) => {
     const usj = readOracle(name);
     const roundTripped = usxStringToUsj(usjToUsxString(usj));
-    // The oracles carry `version: "3.0"`; the converters emit 3.1. That is the documented output
-    // version, not a round-trip loss, so compare CONTENT — the bytes and structure this net
-    // exists to protect — rather than the version stamp.
-    expect(withoutEmptyAttributes(roundTripped.content)).toEqual(
-      withoutEmptyAttributes(usj.content),
-    );
+    expect({ ...roundTripped, content: withoutEmptyAttributes(roundTripped.content) }).toEqual({
+      ...usj,
+      content: withoutEmptyAttributes(usj.content),
+    });
   });
 });

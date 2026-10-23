@@ -1,6 +1,6 @@
 import { $removeLeadingSpace, wasNodeCreated } from "../../nodes/usj/node-react.utils";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getNodeByKey, LexicalEditor } from "lexical";
+import { $getNodeByKey, $isElementNode, LexicalEditor } from "lexical";
 import { useEffect } from "react";
 import { $isParaNode, ParaNode } from "shared";
 
@@ -25,22 +25,40 @@ function useParaNode(editor: LexicalEditor) {
 
 /**
  * Remove any leading space if the node was just created, e.g. by hitting the enter key in the
- * middle of a paragraph. Update ParaNode to not contain text if it is a 'b' marker (blank line).
- * However, if the 'b' ParaNode already contained text, it can be modified (backwards compatible
- * with PT9 & USFM v3.0).
+ * middle of a paragraph. Update ParaNode to not contain text if it is a 'b' marker (blank line):
+ * text typed into an empty one is removed. However, if the 'b' ParaNode already contained text, it
+ * can be modified (backwards compatible with PT9 & USFM v3.0), and content a join moves into an
+ * empty one from the paragraph after it is kept.
  * @param node - ParaNode thats needs updating.
  */
 function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
-  if (wasNodeCreated(editor, node.getKey())) $removeLeadingSpace(node.getFirstChild());
+  if (wasNodeCreated(editor, node.getKey())) {
+    $removeLeadingSpace(node.getFirstChild());
+    // Lexical's history folds an update whose only dirty leaf is a text that kept its text into
+    // the previous undo step. A paragraph break in front of a char span or a note is such an
+    // update (only the text before the break is touched), so the new paragraph's first leaf is
+    // marked too, and Undo takes the break back on its own.
+    const first = node.getFirstDescendant();
+    if (first && !$isElementNode(first)) first.markDirty();
+  }
 
   if (!$isParaNode(node) || node.getMarker() !== "b" || node.isEmpty()) return;
 
   const prevEditorState = editor.getEditorState();
-  const wasEmpty = prevEditorState.read(() => {
+  const { wasEmpty, nextKey } = prevEditorState.read(() => {
     const prevNode = $getNodeByKey(node.getKey());
-    return $isParaNode(prevNode) && (prevNode?.isEmpty() ?? false);
+    return {
+      wasEmpty: $isParaNode(prevNode) && (prevNode?.isEmpty() ?? false),
+      nextKey: prevNode?.getNextSibling()?.getKey(),
+    };
   });
   if (!wasEmpty) return;
+
+  // Only text typed into the blank line is refused. A join with the paragraph after it (Delete at
+  // the blank line, Backspace at that paragraph's start, or a range across the break typed over)
+  // moves that paragraph's content in, and clearing it would delete that paragraph's text.
+  const next = nextKey === undefined ? null : $getNodeByKey(nextKey);
+  if (nextKey !== undefined && (!next || !next.isAttached())) return;
 
   node.clear();
 }

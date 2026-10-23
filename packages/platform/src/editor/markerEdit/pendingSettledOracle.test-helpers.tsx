@@ -46,6 +46,13 @@
  * one of those bytes. And the same character typed at the same place on screen, in whichever node
  * a caret there is spelled in, saves the same file.
  *
+ * Content must not disappear with the keystroke itself, either. Each edit's screen is read twice:
+ * as the edit left it, before any transform ran, and as its transforms left it once the keystroke
+ * landed. The second may only respell the first — no content byte (`unlandedEdit`) may go, the way
+ * a span and the text after it would vanish if a transform dropped them in the keystroke's own
+ * update. The settle's checks cannot see that: the pending document already lacks those bytes, so
+ * it settles to itself.
+ *
  * Positions are held to the same contract while the edit is pending. Every caret position, node
  * boundaries included, reports (`getSelection()`'s translation) a location the same bytes report
  * after the settle — exactly, or, where the settled document reports nothing there, the closest
@@ -138,7 +145,7 @@ function chapterSideUsj(beside: MarkerContent): Usj {
 
 /** The documents the oracle edits; the root child after the chapter is the one edited — the
  * first body paragraph, or a `\ca`/`\cp` span beside the chapter. */
-const CORPUS: { name: string; usj: Usj }[] = [
+export const KEYSTROKE_CORPUS: { name: string; usj: Usj }[] = [
   {
     name: "closed char span",
     usj: twoParaUsj(["In the ", { type: "char", marker: "w", content: ["grace"] }, " of God"]),
@@ -255,7 +262,7 @@ const CORPUS: { name: string; usj: Usj }[] = [
  * view shows a line break before every verse, which is not a byte of the document.
  */
 const UNFORMATTED_CORPUS: { name: string; usj: Usj }[] = [
-  ...CORPUS,
+  ...KEYSTROKE_CORPUS,
   {
     name: "text touching a following verse",
     usj: twoParaUsj([
@@ -301,7 +308,7 @@ export const PROTECTED_NOTE_SHELL_VIEW = "standard+protectedNoteShell";
  * to protect, so only the note rows — the corpus's, and one whose content span runs on to the
  * note's closer, as ParatextData writes footnote text. */
 const PROTECTED_NOTE_SHELL_CORPUS: { name: string; usj: Usj }[] = [
-  ...CORPUS.filter(
+  ...KEYSTROKE_CORPUS.filter(
     ({ name }) =>
       name === "note" || name === "note with an empty caller" || name === "unclosed note",
   ),
@@ -324,7 +331,7 @@ const PROTECTED_NOTE_SHELL_CORPUS: { name: string; usj: Usj }[] = [
 function corpusFor(view: string): { name: string; usj: Usj }[] {
   if (view === PROTECTED_NOTE_SHELL_VIEW) return PROTECTED_NOTE_SHELL_CORPUS;
   if (view === "unformatted") return UNFORMATTED_CORPUS;
-  return CORPUS;
+  return KEYSTROKE_CORPUS;
 }
 
 /** The view options the oracle runs `view` in: an `ORACLE_VIEWS` name, or
@@ -1130,14 +1137,30 @@ function matchedIndexes(a: string, b: string): Int32Array {
   return match;
 }
 
+/** Whether the byte at `index` of `text` is content: not whitespace, and not a byte of a marker
+ * token (`\`, an optional `+`, a name, an optional `*`). */
+function isContentByte(text: string, index: number): boolean {
+  if (/\s/.test(text[index])) return false;
+  for (const match of text.matchAll(MARKER_TOKEN_ANYWHERE_REGEX))
+    if (index >= match.index && index < match.index + match[0].length) return false;
+  return true;
+}
+
 /** The bytes the settle lost and gained, beyond respelling ({@link isRespelledByte}), with a byte
- * that only moved counted on neither side; `undefined` when there are none. */
-function unrespelledBytes(pending: UsfmBytes, settled: UsfmBytes): string | undefined {
+ * that only moved counted on neither side; `undefined` when there are none. `isContentOnly` counts
+ * only content bytes ({@link isContentByte}). */
+function unrespelledBytes(
+  pending: UsfmBytes,
+  settled: UsfmBytes,
+  isContentOnly = false,
+): string | undefined {
   const match = matchedIndexes(pending.text, settled.text);
   const matchedInSettled = new Set(match);
+  const counted = (bytes: UsfmBytes, index: number): boolean =>
+    !isContentOnly || isContentByte(bytes.text, index);
   const lost: string[] = [];
   for (let index = 0; index < pending.text.length; index += 1) {
-    if (match[index] >= 0) continue;
+    if (match[index] >= 0 || !counted(pending, index)) continue;
     // Where the byte would sit in the settled lines: in front of the next byte that is kept.
     let next = index + 1;
     while (next < pending.text.length && match[next] < 0) next += 1;
@@ -1147,7 +1170,11 @@ function unrespelledBytes(pending: UsfmBytes, settled: UsfmBytes): string | unde
   }
   const gained: string[] = [];
   for (let index = 0; index < settled.text.length; index += 1)
-    if (!matchedInSettled.has(index) && !isRespelledByte(settled, index, "settled", false))
+    if (
+      !matchedInSettled.has(index) &&
+      counted(settled, index) &&
+      !isRespelledByte(settled, index, "settled", false)
+    )
       gained.push(settled.text[index]);
   const unmatched = lost.filter((byte) => {
     const at = gained.indexOf(byte);
@@ -1187,8 +1214,12 @@ function withoutRanges(
  * drops from the screen and the file alike is invisible to the screen-equals-file check; this is
  * what sees it.
  */
-function unrespelledChange(pending: UsfmBytes, settled: UsfmBytes): string | undefined {
-  const change = unrespelledBytes(pending, settled);
+function unrespelledChange(
+  pending: UsfmBytes,
+  settled: UsfmBytes,
+  isContentOnly = false,
+): string | undefined {
+  const change = unrespelledBytes(pending, settled, isContentOnly);
   if (!change) return undefined;
   const supplied = [...settled.lineMarkers, ...settled.callers];
   // Either respelling alone, or both together (a `\p` and a caller supplied for one note).
@@ -1199,9 +1230,31 @@ function unrespelledChange(pending: UsfmBytes, settled: UsfmBytes): string | und
       .filter((second) => second[0] >= first[1] || second[1] <= first[0])
       .map((second) => [first, second]),
   ]);
-  return combinations.some((ranges) => !unrespelledBytes(pending, withoutRanges(settled, ranges)))
+  return combinations.some(
+    (ranges) => !unrespelledBytes(pending, withoutRanges(settled, ranges), isContentOnly),
+  )
     ? undefined
     : change;
+}
+
+/**
+ * The content an edit's own update lost or gained beyond respelling it: `spliced` is the screen the
+ * edit left before any transform ran, and `landed` the one its transforms (and the updates they
+ * schedule) left — compared as {@link unrespelledChange} compares a settle, so content a transform
+ * drops with the keystroke is seen before anything is pending to settle. Only content bytes are
+ * counted ({@link isContentByte}): a transform may move a typed byte across a marker's separator,
+ * which is structure the normalization drops, or put back a glyph a protected note shell keeps;
+ * what becomes of whitespace and markers is held to the settle's comparisons. `undefined` when the
+ * transforms only respelled.
+ */
+function unlandedEdit(spliced: string, landed: string, keepRuns: boolean): string | undefined {
+  const typed = normalizeUsfm(spliced, keepRuns);
+  const shown = normalizeUsfm(landed, keepRuns);
+  const change = unrespelledChange(typed, shown, true);
+  return (
+    change &&
+    `${change}\n    typed  ${JSON.stringify(typed.text)}\n    landed ${JSON.stringify(shown.text)}`
+  );
 }
 
 /** Normalized lines as one string: where blocks break is spelled by their markers. */
@@ -1354,6 +1407,9 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
             let applied = false;
             let place: string | undefined;
             let isInNote = false;
+            // Per edit (the keystroke, and the character typed after it): the screen its own
+            // update left before any transform ran, and the one the keystroke landed on.
+            const edits: { spliced: string | undefined; landed?: string }[] = [];
             // In the popover's view every caret placement is announced as a selection change, as a
             // click or an arrow press announces it, so the shell's caret guard moves a caret it
             // does not let rest there. A splice at such a place is no keystroke a user can make
@@ -1398,6 +1454,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                     "text",
                   );
                   selection.removeText();
+                  edits.push({ spliced: $screenLines() });
                   return;
                 }
                 if ("extend" in keystroke) {
@@ -1451,10 +1508,17 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 applied = true;
                 node.setTextContent(result.text);
                 node.select(result.caret, result.caret);
+                edits.push({ spliced: $screenLines() });
               });
               await Promise.resolve();
               await Promise.resolve();
             });
+            const landed = (): void => {
+              const edit = edits.at(-1);
+              if (edit && edit.landed === undefined)
+                edit.landed = mounted.lexical.getEditorState().read($screenLines);
+            };
+            landed();
             // An empty `next` replaces a range with nothing: Backspace.
             const next =
               "character" in keystroke
@@ -1470,7 +1534,13 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 mounted.lexical.update(
                   () => {
                     const selection = $getSelection();
-                    if ($isRangeSelection(selection)) selection.insertText(next);
+                    if (!$isRangeSelection(selection)) return;
+                    selection.insertText(next);
+                    // A range replaced here skips the commands the marker-edit engine answers for
+                    // a range covering glyph bytes (a key's delete-then-type), so what its
+                    // transforms make of it is not what a keystroke makes; it is held to the
+                    // settle's checks only.
+                    if (!("extend" in keystroke)) edits.push({ spliced: $screenLines() });
                   },
                   // Its own history entry, so an undo can stop between the two keystrokes.
                   history ? { tag: HISTORY_PUSH_TAG } : undefined,
@@ -1478,6 +1548,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 await Promise.resolve();
                 await Promise.resolve();
               });
+            landed();
             if (applied && history) {
               await depart(mounted);
               for (const command of history)
@@ -1558,6 +1629,18 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
               pendingScreen && settledScreen
                 ? unrespelledChange(pendingScreen, settledScreen)
                 : undefined;
+            // And each edit only did what it typed: the screen its transforms left only respells
+            // the bytes the keystroke itself left, so no content disappears with the keystroke,
+            // before anything is pending to settle.
+            const keystrokeChange = edits
+              .map(({ spliced, landed: shownAfter }) =>
+                spliced === undefined || shownAfter === undefined
+                  ? undefined
+                  : unlandedEdit(spliced, shownAfter, keepRuns),
+              )
+              .find((detail) => detail !== undefined);
+            if (keystrokeChange)
+              mismatches.set(`${label} [keystroke]`, `${label} [keystroke] ${keystrokeChange}`);
             if (change)
               mismatches.set(
                 `${label} [respelled]`,
@@ -1582,6 +1665,7 @@ export function describePendingSettledOracle(view: string, listFile: URL): void 
                 `${label} [positions]`,
                 `${label} [same place]`,
                 `${label} [respelled]`,
+                `${label} [keystroke]`,
                 `${label} [outside the note]`,
               ])
                 if (mismatches.has(key))

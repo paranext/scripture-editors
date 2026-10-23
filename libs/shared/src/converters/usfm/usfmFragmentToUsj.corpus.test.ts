@@ -4,8 +4,9 @@
  * `testUsfmCorpus/README.md`). This pins ParatextData parse fidelity — the tokenizer's reference
  * semantics — against a corpus that deliberately exercises USFM's edges.
  *
- * The tokenizer diverges NOWHERE on this corpus — every fixture must produce an empty diff.
- * Any new divergence fails its test with a self-describing entry list.
+ * Every fixture must produce an empty diff unless its case pins a known divergence, and a pinned
+ * case must produce exactly its pinned list, so a fix and a new loss both fail the test. Each
+ * failure prints a self-describing entry list.
  *
  * Two deliberate framing choices:
  *
@@ -149,7 +150,16 @@ function corpusDivergences(usfmFile: string, usjFile: string): string[] {
   return diffs;
 }
 
-const CASES: { label: string; usfm: string; usj: string }[] = [
+/**
+ * A divergence a case is KNOWN to have, pinned exactly: the case fails if its diff changes in
+ * either direction, so the work named in `reason` deletes or trims the entry as part of its fix.
+ */
+interface KnownDivergence {
+  reason: string;
+  entries: string[];
+}
+
+const CASES: { label: string; usfm: string; usj: string; known?: KnownDivergence }[] = [
   { label: "testUSFM 2SA 1", usfm: "testUSFM-2SA-1.usfm", usj: "testUSFM-2SA-1.usj" },
   { label: "testUSFM 2SA 2", usfm: "testUSFM-2SA-2.usfm", usj: "testUSFM-2SA-2.usj" },
   {
@@ -168,11 +178,40 @@ const CASES: { label: string; usfm: string; usj: string }[] = [
     usfm: "web-matthew-5-section-header.usfm",
     usj: "web-matthew-5-section-header.usj",
   },
+  { label: "testUSFM 2SA 4", usfm: "testUSFM-2SA-4.usfm", usj: "testUSFM-2SA-4.usj" },
+  {
+    label: "testUSFM 2SA 5",
+    usfm: "testUSFM-2SA-5.usfm",
+    usj: "testUSFM-2SA-5.usj",
+    known: {
+      reason: "bare `\\` read as text, not a nameless marker",
+      entries: [
+        // ParatextData reads a bare `\` at any token start as a marker with an empty name — here
+        // three `<para style="">` paragraphs (`\ 2`, `\bd \ text`, the `\` ending verse 3). The
+        // tokenizer keeps each one as literal text, so the `\ 2` stays in verse 1's paragraph and
+        // the unclosed `\bd` runs on through verse 3. PR #11 reads a nameless marker only where a
+        // fragment opens with one (`opensNamelessParagraph`).
+        '$[3]<para:p>[1] text: oracle "Chapter 5 holds deliberately damaged USFM that ..." vs "Chapter 5 holds deliberately damaged USFM that ..."',
+        '$[3]<para:p>[+2] tokenizer emits <verse:v number="2"> — oracle lacks it',
+        '$[3]<para:p>[+3] tokenizer emits "A bare backslash after a character marker " — oracle lacks it',
+        '$[3]<para:p>[+4] tokenizer emits <char:bd closed="false"> — oracle lacks it',
+        "$[4] oracle has <para:> — tokenizer lacks it",
+        "$[5] oracle has <para:> — tokenizer lacks it",
+        "$[6] oracle has <para:> — tokenizer lacks it",
+      ],
+    },
+  },
+  { label: "testUSFM 1SA 1", usfm: "testUSFM-1SA-1.usfm", usj: "testUSFM-1SA-1.usj" },
 ];
 
 describe("usfmFragmentToUsjContent — testUSFM cross-oracle corpus (Paratext 9.5 USJ)", () => {
-  it.each(CASES)("$label: zero divergence from ParatextData's own USJ", ({ usfm, usj }) => {
-    // Each diff entry names its path and both sides, so a failure is self-diagnosing.
-    expect(corpusDivergences(usfm, usj)).toEqual([]);
-  });
+  for (const { label, usfm, usj, known } of CASES) {
+    const title = known
+      ? `${label}: only the known divergence from ParatextData's own USJ (${known.reason})`
+      : `${label}: zero divergence from ParatextData's own USJ`;
+    it(title, () => {
+      // Each diff entry names its path and both sides, so a failure is self-diagnosing.
+      expect(corpusDivergences(usfm, usj)).toEqual(known?.entries ?? []);
+    });
+  }
 });

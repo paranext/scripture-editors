@@ -1,6 +1,7 @@
 /**
  * Shared harness for the settled-output suites: one Standard-view `Editor` mount behind its public
- * `EditorRef`, plus the raw Lexical editor the tests drive edits through. A plain helper module
+ * `EditorRef`, plus the raw Lexical editor the tests drive edits through (both thin wrappers over
+ * `mountInView`, which mounts any view). A plain helper module
  * rather than an export from one of the suites, so a suite that needs it does not re-register the
  * other suite's tests by importing it.
  */
@@ -9,8 +10,7 @@ import {
   reset,
   serializeEditorState,
 } from "./adaptors/usj-editor.adaptor";
-import Editor from "./Editor";
-import { EditorProps, EditorRef } from "./editor.model";
+import { MountedEditor, mountInView, MountOptions } from "./editorViews.test-helpers";
 import {
   $rebuildBook,
   $rebuildNoteContent,
@@ -18,95 +18,20 @@ import {
   Tier2Context,
 } from "./markerEdit/tier2Rebuild.utils";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
-import { SerializedVerseRef } from "@sillsdev/scripture";
-import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
-import { act, render } from "@testing-library/react";
 import { $getRoot, $isElementNode, LexicalEditor, LexicalNode } from "lexical";
-import { createRef, ReactElement, RefObject } from "react";
 import {
   $isBookNode,
   $isNoteNode,
   $isParaNode,
   getMarker as bundledGetMarker,
-  LoggerBasic,
   NoteNode,
-  StyleInfo,
   TypedMarkNode,
 } from "shared";
-import {
-  getViewOptions,
-  STANDARD_VIEW_MODE,
-  StructureProtectionMode,
-  usjReactNodes,
-  ViewOptions,
-} from "shared-react";
+import { getViewOptions, STANDARD_VIEW_MODE, usjReactNodes, ViewOptions } from "shared-react";
 import { expect } from "vitest";
 // Reaching inside only for tests.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { createBasicTestEnvironment } from "../../../../libs/shared/src/nodes/usj/test.utils";
-
-// jsdom doesn't implement `getBoundingClientRect` on `Range`; moving the caret gives the editor
-// root DOM focus, and Lexical's post-commit scroll-into-view reads a Range rect. Stub it (a zero
-// rect nothing asserts on), same as the marker-edit tests.
-if (typeof Range.prototype.getBoundingClientRect !== "function") {
-  Range.prototype.getBoundingClientRect = function (): DOMRect {
-    return {
-      x: 0,
-      y: 0,
-      width: 0,
-      height: 0,
-      top: 0,
-      right: 0,
-      bottom: 0,
-      left: 0,
-      toJSON() {
-        return this;
-      },
-    };
-  };
-}
-
-// jsdom's `HTMLElement.focus()` unconditionally collapses the document Selection to the start of
-// the focused element; a real browser PRESERVES an existing in-element selection across `focus()`.
-// Lexical's `updateDOMSelection` calls `rootElement.focus({ preventScroll: true })` on its "the DOM
-// selection already matches the target" branch (a cursor-visibility ensure-focus) whenever the root
-// isn't `document.activeElement` — which, after a mutating update that leaves the caret unmoved
-// (the marker-edit engine's deferred settle pass), is exactly the branch taken. In a browser that
-// call is a no-op for the selection; in jsdom it wipes the caret the reconcile just confirmed, and
-// a later deferred native `selectionchange` reads the collapsed-to-start selection back into the
-// editor state — so a correctly restored caret silently becomes "start of the first block".
-// Restoring the pre-focus range models the browser and keeps the caret where Lexical put it.
-// (`ScriptureReferencePlugin.test.tsx` carries its own copy of this shim for the same reason.)
-const originalFocus = HTMLElement.prototype.focus;
-HTMLElement.prototype.focus = function focus(options?: FocusOptions) {
-  const selection = document.getSelection();
-  const savedRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
-  originalFocus.call(this, options);
-  if (savedRange && selection) {
-    selection.removeAllRanges();
-    selection.addRange(savedRange);
-  }
-};
-
-/** The editor's host-facing change-notification callback type. */
-type OnUsjChange = EditorProps<LoggerBasic>["onUsjChange"];
-
-/** Optional wiring a mounted test editor may need; all default to absent. */
-interface MountOptions {
-  onUsjChange?: OnUsjChange;
-  onSelectionChange?: EditorProps<LoggerBasic>["onSelectionChange"];
-  scrRef?: SerializedVerseRef;
-  onScrRefChange?: (scrRef: SerializedVerseRef) => void;
-  logger?: LoggerBasic;
-  isReadonly?: boolean;
-  styleInfo?: StyleInfo;
-  /**
-   * `EditorOptions.structureProtectionMode` — the host option the real `Editor` must hand down to
-   * `MarkerEditPlugin` (and to `StructureKeyboardPlugin`) for a protected document's paste to
-   * reach the sanitizer.
-   */
-  structureProtectionMode?: StructureProtectionMode;
-}
 
 export function requireStandardViewOptions(): ViewOptions {
   const options = getViewOptions(STANDARD_VIEW_MODE);
@@ -140,82 +65,6 @@ export const spanUsj: Usj = {
   ],
 };
 
-/** A mounted test editor: its public ref, the raw Lexical editor, and the teardown a row needs
- * when what it is pinning is what happens after the view goes away. */
-interface MountedEditor {
-  ref: RefObject<EditorRef | null>;
-  lexical: LexicalEditor;
-  unmount: () => void;
-  /** Re-render the same editor with a different project stylesheet, the way a host passes one in
-   * once it has loaded. */
-  rerenderWithStyleInfo: (styleInfo: StyleInfo | undefined) => Promise<void>;
-  /** Re-render the same editor at a different scripture reference, the way a host navigates it. */
-  rerenderWithScrRef: (scrRef: SerializedVerseRef) => Promise<void>;
-}
-
-async function mountEditor(
-  usj: Usj,
-  view: ViewOptions,
-  {
-    onUsjChange,
-    onSelectionChange,
-    scrRef,
-    onScrRefChange,
-    logger,
-    isReadonly,
-    styleInfo,
-    structureProtectionMode,
-  }: MountOptions = {},
-): Promise<MountedEditor> {
-  const ref = createRef<EditorRef>();
-  const lexicalRef = createRef<LexicalEditor>();
-  const capture: ReactElement = <EditorRefPlugin editorRef={lexicalRef} />;
-  let currentScrRef = scrRef;
-  const editorWith = (currentStyleInfo: StyleInfo | undefined): ReactElement => (
-    <Editor
-      ref={ref}
-      defaultUsj={usj}
-      scrRef={currentScrRef}
-      onScrRefChange={onScrRefChange}
-      options={{ view, isReadonly, styleInfo: currentStyleInfo, structureProtectionMode }}
-      onUsjChange={onUsjChange}
-      onSelectionChange={onSelectionChange}
-      logger={logger}
-    >
-      {capture}
-    </Editor>
-  );
-  let unmount: (() => void) | undefined;
-  let rerender: ((ui: ReactElement) => void) | undefined;
-  await act(async () => {
-    ({ unmount, rerender } = render(editorWith(styleInfo)));
-  });
-  if (!lexicalRef.current) throw new Error("lexical editor was not captured");
-  if (!unmount || !rerender) throw new Error("render did not return a teardown");
-  const rerenderEditor = rerender;
-  let currentStyleInfo = styleInfo;
-  return {
-    ref,
-    lexical: lexicalRef.current,
-    unmount,
-    rerenderWithStyleInfo: async (nextStyleInfo) => {
-      currentStyleInfo = nextStyleInfo;
-      await act(async () => {
-        rerenderEditor(editorWith(nextStyleInfo));
-        await Promise.resolve();
-      });
-    },
-    rerenderWithScrRef: async (nextScrRef) => {
-      currentScrRef = nextScrRef;
-      await act(async () => {
-        rerenderEditor(editorWith(currentStyleInfo));
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-    },
-  };
-}
-
 /**
  * Mount `Editor` in Standard view and hand back its public ref plus the raw Lexical editor.
  *
@@ -235,7 +84,7 @@ export async function mountStandardViewEditor(
   usj: Usj,
   options: MountOptions = {},
 ): Promise<MountedEditor> {
-  return mountEditor(usj, requireStandardViewOptions(), options);
+  return mountInView(usj, requireStandardViewOptions(), options);
 }
 
 /**
@@ -248,7 +97,7 @@ export async function mountExpandedNoteEditor(
   usj: Usj,
   options: MountOptions = {},
 ): Promise<MountedEditor> {
-  return mountEditor(usj, expandedNoteViewOptions(), options);
+  return mountInView(usj, expandedNoteViewOptions(), options);
 }
 
 /** Load `usj` into a fresh headless editor under `viewOptions`; mirrors

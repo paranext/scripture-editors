@@ -431,7 +431,13 @@ The host owns which KEY does what (see its half); this repo owns the resulting d
 **Space runs collapse on save; the display is deliberately NOT collapsed to match.** Type `a  b` and
 after a settle the screen keeps both spaces while the file gets one, indefinitely. That is a real,
 permanent screen-vs-file divergence, ratified anyway: it models Paratext 9's `RegularizeSpaces`, and
-normalizing the display instead would delete a byte under the user's caret.
+normalizing the display instead would delete a byte under the user's caret. The same holds for spaces
+right after a marker's separator — at a paragraph's start, after a verse number, and at the start of
+a char span's content (`\nd  things` saves as `\nd things`): Paratext 9's tokenizer skips all
+whitespace after an opening marker, so the screen keeps them and the file does not. That includes a
+span holding nothing but spaces (a selected space wrapped in `\nd`): Paratext 9 saves `\nd  \nd*` as
+the empty `\nd \nd*`, so the words on either side join in the file. A no-break space (`~`) is data,
+never one of these spaces: `\nd ~lead\nd*` and `\nd ~\nd*` keep it.
 
 Positions do not diverge with it. The logical content model drops a displayed run's extra spaces
 from its coordinates exactly where serialization drops them, from one shared definition
@@ -447,7 +453,8 @@ The related-but-opposite rule, and NOT an exception to anything: a space the use
 marker is inserted, stays visible, and leaves the caret immediately after it — in a verse or chapter
 glyph's separator run, after a char opener, and inside any of the five display runs (`va`, `vp`,
 `ca`, `cp`, `cat`). The file is unaffected either way because the writer emits structural whitespace
-itself. Accepting that keystroke and discarding it would be the no-silent-no-ops failure.
+itself and, after a char opener, the space is one Paratext 9 skips (above). Accepting that keystroke
+and discarding it from the screen would be the no-silent-no-ops failure.
 
 **Multi-step undo for a palette item apply** is intentional. (Settles are not part of this — see
 Invariant IV.)

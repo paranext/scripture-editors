@@ -78,6 +78,7 @@ import {
   FORMATTED_VIEW_MODE,
   getViewOptions,
   hasStandardViewWhitespace,
+  PARAGRAPH_STRUCTURE_VIEW_MODE,
   STANDARD_VIEW_MODE,
   UNFORMATTED_VIEW_MODE,
   usjReactNodes,
@@ -95,10 +96,11 @@ function requireView(mode: string): ViewOptions {
 
 /** Every marker mode the editor renders, since each builds a different tree around the same gaps:
  * editable glyph text (Standard, Unformatted), read-only glyph decorators (visible), and no glyphs
- * at all (Formatted). */
+ * at all (Formatted, and Paragraph structure with its gutter markers). */
 const VIEWS: [string, ViewOptions][] = [
   ["Standard", requireView(STANDARD_VIEW_MODE)],
   ["Formatted", requireView(FORMATTED_VIEW_MODE)],
+  ["Paragraph structure", requireView(PARAGRAPH_STRUCTURE_VIEW_MODE)],
   ["Unformatted", requireView(UNFORMATTED_VIEW_MODE)],
   ["visible markers", { ...requireView(FORMATTED_VIEW_MODE), markerMode: "visible" }],
 ];

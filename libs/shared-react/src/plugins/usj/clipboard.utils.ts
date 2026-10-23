@@ -1,12 +1,20 @@
-import { mergeRegister } from "@lexical/utils";
+import { $findMatchingParent, mergeRegister } from "@lexical/utils";
 import {
+  $getState,
   $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  $isTextNode,
   COMMAND_PRIORITY_LOW,
   COPY_COMMAND,
   CUT_COMMAND,
   LexicalEditor,
+  LexicalNode,
   PASTE_COMMAND,
+  SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+  TextNode,
 } from "lexical";
+import { textTypeState } from "shared";
 
 function cleanupText(text: string): string {
   return text.replaceAll("\t", " ");
@@ -51,6 +59,51 @@ export function registerEmptyCopyGuard(editor: LexicalEditor): () => void {
   return mergeRegister(
     editor.registerCommand(COPY_COMMAND, $claimWhenNothingToCopy, COMMAND_PRIORITY_LOW),
     editor.registerCommand(CUT_COMMAND, $claimWhenNothingToCopy, COMMAND_PRIORITY_LOW),
+  );
+}
+
+/** Whether `node` is plain prose: a plain text node with no format and no engine role. */
+function $isPlainProse(node: LexicalNode): node is TextNode {
+  return (
+    $isTextNode(node) &&
+    node.getType() === TextNode.getType() &&
+    node.getMode() === "normal" &&
+    node.getFormat() === 0 &&
+    $getState(node, textTypeState) === undefined
+  );
+}
+
+/**
+ * Keeps pasted prose inside the char span or note it is pasted into.
+ *
+ * A paste carrying nodes (the internal Lexical flavor, or `text/html`, which is what Ctrl+V
+ * delivers) is inserted by `RangeSelection.insertNodes`, which splits every inline ancestor of the
+ * caret up to the paragraph and inserts the nodes there — so text pasted inside `\nd Lord\nd*`
+ * lands between two halves of the span, and text pasted inside a note lands in the paragraph after
+ * it. When every pasted node is plain prose and the paste starts in ordinary text, the paste means
+ * exactly what typing that text would, so it is inserted as text at the caret, inside the caret's
+ * span. Anything else (a char span, a verse, a note, a paragraph) is left to Lexical.
+ */
+export function registerInlineProsePaste(editor: LexicalEditor): () => void {
+  return editor.registerCommand(
+    SELECTION_INSERT_CLIPBOARD_NODES_COMMAND,
+    ({ nodes, selection }) => {
+      if (!$isRangeSelection(selection) || nodes.length === 0 || !nodes.every($isPlainProse))
+        return false;
+      const start = selection.isBackward() ? selection.focus : selection.anchor;
+      const startNode = start.getNode();
+      // Typing into a token or segmented node replaces it whole, so only a caret in ordinary text
+      // takes the typing route.
+      if (!$isTextNode(startNode) || startNode.getMode() !== "normal") return false;
+      const isInInline = $findMatchingParent(
+        startNode,
+        (node) => $isElementNode(node) && node.isInline(),
+      );
+      if (!isInInline) return false;
+      selection.insertText(nodes.map((node) => node.getTextContent()).join(""));
+      return true;
+    },
+    COMMAND_PRIORITY_LOW,
   );
 }
 

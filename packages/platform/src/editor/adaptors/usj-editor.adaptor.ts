@@ -4,7 +4,6 @@ import {
   MarkerContent,
   MarkerObject,
   USJ_TYPE,
-  USJ_VERSION,
   Usj,
 } from "@eten-tech-foundation/scripture-utilities";
 import {
@@ -18,6 +17,7 @@ import {
   TextNode,
 } from "lexical";
 import {
+  authoredNbspState,
   ATTRIBUTE_RUN_VERSION,
   AttributeRunKind,
   AttributeRunNode,
@@ -216,7 +216,8 @@ export function reset(callerCountValue = 0) {
  *
  * Invariant: `deserializeSerializedEditorState` (editor-usj.adaptor.ts) must invert this EXACTLY
  * — usj → serialize → deserialize is the identity in every supported view configuration — which
- * is the round-trip guarantee the corpus suites pin (adaptors/corpus/).
+ * is the round-trip guarantee the corpus suites pin (adaptors/corpus/). `usj.version` is not
+ * part of the tree: the reverse adaptor is handed the version to stamp, so any version loads.
  *
  * Reads module state set by {@link initialize}/{@link reset}; call those first on a fresh load.
  */
@@ -230,10 +231,6 @@ export function serializeEditorState(
   if (usj) {
     if (usj.type !== USJ_TYPE)
       _logger?.warn(`This USJ type '${usj.type}' didn't match the expected type '${USJ_TYPE}'.`);
-    if (usj.version !== USJ_VERSION)
-      _logger?.warn(
-        `This USJ version '${usj.version}' didn't match the expected version '${USJ_VERSION}'.`,
-      );
 
     if (usj.content.length > 0) {
       children = insertImpliedParasRecurse(recurseNodes(usj.content));
@@ -452,6 +449,14 @@ function createChar(
     const [firstChild] = childNodes;
     if (isSerializedTextNode(firstChild)) firstChild.text = NBSP + firstChild.text;
     else if (firstChild) childNodes.unshift(createText(NBSP));
+  } else {
+    // Without a separator, an author's `~` left alone in the span is a lone NBSP in the empty
+    // span's placeholder slot, so every text of the span holding one says it is the author's: the
+    // mark stays with the text through the edits that strand its `~` (deleting the rest of it, or
+    // the span content before it).
+    for (const child of childNodes)
+      if (isSerializedTextNode(child) && child.text.includes(NBSP))
+        child[NODE_STATE_KEY] = { ...child[NODE_STATE_KEY], [authoredNbspState.key]: true };
   }
   if (childNodes.length === 0) childNodes.push(createText(EMPTY_CHAR_PLACEHOLDER_TEXT));
   // A char span nested inside another char span carries the `+` prefix in its editable glyphs
@@ -547,9 +552,8 @@ function createPara(
         !isSerializedMarkerNode(node) && !(isSerializedTextNode(node) && node.text === NBSP),
     );
     // A spaces-only first string stays plain: rewriting a lone " " would leave a node that IS
-    // exactly one NBSP, byte-identical to the engine's untagged structural spacers, which the
-    // reverse adaptor drops — deleting the authored space from the file on save. (Only the
-    // lone-" " string can produce that shape — a longer run is already all-NBSP from the display
+    // exactly one NBSP, the shape of the engine's untagged display nodes. (Only the lone-" "
+    // string can produce that shape — a longer run is already all-NBSP from the display
     // mapping — but any spaces-only string gains nothing from the rewrite, so skip them all.)
     if (isSerializedTextNode(firstContent) && !/^ +$/.test(firstContent.text))
       firstContent.text = firstContent.text.replace(/^ +/, (lead) => NBSP.repeat(lead.length));

@@ -71,6 +71,7 @@ import {
   serializedSignatureOf,
   serializedText,
   serializedType,
+  SERIALIZED_SPACE,
   Tier2Context,
   toFragmentText,
   tokenizeFragment,
@@ -110,6 +111,8 @@ import {
   CharNode,
   MarkerLookup,
   MarkerNode,
+  isSerializedCharNode,
+  isSerializedTypedMarkNode,
   isSerializedVerseNode,
   NoteNode,
   ParaNode,
@@ -117,6 +120,7 @@ import {
   SerializedVerseNode,
   UnknownNode,
 } from "shared";
+import { isSerializedImmutableVerseNode } from "shared-react";
 
 /** Where a live node's serialized counterpart sits: the JSON node itself, plus the children array
  * holding it (the array a splice must target — its index is re-read at splice time, since earlier
@@ -594,9 +598,9 @@ export function $settledParaScope(
   // `$resolvePendingMarkers` routes it to `$applyOpenerRename` instead) but wrong for this settle,
   // which unifies both real paths into one rebuild. Short-circuited behind the signature check: a
   // genuine structural change (not just a marker) has already made the signature strings unequal.
-  const isFixedPoint =
-    serializedSignatureOf(rebuilt, getMarkerFn) === $signatureOf(paras, getMarkerFn) &&
-    $structuralMarkersAgree(paras, rebuilt, getMarkerFn);
+  const isRenameOnly =
+    serializedSignatureOf(rebuilt, getMarkerFn) === $signatureOf(paras, getMarkerFn);
+  const isFixedPoint = isRenameOnly && $structuralMarkersAgree(paras, rebuilt, getMarkerFn);
   if (isFixedPoint) {
     logger?.debug("[MarkerEdit] Settled USJ skipped: rebuild is a no-op (fixed point)");
     return undefined;
@@ -617,7 +621,7 @@ export function $settledParaScope(
       newVerses[i].sid = oldVerseSids[i].sid;
   }
   // Annotation marks, mirroring `$rebuildParas`' carry.
-  return $carryMarksIntoSerialized(
+  const carried = $carryMarksIntoSerialized(
     paras,
     tokenized,
     runs.live,
@@ -626,6 +630,40 @@ export function $settledParaScope(
     getMarkerFn,
     viewOptions,
   );
+  // A change that only renames markers is applied in place by the live settle, which re-creates no
+  // verse, so only a re-tokenized scope gains the spacing the re-created verses get.
+  return isRenameOnly ? carried : spaceVersesAfterChars(carried);
+}
+
+/**
+ * Mirrors `TextSpacingPlugin`'s verse transform (shared-react) over a settle's serialized output:
+ * a verse directly after a char span — looking through annotation marks to the span, as the
+ * transform does — gets a plain space in front of it. The live settle gets that space from the
+ * transform once the verse it re-creates lands in the tree; this settle creates no live nodes, so
+ * without the mirror a pending `getUsj()` reports the span and the verse touching while the settled
+ * one reports them spaced. Paratext 9 reads the same bytes with that space (`UsfmToken.Tokenize`
+ * puts one between a closing marker and a following `\v`), and the file is the same either way.
+ *
+ * Only output the live settle re-tokenizes passes through here, as only a verse that is created
+ * or moved re-runs the transform: a span and a verse that already touch in the live tree, in a
+ * scope the live settle only renames in place, stay as they are on both sides.
+ *
+ * @param nodes - A settle's serialized output, changed in place.
+ * @returns `nodes`.
+ */
+function spaceVersesAfterChars(nodes: SerializedLexicalNode[]): SerializedLexicalNode[] {
+  for (let index = 0; index < nodes.length; index++) {
+    const node = nodes[index];
+    const children = serializedChildren(node);
+    if (children) spaceVersesAfterChars(children);
+    if (!isSerializedVerseNode(node) && !isSerializedImmutableVerseNode(node)) continue;
+    let previous: SerializedLexicalNode | undefined = nodes[index - 1];
+    while (isSerializedTypedMarkNode(previous)) previous = serializedChildren(previous)?.at(-1);
+    if (!isSerializedCharNode(previous)) continue;
+    nodes.splice(index, 0, { ...SERIALIZED_SPACE });
+    index += 1;
+  }
+  return nodes;
 }
 
 /**
@@ -1285,17 +1323,15 @@ export function $settledChapterScope(
     chapter.getNumber() !== (freshChapter.number ?? "") ||
     chapter.getAltnumber() !== freshChapter.altnumber ||
     chapter.getPubnumber() !== freshChapter.pubnumber;
-  if (
-    !fieldsLag &&
-    serializedSignatureOf(rebuilt, getMarkerFn) === $signatureOf(region, getMarkerFn) &&
-    $structuralMarkersAgree(region, rebuilt, getMarkerFn)
-  ) {
+  const isReconcileOnly =
+    serializedSignatureOf(rebuilt, getMarkerFn) === $signatureOf(region, getMarkerFn);
+  if (!fieldsLag && isReconcileOnly && $structuralMarkersAgree(region, rebuilt, getMarkerFn)) {
     logger?.debug("[MarkerEdit] Settled chapter USJ skipped: rebuild is a no-op (fixed point)");
     return undefined;
   }
   // Annotation marks, mirroring `$rebuildChapter`'s carry. The chapter region holds no preserved
   // node (the placeholder guard above), so there are no runs to re-key.
-  return $carryMarksIntoSerialized(
+  const carried = $carryMarksIntoSerialized(
     region,
     tokenized,
     [],
@@ -1304,6 +1340,8 @@ export function $settledChapterScope(
     getMarkerFn,
     viewOptions,
   );
+  // As in a paragraph scope: a region the live settle reconciles in place re-creates no verse.
+  return isReconcileOnly ? carried : spaceVersesAfterChars(carried);
 }
 
 /** A note's own OPENING glyph retyped to a different marker name, and the note it renames. */
@@ -1576,6 +1614,9 @@ export function $applySettledBookScope(
  * `lastKnownCaret` is `Editor.tsx`'s remembered last-observed collapsed caret, used only as
  * `$verifiedTransientLiteral`'s fallback when the live selection is absent (see its own doc
  * comment for the exact race this closes).
+ *
+ * `version` is the USJ version to stamp on the result: the version of the document the editor was
+ * loaded with, so a settled read reports the same version as every other read.
  */
 export function $settledUsj(
   serializedState: SerializedEditorState,
@@ -1583,6 +1624,7 @@ export function $settledUsj(
   context: Tier2Context,
   transientInput?: AnchoredTransientInput,
   lastKnownCaret?: LastKnownCaret,
+  version?: string,
 ): Usj | undefined {
   const transient = $verifiedTransientLiteral(transientInput, lastKnownCaret);
   if (pendedKeys.size === 0 && !transient) return undefined;
@@ -1721,5 +1763,5 @@ export function $settledUsj(
     spliceHusk(site.siblings, index);
   }
 
-  return deserializeSerializedEditorState(serializedState, context.viewOptions);
+  return deserializeSerializedEditorState(serializedState, context.viewOptions, version);
 }

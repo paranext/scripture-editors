@@ -1,0 +1,12 @@
+{
+  "testUSFM-2SA-2.usj": {
+    "Backspace at verse|verse: Undo does not restore the document": "In the guarded structure mode, a deletion or a break between two empty verses can take two Undo steps: the first can leave the document as the keystroke left it, the second restores it, and Redo is then lost (verified by hand on `\\p a \\v 2\\v 3\\v 4`). No data is lost. Typing-fidelity finding T-11.",
+    "Delete at verse|verse: Undo does not restore the document": "In the guarded structure mode, a deletion or a break between two empty verses can take two Undo steps: the first can leave the document as the keystroke left it, the second restores it, and Redo is then lost (verified by hand on `\\p a \\v 2\\v 3\\v 4`). No data is lost. Typing-fidelity finding T-11.",
+    "Enter at verse|verse: Undo does not restore the document": "In the guarded structure mode, a deletion or a break between two empty verses can take two Undo steps: the first can leave the document as the keystroke left it, the second restores it, and Redo is then lost (verified by hand on `\\p a \\v 2\\v 3\\v 4`). No data is lost. Typing-fidelity finding T-11."
+  },
+  "testUSFM-2SA-3-corrected.usj": {
+    "Backspace at verse|verse: Undo does not restore the document": "In the guarded structure mode, a deletion or a break between two empty verses can take two Undo steps: the first can leave the document as the keystroke left it, the second restores it, and Redo is then lost (verified by hand on `\\p a \\v 2\\v 3\\v 4`). No data is lost. Typing-fidelity finding T-11.",
+    "Delete at verse|verse: Undo does not restore the document": "In the guarded structure mode, a deletion or a break between two empty verses can take two Undo steps: the first can leave the document as the keystroke left it, the second restores it, and Redo is then lost (verified by hand on `\\p a \\v 2\\v 3\\v 4`). No data is lost. Typing-fidelity finding T-11.",
+    "Enter at verse|verse: Undo does not restore the document": "In the guarded structure mode, a deletion or a break between two empty verses can take two Undo steps: the first can leave the document as the keystroke left it, the second restores it, and Redo is then lost (verified by hand on `\\p a \\v 2\\v 3\\v 4`). No data is lost. Typing-fidelity finding T-11."
+  }
+}
