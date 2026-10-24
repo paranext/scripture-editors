@@ -268,12 +268,13 @@ async function withExtensionLandingAt(
   const proto = lexical
     .getEditorState()
     .read(() => Object.getPrototypeOf($createRangeSelection()) as RangeSelection);
-  const modifySpy = vi
-    .spyOn(proto, "modify")
-    .mockImplementation(function (this: RangeSelection, ...args: ModifyArgs) {
-      expect(args).toEqual(expected);
-      $landing(this);
-    });
+  const modifySpy = vi.spyOn(proto, "modify").mockImplementation(function (
+    this: RangeSelection,
+    ...args: ModifyArgs
+  ) {
+    expect(args).toEqual(expected);
+    $landing(this);
+  });
   try {
     await gesture();
     expect(modifySpy).toHaveBeenCalled();
@@ -520,9 +521,52 @@ describe("structure protection refuses a delete that would remove a paragraph's 
         if (!caption) throw new Error("no caption text");
         selection.focus.set(caption.getKey(), 3, "text");
       },
-      () =>
-        expectRefused(mounted, "p", () => dispatch(mounted.lexical, DELETE_WORD_COMMAND, true)),
+      () => expectRefused(mounted, "p", () => dispatch(mounted.lexical, DELETE_WORD_COMMAND, true)),
     );
+  });
+
+  it("a backward word delete over a verse and a hidden figure, even if the host would confirm it", async () => {
+    // A host that always answers "delete": the lock must refuse before the question is asked.
+    const onHiddenContentDelete = vi.fn<HiddenContentDeleteHandler>(() => "delete");
+    const mounted = await mountLocked(
+      {
+        ...lockedUsj,
+        content: lockedUsj.content.map((node) =>
+          typeof node === "object" && node.type === "para" && node.marker === "q1"
+            ? {
+                type: "para",
+                marker: "q1",
+                content: [
+                  { type: "verse", marker: "v", number: "2" },
+                  { type: "figure", marker: "fig", file: "a.jpg", content: ["Cap"] },
+                  "Blessed is the man",
+                ],
+              }
+            : node,
+        ),
+      } as unknown as Usj,
+      onHiddenContentDelete,
+    );
+    await placeCaret(mounted.lexical, "q1", 1); // "B|lessed is the man"
+    // The hidden-content guard only measures an extent where the browser has `Selection.modify`.
+    const hadModify = typeof Selection.prototype.modify === "function";
+    if (!hadModify) Selection.prototype.modify = () => undefined;
+
+    try {
+      // The word extension steps back over the figure and the verse to the line's own start.
+      await withExtensionLandingAt(
+        mounted.lexical,
+        ["extend", true, "word"],
+        (selection) => {
+          selection.focus.set($paraOf("q1").getKey(), 0, "element");
+        },
+        () =>
+          expectRefused(mounted, "q1", () => dispatch(mounted.lexical, DELETE_WORD_COMMAND, true)),
+      );
+    } finally {
+      if (!hadModify) delete (Selection.prototype as Partial<Selection>).modify;
+    }
+    expect(onHiddenContentDelete).not.toHaveBeenCalled();
   });
 });
 
