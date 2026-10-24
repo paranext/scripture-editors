@@ -276,12 +276,13 @@ async function withExtensionLandingAt(
   const proto = lexical
     .getEditorState()
     .read(() => Object.getPrototypeOf($createRangeSelection()) as RangeSelection);
-  const modifySpy = vi
-    .spyOn(proto, "modify")
-    .mockImplementation(function (this: RangeSelection, ...args: ModifyArgs) {
-      expect(args).toEqual(expected);
-      $landing(this);
-    });
+  const modifySpy = vi.spyOn(proto, "modify").mockImplementation(function (
+    this: RangeSelection,
+    ...args: ModifyArgs
+  ) {
+    expect(args).toEqual(expected);
+    $landing(this);
+  });
   try {
     await gesture();
     expect(modifySpy).toHaveBeenCalled();
@@ -528,8 +529,7 @@ describe("structure protection refuses a delete that would remove a paragraph's 
         if (!caption) throw new Error("no caption text");
         selection.focus.set(caption.getKey(), 3, "text");
       },
-      () =>
-        expectRefused(mounted, "p", () => dispatch(mounted.lexical, DELETE_WORD_COMMAND, true)),
+      () => expectRefused(mounted, "p", () => dispatch(mounted.lexical, DELETE_WORD_COMMAND, true)),
     );
   });
 
@@ -569,9 +569,7 @@ describe("structure protection refuses a delete that would remove a paragraph's 
           selection.focus.set($paraOf("q1").getKey(), 0, "element");
         },
         () =>
-          expectRefused(mounted, "q1", () =>
-            dispatch(mounted.lexical, DELETE_WORD_COMMAND, true),
-          ),
+          expectRefused(mounted, "q1", () => dispatch(mounted.lexical, DELETE_WORD_COMMAND, true)),
       );
     } finally {
       if (!hadModify) delete (Selection.prototype as Partial<Selection>).modify;
