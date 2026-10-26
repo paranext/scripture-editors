@@ -9,7 +9,7 @@ import type { EditorState, LexicalEditor, UpdateListenerPayload } from "lexical"
 import { $getNodeByKey, $isTextNode, HISTORY_MERGE_TAG } from "lexical";
 import Delta from "quill-delta";
 import { useLayoutEffect } from "react";
-import { $findFirstAncestorNoteNode, MARKER_SETTLE_TAG } from "shared";
+import { $findFirstAncestorNoteNode, isCursorPlaceholderOnly, MARKER_SETTLE_TAG } from "shared";
 
 /** Stable default for {@link DeltaOnChangePlugin}'s `ignoreTags` so the effect deps stay stable. */
 const EMPTY_TAGS: readonly string[] = [];
@@ -143,7 +143,14 @@ export function $getUpdateOps(
       if (retain !== undefined) {
         const prevTextDoc = prevEditorState.read(() => {
           const prevNode = $getNodeByKey(nodeKey);
-          return new Delta([$isTextNode(prevNode) ? $getTextOp(prevNode) : { insert: "" }]);
+          // A placeholder-only caret host has zero length in delta-doc coordinates, like the
+          // retain above counts it: diffing from its raw placeholder would delete a unit that is
+          // not there — whatever follows it, such as the next verse.
+          const isBareHost =
+            $isTextNode(prevNode) && isCursorPlaceholderOnly(prevNode.getTextContent());
+          return new Delta([
+            $isTextNode(prevNode) && !isBareHost ? $getTextOp(prevNode) : { insert: "" },
+          ]);
         });
         const textDoc = new Delta([$getTextOp(dirtyNode)]);
         const nodePositionRetain = new Delta(retain > 0 ? [{ retain }] : []);

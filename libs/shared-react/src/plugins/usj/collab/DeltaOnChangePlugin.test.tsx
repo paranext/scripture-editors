@@ -10,6 +10,7 @@ import {
   typeTextAtSelection,
 } from "../react-test.utils";
 import { DeltaOp } from "./delta-common.utils";
+import { $createCaretHostNode } from "../transientCaretHost";
 import { DeltaOnChangePlugin } from "./DeltaOnChangePlugin";
 import {
   $createTextNode,
@@ -402,6 +403,34 @@ describe("OnChangePlugin", () => {
     // The transient caret hosts (an emptied verse's, and a trailing note's) tag every mutation they
     // make with CURSOR_CHANGE_TAG. That tag is what keeps a host out of save emission entirely: the
     // commit never reaches this handler, so the host application is never told the document changed.
+    it("emits only the insert when text replaces a caret host between two verses", async () => {
+      // The empty-verse guard hosts the caret in a placeholder-only text node, which delta-doc
+      // coordinates count as zero length. The first keystroke turns it into the typed text, and
+      // diffing from the placeholder's raw text would also delete a unit — the next verse.
+      let host: TextNode;
+      const { editor } = await testEnvironment(() => {
+        host = $createCaretHostNode();
+        $getRoot().append(
+          $createImpliedParaNode().append(
+            $createImmutableVerseNode("2"),
+            host,
+            $createImmutableVerseNode("3"),
+            $createTextNode("three"),
+          ),
+        );
+      });
+
+      await sutUpdate(editor, () => {
+        // What the host's strip leaves once "a" is typed into it.
+        // Defined by the test environment.
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        host!.setTextContent("a");
+      });
+
+      expect(updateOps.some((op) => "delete" in op)).toBe(false);
+      expect(updateOps.filter((op) => "insert" in op)).toEqual([{ insert: "a" }]);
+    });
+
     it("skips the delta for a CURSOR_CHANGE_TAG commit, so a caret host is never emitted", async () => {
       const { editor, calls } = await setup();
       await sutUpdate(editor, $makeMultiNodeChange, { tag: CURSOR_CHANGE_TAG });

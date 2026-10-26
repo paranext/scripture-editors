@@ -18,6 +18,7 @@ import {
   $structuralDeleteTarget,
   keyDownToIntent,
 } from "./structureKeyboard.utils";
+import { $createCaretHostNode } from "./transientCaretHost";
 import {
   $createNodeSelection,
   $getRoot,
@@ -336,6 +337,27 @@ describe("$adjacentVerseMarker", () => {
     editor.getEditorState().read(() => {
       expect($adjacentVerseMarker($getSelection()!, "backward")).toBeUndefined();
       expect($adjacentVerseMarker($getSelection()!, "forward")).toBeUndefined();
+    });
+  });
+});
+
+describe("$adjacentVerseMarker from inside a caret host", () => {
+  // The empty-verse guard rests the caret in a placeholder-only text node between two verse
+  // markers. Either offset in it is the same screen position, right next to both verses.
+  it.each([0, 1])("sees both neighboring verses from offset %i", async (offset) => {
+    let v3: ReturnType<typeof $createImmutableVerseNode>;
+    let v4: ReturnType<typeof $createImmutableVerseNode>;
+    let host: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      v3 = $createImmutableVerseNode("3");
+      v4 = $createImmutableVerseNode("4");
+      host = $createCaretHostNode();
+      $getRoot().append($createParaNode("p").append(v3, host, v4));
+    });
+    updateSelection(editor, host!, offset);
+    editor.getEditorState().read(() => {
+      expect($adjacentVerseMarker($getSelection()!, "backward")?.getKey()).toBe(v3!.getKey());
+      expect($adjacentVerseMarker($getSelection()!, "forward")?.getKey()).toBe(v4!.getKey());
     });
   });
 });
