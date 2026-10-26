@@ -7,6 +7,7 @@
  * caller shows it again. Either way the screen shows what the file gets.
  */
 import { mountInView, oracleView } from "../annotationLocations/annotationLocations.test-helpers";
+import { EDITOR_VIEWS } from "../editorViews.test-helpers";
 import { IDLE_SETTLE_DELAY_MS } from "./MarkerEditPlugin";
 import { $textContaining, twoParaUsj } from "../positions/positions.test-helpers";
 import { MarkerContent, MarkerObject, Usj } from "@eten-tech-foundation/scripture-utilities";
@@ -464,6 +465,37 @@ describe.each(["standard+expandedNotes", "unformatted"])(
       const saved = savedNote(mounted.ref.current?.getUsj());
       expect(saved).toMatchObject({ caller: "", content: ["note text"] });
       expectNoteScreenIsSaved(mounted.lexical, saved);
+    });
+  },
+);
+
+// ParatextData reads `\f \ft …` as `caller=""` and writes it back as `\f \ft …`, so an edit
+// anywhere must never give such a note a caller.
+describe.each(EDITOR_VIEWS.map(({ name }) => name))(
+  "a note with an empty caller, edited beside and inside (%s view)",
+  (view) => {
+    it("saves the caller empty", async () => {
+      const mounted = await mountInView(emptyCallerNoteUsj, oracleView(view));
+      for (const [text, offset] of [
+        [" b", 2],
+        ["note text", 4],
+      ] as const)
+        await act(async () => {
+          mounted.lexical.update(() => {
+            $textContaining(text).select(offset, offset);
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) selection.insertText("z");
+          });
+          await Promise.resolve();
+        });
+      await depart(mounted);
+
+      const para = mounted.ref.current?.getUsj()?.content[2];
+      expect(typeof para === "object" && para.content).toEqual([
+        "a",
+        { type: "note", marker: "f", caller: "", content: ["notez text"] },
+        " bz",
+      ]);
     });
   },
 );
