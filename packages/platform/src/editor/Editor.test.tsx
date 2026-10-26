@@ -1187,11 +1187,12 @@ describe("replaceCharacterMarker through the editor ref", () => {
  * Rows of the extend suite below known to fail, keyed `<view>: <row>`. Both are Standard view only:
  * the same calls produce the documented result in formatted and paragraph-structure.
  */
+// TODO(PT-4925): make Standard view's extend coalesce and resolve conflicts, then remove these.
 const EXTEND_KNOWN_FAILURES: { [key: string]: string } = {
   "standard: coalesce":
-    "the new \\bd run lands beside the existing \\bd span instead of merging into it, so the paragraph saves as two adjacent \\bd spans",
+    "PT-4925: the new \\bd run lands beside the existing \\bd span instead of merging into it, so the paragraph saves as two adjacent \\bd spans",
   "standard: conflict":
-    "after the conflicting \\nd is removed the \\bd wrap never runs, yet the call reports true: the text is left with no character style at all",
+    "PT-4925: after the conflicting \\nd is removed the \\bd wrap never runs, yet the call reports true: the text is left with no character style at all",
 };
 const runExtendRow = knownFailureRunner(
   EXTEND_KNOWN_FAILURES,

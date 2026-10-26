@@ -33,6 +33,7 @@ import {
 import {
   $createBookNode,
   $createGutterMarkerNode,
+  $createImmutableChapterNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createParaNode,
@@ -918,9 +919,9 @@ describe("StructureKeyboardPlugin — per-edit undo/redo for a run of verse dele
 });
 
 // The plugin renders no UI; it publishes the armed state to the editor root so the host app can
-// render a localized hint (see paranext-core's VerseDeleteTooltipOverlay). These assert that
+// render a localized hint (see paranext-core's TwoStepDeleteTooltipOverlay). These assert that
 // DOM contract: `data-verse-delete-intent` + `data-verse-delete-kind`, set only for hint-worthy
-// (verse / selection) arms and cleared otherwise.
+// (verse / chapter / selection) arms and cleared otherwise.
 describe("StructureKeyboardPlugin — armed DOM signals for the host hint", () => {
   it("Backspace-armed verse marks intent=deleteBackward, kind=verse", async () => {
     let t1: TextNode;
@@ -952,7 +953,21 @@ describe("StructureKeyboardPlugin — armed DOM signals for the host hint", () =
     expect(root?.getAttribute("data-verse-delete-kind")).toBe("selection");
   });
 
-  it("paragraph-merge arm sets no hint attributes (verse-marker scope only)", async () => {
+  it("Backspace-armed chapter marks intent=deleteBackward, kind=chapter", async () => {
+    let t1: TextNode;
+    const { editor } = await guardedEnvironment(() => {
+      t1 = $createTextNode("text");
+      $getRoot().append($createImmutableChapterNode("1"), $createParaNode("p").append(t1));
+    });
+    updateSelection(editor, t1!, 0); // caret at the start of the paragraph after the chapter
+
+    await pressKey(editor, "Backspace", 0); // arm the chapter marker
+    const root = editor.getRootElement();
+    expect(root?.getAttribute("data-verse-delete-intent")).toBe("deleteBackward");
+    expect(root?.getAttribute("data-verse-delete-kind")).toBe("chapter");
+  });
+
+  it("paragraph-merge arm sets no hint attributes", async () => {
     let t2: TextNode;
     const { editor } = await guardedEnvironment(() => {
       t2 = $createTextNode("second");

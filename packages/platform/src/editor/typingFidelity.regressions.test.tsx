@@ -547,3 +547,33 @@ for (const { name, view, structureProtectionMode } of EDITING_AND_GUARDED_VIEWS)
     });
   });
 }
+
+// The paragraph-structure view's gutter glyph leads the new paragraph, ahead of its text; the
+// break's space must still go, as it does in the other views.
+forEachView(EDITING_VIEWS, ({ view }) => {
+  describe("Enter at a word break", () => {
+    it.each<[string, StructureProtectionMode | undefined]>([
+      ["unguarded", undefined],
+      ["guarded", "guarded"],
+    ])(
+      "saves the second paragraph without the break's space (%s)",
+      async (_, structureProtectionMode) => {
+        const mounted = await mountInView(oneParaUsj(["In the beginning"]), view, {
+          structureProtectionMode,
+        });
+        await act(async () => {
+          mounted.ref.current?.setSelection({
+            start: { jsonPath: "$.content[2].content[0]", offset: 2 },
+          });
+        });
+
+        expect(await press(mounted, "Enter")).toEqual([]);
+
+        expect(mounted.ref.current?.getUsj()?.content.slice(2)).toEqual([
+          { type: "para", marker: "p", content: ["In"] },
+          { type: "para", marker: "p", content: ["the beginning"] },
+        ]);
+      },
+    );
+  });
+});

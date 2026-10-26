@@ -122,6 +122,12 @@ refused. The public surface grew substantially; nothing was removed.
   the paragraph-structure view, as removing its selected marker does. It used to delete the line's
   gutter glyph and reset its marker to `\p`. `"guarded"` asks for a second press, and
   `"protected"` refuses it.
+- **`"guarded"` arms a chapter marker for its two-press delete**, in the formatted and
+  paragraph-structure views: Backspace or Delete beside `\c N` first selects the chapter, and the
+  second press removes it. While a chapter is armed, the editor root carries
+  `data-verse-delete-kind="chapter"` beside `data-verse-delete-intent`, as it does `verse` and
+  `selection`, so a host that renders the "press again" hint from these attributes should handle
+  the new value.
 - **`EditorRef.copy()` and `EditorRef.cut()` with nothing selected now leave the clipboard alone.**
   Previously either one, called at a collapsed caret or with no selection, still wrote to the system
   clipboard — it put a lone `#` there, because `@lexical/clipboard` synthesizes a copy event by
@@ -273,6 +279,9 @@ refused. The public surface grew substantially; nothing was removed.
   caret move and never reach `onUsjChange`.
 - In the paragraph-structure view, a guarded two-step paragraph merge no longer leaves the merged
   paragraph's gutter marker in the middle of the paragraph it joined.
+- In the paragraph-structure view, Enter at a word break (`In| the`) no longer leaves the break's
+  space at the start of the new paragraph: `getUsj()` reports `the`, as the other views do, where it
+  reported ` the`.
 
 - In Standard view, the USJ positions the editor reports and accepts (selections, annotations)
   after a milestone, a verse's `\va`/`\vp`, or a chapter's `\ca` were one content item too far:

@@ -23,6 +23,8 @@
  * argued where it is applied:
  * - the engine-owned space before a verse ({@link JoinOptions});
  * - the derived `sid`/`vid` a text flavor has no bytes for ({@link withoutDerivedAttributes});
+ * - an empty derived `sid` that Standard view's rebuild after a pasted verse drops
+ *   ({@link withoutEmptySidsIn});
  * - a hidden-marker view's plain-text paste arrives as prose ({@link plainFragment});
  * - `CommandMenuPlugin` refuses a hidden-view paste of content holding `\` or `/`
  *   ({@link isRefusedByPasteGate});
@@ -231,6 +233,19 @@ function withoutDerivedAttributes(fragment: Item[]): Item[] {
     // `vid` is outside the `MarkerObject` type, though ParatextData writes it on a paragraph.
     if (copy.type === "para") Reflect.deleteProperty(copy, "vid");
     return copy;
+  });
+}
+
+/** `content` with no empty `sid` on the verses of the block at `index`. */
+function withoutEmptySidsIn(content: Item[], index: number): Item[] {
+  return content.map((block, at) => {
+    if (at !== index || typeof block === "string") return block;
+    const items = (block.content ?? []).map((item) => {
+      if (typeof item === "string" || item.type !== "verse" || item.sid !== "") return item;
+      const { sid: _derived, ...verse } = item;
+      return verse;
+    });
+    return withContent(block, items, originOf(block));
   });
 }
 
@@ -663,21 +678,16 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | UsfmRow): strin
     )
       return "PT-4921: text/html carries no char attributes (`closed`) and brings a note's display spacers back as text";
   }
+  // TODO(PT-4388): read a bare `\` as a nameless marker once ParatextData 9.6 is in (parked on
+  // branch `pt-4197-nameless-96`).
   if (row.viewName === "standard" && fixture === "testUSFM-2SA-5.usj") {
     if (
       "text" in row ||
       row.operation === "copy, paste html and plain" ||
       row.operation === "copy, paste plain text"
     )
-      return "Standard's text path over deliberately damaged USFM: a nameless marker re-tokenizes as text, and a bare backslash keeps the paste a pending literal";
+      return "PT-4388: Standard's text path over deliberately damaged USFM: a nameless marker re-tokenizes as text, and a bare backslash keeps the paste a pending literal";
   }
-  if (
-    row.viewName === "standard" &&
-    fixture === "testUSFM-2SA-3-corrected.usj" &&
-    "text" in row &&
-    row.text === "\\v 9 x"
-  )
-    return "Standard's paragraph rebuild re-derives the paragraph's verses without the fixture's derived (empty) `sid`";
   return undefined;
 }
 
@@ -827,16 +837,23 @@ async function runUsfmRow(row: UsfmRow, usj: Usj): Promise<void> {
       row.text === "\\v 9 x"
         ? [{ type: "verse", marker: "v", number: "9" }, "x"]
         : [{ type: "char", marker: "nd", content: ["y"] }];
-    const expected = plain(
-      insertFragment(original, destination, [{ type: "para", content: tokens }], {
-        spaceBeforeVerse: false,
-      }),
-    );
-    expect(contentOf(mounted), "after the paste").toEqual(expected);
+    const pasted = insertFragment(original, destination, [{ type: "para", content: tokens }], {
+      spaceBeforeVerse: false,
+    });
+    // A pasted verse makes Standard view rebuild part of the paragraph it lands in, re-deriving
+    // its verses, and an empty derived `sid` (the 2SA-3 fixture's) does not survive that.
+    // Dropping derived metadata is accepted (data-fidelity catalog F-8), so in that paragraph an
+    // empty `sid` may be dropped; everything else, non-empty `sid`s included, must survive exactly.
+    const settled = (content: Item[] | undefined) =>
+      content && row.text === "\\v 9 x"
+        ? withoutEmptySidsIn(content, destination.path[0])
+        : content;
+    const expected = settled(plain(pasted));
+    expect(settled(contentOf(mounted)), "after the paste").toEqual(expected);
     await undo(mounted);
     expect(contentOf(mounted), "after undoing the paste").toEqual(original);
     await redo(mounted);
-    expect(contentOf(mounted), "after redoing the paste").toEqual(expected);
+    expect(settled(contentOf(mounted)), "after redoing the paste").toEqual(expected);
   } finally {
     mounted.unmount();
   }

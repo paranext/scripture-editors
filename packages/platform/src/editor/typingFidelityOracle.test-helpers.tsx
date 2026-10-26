@@ -27,11 +27,12 @@
  *
  * The editor's own standing rules are allowed for, each where it applies and nowhere else: the
  * whitespace at a paragraph break may go (a block's edge whitespace is no content a USFM reader
- * keeps); the continuation of a split span may carry its marker alone (`CharNode.insertNewAfter`);
- * text before a verse ends in a space (TextSpacingPlugin; compared up to it); a space typed as an
- * empty verse's whole content, text typed into an empty `\b`, and any edit inside a table or a
- * sidebar (read-only) are refused. Two spans alike in all but content that a keystroke leaves side
- * by side stay two spans, as they do in Standard view.
+ * keeps), and must go from the start of a new paragraph that starts with text; the continuation of
+ * a split span may carry its marker alone (`CharNode.insertNewAfter`); text before a verse ends in
+ * a space (TextSpacingPlugin; compared up to it); a space typed as an empty verse's whole content,
+ * text typed into an empty `\b`, and any edit inside a table or a sidebar (read-only) are refused.
+ * Two spans alike in all but content that a keystroke leaves side by side stay two spans, as they
+ * do in Standard view.
  *
  * After every keystroke: the saved USJ must be one of the expected documents; Undo must restore
  * the pre-keystroke USJ exactly, and Redo must re-apply the keystroke's USJ exactly. Before any
@@ -553,8 +554,13 @@ function expectedDocs(before: Usj, edit: Edit): Set<string> {
         unitsOf(left).length,
       );
       const rightTrimmed = withoutUnits(right, 0, spaceRun(unitsOf(right)));
+      // A new paragraph that starts with text loses that text's leading space, in every view
+      // (`ParaNodePlugin`); where it starts with an atom or a span, either is allowed.
+      const dropsRightLead = typeof right[0] === "string" && right[0].startsWith(" ");
       for (const leftVariant of [left, pruned(leftTrimmed)])
-        for (const rightVariant of [right, pruned(rightTrimmed)])
+        for (const rightVariant of dropsRightLead
+          ? [pruned(rightTrimmed)]
+          : [right, pruned(rightTrimmed)])
           out.add(
             normalizedDoc(
               spliced(
