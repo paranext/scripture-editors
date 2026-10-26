@@ -999,12 +999,7 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     );
   }
 
-  // Built as a plain object (rebuilt per render, same as the previous inline useImperativeHandle
-  // factory) and assigned to editorApiRef UNCONDITIONALLY below — never inside the
-  // useImperativeHandle factory, which React only invokes when the consumer actually attached a
-  // ref, so a factory-side assignment leaves the mirror null (and the in-editor marker menu dead)
-  // for exactly the no-ref consumer the mirror exists to serve.
-  /** Starts chapter 1 in a book with no chapters; `false` when it already has one. */
+  /** Starts chapter 1 in a book with no chapters; `false`, changing nothing, anywhere else. */
   function insertFirstChapterAtScrRef(editor: LexicalEditor, chapterNum: number, verseCount = 0) {
     let inserted = false;
     editor.update(
@@ -1016,6 +1011,11 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     return inserted;
   }
 
+  // Built as a plain object (rebuilt per render, same as the previous inline useImperativeHandle
+  // factory) and assigned to editorApiRef UNCONDITIONALLY below — never inside the
+  // useImperativeHandle factory, which React only invokes when the consumer actually attached a
+  // ref, so a factory-side assignment leaves the mirror null (and the in-editor marker menu dead)
+  // for exactly the no-ref consumer the mirror exists to serve.
   const editorApi: EditorRef = {
     focus() {
       const editor = editorRef.current;

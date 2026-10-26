@@ -9,9 +9,22 @@
  * wants empty verses).
  */
 import usjEditorAdaptor from "../adaptors/usj-editor.adaptor";
+import {
+  isParagraphTagValid,
+  ParaStackEntry,
+  pushParaTagIfValid,
+  toStackEntry,
+} from "./markerValidation.utils";
 import { MarkerContent, USJ_TYPE, USJ_VERSION } from "@eten-tech-foundation/scripture-utilities";
 import { $getRoot, $isElementNode, $parseSerializedNode, LexicalNode } from "lexical";
-import { $isBookNode, $isParaNode, $isSomeChapterNode, defaultStyleInfo, StyleInfo } from "shared";
+import {
+  $isBookNode,
+  $isImpliedParaNode,
+  $isParaNode,
+  $isSomeChapterNode,
+  defaultStyleInfo,
+  StyleInfo,
+} from "shared";
 import { ViewOptions } from "shared-react";
 
 /**
@@ -25,22 +38,43 @@ export function $canInsertChapter(chapterNum: number | undefined): boolean {
 }
 
 /**
- * Whether `node` is part of the book's front matter, which comes before chapter 1: the `\id` line,
- * and each paragraph whose marker the stylesheet allows under `\id` (headings, titles, the
- * introduction). Anything else is chapter content.
+ * The first block of chapter content, which `\c 1` goes before; `undefined` when the document is
+ * all front matter.
+ *
+ * The PT9 paragraph validator decides: chapter content starts at the first paragraph that needs a
+ * chapter, one the validator rejects where it stands but accepts right after a `\c`, such as a `\s1`
+ * or a `\p`. Everything before it is front matter: the `\id` line, the running header, table of
+ * contents, titles and introduction. A front-matter paragraph out of order, such as an `\ie` after
+ * an `\imte`, is rejected after a `\c` too, so it stays before the chapter rather than splitting the
+ * introduction.
+ *
+ * The validator cannot place a paragraph the stylesheet does not declare, or one it declares valid
+ * anywhere, so those start the chapter content, as does text in no paragraph at all.
  */
-function $isFrontMatter(node: LexicalNode, styleInfo: StyleInfo): boolean {
-  if ($isBookNode(node)) return true;
-  if (!$isParaNode(node)) return false;
-  const marker = node.getMarker();
-  const entry = Object.hasOwn(styleInfo.markers, marker) ? styleInfo.markers[marker] : undefined;
-  return !!entry?.occursUnder?.includes("id");
+function $findChapterContentStart(styleInfo: StyleInfo): LexicalNode | undefined {
+  const id = toStackEntry(styleInfo, "id") ?? { marker: "id", rank: 0, occursUnder: [] };
+  const chapter = toStackEntry(styleInfo, "c") ?? { marker: "c", rank: 0, occursUnder: ["id"] };
+  // A `\c` closes everything above the `\id` line, so this is the stack after any chapter marker.
+  const afterChapter: readonly ParaStackEntry[] = [id, chapter];
+  const stack: ParaStackEntry[] = [id];
+  return $getRoot()
+    .getChildren()
+    .find((child) => {
+      if ($isBookNode(child)) return false;
+      if (!$isParaNode(child)) return true;
+      const tag = toStackEntry(styleInfo, child.getMarker());
+      if (!tag || tag.occursUnder.length === 0) return true;
+      if (pushParaTagIfValid(stack, tag)) return false;
+      return isParagraphTagValid(afterChapter, tag);
+    });
 }
 
 /**
  * Inserts chapter 1, with `verseCount` empty verses after it, where USFM puts it: after the front
- * matter (see {@link $isFrontMatter}), before any chapter content. The caret goes on the chapter
- * line. Only where {@link $canInsertChapter} allows a chapter.
+ * matter, before any chapter content (see {@link $findChapterContentStart}). Where the markers show,
+ * the caret goes at the end of the chapter line. Where they are hidden there is no chapter line, so
+ * the caret goes after verse 1, or with no verses to the start of the paragraph that follows; with
+ * neither, it stays where it was. Only where {@link $canInsertChapter} allows a chapter.
  *
  * The nodes come from the same conversion that loads a document, so they match a loaded `\c 1` in
  * every view.
@@ -71,16 +105,21 @@ export function $insertFirstChapter({
   );
   const nodes = serialized.root.children.map((child) => $parseSerializedNode(child));
 
-  const firstChapterContent = $getRoot()
-    .getChildren()
-    .find((child) => !$isFrontMatter(child, styleInfo));
+  const chapterContentStart = $findChapterContentStart(styleInfo);
   for (const node of nodes) {
-    if (firstChapterContent) firstChapterContent.insertBefore(node);
+    if (chapterContentStart) chapterContentStart.insertBefore(node);
     else $getRoot().append(node);
   }
 
-  const chapter = nodes[0];
+  // Where the markers show, the chapter line is text, so the caret goes at its end. Where they are
+  // hidden the chapter is a decorator with no line to type on, so the caret goes after verse 1, or
+  // with no verses to the start of the chapter content's first paragraph. With neither it stays
+  // where it was, rather than between blocks or inside a table or an opaque block.
+  const [chapter, verses] = nodes;
+  const firstVerse = $isElementNode(verses) ? verses.getFirstChild() : undefined;
   if ($isElementNode(chapter)) chapter.selectEnd();
-  else chapter.selectNext(0, 0);
+  else if (firstVerse) firstVerse.selectNext();
+  else if ($isParaNode(chapterContentStart) || $isImpliedParaNode(chapterContentStart))
+    chapterContentStart.select(0, 0);
   return true;
 }

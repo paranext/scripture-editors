@@ -115,9 +115,10 @@ refused. The public surface grew substantially; nothing was removed.
 
 - **A book with no chapters can start chapter 1 from the `\` menu.** In chapter 1 with no chapter
   yet, the menu offers `\c`; picking it, or `EditorRef.insertMarker("c")`, inserts `\c 1` after the
-  book's front matter (the `\id` line and each paragraph the stylesheet allows under `\id`), whatever
-  the caret position. `\c` stays out of the Enter menu, and out of the `\` menu in every other
-  chapter, which already has its marker. `insertMarker("c")` used to do nothing in the `\id` line.
+  book's front matter (the `\id` line, running header, table of contents, titles and introduction)
+  and before the first paragraph that needs a chapter, such as a `\s1` or a `\p`, whatever the
+  caret position. `\c` stays out of the Enter menu, and out of the `\` menu in every other chapter,
+  which already has its marker. `insertMarker("c")` used to do nothing in the `\id` line.
 
 - **Paragraphs the editor creates in the paragraph-structure view get their gutter marker.** An
   Enter split or a multi-line paste used to create a paragraph with no marker glyph, which the

@@ -40,17 +40,32 @@ export interface ParaStackEntry {
 }
 
 /**
- * The `+` nesting prefix. Hoisted because `getEntry` runs once per paragraph, char span and verse
- * of the whole document on every commit, and a regex literal allocates a fresh RegExp per call.
+ * The `+` nesting prefix. Hoisted because `getMarkerStyleInfo` runs once per paragraph, char span
+ * and verse of the whole document on every commit, and a regex literal allocates a fresh RegExp
+ * per call.
  */
 const NESTING_PREFIX_REGEX = /^\+/;
 
-function getEntry(styleInfo: StyleInfo, marker: string): MarkerStyleInfo | undefined {
+/** The stylesheet's entry for `marker` (ignoring a `+` nesting prefix), if it declares one. */
+export function getMarkerStyleInfo(
+  styleInfo: StyleInfo,
+  marker: string,
+): MarkerStyleInfo | undefined {
   const name = marker.replace(NESTING_PREFIX_REGEX, "");
   // Own-property guard: `markers` is a plain object, so a bare index resolves Object.prototype
   // members (`constructor`, `toString`, `valueOf`, …) as if they were stylesheet entries — a
   // marker named after one would never be flagged unknown.
   return Object.hasOwn(styleInfo.markers, name) ? styleInfo.markers[name] : undefined;
+}
+
+/**
+ * `marker` as a validity-stack entry, read from the stylesheet; `undefined` when the stylesheet
+ * does not declare it.
+ */
+export function toStackEntry(styleInfo: StyleInfo, marker: string): ParaStackEntry | undefined {
+  const entry = getMarkerStyleInfo(styleInfo, marker);
+  if (!entry) return undefined;
+  return { marker, rank: entry.rank ?? 0, occursUnder: entry.occursUnder ?? [] };
 }
 
 /** What opening `tag` would do to a validity stack, when it is valid there at all. */
@@ -144,7 +159,7 @@ function checkChar(
   styleInfo: StyleInfo,
   out: Map<NodeKey, MarkerValidity>,
 ): void {
-  const entry = getEntry(styleInfo, marker);
+  const entry = getMarkerStyleInfo(styleInfo, marker);
   if (!entry) {
     flagGlyphs(node, "unknown", out);
     return;
@@ -170,7 +185,7 @@ function $validateInline(
       $validateInline(child, contextMarker, styleInfo, out, insideXq || marker === "xq");
     } else if ($isSomeVerseNode(child)) {
       if (insideXq) continue;
-      const entry = getEntry(styleInfo, "v");
+      const entry = getMarkerStyleInfo(styleInfo, "v");
       if (!entry) out.set(child.getKey(), "unknown");
       else if (
         contextMarker !== undefined &&
@@ -213,8 +228,8 @@ export function $validateDocument(
   const stack: ParaStackEntry[] = [];
 
   const validateParaLevel = (node: LexicalNode, marker: string): void => {
-    const entry = getEntry(styleInfo, marker);
-    if (!entry) {
+    const tag = toStackEntry(styleInfo, marker);
+    if (!tag) {
       flagGlyphs(node, "unknown", out);
       // PT9 auto-creates unknown tags with empty occursUnder (ScrStylesheet
       // .GetTagIndex:182-201) — valid anywhere, and like every empty-occursUnder
@@ -222,11 +237,6 @@ export function $validateDocument(
       pushParaTagIfValid(stack, { marker, rank: 0, occursUnder: [] });
       return;
     }
-    const tag: ParaStackEntry = {
-      marker,
-      rank: entry.rank ?? 0,
-      occursUnder: entry.occursUnder ?? [],
-    };
     if (!pushParaTagIfValid(stack, tag)) flagGlyphs(node, "invalid", out);
   };
 

@@ -16,9 +16,11 @@
  */
 import { isUsjMarkerSupported } from "../adaptors/usj-marker-action.utils";
 import {
+  getMarkerStyleInfo,
   isParagraphTagValid,
   ParaStackEntry,
   pushParaTagIfValid,
+  toStackEntry,
 } from "../markerEdit/markerValidation.utils";
 import { MarkerStyleInfo, StyleInfo } from "shared";
 
@@ -106,15 +108,6 @@ function includeMarker(marker: string, extraValidMarkers?: readonly string[]): b
   return (
     !marker.startsWith("zpa") && marker !== "c" && isUsjMarkerSupported(marker, extraValidMarkers)
   );
-}
-
-function toStackEntry(styleInfo: StyleInfo, marker: string): ParaStackEntry | undefined {
-  // `Object.hasOwn`, not a bare index: a document paragraph marked `\toString` (or any other
-  // `Object.prototype` member name) would otherwise resolve to the inherited function and build a
-  // stack entry for a marker the stylesheet never declared.
-  const entry = Object.hasOwn(styleInfo.markers, marker) ? styleInfo.markers[marker] : undefined;
-  if (!entry) return undefined;
-  return { marker, rank: entry.rank ?? 0, occursUnder: entry.occursUnder ?? [] };
 }
 
 /**
@@ -318,7 +311,7 @@ export function getMarkerMenuItems(
  */
 function chapterItem(styleInfo: StyleInfo, context: MarkerMenuContext): MarkerMenuItem | undefined {
   if (!context.canInsertChapter || context.noteMarker || context.hasTextSelection) return undefined;
-  const entry = Object.hasOwn(styleInfo.markers, "c") ? styleInfo.markers.c : undefined;
+  const entry = getMarkerStyleInfo(styleInfo, "c");
   return entry ? toItem(entry, "paragraph") : undefined;
 }
 
