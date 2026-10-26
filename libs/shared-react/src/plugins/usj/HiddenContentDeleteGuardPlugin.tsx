@@ -110,13 +110,15 @@ interface Settlement {
 /** A word or line delete's reach, as measured from the caret. */
 interface DeleteExtent {
   hidden: UnknownNode[];
-  /** The range the delete removes; absent where it removes only the hidden content. */
-  range?: RangeSnapshot;
   /**
-   * Where the browser's extension reached, even past the caret's paragraph (where `range` stops
-   * short of it); absent where it was not measured or reached nothing.
+   * The range the delete removes; absent where it removes only the hidden content (the extension
+   * left the caret's paragraph, or was not measured or reached nothing).
    */
+  range?: RangeSnapshot;
+  /** Where the browser's extension reached, whether or not it left the caret's paragraph. */
   measured?: RangeSnapshot;
+  /** Whether that extension left the caret's paragraph (or note). */
+  leavesLine?: boolean;
 }
 
 /**
@@ -350,8 +352,8 @@ export function HiddenContentDeleteGuardPlugin({
     ): boolean => {
       const isProtected = structureProtectionModeRef.current === "protected";
       // Under protected structure a forward delete in front of a line's gutter glyph runs from just
-      // past it (see `StructureKeyboardPlugin`), so it is judged from there, on a copy: the caret
-      // stays where it is if the answer is "keep" or the delete is refused.
+      // past it (see `StructureKeyboardPlugin`), so it is judged from there, on a copy: the live
+      // caret moves only if the answer moves it.
       const from = selection.clone();
       if (isProtected && direction === "forward") $moveCaretPastGutterGlyph(from);
       const run = $hiddenRunAtCaret(from, direction);
@@ -364,12 +366,12 @@ export function HiddenContentDeleteGuardPlugin({
       // Protected structure judges a word or line delete by where it extends to, and refuses one
       // that reaches a verse, another block or partway into an opaque construct. Asking first
       // would carry out on "delete" what it refuses, so this steps aside for its refusal. The one
-      // exception: an extent that only leaves the line, with hidden content right at the caret,
-      // takes just that content (stopping at the line's edge), which the structure keeps.
+      // exception: an extent that only leaves the line, with hidden content right at the caret.
+      // That delete stops at the line's edge and removes only hidden content (every hidden node up
+      // to that edge), never the line's markers, so it is still asked about.
       if (isProtected && extent?.measured) {
         const measured = $rangeFrom(extent.measured);
-        const intent = direction === "backward" ? "deleteBackward" : "deleteForward";
-        if (measured && $shouldRefuseExtendedDelete(measured, intent) && (extent.range || !run))
+        if (measured && $shouldRefuseExtendedDelete(measured) && !(extent.leavesLine && run))
           return false;
       }
       const hidden = $inDocumentOrder([...(run?.nodes ?? []), ...(extent?.hidden ?? [])]);
@@ -392,7 +394,7 @@ export function HiddenContentDeleteGuardPlugin({
               ? () => $placeCaretPastHiddenRun($freshRun(run, runKeys), direction)
               : undefined,
           $delete: () => {
-            if (range) $removeRange(range);
+            if (range) $removeRange(range, isProtected);
             $removeHidden(keys);
           },
         },
@@ -547,7 +549,7 @@ export function HiddenContentDeleteGuardPlugin({
         return false;
       // The guards that narrow a cut's range run after this one, and the copy below is taken now:
       // narrowed first, the copy and the removal are of the same range.
-      $narrowEditRange(selection);
+      $narrowEditRange(selection, structureProtectionModeRef.current === "protected");
       if (selection.isCollapsed()) return false;
       const hidden = $hiddenNodesInSelection(selection);
       if (hidden.length === 0) return false;
@@ -720,19 +722,18 @@ function $deleteExtent(
   selection.dirty = true;
   const measured = probe.isCollapsed() ? undefined : $rangeSnapshot(probe);
   if (!$isInCaretContainer(probe.focus, from))
-    return { hidden: $hiddenNodesToParaEdge(from, direction), measured };
+    return { hidden: $hiddenNodesToParaEdge(from, direction), measured, leavesLine: true };
   return { hidden: $hiddenNodesInSelection(probe), range: measured, measured };
 }
 
 /**
  * Mutating: call inside `editor.update()`. Removes a word or line delete's measured extent, narrowed
- * as the guards on every edit's range narrow it: past the `\id` line's prefix and a line's gutter
- * glyph, and out of a note's shell.
+ * as the guards on every edit's range narrow it (see {@link $narrowEditRange}).
  */
-function $removeRange(snapshot: RangeSnapshot): void {
+function $removeRange(snapshot: RangeSnapshot, isProtected: boolean): void {
   const range = $rangeFrom(snapshot);
   if (!range) return;
-  $narrowEditRange(range);
+  $narrowEditRange(range, isProtected);
   if (range.isCollapsed()) return;
   $setSelection(range);
   range.removeText();
@@ -742,9 +743,10 @@ function $removeRange(snapshot: RangeSnapshot): void {
  * Mutating: call inside `editor.update()`. Narrows `selection` as the guards that run after this
  * plugin narrow an edit's range, for an edit that acts on it before they do.
  */
-function $narrowEditRange(selection: RangeSelection): void {
+function $narrowEditRange(selection: RangeSelection, isProtected: boolean): void {
   $narrowSelectionPastBookPrefix(selection);
-  $narrowSelectionPastGutterGlyph(selection);
+  // Only the lock keeps a line's gutter glyph out of an edit: unlocked, a cut copies the marker.
+  if (isProtected) $narrowSelectionPastGutterGlyph(selection);
   $confineRangeToProtectedNote(selection);
 }
 

@@ -12,17 +12,21 @@ import {
   $isParaEmpty,
   $isUnmergeableParaStart,
   $mergeParaIntoPrevious,
+  $moveCaretPastGutterGlyph,
+  $narrowSelectionPastGutterGlyph,
   $paraDeleteEffect,
   $sanitizeNodesForProtectedStructure,
   $selectionContainsVerseMarker,
   $selectionSpansBlockBoundary,
   $shouldBlockSelectionReplacement,
   $shouldBlockStructuralEdit,
+  $shouldRefuseExtendedDelete,
   $structuralDeleteTarget,
   keyDownToIntent,
 } from "./structureKeyboard.utils";
 import {
   $createNodeSelection,
+  $createRangeSelection,
   $getRoot,
   $getSelection,
   $createTextNode,
@@ -37,11 +41,14 @@ import {
   $createChapterNode,
   $createCharNode,
   $createGutterMarkerNode,
+  $createImmutableChapterNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
   $createNoteNode,
   $createParaNode,
   $createImpliedParaNode,
+  $createMilestoneNode,
+  $createUnknownNode,
   $createVerseNode,
   $isCharNode,
   $isNoteNode,
@@ -1033,6 +1040,157 @@ describe("$isUnmergeableParaStart", () => {
     updateSelection(editor, t1!, 0);
     editor.getEditorState().read(() => {
       expect($isUnmergeableParaStart($getSelection()!)).toBe(false);
+    });
+  });
+});
+
+describe("forward deletes and extents around a line's gutter marker", () => {
+  /** A paragraph led by its gutter marker glyph, as the paragraph-structure view shows it. */
+  const $createMarkedPara = (marker: string) =>
+    $createParaNode(marker).append($createGutterMarkerNode(`\\${marker}${NBSP}`));
+
+  /** Mounts `line` (built by `$build`) before a closing paragraph, caret in front of its marker. */
+  async function caretInFrontOfMarker($build: (line: ParaNode) => void) {
+    let line: ParaNode;
+    const { editor } = await baseTestEnvironment(() => {
+      line = $createMarkedPara("q2");
+      $build(line);
+      $getRoot().append(line, $createParaNode("p").append($createTextNode("closing")));
+    });
+    await sutUpdate(editor, () => line!.select(0, 0));
+    return { editor, line: line! };
+  }
+
+  const blocksForwardDelete = (editor: LexicalEditor) =>
+    editor
+      .getEditorState()
+      .read(() => $shouldBlockStructuralEdit($getSelection()!, "deleteForward"));
+
+  it("judges a forward delete from past the marker: allowed into the line's text", async () => {
+    const { editor } = await caretInFrontOfMarker((line) => line.append($createTextNode("text")));
+    expect(blocksForwardDelete(editor)).toBe(false);
+  });
+
+  it("refuses a forward delete onto a verse marker past the marker", async () => {
+    const { editor } = await caretInFrontOfMarker((line) =>
+      line.append($createImmutableVerseNode("1"), $createTextNode("text")),
+    );
+    expect(blocksForwardDelete(editor)).toBe(true);
+  });
+
+  it("refuses a forward delete onto a milestone past the marker, which renders nothing", async () => {
+    const { editor } = await caretInFrontOfMarker((line) =>
+      line.append($createMilestoneNode("qt-s"), $createTextNode("text")),
+    );
+    expect(blocksForwardDelete(editor)).toBe(true);
+  });
+
+  it("refuses a forward delete onto a hidden construct past the marker", async () => {
+    const { editor } = await caretInFrontOfMarker((line) =>
+      line.append($createUnknownNode("figure", "fig"), $createTextNode("text")),
+    );
+    expect(blocksForwardDelete(editor)).toBe(true);
+  });
+
+  it("refuses a forward delete in front of an empty line's marker, which would merge the next line", async () => {
+    const { editor } = await caretInFrontOfMarker(() => undefined);
+    expect(blocksForwardDelete(editor)).toBe(true);
+  });
+
+  it("moves a caret past the marker only where a forward delete may start", async () => {
+    const { editor: withText } = await caretInFrontOfMarker((para) =>
+      para.append($createTextNode("text")),
+    );
+    await sutUpdate(withText, () => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection");
+      expect($moveCaretPastGutterGlyph(selection)).toBe(true);
+      expect(selection.anchor.getNode().getTextContent()).toBe("text");
+      expect(selection.anchor.offset).toBe(0);
+      expect(selection.isCollapsed()).toBe(true);
+    });
+
+    const { editor: withVerse } = await caretInFrontOfMarker((para) =>
+      para.append($createImmutableVerseNode("1")),
+    );
+    await sutUpdate(withVerse, () => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("no range selection");
+      expect($moveCaretPastGutterGlyph(selection)).toBe(false);
+      expect(selection.anchor.offset).toBe(0);
+    });
+  });
+
+  it("narrows a range that starts in front of the marker to start past it", async () => {
+    const { editor, line } = await caretInFrontOfMarker((para) =>
+      para.append($createTextNode("text")),
+    );
+    await sutUpdate(editor, () => {
+      const text = line.getLastChild();
+      if (!$isTextNode(text)) throw new Error("no line text");
+      const selection = $createRangeSelection();
+      selection.anchor.set(line.getKey(), 0, "element");
+      selection.focus.set(text.getKey(), 4, "text");
+      $narrowSelectionPastGutterGlyph(selection);
+      expect(selection.anchor.key).toBe(text.getKey());
+      expect(selection.anchor.offset).toBe(0);
+    });
+  });
+});
+
+describe("$shouldRefuseExtendedDelete and the chapter rule", () => {
+  it("refuses an extent over a verse, or one that ends inside a hidden construct", async () => {
+    let line: ParaNode;
+    let before: TextNode;
+    let after: TextNode;
+    let caption: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      line = $createParaNode("p");
+      before = $createTextNode("before ");
+      after = $createTextNode(" after");
+      caption = $createTextNode("caption");
+      $getRoot().append(
+        line.append(
+          before,
+          $createImmutableVerseNode("2"),
+          after,
+          $createUnknownNode("figure", "fig").append(caption),
+        ),
+      );
+    });
+    editor.getEditorState().read(() => {
+      const range = (anchor: [TextNode, number], focus: [TextNode, number]) => {
+        const selection = $createRangeSelection();
+        selection.anchor.set(anchor[0].getKey(), anchor[1], "text");
+        selection.focus.set(focus[0].getKey(), focus[1], "text");
+        return selection;
+      };
+      expect($shouldRefuseExtendedDelete(range([before, 2], [after, 2]))).toBe(true);
+      expect($shouldRefuseExtendedDelete(range([after, 2], [caption, 3]))).toBe(true);
+      expect($shouldRefuseExtendedDelete(range([after, 1], [after, 4]))).toBe(false);
+    });
+  });
+
+  it("counts a range covering a chapter marker as crossing a block, but not a caret beside one", async () => {
+    let closing: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      closing = $createTextNode("closing");
+      $getRoot().append(
+        $createParaNode("p").append(closing),
+        $createImmutableChapterNode("2"),
+        $createParaNode("p").append($createTextNode("next")),
+      );
+    });
+    editor.getEditorState().read(() => {
+      const range = $createRangeSelection();
+      range.anchor.set(closing.getKey(), "closing".length, "text");
+      range.focus.set("root", 2, "element");
+      expect($selectionSpansBlockBoundary(range)).toBe(true);
+
+      const caret = $createRangeSelection();
+      caret.anchor.set(closing.getKey(), "closing".length, "text");
+      caret.focus.set(closing.getKey(), "closing".length, "text");
+      expect($selectionSpansBlockBoundary(caret)).toBe(false);
     });
   });
 });
