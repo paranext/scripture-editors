@@ -637,19 +637,23 @@ function rowsFor(fixture: string, usj: Usj): { ranges: RangeRow[]; usfm: UsfmRow
 
 /**
  * Why a row is known to fail, or `undefined`. Each reason names a finding in the PT-4197
- * data-fidelity catalog; a row that starts passing fails, so a fix deletes its rule.
+ * data-fidelity catalog, led by the ticket that will fix it where one is filed; a row that starts
+ * passing fails, so a fix deletes its rule.
  */
 function knownFailure(fixture: string, usj: Usj, row: RangeRow | UsfmRow): string | undefined {
   if ("range" in row) {
     const { kind, start, end } = row.range;
     const copied = sliceUsj(usj.content, start, end);
+    // TODO(PT-4911): write a hidden view's text/plain without the gutter glyph text.
     if (
       row.viewName === "paragraph-structure" &&
       (kind === "across a paragraph boundary" || kind === "spans a whole paragraph") &&
       row.operation !== "cut" &&
       !isRefusedByPasteGate(row.view, copied)
     )
-      return "the copy's text/plain carries the next paragraph's gutter glyph (`\\q1 `), so CommandMenuPlugin refuses its paste";
+      return "PT-4911: the copy's text/plain carries the next paragraph's gutter glyph (`\\q1 `), so CommandMenuPlugin refuses its paste";
+    // TODO(PT-4921): carry what the html flavor loses (char and note attributes, figures), and
+    // keep a note's display spacers out of it.
     if (
       isMarkerHidden(row.view) &&
       row.operation === "copy, paste html and plain" &&
@@ -657,7 +661,7 @@ function knownFailure(fixture: string, usj: Usj, row: RangeRow | UsfmRow): strin
       kind !== "inside note content" &&
       holdsHtmlLossyContent(copied)
     )
-      return "text/html carries no char attributes (`closed`) and brings a note's display spacers back as text";
+      return "PT-4921: text/html carries no char attributes (`closed`) and brings a note's display spacers back as text";
   }
   if (row.viewName === "standard" && fixture === "testUSFM-2SA-5.usj") {
     if (
