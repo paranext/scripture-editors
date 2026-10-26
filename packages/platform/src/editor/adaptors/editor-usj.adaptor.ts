@@ -255,8 +255,9 @@ function createCharMarker(
   node: SerializedCharNode,
   content: MarkerContent[] | undefined,
 ): MarkerObject {
-  const { type, marker: nodeMarker, unknownAttributes } = node;
-  const marker = nodeMarker === "" ? undefined : nodeMarker;
+  // An empty marker is a span with no name (ParatextData reads a bare `\` in a note as
+  // `<char style="">`), not a missing one, so it is kept as `marker: ""`.
+  const { type, marker, unknownAttributes } = node;
   // The structural NBSP separator at the span's start is stripped in `recurseNodes`, from the
   // text node right after the opening glyph — positionally, so an authored leading `~` survives.
   return removeUndefinedProperties({
