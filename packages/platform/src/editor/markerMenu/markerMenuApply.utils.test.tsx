@@ -1051,12 +1051,12 @@ describe("$applyMarkerMenuSelection", () => {
   });
 
   describe("the `\\c` pick in a book with no chapters", () => {
-    /** Chapter 1 of a book with no chapters (`\id` line, then `afterBook`), caret placed by `$select`. */
-    async function emptyBookAtCaret($select: (idText: TextNode) => void, afterBook = () => {}) {
+    /** Chapter 1 of a book with no chapters (`\id` line, then `$afterBook`), caret placed by `$select`. */
+    async function emptyBookAtCaret($select: (idText: TextNode) => void, $afterBook?: () => void) {
       let idText: TextNode;
       const environment = await historyTestEnvironment(() => {
         idText = $buildBookLine("Genesis description");
-        afterBook();
+        $afterBook?.();
       });
       await act(async () =>
         environment.editor.update(() => $select(requireDefined(idText, "book line text"))),
@@ -1133,12 +1133,12 @@ describe("$applyMarkerMenuSelection", () => {
 
     it("goes after the front matter and before chapter content, wherever the caret is", async () => {
       // `\mt1` and `\ip` belong before chapter 1, and `\p` after it.
-      const appendBlocks = () =>
+      const $appendBlocks = () =>
         $getRoot().append($para("mt1", "Jonah"), $para("ip", "Introduction"), $para("p", "Text"));
-      const atIdLine = await emptyBookAtCaret((idText) => idText.selectEnd(), appendBlocks);
+      const atIdLine = await emptyBookAtCaret((idText) => idText.selectEnd(), $appendBlocks);
       const inBody = await emptyBookAtCaret(
         () => requireDefined($getRoot().getLastDescendant() ?? undefined, "no text").selectEnd(),
-        appendBlocks,
+        $appendBlocks,
       );
 
       for (const { editor } of [atIdLine, inBody]) {
