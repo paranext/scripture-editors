@@ -45,6 +45,12 @@ export interface MarkerMenuContext {
   hasTextSelection: boolean;
   /** Caret is inside visible marker glyph text (extension lets Enter pass through). */
   inMarkerText: boolean;
+  /**
+   * Set when a chapter marker can be inserted: the document is chapter 1 and has no `\c` yet, as in
+   * a book that has no chapters. Every other chapter document already carries its own `\c`, and
+   * the host's save removes a second one.
+   */
+  canInsertChapter?: boolean;
 }
 
 /**
@@ -92,9 +98,9 @@ function withoutBasicToken(description?: string): string | undefined {
  * `id`; PT9 does not filter deprecated markers, and neither do we).
  *
  * `\c` (chapter) is also skipped: the sheet types it `styleType: "paragraph"`, but it is a
- * structural marker inserted via its own `getUsjMarkerAction` chapter action, not a paragraph
- * style to retag/split into. Offering it in the paragraph menu let it be picked from the Enter
- * split menu, where `$splitParagraphWithMarker("c")` produced a malformed `<para marker="c">`.
+ * structural marker, not a paragraph style to retag or split into, and the Enter menu splits with
+ * whatever it is given. The `\` menu offers it separately, only where a chapter can be inserted
+ * ({@link chapterItem}).
  */
 function includeMarker(marker: string, extraValidMarkers?: readonly string[]): boolean {
   return (
@@ -265,15 +271,21 @@ function compareBasicFirst(a: MarkerMenuItem, b: MarkerMenuItem): number {
   return a.isBasic ? -1 : 1;
 }
 
+/**
+ * Close tags, then character and note items. `chapter` joins the character and note items in their
+ * own order, but only when the source has something of its own to offer: an empty character source
+ * still falls back to the paragraph list.
+ */
 function characterItems(
   styleInfo: StyleInfo,
   context: MarkerMenuContext,
   extraValidMarkers?: readonly string[],
+  chapter?: MarkerMenuItem,
 ): MarkerMenuItem[] {
-  return [
-    ...closeTagItems(styleInfo, context.openCharMarkers),
-    ...characterItemsRaw(styleInfo, context, extraValidMarkers),
-  ].sort(compareBasicFirst);
+  const closeTags = closeTagItems(styleInfo, context.openCharMarkers);
+  const items = characterItemsRaw(styleInfo, context, extraValidMarkers);
+  if (closeTags.length === 0 && items.length === 0) return [];
+  return [...closeTags, ...withChapterItem(items, chapter)].sort(compareBasicFirst);
 }
 
 /**
@@ -289,9 +301,33 @@ export function getMarkerMenuItems(
   context: MarkerMenuContext,
   extraValidMarkers?: readonly string[],
 ): MarkerMenuItem[] {
-  if (context.source === "paragraph") return paragraphItems(styleInfo, context, extraValidMarkers);
-  const items = characterItems(styleInfo, context, extraValidMarkers);
-  return items.length > 0 ? items : paragraphItems(styleInfo, context, extraValidMarkers);
+  const chapter = chapterItem(styleInfo, context);
+  if (context.source === "character") {
+    const items = characterItems(styleInfo, context, extraValidMarkers, chapter);
+    if (items.length > 0) return items;
+  }
+  return withChapterItem(paragraphItems(styleInfo, context, extraValidMarkers), chapter);
+}
+
+/**
+ * The `\c` entry, when the caret is where a chapter can be inserted: the document has no chapter
+ * yet ({@link MarkerMenuContext.canInsertChapter}), outside a note, at a caret rather than over a
+ * selection (a chapter does not wrap text). Offered from both `\` sources, since an empty book's
+ * only caret position, the `\id` line, is character source. Picking it inserts the chapter line
+ * itself (`$applyMarkerMenuSelection`), never a paragraph retag or split.
+ */
+function chapterItem(styleInfo: StyleInfo, context: MarkerMenuContext): MarkerMenuItem | undefined {
+  if (!context.canInsertChapter || context.noteMarker || context.hasTextSelection) return undefined;
+  const entry = Object.hasOwn(styleInfo.markers, "c") ? styleInfo.markers.c : undefined;
+  return entry ? toItem(entry, "paragraph") : undefined;
+}
+
+/** `items` (already sorted) with `chapter` added in its sorted place. */
+function withChapterItem(
+  items: MarkerMenuItem[],
+  chapter: MarkerMenuItem | undefined,
+): MarkerMenuItem[] {
+  return chapter ? [...items, chapter].sort(compareItems) : items;
 }
 
 /**

@@ -17,6 +17,7 @@
  * `OnSelectionChangePlugin`.
  */
 import { MarkerMenuContext } from "./markerItemSource";
+import { $canInsertChapter } from "../markerEdit/firstChapter.utils";
 import { $findMatchingParent } from "@lexical/utils";
 import {
   $getRoot,
@@ -225,9 +226,12 @@ function $getMenuFocus(
  *
  * @param editor - The editor being read, to anchor at a selected paragraph marker's glyph; without
  *   it, a marker selection reports no `anchorRect`.
+ * @param chapterNum - The chapter the document is, which decides `canInsertChapter`; without it,
+ *   no chapter can be inserted.
  */
 export function $getMarkerMenuContext(
   editor?: LexicalEditor,
+  chapterNum?: number,
 ): MarkerMenuContextSnapshot | undefined {
   const selection = $getSelection();
   const focus = $getMenuFocus(selection);
@@ -268,6 +272,7 @@ export function $getMarkerMenuContext(
     // (see $isPointInMarkerGlyphText) — Enter there opens the paragraph menu exactly as at the
     // end of a plain-text paragraph.
     inMarkerText: $isPointInMarkerGlyphText(focusNode, offset),
+    canInsertChapter: $canInsertChapter(chapterNum),
     anchorRect: getGlyphRect(editor, $getSelectedParaMarker(selection)) ?? getAnchorRect(),
   };
 }

@@ -214,6 +214,12 @@ What follows from that:
   SPLIT: the tail after the caret becomes a new paragraph inserted directly after the book, with an
   open character span closed on the left and reopened in it. Typed `\p`, `\ip` or `\c ` bytes end
   the line the same way, where the file bytes would.
+- **In a book with no chapters, the `\` menu also offers `\c`**, and nowhere else does
+  (`canInsertChapter`: chapter 1 with no chapter yet). Every other chapter already has its `\c`, and
+  the host's save removes a second one, so a `\c` offered there would always be undone. The pick
+  does NOT split the line: chapter 1 goes after the book's front matter (the `\id` line and each
+  paragraph the stylesheet allows under `\id`), wherever the caret is. `EditorRef.insertMarker("c")`
+  and `EditorRef.insertFirstChapter` put it in the same place (`markerEdit/firstChapter.utils.ts`).
 - **The line settles.** `$rebuildBook` is the fourth settle scope beside paragraphs, note content
   and chapters; like the note scope it re-tokenizes only the content and preserves the book node,
   its code and its prefix, which are never re-derived from displayed bytes. Without it, typed
