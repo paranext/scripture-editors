@@ -42,6 +42,7 @@
  */
 
 import { NBSP } from "shared";
+import { getNbspSpelling, ViewOptions } from "shared-react";
 
 /**
  * Data → display: NBSP → `nbspSpelling`; spaces in runs of 2+ → NBSP. Paragraph-leading
@@ -64,4 +65,27 @@ export function usjTextToDisplay(text: string, nbspSpelling = "~"): string {
  */
 export function displayTextToUsj(text: string, nbspSpelling = "~"): string {
   return text.replaceAll(NBSP, " ").replaceAll(nbspSpelling, NBSP);
+}
+
+/**
+ * Respells the no-break spaces in text a host takes from the editor's display — a DOM selection or
+ * an element's `textContent`, for a copy or a search — the way the project's USFM spells them.
+ * Standard view shows a stored no-break space as `getNbspSpelling(viewOptions)`: with
+ * `ViewOptions.allowInvisibleCharacters` off that is `~`, already the USFM spelling, and the text is
+ * returned unchanged; with it on each `⍽` (U+237D) becomes U+00A0 and `~` stays an ordinary
+ * character. Other display characters (the no-break spaces a space run or a marker separator
+ * shows as) are left as they are.
+ *
+ * @param displayText - Text read from the editor's display.
+ * @param viewOptions - The editor's view options.
+ * @returns The text with the project's spelling of a no-break space.
+ *
+ * @public
+ */
+export function toUsfmNbspSpelling(
+  displayText: string,
+  viewOptions: ViewOptions | undefined,
+): string {
+  const nbspSpelling = getNbspSpelling(viewOptions);
+  return nbspSpelling === "~" ? displayText : displayText.replaceAll(nbspSpelling, NBSP);
 }

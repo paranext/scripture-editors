@@ -110,6 +110,10 @@ refused. The public surface grew substantially; nothing was removed.
   settle. A U+00A0 typed or pasted is kept as one. The Markers view's copy and the Unformatted
   view's marker settle follow the same spelling. Views that hide markers are unaffected, and so is
   `getViewMode`. Off (the default) is unchanged: `~` is a no-break space.
+- `toUsfmNbspSpelling(displayText, viewOptions)`: for a host that reads text from the editor's
+  display (a DOM selection, an element's `textContent`) to copy or search it — turns the displayed
+  `⍽` back into U+00A0 when `ViewOptions.allowInvisibleCharacters` is on, and leaves the text
+  unchanged when it is off (`~` is already the project's spelling then).
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
 - `EditorProps.onParaMarkerMenuRequest` — fired on unmodified Enter or Alt+↓ while a paragraph marker is
   selected, so the host can open its paragraph dropdown.

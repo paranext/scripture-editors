@@ -1,5 +1,5 @@
-import { displayTextToUsj, usjTextToDisplay } from "./whitespaceDisplay.utils";
-import { NBSP } from "shared";
+import { displayTextToUsj, toUsfmNbspSpelling, usjTextToDisplay } from "./whitespaceDisplay.utils";
+import { NBSP, NBSP_SYMBOL } from "shared";
 
 describe("usjTextToDisplay", () => {
   it("shows a stored NBSP as a tilde", () => {
@@ -31,5 +31,20 @@ describe("displayTextToUsj", () => {
   it("round-trips with usjTextToDisplay for normalized text", () => {
     const data = `In the days${NBSP}of the judges`;
     expect(displayTextToUsj(usjTextToDisplay(data))).toBe(data);
+  });
+});
+
+describe("toUsfmNbspSpelling", () => {
+  const standard = { markerMode: "editable", hasSpacing: true, isFormattedFont: true } as const;
+
+  it("leaves displayed text alone when the project spells a no-break space `~`", () => {
+    expect(toUsfmNbspSpelling(`a~b${NBSP_SYMBOL}c`, standard)).toBe(`a~b${NBSP_SYMBOL}c`);
+    expect(toUsfmNbspSpelling("a~b", undefined)).toBe("a~b");
+  });
+
+  it("turns each displayed no-break space into U+00A0 when `~` is an ordinary character", () => {
+    expect(
+      toUsfmNbspSpelling(`a~b${NBSP_SYMBOL}c`, { ...standard, allowInvisibleCharacters: true }),
+    ).toBe(`a~b${NBSP}c`);
   });
 });
