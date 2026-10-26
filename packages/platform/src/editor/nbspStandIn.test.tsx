@@ -600,6 +600,24 @@ describe("the stand-in for a stored no-break space", () => {
   });
 
   describe("note callers", () => {
+    it("hand a click handler the note's ops with U+00A0", async () => {
+      let clickedOps: unknown;
+      const mounted = await mountInView(usjWith(["a ", noteWithNbsp, " b"]), standardOn, {
+        nodes: {
+          noteCallerOnClick: (_event, _key, _collapsed, _getCaller, _setCaller, getNoteOps) => {
+            clickedOps = getNoteOps();
+          },
+        },
+      });
+      const caller = mounted.lexical.getRootElement()?.querySelector("button[data-caller-id]");
+      if (!(caller instanceof HTMLElement)) throw new Error("no note caller button");
+
+      await act(async () => caller.click());
+
+      expect(JSON.stringify(clickedOps)).toContain(`g${NBSP}h`);
+      expectNoStandIn(clickedOps);
+    });
+
     it("preview a note's text with U+00A0", async () => {
       const mounted = await mountInView(usjWith(["a ", noteWithNbsp, " b"]), standardOn);
 

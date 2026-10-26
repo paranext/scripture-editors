@@ -534,7 +534,38 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
     viewOptionsRef.current = resolvedViewOptions;
   }
   const viewOptions = viewOptionsRef.current;
-  const nodeOptions = useMemo(() => nodes ?? defaultNodeOptions, [nodes]);
+  const nodeOptions = useMemo(() => {
+    const options = nodes ?? defaultNodeOptions;
+    const { noteCallerOnClick } = options;
+    if (!noteCallerOnClick) return options;
+    // The note ops a caller click hands out are the editor's own, so they go out as every other op
+    // the editor gives a host does (`opsForHost`): with U+00A0, never the internal stand-in for a
+    // stored no-break space. Read through the ref so the options keep their identity.
+    return {
+      ...options,
+      noteCallerOnClick: (
+        event,
+        noteNodeKey,
+        isCollapsed,
+        getCaller,
+        setCaller,
+        getNoteOps,
+        getNoteIndex,
+      ) =>
+        noteCallerOnClick(
+          event,
+          noteNodeKey,
+          isCollapsed,
+          getCaller,
+          setCaller,
+          () => {
+            const ops = getNoteOps();
+            return ops && opsForHost(ops, viewOptionsRef.current);
+          },
+          getNoteIndex,
+        ),
+    } satisfies UsjNodeOptions;
+  }, [nodes]);
   const contextMenuOptions = useMemo(() => contextMenu, [contextMenu]);
   // The same `?? defaultStyleInfo` fallback the palette/validator consumers use (menuStyleInfo
   // below): with no host styleInfo, classifying from the smaller bundled markers table while the
