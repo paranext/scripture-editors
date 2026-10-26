@@ -55,10 +55,9 @@ import { StructureProtectionMode } from "./structure-protection.model";
  * The armed state is published to the DOM (rather than rendered here) so the host app owns the
  * user-facing hint: the root element carries the `verse-delete-armed` class plus
  * `data-verse-delete-intent` (`deleteBackward` | `deleteForward`) and `data-verse-delete-kind`
- * (`verse` | `selection`), and the armed marker carries the `verse-selected` class. The host can
- * observe these to render a localized tooltip (see paranext-core's VerseDeleteTooltipOverlay). An
- * armed chapter carries the `verse-selected` class too, so it shows the same armed styling, but
- * publishes no hint kind: the host's hint names a verse marker or a selection, never a chapter.
+ * (`verse` | `chapter` | `selection`), and the armed marker (a verse or a chapter) carries the
+ * `verse-selected` class. The host can observe these to render a localized tooltip (see
+ * paranext-core's TwoStepDeleteTooltipOverlay). An armed paragraph merge publishes no hint kind.
  *
  * @param structureProtectionMode - `"off"` (e.g. the Power interface mode): the plugin registers
  *   no handlers and editing is fully native — no blocking, no two-step delete, no armed state.
@@ -302,12 +301,12 @@ export function StructureKeyboardPlugin({
 
   // Publish the armed state onto the editor root: the class gates the CSS blink to armed markers,
   // and the data attributes let the host app render a localized destructive hint. `para` merges
-  // and chapters expose no hint kind (the host's hint is verse-marker scope). A chapter glyph has no
-  // selection rendering of its own (unlike a verse's decorator), so its armed class is set here.
+  // expose no hint kind. A chapter glyph has no selection rendering of its own (unlike a verse's
+  // decorator), so its armed class is set here.
   useEffect(() => {
     const root = editor.getRootElement();
     if (!root) return;
-    const showHint = !!armed && (armed.kind === "verse" || armed.kind === "selection");
+    const showHint = !!armed && armed.kind !== "para";
     const armedChapter =
       armed?.kind === "chapter" ? (editor.getElementByKey(armed.key) ?? undefined) : undefined;
     armedChapter?.classList.add(VERSE_SELECTED_CLASS_NAME);

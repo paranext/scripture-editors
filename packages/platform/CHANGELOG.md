@@ -122,6 +122,12 @@ refused. The public surface grew substantially; nothing was removed.
   the paragraph-structure view, as removing its selected marker does. It used to delete the line's
   gutter glyph and reset its marker to `\p`. `"guarded"` asks for a second press, and
   `"protected"` refuses it.
+- **`"guarded"` arms a chapter marker for its two-press delete**, in the formatted and
+  paragraph-structure views: Backspace or Delete beside `\c N` first selects the chapter, and the
+  second press removes it. While a chapter is armed, the editor root carries
+  `data-verse-delete-kind="chapter"` beside `data-verse-delete-intent`, as it does `verse` and
+  `selection`, so a host that renders the "press again" hint from these attributes should handle
+  the new value.
 - **`EditorRef.copy()` and `EditorRef.cut()` with nothing selected now leave the clipboard alone.**
   Previously either one, called at a collapsed caret or with no selection, still wrote to the system
   clipboard — it put a lone `#` there, because `@lexical/clipboard` synthesizes a copy event by

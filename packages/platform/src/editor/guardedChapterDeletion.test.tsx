@@ -143,12 +143,16 @@ describe("guarded: a chapter beside the caret is armed, then deleted", () => {
           expect(await press(m, key)).toEqual([]);
           expect(m.ref.current?.getUsj()).toEqual(DOC);
           expect(isChapterArmed(m, number)).toBe(true);
-          // The host's hint names a verse marker or a selection; a chapter publishes none.
-          expect(m.lexical.getRootElement()?.hasAttribute("data-verse-delete-kind")).toBe(false);
+          // The host renders its "press again" hint from these, naming the chapter marker.
+          const intent = key === "Backspace" ? "deleteBackward" : "deleteForward";
+          const root = m.lexical.getRootElement();
+          expect(root?.getAttribute("data-verse-delete-kind")).toBe("chapter");
+          expect(root?.getAttribute("data-verse-delete-intent")).toBe(intent);
 
           expect(await press(m, key)).toEqual([]);
           expect(m.ref.current?.getUsj()).toEqual(withoutChapter(number));
           expect(m.lexical.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
+          expect(m.lexical.getRootElement()?.hasAttribute("data-verse-delete-kind")).toBe(false);
           // The caret is left in the text, so the next keystroke has somewhere to go.
           const isCollapsedCaret = m.lexical.getEditorState().read(() => {
             const selection = $getSelection();
