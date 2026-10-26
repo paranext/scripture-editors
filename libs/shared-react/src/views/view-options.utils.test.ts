@@ -10,6 +10,7 @@ import {
 } from "./view-mode.model";
 import {
   getDefaultViewMode,
+  getNbspSpelling,
   getVerseNodeClass,
   getViewClassList,
   getViewMode,
@@ -17,7 +18,7 @@ import {
   hasStandardViewWhitespace,
   ViewOptions,
 } from "./view-options.utils";
-import { VerseNode } from "shared";
+import { NBSP_SYMBOL, VerseNode } from "shared";
 
 /** Every view mode the package knows about. New modes join these tests automatically. */
 const allViewModes = Object.keys(viewModeToViewNames) as ViewMode[];
@@ -154,6 +155,22 @@ describe("getViewMode", () => {
     expect(getViewMode(viewOptions)).toBe(FORMATTED_VIEW_MODE);
   });
 
+  // It describes the project's stored text, not the view, so it never changes which mode a view is.
+  it.each(allViewModes.flatMap((viewMode) => [true, false].map((allow) => [viewMode, allow])))(
+    "still resolves '%s' with allowInvisibleCharacters %s",
+    (viewMode, allowInvisibleCharacters) => {
+      const viewOptions = getViewOptions(viewMode as ViewMode);
+      if (!viewOptions) throw new Error(`${viewMode} view options are not defined`);
+
+      expect(
+        getViewMode({
+          ...viewOptions,
+          allowInvisibleCharacters: allowInvisibleCharacters as boolean,
+        }),
+      ).toBe(viewMode);
+    },
+  );
+
   it("still resolves block verse with the neutralized para features spelled out", () => {
     const blockVerseViewOptions = getViewOptions(BLOCK_VERSE_VIEW_MODE);
     if (!blockVerseViewOptions) throw new Error("block verse view options are not defined");
@@ -252,5 +269,17 @@ describe("standard-view whitespace gate", () => {
 
   it("does NOT apply when view options are undefined", () => {
     expect(hasStandardViewWhitespace(undefined)).toBe(false);
+  });
+});
+
+describe("getNbspSpelling", () => {
+  it("is `~` unless the project stores invisible characters literally", () => {
+    const standard = getViewOptions(STANDARD_VIEW_MODE);
+    if (!standard) throw new Error("standard view options not found");
+
+    expect(getNbspSpelling(undefined)).toBe("~");
+    expect(getNbspSpelling(standard)).toBe("~");
+    expect(getNbspSpelling({ ...standard, allowInvisibleCharacters: false })).toBe("~");
+    expect(getNbspSpelling({ ...standard, allowInvisibleCharacters: true })).toBe(NBSP_SYMBOL);
   });
 });

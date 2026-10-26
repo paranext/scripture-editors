@@ -10,6 +10,12 @@ export interface UnknownAttributes {
 export const NBSP = "\u00A0";
 /** Zero-width space (U+200B). */
 export const ZWSP = "\u200B";
+/**
+ * Shouldered open box (U+237D), the conventional picture of a no-break space. Standard view shows a
+ * stored no-break space as this character, instead of `~`, in a project where `~` is an ordinary
+ * character (see `ViewOptions.allowInvisibleCharacters` in shared-react).
+ */
+export const NBSP_SYMBOL = "\u237D";
 
 export const EMPTY_CHAR_PLACEHOLDER_TEXT = NBSP;
 

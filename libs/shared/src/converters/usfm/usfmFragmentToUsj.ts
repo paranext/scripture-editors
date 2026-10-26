@@ -94,6 +94,12 @@ export interface UsfmFragmentOptions {
    * rather than as text. Ignored in note content.
    */
   opensNamelessParagraph?: boolean;
+  /**
+   * The character that spells a no-break space in the fragment; each one becomes U+00A0 in the USJ.
+   * Defaults to `~`, Paratext's USFM spelling. Pass `NBSP_SYMBOL` for a project that stores a
+   * no-break space as the literal U+00A0: there `~` is an ordinary character and is kept as one.
+   */
+  nbspSpelling?: string;
 }
 
 const VERSE_MARKER = "v";
@@ -888,10 +894,11 @@ function scanMilestone(
   return { token: { kind: "milestone", marker: name, attributes }, next: closeIndex + 2 };
 }
 
-/** Convert `~` to NBSP for USJ text content (PT9 read-side `UsfmParser` behavior), and
- * normalize the line-break marker `regularizeSpaces` preserved back to a plain space. */
-function toUsjText(text: string): string {
-  return text.replaceAll("\n", " ").replaceAll("~", NBSP);
+/** Convert `nbspSpelling` (`~` unless the caller says otherwise) to NBSP for USJ text content (PT9
+ * read-side `UsfmParser` behavior), and normalize the line-break marker `regularizeSpaces`
+ * preserved back to a plain space. */
+function toUsjText(text: string, nbspSpelling: string): string {
+  return text.replaceAll("\n", " ").replaceAll(nbspSpelling, NBSP);
 }
 
 /** Get (and lazily initialize) a marker object's content array without a non-null assertion. */
@@ -927,6 +934,7 @@ export function usfmFragmentToUsjContent(
 ): MarkerContent[] {
   const result: MarkerContent[] = [];
   const isNoteContext = options?.isNoteContext ?? false;
+  const nbspSpelling = options?.nbspSpelling ?? "~";
   let para: MarkerObject | undefined;
   let note: ClosableMarkerObject | undefined;
   const charStack: CharFrame[] = [];
@@ -1088,7 +1096,7 @@ export function usfmFragmentToUsjContent(
     | undefined;
 
   const flushHeldWhitespace = () => {
-    if (heldWhitespace) pushContent(toUsjText(heldWhitespace));
+    if (heldWhitespace) pushContent(toUsjText(heldWhitespace, nbspSpelling));
     heldWhitespace = "";
   };
   const clearAttrTarget = (atBlockBoundary = false) => {
@@ -1112,7 +1120,7 @@ export function usfmFragmentToUsjContent(
   const materializeCaptureAsChar = () => {
     if (!attrCapture) return;
     const object: MarkerObject = { type: "char", marker: attrCapture.marker, content: [] };
-    if (attrCapture.value) object.content = [toUsjText(attrCapture.value)];
+    if (attrCapture.value) object.content = [toUsjText(attrCapture.value, nbspSpelling)];
     container().push(object);
     charStack.push({ object });
     attrCapture = undefined;
@@ -1125,7 +1133,7 @@ export function usfmFragmentToUsjContent(
     closeCharStack();
     closeNote(false);
     para = { type: "para", marker, content: [] };
-    if (initialText) para.content = [toUsjText(initialText)];
+    if (initialText) para.content = [toUsjText(initialText, nbspSpelling)];
     blockTarget().push(para);
   };
   /** Abort a para-shaped capture (`\cp` with markup): materialize the standalone paragraph. */
@@ -1185,7 +1193,7 @@ export function usfmFragmentToUsjContent(
     const title = refused ? value : parsedTitle;
     const opened: MarkerObject = {
       type: "periph",
-      ...(title ? { [PERIPH_TITLE_ATTRIBUTE]: toUsjText(title) } : {}),
+      ...(title ? { [PERIPH_TITLE_ATTRIBUTE]: toUsjText(title, nbspSpelling) } : {}),
       ...attributes,
     };
     opened.content = [];
@@ -1211,7 +1219,7 @@ export function usfmFragmentToUsjContent(
       startParagraph(FIGURE_MARKER, figCapture.value);
     } else {
       const object: MarkerObject = { type: "char", marker: FIGURE_MARKER, content: [] };
-      if (figCapture.value) object.content = [toUsjText(figCapture.value)];
+      if (figCapture.value) object.content = [toUsjText(figCapture.value, nbspSpelling)];
       container().push(object);
       charStack.push({ object });
     }
@@ -1267,7 +1275,7 @@ export function usfmFragmentToUsjContent(
         // (`\vp 11 vp\vp* This…` → text starts with the space), per its
         // treat-space-after-attribute-markers-as-content behavior.
         Object.assign(attrCapture.target, {
-          [attrCapture.attrName]: toUsjText(attrCapture.value.trim()),
+          [attrCapture.attrName]: toUsjText(attrCapture.value.trim(), nbspSpelling),
         });
         const foldedMarker = attrCapture.marker;
         attrCapture = undefined;
@@ -1314,7 +1322,9 @@ export function usfmFragmentToUsjContent(
         } else {
           // The cp "paragraph" ended with plain-text content only: fold (trailing line
           // whitespace is structural).
-          Object.assign(attrCapture.target, { [attrCapture.attrName]: toUsjText(cpValue) });
+          Object.assign(attrCapture.target, {
+            [attrCapture.attrName]: toUsjText(cpValue, nbspSpelling),
+          });
           attrCapture = undefined;
         }
         // fall through to process the boundary token normally
@@ -1387,7 +1397,7 @@ export function usfmFragmentToUsjContent(
             ...figureAttributes,
           };
           const description = figCapture.value.slice(0, pipeIndex);
-          if (description) figure.content = [toUsjText(description)];
+          if (description) figure.content = [toUsjText(description, nbspSpelling)];
           pushContent(figure);
           figCapture = undefined;
           continue;
@@ -1475,7 +1485,7 @@ export function usfmFragmentToUsjContent(
           if (next === undefined || next.kind === "para" || next.kind === "chapter")
             text = text.slice(0, -1);
         }
-        if (text) pushContent(toUsjText(text));
+        if (text) pushContent(toUsjText(text, nbspSpelling));
         break;
       }
       case "para": {
@@ -1688,7 +1698,10 @@ export function usfmFragmentToUsjContent(
       // Empty `\cp` at fragment end stays a first-class empty para (never an empty pubnumber);
       // a non-empty one folds as the pubnumber.
       if (cpValue === "") startParagraph(attrCapture.marker);
-      else Object.assign(attrCapture.target, { [attrCapture.attrName]: toUsjText(cpValue) });
+      else
+        Object.assign(attrCapture.target, {
+          [attrCapture.attrName]: toUsjText(cpValue, nbspSpelling),
+        });
       attrCapture = undefined;
     } else {
       // Trailing line break at the fragment-end boundary is structural (text-case rule).

@@ -13,6 +13,7 @@
  */
 
 import { $getLexicalContent, copyToClipboard, LexicalClipboardData } from "@lexical/clipboard";
+import { mergeRegister } from "@lexical/utils";
 import {
   $getCharacterOffsets,
   $getEditor,
@@ -23,6 +24,8 @@ import {
   $isLineBreakNode,
   $isRangeSelection,
   $isTextNode,
+  COMMAND_PRIORITY_CRITICAL,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
   LexicalEditor,
   LexicalNode,
@@ -102,12 +105,65 @@ export function $displayWhitespaceTransform(node: TextNode): void {
 }
 
 /**
+ * Makes a no-break space the user types go in as `getNbspSpelling()`'s display form whenever that
+ * is not `~` — the case where the project stores U+00A0 itself, so the character is data and is
+ * kept. With the `~` spelling a typed U+00A0 is left alone: it is display spacing there and saves
+ * as a space, as in Paratext 9, whose authors type a no-break space as `~`.
+ *
+ * Two routes carry typed text, and both are covered: `CONTROLLED_TEXT_INSERTION_COMMAND` (Lexical
+ * dispatches it when it inserts the text itself) is re-dispatched with the text respelled, and a
+ * `beforeinput` the browser would otherwise apply to the DOM itself (Lexical then reads the text
+ * back without a command) is claimed in the capture phase, ahead of Lexical's own listener, and
+ * inserted through the command. Text being composed by an input method is left alone.
+ *
+ * @param editor - The editor.
+ * @param getNbspSpelling - The current spelling, read at each insertion.
+ * @returns The teardown.
+ */
+export function registerTypedNbspSpelling(
+  editor: LexicalEditor,
+  getNbspSpelling: () => string,
+): () => void {
+  const respelled = (text: string | null | undefined): string | undefined => {
+    const nbspSpelling = getNbspSpelling();
+    if (nbspSpelling === "~" || !text?.includes(NBSP)) return undefined;
+    return text.replaceAll(NBSP, nbspSpelling);
+  };
+  const onBeforeInput = (event: InputEvent) => {
+    if (event.inputType !== "insertText" || editor.isComposing()) return;
+    const text = respelled(event.data);
+    if (text === undefined) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+  };
+  return mergeRegister(
+    editor.registerCommand(
+      CONTROLLED_TEXT_INSERTION_COMMAND,
+      (payload) => {
+        if (editor.isComposing()) return false;
+        const text = respelled(typeof payload === "string" ? payload : payload.data);
+        if (text === undefined) return false;
+        editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+        return true;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    ),
+    editor.registerRootListener((root, previousRoot) => {
+      previousRoot?.removeEventListener("beforeinput", onBeforeInput, true);
+      root?.addEventListener("beforeinput", onBeforeInput, true);
+    }),
+    () => editor.getRootElement()?.removeEventListener("beforeinput", onBeforeInput, true),
+  );
+}
+
+/**
  * Whether `node`, an untagged text that is exactly one NBSP, is what is left of a displayed space
  * run — two spaces between two elements (char spans, notes, milestones) display as two NBSPs, and a
  * backspace leaves one — rather than one of the engine's structural lone-NBSP nodes. Content NBSP
- * displays as `~`, so in content a lone NBSP is one or the other. A plain space is the shape the
- * same single space loads as, so it goes back to one. This holds at every depth — in a paragraph,
- * inside a char span, and directly inside an expanded note.
+ * displays as its spelling (`~`, or `NBSP_SYMBOL`), so in content a lone NBSP is one or the other.
+ * A plain space is the shape the same single space loads as, so it goes back to one. This holds at
+ * every depth — in a paragraph, inside a char span, and directly inside an expanded note.
  *
  * Every structural lone NBSP sits where this says no — in Standard view, a superset of the display
  * slots `$isLoneNbspContent` (node.utils.ts) rules out:
@@ -370,14 +426,19 @@ const MARKER_ADJACENT_NBSP = new RegExp(
  *
  * Rules 2 and 3 run as ONE pass over `MARKER_ADJACENT_NBSP`, so a marker recognized on one side is
  * recognized on the other and both resolve to the same byte. Every remaining NBSP is genuine data
- * and is preserved as `~`, the same display form typed data-NBSP takes, so serialization
- * round-trips it to a real NBSP instead of silently collapsing it to a plain space or dropping it.
+ * and is preserved as `nbspSpelling`, the display form a stored NBSP takes (`~`, or `NBSP_SYMBOL`
+ * where `~` is an ordinary character — `getNbspSpelling`), so serialization round-trips it to a
+ * real NBSP instead of silently collapsing it to a plain space or dropping it. A pasted `~` is
+ * never touched: it is the display form already, or an ordinary character.
+ *
+ * @param text - The paste's resolved text.
+ * @param nbspSpelling - What a stored NBSP displays as; `~` by default.
  */
-export function normalizePastedNbsp(text: string): string {
+export function normalizePastedNbsp(text: string, nbspSpelling = "~"): string {
   return text
     .replace(/^\u00A0+/gm, (run) => " ".repeat(run.length))
     .replace(MARKER_ADJACENT_NBSP, " ")
-    .replaceAll(NBSP, "~");
+    .replaceAll(NBSP, nbspSpelling);
 }
 
 /** A `\c` chapter token ANYWHERE in a line: the marker, its separator, and the ONE
@@ -621,6 +682,7 @@ function $insertPastedTextIntoAttributeContext(
   text: string,
   isStructureProtected: boolean,
   getMarker: MarkerLookup,
+  nbspSpelling: string,
 ): void {
   const valueBytes = $isSelectionWithinOneAttributeNode(selection);
   const resolved = valueBytes
@@ -631,6 +693,7 @@ function $insertPastedTextIntoAttributeContext(
         isStructureProtected
           ? stripPastedBlockMarkers(stripPastedChapterAndBookId(text), getMarker)
           : stripPastedChapterAndBookId(text),
+        nbspSpelling,
       );
   // Nothing survived the strip, so there is nothing to replace the selection with — see
   // `$handlePasteForStandardView`.
@@ -735,6 +798,7 @@ export function $handlePasteForStandardView(
   isStructureProtected = false,
   armSplitExpected: () => void = () => undefined,
   getMarker: MarkerLookup = () => undefined,
+  nbspSpelling = "~",
 ): boolean {
   const payload = getPastePayload(event, $getEditor()._config.namespace);
   if (!payload) return false;
@@ -765,10 +829,23 @@ export function $handlePasteForStandardView(
   if (!$isRangeSelection(selection)) return false;
   event?.preventDefault();
   if (inAttributeContext) {
-    $insertPastedTextIntoAttributeContext(selection, text, isStructureProtected, getMarker);
+    $insertPastedTextIntoAttributeContext(
+      selection,
+      text,
+      isStructureProtected,
+      getMarker,
+      nbspSpelling,
+    );
     return true;
   }
-  $insertPastedText(selection, text, isStructureProtected, armSplitExpected, getMarker);
+  $insertPastedText(
+    selection,
+    text,
+    isStructureProtected,
+    armSplitExpected,
+    getMarker,
+    nbspSpelling,
+  );
   return true;
 }
 
@@ -787,6 +864,7 @@ export function $handlePasteForStandardView(
  * @param isStructureProtected Whether the document is structure-protected.
  * @param armSplitExpected Arms the engine's `splitExpected` flag for a multi-line replay.
  * @param getMarker The editor's stylesheet lookup, which says which pasted markers are structure.
+ * @param nbspSpelling What a stored NBSP displays as (`getNbspSpelling`).
  */
 export function $insertPastedText(
   selection: RangeSelection,
@@ -794,12 +872,14 @@ export function $insertPastedText(
   isStructureProtected: boolean,
   armSplitExpected: () => void,
   getMarker: MarkerLookup,
+  nbspSpelling: string,
 ): void {
   const withoutChapterOrBookId = stripPastedChapterAndBookId(text);
   const normalized = normalizePastedNbsp(
     isStructureProtected
       ? stripPastedBlockMarkers(withoutChapterOrBookId, getMarker)
       : withoutChapterOrBookId,
+    nbspSpelling,
   );
   if (!normalized) return;
   const lines = normalized.split("\n");
@@ -939,14 +1019,16 @@ function $startsBlockLine(node: LexicalNode): boolean {
  *    instead of becoming phantom spaces; every other NBSP (marker-trailing spaces, a char span's
  *    structural leading separator, a verse's own marker-to-number gap, the `\id` line's
  *    book-code separator a decorator carries) represents a real source space and still maps to
- *    one. Data-NBSP (displayed as `~`) is untouched either way.
+ *    one. A data NBSP is displayed as `nbspSpelling`: `~` is already its USFM spelling and is left
+ *    alone, and any other spelling (`NBSP_SYMBOL`, where `~` is an ordinary character and the
+ *    project stores U+00A0 itself) is written as U+00A0.
  * 3. A block boundary INSIDE an opaque construct contributes no line break, so the construct
  *    copies out on ONE line (see {@link $startsBlockLine}).
  *
  * Read-only: safe inside `editor.getEditorState().read(...)`, an `editor.update(...)`, or a command
  * handler.
  */
-export function $selectionToUsfmText(selection: RangeSelection): string {
+export function $selectionToUsfmText(selection: RangeSelection, nbspSpelling = "~"): string {
   const nodes = selection.getNodes();
   if (nodes.length === 0) return "";
   const firstNode = nodes[0];
@@ -993,7 +1075,7 @@ export function $selectionToUsfmText(selection: RangeSelection): string {
       text += node.getTextContent().replaceAll(NBSP, " ");
     }
   }
-  return text;
+  return nbspSpelling === "~" ? text : text.replaceAll(nbspSpelling, NBSP);
 }
 
 /**
@@ -1086,10 +1168,11 @@ function $selectionTouchesBookOrChapter(selection: RangeSelection): boolean {
  */
 export function $getStandardViewClipboardData(
   editor: LexicalEditor,
+  nbspSpelling = "~",
 ): LexicalClipboardData | undefined {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) return undefined;
-  const usfm = $selectionToUsfmText(selection);
+  const usfm = $selectionToUsfmText(selection, nbspSpelling);
   const data: LexicalClipboardData = {
     "text/plain": usfm,
     "text/html": usfmToClipboardHtml(usfm),
@@ -1131,6 +1214,7 @@ export function $handleCopyForStandardView(
   editor: LexicalEditor,
   isCut: boolean,
   copyLimit?: number,
+  nbspSpelling = "~",
 ): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || selection.isCollapsed()) {
@@ -1140,7 +1224,7 @@ export function $handleCopyForStandardView(
     // content and is therefore declined here — and one shared function is what keeps them agreeing.
     return isNullPayloadDispatch && !$hasCopyableSelection();
   }
-  const data = $getStandardViewClipboardData(editor);
+  const data = $getStandardViewClipboardData(editor, nbspSpelling);
   if (!data) return false;
   if (copyLimit !== undefined) delete data["application/x-lexical-editor"];
   return $writeCopyPayload(event, editor, selection, data, isCut, copyLimit);

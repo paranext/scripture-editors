@@ -146,6 +146,7 @@ import {
   ViewOptions,
   getDefaultViewOptions,
   getVerseNodeClass,
+  getNbspSpelling,
   hasStandardViewWhitespace,
   isBlockVerseLayout,
   isCollapsedNoteMode,
@@ -1221,7 +1222,13 @@ function recurseNodes(
   markers?.forEach((markerContent) => {
     if (typeof markerContent === "string") {
       if (markerContent)
-        nodes.push(createText(isStandardView() ? usjTextToDisplay(markerContent) : markerContent));
+        nodes.push(
+          createText(
+            isStandardView()
+              ? usjTextToDisplay(markerContent, getNbspSpelling(_viewOptions))
+              : markerContent,
+          ),
+        );
     } else if (!markerContent.type) {
       _logger?.error(`Marker type is missing!`);
     } else {

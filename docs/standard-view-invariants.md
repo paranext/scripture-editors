@@ -395,6 +395,26 @@ string `"made"` — ParatextData produces the same USJ from that input. The sett
 before a typed `\c`, `\tr`, `\esb` or `\esbe` that ParatextData trims on save; positions count only
 non-whitespace bytes, so the kept space never moves one.
 
+### A no-break space has one spelling per project
+
+Standard view shows a stored no-break space (U+00A0) as a visible, editable character, because a
+display NBSP means a space (a run member or a separator) everywhere in the engine. Which character
+depends on the project, through `ViewOptions.allowInvisibleCharacters` (Paratext's
+`AllowInvisibleChars`):
+
+- **Off (default):** `~`, Paratext's own USFM spelling. The project cannot hold a literal tilde —
+  ParatextData reads `~` back as U+00A0 — so the USJ never contains one.
+- **On:** the project stores U+00A0 itself and `~` is an ordinary character, so a stored U+00A0 is
+  spelled `NBSP_SYMBOL` (`⍽`, U+237D) and `~` is never touched. A literal U+237D in such a project
+  saves as U+00A0; that is the price of the spelling.
+
+Every layer that turns display or fragment text into data, or data into display, takes the spelling
+from `getNbspSpelling(viewOptions)` and never writes a literal `~`: the load and save adaptors, the
+settle's fragment tokenizer (`UsfmFragmentOptions.nbspSpelling`), the Unformatted view's content
+fragments, paste, copy (the copy writes U+00A0 itself when the spelling is not `~`), and a typed
+U+00A0 (kept as the spelling when it is not `~`; a space otherwise, as in Paratext 9). A layer that
+spelled it on its own would load under one spelling and save under another.
+
 ---
 
 ## 3. What applying a marker DOES to the document
@@ -436,7 +456,8 @@ right after a marker's separator — at a paragraph's start, after a verse numbe
 a char span's content (`\nd  things` saves as `\nd things`): Paratext 9's tokenizer skips all
 whitespace after an opening marker, so the screen keeps them and the file does not. That includes a
 span holding nothing but spaces (a selected space wrapped in `\nd`): Paratext 9 saves `\nd  \nd*` as
-the empty `\nd \nd*`, so the words on either side join in the file. A no-break space (`~`) is data,
+the empty `\nd \nd*`, so the words on either side join in the file. A no-break space (`~`, or `⍽`
+where `~` is an ordinary character — see "A no-break space has one spelling per project") is data,
 never one of these spaces: `\nd ~lead\nd*` and `\nd ~\nd*` keep it.
 
 Positions do not diverge with it. The logical content model drops a displayed run's extra spaces

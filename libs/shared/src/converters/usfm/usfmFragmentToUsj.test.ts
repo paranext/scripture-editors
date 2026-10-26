@@ -5,7 +5,7 @@ import {
   milestoneDefaultAttribute,
   regularizeSpaces,
 } from "./usfmFragmentToUsj.js";
-import { NBSP } from "../../nodes/usj/node-constants.js";
+import { NBSP, NBSP_SYMBOL } from "../../nodes/usj/node-constants.js";
 import { defaultStyleInfo } from "../../utils/usfm/defaultStyleInfo.js";
 import { createMarkerLookup, StyleInfo } from "../../utils/usfm/styleInfo.js";
 import { MarkerContent, MarkerObject } from "@eten-tech-foundation/scripture-utilities";
@@ -145,6 +145,22 @@ describe("usfmFragmentToUsjContent — core", () => {
   it("maps ~ to NBSP in text content", () => {
     expect(usfmFragmentToUsjContent("\\p 3~000 men")).toEqual([
       { type: "para", marker: "p", content: [`3${NBSP}000 men`] },
+    ]);
+  });
+
+  it("maps the given NBSP spelling to NBSP and keeps ~ when another spelling is given", () => {
+    const text = `\\p a~b${NBSP_SYMBOL}c \\nd d~e${NBSP_SYMBOL}f\\nd* \\w g|lemma="h~i${NBSP_SYMBOL}j"\\w*`;
+    expect(usfmFragmentToUsjContent(text, { nbspSpelling: NBSP_SYMBOL })).toEqual([
+      {
+        type: "para",
+        marker: "p",
+        content: [
+          `a~b${NBSP}c `,
+          { type: "char", marker: "nd", content: [`d~e${NBSP}f`] },
+          " ",
+          { type: "char", marker: "w", lemma: `h~i${NBSP}j`, content: ["g"] },
+        ],
+      },
     ]);
   });
 

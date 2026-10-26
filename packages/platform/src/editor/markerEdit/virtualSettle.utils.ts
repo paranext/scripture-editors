@@ -120,7 +120,7 @@ import {
   SerializedVerseNode,
   UnknownNode,
 } from "shared";
-import { isSerializedImmutableVerseNode } from "shared-react";
+import { getNbspSpelling, isSerializedImmutableVerseNode } from "shared-react";
 
 /** Where a live node's serialized counterpart sits: the JSON node itself, plus the children array
  * holding it (the array a splice must target — its index is re-read at splice time, since earlier
@@ -566,6 +566,7 @@ export function $settledParaScope(
   const content: MarkerContent[] = tokenizeFragment(tokenized, {
     getMarker: getMarkerFn,
     opensNamelessParagraph: $opensNamelessParagraph(paras),
+    nbspSpelling: getNbspSpelling(viewOptions),
   });
   if (content.length === 0) return undefined;
   if (countSentinels(content) !== fragment.sentinels.length) {
@@ -735,6 +736,7 @@ export function $settledNoteScope(
   const content: MarkerContent[] = tokenizeFragment(tokenized, {
     getMarker: getMarkerFn,
     isNoteContext: true,
+    nbspSpelling: getNbspSpelling(viewOptions),
   });
   if (content.length === 0) return undefined;
   if (countSentinels(content) !== out.sentinels.length) {
@@ -1195,7 +1197,7 @@ function $settledBookLine(
   if (!$appendParaFragments(built.out, trailingParas, getMarkerFn, viewOptions)) return undefined;
   const out = $fragmentWithCharOpenerRenames(built.out, charRenames, context);
   const fragment = $fragmentWithoutTransient(out, transient);
-  const tokenized = tokenizedBookLine(fragment, getMarkerFn);
+  const tokenized = tokenizedBookLine(fragment, getMarkerFn, getNbspSpelling(viewOptions));
   if (countSentinels(tokenized.content) !== out.sentinels.length) {
     logger?.warn("[MarkerEdit] Settled book USJ skipped: sentinel/preserved-node count mismatch");
     return undefined;
@@ -1291,7 +1293,7 @@ export function $settledChapterScope(
   // re-tokenizes the region, as in a paragraph scope.
   const out = $fragmentWithCharOpenerRenames(built, charRenames, context);
   const tokenized = $fragmentWithoutTransient(out, transient);
-  const content = chapterFragmentContent(tokenized.text, getMarkerFn);
+  const content = chapterFragmentContent(tokenized.text, getMarkerFn, getNbspSpelling(viewOptions));
   if (countSentinels(content) !== 0) {
     logger?.warn("[MarkerEdit] Settled chapter USJ skipped: unexpected preserved-node placeholder");
     return undefined;

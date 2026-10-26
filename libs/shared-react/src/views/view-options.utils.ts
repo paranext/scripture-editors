@@ -2,6 +2,7 @@ import {
   TEXT_SPACING_CLASS_NAME,
   FORMATTED_FONT_CLASS_NAME,
   MARKER_MODE_CLASS_NAME_PREFIX,
+  NBSP_SYMBOL,
   VerseNode,
 } from "shared";
 import { ImmutableVerseNode } from "../nodes/usj/ImmutableVerseNode";
@@ -151,6 +152,54 @@ export interface ViewOptions {
    * when they mount the editor rather than toggling a live one.
    */
   verseLayout?: VerseLayout;
+  /**
+   * Whether the project stores invisible characters literally: Paratext's per-project
+   * `AllowInvisibleChars` setting ("Allow whitespace and invisible characters" in Paratext 9's
+   * project properties), which Platform.Bible exposes as the project setting
+   * `platformScripture.allowInvisibleCharacters`. A host passes that setting of the project whose
+   * text the editor holds, whatever view it shows. It describes the project's text rather than the
+   * view, so it never changes the mode {@link getViewMode} reports.
+   *
+   * Off (`undefined` or `false`, Paratext's default): the project's USFM spells a no-break space
+   * as `~`, so the USJ the editor is given holds U+00A0 and never `~`. Standard view shows each
+   * U+00A0 as `~`, saves a `~` the user types or pastes as U+00A0, and saves a U+00A0 typed as a
+   * character as a space — the author's no-break space is typed as `~`, as in Paratext 9.
+   *
+   * On: `~` is an ordinary character and the project stores U+00A0 as itself, so the USJ can hold
+   * both and they mean different things. Standard view then shows `~` as `~` and U+00A0 as `⍽`
+   * (U+237D, `NBSP_SYMBOL` in shared) so it is visible and editable, and saves each as itself. A
+   * U+00A0 typed or pasted is kept as one (shown as `⍽`), and a copy writes `~` and U+00A0 as
+   * themselves. The Markers view's copy and the Unformatted view's marker settle spell them the
+   * same way. Space runs still collapse on save. Paratext 9 shows the U+00A0 itself there, which
+   * looks like a space; ParatextData still drops a U+00A0 right after a marker or next to a space
+   * when it saves, in both products.
+   *
+   * Because `⍽` stands for U+00A0 while this is on, a literal U+237D in such a project's text is
+   * saved from Standard view as U+00A0.
+   *
+   * Views that hide markers (formatted, paragraph-structure, block verse) show the stored
+   * characters as they are either way, so they behave the same with this on or off.
+   *
+   * Passing the wrong value for the project corrupts text saved from Standard view: off for a
+   * project that has it on turns every `~` into U+00A0; on for a project that has it off saves a
+   * typed `~` as `~`, which that project reads back as a no-break space.
+   */
+  allowInvisibleCharacters?: boolean;
+}
+
+/**
+ * The character that spells a stored no-break space (U+00A0) in Standard view's display text and
+ * in the USFM its marker settle re-tokenizes: `~`, unless
+ * {@link ViewOptions.allowInvisibleCharacters} is on, when `~` is an ordinary character and
+ * `NBSP_SYMBOL` (`⍽`, U+237D) spells it instead.
+ *
+ * @param viewOptions - View options of the editor.
+ * @returns `~` or `NBSP_SYMBOL`.
+ *
+ * @public
+ */
+export function getNbspSpelling(viewOptions: ViewOptions | undefined): string {
+  return viewOptions?.allowInvisibleCharacters ? NBSP_SYMBOL : "~";
 }
 
 /**
@@ -315,9 +364,12 @@ function canonicalize(viewOptions: ViewOptions | undefined) {
   if (!viewOptions) return viewOptions;
 
   // Strip the `undefined`-valued keys first - spreading them over the defaults would reinstate the
-  // very "not set" state the defaults exist to resolve.
+  // very "not set" state the defaults exist to resolve. `allowInvisibleCharacters` describes the
+  // project's text, not the view, so it is no part of what identifies a mode.
   const setOptions = Object.fromEntries(
-    Object.entries(viewOptions).filter(([, value]) => value !== undefined),
+    Object.entries(viewOptions).filter(
+      ([key, value]) => value !== undefined && key !== "allowInvisibleCharacters",
+    ),
   );
   return { ...optionalViewOptionDefaults, ...setOptions };
 }

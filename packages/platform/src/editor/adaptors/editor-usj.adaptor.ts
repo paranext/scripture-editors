@@ -79,6 +79,7 @@ import {
   VerseNode,
 } from "shared";
 import {
+  getNbspSpelling,
   hasStandardViewWhitespace,
   ImmutableNoteCallerNode,
   ImmutableVerseNode,
@@ -879,7 +880,8 @@ function recurseNodes(
           // The caller's own bytes are the note's caller; bytes typed into a damaged caller text
           // are the content the departure moves them to (`noteCallerSlotNode`).
           let typed = typedCallerBytes(callerSlot.node.text, callerSlot.caller);
-          if (isStandardView(viewOptions)) typed = displayTextToUsj(collapseSpaceRuns(typed));
+          if (isStandardView(viewOptions))
+            typed = displayTextToUsj(collapseSpaceRuns(typed), getNbspSpelling(viewOptions));
           if (typed) combineTextContentOrAdd(markers, typed);
           break;
         }
@@ -922,7 +924,8 @@ function recurseNodes(
           )
             text = text.slice(1);
           // Standard view stores display text; collapse space runs and invert on serialization.
-          if (isStandardView(viewOptions)) text = displayTextToUsj(collapseSpaceRuns(text));
+          if (isStandardView(viewOptions))
+            text = displayTextToUsj(collapseSpaceRuns(text), getNbspSpelling(viewOptions));
           combineTextContentOrAdd(markers, text);
         }
         break;

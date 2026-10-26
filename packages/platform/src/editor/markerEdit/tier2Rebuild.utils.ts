@@ -135,6 +135,7 @@ import {
   $isImmutableNoteCallerNode,
   $selectAfterNote,
   $selectNote,
+  getNbspSpelling,
   hasStandardViewWhitespace,
   usjReactNodes,
   ViewOptions,
@@ -303,13 +304,14 @@ export function tokenizeFragment(
  * an attribute run, and not the para-prefix separator. What an NBSP byte in such a run MEANS
  * depends on the view, so the flattening must too:
  *
- * - Standard-view whitespace: a data NBSP displays as `~` (usjTextToDisplay), so an NBSP byte in
- *   display text is always a display artifact — a space-run member or a structural separator —
- *   and flattens to " " ({@link toFragmentText}).
+ * - Standard-view whitespace: a data NBSP displays as its spelling (`~`, or `NBSP_SYMBOL` when `~`
+ *   is an ordinary character — `getNbspSpelling`; usjTextToDisplay), so an NBSP byte in display
+ *   text is always a display artifact — a space-run member or a structural separator — and
+ *   flattens to " " ({@link toFragmentText}).
  * - Unformatted (editable without the standard whitespace mapping): a content NBSP IS the data
- *   byte. It is spelled `~` — the tokenizer's input convention (`usjText` maps `~` back to NBSP,
- *   PT9 UsfmParser) — so a settle that rewrites the paragraph round-trips it instead of
- *   corrupting it to a plain space. Two structural shapes still flatten to " " even here: a node
+ *   byte. It is spelled the way the tokenizer is told to read a no-break space (`getNbspSpelling`,
+ *   passed to it as `nbspSpelling`; `~` is PT9 UsfmParser's spelling) — so a settle that rewrites
+ *   the paragraph round-trips it instead of corrupting it to a plain space. Two structural shapes still flatten to " " even here: a node
  *   that is EXACTLY one NBSP in one of the engine's display slots (a spacer, separator or
  *   empty-char placeholder — `isNbspContent`, from `$isLoneNbspContent`, the rule serialization
  *   keeps content by), and the one structural leading NBSP fused onto a char span's first
@@ -332,12 +334,13 @@ export function contentFragmentText(
 ): string {
   if (hasStandardViewWhitespace(viewOptions)) return toFragmentText(text);
   if (text === NBSP && !isNbspContent) return " ";
+  const nbspSpelling = getNbspSpelling(viewOptions);
   const hasLead = structuralLead && text.startsWith(NBSP);
   const body = hasLead ? text.slice(1) : text;
   const runOnName = structuralLead && !hasLead ? NAME_ENDING_AT_NBSP_REGEX.exec(body) : null;
   if (runOnName)
-    return `${runOnName[0]} ${body.slice(runOnName[0].length + 1).replaceAll(NBSP, "~")}`;
-  return (hasLead ? " " : "") + body.replaceAll(NBSP, "~");
+    return `${runOnName[0]} ${body.slice(runOnName[0].length + 1).replaceAll(NBSP, nbspSpelling)}`;
+  return (hasLead ? " " : "") + body.replaceAll(NBSP, nbspSpelling);
 }
 
 /** Leading bytes the tokenizer's name scan runs through (anything but whitespace, a zero-width
@@ -2976,6 +2979,7 @@ export function $rebuildParas(paras: ParaNode[], context: Tier2Context): boolean
   const content: MarkerContent[] = tokenizeFragment(combined, {
     getMarker: getMarkerFn,
     opensNamelessParagraph: $opensNamelessParagraph(paras),
+    nbspSpelling: getNbspSpelling(viewOptions),
   });
   if (content.length === 0) {
     logger?.debug("[MarkerEdit] Tier 2 skipped: tokenizer produced no content");
@@ -3226,6 +3230,7 @@ export function $rebuildNoteContent(note: NoteNode, context: Tier2Context): bool
   const content: MarkerContent[] = tokenizeFragment(out, {
     getMarker: getMarkerFn,
     isNoteContext: true,
+    nbspSpelling: getNbspSpelling(viewOptions),
   });
   if (content.length === 0) {
     logger?.debug("[MarkerEdit] Note Tier 2 skipped: tokenizer produced no content");
@@ -3520,8 +3525,12 @@ const LEADING_DEFAULT_PARA_MARKER = new RegExp(
 export function tokenizedBookLine(
   fragment: FragmentAccumulator,
   getMarkerFn: MarkerLookup,
+  nbspSpelling: string,
 ): { content: MarkerContent[]; lineContent: MarkerContent[]; followingBlocks: MarkerContent[] } {
-  const content: MarkerContent[] = tokenizeFragment(fragment, { getMarker: getMarkerFn });
+  const content: MarkerContent[] = tokenizeFragment(fragment, {
+    getMarker: getMarkerFn,
+    nbspSpelling,
+  });
   const [first, ...rest] = content;
   const opensWithImpliedPara =
     typeof first === "object" &&
@@ -3590,7 +3599,7 @@ export function $rebuildBook(
     $getEditor(),
   );
 
-  const tokenized = tokenizedBookLine(out, getMarkerFn);
+  const tokenized = tokenizedBookLine(out, getMarkerFn, getNbspSpelling(viewOptions));
   // Symmetry bail-out (see `$rebuildParas`): a preserved-run/placeholder mismatch aborts the
   // rebuild with the line untouched rather than silently dropping a node.
   if (countSentinels(tokenized.content) !== out.sentinels.length) {
@@ -3892,9 +3901,14 @@ const LEADING_PARA_MARKER_REGEX = /^\s*\\p(?:\s|$)/;
  * Display-only line breaks are not read ({@link withoutDisplayLineBreaks}). Exported for the
  * read-only settle (virtualSettle.utils.ts), which must read the same content.
  */
-export function chapterFragmentContent(text: string, getMarkerFn: MarkerLookup): MarkerContent[] {
+export function chapterFragmentContent(
+  text: string,
+  getMarkerFn: MarkerLookup,
+  nbspSpelling: string,
+): MarkerContent[] {
   const content = usfmFragmentToUsjContent(withoutDisplayLineBreaks(text), {
     getMarker: getMarkerFn,
+    nbspSpelling,
   });
   const [first, ...others] = content;
   if (
@@ -4103,7 +4117,7 @@ export function $rebuildChapter(chapter: ChapterNode, context: Tier2Context): bo
   // destroys them — carried the way `$rebuildParas` carries a paragraph's.
   const markRanges = $captureMarkByteRanges(region, out, undefined, $getEditor());
 
-  const content = chapterFragmentContent(out.text, getMarkerFn);
+  const content = chapterFragmentContent(out.text, getMarkerFn, getNbspSpelling(viewOptions));
   if (content.length === 0 && anchorInRegion) {
     logger?.debug("[MarkerEdit] Chapter Tier 2 deferred: emptied chapter line holds the caret");
     return false;
@@ -4375,9 +4389,11 @@ export function $idleSettleWouldDiscardCaretHeldBytes(
     ? $buildBookFragment(scope, getMarkerFn, viewOptions).out
     : $buildParaFragment(scope, getMarkerFn, viewOptions);
   if (!fragment) return false;
+  const nbspSpelling = getNbspSpelling(viewOptions);
   const content = tokenizeFragment(fragment, {
     getMarker: getMarkerFn,
     opensNamelessParagraph: $opensNamelessParagraph([scope]),
+    nbspSpelling,
   });
   if (content.length === 0) return false;
   const counts = new Map<string, number>();
@@ -4385,12 +4401,12 @@ export function $idleSettleWouldDiscardCaretHeldBytes(
     if (!FRAGMENT_WS.test(ch)) counts.set(ch, (counts.get(ch) ?? 0) + 1);
   const folded: string[] = [];
   appendContentBytes(content, folded);
-  // Fragment text spells a data NBSP as `~` (in every view: the standard-view display already
-  // shows `~`, and `contentFragmentText` spells unformatted content NBSPs the same way), while
-  // the fold emits the real NBSP byte — which `\s` matches, so it would silently vanish from
-  // this count and report every caret-held data NBSP as a discard. Count it as the fragment
+  // Fragment text spells a data NBSP as `nbspSpelling` (in every view: the standard-view display
+  // already shows it that way, and `contentFragmentText` spells unformatted content NBSPs the same
+  // way), while the fold emits the real NBSP byte — which `\s` matches, so it would silently vanish
+  // from this count and report every caret-held data NBSP as a discard. Count it as the fragment
   // spells it.
-  for (const ch of folded.join("").replaceAll(NBSP, "~")) {
+  for (const ch of folded.join("").replaceAll(NBSP, nbspSpelling)) {
     if (FRAGMENT_WS.test(ch)) continue;
     const remaining = counts.get(ch);
     if (remaining !== undefined && remaining > 0) counts.set(ch, remaining - 1);

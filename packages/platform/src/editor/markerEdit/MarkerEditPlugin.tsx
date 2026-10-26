@@ -38,6 +38,7 @@ import {
   $displayWhitespaceTransform,
   $handleCopyForStandardView,
   $handlePasteForStandardView,
+  registerTypedNbspSpelling,
   getDataTransferPayload,
   normalizePastedNbsp,
   stripPastedBlockMarkers,
@@ -121,6 +122,7 @@ import {
   $shouldBlockStructuralEdit,
   EditIntent,
   editorHoldsDomFocus,
+  getNbspSpelling,
   hasStandardViewWhitespace,
   keyDownToIntent,
   releaseTagsAfterNextCommit,
@@ -442,10 +444,10 @@ function registerPasteNormalization(
         // `normalizePastedNbsp` the Standard-view external-paste handler uses
         // (whitespaceDisplay.plugin.utils.ts) — a display-NBSP (the separator after `\fr`/`\ft`,
         // a note's inter-child spacer) settles to a space exactly as it would outside a note, and
-        // only genuine data survives as `~`. Inserted raw an NBSP is
-        // indistinguishable from a display-NBSP (a plain space in a run), so serialization would
-        // corrupt it into a plain space if left unmapped. A pasted literal `~` is already the
-        // display form and passes through unchanged. `\c`/`\id` bytes are dropped first, via the
+        // only genuine data survives, as the display spelling (`~` or `NBSP_SYMBOL`). Inserted raw
+        // an NBSP is indistinguishable from a display-NBSP (a plain space in a run), so
+        // serialization would corrupt it into a plain space if left unmapped. A pasted literal `~`
+        // is already the display form, or an ordinary character, and passes through unchanged. `\c`/`\id` bytes are dropped first, via the
         // same `stripPastedChapterAndBookId` the external handler uses — note content
         // re-tokenizes literal text through the SAME Tier 2 tokenizer a paragraph does, so a
         // pasted `\c`/`\id` landing here is just as reachable (and just as save-poisoning) as one
@@ -465,7 +467,9 @@ function registerPasteNormalization(
           isStandardView && context.structureProtectionMode === "protected"
             ? stripPastedBlockMarkers(withoutChapterOrBookId, context.getMarker)
             : withoutChapterOrBookId;
-        const noteText = isStandardView ? normalizePastedNbsp(withoutStructure) : withoutStructure;
+        const noteText = isStandardView
+          ? normalizePastedNbsp(withoutStructure, getNbspSpelling(context.viewOptions))
+          : withoutStructure;
         if (noteText.includes("\n")) {
           const lines = noteText.split("\n");
           let outcome = $handlePasteLinesInNote(lines, context.getMarker);
@@ -513,6 +517,7 @@ function registerPasteNormalization(
             context.splitExpected.current = true;
           },
           context.getMarker,
+          getNbspSpelling(context.viewOptions),
         );
         if (isClaimed) event?.preventDefault();
         return isClaimed;
@@ -1121,6 +1126,7 @@ export function MarkerEditPlugin({
               if (editor.isComposing()) return;
               $displayWhitespaceTransform(node);
             }),
+            registerTypedNbspSpelling(editor, () => getNbspSpelling(context.viewOptions)),
             editor.registerCommand(
               COPY_COMMAND,
               (event) =>
@@ -1134,6 +1140,7 @@ export function MarkerEditPlugin({
                   editor,
                   false,
                   copyLimitRef.current,
+                  getNbspSpelling(context.viewOptions),
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -1149,6 +1156,7 @@ export function MarkerEditPlugin({
                   editor,
                   true,
                   copyLimitRef.current,
+                  getNbspSpelling(context.viewOptions),
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -1169,6 +1177,7 @@ export function MarkerEditPlugin({
                     context.splitExpected.current = true;
                   },
                   context.getMarker,
+                  getNbspSpelling(context.viewOptions),
                 ),
               COMMAND_PRIORITY_HIGH,
             ),
@@ -1355,6 +1364,7 @@ export function MarkerEditPlugin({
                 context.splitExpected.current = true;
               },
               context.getMarker,
+              getNbspSpelling(context.viewOptions),
             )
           );
         },

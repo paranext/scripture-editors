@@ -102,6 +102,14 @@ refused. The public surface grew substantially; nothing was removed.
     arming step, so one press merges.
   - Cut, copy and drag are refused, since the marker is not content, unless the browser's selection
     has moved to other text (a right-click, say), which they then use.
+- `ViewOptions.allowInvisibleCharacters`: a host passes the project's Paratext
+  `AllowInvisibleChars` setting (Platform.Bible's `platformScripture.allowInvisibleCharacters`).
+  Such a project stores a no-break space as U+00A0 itself and `~` as an ordinary character, so
+  with the option on Standard view shows a stored U+00A0 as `⍽` (U+237D) instead of `~`, keeps `~`
+  as `~`, and saves both as themselves — loaded, typed, pasted, copied, and through a marker
+  settle. A U+00A0 typed or pasted is kept as one. The Markers view's copy and the Unformatted
+  view's marker settle follow the same spelling. Views that hide markers are unaffected, and so is
+  `getViewMode`. Off (the default) is unchanged: `~` is a no-break space.
 - `EditorRef.getSelectedParaMarker()` — the selected paragraph marker's name, or `undefined`.
 - `EditorProps.onParaMarkerMenuRequest` — fired on unmodified Enter or Alt+↓ while a paragraph marker is
   selected, so the host can open its paragraph dropdown.
