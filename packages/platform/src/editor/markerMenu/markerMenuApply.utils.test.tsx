@@ -1098,7 +1098,7 @@ describe("$applyMarkerMenuSelection", () => {
     }
 
     /** A paragraph with its visible marker prefix and `text`. */
-    function $para(marker: string, text: string): ParaNode {
+    function $createParaNodeWithText(marker: string, text: string): ParaNode {
       return $createParaNode(marker).append(
         $createMarkerNode(marker),
         $createTrailingSpaceNode(),
@@ -1132,9 +1132,17 @@ describe("$applyMarkerMenuSelection", () => {
     });
 
     it("goes after the front matter and before chapter content, wherever the caret is", async () => {
-      // `\mt1` and `\ip` belong before chapter 1, and `\p` after it.
+      // The front matter is what the paragraph validator accepts after `\id`: `\toca1` only follows
+      // the running header, `\h`. A section heading is chapter content, so chapter 1 starts there.
       const $appendBlocks = () =>
-        $getRoot().append($para("mt1", "Jonah"), $para("ip", "Introduction"), $para("p", "Text"));
+        $getRoot().append(
+          $createParaNodeWithText("h", "Jonah"),
+          $createParaNodeWithText("toca1", "Jon"),
+          $createParaNodeWithText("mt1", "Jonah"),
+          $createParaNodeWithText("ip", "Introduction"),
+          $createParaNodeWithText("s1", "Heading"),
+          $createParaNodeWithText("p", "Text"),
+        );
       const atIdLine = await emptyBookAtCaret((idText) => idText.selectEnd(), $appendBlocks);
       const inBody = await emptyBookAtCaret(
         () => requireDefined($getRoot().getLastDescendant() ?? undefined, "no text").selectEnd(),
@@ -1145,12 +1153,76 @@ describe("$applyMarkerMenuSelection", () => {
         await pick(editor, offeredChapterItem(editor));
         expect(editor.getEditorState().read($blocks)).toEqual([
           "book:id",
+          "para:h",
+          "para:toca1",
           "para:mt1",
           "para:ip",
           "chapter:c",
+          "para:s1",
           "para:p",
         ]);
       }
+    });
+
+    it("keeps front matter that is out of order before the chapter", async () => {
+      // The validator rejects a second `\imt2` after introduction prose, and an `\ie` after the
+      // `\imte1`, on rank alone. They are still the introduction, so the chapter goes after them.
+      const { editor } = await emptyBookAtCaret(
+        (idText) => idText.selectEnd(),
+        () =>
+          $getRoot().append(
+            $createParaNodeWithText("mt1", "Jonah"),
+            $createParaNodeWithText("ip", "Introduction"),
+            $createParaNodeWithText("imt2", "Outline"),
+            $createParaNodeWithText("ip", "More introduction"),
+            $createParaNodeWithText("imte1", "End of introduction"),
+            $createParaNodeWithText("ie", ""),
+            $createParaNodeWithText("p", "Text"),
+          ),
+      );
+
+      await pick(editor, offeredChapterItem(editor));
+
+      expect(editor.getEditorState().read($blocks)).toEqual([
+        "book:id",
+        "para:mt1",
+        "para:ip",
+        "para:imt2",
+        "para:ip",
+        "para:imte1",
+        "para:ie",
+        "chapter:c",
+        "para:p",
+      ]);
+    });
+
+    it("starts the chapter content at a paragraph the stylesheet allows anywhere", async () => {
+      // A host stylesheet may leave `occursUnder` out. The validator then accepts the paragraph
+      // anywhere, which says nothing about whether it comes before the chapter.
+      const styleInfo: StyleInfo = {
+        ...defaultStyleInfo,
+        markers: {
+          ...defaultStyleInfo.markers,
+          p: { ...defaultStyleInfo.markers.p, occursUnder: undefined },
+        },
+      };
+      const { editor } = await emptyBookAtCaret(
+        (idText) => idText.selectEnd(),
+        () =>
+          $getRoot().append(
+            $createParaNodeWithText("mt1", "Jonah"),
+            $createParaNodeWithText("p", "Text"),
+          ),
+      );
+
+      await pick(editor, offeredChapterItem(editor), makeDeps(styleInfo));
+
+      expect(editor.getEditorState().read($blocks)).toEqual([
+        "book:id",
+        "para:mt1",
+        "chapter:c",
+        "para:p",
+      ]);
     });
 
     it("puts the caret on the new chapter line", async () => {

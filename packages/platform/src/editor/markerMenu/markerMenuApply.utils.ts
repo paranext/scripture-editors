@@ -491,7 +491,7 @@ export function $applyMarkerMenuSelection(
     });
     if (!inserted)
       deps.logger?.warn(
-        "$applyMarkerMenuSelection: no chapter inserted; this chapter already has one",
+        "$applyMarkerMenuSelection: no chapter inserted; only chapter 1 of a book with no chapters can take one",
       );
     return;
   }

@@ -13,7 +13,11 @@
  */
 import { EditorRef } from "../editor.model";
 import { getEnterMenuItems, getMarkerMenuItems } from "../markerMenu/markerItemSource";
-import { mountStandardViewEditor } from "../settledGetUsj.test-helpers";
+import {
+  mountStandardViewEditor,
+  mountViewEditor,
+  requireStandardViewOptions,
+} from "../settledGetUsj.test-helpers";
 import { requireDefined } from "./markerEdit.test-helpers";
 import { MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { SerializedVerseRef } from "@sillsdev/scripture";
@@ -48,6 +52,12 @@ import {
   NBSP,
   StyleInfo,
 } from "shared";
+import {
+  FORMATTED_VIEW_MODE,
+  getViewOptions,
+  PARAGRAPH_STRUCTURE_VIEW_MODE,
+  ViewMode,
+} from "shared-react";
 import { describe, expect, it } from "vitest";
 
 const CHAPTER_2: MarkerContent = { type: "chapter", marker: "c", number: "2" };
@@ -1103,9 +1113,13 @@ describe("a chapter inserted into a book with no chapters", () => {
   const emptyBook: Usj = { type: "USJ", version: "3.1", content: [BOOK] };
   const GEN_1_1: SerializedVerseRef = { book: "GEN", chapterNum: 1, verseNum: 1 };
 
-  /** Mounts the empty book at `scrRef` with the caret at the end of the `\id` line's text. */
-  async function mountEmptyBook(scrRef: SerializedVerseRef = GEN_1_1) {
-    const mounted = await mountStandardViewEditor(emptyBook, { scrRef });
+  /** Mounts `usj` (the empty book) at `scrRef` with the caret at the end of the `\id` line's text. */
+  async function mountEmptyBook(
+    scrRef: SerializedVerseRef = GEN_1_1,
+    view = requireStandardViewOptions(),
+    usj = emptyBook,
+  ) {
+    const mounted = await mountViewEditor(usj, view, { scrRef });
     await act(async () =>
       mounted.lexical.update(() => {
         const book = requireDefined($getRoot().getFirstChild() ?? undefined, "no book");
@@ -1188,6 +1202,82 @@ describe("a chapter inserted into a book with no chapters", () => {
       { type: "verse", marker: "v", number: "2" },
     ]);
   });
+
+  // Where the markers are hidden the chapter is a decorator, with no line to put the caret on.
+  describe.each<ViewMode>([FORMATTED_VIEW_MODE, PARAGRAPH_STRUCTURE_VIEW_MODE])(
+    "with the markers hidden (%s view)",
+    (viewMode) => {
+      const mountHiddenMarkers = (usj = emptyBook) =>
+        mountEmptyBook(GEN_1_1, requireDefined(getViewOptions(viewMode), "no view options"), usj);
+
+      it("puts the caret after verse 1, so typing goes into verse 1", async () => {
+        const { ref, lexical } = await mountHiddenMarkers();
+
+        await act(async () => {
+          ref.current?.insertFirstChapter(2);
+        });
+        await typeText(lexical, "In the beginning");
+
+        expect(ref.current?.getUsj()?.content).toEqual([
+          BOOK,
+          CHAPTER_1,
+          { type: "verse", marker: "v", number: "1" },
+          // The space is the editor's, ahead of the next verse, as when typing in a loaded chapter.
+          "In the beginning ",
+          { type: "verse", marker: "v", number: "2" },
+        ]);
+      });
+
+      it("puts the caret after a single verse", async () => {
+        const { ref, lexical } = await mountHiddenMarkers();
+
+        await act(async () => {
+          ref.current?.insertFirstChapter(1);
+        });
+        await typeText(lexical, "In the beginning");
+
+        expect(ref.current?.getUsj()?.content).toEqual([
+          BOOK,
+          CHAPTER_1,
+          { type: "verse", marker: "v", number: "1" },
+          "In the beginning",
+        ]);
+      });
+
+      it("puts the caret at the start of the chapter content when there are no verses", async () => {
+        const text: MarkerContent = { type: "para", marker: "p", content: ["Text"] };
+        const { ref, lexical } = await mountHiddenMarkers({ ...emptyBook, content: [BOOK, text] });
+
+        await act(async () => {
+          ref.current?.insertFirstChapter();
+        });
+        await typeText(lexical, "New ");
+
+        expect(ref.current?.getUsj()?.content).toEqual([
+          BOOK,
+          CHAPTER_1,
+          { type: "para", marker: "p", content: ["New Text"] },
+        ]);
+      });
+
+      it("leaves the caret where it was when nothing follows the chapter", async () => {
+        const { ref, lexical } = await mountHiddenMarkers();
+        const $caret = () => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) throw new Error("expected a caret");
+          return { key: selection.focus.key, offset: selection.focus.offset };
+        };
+        const before = lexical.getEditorState().read($caret);
+
+        await act(async () => {
+          ref.current?.insertFirstChapter();
+        });
+
+        expect(ref.current?.getUsj()?.content).toEqual([BOOK, CHAPTER_1]);
+        expect(lexical.getEditorState().read($caret)).toEqual(before);
+      });
+    },
+  );
 
   it("is not offered or inserted in a chapter after the first", async () => {
     const { ref } = await mountEmptyBook({ book: "GEN", chapterNum: 2, verseNum: 1 });
