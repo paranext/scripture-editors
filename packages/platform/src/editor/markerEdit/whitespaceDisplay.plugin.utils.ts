@@ -47,6 +47,7 @@ import {
   MarkerType,
   MARKER_TRAILING_SPACE_TEXT_TYPE,
   NBSP,
+  NBSP_STAND_IN,
   textTypeState,
 } from "shared";
 import {
@@ -64,6 +65,7 @@ import {
 import { ENGINE_MARKER_NAME_BYTES } from "./markerName.pattern";
 import { $isNoteCallerSlot } from "./noteCallerSlot.utils";
 import { paratext9HtmlToUsfm } from "./paratext9Clipboard.utils";
+import { controlCharactersToSpaces } from "./whitespaceDisplay.utils";
 
 /** Spaces in runs display as NBSP so they are visible while typing, and a lone display NBSP left
  * standing on its own goes back to a plain space ({@link $isLeftoverDisplaySpace}). */
@@ -108,7 +110,10 @@ export function $displayWhitespaceTransform(node: TextNode): void {
  * Makes a no-break space the user types go in as `getNbspSpelling()`'s display form whenever that
  * is not `~` — the case where the project stores U+00A0 itself, so the character is data and is
  * kept. With the `~` spelling a typed U+00A0 is left alone: it is display spacing there and saves
- * as a space, as in Paratext 9, whose authors type a no-break space as `~`.
+ * as a space, as in Paratext 9, whose authors type a no-break space as `~`. A typed C0 control
+ * character other than tab, line feed and carriage return goes in as a space either way
+ * ({@link controlCharactersToSpaces}), so a typed U+001A never becomes the stand-in for a stored
+ * no-break space.
  *
  * Two routes carry typed text, and both are covered: `CONTROLLED_TEXT_INSERTION_COMMAND` (Lexical
  * dispatches it when it inserts the text itself) is re-dispatched with the text respelled, and a
@@ -125,9 +130,22 @@ export function registerTypedNbspSpelling(
   getNbspSpelling: () => string,
 ): () => void {
   const respelled = (text: string | null | undefined): string | undefined => {
+    if (!text) return undefined;
     const nbspSpelling = getNbspSpelling();
-    if (nbspSpelling === "~" || !text?.includes(NBSP)) return undefined;
-    return text.replaceAll(NBSP, nbspSpelling);
+    let result = controlCharactersToSpaces(text);
+    if (nbspSpelling !== "~") result = result.replaceAll(NBSP, nbspSpelling);
+    return result === text ? undefined : result;
+  };
+  // Set while the respelled text is inserted, which holds the stand-in: respelling it again would
+  // read that stand-in as a typed control character.
+  let isInsertingRespelled = false;
+  const insertRespelled = (text: string) => {
+    isInsertingRespelled = true;
+    try {
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+    } finally {
+      isInsertingRespelled = false;
+    }
   };
   const onBeforeInput = (event: InputEvent) => {
     if (event.inputType !== "insertText" || editor.isComposing()) return;
@@ -135,16 +153,16 @@ export function registerTypedNbspSpelling(
     if (text === undefined) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+    insertRespelled(text);
   };
   return mergeRegister(
     editor.registerCommand(
       CONTROLLED_TEXT_INSERTION_COMMAND,
       (payload) => {
-        if (editor.isComposing()) return false;
+        if (isInsertingRespelled || editor.isComposing()) return false;
         const text = respelled(typeof payload === "string" ? payload : payload.data);
         if (text === undefined) return false;
-        editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+        insertRespelled(text);
         return true;
       },
       COMMAND_PRIORITY_CRITICAL,
@@ -161,7 +179,7 @@ export function registerTypedNbspSpelling(
  * Whether `node`, an untagged text that is exactly one NBSP, is what is left of a displayed space
  * run — two spaces between two elements (char spans, notes, milestones) display as two NBSPs, and a
  * backspace leaves one — rather than one of the engine's structural lone-NBSP nodes. Content NBSP
- * displays as its spelling (`~`, or `NBSP_SYMBOL`), so in content a lone NBSP is one or the other.
+ * displays as its spelling (`~`, or `NBSP_STAND_IN`), so in content a lone NBSP is one or the other.
  * A plain space is the shape the same single space loads as, so it goes back to one. This holds at
  * every depth — in a paragraph, inside a char span, and directly inside an expanded note.
  *
@@ -357,9 +375,13 @@ export function getDataTransferPayload(
   // data-NBSP loss is accepted.
   const paratext9Text = html ? paratext9HtmlToUsfm(html) : undefined;
   return {
-    text: paratext9Text
-      ? normalizeLineEndings(paratext9Text)
-      : plainText || (html ? normalizeLineEndings(htmlPasteText(html)) : ""),
+    // Control characters become spaces, as Paratext would read them, before any claim sees the text:
+    // U+001A is the editor's stand-in for a stored no-break space (`controlCharactersToSpaces`).
+    text: controlCharactersToSpaces(
+      paratext9Text
+        ? normalizeLineEndings(paratext9Text)
+        : plainText || (html ? normalizeLineEndings(htmlPasteText(html)) : ""),
+    ),
     isInternal: isSameNamespaceLexicalPayload(
       dataTransfer.getData("application/x-lexical-editor"),
       namespace,
@@ -426,7 +448,7 @@ const MARKER_ADJACENT_NBSP = new RegExp(
  *
  * Rules 2 and 3 run as ONE pass over `MARKER_ADJACENT_NBSP`, so a marker recognized on one side is
  * recognized on the other and both resolve to the same byte. Every remaining NBSP is genuine data
- * and is preserved as `nbspSpelling`, the display form a stored NBSP takes (`~`, or `NBSP_SYMBOL`
+ * and is preserved as `nbspSpelling`, the display form a stored NBSP takes (`~`, or `NBSP_STAND_IN`
  * where `~` is an ordinary character — `getNbspSpelling`), so serialization round-trips it to a
  * real NBSP instead of silently collapsing it to a plain space or dropping it. A pasted `~` is
  * never touched: it is the display form already, or an ordinary character.
@@ -802,6 +824,87 @@ export function $handlePasteForStandardView(
 ): boolean {
   const payload = getPastePayload(event, $getEditor()._config.namespace);
   if (!payload) return false;
+  return $insertTransferForStandardView(
+    payload,
+    () => event?.preventDefault(),
+    isStructureProtected,
+    armSplitExpected,
+    getMarker,
+    nbspSpelling,
+  );
+}
+
+/**
+ * Standard-view DROP: a drop's data goes in exactly as a paste of the same data does
+ * ({@link $handlePasteForStandardView}), so its control characters, no-break spaces, `\c`/`\id`
+ * tokens and lines get the same rules. Lexical's own insertion reads none of them: a dropped U+00A0
+ * would go in as display spacing and save as a space, and a dropped U+001A as the stand-in for a
+ * stored no-break space. Declines what a paste declines.
+ *
+ * A drop arrives as `CONTROLLED_TEXT_INSERTION_COMMAND` with the `insertFromDrop` input event.
+ * Mutating: call from that command's handler, before Lexical's own insertion.
+ *
+ * @param dataTransfer The drop's data.
+ * @param isStructureProtected Whether the document is structure-protected.
+ * @param armSplitExpected Arms the engine's `splitExpected` flag for a multi-line replay.
+ * @param getMarker The editor's stylesheet lookup, which says which dropped markers are structure.
+ * @param nbspSpelling What a stored NBSP displays as (`getNbspSpelling`).
+ * @returns Whether the drop is claimed.
+ */
+export function $handleDropForStandardView(
+  dataTransfer: DataTransfer,
+  isStructureProtected: boolean,
+  armSplitExpected: () => void,
+  getMarker: MarkerLookup,
+  nbspSpelling: string,
+): boolean {
+  return $insertTransferForStandardView(
+    getDataTransferPayload(dataTransfer, $getEditor()._config.namespace),
+    () => undefined,
+    isStructureProtected,
+    armSplitExpected,
+    getMarker,
+    nbspSpelling,
+  );
+}
+
+/**
+ * Drag data for a drag out of Standard view: the same USFM text and html a copy of the selection
+ * writes ({@link $getStandardViewClipboardData}), in place of the browser's own picture of the
+ * display — which carries the display's characters, the internal stand-in for a stored no-break
+ * space among them, to wherever the drop lands. No internal flavor: a drop is read as text
+ * ({@link $handleDropForStandardView}).
+ *
+ * Read-only: call from a `DRAGSTART_COMMAND` handler; it never claims the drag.
+ *
+ * @param event The drag's `dragstart` event.
+ * @param editor The editor.
+ * @param nbspSpelling What a stored NBSP displays as (`getNbspSpelling`).
+ */
+export function $setStandardViewDragData(
+  event: DragEvent,
+  editor: LexicalEditor,
+  nbspSpelling: string,
+): void {
+  const { dataTransfer } = event;
+  if (!dataTransfer) return;
+  const data = $getStandardViewClipboardData(editor, nbspSpelling);
+  if (!data) return;
+  dataTransfer.clearData();
+  for (const type of ["text/plain", "text/html"] as const) {
+    const value = data[type];
+    if (value) dataTransfer.setData(type, value);
+  }
+}
+
+function $insertTransferForStandardView(
+  payload: PastePayload,
+  preventDefault: () => void,
+  isStructureProtected: boolean,
+  armSplitExpected: () => void,
+  getMarker: MarkerLookup,
+  nbspSpelling: string,
+): boolean {
   const selection = $getSelection();
   const inAttributeContext =
     $isRangeSelection(selection) && $isSelectionInAttributeContext(selection);
@@ -827,7 +930,7 @@ export function $handlePasteForStandardView(
   const { text } = payload;
   if (!text) return false;
   if (!$isRangeSelection(selection)) return false;
-  event?.preventDefault();
+  preventDefault();
   if (inAttributeContext) {
     $insertPastedTextIntoAttributeContext(
       selection,
@@ -1020,7 +1123,7 @@ function $startsBlockLine(node: LexicalNode): boolean {
  *    structural leading separator, a verse's own marker-to-number gap, the `\id` line's
  *    book-code separator a decorator carries) represents a real source space and still maps to
  *    one. A data NBSP is displayed as `nbspSpelling`: `~` is already its USFM spelling and is left
- *    alone, and any other spelling (`NBSP_SYMBOL`, where `~` is an ordinary character and the
+ *    alone, and any other spelling (`NBSP_STAND_IN`, where `~` is an ordinary character and the
  *    project stores U+00A0 itself) is written as U+00A0.
  * 3. A block boundary INSIDE an opaque construct contributes no line break, so the construct
  *    copies out on ONE line (see {@link $startsBlockLine}).
@@ -1179,8 +1282,16 @@ export function $getStandardViewClipboardData(
   };
   if ($selectionReachesIntoOpaqueBlock() || $selectionTouchesBookOrChapter(selection)) return data;
   const lexical = $getLexicalContent(editor);
-  if (lexical) data["application/x-lexical-editor"] = lexical;
+  // The internal flavor is the editor's own nodes, so it holds the stand-in for a stored no-break
+  // space (`NBSP_STAND_IN`) as it is, and the stand-in must not leave the editor. Without the
+  // flavor the paste takes the text, which spells the no-break space as U+00A0.
+  if (lexical && !holdsNbspStandIn(lexical)) data["application/x-lexical-editor"] = lexical;
   return data;
+}
+
+/** Whether serialized editor JSON holds the stand-in, either as itself or escaped (`\u001a`). */
+function holdsNbspStandIn(json: string): boolean {
+  return json.includes(NBSP_STAND_IN) || /\\u001a/i.test(json);
 }
 
 /**

@@ -39,8 +39,11 @@
   /* Same `serif` fallback the generated rules carry: if a host resolves `--usj-font-fallback` from
      a custom property of its own that turns out to be undefined, the property is invalid at
      computed-value time, and a bare `var()` would make this whole declaration invalid — dropping
-     Scripture text onto the inherited UI font, which is the failure this chain exists to prevent. */
-  font-family: var(--usj-font-fallback, serif);
+     Scripture text onto the inherited UI font, which is the failure this chain exists to prevent.
+     The editor's no-break-space stand-in family leads, as in every generated rule: it draws U+001A
+     alone, and only a first family's glyph replaces the box a browser draws for a control character
+     (`NBSP_STAND_IN_FONT_FAMILY`; the editor adds the face itself). */
+  font-family: "PlatformEditorNbspStandIn", var(--usj-font-fallback, serif);
   font-size: 12pt;
 }
 

@@ -397,23 +397,56 @@ non-whitespace bytes, so the kept space never moves one.
 
 ### A no-break space has one spelling per project
 
-Standard view shows a stored no-break space (U+00A0) as a visible, editable character, because a
+Standard view holds a stored no-break space (U+00A0) as a distinct, editable character, because a
 display NBSP means a space (a run member or a separator) everywhere in the engine. Which character
 depends on the project, through `ViewOptions.allowInvisibleCharacters` (Paratext's
 `AllowInvisibleChars`):
 
-- **Off (default):** `~`, Paratext's own USFM spelling. The project cannot hold a literal tilde —
-  ParatextData reads `~` back as U+00A0 — so the USJ never contains one.
+- **Off (default):** `~`, Paratext's own USFM spelling, shown as `~`. The project cannot hold a
+  literal tilde — ParatextData reads `~` back as U+00A0 — so the USJ never contains one.
 - **On:** the project stores U+00A0 itself and `~` is an ordinary character, so a stored U+00A0 is
-  spelled `NBSP_SYMBOL` (`⍽`, U+237D) and `~` is never touched. A literal U+237D in such a project
-  saves as U+00A0; that is the price of the spelling.
+  held as `NBSP_STAND_IN` (U+001A, SUBSTITUTE) and `~` is never touched. The `NBSP_STAND_IN_FONT_FAMILY`
+  font face (one empty glyph a quarter of an em wide, `unicode-range: U+1A`, added to the document
+  by the editor) draws it as a blank the width of a space, so it looks like the no-break space it is.
+  A browser draws a control character as a visible box unless the FIRST family in the element's
+  font stack has a glyph for it, so that family leads every Scripture `font-family` —
+  `generateUsjCss` emits it first, and `usj-nodes.css` (and every host copy of it) puts it in front
+  of `--usj-font-fallback`.
+
+Why U+001A: no project text can hold it. ParatextData's `ScrText.GetText` turns U+0001–U+0008 and
+U+000E–U+001F into spaces on every read (measured), so the stand-in collides with nothing. Its
+Unicode properties fit a no-break space: bidi class BN, line-break class CM (no break before it),
+one grapheme. Not U+0000 (`SIGNATURE_SEPARATOR` in `settledScopes.utils.ts`), nor U+000B/U+000C
+(whitespace to JavaScript's `\s`), nor U+001C–U+001F (bidi paragraph and segment separators).
+
+The stand-in is internal and must never leave the editor, and nothing from outside may become it:
+
+- **Out:** every boundary gives U+00A0 — `getUsj`/`onUsjChange`, the delta ops `onUsjChange` and the
+  note-op getters return (`opsForHost`, which also gives a space for an NBSP the view shows in a
+  space run, so a U+00A0 in the ops is always a no-break space or a marker's own separator), the
+  copy and cut flavors (`$selectionToUsfmText` writes U+00A0; the internal Lexical flavor is left
+  out when the selection holds a stand-in), the drag data (`$setStandardViewDragData`, the same USFM
+  a copy writes), annotation callbacks' text, and note-caller previews. Text a host reads from the
+  DOM still holds it; `toUsfmNbspSpelling` turns it back.
+- **In:** every C0 control character but tab, line feed and carriage return becomes a space before
+  anything else reads the text (`controlCharactersToSpaces`) — a load (`usjWithoutControlCharacters`,
+  attribute values included), a paste or a drop (`getDataTransferPayload`), typing
+  (`registerTypedNbspSpelling`), applied ops (`opsFromHost`) — in either setting, as ParatextData
+  would read it back. Then a U+00A0 that is data becomes the stand-in: typed, pasted or dropped
+  (`normalizePastedNbsp`'s positional rules), or in applied ops when it is not a marker's separator
+  or a lone spacer.
+- **The tokenizer** keeps the spelling as a character: `regularizeSpaces` would otherwise turn a
+  control character into a space before `UsfmFragmentOptions.nbspSpelling` maps it to U+00A0.
 
 Every layer that turns display or fragment text into data, or data into display, takes the spelling
 from `getNbspSpelling(viewOptions)` and never writes a literal `~`: the load and save adaptors, the
 settle's fragment tokenizer (`UsfmFragmentOptions.nbspSpelling`), the Unformatted view's content
-fragments, paste, copy (the copy writes U+00A0 itself when the spelling is not `~`), and a typed
-U+00A0 (kept as the spelling when it is not `~`; a space otherwise, as in Paratext 9). A layer that
-spelled it on its own would load under one spelling and save under another.
+fragments, paste, drop, copy (the copy writes U+00A0 itself when the spelling is not `~`), and a
+typed U+00A0 (kept as the spelling when it is not `~`; a space otherwise, as in Paratext 9). A
+layer that spelled it on its own would load under one spelling and save under another.
+
+Known gap, in both settings: an attribute value's U+00A0 (`\w g|lemma="h~i"\w*`) is shown in its
+attribute run as a raw U+00A0, and a settle of its paragraph reads that as a space.
 
 ---
 
@@ -456,7 +489,7 @@ right after a marker's separator — at a paragraph's start, after a verse numbe
 a char span's content (`\nd  things` saves as `\nd things`): Paratext 9's tokenizer skips all
 whitespace after an opening marker, so the screen keeps them and the file does not. That includes a
 span holding nothing but spaces (a selected space wrapped in `\nd`): Paratext 9 saves `\nd  \nd*` as
-the empty `\nd \nd*`, so the words on either side join in the file. A no-break space (`~`, or `⍽`
+the empty `\nd \nd*`, so the words on either side join in the file. A no-break space (`~`, or the stand-in
 where `~` is an ordinary character — see "A no-break space has one spelling per project") is data,
 never one of these spaces: `\nd ~lead\nd*` and `\nd ~\nd*` keep it.
 

@@ -11,7 +11,7 @@
  * does not re-register another suite's tests by importing it.
  */
 import Editor from "./Editor";
-import { EditorProps, EditorRef } from "./editor.model";
+import { EditorOptions, EditorProps, EditorRef } from "./editor.model";
 import { Usj } from "@eten-tech-foundation/scripture-utilities";
 import { SerializedVerseRef } from "@sillsdev/scripture";
 import { EditorRefPlugin } from "@lexical/react/LexicalEditorRefPlugin";
@@ -243,6 +243,8 @@ export interface MountOptions {
    * reach the sanitizer.
    */
   structureProtectionMode?: StructureProtectionMode;
+  /** `EditorOptions.nodes`: node options such as a note caller's click handler. */
+  nodes?: EditorOptions["nodes"];
 }
 
 /** A mounted test editor: its public ref, the raw Lexical editor, and the teardown a row needs
@@ -273,6 +275,7 @@ export async function mountInView(
     isReadonly,
     styleInfo,
     structureProtectionMode,
+    nodes,
   }: MountOptions = {},
 ): Promise<MountedEditor> {
   const ref = createRef<EditorRef>();
@@ -298,7 +301,7 @@ export async function mountInView(
       defaultUsj={usj}
       scrRef={currentScrRef}
       onScrRefChange={onScrRefChange}
-      options={{ view, isReadonly, styleInfo: currentStyleInfo, structureProtectionMode }}
+      options={{ view, isReadonly, styleInfo: currentStyleInfo, structureProtectionMode, nodes }}
       onUsjChange={onUsjChange}
       onSelectionChange={onSelectionChange}
       logger={collectingLogger}

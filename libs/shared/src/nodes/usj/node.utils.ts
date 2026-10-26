@@ -80,6 +80,7 @@ import {
   EMPTY_CHAR_PLACEHOLDER_TEXT,
   IMMUTABLE_NOTE_CALLER_NODE_TYPE,
   NBSP,
+  NBSP_STAND_IN,
   UnknownAttributes,
 } from "./node-constants.js";
 import { isCursorPlaceholderOnly } from "../../plugins/CursorHandler/index.js";
@@ -570,7 +571,9 @@ export function getPreviewTextFromSerializedNodes(childNodes: SerializedLexicalN
     .join(" ")
     .trim();
 
-  return previewText;
+  // The preview is shown and handed out (the caller's title), so a stored no-break space is the
+  // U+00A0 itself, not Standard view's internal stand-in for it.
+  return previewText.replaceAll(NBSP_STAND_IN, NBSP);
 }
 
 /**
@@ -591,7 +594,8 @@ export function $getNoteCallerPreviewText(childNodes: LexicalNode[]): string {
     if (textContent.length > 0) parts.push(textContent);
   }
 
-  return parts.join(" ").trim();
+  // As in `getPreviewTextFromSerializedNodes`: U+00A0, not the internal stand-in.
+  return parts.join(" ").trim().replaceAll(NBSP_STAND_IN, NBSP);
 }
 
 /**

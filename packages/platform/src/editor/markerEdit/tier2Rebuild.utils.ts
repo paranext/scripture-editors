@@ -304,7 +304,7 @@ export function tokenizeFragment(
  * an attribute run, and not the para-prefix separator. What an NBSP byte in such a run MEANS
  * depends on the view, so the flattening must too:
  *
- * - Standard-view whitespace: a data NBSP displays as its spelling (`~`, or `NBSP_SYMBOL` when `~`
+ * - Standard-view whitespace: a data NBSP displays as its spelling (`~`, or `NBSP_STAND_IN` when `~`
  *   is an ordinary character — `getNbspSpelling`; usjTextToDisplay), so an NBSP byte in display
  *   text is always a display artifact — a space-run member or a structural separator — and
  *   flattens to " " ({@link toFragmentText}).

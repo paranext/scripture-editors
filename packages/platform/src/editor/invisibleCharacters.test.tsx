@@ -17,12 +17,12 @@ import {
   PASTE_COMMAND,
   TextNode,
 } from "lexical";
-import { NBSP } from "shared";
+import { NBSP, NBSP_STAND_IN } from "shared";
 import { ViewOptions } from "shared-react";
 import { describe, expect, it } from "vitest";
 
 /** How Standard view shows a stored no-break space when `~` is an ordinary character. */
-const NBSP_GLYPH = "⍽";
+const NBSP_GLYPH = NBSP_STAND_IN;
 
 /** `\id`, `\c 1`, one paragraph holding `content`, then a paragraph to move the caret to. */
 function oneParaUsj(content: MarkerContent[]): Usj {

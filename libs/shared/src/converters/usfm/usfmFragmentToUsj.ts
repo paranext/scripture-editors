@@ -96,7 +96,7 @@ export interface UsfmFragmentOptions {
   opensNamelessParagraph?: boolean;
   /**
    * The character that spells a no-break space in the fragment; each one becomes U+00A0 in the USJ.
-   * Defaults to `~`, Paratext's USFM spelling. Pass `NBSP_SYMBOL` for a project that stores a
+   * Defaults to `~`, Paratext's USFM spelling. Pass `NBSP_STAND_IN` for a project that stores a
    * no-break space as the literal U+00A0: there `~` is an ordinary character and is kept as one.
    */
   nbspSpelling?: string;
@@ -207,8 +207,13 @@ const INVISIBLE_CHAR_OR_WHITESPACE =
  *
  * Exported so the Paratext test vectors it must reproduce can be asserted directly, without the
  * marker-boundary handling of a full fragment parse in between.
+ *
+ * @param text - The text to regularize.
+ * @param kept - A character kept as an ordinary character even when it is a control character:
+ *   the no-break-space spelling the fragment uses (`UsfmFragmentOptions.nbspSpelling`), which is
+ *   U+001A where `~` is an ordinary character.
  */
-export function regularizeSpaces(text: string): string {
+export function regularizeSpaces(text: string, kept?: string): string {
   let result = "";
   let lastCharWasSpace = false;
   // Placeholder previous character, so the first iteration cannot report a duplicate
@@ -218,7 +223,11 @@ export function regularizeSpaces(text: string): string {
   let runIndex = -1;
   for (let i = 0; i < text.length; i += 1) {
     const ch = text[i];
-    if (ch.charCodeAt(0) < 32) {
+    if (ch === kept) {
+      result += ch;
+      lastCharWasSpace = false;
+      runIndex = -1;
+    } else if (ch.charCodeAt(0) < 32) {
       // Control characters, CR/LF, and TAB become spaces
       if (!lastCharWasSpace) {
         runIndex = result.length;
@@ -393,6 +402,7 @@ function tokenize(
   isNoteContext: boolean,
   placeholders: readonly PreservedNodeKind[],
   opensNamelessParagraph: boolean,
+  nbspSpelling: string,
 ): Token[] {
   const tokens: Token[] = [];
   let index = 0;
@@ -433,7 +443,7 @@ function tokenize(
       const nextMarker = fragment.indexOf("\\", index);
       let end = nextMarker === -1 ? fragment.length : nextMarker;
       if (nextNoteEnding < noteEnding.length) end = Math.min(end, noteEnding[nextNoteEnding]);
-      pushTextWithOptbreaks(regularizeSpaces(fragment.slice(index, end)));
+      pushTextWithOptbreaks(regularizeSpaces(fragment.slice(index, end), nbspSpelling));
       index = end;
       continue;
     }
@@ -1232,6 +1242,7 @@ export function usfmFragmentToUsjContent(
     isNoteContext,
     options?.placeholders ?? [],
     !isNoteContext && options?.opensNamelessParagraph === true,
+    nbspSpelling,
   );
   for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
     const token = tokens[tokenIndex];
