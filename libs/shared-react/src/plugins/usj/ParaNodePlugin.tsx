@@ -2,7 +2,7 @@ import { $removeLeadingSpace, wasNodeCreated } from "../../nodes/usj/node-react.
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getNodeByKey, $isElementNode, LexicalEditor } from "lexical";
 import { useEffect } from "react";
-import { $isParaNode, ParaNode } from "shared";
+import { $isGutterMarkerNode, $isParaNode, ParaNode } from "shared";
 
 export function ParaNodePlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -25,21 +25,24 @@ function useParaNode(editor: LexicalEditor) {
 
 /**
  * Remove any leading space if the node was just created, e.g. by hitting the enter key in the
- * middle of a paragraph. Update ParaNode to not contain text if it is a 'b' marker (blank line):
- * text typed into an empty one is removed. However, if the 'b' ParaNode already contained text, it
+ * middle of a paragraph — from its first text, past the gutter marker glyph that leads every
+ * paragraph in the paragraph-structure view, so that view saves the break as the others do.
+ * Update ParaNode to not contain text if it is a 'b' marker (blank line): text typed into an empty
+ * one is removed. However, if the 'b' ParaNode already contained text, it
  * can be modified (backwards compatible with PT9 & USFM v3.0), and content a join moves into an
  * empty one from the paragraph after it is kept.
  * @param node - ParaNode thats needs updating.
  */
 function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
   if (wasNodeCreated(editor, node.getKey())) {
-    $removeLeadingSpace(node.getFirstChild());
+    const first = node.getFirstChild();
+    $removeLeadingSpace($isGutterMarkerNode(first) ? first.getNextSibling() : first);
     // Lexical's history folds an update whose only dirty leaf is a text that kept its text into
     // the previous undo step. A paragraph break in front of a char span or a note is such an
     // update (only the text before the break is touched), so the new paragraph's first leaf is
     // marked too, and Undo takes the break back on its own.
-    const first = node.getFirstDescendant();
-    if (first && !$isElementNode(first)) first.markDirty();
+    const firstLeaf = node.getFirstDescendant();
+    if (firstLeaf && !$isElementNode(firstLeaf)) firstLeaf.markDirty();
   }
 
   if (!$isParaNode(node) || node.getMarker() !== "b" || node.isEmpty()) return;

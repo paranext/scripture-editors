@@ -279,6 +279,9 @@ refused. The public surface grew substantially; nothing was removed.
   caret move and never reach `onUsjChange`.
 - In the paragraph-structure view, a guarded two-step paragraph merge no longer leaves the merged
   paragraph's gutter marker in the middle of the paragraph it joined.
+- In the paragraph-structure view, Enter at a word break (`In| the`) no longer leaves the break's
+  space at the start of the new paragraph: `getUsj()` reports `the`, as the other views do, where it
+  reported ` the`.
 
 - In Standard view, the USJ positions the editor reports and accepts (selections, annotations)
   after a milestone, a verse's `\va`/`\vp`, or a chapter's `\ca` were one content item too far:
