@@ -355,11 +355,11 @@ describe("$getMarkerMenuContext", () => {
 
   describe("canInsertChapter", () => {
     /** An empty book, `\id` line only, with the caret at the end of the line's text. */
-    async function emptyBookEditor($appendAfterBook: () => void = () => {}) {
+    async function emptyBookEditor($appendAfterBook?: () => void) {
       let text: TextNode;
       const { editor } = await testEnvironment(() => {
         text = $buildBookLine("empty book");
-        $appendAfterBook();
+        $appendAfterBook?.();
       });
       await act(async () => editor.update(() => text.select(10, 10)));
       return editor;
