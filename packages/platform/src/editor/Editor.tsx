@@ -26,6 +26,7 @@ import {
 } from "./markerMenu/markerMenuApply.utils";
 import { $getMarkerMenuContext } from "./markerMenu/markerMenuContext.utils";
 import { $applyParaMarker } from "./markerEdit/applyParaMarker.utils";
+import { $insertFirstChapter } from "./markerEdit/firstChapter.utils";
 import { EscapeKeyPlugin } from "./EscapeKeyPlugin";
 import {
   COMMIT_PENDING_MARKERS_COMMAND,
@@ -1003,6 +1004,18 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
   // useImperativeHandle factory, which React only invokes when the consumer actually attached a
   // ref, so a factory-side assignment leaves the mirror null (and the in-editor marker menu dead)
   // for exactly the no-ref consumer the mirror exists to serve.
+  /** Starts chapter 1 in a book with no chapters; `false` when it already has one. */
+  function insertFirstChapterAtScrRef(editor: LexicalEditor, chapterNum: number, verseCount = 0) {
+    let inserted = false;
+    editor.update(
+      () => {
+        inserted = $insertFirstChapter({ chapterNum, verseCount, viewOptions, styleInfo });
+      },
+      { discrete: true },
+    );
+    return inserted;
+  }
+
   const editorApi: EditorRef = {
     focus() {
       const editor = editorRef.current;
@@ -1475,6 +1488,9 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // Every edit below is written for a caret; a selected paragraph marker counts as one at its
       // paragraph's content start, so collapse to there first rather than act on the glyph.
       editorRef.current.update($collapseParaMarkerSelection, { discrete: true });
+      // In a book with no chapters, `\c` starts chapter 1 where the `\` menu's pick does.
+      if (marker === "c" && insertFirstChapterAtScrRef(editorRef.current, scrRef.chapterNum))
+        return undefined;
       const markerAction = getUsjMarkerAction(
         marker,
         expandedNoteKeyRef,
@@ -1492,13 +1508,20 @@ const Editor = forwardRef(function Editor<TLogger extends LoggerBasic>(
       // is known exactly here, so it cannot drift with the coordinate systems.
       return markerAction.getInsertedNoteKey?.();
     },
+    insertFirstChapter(verseCount) {
+      if (effectiveIsReadonly) throw new Error("Cannot insert a chapter in readonly mode");
+      if (!scrRef)
+        throw new Error("Cannot insert a chapter without a scripture reference (scrRef)");
+      if (!editorRef.current) return false;
+      return insertFirstChapterAtScrRef(editorRef.current, scrRef.chapterNum, verseCount);
+    },
     getMarkerMenuContext() {
       if (isReadonly) return undefined;
       // `getEditorState().read`, NOT `editor.read` - the latter force-flushes any in-flight
       // update mid-dispatch (the same hazard as reading during an `OnSelectionChangePlugin`
       // callback).
       const editor = editorRef.current;
-      return editor?.getEditorState().read(() => $getMarkerMenuContext(editor));
+      return editor?.getEditorState().read(() => $getMarkerMenuContext(editor, scrRef?.chapterNum));
     },
     applyMarkerMenuSelection(item, opts) {
       if (isReadonly) throw new Error("Cannot apply marker menu selection in readonly mode");

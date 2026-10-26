@@ -672,6 +672,19 @@ export interface EditorRef {
    */
   insertMarker(marker: string): string | undefined;
   /**
+   * Starts chapter 1 in a book that has no chapters: inserts `\c 1`, then `verseCount` empty
+   * verses, after the book's front matter (the `\id` line, headings, titles and introduction),
+   * with the caret on the chapter line. This is where {@link EditorRef.insertMarker} with `"c"` and
+   * the `\` menu's `\c` put it too.
+   *
+   * @param verseCount - How many empty verses to add after the chapter marker. Defaults to none.
+   * @returns `false`, changing nothing, unless the `scrRef` prop is chapter 1 and the document has
+   *   no chapter yet.
+   * @throws Will throw an error if the editor is in readonly mode.
+   * @throws Will throw an error if the `scrRef` prop was not provided to the editor.
+   */
+  insertFirstChapter(verseCount?: number): boolean;
+  /**
    * Snapshot of the marker-menu context at the current selection (standard-view marker menus).
    * Returns undefined when the editor is readonly or has no range selection.
    */
