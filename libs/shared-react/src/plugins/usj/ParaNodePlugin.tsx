@@ -2,7 +2,7 @@ import { $removeLeadingSpace, wasNodeCreated } from "../../nodes/usj/node-react.
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getNodeByKey, LexicalEditor } from "lexical";
 import { useEffect } from "react";
-import { $isParaNode, ParaNode } from "shared";
+import { $isGutterMarkerNode, $isParaNode, getApplyingUpdateSource, ParaNode } from "shared";
 
 export function ParaNodePlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -28,10 +28,19 @@ function useParaNode(editor: LexicalEditor) {
  * middle of a paragraph. Update ParaNode to not contain text if it is a 'b' marker (blank line).
  * However, if the 'b' ParaNode already contained text, it can be modified (backwards compatible
  * with PT9 & USFM v3.0).
+ *
+ * The leading space is looked for past a gutter marker glyph: in the gutter view another
+ * ParaNode transform gives a new paragraph its glyph, and whether that transform runs before or
+ * after this one depends on the order the plugins registered in. A paragraph an applied update
+ * creates keeps its leading space: the apply reports its ops as given, so trimming here would leave
+ * this document out of step with the one that sent them.
  * @param node - ParaNode thats needs updating.
  */
 function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
-  if (wasNodeCreated(editor, node.getKey())) $removeLeadingSpace(node.getFirstChild());
+  if (!getApplyingUpdateSource(editor) && wasNodeCreated(editor, node.getKey())) {
+    const first = node.getFirstChild();
+    $removeLeadingSpace($isGutterMarkerNode(first) ? first.getNextSibling() : first);
+  }
 
   if (!$isParaNode(node) || node.getMarker() !== "b" || node.isEmpty()) return;
 

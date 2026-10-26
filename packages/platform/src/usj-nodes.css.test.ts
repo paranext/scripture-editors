@@ -87,3 +87,20 @@ describe("usj-nodes.css Scripture text font", () => {
     expect(declaredCss).not.toContain("@font-face");
   });
 });
+
+/**
+ * Pins the rule that moves a paragraph's leading marker glyph into the gutter. The jsdom tests in
+ * `editor/gutterParaMarkers.test.tsx` find that glyph with the per-paragraph half of this selector,
+ * and jsdom applies no stylesheet, so a change here would leave them green while the real gutter
+ * went blank.
+ */
+describe("usj-nodes.css gutter paragraph marker", () => {
+  const css = readFileSync(new URL("./usj-nodes.css", import.meta.url), "utf-8");
+  const flatCss = css.replace(/\s+/g, " ");
+
+  it("shows a paragraph's first non-verse, non-chapter marker in the gutter", () => {
+    expect(flatCss).toContain(
+      ".psc-gutter-markers .para > .marker:not(.verse):not(.chapter):first-child,",
+    );
+  });
+});

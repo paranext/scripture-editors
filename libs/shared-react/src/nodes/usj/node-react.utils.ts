@@ -7,6 +7,7 @@ import {
 import {
   BaseSelection,
   $getNodeByKey,
+  $getSelection,
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
@@ -370,13 +371,27 @@ export function $addTrailingSpace(node: LexicalNode | null | undefined) {
 }
 
 /**
- * Removes the any leading space from a TextNode.
+ * Removes any leading space from a TextNode. A selection point in that text moves back with
+ * it, so a caret at its end is not left past the end of the shortened text.
+ *
+ * Mutating: call inside `editor.update()` or a node transform.
  * @param node - Text node to remove leading space from.
  */
 export function $removeLeadingSpace(node: LexicalNode | null | undefined) {
-  if ($isTextNode(node)) {
-    const text = node.getTextContent();
-    if (text.startsWith(" ")) node.setTextContent(text.trimStart());
+  if (!$isTextNode(node)) return;
+
+  const text = node.getTextContent();
+  if (!text.startsWith(" ")) return;
+
+  const trimmed = text.trimStart();
+  const removed = text.length - trimmed.length;
+  node.setTextContent(trimmed);
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return;
+
+  for (const point of [selection.anchor, selection.focus]) {
+    if (point.type === "text" && point.key === node.getKey())
+      point.set(point.key, Math.max(0, point.offset - removed), "text");
   }
 }
 
