@@ -597,6 +597,9 @@ export interface Thread {
 }
 
 // @public
+export function toUsfmNbspSpelling(displayText: string, viewOptions: ViewOptions | undefined): string;
+
+// @public
 export interface TransientInput {
     // (undocumented)
     kind: "marker-literal";
