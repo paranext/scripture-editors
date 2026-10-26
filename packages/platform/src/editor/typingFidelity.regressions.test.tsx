@@ -6,9 +6,11 @@ import {
   EDITING_VIEWS,
   editorView,
   forEachView,
+  MountedEditor,
   mountInView,
   NamedView,
 } from "./editorViews.test-helpers";
+import { EditorRef } from "./editor.model";
 import { installSelectionModify, press } from "./typingFidelityOracle.test-helpers";
 import { ContentJsonPath, MarkerContent, Usj } from "@eten-tech-foundation/scripture-utilities";
 import { act } from "@testing-library/react";
@@ -84,27 +86,80 @@ function paragraphsAfterChapter(usj: Usj | undefined): { marker?: string; text: 
   }));
 }
 
-forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
-  // The joined paragraph keeps the blank line's marker, as joining any two paragraphs keeps the
-  // first one's; what matters here is that no text is lost.
-  describe("joining a paragraph with an empty blank line before it", () => {
-    it("Backspace at the paragraph's start keeps its text", async () => {
-      const mounted = await mountInView(BLANK_LINE_THEN_PARAGRAPH, view);
+/** The hidden-marker editing views, and paragraph-structure as Simple mode edits in it, where a
+ * join of two paragraphs is armed by the first press of the key and made by the second. */
+const HIDDEN_MARKER_AND_GUARDED_VIEWS: (NamedView<string> & {
+  structureProtectionMode?: StructureProtectionMode;
+  presses: number;
+})[] = [
+  ...HIDDEN_MARKER_VIEWS.map((entry) => ({ ...entry, presses: 1 })),
+  {
+    name: "paragraph-structure (guarded)",
+    view: editorView("paragraph-structure"),
+    structureProtectionMode: "guarded",
+    presses: 2,
+  },
+];
+
+/** What the editor shows for the paragraphs after the chapter of `usj` loaded as is. */
+async function renderedParagraphs(usj: Usj, view: NamedView<string>["view"]): Promise<string[]> {
+  const mounted = await mountInView(usj, view);
+  const texts = paragraphTexts(mounted);
+  mounted.unmount();
+  return texts;
+}
+
+/** The text of each paragraph after the chapter, as the editor holds it. */
+function paragraphTexts(mounted: MountedEditor): string[] {
+  return mounted.lexical.getEditorState().read(() =>
+    $getRoot()
+      .getChildren()
+      .slice(2)
+      .map((node) => node.getTextContent()),
+  );
+}
+
+/** `\id`, `\c 1`, then `\p text`: what joining the paragraph into the blank line leaves. */
+const PARAGRAPH_ONLY: Usj = {
+  ...BLANK_LINE_THEN_PARAGRAPH,
+  content: BLANK_LINE_THEN_PARAGRAPH.content.filter(
+    (item) => typeof item !== "object" || item.marker !== "b",
+  ),
+};
+
+for (const { name, view, structureProtectionMode, presses } of HIDDEN_MARKER_AND_GUARDED_VIEWS) {
+  // Paratext 9's formatted view joins two paragraphs the way its HTML editor (Gecko) joins two
+  // blocks: the second block survives and takes in the first's content (`JoinNodeTransaction`
+  // keeps the right node). Joined with the empty blank line before it, a paragraph keeps its own
+  // marker and the blank line is gone.
+  describe(`in ${name} view: joining a paragraph with an empty blank line before it`, () => {
+    it.each<[string, Parameters<EditorRef["setSelection"]>[0], string]>([
+      [
+        "Backspace at the paragraph's start",
+        { start: { jsonPath: "$.content[3].content[0]", offset: 0 } },
+        "Backspace",
+      ],
+      ["Delete in the blank line", { start: { jsonPath: "$.content[2]", offset: 0 } }, "Delete"],
+    ])("%s drops the blank line and keeps the paragraph", async (_, selection, key) => {
+      const mounted = await mountInView(BLANK_LINE_THEN_PARAGRAPH, view, {
+        structureProtectionMode,
+      });
       await act(async () => {
-        mounted.ref.current?.setSelection({
-          start: { jsonPath: "$.content[3].content[0]", offset: 0 },
-        });
+        mounted.ref.current?.setSelection(selection);
       });
 
-      expect(await press(mounted, "Backspace")).toEqual([]);
+      for (let count = 0; count < presses; count++) expect(await press(mounted, key)).toEqual([]);
 
       expect(paragraphsAfterChapter(mounted.ref.current?.getUsj())).toEqual([
-        { marker: "b", text: "text" },
+        { marker: "p", text: "text" },
       ]);
+      expect(paragraphTexts(mounted)).toEqual(await renderedParagraphs(PARAGRAPH_ONLY, view));
     });
 
     it("typing over a range from the blank line into the paragraph keeps the rest", async () => {
-      const mounted = await mountInView(BLANK_LINE_THEN_PARAGRAPH, view);
+      const mounted = await mountInView(BLANK_LINE_THEN_PARAGRAPH, view, {
+        structureProtectionMode,
+      });
       await act(async () => {
         mounted.ref.current?.setSelection({
           start: { jsonPath: "$.content[2]", offset: 0 },
@@ -115,11 +170,11 @@ forEachView(HIDDEN_MARKER_VIEWS, ({ view }) => {
       expect(await press(mounted, "x", "x")).toEqual([]);
 
       expect(paragraphsAfterChapter(mounted.ref.current?.getUsj())).toEqual([
-        { marker: "b", text: "xext" },
+        { marker: "p", text: "xext" },
       ]);
     });
   });
-});
+}
 
 forEachView(EDITING_VIEWS, ({ view }) => {
   describe("Undo after Enter in front of a char span or a note", () => {

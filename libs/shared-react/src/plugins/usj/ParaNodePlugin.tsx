@@ -2,7 +2,8 @@ import { $removeLeadingSpace, wasNodeCreated } from "../../nodes/usj/node-react.
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getNodeByKey, $isElementNode, LexicalEditor } from "lexical";
 import { useEffect } from "react";
-import { $isParaNode, ParaNode } from "shared";
+import { $isParaNode, $isVisibleMarkerNode, ParaNode } from "shared";
+import { $syncParaMarkerGlyph } from "./collab/delta-apply-update.utils";
 
 export function ParaNodePlugin(): null {
   const [editor] = useLexicalComposerContext();
@@ -27,8 +28,8 @@ function useParaNode(editor: LexicalEditor) {
  * Remove any leading space if the node was just created, e.g. by hitting the enter key in the
  * middle of a paragraph. Update ParaNode to not contain text if it is a 'b' marker (blank line):
  * text typed into an empty one is removed. However, if the 'b' ParaNode already contained text, it
- * can be modified (backwards compatible with PT9 & USFM v3.0), and content a join moves into an
- * empty one from the paragraph after it is kept.
+ * can be modified (backwards compatible with PT9 & USFM v3.0). A join of an empty one with the
+ * paragraph after it keeps that paragraph: its marker replaces the blank line's.
  * @param node - ParaNode thats needs updating.
  */
 function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
@@ -45,20 +46,34 @@ function $paraNodeTransform(node: ParaNode, editor: LexicalEditor): void {
   if (!$isParaNode(node) || node.getMarker() !== "b" || node.isEmpty()) return;
 
   const prevEditorState = editor.getEditorState();
-  const { wasEmpty, nextKey } = prevEditorState.read(() => {
+  const { wasEmpty, wasBlank, nextKey, nextPara } = prevEditorState.read(() => {
     const prevNode = $getNodeByKey(node.getKey());
+    const prevNext = prevNode?.getNextSibling();
     return {
-      wasEmpty: $isParaNode(prevNode) && (prevNode?.isEmpty() ?? false),
-      nextKey: prevNode?.getNextSibling()?.getKey(),
+      wasEmpty: $isParaNode(prevNode) && prevNode.isEmpty(),
+      // Empty but for a marker glyph the view shows in front of it (a gutter or visible marker).
+      wasBlank: $isParaNode(prevNode) && prevNode.getChildren().every($isVisibleMarkerNode),
+      nextKey: prevNext?.getKey(),
+      nextPara: $isParaNode(prevNext)
+        ? { marker: prevNext.getMarker(), unknownAttributes: prevNext.getUnknownAttributes() }
+        : undefined,
     };
   });
-  if (!wasEmpty) return;
+  if (!wasBlank) return;
 
-  // Only text typed into the blank line is refused. A join with the paragraph after it (Delete at
-  // the blank line, Backspace at that paragraph's start, or a range across the break typed over)
-  // moves that paragraph's content in, and clearing it would delete that paragraph's text.
+  // A join with the paragraph after it (Delete at the blank line, Backspace at that paragraph's
+  // start, or a range across the break typed over) moves that paragraph's content in. Paratext 9
+  // keeps the joined paragraph and drops the blank line: its formatted view joins two paragraphs
+  // the way its HTML editor joins two blocks, keeping the second block.
   const next = nextKey === undefined ? null : $getNodeByKey(nextKey);
-  if (nextKey !== undefined && (!next || !next.isAttached())) return;
+  if (nextKey !== undefined && (!next || !next.isAttached())) {
+    if (nextPara) {
+      $syncParaMarkerGlyph(node, nextPara.marker);
+      node.setUnknownAttributes(nextPara.unknownAttributes);
+    }
+    return;
+  }
 
-  node.clear();
+  // Only text typed into the blank line is refused.
+  if (wasEmpty) node.clear();
 }
