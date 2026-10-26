@@ -34,6 +34,7 @@ import {
 } from "lexical";
 import {
   $createBookNode,
+  $createChapterNode,
   $createGutterMarkerNode,
   $createMarkerNode,
   $createMarkerTrailingSeparator,
@@ -733,6 +734,34 @@ describe("StructureKeyboardPlugin — two-step delete guards", () => {
     });
   });
 
+  it.each([
+    ["with a gutter marker", true],
+    ["with no marker shown", false],
+  ])(
+    "Backspace at the start of a chapter's first paragraph (%s) is refused, not armed",
+    async (_label, hasGutterMarker) => {
+      let para: ParaNode;
+      let t1: TextNode;
+      const { editor } = await guardedEnvironment(() => {
+        t1 = $createTextNode("first");
+        para = $createParaNode("p");
+        $getRoot().append(
+          $createChapterNode("1"),
+          hasGutterMarker ? para.append($createGutterMarkerNode("\\p "), t1) : para.append(t1),
+        );
+      });
+      updateSelection(editor, t1!, 0);
+      const before = JSON.stringify(editor.getEditorState().toJSON());
+
+      // Claimed by the plugin (preventDefault, returns true), so no native path is hit.
+      await pressKey(editor, "Backspace", 0);
+      await pressKey(editor, "Backspace", 0);
+
+      expect(JSON.stringify(editor.getEditorState().toJSON())).toBe(before);
+      expect(editor.getRootElement()?.classList.contains("verse-delete-armed")).toBe(false);
+    },
+  );
+
   it("protected mode never runs the two-step path (boundary delete is blocked)", async () => {
     let t2: TextNode;
     const { editor } = await protectedEnvironment(() => {
@@ -1011,8 +1040,8 @@ describe("StructureKeyboardPlugin — armed DOM signals for the host hint", () =
     let t2: TextNode;
     const { editor } = await guardedEnvironment(() => {
       t2 = $createTextNode("second");
-      second = $createParaNode("p").append(t2);
-      $getRoot().append($createParaNode("p").append($createTextNode("first")), second);
+      second = $createParaNode("p");
+      $getRoot().append($createParaNode("p").append($createTextNode("first")), second.append(t2));
     });
     updateSelection(editor, t2!, 0); // caret at start of the second paragraph
 
@@ -1028,8 +1057,8 @@ describe("StructureKeyboardPlugin — armed DOM signals for the host hint", () =
     let second: ParaNode;
     const { editor } = await guardedEnvironment(() => {
       t1 = $createTextNode("first");
-      second = $createParaNode("p").append($createTextNode("second"));
-      $getRoot().append($createParaNode("p").append(t1), second);
+      second = $createParaNode("p");
+      $getRoot().append($createParaNode("p").append(t1), second.append($createTextNode("second")));
     });
     updateSelection(editor, t1!, 5); // caret at end of the first paragraph
 
@@ -1043,8 +1072,11 @@ describe("StructureKeyboardPlugin — armed DOM signals for the host hint", () =
   it("an armed empty paragraph marks kind=removeEmptyPara", async () => {
     let empty: ParaNode;
     const { editor } = await guardedEnvironment(() => {
-      empty = $createParaNode("p").append($createGutterMarkerNode("\\p "));
-      $getRoot().append($createParaNode("p").append($createTextNode("first")), empty);
+      empty = $createParaNode("p");
+      $getRoot().append(
+        $createParaNode("p").append($createTextNode("first")),
+        empty.append($createGutterMarkerNode("\\p ")),
+      );
     });
     updateSelection(editor, empty!, 1); // caret just past the empty paragraph's gutter marker
 

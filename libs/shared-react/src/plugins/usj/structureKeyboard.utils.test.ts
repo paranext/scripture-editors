@@ -10,6 +10,7 @@ import {
   $caretAtParaStart,
   $isArmedSelection,
   $isParaEmpty,
+  $isUnmergeableParaStart,
   $mergeParaIntoPrevious,
   $paraDeleteEffect,
   $sanitizeNodesForProtectedStructure,
@@ -996,6 +997,42 @@ describe("empty verse carets", () => {
       expect($selectionContainsVerseMarker(selection)).toBe(true);
       expect($shouldBlockStructuralEdit(selection, "insertText")).toBe(true);
       expect($shouldBlockStructuralEdit(selection, "deleteBackward")).toBe(true);
+    });
+  });
+});
+
+describe("$isUnmergeableParaStart", () => {
+  it("is true at the start of a para after a chapter, and false mid-text", async () => {
+    let t1: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      t1 = $createTextNode("first");
+      $getRoot().append($createChapterNode("2"), $createParaNode("p").append(t1));
+    });
+    updateSelection(editor, t1!, 0);
+    editor.getEditorState().read(() => {
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(true);
+    });
+    updateSelection(editor, t1!, 2);
+    editor.getEditorState().read(() => {
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(false);
+    });
+  });
+
+  it("is false at the start of a para that can merge, and of the first block", async () => {
+    let t1: TextNode;
+    let t2: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      t1 = $createTextNode("first");
+      t2 = $createTextNode("second");
+      $getRoot().append($createParaNode("p").append(t1), $createParaNode("p").append(t2));
+    });
+    updateSelection(editor, t2!, 0);
+    editor.getEditorState().read(() => {
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(false);
+    });
+    updateSelection(editor, t1!, 0);
+    editor.getEditorState().read(() => {
+      expect($isUnmergeableParaStart($getSelection()!)).toBe(false);
     });
   });
 });

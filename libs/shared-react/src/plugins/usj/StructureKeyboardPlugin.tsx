@@ -1,5 +1,6 @@
 import {
   $isArmedSelection,
+  $isUnmergeableParaStart,
   $mergeParaIntoPrevious,
   $paraDeleteEffect,
   $placeCaretAtEnd,
@@ -10,7 +11,9 @@ import {
   $structuralDeleteTarget,
   ArmedDelete,
   CONFIRMED_DELETE_TAG,
+  DeleteIntent,
   keyDownToIntent,
+  snapshotPoint,
 } from "./structureKeyboard.utils";
 import { $generateNodesFromDOM } from "@lexical/html";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -42,40 +45,21 @@ import {
   $getSelectedParaMarkerPara,
   $isSomeParaNode,
   $selectParaMarker,
+  MARKER_TEXT_TYPE,
 } from "shared";
 import { $narrowSelectionPastBookPrefix } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
-
-/** Where an armed gutter marker's text starts, relative to the marker's own box. */
-const MARKER_TEXT_LEFT_PROPERTY = "--para-merge-armed-text-left";
-/** How wide an armed gutter marker's text is, without its trailing space. */
-const MARKER_TEXT_WIDTH_PROPERTY = "--para-merge-armed-text-width";
-
-/**
- * Publishes where a gutter marker's text sits as {@link MARKER_TEXT_LEFT_PROPERTY} and
- * {@link MARKER_TEXT_WIDTH_PROPERTY}, so the stylesheet can draw the armed highlight around the
- * text alone. The text does not sit inside the marker's box: the paragraph's first-line indent
- * carries over to it.
- */
-function publishMarkerTextBounds(marker: HTMLElement): void {
-  const text = marker.firstChild;
-  if (text?.nodeType !== Node.TEXT_NODE) return;
-  const range = document.createRange();
-  range.setStart(text, 0);
-  range.setEnd(text, (text.textContent ?? "").trimEnd().length);
-  // jsdom has no layout, so no Range geometry.
-  if (typeof range.getBoundingClientRect !== "function") return;
-  const textBounds = range.getBoundingClientRect();
-  const markerBounds = marker.getBoundingClientRect();
-  marker.style.setProperty(MARKER_TEXT_LEFT_PROPERTY, `${textBounds.left - markerBounds.left}px`);
-  marker.style.setProperty(MARKER_TEXT_WIDTH_PROPERTY, `${textBounds.width}px`);
-}
 
 /**
  * Class on an armed paragraph's gutter marker (or, when it shows none, on the paragraph) while a
  * two-step paragraph delete is pending.
  */
 export const PARA_MERGE_ARMED_CLASS_NAME = "para-merge-armed";
+
+/** Where an armed gutter marker's text starts, relative to the marker's own box. */
+const MARKER_TEXT_LEFT_PROPERTY = "--para-merge-armed-text-left";
+/** How wide an armed gutter marker's text is, without its trailing space. */
+const MARKER_TEXT_WIDTH_PROPERTY = "--para-merge-armed-text-width";
 
 /**
  * Governs structural keystrokes (Backspace/Delete/Enter/typing) at verse- and paragraph-marker
@@ -96,9 +80,9 @@ export const PARA_MERGE_ARMED_CLASS_NAME = "para-merge-armed";
  * user-facing hint: the root element carries the `verse-delete-armed` class plus
  * `data-verse-delete-intent` (`deleteBackward` | `deleteForward`) and `data-verse-delete-kind`
  * (`verse` | `selection`, or for a paragraph what the second press does: `joinPreviousPara` |
- * `joinNextPara` | `removeEmptyPara`). An armed verse marker carries the `verse-selected` class, and
- * an armed paragraph's gutter marker {@link PARA_MERGE_ARMED_CLASS_NAME}. The host can observe these to
- * render a localized tooltip (see paranext-core's TwoStepDeleteTooltipOverlay).
+ * `joinNextPara` | `removeEmptyPara`). An armed verse marker carries the `verse-selected` class,
+ * and an armed paragraph's gutter marker {@link PARA_MERGE_ARMED_CLASS_NAME}. The host can observe
+ * these to render a localized tooltip (see paranext-core's TwoStepDeleteTooltipOverlay).
  *
  * @param structureProtectionMode - `"off"` (e.g. the Power interface mode): the plugin registers
  *   no handlers and editing is fully native — no blocking, no two-step delete, no armed state.
@@ -140,7 +124,7 @@ export function StructureKeyboardPlugin({
     };
 
     const $handleTwoStepDelete = (
-      intent: "deleteBackward" | "deleteForward",
+      intent: DeleteIntent,
       event: KeyboardEvent | undefined,
     ): boolean => {
       const selection = $getSelection();
@@ -190,13 +174,13 @@ export function StructureKeyboardPlugin({
           $setSelection(ns);
           setArmedState({ key: target.node.getKey(), kind: target.kind, intent });
         } else {
-          // A merge removes only the paragraph's marker; its text stays. So a Backspace arm selects
-          // the marker, as a click on it would, and never the text. Removing a selected marker joins
-          // its paragraph to the one before, whichever key was pressed. A Delete arm keeps the
-          // caret at the end of its paragraph: selecting the NEXT paragraph's marker would move the
-          // caret there, so typing or an arrow key after the arm would act in that paragraph. With
-          // no marker selected, the caret stays where it is, and the armed class (still on the
-          // marker, when there is one) and the host's hint say what is armed.
+          // A merge removes only the paragraph's marker; its text stays. So a Backspace arm
+          // selects the marker, as a click on it would, and never the text. Removing a selected
+          // marker joins its paragraph to the one before, whichever key was pressed. A Delete arm
+          // keeps the caret at the end of its paragraph: selecting the NEXT paragraph's marker
+          // would move the caret there, so typing or an arrow key after the arm would act in that
+          // paragraph. With no marker selected, the caret stays where it is, and the armed class
+          // (still on the marker, when there is one) and the host's hint say what is armed.
           const isMarkerSelected = !!$getSelectedParaMarkerPara(selection);
           const glyph =
             intent === "deleteBackward" ? $getSelectableParaMarker(target.node) : undefined;
@@ -211,12 +195,8 @@ export function StructureKeyboardPlugin({
               isMarkerSelected ? "deleteBackward" : intent,
             ),
             ...(caret && {
-              anchor: {
-                key: caret.anchor.key,
-                offset: caret.anchor.offset,
-                type: caret.anchor.type,
-              },
-              focus: { key: caret.focus.key, offset: caret.focus.offset, type: caret.focus.type },
+              anchor: snapshotPoint(caret.anchor),
+              focus: snapshotPoint(caret.focus),
             }),
           });
         }
@@ -238,9 +218,16 @@ export function StructureKeyboardPlugin({
           kind: "selection",
           intent,
           key: verseKeys[0],
-          anchor: { key: anchor.key, offset: anchor.offset, type: anchor.type },
-          focus: { key: focus.key, offset: focus.offset, type: focus.type },
+          anchor: snapshotPoint(anchor),
+          focus: snapshotPoint(focus),
         });
+        event?.preventDefault();
+        return true;
+      }
+      // A paragraph start with a block before it that it cannot merge into (a chapter, say):
+      // refused, as the same key is under "protected". Let through, the native delete would
+      // remove that block.
+      if (intent === "deleteBackward" && $isUnmergeableParaStart(selection)) {
         event?.preventDefault();
         return true;
       }
@@ -269,10 +256,13 @@ export function StructureKeyboardPlugin({
       // Lexical only reconstructs known node types, but this also clears the taint flow).
       const safeHtml = DOMPurify.sanitize(html);
       const dom = new DOMParser().parseFromString(safeHtml, "text/html");
-      // Every marker glyph is presentation, not content: a paragraph's gutter marker (a triple-clicked
-      // heading copies its `\s1`) and an inline marker glyph alike. Parsed back, each would arrive as
-      // plain text such as `\s1 ` or `\w `, and saved, as a real marker — so all of them are dropped.
-      dom.querySelectorAll('[data-text-type="marker"]').forEach((glyph) => glyph.remove());
+      // Every marker glyph is presentation, not content: a paragraph's gutter marker (a
+      // triple-clicked heading copies its `\s1`) and an inline marker glyph alike. Parsed back,
+      // each would arrive as plain text such as `\s1 ` or `\w `, and saved, as a real marker — so
+      // all of them are dropped.
+      dom
+        .querySelectorAll(`[data-text-type="${MARKER_TEXT_TYPE}"]`)
+        .forEach((glyph) => glyph.remove());
       const sanitized = $sanitizeNodesForProtectedStructure($generateNodesFromDOM(editor, dom));
       // For DROP, the browser pre-positions the DOM selection at the drop point before the event fires, so $getSelection() reflects the drop target.
       const selection = $getSelection();
@@ -396,4 +386,24 @@ export function StructureKeyboardPlugin({
 
   // Renders no UI: the armed hint is owned by the host app (see this component's JSDoc).
   return null;
+}
+
+/**
+ * Publishes where a gutter marker's text sits as {@link MARKER_TEXT_LEFT_PROPERTY} and
+ * {@link MARKER_TEXT_WIDTH_PROPERTY}, so the stylesheet can draw the armed highlight around the
+ * text alone. The text does not sit inside the marker's box: the paragraph's first-line indent
+ * carries over to it.
+ */
+function publishMarkerTextBounds(marker: HTMLElement): void {
+  const text = marker.firstChild;
+  if (text?.nodeType !== Node.TEXT_NODE) return;
+  const range = document.createRange();
+  range.setStart(text, 0);
+  range.setEnd(text, (text.textContent ?? "").trimEnd().length);
+  // jsdom has no layout, so no Range geometry.
+  if (typeof range.getBoundingClientRect !== "function") return;
+  const textBounds = range.getBoundingClientRect();
+  const markerBounds = marker.getBoundingClientRect();
+  marker.style.setProperty(MARKER_TEXT_LEFT_PROPERTY, `${textBounds.left - markerBounds.left}px`);
+  marker.style.setProperty(MARKER_TEXT_WIDTH_PROPERTY, `${textBounds.width}px`);
 }

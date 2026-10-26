@@ -668,8 +668,8 @@ button.toolbar-item:disabled .chevron-down {
    blink as an armed verse marker. Only the marker goes, so the paragraph's text is left untinted.
    The marker's text does not sit inside its box (the paragraph's first-line indent carries over to
    it), so the tint is a box drawn behind the text from the bounds StructureKeyboardPlugin measures
-   and publishes; without them it covers the marker's whole box, with the same margin. The selector out-ranks the gutter
-   marker's own rule. */
+   and publishes; without them it covers the marker's whole box, with the same margin. The selector
+   out-ranks the gutter marker's own rule. */
 .psc-gutter-markers .para > .marker.para-merge-armed:not(.verse):not(.chapter):first-child {
   color: #dc2626;
   isolation: isolate;

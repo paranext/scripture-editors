@@ -8,7 +8,6 @@ import {
   $isRangeSelection,
   $isTextNode,
   BaseSelection,
-  ElementNode,
   LexicalNode,
   NodeKey,
   RangeSelection,
@@ -40,6 +39,9 @@ export const CONFIRMED_DELETE_TAG = "confirmed-delete";
 /** Editing operations that can alter block structure. */
 export type EditIntent = "insertParagraph" | "deleteBackward" | "deleteForward" | "insertText";
 
+/** The editing operations that delete: Backspace and Delete. */
+export type DeleteIntent = Extract<EditIntent, "deleteBackward" | "deleteForward">;
+
 /** What a structural delete keystroke would act on. */
 export type DeleteTarget =
   | { kind: "verse"; node: SomeVerseNode }
@@ -59,6 +61,11 @@ export function isSamePoint(point: PointSnapshot, snapshot: PointSnapshot): bool
   );
 }
 
+/** Snapshots `point`, so a later selection can be checked against it. */
+export function snapshotPoint(point: PointSnapshot): PointSnapshot {
+  return { key: point.key, offset: point.offset, type: point.type };
+}
+
 /**
  * What an armed paragraph delete will do, which the host names in its hint: join the paragraph to
  * the one before it, pull the next paragraph up into the current one, or remove an empty paragraph.
@@ -68,7 +75,7 @@ export type ParaDeleteEffect = "joinPreviousPara" | "joinNextPara" | "removeEmpt
 /** A pending two-step delete: the armed target's kind + the intent that armed it. */
 export interface ArmedDelete {
   kind: "verse" | "para" | "selection";
-  intent: "deleteBackward" | "deleteForward";
+  intent: DeleteIntent;
   /** verse/para: the target node's key. selection: the first verse marker key in the range. */
   key: NodeKey;
   /** para only: what the second press will do. */
@@ -299,8 +306,8 @@ export function $shouldBlockStructuralEdit(selection: BaseSelection, intent: Edi
 
 /**
  * The marker/section a delete keystroke would remove at a structural boundary, or undefined
- * when the keystroke is ordinary editing. Mirror of `$shouldBlockStructuralEdit`'s boundary
- * conditions, but resolves the target node instead of returning a boolean.
+ * when there is nothing it can remove there: ordinary editing, or a boundary
+ * {@link $isUnmergeableParaStart} refuses.
  *
  * Backward: the adjacent verse, else the current paragraph (when it has a paragraph or the `\id`
  * line before it to merge into).
@@ -340,6 +347,20 @@ export function $structuralDeleteTarget(
   return undefined;
 }
 
+/**
+ * True when a collapsed caret sits at the start of a paragraph that has a block before it but
+ * cannot merge into it — a chapter marker, say. A Backspace there has nothing it may remove, and
+ * left to the native delete it would remove that block, so it must be refused.
+ *
+ * Read-only: safe in any read or update.
+ */
+export function $isUnmergeableParaStart(selection: BaseSelection): boolean {
+  if (!$caretAtParaStart(selection) || !$hasNeighborBlock(selection, "backward")) return false;
+  if (!$isRangeSelection(selection)) return false;
+  const para = $getParaAncestor(selection.anchor.getNode());
+  return !$isSomeParaNode(para) || !$canMergeIntoPrevious(para);
+}
+
 /** True when the live selection still encodes the armed target. */
 export function $isArmedSelection(selection: BaseSelection | null, armed: ArmedDelete): boolean {
   if (!selection) return false;
@@ -368,7 +389,7 @@ function $isAtSnapshot(selection: RangeSelection, armed: ArmedDelete): boolean {
  *
  * Read-only: safe in any read or update.
  */
-export function $isParaEmpty(para: ElementNode): boolean {
+export function $isParaEmpty(para: SomeParaNode): boolean {
   return para
     .getChildren()
     .every(
@@ -386,10 +407,7 @@ export function $isParaEmpty(para: ElementNode): boolean {
  *
  * Read-only: safe in any read or update.
  */
-export function $paraDeleteEffect(
-  para: ElementNode,
-  intent: "deleteBackward" | "deleteForward",
-): ParaDeleteEffect {
+export function $paraDeleteEffect(para: SomeParaNode, intent: DeleteIntent): ParaDeleteEffect {
   if ($isParaEmpty(para)) return "removeEmptyPara";
   return intent === "deleteForward" ? "joinNextPara" : "joinPreviousPara";
 }
@@ -408,13 +426,11 @@ export function $placeCaretAtEnd(node: LexicalNode): void {
 
 /**
  * True when `para` has something right before it to merge into: a paragraph, or the `\id` line —
- * the only case {@link $mergeParaIntoPrevious} acts on. `ParaMarkerSelectionPlugin` hands a selected
- * marker's delete to the two-step delete exactly when this holds, and `$structuralDeleteTarget` arms
- * one exactly when it holds, so the two never disagree.
+ * the only case {@link $mergeParaIntoPrevious} acts on.
  *
  * Read-only: safe in any read or update.
  */
-export function $canMergeIntoPrevious(para: LexicalNode): boolean {
+export function $canMergeIntoPrevious(para: SomeParaNode): boolean {
   return $isParaLikeNode(para.getPreviousSibling());
 }
 
@@ -424,8 +440,8 @@ export function $canMergeIntoPrevious(para: LexicalNode): boolean {
  * caret at the junction. Text is never lost. A paragraph merges into a paragraph
  * (ParaNode/ImpliedParaNode either way) or into the `\id` line's BookNode — mirroring
  * markerEditDeletion.utils.ts's marker-deletion merge, which already treats the two the same
- * way, since the line is content like any paragraph's; any other previous sibling is a no-op.
- * Caller guarantees a previous element sibling exists (checked via `$hasNeighborBlock`).
+ * way, since the line is content like any paragraph's; any other previous sibling is a no-op
+ * (see {@link $canMergeIntoPrevious}).
  *
  * Mutating: call inside `editor.update()` (dispatched from StructureKeyboardPlugin.tsx).
  *

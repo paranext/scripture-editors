@@ -594,7 +594,7 @@ describe("Backspace/Delete on a selected paragraph marker", () => {
       await pressKeyOn(lexical, { key });
       await flushQueuedEvents();
       expect(ref.current?.getUsj()).toEqual(before);
-      expect(ref.current?.getSelectedParaMarker()).toBeDefined();
+      expect(ref.current?.getSelectedParaMarker()).toBe("li2");
 
       await pressKeyOn(lexical, { key });
       await flushQueuedEvents();
@@ -768,4 +768,63 @@ describe("Backspace from the start of a line with no verse", () => {
     await flushQueuedEvents();
     expect(ref.current?.getUsj()).toEqual(withPoetryLine);
   });
+});
+
+describe("deleting a whole row's selection where structure is protected", () => {
+  const view = getViewOptions(PARAGRAPH_STRUCTURE_VIEW_MODE);
+  const rowsUsj: Usj = {
+    type: "USJ",
+    version: "3.1",
+    content: [
+      { type: "book", marker: "id", code: "GEN", content: ["Test Book"] },
+      { type: "para", marker: "mt", content: ["Title"] },
+      { type: "chapter", marker: "c", number: "1" },
+      { type: "para", marker: "s1", content: ["Heading"] },
+      { type: "para", marker: "p", content: ["Paragraph text"] },
+      { type: "para", marker: "q", content: ["Poetry line"] },
+    ],
+  };
+
+  it.each(
+    ["mt", "s1", "p"].flatMap((marker) => [
+      [marker, "Backspace"],
+      [marker, "Delete"],
+    ]),
+  )(
+    "keeps the \\%s marker when its whole row is selected and %s is pressed",
+    async (marker, key) => {
+      const { ref, lexical } = await mountParagraphStructure(
+        { options: { view, structureProtectionMode: "protected" } },
+        rowsUsj,
+      );
+      // What a triple-click leaves once Lexical narrows it to the row: the whole paragraph, its
+      // gutter marker included.
+      await act(async () => {
+        lexical.update(() => {
+          const para = $paraOf(marker);
+          para.select(0, para.getChildrenSize());
+        });
+      });
+      await flushQueuedEvents();
+
+      await act(async () => {
+        lexical
+          .getRootElement()
+          ?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      });
+      await flushQueuedEvents();
+
+      const rows = ref.current?.getUsj()?.content ?? [];
+      // The text goes; only the marker stays.
+      expect(
+        rows.find((row) => typeof row !== "string" && row.marker === marker),
+      ).not.toHaveProperty("content.0");
+      expect(rows.map((row) => (typeof row === "string" ? row : row.marker))).toEqual(
+        rowsUsj.content.map((row) => (typeof row === "string" ? row : row.marker)),
+      );
+      expect(
+        lexical.getEditorState().read(() => $isGutterMarkerNode($paraOf(marker).getFirstChild())),
+      ).toBe(true);
+    },
+  );
 });
