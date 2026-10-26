@@ -262,6 +262,45 @@ forEachView(
   },
 );
 
+// Paratext 9's Standard view saves every U+00A0 in its editor as a space when the project stores a
+// no-break space as `~` (`UsfmHtmlUtilities.LegacyPostprocessUsfm`): one typed there is display
+// spacing, not data, and the author's no-break space is typed as `~`.
+describe("in standard view: a no-break space typed as a character", () => {
+  it.each<[string, MarkerContent[], ContentJsonPath, number, MarkerContent[]]>([
+    ["between two letters", ["ab"], "$.content[2].content[0]", 1, ["a b"]],
+    ["after a space", ["a b"], "$.content[2].content[0]", 2, ["a b"]],
+    [
+      "at a span's start",
+      ["a ", { type: "char", marker: "nd", content: ["x"] }, " b"],
+      "$.content[2].content[1].content[0]",
+      0,
+      ["a ", { type: "char", marker: "nd", content: ["x"] }, " b"],
+    ],
+  ])("is saved as a space (%s)", async (_, content, jsonPath, offset, saved) => {
+    const mounted = await mountInView(oneParaUsj(content), editorView("standard"));
+    await act(async () => {
+      mounted.ref.current?.setSelection({ start: { jsonPath, offset } });
+    });
+
+    expect(await press(mounted, NBSP, NBSP)).toEqual([]);
+
+    expect(mounted.ref.current?.getUsj()).toEqual(oneParaUsj(saved));
+  });
+
+  it("is saved as `~` when typed as `~`", async () => {
+    const mounted = await mountInView(oneParaUsj(["ab"]), editorView("standard"));
+    await act(async () => {
+      mounted.ref.current?.setSelection({
+        start: { jsonPath: "$.content[2].content[0]", offset: 1 },
+      });
+    });
+
+    expect(await press(mounted, "~", "~")).toEqual([]);
+
+    expect(mounted.ref.current?.getUsj()).toEqual(oneParaUsj([`a${NBSP}b`]));
+  });
+});
+
 /** `\p a \nd one \+wj two\+wj* three\nd* b`. */
 const NESTED_SPAN: Usj = oneParaUsj([
   "a ",
