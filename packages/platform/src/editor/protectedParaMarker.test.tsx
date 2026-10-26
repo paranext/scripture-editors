@@ -597,6 +597,31 @@ describe("structure protection refuses a delete that would remove a paragraph's 
     expect(onHiddenContentDelete).not.toHaveBeenCalled();
   });
 
+  it("Cmd+Backspace on a verse-led line holding a hidden figure, even if the host would confirm it", async () => {
+    const onHiddenContentDelete = vi.fn<HiddenContentDeleteHandler>(() => "delete");
+    const mounted = await mountLocked(
+      lockedUsjWith("q1", [VERSE_2, FIGURE, "Blessed is the man"]),
+      onHiddenContentDelete,
+    );
+    await placeCaret(mounted.lexical, "q1", 10); // "Blessed is| the man"
+
+    // As measured in Chrome: past the verse's span, the extension lands in the line before.
+    await withBrowserModify(() =>
+      withExtensionLandingAt(
+        mounted.lexical,
+        ["extend", true, "lineboundary"],
+        (selection) => {
+          const previous = $paraOf("s1").getLastChild();
+          if (!$isTextNode(previous)) throw new Error("no heading text");
+          selection.focus.set(previous.getKey(), previous.getTextContentSize(), "text");
+        },
+        () =>
+          expectRefused(mounted, "q1", () => dispatch(mounted.lexical, DELETE_LINE_COMMAND, true)),
+      ),
+    );
+    expect(onHiddenContentDelete).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["Delete", (lexical: LexicalEditor) => pressKey(lexical, "Delete")],
     [
