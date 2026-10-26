@@ -11,6 +11,7 @@ import {
   ElementNode,
   LexicalNode,
   NodeKey,
+  RangeSelection,
 } from "lexical";
 import {
   $getSelectableParaMarker,
@@ -72,7 +73,10 @@ export interface ArmedDelete {
   key: NodeKey;
   /** para only: what the second press will do. */
   paraEffect?: ParaDeleteEffect;
-  /** selection only: the armed range's endpoints. */
+  /**
+   * selection: the armed range's endpoints. para, when the paragraph shows no marker to select:
+   * the caret's, which the arm leaves where it was.
+   */
   anchor?: PointSnapshot;
   focus?: PointSnapshot;
 }
@@ -298,7 +302,8 @@ export function $shouldBlockStructuralEdit(selection: BaseSelection, intent: Edi
  * when the keystroke is ordinary editing. Mirror of `$shouldBlockStructuralEdit`'s boundary
  * conditions, but resolves the target node instead of returning a boolean.
  *
- * Backward: the adjacent verse, else the current paragraph (when a previous block exists).
+ * Backward: the adjacent verse, else the current paragraph (when it has a paragraph or the `\id`
+ * line before it to merge into).
  * Forward: the adjacent verse, else the NEXT paragraph (when a next block exists) — the block
  * whose marker the merge removes.
  * A selected gutter marker (either direction): its paragraph, when there is one before it to merge
@@ -310,17 +315,15 @@ export function $structuralDeleteTarget(
 ): DeleteTarget | undefined {
   const markerPara = $getSelectedParaMarkerPara(selection);
   if (markerPara) {
-    return $isParaLikeNode(markerPara.getPreviousSibling())
-      ? { kind: "para", node: markerPara }
-      : undefined;
+    return $canMergeIntoPrevious(markerPara) ? { kind: "para", node: markerPara } : undefined;
   }
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return undefined;
   if (intent === "deleteBackward") {
     const verse = $adjacentVerseMarker(selection, "backward");
     if (verse) return { kind: "verse", node: verse };
-    if ($caretAtParaStart(selection) && $hasNeighborBlock(selection, "backward")) {
+    if ($caretAtParaStart(selection)) {
       const para = $getParaAncestor(selection.anchor.getNode());
-      if ($isSomeParaNode(para)) return { kind: "para", node: para };
+      if ($isSomeParaNode(para) && $canMergeIntoPrevious(para)) return { kind: "para", node: para };
     }
     return undefined;
   }
@@ -344,24 +347,27 @@ export function $isArmedSelection(selection: BaseSelection | null, armed: ArmedD
     return $isNodeSelection(selection) && selection.has(armed.key);
   }
   if (armed.kind === "selection") {
-    if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-    if (!armed.anchor || !armed.focus) return false;
-    return isSamePoint(selection.anchor, armed.anchor) && isSamePoint(selection.focus, armed.focus);
+    return (
+      $isRangeSelection(selection) && !selection.isCollapsed() && $isAtSnapshot(selection, armed)
+    );
   }
-  // A paragraph armed from its selected gutter marker stays armed while the marker stays selected.
+  // A paragraph armed on its gutter marker stays armed while that marker stays selected; one that
+  // shows no marker, while the caret stays where it was.
   if ($getSelectedParaMarkerPara(selection)?.getKey() === armed.key) return true;
-  if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-  const anchorPara = $getParaAncestor(selection.anchor.getNode());
-  const focusPara = $getParaAncestor(selection.focus.getNode());
-  return (
-    !!anchorPara &&
-    anchorPara.getKey() === armed.key &&
-    !!focusPara &&
-    focusPara.getKey() === armed.key
-  );
+  return $isRangeSelection(selection) && $isAtSnapshot(selection, armed);
 }
 
-/** True when `para` has nothing but its own marker prefix (a gutter marker, say), or nothing. */
+/** True when `selection` has exactly the endpoints `armed` recorded. */
+function $isAtSnapshot(selection: RangeSelection, armed: ArmedDelete): boolean {
+  if (!armed.anchor || !armed.focus) return false;
+  return isSamePoint(selection.anchor, armed.anchor) && isSamePoint(selection.focus, armed.focus);
+}
+
+/**
+ * True when `para` has nothing but its own marker prefix (a gutter marker, say), or nothing.
+ *
+ * Read-only: safe in any read or update.
+ */
 export function $isParaEmpty(para: ElementNode): boolean {
   return para
     .getChildren()
@@ -377,6 +383,8 @@ export function $isParaEmpty(para: ElementNode): boolean {
  * What the second press of an armed paragraph delete will do to `para`, the paragraph the merge
  * removes: the current one for a Backspace (or a selected gutter marker), the next one for a
  * Delete.
+ *
+ * Read-only: safe in any read or update.
  */
 export function $paraDeleteEffect(
   para: ElementNode,
@@ -396,6 +404,18 @@ export function $placeCaretAtEnd(node: LexicalNode): void {
   } else {
     node.selectNext(0, 0);
   }
+}
+
+/**
+ * True when `para` has something right before it to merge into: a paragraph, or the `\id` line —
+ * the only case {@link $mergeParaIntoPrevious} acts on. `ParaMarkerSelectionPlugin` hands a selected
+ * marker's delete to the two-step delete exactly when this holds, and `$structuralDeleteTarget` arms
+ * one exactly when it holds, so the two never disagree.
+ *
+ * Read-only: safe in any read or update.
+ */
+export function $canMergeIntoPrevious(para: LexicalNode): boolean {
+  return $isParaLikeNode(para.getPreviousSibling());
 }
 
 /**

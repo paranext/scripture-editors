@@ -16,7 +16,7 @@ import {
   ParaMarkerPrefixCursorGuardPlugin,
 } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
-import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
+import { PARA_MERGE_ARMED_CLASS_NAME, StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { TextDirectionPlugin } from "./TextDirectionPlugin";
 import {
   baseTestEnvironment,
@@ -712,6 +712,48 @@ describe('ParaMarkerSelectionPlugin — Backspace/Delete on a selected marker ta
     });
 
     expect(documentJson(editor)).toBe(before);
+  });
+
+  it("Backspace at the start of a paragraph's text selects its marker, not its text, then merges", async () => {
+    const { editor, li2, secondText } = await deletionEnvironment("guarded");
+    await sutUpdate(editor, () => secondText.select(0, 0));
+    const before = documentJson(editor);
+
+    await pressKey(editor, "Backspace");
+
+    expect(documentJson(editor)).toBe(before);
+    expect(selectedMarkerOf(editor)).toBe("li2");
+    const glyphKey = editor.getEditorState().read(() => li2.getFirstChildOrThrow().getKey());
+    const glyphElement = editor.getElementByKey(glyphKey);
+    expect(glyphElement?.classList.contains(PARA_MERGE_ARMED_CLASS_NAME)).toBe(true);
+    expect(
+      editor.getElementByKey(li2.getKey())?.classList.contains(PARA_MERGE_ARMED_CLASS_NAME),
+    ).toBe(false);
+
+    await pressKey(editor, "Backspace");
+
+    expectMergedAtJoin(editor);
+  });
+
+  it("Delete at the end of a paragraph marks the next paragraph's marker, keeps the caret, then merges it up", async () => {
+    const { editor, li2, firstText } = await deletionEnvironment("guarded");
+    await sutUpdate(editor, () => firstText.select(5, 5));
+
+    await pressKey(editor, "Delete");
+
+    // The caret stays at the end of the first paragraph, so typing or an arrow key after the arm
+    // acts there, not in the next paragraph.
+    expect(selectedMarkerOf(editor)).toBeUndefined();
+    editor.getEditorState().read(() => $expectSelectionToBe(firstText, 5));
+    const glyphKey = editor.getEditorState().read(() => li2.getFirstChildOrThrow().getKey());
+    expect(editor.getElementByKey(glyphKey)?.classList.contains(PARA_MERGE_ARMED_CLASS_NAME)).toBe(
+      true,
+    );
+    expect(editor.getRootElement()?.getAttribute("data-verse-delete-kind")).toBe("joinNextPara");
+
+    await pressKey(editor, "Delete");
+
+    expectMergedAtJoin(editor);
   });
 
   it("the other key after the first press cancels without merging", async () => {

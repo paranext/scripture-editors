@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
 import { $createImmutableVerseNode, ImmutableVerseNode } from "../../nodes/usj";
-import { StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
+import { PARA_MERGE_ARMED_CLASS_NAME, StructureKeyboardPlugin } from "./StructureKeyboardPlugin";
 import { HistoryPlugin } from "../History/HistoryPlugin";
 import { $isBookPrefixNode } from "./ParaMarkerPrefixCursorGuardPlugin";
 import {
@@ -18,6 +18,7 @@ import {
   $createTextNode,
   $getSelection,
   $isNodeSelection,
+  $isRangeSelection,
   $setSelection,
   LexicalEditor,
   LexicalNode,
@@ -476,7 +477,7 @@ describe("StructureKeyboardPlugin — two-step delete (unprotected)", () => {
     });
   });
 
-  it("paragraph Backspace at start: first press selects the block, second merges into previous", async () => {
+  it("paragraph Backspace at start: first press arms without selecting the text, second merges into previous", async () => {
     let q: ParaNode;
     let t2: TextNode;
     const { editor } = await guardedEnvironment(() => {
@@ -488,8 +489,10 @@ describe("StructureKeyboardPlugin — two-step delete (unprotected)", () => {
 
     await pressKey(editor, "Backspace", 0);
     editor.getEditorState().read(() => {
+      // Armed, with the caret left where it was: the paragraph's text is not selected.
       const sel = $getSelection();
-      expect(sel && !$isNodeSelection(sel) && !sel.isCollapsed()).toBe(true);
+      expect($isRangeSelection(sel) && sel.isCollapsed()).toBe(true);
+      expect($isRangeSelection(sel) && sel.anchor.key).toBe(t2!.getKey());
       expect($getRoot().getChildrenSize()).toBe(2); // not yet merged
     });
 
@@ -520,8 +523,10 @@ describe("StructureKeyboardPlugin — two-step delete (unprotected)", () => {
 
     await pressKey(editor, "Backspace", 0);
     editor.getEditorState().read(() => {
+      // Armed, with the caret left where it was: the paragraph's text is not selected.
       const sel = $getSelection();
-      expect(sel && !$isNodeSelection(sel) && !sel.isCollapsed()).toBe(true);
+      expect($isRangeSelection(sel) && sel.isCollapsed()).toBe(true);
+      expect($isRangeSelection(sel) && sel.anchor.key).toBe(t2!.getKey());
       expect($getRoot().getChildrenSize()).toBe(2); // not yet merged
     });
 
@@ -597,7 +602,25 @@ describe("StructureKeyboardPlugin — two-step delete (unprotected)", () => {
     });
   });
 
-  it("paragraph Delete at end: first press selects the next block, second merges it up", async () => {
+  it("Backspace twice removes an empty paragraph with no children", async () => {
+    let empty: ParaNode;
+    const { editor } = await guardedEnvironment(() => {
+      empty = $createParaNode("p");
+      $getRoot().append($createParaNode("p").append($createTextNode("first")), empty);
+    });
+    updateSelection(editor, empty!, 0);
+
+    await pressKey(editor, "Backspace", 0);
+    expect(editor.getRootElement()?.getAttribute("data-verse-delete-kind")).toBe("removeEmptyPara");
+    await pressKey(editor, "Backspace", 0);
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildrenSize()).toBe(1);
+      expect($getRoot().getTextContent()).toBe("first");
+    });
+  });
+
+  it("paragraph Delete at end: first press arms the next paragraph, second merges it up", async () => {
     let t1: TextNode;
     const { editor } = await guardedEnvironment(() => {
       t1 = $createTextNode("first");
@@ -943,11 +966,13 @@ describe("StructureKeyboardPlugin — per-edit undo/redo for a run of verse dele
 });
 
 // The plugin renders no UI; it publishes the armed state to the editor root so the host app can
-// render a localized hint (see paranext-core's VerseDeleteTooltipOverlay). These assert that
+// render a localized hint (see paranext-core's TwoStepDeleteTooltipOverlay). These assert that
 // DOM contract: `data-verse-delete-intent` + `data-verse-delete-kind` for every arm, cleared
-// otherwise, plus `para-merge-armed` on an armed paragraph's element.
+// otherwise, plus PARA_MERGE_ARMED_CLASS_NAME on an armed paragraph's marker (or the paragraph).
 function armedParaElements(editor: LexicalEditor): Element[] {
-  return Array.from(editor.getRootElement()?.querySelectorAll(".para-merge-armed") ?? []);
+  return Array.from(
+    editor.getRootElement()?.querySelectorAll(`.${PARA_MERGE_ARMED_CLASS_NAME}`) ?? [],
+  );
 }
 
 describe("StructureKeyboardPlugin — armed DOM signals for the host hint", () => {

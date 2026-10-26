@@ -403,6 +403,18 @@ describe("$structuralDeleteTarget", () => {
     });
   });
 
+  it("returns undefined at the start of a para after a chapter (nothing it can merge into)", async () => {
+    let t1: TextNode;
+    const { editor } = await baseTestEnvironment(() => {
+      t1 = $createTextNode("first");
+      $getRoot().append($createChapterNode("2"), $createParaNode("p").append(t1));
+    });
+    updateSelection(editor, t1!, 0);
+    editor.getEditorState().read(() => {
+      expect($structuralDeleteTarget($getSelection()!, "deleteBackward")).toBeUndefined();
+    });
+  });
+
   it("returns undefined mid-text", async () => {
     let t1: TextNode;
     const { editor } = await baseTestEnvironment(() => {
@@ -451,7 +463,7 @@ describe("$isArmedSelection", () => {
     });
   });
 
-  it("para: true when a non-collapsed range's anchor and focus both resolve to the armed para", async () => {
+  it("para: true while the caret stays where a paragraph with no marker was armed, false once it moves", async () => {
     let para: ParaNode;
     let t1: TextNode;
     const { editor } = await baseTestEnvironment(() => {
@@ -459,15 +471,23 @@ describe("$isArmedSelection", () => {
       t1 = $createTextNode("hello");
       $getRoot().append(para.append(t1));
     });
+    const caretAt = (offset: number) => ({ key: t1!.getKey(), offset, type: "text" as const });
+    const armed = {
+      key: para!.getKey(),
+      kind: "para" as const,
+      intent: "deleteBackward" as const,
+      anchor: caretAt(0),
+      focus: caretAt(0),
+    };
+
+    updateSelection(editor, t1!, 0);
+    editor.getEditorState().read(() => {
+      expect($isArmedSelection($getSelection(), armed)).toBe(true);
+    });
+
     updateSelection(editor, t1!, 0, t1!, 5);
     editor.getEditorState().read(() => {
-      expect(
-        $isArmedSelection($getSelection(), {
-          key: para!.getKey(),
-          kind: "para",
-          intent: "deleteBackward",
-        }),
-      ).toBe(true);
+      expect($isArmedSelection($getSelection(), armed)).toBe(false);
     });
   });
 

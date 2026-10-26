@@ -6,6 +6,7 @@ import {
 } from "./ParaMarkerPrefixCursorGuardPlugin";
 import { StructureProtectionMode } from "./structure-protection.model";
 import {
+  $canMergeIntoPrevious,
   $getGutterParaWithCaretAtStart,
   $mergeParaIntoPrevious,
   $placeCaretAfterParaChild,
@@ -48,7 +49,6 @@ import {
   $getSelectedParaMarker,
   $getSelectedParaMarkerPara,
   $isGutterMarkerNode,
-  $isParaLikeNode,
   $isSomeParaNode,
   $placeCaretAtBoundary,
   $selectParaMarker,
@@ -164,9 +164,8 @@ export function ParaMarkerSelectionPlugin({
 
     // Under "guarded", a merge that would happen is left to `StructureKeyboardPlugin`'s two-step
     // delete, which arms it on the first press and performs it on the second.
-    const $isTwoStepRemoval = (para: SomeParaNode) =>
-      structureProtectionModeRef.current === "guarded" &&
-      $isParaLikeNode(para.getPreviousSibling());
+    const $deferToTwoStepDelete = (para: SomeParaNode) =>
+      structureProtectionModeRef.current === "guarded" && $canMergeIntoPrevious(para);
 
     /**
      * Adopts the browser's selection when it has moved off the glyph — a right-click on other text,
@@ -257,7 +256,7 @@ export function ParaMarkerSelectionPlugin({
           return true;
         case "Backspace":
         case "Delete":
-          if ($isTwoStepRemoval(para)) return false;
+          if ($deferToTwoStepDelete(para)) return false;
           event.preventDefault();
           $removeMarker(para);
           return true;
@@ -283,7 +282,7 @@ export function ParaMarkerSelectionPlugin({
       if (!editor.isEditable()) return false;
       const markerPara = $getActivePara();
       if (markerPara) {
-        if ($isTwoStepRemoval(markerPara)) return false;
+        if ($deferToTwoStepDelete(markerPara)) return false;
         $removeMarker(markerPara);
         return true;
       }
@@ -304,7 +303,7 @@ export function ParaMarkerSelectionPlugin({
       const { inputType } = event;
       if (inputType.startsWith("delete")) {
         event.preventDefault();
-        if ($isTwoStepRemoval(para))
+        if ($deferToTwoStepDelete(para))
           editor.dispatchCommand(DELETE_CHARACTER_COMMAND, inputType.includes("Backward"));
         else $removeMarker(para);
         return true;
